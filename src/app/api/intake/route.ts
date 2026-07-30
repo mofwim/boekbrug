@@ -21,7 +21,22 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
-import { verifyInvoiceFromPdf } from "@/lib/ai"
+import {
+  verifyInvoiceFromPdf,
+  // [STATEMENT-RECONCILE] herkenning + lezer van een leveranciersoverzicht
+  isStatementFilename,
+  looksLikeStatementReason,
+  readSupplierStatement,
+} from "@/lib/ai"
+// [STATEMENT-RECONCILE] pure vergelijking: overzichtsregels × onze eigen facturen.
+import {
+  reconcileStatement,
+  reconcileNote,
+  summarizeReconcile,
+  type StatementLine,
+  type BookedInvoice,
+} from "@/lib/statement-reconcile"
+import { supplierNameKey } from "@/lib/supplier-registry"
 import { resolveImportTarget, ensureImportedFolder } from "@/lib/bestanden"
 import { computeContentHash } from "@/lib/content-hash"
 import { buildFolderBreadcrumb } from "@/lib/documents"
@@ -628,13 +643,46 @@ export async function POST(req: NextRequest) {
     // [INTAKE-FEEDBACK] resolve the folder name so the client can show "where"
     // and deep-link to it (same breadcrumb helper as the duplicate path).
     const docFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId)
+    const folderName = docFolderPath.length ? docFolderPath[docFolderPath.length - 1] : null
+
+    // ── [STATEMENT-RECONCILE] Een rekeningoverzicht is geen factuur — maar wél het enige
+    // stuk dat van BUITEN vertelt wat je zou moeten hebben. Tot nu toe herkenden we het
+    // (hierboven: is_statement / de filename- en tekst-guards), zetten het terecht NIET in
+    // de boeken, en deden er daarna niets mee. Nu lezen we de regels en vergelijken ze met
+    // wat we van deze leverancier hebben, zodat de ene ontbrekende inkoopfactuur — de
+    // voorbelasting die de eigenaar anders niet terugvraagt — een naam en een nummer krijgt.
+    // Er wordt niets geboekt: de uitkomst is een aanwijzing; de eigenaar haalt de factuur op.
+    // Faalt zacht in elke stap: het bestand staat dan gewoon in bestanden, zoals altijd.
+    if (doc?.id && isSupplierStatement(v, file.name)) {
+      const reconcile = await reconcileSupplierStatement({
+        supabase,
+        pipeline,
+        userId: user.id,
+        documentId: doc.id,
+        base64,
+        mimeType: effectiveType,
+        filename: file.name,
+        receiverName,
+      })
+      if (reconcile) {
+        return NextResponse.json({
+          ok: true,
+          destination: "statement",
+          document_id: doc.id,
+          folder_id: folderId,
+          folder_name: folderName,
+          ...reconcile,
+        })
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       destination: "document",
       could_not_read: couldNotRead,
       document_id: doc?.id ?? null,
       folder_id: folderId,
-      folder_name: docFolderPath.length ? docFolderPath[docFolderPath.length - 1] : null,
+      folder_name: folderName,
       message: couldNotRead
         ? "We konden dit document niet lezen. Het staat veilig in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is."
         : "Opgeslagen in je bestanden (geen factuur of bon herkend).",
@@ -869,11 +917,23 @@ export async function POST(req: NextRequest) {
       await pipeline.from("notifications").insert({
         user_id: user.id,
         title: "Factuur automatisch verwerkt",
-        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en klaargezet voor de boekhouder. Controleer indien nodig.`.replace("  ", " "),
+        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace("  ", " "),
         type: "invoice",
+        // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
+        // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
+        // tap for nothing: it announces a booking and then leaves the owner to find
+        // the invoice by hand — on a surface the notification never names.
+        link: `/dashboard/incoming/manage?focus=${invoice.id}`,
       })
     } catch { /* non-essential */ }
   }
+
+  // [INTAKE-AUTO-FEEDBACK] Where the FILE itself was filed. The document path already
+  // echoed folder_id/folder_name so the upload modal could say "opgeslagen in …"; the
+  // invoice path never did, so an invoice — the one thing the owner most wants to be
+  // able to find back — landed without a location. Same breadcrumb helper, best-effort:
+  // a failure here must never affect the (already committed) invoice.
+  const invoiceFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId).catch(() => [])
 
   return NextResponse.json({
     ok: true,
@@ -881,6 +941,8 @@ export async function POST(req: NextRequest) {
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
     auto_verified: autoAdv.advance,
+    folder_id: folderId,
+    folder_name: invoiceFolderPath.length ? invoiceFolderPath[invoiceFolderPath.length - 1] : null,
     // [UPLOAD-HUB] Echo the key extracted fields so the upload page can show WHAT each file is
     // (leverancier · bedrag · nummer) at a glance — the owner verifies without opening every file.
     vendor: v.vendor ?? null,
@@ -896,7 +958,12 @@ export async function POST(req: NextRequest) {
         : possibleDup
           ? `Factuur herkend — let op: mogelijk dubbel${possibleDup.match.invoice_number ? ` met ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Controleer voor je bevestigt.`
           : autoAdv.advance
-            ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
+            // [INTAKE-AUTO-FEEDBACK] Name the DESTINATION, not just the fact. "Automatisch
+            // verwerkt" alone left the owner looking for the invoice in the verify queue,
+            // where an auto-advanced invoice never appears — it is booked (unpaid) on
+            // Inkoopfacturen. Saying so, plus "nog niet betaald", is what makes the
+            // automatic step checkable instead of merely fast.
+            ? "Herkend, gecontroleerd en geboekt als inkoopfactuur — klaar voor de boekhouder (nog niet betaald)."
             : "Factuur herkend — controleer en bevestig.",
   })
 }
@@ -1336,6 +1403,9 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
   // otherwise see), appended to the honest message and returned structured for the caller.
   if (result.balanceWarning) msg += ` ${result.balanceWarning}`
+  // [STATEMENT-CONTINUITY] …en of er een heel AFSCHRIFT tussen zit dat we nog niet hebben. Twee
+  // verschillende gaten: balanceWarning kijkt binnen dit bestand, dit tussen de bestanden.
+  if (result.continuityWarning) msg += ` ${result.continuityWarning}`
   return NextResponse.json({
     ok: true,
     destination: "bank",
@@ -1346,6 +1416,150 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
     balanceWarning: result.balanceWarning,
+    continuityWarning: result.continuityWarning,
     message: msg,
   })
+}
+// ── [STATEMENT-RECONCILE] Het leveranciersoverzicht als volledigheidscontrole ────────────────
+
+/**
+ * Is dit document een REKENINGOVERZICHT van een leverancier (en dus geen boekbare factuur)?
+ * Drie onafhankelijke signalen, precies de drie die de extractor zelf al gebruikt om zo'n
+ * document te WEIGEREN — we hangen er alleen een tweede leven aan. Eén ervan volstaat:
+ *   · het model zette is_statement (de tekst-guard forceert dat ook),
+ *   · het model schreef zijn eigen reden ("rekeningoverzicht — …"),
+ *   · de bestandsnaam laat geen twijfel.
+ */
+function isSupplierStatement(
+  v: { is_statement?: boolean | null; reason?: string | null },
+  filename: string,
+): boolean {
+  return v.is_statement === true || looksLikeStatementReason(v.reason) || isStatementFilename(filename)
+}
+
+/** Wat de client krijgt: één eerlijke zin + de nummers die de eigenaar moet gaan zoeken. */
+interface StatementReconcilePayload {
+  message: string
+  vendor: string | null
+  period: { from: string; to: string } | null
+  compared: number
+  missing: Array<{ invoice_number: string | null; date: string | null; amount: number | null }>
+  missing_amount: number
+  archived: Array<{ invoice_number: string | null; invoice_id: string }>
+  not_on_statement: Array<{ invoice_number: string | null; invoice_id: string }>
+  unreadable: number
+}
+
+/**
+ * Lees het overzicht, haal onze eigen facturen van die leverancier erbij en vergelijk.
+ *
+ * Discipline (hetzelfde als overal in deze pipeline): niets boeken, niets aanpassen aan
+ * bestaande facturen, en liever geen uitspraak dan een gokkende. Faalt zacht — elke `null`
+ * hier laat de gewone "opgeslagen in je bestanden"-afhandeling staan, precies zoals vóór
+ * deze functie bestond.
+ */
+async function reconcileSupplierStatement(args: {
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
+  pipeline: ReturnType<typeof createPipelineClient>
+  userId: string
+  documentId: string
+  base64: string
+  mimeType: string
+  filename: string
+  receiverName: string | null
+}): Promise<StatementReconcilePayload | null> {
+  const { supabase, pipeline, userId, documentId, base64, mimeType, filename, receiverName } = args
+
+  const read = await readSupplierStatement(base64, mimeType, filename, receiverName)
+  // Geen leesbare regels → geen controle. Nooit "alles compleet" claimen op een leeg resultaat.
+  if (!read.ok || read.lines.length === 0) return null
+
+  const lines: StatementLine[] = read.lines.map((l) => ({
+    invoice_number: l.invoice_number,
+    date: l.date,
+    amount: l.amount,
+    kind: l.kind,
+    description: l.description,
+  }))
+
+  // Het venster waarin we onze eigen facturen zoeken: de periode van het overzicht, ruim
+  // genomen (een factuur van eind vorige maand staat op het overzicht van deze). Zonder
+  // periode: de laatste achttien maanden — verder terug zegt een overzicht niets meer.
+  const lineDates = lines.map((l) => l.date).filter((d): d is string => !!d).sort()
+  const anchor = read.period_from ?? lineDates[0] ?? null
+  const from = anchor
+    ? new Date(new Date(`${anchor}T00:00:00Z`).getTime() - 90 * 86_400_000).toISOString().slice(0, 10)
+    : new Date(Date.now() - 550 * 86_400_000).toISOString().slice(0, 10)
+
+  const { data: invRows } = await supabase
+    .from("invoices")
+    .select("id, invoice_number, invoice_date, total_inc_btw, status, client_name")
+    .eq("receiver_id", userId)
+    .eq("direction", "incoming")
+    .gte("invoice_date", from)
+    .order("invoice_date", { ascending: false })
+    .limit(2000)
+
+  const rows = (invRows ?? []) as unknown as Array<{
+    id: string; invoice_number: string | null; invoice_date: string | null
+    total_inc_btw: number | null; status: string | null; client_name: string | null
+  }>
+
+  // Alleen de facturen van DEZE leverancier vergelijken. Zonder bruikbare leveranciersnaam
+  // vergelijken we tegen alles: een regel die we dan nergens terugvinden ontbreekt echt, en
+  // dat is de enige claim die we in dat geval doen (zie hieronder — geen `notOnStatement`).
+  const vendorKey = supplierNameKey(read.vendor)
+  const scoped = vendorKey ? rows.filter((r) => supplierNameKey(r.client_name) === vendorKey) : rows
+  const booked: BookedInvoice[] = scoped.map((r) => ({
+    id: r.id,
+    invoice_number: r.invoice_number,
+    invoice_date: r.invoice_date,
+    total_inc_btw: r.total_inc_btw,
+    status: r.status ?? "processing",
+  }))
+
+  const result = reconcileStatement({
+    lines,
+    booked,
+    period: read.period_from && read.period_to ? { from: read.period_from, to: read.period_to } : null,
+  })
+
+  const message = summarizeReconcile(result, read.vendor)
+
+  // [STATEMENT-RECONCILE] De uitkomst hoort bij het BESTAND, niet bij dit ene venster: wie het
+  // scherm wegklikt moet hem in Mijn bestanden nog kunnen teruglezen. `notes` is een bestaande
+  // vrije tekstkolom — geen migratie nodig — en `ai_doc_type` maakt het overzicht later
+  // vindbaar als wat het is. Best-effort: mislukt dit, dan blijft alleen het venster over.
+  try {
+    await pipeline
+      .from("documents")
+      .update({ notes: reconcileNote(result, read.vendor).slice(0, 1000), ai_doc_type: "statement" })
+      .eq("id", documentId)
+      .eq("user_id", userId)
+  } catch {
+    /* niet fataal */
+  }
+
+  return {
+    message,
+    vendor: read.vendor,
+    period: result.period,
+    compared: result.matched.length + result.archived.length + result.missing.length,
+    missing: result.missing.map((l) => ({
+      invoice_number: l.invoice_number,
+      date: l.date,
+      amount: l.amount,
+    })),
+    missing_amount: result.missingAmount,
+    archived: result.archived.map((m) => ({
+      invoice_number: m.invoice.invoice_number,
+      invoice_id: m.invoice.id,
+    })),
+    // Zonder leveranciersnaam kunnen we niet zeggen dat wij iets EXTRA hebben — dan vergelijken
+    // we immers tegen alle leveranciers tegelijk. Dan liever zwijgen dan onzin melden.
+    not_on_statement: vendorKey
+      ? result.notOnStatement.map((i) => ({ invoice_number: i.invoice_number, invoice_id: i.id }))
+      : [],
+    unreadable: result.unreadable.length,
+  }
 }

@@ -1779,7 +1779,13 @@ function DetailRow({ label, value, bold }: { label: string; value: string; bold?
 // [INTAKE-FEEDBACK] Per-file outcome shown in the results modal.
 type IntakeResult = {
   name: string;
-  status: "invoice" | "document" | "bank" | "duplicate" | "error";
+  // [AUTO-ADVANCE-HONESTY] "auto" is a DIFFERENT outcome from "invoice", not a nicer word for
+  // it: /api/intake books a clean, confident invoice straight to 'received' (auto_verified),
+  // so it is NOT in this verify queue — it is with the Inkoopfacturen. Reporting it as
+  // "invoice" pointed the owner at a card that is not here. "statement" / "turnover" /
+  // "ledger" are the destinations the route gained since; without them each fell through to
+  // the "invoice" default below and was announced as an invoice awaiting a tap.
+  status: "auto" | "invoice" | "statement" | "turnover" | "ledger" | "document" | "bank" | "duplicate" | "error";
   message: string;
   // present for document / duplicate → deep-link + focus in Mijn bestanden
   link?: { folderId: string | null; focusId: string };
@@ -1790,12 +1796,16 @@ type IntakeResult = {
   invoiceId?: string;
 };
 
-const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
-  invoice:   { icon: "✓",  color: M3.success },
-  document:  { icon: "📁", color: "#1a73e8" },
-  bank:      { icon: "🏦", color: "#1a73e8" },
-  duplicate: { icon: "ℹ️", color: "#5f6368" },
-  error:     { icon: "⚠️", color: "#b3261e" },
+const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string; label: string }> = {
+  auto:      { icon: "✓",  color: M3.success, label: "Automatisch verwerkt" },
+  invoice:   { icon: "✓",  color: M3.success, label: "Wacht op je controle" },
+  statement: { icon: "🧾", color: "#9a5b00",  label: "Rekeningoverzicht gecontroleerd" },
+  turnover:  { icon: "🛒", color: M3.success, label: "Omzet geboekt" },
+  ledger:    { icon: "🔗", color: "#7B1FA2",  label: "Controle-check" },
+  document:  { icon: "📁", color: "#1a73e8",  label: "In je bestanden" },
+  bank:      { icon: "🏦", color: "#1a73e8",  label: "Bankafschrift" },
+  duplicate: { icon: "ℹ️", color: "#5f6368",  label: "Al toegevoegd" },
+  error:     { icon: "⚠️", color: "#b3261e",  label: "Niet gelukt" },
 };
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
@@ -1861,10 +1871,25 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         if (dest === "bank") {
           return { name: file.name, status: "bank", message };
         }
-        // invoice | receipt → lives in this verify queue
-        // [INTAKE-FOCUS] keep invoice_id so the row can deep-link to the card
+        // [STATEMENT-RECONCILE] A supplier statement is a completeness CHECK, not a booking:
+        // nothing enters the books, so it must not be announced as an added invoice.
+        if (dest === "statement") {
+          const docId = (data as { document_id?: string }).document_id;
+          return {
+            name: file.name, status: "statement", message,
+            link: docId ? { folderId: (data as { folder_id?: string }).folder_id ?? null, focusId: docId } : undefined,
+          };
+        }
+        if (dest === "turnover" || dest === "ledger") {
+          return { name: file.name, status: dest, message };
+        }
+        // [AUTO-ADVANCE-HONESTY] A clean, confident invoice is booked straight to 'received' and
+        // is therefore NOT in this queue — sending the owner to "controle" showed them a list
+        // without the card they were promised. Same invoice_id, a truthful destination.
+        // [INTAKE-FOCUS] keep invoice_id so the row can deep-link to the card either way.
+        const autoVerified = (data as { auto_verified?: boolean }).auto_verified === true;
         return {
-          name: file.name, status: "invoice", message,
+          name: file.name, status: autoVerified ? "auto" : "invoice", message,
           invoiceId: (data as { invoice_id?: string }).invoice_id,
         };
       }
@@ -2219,7 +2244,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                       <p style={{ fontSize: 13, fontWeight: 600, color: "#202124", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {r.name}
                       </p>
-                      <p style={{ fontSize: 12, color: meta.color, margin: 0 }}>{r.message}</p>
+                      {/* [AUTO-ADVANCE-HONESTY] WHAT happened, in the app's own words, before the
+                          server's sentence. The message alone could not distinguish an invoice
+                          that is waiting for a tap from one that is already booked — and those
+                          are the two outcomes the owner must never confuse. */}
+                      <p style={{ fontSize: 12, color: meta.color, margin: 0, fontWeight: 600 }}>{meta.label}</p>
+                      <p style={{ fontSize: 12, color: "#5f6368", margin: 0 }}>{r.message}</p>
                       {r.link && (
                         <button
                           type="button"
@@ -2240,6 +2270,16 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                         >
                           Naar controle →
                         </button>
+                      )}
+                      {/* [AUTO-ADVANCE-HONESTY] Already booked → the link goes where the invoice
+                          actually IS (Inkoopfacturen), never to a queue it never entered. */}
+                      {r.status === "auto" && (
+                        <Link
+                          href={r.invoiceId ? `/dashboard/incoming/manage?focus=${r.invoiceId}` : "/dashboard/incoming/manage"}
+                          style={{ marginTop: 6, display: "inline-block", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          Naar Inkoopfacturen →
+                        </Link>
                       )}
                     </div>
                   </div>

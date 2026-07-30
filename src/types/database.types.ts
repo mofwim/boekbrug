@@ -534,6 +534,50 @@ export type Database = {
           },
         ]
       }
+      bank_statement_periods: {
+        Row: {
+          closing_balance: number | null
+          created_at: string
+          currency: string | null
+          document_id: string
+          iban: string | null
+          opening_balance: number | null
+          period_end: string | null
+          period_start: string | null
+          user_id: string
+        }
+        Insert: {
+          closing_balance?: number | null
+          created_at?: string
+          currency?: string | null
+          document_id: string
+          iban?: string | null
+          opening_balance?: number | null
+          period_end?: string | null
+          period_start?: string | null
+          user_id: string
+        }
+        Update: {
+          closing_balance?: number | null
+          created_at?: string
+          currency?: string | null
+          document_id?: string
+          iban?: string | null
+          opening_balance?: number | null
+          period_end?: string | null
+          period_start?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_periods_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: true
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ledger_daily: {
         Row: {
           account_nr: string | null
