@@ -19,16 +19,14 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF',
-  primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#ffffff', onSurface: '#202124',
-  surfaceVariant: '#f1f3f4',
-  success: '#34A853', error: '#B3261E',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { md: 12, lg: 16, full: 9999 }
 
 type Variant = 'card' | 'fab' | 'compact'
 
@@ -40,9 +38,12 @@ export default function IntakeButton({
   onDone?: (result: IntakeResult) => void
 }) {
   const router = useRouter()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
@@ -73,10 +74,6 @@ export default function IntakeButton({
   const mpFileRef = useRef<HTMLInputElement>(null)
   const MAX_PAGES = 20
 
-  function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3500)
-  }
 
   // [DUP-ARCHIVED] "Terugzetten" — de upload botste op een factuur die de eigenaar zelf genegeerd
   // heeft. Opnieuw uploaden lost dat niet op (bij identieke bytes kán het niet eens); de bestaande
@@ -240,7 +237,7 @@ export default function IntakeButton({
         aria-label="Toevoegen"
         style={{
           position: 'fixed',
-          bottom: 'calc(88px + env(safe-area-inset-bottom))',
+          bottom: 'calc(88px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
           right: 20,
           background: M3.primary, color: M3.onPrimary,
           borderRadius: 16, padding: '16px 20px',
@@ -510,7 +507,7 @@ export default function IntakeButton({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
-              paddingBottom: 'calc(24px + env(safe-area-inset-bottom))',
+              paddingBottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
               width: '100%', maxWidth: 430,
             }}
           >
@@ -567,11 +564,6 @@ export default function IntakeButton({
         </div>
       )}
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
     </>
   )
 }

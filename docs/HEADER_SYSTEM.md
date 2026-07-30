@@ -107,8 +107,21 @@ import { STICKY_BELOW_HEADER } from "@/lib/design/tokens";
 - **No hardcoded `56`.** Use `PAGE_HEADER_HEIGHT` / `STICKY_BELOW_HEADER`.
 - **No off-palette fonts or colours.** Use `FONT` (not `Inter`, not a
   `system-ui` stack) and `M3` (e.g. `M3.error` `#B3261E`, never `#EA4335`).
+  This is not only about consistency: `#EA4335` measures 3.9:1 on white,
+  `#34A853` 3.1:1 and `#E37400` 3.1:1 — all below the 4.5:1 an ordinary word
+  needs. The `M3` values are the same hues taken dark enough to read. When you
+  want the bright brand tone for a *fill* (a dot, a bar, a solid block, where
+  3:1 applies), the tokens carry it as `M3.successFill` / `warningFill` /
+  `errorFill`. See the header of `src/lib/design/tokens.ts`.
 - **Don't add a third header component.** Extend `SubPageHeader` (or the
   `useSubPageHeader` actions slot) instead.
+- **Both bars carry `viewTransitionName: 'page-header'`.** That is what holds
+  the bar still while the page slides underneath it during a navigation. If you
+  build a third sticky bar, give it the same name or the header will slide.
+- **No `!important` on a shared element rule**, and be careful the other way
+  too: an inline `style` beats a class, so anything a media query has to be
+  able to change (a size, a `display`) must live in CSS, not inline. Both
+  mistakes have bitten this codebase — see `docs/MOTION_SYSTEM.md`.
 
 ## Known intentional exceptions
 

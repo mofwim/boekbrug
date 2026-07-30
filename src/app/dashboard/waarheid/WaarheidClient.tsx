@@ -8,6 +8,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { FONT } from "@/lib/design/tokens";
+import { useDialog } from "@/components/ui/Dialog";
+import { useToast } from "@/components/ui/Toast";
 
 // [HEADER-SYSTEM] This screen previously shipped its own Inter font — the only
 // Inter surface in an otherwise Roboto app. It now uses the shared FONT token
@@ -58,6 +60,8 @@ const LENSES: { key: Lens; label: string }[] = [
 ];
 
 export default function WaarheidClient() {
+  const dialog = useDialog();
+  const toast = useToast();
   const [lens, setLens] = useState<Lens>("this-quarter");
   const [data, setData] = useState<TruthResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,17 +98,24 @@ export default function WaarheidClient() {
         });
         if (res.status === 409) {
           const j = await res.json().catch(() => ({}));
-          const proceed = window.confirm(
-            `${j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd."}\n\nToch als ingediend markeren?`,
-          );
+          // [FILING-GATE] This is the most consequential confirmation in the
+          // app — the owner is declaring a quarter finished while the server
+          // says it is not. It deserves the app's own dialog, with the server's
+          // reason as the body rather than glued onto the question with \n\n.
+          const proceed = await dialog.confirm({
+            title: "Toch als ingediend markeren?",
+            message: j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd.",
+            confirmLabel: "Ja, markeer als ingediend",
+            danger: true,
+          });
           if (!proceed) return;
           const res2 = await fetch("/api/btw/file", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ year: data.year, quarter: data.quarter, acknowledge: true }),
           });
-          if (!res2.ok) { window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return; }
+          if (!res2.ok) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
         } else if (!res.ok) {
-          window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return;
+          toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
         }
       } else {
         await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
@@ -113,7 +124,7 @@ export default function WaarheidClient() {
     } finally {
       setFiling(false);
     }
-  }, [data, lens, load]);
+  }, [data, lens, load, dialog, toast]);
 
   const r = data?.result;
   const isQuarterLens = !!(data?.quarter && data?.year);

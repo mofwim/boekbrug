@@ -195,8 +195,6 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
               fontSize: 14, fontWeight: 500,
               color: T.onPrimary, cursor: "pointer",
             }}
-            onMouseDown={e => (e.currentTarget.style.transform = "scale(0.97)")}
-            onMouseUp={e => (e.currentTarget.style.transform = "none")}
           >
             Hier verplaatsen
           </button>

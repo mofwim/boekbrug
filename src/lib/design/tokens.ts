@@ -1,9 +1,27 @@
 // src/lib/design/tokens.ts
 // [DESIGN] Shared Material design tokens — single source of truth.
-// Superset of the per-surface M3 palettes that were previously copy-pasted into
-// each dashboard client. Values are the agreed (majority) tokens; surfaces whose
-// local palette used a DIFFERENT value for a shared key keep their own local M3
-// (importing this would change their color), so they are intentionally NOT migrated.
+//
+// This used to be a superset that nobody imported: thirteen dashboard screens
+// each declared their own `const M3 = {…}`, and the note here said surfaces
+// whose local palette disagreed were "intentionally NOT migrated" because
+// importing this would change their colour. Changing their colour turned out to
+// be the entire point — the disagreement was not a matter of taste:
+//
+//   success   local #34A853 (Google green 500)  →  3.06:1 on white   FAILS AA
+//             here  #137333 (Google green 800)  →  5.95:1 on white   passes
+//   warning   local #E37400 (Google amber 600)  →  3.10:1 on white   FAILS AA
+//             here  #7C5800 (Google amber 900)  →  6.46:1 on white   passes
+//
+// Six screens used the bright green and seven the bright amber, and several used
+// them for TEXT: a received amount in the Kas ledger, the match confirmations in
+// Bank, a button label in Inkoopfacturen. Money and status, printed below the
+// legibility floor. Tellingly, the same files hardcoded '#137333' and '#7C5800'
+// literally inches away, wherever the author happened to notice.
+//
+// So: `success` / `warning` / `error` are the TEXT-SAFE tones and are what you
+// want almost always. The bright brand versions live on as *Fill — legitimate
+// for a solid fill, a status dot or a progress bar, where the 3:1 non-text
+// threshold applies, and never for a glyph or a word.
 export const M3 = {
   primary: '#1A73E8',
   onPrimary: '#FFFFFF',
@@ -31,16 +49,115 @@ export const M3 = {
   tertiaryContainer: '#E1BEE7',
   warn: '#B26A00',
   warnContainer: '#FEEFC3',
+
+  // ── Fill-only tones ───────────────────────────────────────────────────────
+  // The bright Google brand colours. Use for a solid fill, a status dot, a bar,
+  // an icon on a dark ground — anything covered by the 3:1 non-text contrast
+  // rule. NEVER for text or a glyph on a light surface: they sit around 3:1,
+  // which is below the 4.5:1 an ordinary word needs. Reach for `success` /
+  // `warning` / `error` instead, which are the same hues taken darker.
+  successFill: '#34A853',
+  warningFill: '#E37400',
+  errorFill: '#EA4335',
 } as const
+
+// ── Radius ──────────────────────────────────────────────────────────────────
+// [DESIGN] One radius scale. Eleven files declared their own `const R`, mostly
+// agreeing but not always ({sm:8,md:12,lg:16,full:9999} vs one with xl:24 vs one
+// with full:999), and the accountant screens ignored the idea entirely and used
+// a flat 8 everywhere while the owner screens used 16. That single difference is
+// most of why the two halves of the app do not look like one product.
+//
+// Mirrors --radius-* in globals.css. `full` is a pill; use it for chips and
+// anything capsule-shaped.
+export const R = {
+  /** 8px — a chip, a small inline control. */
+  sm: 8,
+  /** 12px — a button, a nested panel. Matches --radius-button. */
+  md: 12,
+  /** 16px — a card. Matches --radius-card. The app's default surface radius. */
+  lg: 16,
+  /** 24px — a sheet or a large modal. */
+  xl: 24,
+  /** 28px — a dialog. Rounder than a card on purpose, so a dialog reads as a
+   *  separate object rather than a panel of the page. */
+  dialog: 28,
+  /** A pill. */
+  full: 9999,
+} as const
+
+// ── Elevation ───────────────────────────────────────────────────────────────
+// [DESIGN] Card shadows. The two sides of the app disagreed here too: the
+// accountant screens drew a 1px grey border and no shadow, the owner screens a
+// shadow and no border. EL1 is the shared answer — the same value as
+// --shadow-card in globals.css.
+export const EL1 = '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)'
+export const EL2 = '0 4px 12px rgba(0,0,0,0.12)'
+export const EL3 = '0 8px 32px rgba(0,0,0,0.16)'
 export const FONT = "'Roboto', -apple-system, sans-serif"
 export const FONT_NUM = "'Roboto Mono', monospace"
+
+// ── Motion ──────────────────────────────────────────────────────────────────
+// [MOTION] Single source of truth for how long things take and how they ease.
+// Before this existed every transition in the app was a hand-written magic
+// number — 113 inline `transition:` declarations across 41 files, no two the
+// same — so nothing felt like it belonged to one product. The mirror of this
+// table lives in globals.css as --dur-* / --ease-* custom properties; change a
+// value in BOTH or they drift. See docs/MOTION_SYSTEM.md.
+//
+// Durations are tuned for a financial app: quick and matter-of-fact, never
+// showy. The rule of thumb is that the user should never *wait* on an
+// animation — motion explains what moved where, then gets out of the way.
+export const DUR = {
+  /** 80ms — a press, a hover tint. Below ~100ms reads as instant. */
+  instant: 80,
+  /** 140ms — the default for colour/opacity on a control. */
+  fast: 140,
+  /** 200ms — the default for anything that moves or resizes. */
+  base: 200,
+  /** 280ms — a dialog or sheet arriving. */
+  slow: 280,
+  /** 400ms — a full-surface change; the longest we ever use. */
+  slower: 400,
+} as const
+
+// Material 3 easing set. `standard` covers almost everything. `decelerate` is
+// for things ENTERING the screen (fast at first, settles gently — the single
+// biggest contributor to a "fluid" feel), `accelerate` for things LEAVING
+// (content on its way out should not linger), `spring` adds a small overshoot
+// and is reserved for a press release or a FAB — never for data.
+export const EASE = {
+  standard: 'cubic-bezier(0.2, 0, 0, 1)',
+  decelerate: 'cubic-bezier(0.05, 0.7, 0.1, 1)',
+  accelerate: 'cubic-bezier(0.3, 0, 0.8, 0.15)',
+  spring: 'cubic-bezier(0.34, 1.3, 0.64, 1)',
+} as const
+
+/**
+ * Build a CSS `transition` value from the tokens above.
+ *
+ *   transition('opacity', 'fast')                → "opacity 140ms cubic-bezier(…)"
+ *   transition(['opacity', 'transform'], 'base') → both properties, same timing
+ *
+ * Prefer this over a literal so timings stay in step across the app. Avoid
+ * `all` — it animates properties you did not mean to (notably `height`, which
+ * is what makes a list feel like it is swimming).
+ */
+export function transition(
+  property: string | readonly string[],
+  duration: keyof typeof DUR = 'base',
+  easing: keyof typeof EASE = 'standard',
+): string {
+  const props = typeof property === 'string' ? [property] : property
+  return props.map((p) => `${p} ${DUR[duration]}ms ${EASE[easing]}`).join(', ')
+}
 
 // [HEADER-SYSTEM] Single source of truth for the sticky-header height.
 // The shared sub-page bar (components/nav/SubPageHeader) and the home bar
 // (app/dashboard/_shared DashboardHeader) both use this, and any secondary
 // sticky toolbar that must sit BELOW the header offsets by it — so nobody
 // hardcodes a magic `56` again. If the header height ever changes, change it
-// here only. See docs/header-system.md.
+// here only. See docs/HEADER_SYSTEM.md.
 export const PAGE_HEADER_HEIGHT = 56
 
 // CSS `top:` value for a secondary sticky bar that must clear the page header,

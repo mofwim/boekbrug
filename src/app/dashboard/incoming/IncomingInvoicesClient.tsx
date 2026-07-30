@@ -57,6 +57,11 @@ interface ImportHealth {
 // [OBSERVABILITY] Map a stored skip reason to a short, owner-facing line. Known codes get a
 // friendly phrase; a Dutch reason the AI already wrote (e.g. "rekeningoverzicht — …") is shown
 // as-is (trimmed). Never a raw technical token the owner can't understand.
+import { useRouter } from "next/navigation";
+import { useDialog } from "@/components/ui/Dialog";
+import { useToast } from "@/components/ui/Toast";
+import { M3 } from '@/lib/design/tokens'
+
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
   if (r === "could_not_read") return "kon niet gelezen worden — staat in je bestanden";
@@ -168,6 +173,12 @@ function formatSignedAmount(amount: number): string {
 // ── Email connect card ────────────────────────────────────────────────────────
 
 function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
+  const dialog = useDialog();
+  // [INSTANT] router.refresh() re-runs this route's server component and
+  // streams fresh props in; window.location.reload() threw away the whole
+  // document — bundle, scroll position, which tab was open, which card was
+  // expanded — and rebuilt it from nothing. Same data, a fraction of the wait.
+  const router = useRouter();
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   // [BACKFILL] Re-scan control — an owner-triggered re-pull over a chosen start date, for
@@ -294,7 +305,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               : ` ${totalCouldNotRead} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.`;
         }
         setSyncResult(message);
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => router.refresh(), 1500);
         return;
       }
 
@@ -314,9 +325,15 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   };
 
   const handleDisconnect = async () => {
-    if (!confirm("E-mailverbinding verwijderen?")) return;
+    const ok = await dialog.confirm({
+      title: "E-mailverbinding verwijderen?",
+      message: "Nieuwe facturen komen dan niet meer automatisch binnen. Facturen die al ingelezen zijn, blijven staan.",
+      confirmLabel: "Verbinding verwijderen",
+      danger: true,
+    });
+    if (!ok) return;
     await fetch("/api/email/sync", { method: "DELETE" });
-    window.location.reload();
+    router.refresh();
   };
 
   // [OBSERVABILITY] Load the "overgeslagen bij import" list the first time it's opened.
@@ -411,7 +428,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             onClick={handleDisconnect}
             style={{
               background: "transparent", border: "1.5px solid #ea4335",
-              color: "#ea4335", borderRadius: 10, padding: "10px 16px",
+              color: M3.error, borderRadius: 10, padding: "10px 16px",
               fontWeight: 600, fontSize: 14, cursor: "pointer",
             }}
           >
@@ -729,7 +746,7 @@ function ConfirmPaidModal({
         style={{
           background: "#fff", borderRadius: "20px 20px 0 0",
           padding: "24px 20px",
-          paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+          paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
           width: "100%", maxWidth: 430,
         }}
       >
@@ -947,7 +964,7 @@ function ConfirmPaidModal({
                 )}
               </div>
               {dateMissing && (
-                <div style={{ fontSize: 12.5, color: "#EA4335", textAlign: "right", marginTop: 6 }}>
+                <div style={{ fontSize: 12.5, color: M3.error, textAlign: "right", marginTop: 6 }}>
                   Factuurdatum ontbreekt — verplicht om te bevestigen.
                 </div>
               )}
@@ -1297,6 +1314,9 @@ function InvoiceCard({
   domId?: string;
   highlighted?: boolean;
 }) {
+  const dialog = useDialog();
+  const toast = useToast();
+  const router = useRouter();
   const [loadingPdf, setLoadingPdf] = useState(false);
 
   // [REIMPORT] Re-read this invoice's stored PDF with the current extractor. Only offered on
@@ -1309,34 +1329,43 @@ function InvoiceCard({
       const res = await fetch(`/api/email/reimport/${invoice.id}`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
-        window.location.reload(); // pick up the refreshed amounts + health
+        router.refresh(); // pick up the refreshed amounts + health
         return;
       }
       if (data.notInvoice) {
-        // [HERLEES-ARCHIVEER] De server archiveert zo'n stuk nu zelf, met reden "Geen factuur".
-        // Dan is de eerlijke melding "hij is weggezet, en zo haal je hem terug" — niet "doe het
-        // zelf maar". Als het archiveren niet lukte (bijv. er staat al geld op), zeggen we dat.
+        // [HERLEES-ARCHIVEER] main's newer behaviour, kept whole: the server now
+        // archives such a document itself with reason "Geen factuur", so the
+        // honest message is "it has been put away, and this is how you get it
+        // back" — not "sort it out yourself". If archiving failed (money is
+        // already booked against it, say), we say that instead.
+        // Only the DELIVERY changed here: the app's own dialog rather than a
+        // browser box, and router.refresh() rather than throwing the whole
+        // document away. See docs/MOTION_SYSTEM.md.
         if (data.archived) {
-          alert(
-            "Bij het opnieuw inlezen bleek dit geen boekbare factuur te zijn" +
+          await dialog.alert({
+            title: "Dit lijkt geen boekbare factuur",
+            message:
+              "Bij het opnieuw inlezen vonden we geen factuurgegevens" +
               (data.reason ? ` (${data.reason})` : "") +
-              ". Hij is verplaatst naar Genegeerd met reden “Geen factuur”. " +
-              "Klopt dat niet? Zet hem daar met één tik terug."
-          );
-          window.location.reload(); // de kaart hoort nu bij Genegeerd, niet meer in de wachtrij
+              ". Hij staat nu bij Genegeerd, met reden “Geen factuur”.\n\n" +
+              "Klopt dat niet? Zet hem daar met één tik terug.",
+          });
+          router.refresh(); // de kaart hoort nu bij Genegeerd, niet meer in de wachtrij
           return;
         }
-        alert(
-          "Bij het opnieuw inlezen bleek dit geen boekbare factuur te zijn" +
+        await dialog.alert({
+          title: "Dit lijkt geen boekbare factuur",
+          message:
+            "Bij het opnieuw inlezen vonden we geen factuurgegevens" +
             (data.reason ? ` (${data.reason})` : "") +
             ". " +
-            (data.detail ?? "De gegevens zijn niet gewijzigd — je kunt hem zelf negeren.")
-        );
+            (data.detail ?? "De opgeslagen gegevens zijn niet gewijzigd — je kunt hem zelf negeren."),
+        });
       } else {
-        alert(data.error || "Opnieuw inlezen is niet gelukt — probeer het later opnieuw.");
+        toast(data.error || "Opnieuw inlezen is niet gelukt — probeer het later opnieuw.", { tone: "error" });
       }
     } catch {
-      alert("Opnieuw inlezen is niet gelukt — probeer het later opnieuw.");
+      toast("Opnieuw inlezen is niet gelukt — probeer het later opnieuw.", { tone: "error" });
     } finally {
       setReimporting(false);
     }
@@ -1350,10 +1379,10 @@ function InvoiceCard({
       if (data.url) {
         window.open(data.url, "_blank", "noopener,noreferrer");
       } else {
-        alert(data.error || "Kon bestand niet openen");
+        toast(data.error || "Kon bestand niet openen", { tone: "error" });
       }
     } catch {
-      alert("Kon bestand niet openen");
+      toast("Kon bestand niet openen", { tone: "error" });
     } finally {
       setLoadingPdf(false);
     }
@@ -1489,7 +1518,7 @@ function InvoiceCard({
                   marginTop: 6,
                 }}
               >
-                <span style={{ fontSize: 11, color: "#34a853" }}>✓</span>
+                <span style={{ fontSize: 11, color: M3.success }}>✓</span>
                 <span style={{ fontSize: 12, color: "#5f6368" }}>
                   Klaar om te bevestigen
                 </span>
@@ -1762,7 +1791,7 @@ type IntakeResult = {
 };
 
 const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
-  invoice:   { icon: "✓",  color: "#34a853" },
+  invoice:   { icon: "✓",  color: M3.success },
   document:  { icon: "📁", color: "#1a73e8" },
   bank:      { icon: "🏦", color: "#1a73e8" },
   duplicate: { icon: "ℹ️", color: "#5f6368" },
@@ -1770,6 +1799,8 @@ const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string 
 };
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
+  const toast = useToast();
+  const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   // [SMART-INTAKE-B] separate camera input (capture) alongside the file input
@@ -1861,7 +1892,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 
     const all = Array.from(fileList);
     if (all.length > MAX_BATCH) {
-      alert(`Maximaal ${MAX_BATCH} bestanden per keer. Je koos er ${all.length}.`);
+      toast(`Maximaal ${MAX_BATCH} bestanden per keer. Je koos er ${all.length}.`, { tone: "error" });
       return;
     }
 
@@ -1917,13 +1948,13 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       (f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(f.name),
     );
     if (imgs.length === 0) {
-      alert("Kies foto's of afbeeldingen — de pagina's van de factuur.");
+      toast("Kies foto's of afbeeldingen — de pagina's van de factuur.", { tone: "error" });
       return;
     }
     setMpPages((prev) => {
       const merged = [...prev, ...imgs];
       if (merged.length > MAX_PAGES) {
-        alert(`Maximaal ${MAX_PAGES} pagina's per factuur.`);
+        toast(`Maximaal ${MAX_PAGES} pagina's per factuur.`, { tone: "error" });
         return merged.slice(0, MAX_PAGES);
       }
       return merged;
@@ -1942,7 +1973,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       // [MP-RETRY] On a transient upload failure, KEEP the collected pages + the panel so the
       // owner can retry — never make them re-photograph every page.
       if (result.status === "error") {
-        alert(result.message || "Uploaden mislukt — probeer het opnieuw.");
+        toast(result.message || "Uploaden mislukt — probeer het opnieuw.", { tone: "error" });
         return;
       }
       setMpOpen(false);
@@ -1952,9 +1983,9 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       setShowResults(true);
     } catch (e) {
       // A combine failure names the failing page — keep the pages so the owner redoes only that one.
-      alert(e instanceof Error && /Pagina/.test(e.message)
+      toast(e instanceof Error && /Pagina/.test(e.message)
         ? `${e.message} De andere pagina's blijven bewaard.`
-        : "Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.");
+        : "Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.", { tone: "error" });
     } finally {
       setCombining(false);
     }
@@ -1963,11 +1994,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // [INTAKE-FEEDBACK] Close the modal AND refresh so new invoices show in the queue.
   const closeResults = () => {
     setShowResults(false);
-    window.location.reload();
+    router.refresh();
   };
 
   const openInBestanden = (link: { folderId: string | null; focusId: string }) => {
-    window.location.assign(`/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`);
+    router.push(`/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`);
   };
 
   // [INTAKE-FOCUS] "Naar controle →" — same full-navigation pattern as
@@ -2165,7 +2196,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
-              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
               width: "100%", maxWidth: 430, maxHeight: "80vh", overflowY: "auto",
             }}
           >
@@ -2241,6 +2272,9 @@ export default function IncomingInvoicesClient({
   confirmedInvoices,
   connectionStatus,
 }: Props) {
+  const dialog = useDialog();
+  const toast = useToast();
+  const router = useRouter();
   // [BOEK-011] Navigation paths — resolved through the central navigation helper
   // [SUBNAV] Logo (home) + Terug (canonical parent) now come from the shared
   // sub-page header (DashboardChrome), so this page no longer computes them.
@@ -2254,11 +2288,6 @@ export default function IncomingInvoicesClient({
   // incoming invoices (supplier / invoice number / amount) instantly, in place.
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // [NEGEER-UNDO] De toast kan nu een handeling dragen ("Ongedaan maken"). De timer staat in een
-  // ref zodat een tweede toast de eerste niet stiekem laat aftellen op de oude tijd.
-  const [toast, setToast] = useState<{ msg: string; action?: { label: string; run: () => void } } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   // [INTAKE-FOCUS] Deep-link target from the upload results modal
   // ("Naar controle →" navigates to /dashboard/incoming?focus={invoiceId}).
@@ -2307,15 +2336,16 @@ export default function IncomingInvoicesClient({
   const [missing, setMissing] = useState<{ supplier: string; reason: string; lastSeen: string }[]>([]);
   const [missingDismissed, setMissingDismissed] = useState(false);
 
-  // [NEGEER-UNDO] Een toast met een handeling erin. De tijd staat bewust langer (7s) wanneer er
-  // iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om te beslissen dat je het
-  // toch niet wilde. Zonder actie blijft het exact zoals het was.
-  const showToast = (msg: string, action?: { label: string; run: () => void }) => {
-    setToast({ msg, action });
-    const ms = action ? 7000 : 3000;
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), ms);
-  };
+  // [NEGEER-UNDO] Een toast met een handeling erin ("Ongedaan maken"). De tijd staat bewust
+  // langer (7s) wanneer er iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om
+  // te beslissen dat je het toch niet wilde.
+  // [MOTION] De weergave komt nu van de app-brede snackbar (components/ui/Toast); deze wikkel
+  // vertaalt alleen de lokale {label, run}-vorm naar {label, onClick}, zodat de ruim twintig
+  // aanroepen hieronder ongewijzigd blijven.
+  const showToast = (msg: string, action?: { label: string; run: () => void }) =>
+    toast(msg, action
+      ? { action: { label: action.label, onClick: action.run }, duration: 7000 }
+      : { duration: 3000 });
 
   // OAuth result toast — shown on the next tick (never synchronously in the
   // effect body — avoids a cascading re-render during the effects pass).
@@ -2686,13 +2716,13 @@ export default function IncomingInvoicesClient({
     // [REREAD-STRONG] The re-read is a heavier, on-demand read per invoice; confirm before running
     // it across the whole flagged set so a large queue isn't kicked off (and the page blocked) by
     // an accidental tap.
-    if (
-      targets.length > 1 &&
-      !window.confirm(
-        `${targets.length} facturen opnieuw inlezen? Dit leest elke gemarkeerde factuur opnieuw en kan even duren.`
-      )
-    ) {
-      return;
+    if (targets.length > 1) {
+      const ok = await dialog.confirm({
+        title: `${targets.length} facturen opnieuw inlezen?`,
+        message: "Elke gemarkeerde factuur wordt opnieuw gelezen. Dat kan even duren — je kunt ondertussen niets anders doen op dit scherm.",
+        confirmLabel: "Opnieuw inlezen",
+      });
+      if (!ok) return;
     }
     setReimportAllRunning(true);
     setReimportAllDone(0);
@@ -2726,8 +2756,11 @@ export default function IncomingInvoicesClient({
     // are the feedback. "opnieuw ingelezen" (re-read), not "bijgewerkt" — reimport always re-reads
     // but keeps the stored amounts when the fresh read is no better, so it may not have changed.
     if (notInvoice > 0 || failed > 0) {
-      alert(
-        "Opnieuw inlezen klaar:\n" +
+      // Kept as a dialog rather than a snackbar: this is a multi-line result
+      // the owner has to act on, and it must not scroll away unread.
+      await dialog.alert({
+        title: "Opnieuw inlezen klaar",
+        message:
           `• ${reread} opnieuw ingelezen\n` +
           (archivedNotInvoice
             ? `• ${archivedNotInvoice} bleek geen boekbare factuur — verplaatst naar Genegeerd (reden: geen factuur)\n`
@@ -2736,11 +2769,11 @@ export default function IncomingInvoicesClient({
             ? `• ${notInvoice - archivedNotInvoice} bleek geen boekbare factuur, maar kon niet worden weggezet — bekijk die zelf\n`
             : "") +
           (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
-          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "")
-      );
+          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw` : ""),
+      });
     }
-    window.location.reload();
-  }, [pending, reimportAllRunning]);
+    router.refresh();
+  }, [pending, reimportAllRunning, dialog, router]);
 
   const list = tab === "pending" ? pending : tab === "confirmed" ? confirmed : ignored;
 
@@ -2805,7 +2838,7 @@ export default function IncomingInvoicesClient({
           </p>
         ) : (
           <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
-            <span style={{ color: "#34a853", fontWeight: 600 }}>
+            <span style={{ color: M3.success, fontWeight: 600 }}>
               Niets om te corrigeren
             </span>{" "}
             · {readyToConfirmCount}{" "}
@@ -3106,7 +3139,7 @@ export default function IncomingInvoicesClient({
         <div
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
-            padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+            padding: "12px 16px calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
             background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
             borderTop: "1px solid #e0e0e0",
             display: "flex", justifyContent: "center",
@@ -3158,7 +3191,7 @@ export default function IncomingInvoicesClient({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
-              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
               width: "100%", maxWidth: 430,
             }}
           >
@@ -3226,39 +3259,6 @@ export default function IncomingInvoicesClient({
       )}
 
       {/* Toast */}
-      {toast && (
-        <div
-          style={{
-            position: "fixed", bottom: 32, left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(28,28,30,0.92)", color: "#fff",
-            padding: "12px 20px", borderRadius: 20, fontSize: 14, fontWeight: 600,
-            backdropFilter: "blur(12px)", whiteSpace: "nowrap", zIndex: 3000,
-            boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
-            display: "flex", alignItems: "center", gap: 14,
-          }}
-        >
-          <span>{toast.msg}</span>
-          {/* [NEGEER-UNDO] De weg terug zit in dezelfde tik als de handeling zelf. */}
-          {toast.action && (
-            <button
-              onClick={() => {
-                const run = toast.action!.run;
-                if (toastTimer.current) clearTimeout(toastTimer.current);
-                setToast(null);
-                run();
-              }}
-              style={{
-                background: "transparent", border: "none", color: "#8ab4f8",
-                fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
-                textDecoration: "underline", whiteSpace: "nowrap",
-              }}
-            >
-              {toast.action.label}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

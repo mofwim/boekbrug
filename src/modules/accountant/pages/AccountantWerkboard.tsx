@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
-import { M3, FONT } from '@/lib/design/tokens'
+import { EL1, FONT, M3, R } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
@@ -217,7 +217,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
 
         {/* ── Deadline hero (from #1) — follows the selected quarter ── */}
         <div style={{
-          backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '20px',
+          backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '20px',
           display: 'flex', alignItems: 'center', gap: 16, borderLeft: `4px solid ${heroColor}`,
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -264,7 +264,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
               { n: summary.almost, label: 'Bijna', color: summary.almost > 0 ? '#7C5800' : '#5F6368' },
               { n: summary.attention, label: 'Nog niet', color: summary.attention > 0 ? '#B3261E' : '#5F6368' },
             ].map(s => (
-              <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '12px 8px', textAlign: 'center' }}>
+              <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
                 <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
                 <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
               </div>
@@ -289,7 +289,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 30px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124', background: '#FFFFFF' }}
               />
               {query && (
-                <button onClick={() => setQuery('')} aria-label="Wissen" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setQuery('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
             {/* [HERTIKKEN] De machineleesbare CSV over ALLE klanten van dit kwartaal.
@@ -305,7 +305,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         )}
 
         {/* ── Client board ── */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           {clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>Nog geen klanten gekoppeld</p>
           ) : visible.length === 0 ? (

@@ -17,6 +17,8 @@ import { Icon } from "./components/ui/Icon";
 import { Spinner } from "./components/ui/Spinner";
 import { ContextMenu } from "./components/ui/ContextMenu";
 import { BulkBar } from "./components/ui/BulkBar";
+import { useDialog } from "@/components/ui/Dialog";
+import { useToast } from "@/components/ui/Toast";
 
 import { DocCard } from "./components/DocCard";
 import { DocRow } from "./components/DocRow";
@@ -202,6 +204,8 @@ const newMenuItemStyle: React.CSSProperties = {
 };
 
 export function BestandenPage({ role }: BestandenPageProps = {}) {
+  const dialog = useDialog();
+  const toast = useToast();
   // [BOEK-033] Normalise to navigation.ts Role union — only 'accountant' is special;
   // every other value (zzper, client, null) maps to the ZZP home.
   const navRole: "zzper" | "accountant" = role === "accountant" ? "accountant" : "zzper";
@@ -271,8 +275,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── Modals ──
   const [preview, setPreview] = useState<BestandRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
-  // [BRUG-FILES-SHARED] Lightweight toast for share confirmation (no library).
-  const [toast, setToast] = useState<string | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
   // [BRUG-FILES-SHARED / AI-SUGGEST] Pending AI placement suggestion for a file
   // uploaded at the root. We SUGGEST, the owner confirms — never a silent move.
@@ -585,17 +587,39 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       if (e.key === "Delete") {
         e.preventDefault();
         if (fileIds.length === 0) return;
-        if (!confirm(`${fileIds.length} bestand(en) naar prullenbak?`)) return;
-        Promise.all(fileIds.map(id =>
+        // [MOTION] No confirmation here on purpose. This moves files to the
+        // prullenbak, which is reversible — and a modal in front of a reversible
+        // action is friction that teaches people to dismiss modals without
+        // reading them. Instead: do it immediately, then offer Undo in the
+        // snackbar. Emptying the trash, which is NOT reversible, is where the
+        // confirmation actually lives (components/Trash.tsx).
+        const trashed = [...fileIds];
+        Promise.all(trashed.map(id =>
           fetch(`/api/bestanden?id=${id}`, {
             method: "PATCH", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ trashed: true }),
           })
         )).then(() => {
-          setDocs(p => p.filter(d => !fileIds.includes(d.id)));
-          setSmartDocs(p => p.filter(d => !fileIds.includes(d.id))); // [BESTANDEN-SMART] keep smart view in sync
+          setDocs(p => p.filter(d => !trashed.includes(d.id)));
+          setSmartDocs(p => p.filter(d => !trashed.includes(d.id))); // [BESTANDEN-SMART] keep smart view in sync
           setSelectedIds(new Set());
           refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
+          toast(
+            trashed.length === 1 ? "Bestand naar prullenbak" : `${trashed.length} bestanden naar prullenbak`,
+            {
+              action: {
+                label: "Ongedaan maken",
+                onClick: () => {
+                  void Promise.all(trashed.map(id =>
+                    fetch(`/api/bestanden/trash?id=${id}`, {
+                      method: "PATCH", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ restore: true }),
+                    })
+                  )).then(() => { loadContents(currentFolderId); refreshStorage(); });
+                },
+              },
+            },
+          );
         });
       }
     };
@@ -635,10 +659,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // [mutation-safety] Shared helpers so a failed write never leaves the UI asserting
   // success. flashToast shows a transient message; reloadTruth re-syncs the view with
   // the server (used when an optimistic-ish action fails, so nothing silently lies).
-  const flashToast = (msg: string, ms = 2600) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), ms);
-  };
+  // [MOTION] Was a local useState + a hand-rolled fixed <div> at bottom:96 that
+  // could not stack, did not announce itself, and vanished with the page on
+  // navigation. Now the app-wide snackbar (components/ui/Toast). The `ms`
+  // parameter is kept so the nine existing call sites need no edit.
+  const flashToast = (msg: string, ms = 2600) => toast(msg, { duration: ms });
   const reloadTruth = () => {
     loadContents(currentFolderId);
     loadAllFolders();
@@ -695,7 +720,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     // [BOEK-033] Guard: never delete system folders
     const folder = subFolders.find(f => f.id === id) ?? allFolders.find(f => f.id === id);
     if (folder?.is_system) return;
-    if (!confirm("Map verwijderen? Bestanden worden naar hoofdmap verplaatst.")) return;
+    const ok = await dialog.confirm({
+      title: `Map "${folder?.name ?? ''}" verwijderen?`,
+      message: 'De bestanden erin blijven bestaan — die verhuizen naar je hoofdmap.',
+      confirmLabel: 'Map verwijderen',
+      danger: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
     if (!res.ok) { flashToast("Map verwijderen mislukt"); return; } // no optimistic removal on failure
     setSubFolders(p => p.filter(f => f.id !== id));
@@ -813,7 +844,15 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const selectedFolderIds = [...selectedIds].filter(k => k.startsWith("f:")).map(k => k.slice(2));
 
   const handleBulkDelete = async () => {
-    if (!confirm(`${selectedIds.size} item(s) verwijderen?`)) return;
+    const ok = await dialog.confirm({
+      title: `${selectedIds.size} item(s) verwijderen?`,
+      message: selectedFolderIds.length > 0
+        ? 'Bestanden gaan naar de prullenbak en kun je terughalen. Geselecteerde mappen worden verwijderd; de bestanden daaruit verhuizen naar je hoofdmap.'
+        : 'De bestanden gaan naar de prullenbak. Je kunt ze daar terughalen.',
+      confirmLabel: 'Verwijderen',
+      danger: true,
+    });
+    if (!ok) return;
     if (bulkBusyRef.current) return; // [double-submit] one batch at a time
     bulkBusyRef.current = true;
     try {
@@ -995,20 +1034,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {/* ── Modals ── */}
       {preview && <PreviewModal doc={preview} onClose={() => setPreview(null)} />}
       {renameTarget && <RenameModal currentName={renameTarget.name} type={renameTarget.type} onConfirm={handleRenameConfirm} onClose={() => setRenameTarget(null)} />}
-      {/* [BRUG-FILES-SHARED] Share confirmation toast — auto-dismisses. */}
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 96, left: "50%", transform: "translateX(-50%)",
-          zIndex: 500, background: "#323232", color: "#fff",
-          padding: "12px 20px", borderRadius: 24, fontSize: 14, fontWeight: 500,
-          boxShadow: "0 4px 16px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", gap: 8,
-          fontFamily: "'Roboto',sans-serif", whiteSpace: "nowrap",
-          pointerEvents: "none",
-        }}>
-          <Icon name="share" size={16} color="#fff" />
-          {toast}
-        </div>
-      )}
       {moveTarget && <MoveModal folders={allFolders} excludeId={moveTarget.excludeId} onMove={fid => handleMove(moveTarget.id, moveTarget.type, fid)} onClose={() => setMoveTarget(null)} />}
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
       {/* [AI-SUGGEST] Root upload → AI suggests a folder; the owner confirms or picks. */}
@@ -1305,8 +1330,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 border: "none", borderRadius: T.full, fontSize: 14, fontWeight: 500,
                 cursor: "pointer", boxShadow: T.elev1, flexShrink: 0,
               }}
-              onMouseDown={e => (e.currentTarget.style.transform = "scale(0.97)")}
-              onMouseUp={e => (e.currentTarget.style.transform = "none")}
             >
               <Icon name="add" size={18} color={T.onPrimary} />
               <span className="hidden sm:inline">Nieuw</span>
@@ -1881,7 +1904,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         onClick={() => fileInputRef.current?.click()}
         title="Bestand uploaden (of sleep een bestand hierheen)"
         style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 40,
+          // [SAFE-AREA] Matches every other FAB in the app (ZzpDashboard,
+          // WerkplekClient, KlantenClient). A flat `24` put it on top of the
+          // home indicator once viewportFit:cover was enabled in app/layout.tsx.
+          position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", right: 24, zIndex: 40,
           width: 56, height: 56, borderRadius: T.full,
           background: T.primary, border: "none", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -1889,8 +1915,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         }}
         onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.08)")}
         onMouseLeave={e => (e.currentTarget.style.transform = "none")}
-        onMouseDown={e => (e.currentTarget.style.transform = "scale(0.95)")}
-        onMouseUp={e => (e.currentTarget.style.transform = "scale(1.08)")}
       >
         <Icon name="upload" size={26} color={T.onPrimary} />
       </button>

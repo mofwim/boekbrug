@@ -302,7 +302,7 @@ function SearchInput({
         onKeyDown={onKeyDown}
       />
       {query && (
-        <button
+        <button className="tap-44"
           tabIndex={-1}
           aria-label="Wissen"
           onClick={onClear}

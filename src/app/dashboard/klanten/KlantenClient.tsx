@@ -5,29 +5,18 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
 // [SMART-FILTER] Accent-insensitieve fold ("Café" ↔ "cafe") — één gedeelde,
 // null-veilige bron voor alle pagina's (src/lib/search.ts).
 import { foldText } from '@/lib/search'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  surfaceVariant:    '#f1f3f4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-  errorContainer:    '#F9DEDC',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 interface Client {
@@ -56,6 +45,10 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
+  const dialog = useDialog()
+  // [MOTION] The app-wide snackbar. Bound to the name the call sites already
+  // used, so the seven showToast(...) calls below are unchanged.
+  const showToast = useToast()
   const [clients, setClients]       = useState<Client[]>([])
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
@@ -65,7 +58,6 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const [form, setForm]             = useState(EMPTY)
   const [saving, setSaving]         = useState(false)
   const [error, setError]           = useState<string | null>(null)
-  const [toast, setToast]           = useState<string | null>(null)
 
   useEffect(() => { loadClients() }, [])
 
@@ -161,13 +153,21 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Klant verwijderen?')) return
+    // [MOTION] Was window.confirm('Klant verwijderen?') — a browser box that
+    // named neither the client nor the consequence.
+    const client = clients.find(c => c.id === id)
+    const ok = await dialog.confirm({
+      title: 'Klant verwijderen?',
+      message: `${client?.name ?? 'Deze klant'} verdwijnt uit je klantenlijst. Facturen die je al aan deze klant stuurde, blijven staan.`,
+      confirmLabel: 'Verwijderen',
+      danger: true,
+    })
+    if (!ok) return
     await supabase.from('clients').delete().eq('id', id)
     setClients(prev => prev.filter(c => c.id !== id))
     showToast('Klant verwijderd')
   }
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   // `as const` op de sleutels: daardoor weet TypeScript dat f.key een veld van het
   // formulier is, in plaats van een willekeurige string die een cast nodig heeft.
@@ -340,19 +340,12 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         )}
       </main>
 
-      {/* Toast */}
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
-
       {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
       <button
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
-          bottom: `calc(24px + env(safe-area-inset-bottom))`,
+          bottom: `calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           right: 20,
           background: '#D3E3FD',
           color: '#041E49',
@@ -365,14 +358,11 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
           fontFamily: FONT, zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur
       </button>
       <style>{`
-        @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
         @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
         ::-webkit-scrollbar { display: none }
       `}</style>
