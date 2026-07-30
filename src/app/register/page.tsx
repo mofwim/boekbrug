@@ -7,6 +7,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
 import {
   PURPOSE_PARAM,
   landingPath,
@@ -85,8 +86,11 @@ function RegisterContent() {
     // bestemmings-URL, en /dashboard/kluis herstelt het profiel zelf zodra de gebruiker
     // daar aankomt. Zonder dat zou iemand die zich via Google registreert vanaf
     // /bewaarplicht alsnog als gewoon boekhoudaccount binnenkomen.
+    // [SEC-REDIRECT] Wat de bezoeker meebracht wordt hier al gecontroleerd, niet pas in de
+    // callback: een bestemming die wij niet vertrouwen hoort onze eigen URL niet eens in.
+    const wens = searchParams.get('redirect')
     const redirectUrl =
-      searchParams.get('redirect') ??
+      (isSafeRedirect(wens) ? wens : null) ??
       (purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null)
     // De bestemming reist mee als ?next= op de callback. Hier stond eerder een `state`-object
     // met de rol erin dat NERGENS werd meegegeven aan signInWithOAuth — het werd berekend en
@@ -224,9 +228,12 @@ function RegisterContent() {
         if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
       })
 
-    const redirectUrl = searchParams.get('redirect')
     // [KLUIS] Een archiefaccount landt in zijn kluis, niet in een wizard over facturen.
-    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : landingPath(purpose))
+    // [SEC-REDIRECT] En nooit ongecontroleerd op een bestemming uit de querystring: hier stond
+    // `router.push(decodeURIComponent(redirectUrl))`, wat volgens de documentatie van deze router
+    // uitdrukkelijk een XSS-gat is (een `javascript:`-URL wordt UITGEVOERD op onze eigen pagina) —
+    // en dat precies op het moment dat er net een verse sessie is aangemaakt.
+    router.push(safeRedirect(searchParams.get('redirect'), landingPath(purpose)))
   }
 
   // [BOEK-015] email confirmation screen

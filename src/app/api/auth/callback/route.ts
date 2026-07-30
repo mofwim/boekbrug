@@ -7,15 +7,17 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { safeRedirect } from '@/lib/safe-redirect'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
-  // `next` param — fallback destination after login. [SEC] Accept ONLY a same-origin
-  // relative path (starts with a single "/", not "//" or "/\"); anything else falls back
-  // to /dashboard, so a crafted ?next=//evil.com can't turn login into an open redirect.
-  const rawNext = searchParams.get('next') ?? '/dashboard'
-  const next = /^\/(?![/\\])/.test(rawNext) ? rawNext : '/dashboard'
+  // `next` param — fallback destination after login. [SEC-REDIRECT] Accept ONLY a same-origin
+  // relative path; anything else falls back to /dashboard, so a crafted ?next=//evil.com can't
+  // turn login into an open redirect. De regel die hier stond staat nu in src/lib/safe-redirect.ts:
+  // dit was de ENIGE van de drie plekken die de bestemming controleerde, en /login en /register
+  // deden het niet — een controle op één van de drie is geen controle.
+  const next = safeRedirect(searchParams.get('next'), '/dashboard')
 
   // [Google-OAuth] No code = something went wrong upstream
   if (!code) {

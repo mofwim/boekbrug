@@ -7,6 +7,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import { safeRedirect } from '@/lib/safe-redirect'
 
 function LoginContent() {
   const [email, setEmail] = useState('')
@@ -80,8 +81,13 @@ function LoginContent() {
       return
     }
 
-    const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/dashboard')
+    // [SEC-REDIRECT] Nooit ongecontroleerd naar een bestemming uit de querystring. Hier stond
+    // `router.push(decodeURIComponent(redirectUrl))`, en dat is volgens de documentatie van deze
+    // router uitdrukkelijk een XSS-gat: een `javascript:`-URL wordt dan UITGEVOERD op onze eigen
+    // pagina, met de sessie die net is aangemaakt. De tweede decodeURIComponent is ook weg:
+    // searchParams.get() heeft de waarde al gedecodeerd, en die dubbele slag liep stuk op een
+    // letterlijk procentteken (URIError → het scherm bleef op "Bezig..." staan).
+    router.push(safeRedirect(searchParams.get('redirect'), '/dashboard'))
   }
 
   // Re-send the confirmation e-mail for an unconfirmed account.
