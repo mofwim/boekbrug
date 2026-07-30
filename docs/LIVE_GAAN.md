@@ -214,9 +214,30 @@ kort na de 5e van januari/april/juli/oktober.
 - **KVK-inschrijving en een zakelijke bankrekening.** Zonder deze twee keert Stripe niet uit, en
   `/steun` blijft bewust een 404 zolang er geen echt KVK-nummer is: er wordt nooit om geld gevraagd
   zonder identificeerbare rechtspersoon.
+- **~~MX-records voor `boekbrug.nl`~~ — gedaan op 30 juli.** Het domein had er geen, terwijl de
+  app `privacy@`, `legal@` en `support@boekbrug.nl` publiceert als het officiële loket, mét de
+  AVG-termijnen van 30 en 7 dagen. Alle drie bouncden. Opgelost met doorsturen (`mx1/mx2.improvmx.com`
+  plus één SPF-regel op de hoofdnaam) in plaats van mailboxen, en `_dmarc` meteen meegenomen — die
+  stond al in `AUTH_SETUP_GUIDE.md §C.3` beschreven maar was nooit aangezet. Extern nagemeten,
+  inclusief de controle dat het Resend-pad (`send.` MX + SPF + DKIM) en de Vercel-records ongemoeid
+  bleven: een MX op de hoofdnaam botst niet met een verzendpad op een subnaam, want SPF wordt tegen
+  het envelop-domein gecontroleerd en dat is bij Resend `send.boekbrug.nl`. Let op bij later
+  uitbreiden: één SPF-record per domein, dus mengen in dezelfde regel en nooit een tweede erbij.
+  Een echte testmail is de hele keten door gegaan, dus ontvangen werkt aantoonbaar. Hij belandde
+  wel in de ongewenste map, en dat gaat niet vanzelf over: doorgestuurde post komt binnen vanaf de
+  doorstuurdienst, dus de SPF-controle van de oorspronkelijke afzender faalt per definitie. Filteren
+  op afzender kan niet (die verschilt per bericht) — het moet een regel op het `To`-adres
+  `@boekbrug.nl` zijn met "nooit als spam". Dat is geen detail: de privacyverklaring belooft 30 dagen
+  op een AVG-verzoek en 7 op een klacht, en een spambak laat die termijnen ongemerkt verlopen.
+  Blijft verder over: de catch-all `*@` uitzetten (spam).
 - **De bedrijfsidentiteit in Vercel** — `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` ·
   `_ADDRESS` · `_CITY`. Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit
-  als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand.
+  als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand. De
+  vervanging zélf is af en getest: `src/content/legal/company.ts` vult de drie juridische teksten
+  bij het bouwen, dus er staat nergens een `[JOUW NAAM]` op het scherm — zonder variabelen leest
+  het "geëxploiteerd door BoekBrug, gevestigd te Tilburg, KVK-nummer (volgt)". Alleen `_KVK` en
+  `_BTW` horen bij "voordat je geld aanneemt"; `_LEGAL_NAME` en `_ADDRESS` staan in de
+  privacyverklaring als verwerkingsverantwoordelijke en gelden vanaf de eerste gebruiker.
 - **Twee Stripe-prijzen**, exact gelijk aan wat de voorwaarden publiceren: Plus **€ 12,99 per
   maand** (terugkerend) en de Bewaarkluis **€ 19 per bewaarjaar** (eenmalig). De checkout dwingt
   acceptatie van die voorwaarden af, dus een verschil is precies het gat waar de klant gelijk in

@@ -1,7 +1,7 @@
 # [CI] BoekBrug continuous integration.
 # Runs the same three hard gates the project uses locally before every merge:
 #   1. `tsc --noEmit`  — full TypeScript type-check.
-#   2. `tsx --test`    — the unit-test suite under src/lib.
+#   2. `tsx --test`    — the unit-test suite: src/lib plus src/content/legal.
 #   3. `next build`    — the production build, WITHOUT any secrets.
 # Lint is intentionally NOT a blocking gate here (the repo carries known
 # pre-existing eslint findings).
@@ -51,8 +51,12 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
+      # The glob used to be src/lib/*.test.ts only, so a test written anywhere else was green by
+      # never running. src/content/legal is the second place with real invariants (the legal pages
+      # must render no unfilled [PLACEHOLDER]), hence both paths. Adding a directory of tests means
+      # adding it here too — silence is what this step is supposed to make impossible.
       - name: Unit tests
-        run: npx tsx --test src/lib/*.test.ts
+        run: npx tsx --test src/lib/*.test.ts src/content/legal/*.test.ts
 
       # No env is provided on purpose — see [BUILD-NO-SECRETS] above. If this step ever needs a
       # secret again, something started building a client at render time; fix that rather than

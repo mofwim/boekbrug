@@ -69,6 +69,74 @@ Dit is de enige schakelaar in de app die data vernietigt. Leeg = dry run. Er kan
 2033 aan de beurt zijn; meldt een dry run nu al een kandidaat, dan is er een datum verkeerd
 gezet — uitzoeken, niet aanzetten.
 
+**☑ `boekbrug.nl` kan post ONTVANGEN — opgelost op 30 juli**
+
+Dit stond hier een halve dag als het enige punt op deze lijst dat iets kapots repareerde in
+plaats van iets mogelijk te maken, en het is af. De aanleiding: `boekbrug.nl` had **geen
+enkel MX-record**, terwijl de app drie adressen publiceert als het officiële loket —
+`privacy@` (Privacyverklaring §1, §6, §12, §13, mét de beloofde termijnen van 30 en 7 dagen),
+`legal@` (Voorwaarden) en `support@` (Voorwaarden + privacy §13). Alle drie bouncden. Dat is
+iets anders dan een leeg KVK-veld: "(volgt)" is een eerlijke lege plek, een gepubliceerd
+adres dat weigert is een belofte die de app niet waarmaakt — en het is precies het kanaal
+dat de AVG (art. 13) verplicht stelt, dus het telde vanaf de eerste gebruiker, niet vanaf de
+eerste euro.
+
+Opgelost met doorsturen in plaats van mailboxen: vier regels in de TransIP DNS-tabel, en de
+aliassen bij de doorstuurdienst. Nagemeten vanaf een externe resolver, niet aangenomen:
+
+| Record | Stand |
+|---|---|
+| `MX boekbrug.nl` | `10 mx1.improvmx.com` · `20 mx2.improvmx.com` |
+| `TXT boekbrug.nl` (SPF) | `v=spf1 include:spf.improvmx.com ~all` — en **precies één** |
+| `TXT _dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@boekbrug.nl; fo=1` |
+| CONTROLE `MX send.boekbrug.nl` | ongewijzigd (Resend-retourpad) |
+| CONTROLE `TXT send.boekbrug.nl` | ongewijzigd (`include:amazonses.com`) |
+| CONTROLE `TXT resend._domainkey` | ongewijzigd (DKIM, 218 tekens) |
+| CONTROLE `A boekbrug.nl` + `www` | ongewijzigd (Vercel) |
+
+Twee dingen aan die SPF-regel zijn het onthouden waard. Een domein mag er **maar één** hebben:
+een tweede maakt ze allebei ongeldig, dus een latere afzender wordt in dezelfde regel gemengd
+en er komt nooit een rij bij. En er staat bewust géén `include:amazonses.com` in — dat zou
+iedere SES-klant ter wereld laten afzenden namens dit domein. Resend zet die include daarom
+zelf op de subnaam `send.`, en daar hoort hij te blijven.
+
+Die laatste drie staan er met opzet bij. Een MX op de hoofdnaam en het verzendpad van Resend
+lijken op elkaar te botsen maar doen dat niet — Resend hangt op de subnaam `send.` — en dat
+is nu gemeten in plaats van beredeneerd. DMARC stond al beschreven in
+`docs/AUTH_SETUP_GUIDE.md §C.3` en was nooit aangezet; dat is meteen meegenomen, met `rua` op
+het eigen domein omdat rapportage naar een extern adres een autorisatierecord vereist bij die
+andere partij.
+
+Wat hier NIET aan lag, voor de volgende lezer: Resend verzorgt het **verzenden**
+(`noreply@boekbrug.nl`) en werkte de hele tijd. Ontvangen is een losse zaak die Resend niet
+doet. De doorstuurbestemming wordt nergens gepubliceerd, dus welk privé-adres daarachter
+hangt maakt voor de buitenwereld niets uit.
+
+**☑ En één echte mail is er doorheen gegaan**
+Kloppende DNS bewijst dat de weg getekend is, niet dat er iets aankomt. Een testbericht is de
+hele keten door gegaan — Google → `mx1.improvmx.com` → de doorstuurbestemming — dus ontvangen
+werkt aantoonbaar, niet theoretisch.
+
+**☐ Maar hij belandde in de ongewenste map, en dát is geen schoonheidsfoutje**
+Dit hoort bij doorsturen en het gaat niet vanzelf over: een doorgestuurd bericht komt binnen
+vanaf de doorstuurdienst en niet vanaf de server van de oorspronkelijke afzender, dus diens
+SPF-controle faalt per definitie. Elke volgende mail heeft hetzelfde.
+
+Waarom dat hier zwaarder weegt dan bij gewone post: de privacyverklaring belooft antwoord
+binnen **30 dagen** op een AVG-verzoek en binnen **7 dagen** op een klacht. Een verzoek dat
+ongelezen in de spambak ligt, is een gepubliceerde termijn die verloopt zonder dat iemand het
+merkt. De inbox is hier onderdeel van de belofte.
+
+Eén keer "geen spam" aanvinken lost het niet op, want de afzender verschilt per bericht —
+filteren op **wie het stuurt** kan dus niet. Wat wel werkt is filteren op **waar het heen
+ging**: een regel op het `To`-adres `@boekbrug.nl` met "nooit als spam markeren", plus een
+eigen label zodat zakelijke post niet tussen privémail verdwijnt. Niet elke mailprovider
+biedt dat op het To-veld; kies de bestemming daarop uit.
+
+**☐ De catch-all hoort uit**
+De vier expliciete aliassen dekken alles wat de documenten noemen, terwijl `*@boekbrug.nl`
+elk verzonnen adres accepteert en daarmee vooral spam binnenhaalt.
+
 ## 2. Voordat je geld kunt aannemen
 
 **☐ KVK-inschrijving en een zakelijke bankrekening**
@@ -79,6 +147,21 @@ bewust een 404: er wordt nooit om geld gevraagd zonder identificeerbare rechtspe
 `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` · `_ADDRESS` · `_CITY`
 Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit als een
 echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand.
+
+Twee dingen die hier eerder onduidelijk stonden, want ze vallen niet allebei onder "geld":
+
+*Het werkt al, en er staat nergens een blokhaak op je scherm.* De vervanging zit in
+`src/content/legal/company.ts` en draait bij het bouwen over de drie juridische teksten
+(voorwaarden, privacy, eerlijk gebruik). Zonder ingevulde variabelen leest de bezoeker
+vandaag "geëxploiteerd door **BoekBrug**, gevestigd te Tilburg, KVK-nummer **(volgt)**" —
+niet `[JOUW NAAM]`. Nagemeten door de drie modules te importeren en op overgebleven
+placeholders te zoeken: nul.
+
+*Alleen `_KVK` en `_BTW` horen echt bij "voordat je geld aanneemt".* `_LEGAL_NAME` en
+`_ADDRESS` staan in de privacyverklaring als de verwerkingsverantwoordelijke, en die vraag
+stelt de AVG bij de eerste gebruiker. Zolang je nog niets int, is "(volgt)" verdedigbaar
+mits het loket hierboven wél openstaat — een bereikbaar adres is waar een betrokkene je
+daadwerkelijk mee vindt.
 
 **☐ Stripe: twee prijzen, niet één**
 
