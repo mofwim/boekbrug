@@ -55,7 +55,7 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 // as one invoice double-counts the invoices it summarises. Narrow on purpose: it excludes
 // "aanmaning"/"herinnering", which can be a single-invoice reminder that IS bookable.
 export function isStatementFilename(filename: string): boolean {
-  return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
+  return /(rekening|saldo|debiteuren|betalings?)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
 }
 
 // [REMINDER] A filename that unmistakably marks a payment REMINDER (not a fresh invoice). Used
@@ -63,8 +63,20 @@ export function isStatementFilename(filename: string): boolean {
 // the model booked as a plain invoice is still flagged for the human. Deliberately excludes
 // bare "factuur"/"invoice". A reminder is a real (single) invoice, so we do NOT reject it — we
 // only ensure it is FLAGGED so the human checks it isn't already booked (avoids double-count).
+// [INCASSO-WOORDEN] De volledige Nederlandse escalatieladder, niet alleen de eerste twee treden.
+// Nagelopen tegen deurwaarders-/incassobronnen; de keten is:
+//
+//   betalingsherinnering → aanmaning → sommatie → ingebrekestelling
+//
+// en daarnaast de WIK-brief (Wet Incassokosten), ook bekend als 14-dagenbrief, aanzegging of
+// laatste sommatie: de wettelijk verplichte brief vóórdat incassokosten in rekening mogen worden
+// gebracht. Al deze documenten hebben ÉÉN ding gemeen dat hier telt: ze gaan over een factuur die
+// je al hoort te hebben. Ze zijn dus nooit een NIEUWE kost.
+//
+// Alleen "herinnering" en "aanmaning" stonden hier — dus een "sommatie.pdf" of een
+// "ingebrekestelling.pdf" gleed langs deze backstop en kon als een gewone factuur landen.
 export function isReminderFilename(filename: string): boolean {
-  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|aanmaning|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder/i.test(
+  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|herinneringsnota|aanmaning|sommatie|ingebrekestelling|wik[-_ ]?brief|14[-_ ]?dagen[-_ ]?brief|aanzegging|incasso[-_ ]?brief|laatste[-_ ]?(waarschuwing|aanmaning|sommatie)|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder|final[-_ ]?notice|dunning/i.test(
     filename || "",
   );
 }
@@ -83,7 +95,10 @@ export function looksLikeStatementText(text: string | null | undefined): boolean
   if (!text) return false;
   const t = text.toLowerCase();
   const overviewTitle =
-    /(rekening|saldo)[-\s]?overzicht/.test(t) ||
+    // [INCASSO-WOORDEN] debiteuren-/betalingsoverzicht meegenomen: zelfde vorm, zelfde gevaar
+    // (één gesommeerd totaal over meerdere facturen). Bewust NIET "maandoverzicht" of
+    // "jaaroverzicht": dat is vaak juist een verzamelfactuur, en die IS boekbaar.
+    /(rekening|saldo|debiteuren|betalings)[-\s]?overzicht/.test(t) ||
     /openstaande\s+(facturen|posten)/.test(t) ||
     /overzicht\s+(van\s+)?openstaande/.test(t) ||
     /overzicht\s+(van\s+)?(je|uw|de)\s+facturen/.test(t);
@@ -109,7 +124,7 @@ export function looksLikeStatementReason(reason: string | null | undefined): boo
   if (!reason) return false;
   const r = reason.toLowerCase();
   return (
-    /(rekening|saldo)[-\s]?overzicht/.test(r) ||
+    /(rekening|saldo|debiteuren|betalings)[-\s]?overzicht/.test(r) ||
     /openstaande\s+(facturen|posten)/.test(r) ||
     /samenvatting\s+van\s+\S*\s*factur/.test(r) ||
     /overzicht\s+van\s+(meerdere|bestaande)\s+factur/.test(r) ||
@@ -366,6 +381,14 @@ export interface VerifyInvoiceResult {
   // auto-books payment — it only pre-fills a suggestion the human confirms.
   paid_method?: "bank" | "kas" | "pin" | null; // 'kas' = contant/cash
   paid_date?: string | null;                    // the written/stamped payment date, "YYYY-MM-DD"
+  // [BON-BETAALWIJZE] The tender block a kassabon PRINTS, copied verbatim ("Bankpas 70,29",
+  // "KONTANT 120,00 Afronding 0,02 Wisselgeld 7,10"). Kept as literal text on purpose: the
+  // classification into bank/kas happens in bon-betaalwijze.ts, which is pure and unit-tested
+  // against real receipts, so the decision does not drift with the model. Null when absent.
+  paid_evidence?: string | null;
+  // Last 4 digits of the card when the receipt masks and prints it. Makes the later bank match
+  // reliable (the same four digits appear on the statement line). Never invented.
+  paid_card_last4?: string | null;
   // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
   // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
   // number, or amounts printed negative. Routing is unaffected (a creditnota
@@ -1142,6 +1165,8 @@ Return only a JSON object with these exact keys:
   "is_paid": boolean,
   "paid_method": "bank" | "kas" | "pin" | null,
   "paid_date": "YYYY-MM-DD" or null,
+  "paid_evidence": string or null,
+  "paid_card_last4": string or null,
   "is_credit_note": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
@@ -1254,6 +1279,17 @@ CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=fa
   invoice's details (one number, one amount). Extract the ORIGINAL invoice's amount, NOT any
   added herinneringskosten line, as the total. (The rule ABOVE — is_invoice=false — is ONLY
   for an overview of TWO OR MORE invoices.)
+- The Dutch escalation ladder counts as a reminder at EVERY rung, not just the first two.
+  Set is_reminder=true for any of: "Betalingsherinnering", "Herinnering", "Herinneringsnota",
+  "Aanmaning", "Laatste aanmaning", "Sommatie", "Ingebrekestelling", "WIK-brief",
+  "14-dagenbrief", "Aanzegging", "Laatste waarschuwing", an incassobrief or a
+  deurwaarder/incassobureau letter, or their English equivalents ("Reminder",
+  "Final notice", "Dunning letter"). They all concern an invoice the recipient should already
+  have, so none of them is ever a NEW cost.
+- reminder_of_invoice_number is IMPORTANT, not decoration: it is how we check whether the
+  original invoice is already booked. Always fill it with the ORIGINAL invoice's number when the
+  document names one — even when that number appears only in a sentence like
+  "betreft factuur 2026-0041" or "onze factuur 2026-0041 d.d. 3 maart".
 - For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
 
 Document kind + paid status (ALWAYS set these):
@@ -1283,6 +1319,26 @@ Document kind + paid status (ALWAYS set these):
   payment from an unmarked invoice. A printed "te betalen"/due date is NOT a payment mark.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
+- [BON-BETAALWIJZE] PRINTED TENDER LINE ON A KASSABON. The rule above is about HANDWRITTEN
+  marks on an invoice. A till receipt does not need one: it PRINTS how it was settled, and that
+  is the accountant's first question about a receipt — the one he cannot derive himself, because
+  a cash purchase leaves no bank line. Read that block and fill:
+    · "paid_evidence": the tender line(s) COPIED VERBATIM, e.g. "Bankpas 70,29",
+      "Kontant 10,75 / Wisselgeld 0,00", "KONTANT 120,00 Afronding 0,02 Wisselgeld 7,10",
+      "PIN leesmethode CTL CHIP / Betaling gelukt". Copy what is printed — do NOT summarise it
+      and do NOT translate it. Null when the receipt prints no tender line at all.
+    · "paid_card_last4": the last 4 digits of the card when a masked card number is printed
+      ("Kaart xxxxxxxxxxxxxxxx6596" → "6596"). Null otherwise. Never invent digits.
+    · "paid_method": "bank" for a card payment (Bankpas, PIN, Maestro, V PAY, contactloos,
+      creditcard), "kas" for contant/kontant/cash, null when the receipt does not say.
+  A card payment is "bank" even when the word "bank" does not appear — a pinpas settles on the
+  bank account. When BOTH a cash tender and a card tender are printed (a split payment), still
+  copy both into paid_evidence and set paid_method=null: a human decides that one.
+- [BON-NUMMER] A kassabon usually DOES carry a printed reference, just not called "factuurnummer"
+  — "BON: 2/667957", "Bon 4/744768", "Transactie 049612", "Volgnr. 0001", a receipt/ticket
+  number. Put that printed reference in "invoice_number". It is the only identifier the document
+  actually has, and it is what makes a re-photographed bon recognisable as the same one. Leave
+  invoice_number null only when the receipt truly prints no reference at all — never invent one.
 
 Creditnota detection (ALWAYS set is_credit_note):
 - "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:

@@ -22,11 +22,16 @@ import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
 import { sendQuarterReadyToAccountant } from "@/lib/email";
+import { appOrigin } from "@/lib/app-origin";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     console.error("[CRON-QUARTER-CLOSE] CRON_SECRET is not configured — the quarter-end handoff is DISABLED.");
@@ -119,7 +124,12 @@ export async function GET(req: NextRequest) {
         .single();
       const clientName =
         ownerProfile?.company_name || ownerProfile?.full_name || "je klant";
-      const origin = (process.env.NEXT_PUBLIC_SITE_URL || "https://boekbrug.nl").replace(/\/$/, "");
+      // [ORIGIN] Las NEXT_PUBLIC_SITE_URL — een tweede naam die niet in .env.example stond, met
+      // een hardgecodeerd domein als vangnet. Wie volgens .env.example inrichtte zette
+      // NEXT_PUBLIC_APP_URL en kreeg hier stil boekbrug.nl, ook op een ander domein: de
+      // boekhouder ontving dan een pakket-link naar een andere site. Nu één keten, beide namen.
+      // Een cron heeft geen verzoek-origin, dus hier is het vangnet wél nodig.
+      const origin = appOrigin(process.env) ?? "https://boekbrug.nl";
       const quarterPath = `/dashboard/clients/${ownerId}/kwartaal?q=${period.quarter}&year=${period.year}`;
 
       for (const link of links ?? []) {
@@ -149,7 +159,12 @@ export async function GET(req: NextRequest) {
             .eq("id", link.accountant_id)
             .single();
           if (accProfile?.email) {
-            await sendQuarterReadyToAccountant({
+            // [TRUST-DELIVERY-RETURN] Dit is de mail die het product maakt: "het kwartaal van je
+            // klant staat klaar". Resend gooit niet bij een weigering maar lost op met { error },
+            // dus deze catch ving alleen echte exceptions — een geweigerde mail liep er stil
+            // langs. Dan denkt de ondernemer dat zijn boekhouder bericht heeft, denkt de
+            // boekhouder dat er niets klaarstaat, en wacht iedereen op de ander.
+            const mailDelivered = await sendQuarterReadyToAccountant({
               toEmail: accProfile.email,
               accountantName: accProfile.full_name || "boekhouder",
               clientName,
@@ -160,6 +175,14 @@ export async function GET(req: NextRequest) {
               packageUrl: `${origin}/api/closing-package?clientId=${ownerId}&year=${period.year}&quarter=${period.quarter}`,
               quarterUrl: `${origin}${quarterPath}`,
             });
+            if (!mailDelivered) {
+              console.error("[CRON-QUARTER-CLOSE] kwartaalmail geweigerd door de mailprovider", {
+                ownerId, accountantId: link.accountant_id, quarter: `Q${period.quarter} ${period.year}`,
+              });
+              // De in-app melding aan de boekhouder is hierboven al weggeschreven en blijft staan:
+              // het kwartaal staat écht klaar in zijn portaal, ook als de mail niet aankwam. Dit
+              // maakt alleen vindbaar dat de attendering hem niet bereikte.
+            }
           }
         } catch (mailErr) {
           console.error("[CRON-QUARTER-CLOSE] kwartaalmail naar boekhouder mislukt (niet fataal)", {
@@ -175,6 +198,18 @@ export async function GET(req: NextRequest) {
       Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "quarter-close" }, extra: { ownerId } });
     }
   }
+
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "quarter-close", { startedAt: cronStartedAt, ok: true, result: {
+    ok: true,
+    quarter: `Q${period.quarter} ${period.year}`,
+    owners: ownerIds.length,
+    notifiedOwners,
+    notifiedAccountants,
+    skippedEmpty,
+    failed,
+    truncated,
+  } });
 
   return NextResponse.json({
     ok: true,

@@ -18,6 +18,8 @@ import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, typ
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
+// [RUBRIEK-SPLIT] One helper, three surfaces — see the call site for why readiness needs it too.
+import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 import { needsDocument } from "@/lib/bank-identity";
 import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
@@ -204,9 +206,21 @@ export async function GET(req: NextRequest) {
     i.direction === "incoming" || i.direction === "outgoing"
       ? i.direction
       : i.receiver_id === ownerId ? "incoming" : "outgoing";
+  // [RUBRIEK-SPLIT] The same per-line rate shares /api/aangifte and the closing package feed in.
+  // Leaving them out here was not neutral: 5a is the SUM OF THE ROUNDED rubrieken, so moving a
+  // mixed-rate invoice's omzet between 1a and 1b changes the rounding of each bucket and can move
+  // the total by a euro. This route publishes `concept.verschuldigd`, so without the split the
+  // readiness card and the aangifte screen could quote different figures for the same quarter —
+  // the screen-vs-ZIP divergence this file's own comments call out as a bug class.
+  // The declared-status allow-lists, hoisted: the dateless check below needs them too.
+  const OUT_OK = new Set(["paid", "sent", "overdue"]);
+  const IN_OK = new Set(["paid", "received"]);
+
+  const rateSharesByInvoice = await fetchRateShares(pipeline, invRaw.filter((i) => effDir(i) === "outgoing"));
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
+    rate_lines: i.id ? rateSharesByInvoice.get(i.id as string) ?? null : null,
   }));
   // [PACKAGE-READINESS] Imported bills dated in the quarter still in the verify queue
   // (status 'processing') must block "klaar" — they'd otherwise reach the accountant nowhere.
@@ -287,6 +301,28 @@ export async function GET(req: NextRequest) {
   // Default factuur → the accrual path is byte-identical. Under kas the readiness figures + the
   // klaar-gate reflect BTW on the paid date, and undated paid money blocks "klaar" (below).
   const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
+
+  // [DATE-GAP] A verified invoice with NO invoice_date is dropped by the range filter above, so
+  // it is in none of the figures — and readiness never said so, while /api/aangifte warns about
+  // exactly this ("telt NIET mee in dit kwartaal"). "Klaar, 100%" beside that warning is two
+  // surfaces disagreeing about whether the quarter is complete. Under KAS the invoice_date is
+  // irrelevant (invoices enter by payment date), so the check is factuurstelsel-only — the
+  // analogous cash-basis signal is undatedPaidCount, which already blocks below.
+  let datelessVerifiedCount = 0;
+  if (sr.scheme !== "kas") {
+    const datelessRaw = await fetchAllRows((from, to) => pipeline
+      .from("invoices")
+      .select("status, receiver_id, direction")
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .is("invoice_date", null)
+      .order("id", { ascending: true }).range(from, to));
+    datelessVerifiedCount = datelessRaw.filter((i) => {
+      const dir = i.direction === "incoming" || i.direction === "outgoing"
+        ? i.direction : (i.receiver_id === ownerId ? "incoming" : "outgoing");
+      return dir === "incoming" ? IN_OK.has(i.status ?? "") : OUT_OK.has(i.status ?? "");
+    }).length;
+  }
+
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
@@ -380,8 +416,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const OUT_OK = new Set(["paid", "sent", "overdue"]);
-  const IN_OK = new Set(["paid", "received"]);
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays,
@@ -501,6 +535,11 @@ export async function GET(req: NextRequest) {
     regimeFlags,     // [REGIME-FLAGS] KOR / verlegd / marge → risks, never a block
     undatedPaidCount: sr.undatedPaidCount,       // [KASSTELSEL] undated paid money blocks "klaar"
     estimatedPaidCount: sr.estimatedPortionCount, // [KASSTELSEL] estimated pay-date → risk
+    // [DATE-GAP] De samenvatting berekent dit al (datelessVerifiedInvoices → warning
+    // 'invoice_no_date'); dit scherm las het alleen niet. Geen extra query, geen nieuw veld —
+    // we lezen de waarschuwing die er toch al is, en tellen het aantal uit haar tekst niet mee
+    // maar uit de aanwezigheid: één risico volstaat om "stil 100% klaar" onmogelijk te maken.
+    datelessInvoiceCount: summary.warnings.some((w) => w.code === "invoice_no_date") ? 1 : 0,
     badDebt: badDebt.eligible.length > 0
       ? { count: badDebt.eligible.length, reclaimableBtw: badDebt.totalReclaimableBtw }
       : undefined, // [BAD-DEBT] reclaimable BTW on >1yr-unpaid sales → risk, never a block
@@ -508,6 +547,7 @@ export async function GET(req: NextRequest) {
       ? { count: vatClawback.eligible.length, repayableBtw: vatClawback.totalRepayableBtw }
       : undefined, // [BAD-DEBT] repayable voorbelasting on >1yr-unpaid purchases → risk, never a block
     icpProblems, // [ICP] EU sales that cannot go on the opgaaf as they stand → risk
+    datelessVerifiedCount, // [DATE-GAP] verified invoices with no date → they count nowhere
   };
   const report = buildReadiness(signals);
 

@@ -6,7 +6,7 @@
 // hardest on the "must keep" cases, especially vendors whose NAME contains
 // chrome words like 'logo' / 'icon' / 'banner' (the bug in the first draft,
 // where substring matching would have dropped their invoices).
-import { isLikelyInvoiceCandidate } from "./email-integration";
+import { isLikelyInvoiceCandidate, attachmentSkipReason } from "./email-integration";
 
 let passed = 0;
 let failed = 0;
@@ -48,6 +48,32 @@ check("image12.png (2 digits, not inline pattern) kept",
   isLikelyInvoiceCandidate(img("image12.png", 30000)) === true);
 check("att123.png (3 digits, not 5) kept",
   isLikelyInvoiceCandidate(img("att123.png", 30000)) === true);
+
+console.log("\n— [OVERSIZED-VISIBLE] een te grote bijlage verdwijnt niet meer stil —");
+{
+  const MB = 1024 * 1024;
+  // DE BUG: een bijlage boven de 10 MB werd geweigerd met exact dezelfde stille `false` als een
+  // logo. Hij is dan nooit opgehaald en nooit bekeken — het kan de grootste inkoopfactuur van het
+  // kwartaal zijn geweest — en het overgeslagen-paneel meldde "Niets overgeslagen".
+  const groot = pdf("inkoopfactuur-groot.pdf", 12 * MB);
+  check("een te grote PDF wordt nog steeds geweigerd", isLikelyInvoiceCandidate(groot) === false);
+  check("…maar nu MET een reden", attachmentSkipReason(groot) !== null);
+  check("de reden noemt de grens", /10 MB/.test(attachmentSkipReason(groot) ?? ""));
+  check("de reden noemt een uitweg die echt bestaat",
+    /splits|foto/i.test(attachmentSkipReason(groot) ?? ""));
+
+  // Precies op de grens telt nog gewoon mee.
+  check("precies 10 MB is geen reden", attachmentSkipReason(pdf("net-goed.pdf", 10 * MB)) === null);
+
+  // EN DE GRENS VAN DE MELDING: vorm-weigeringen blijven stil. Zou een logo ook een regel
+  // opleveren, dan verzuipt het paneel in ruis en kijkt niemand er meer naar.
+  check("een logo levert geen reden op", attachmentSkipReason(img("logo.png", 3000)) === null);
+  check("…en wordt nog steeds gewoon geweigerd", isLikelyInvoiceCandidate(img("logo.png", 3000)) === false);
+  check("een gewone factuur-PDF levert geen reden op", attachmentSkipReason(pdf("factuur.pdf", 250000)) === null);
+
+  // size 0 = "onbekend" bij de provider → geen reden, de bytecontrole verderop vangt het.
+  check("onbekende omvang levert geen reden op", attachmentSkipReason(pdf("onbekend.pdf", 0)) === null);
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -14,11 +14,12 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
-import { formatDateNL } from '@/lib/format-nl'
+import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
+import { M3 } from '@/lib/design/tokens'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -269,7 +270,7 @@ function OutlinedInput({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
-        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
       </label>
       <input
         type={type}
@@ -324,7 +325,7 @@ function DateField({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
-        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
       </label>
       <input
         type="date"
@@ -452,7 +453,12 @@ function NewInvoicePageContent() {
   const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0]
+  // [TZ] The owner's Amsterdam day, not the UTC one. This value seeds BOTH the
+  // factuurdatum and the leverdatum of a document that carries a number from the
+  // doorlopende reeks — and toISOString() is still on yesterday until 01:00 (02:00
+  // in summer). An invoice typed just after midnight on 1 January would be dated
+  // into the previous fiscal year and the previous BTW-quarter.
+  const today = amsterdamToday()
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
   // [FACTUUR-A] Leverdatum (Art. 35a sub f) — defaults to invoice date until
@@ -945,15 +951,26 @@ function NewInvoicePageContent() {
       }))
     )
 
-    // [BOEK-031] Replace flow — markeer de oude factuur
-    // [FACTUUR-A] No browser-side number to stamp anymore; archive only.
-    if (replacesId) {
-      await supabase.from('invoices')
-        .update({ status: 'archived' })
-        .eq('id', replacesId)
-    }
+    // [BOEK-031] Replace flow — de LINK naar de oude factuur wordt hierboven vastgelegd
+    // (original_invoice_id). Wat hier stond, is weg:
+    //
+    //   await supabase.from('invoices').update({ status: 'archived' }).eq('id', replacesId)
+    //
+    // [ISSUED-STAYS] Dat was een rauwe browser-schrijfactie die de hele serverautoriteit
+    // oversloeg — geen refuseArchive, geen money_settled-controle, geen bank_tx_invoices-probe,
+    // geen audit-regel. Ze kon dus een VERSTUURDE, genummerde verkoopfactuur archiveren, precies
+    // wat de doorlopende nummering verbiedt: zo'n factuur wordt gecorrigeerd met een creditnota,
+    // niet uit de reeks gehaald. Geen enkel scherm linkt naar ?replaces= — dit was alleen te
+    // bereiken door de URL zelf te typen — dus er gaat geen werkende flow verloren.
+    //
+    // Wordt de vervang-flow ooit echt gebouwd, dan hoort hij door /api/invoice/[id]/archive te
+    // lopen, waar die grendels wél staan.
 
     // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
+    // Bewust WEL een directe schrijfactie: refuseArchive weigert per definitie alles wat niet
+    // 'incoming' is (regel [ISSUED-STAYS]), dus ook een offerte, en die route zou deze werkende
+    // flow dus breken. Een offerte draagt geen factuurnummer en geen geld — de twee dingen die
+    // die grendel beschermt — dus hier valt niets te omzeilen.
     if (offerteId) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
@@ -1019,7 +1036,7 @@ function NewInvoicePageContent() {
           "Omzetten naar factuur" action now come from the shared sub-page header
           (registered via useSubPageHeader above). */}
 
-      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}>
+      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
 
         {/* [DS] Segmented Button — Material You, één geheel */}
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
@@ -1170,11 +1187,11 @@ function NewInvoicePageContent() {
               <div>
                 <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
-                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
                 )}
                 {/* [ICP] Said while the number is still on screen and still fixable. */}
                 {euVatSuspect && (
-                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
+                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>
                     Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
                   </p>
                 )}
@@ -1382,7 +1399,7 @@ function NewInvoicePageContent() {
             )}
 
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
-            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', zIndex: 10 }}>
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
               <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button onClick={() => {
                   // [FACTUUR-A] Factuur send is irreversible (number consumed

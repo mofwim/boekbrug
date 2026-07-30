@@ -1,0 +1,78 @@
+-- =====================================================================
+-- [SEC-LINK] accountant_clients UPDATE reopened the self-service link
+-- =====================================================================
+-- Problem (confirmed):
+--   accountant_clients_insert_consent.sql closed the INSERT hole and said so in
+--   its own header: "(SELECT/UPDATE/DELETE policies on accountant_clients are
+--   unchanged...)". The UPDATE policy left standing was:
+--
+--       CREATE POLICY accountant_clients_update ON public.accountant_clients
+--         FOR UPDATE TO authenticated
+--         USING (accountant_id = auth.uid())
+--         WITH CHECK (accountant_id = auth.uid());
+--
+--   → it constrains the ACCOUNTANT side and says nothing about zzper_id. So the
+--     holder of ONE link row can simply re-point it:
+--
+--       supabase.from('accountant_clients')
+--               .update({ zzper_id: VICTIM_ID })
+--               .eq('accountant_id', MY_ID)
+--
+--     USING passes (accountant_id is mine), WITH CHECK passes (accountant_id is
+--     unchanged), and zzper_id is unconstrained in both. That is the identical
+--     escalation the INSERT migration closed, reached through a different verb —
+--     and it is repeatable: one row retargets to a new victim as often as you like.
+--
+--   Getting the first row is not a barrier. `invitations` still carries
+--   "zzper can insert invitations" WITH CHECK (auth.uid() = zzper_id), so an
+--   attacker invites their OWN e-mail address as their own accountant, accepts
+--   it through the normal verified flow, and now legitimately owns a link row
+--   {accountant_id: ME, zzper_id: ME} to retarget.
+--
+--   Once zzper_id points at a victim, is_my_accountant_client(VICTIM) is true,
+--   which grants invoices_accountant_read, documents_accountant_read and
+--   invoice_lines_select_accountant — and /dashboard/brug signs the victim's
+--   actual file bytes via service_role.
+--
+-- Why dropping the policy is SAFE (verified against every writer of the table):
+--   `grep -rn "accountant_clients" src/ | grep -iE "update|upsert"` → nothing.
+--   No route, repository or component ever UPDATEs this table. The only writer
+--   anywhere is the e-mail-verified accept route, which INSERTs via service_role
+--   (createPipelineClient, bypasses RLS) — see src/app/api/invite/accept/route.ts.
+--   A link is created once and then only ever read or DELETEd; there is no field
+--   on it that anyone legitimately edits.
+--
+--   Unlinking is untouched: accountant_clients_delete still lets EITHER side
+--   remove the link, which is the consent-withdrawal path and must keep working.
+--
+-- If authenticated updating is ever genuinely needed, it MUST pin the client
+-- side as well as the accountant side, e.g.
+--     USING       (accountant_id = auth.uid())
+--     WITH CHECK  (accountant_id = auth.uid()
+--                  AND zzper_id = (SELECT ac.zzper_id
+--                                    FROM public.accountant_clients ac
+--                                   WHERE ac.id = accountant_clients.id))
+-- so the row can never change WHO it links, only its own metadata.
+--
+-- APPLY: run in the Supabase SQL editor. No data changed. Idempotent.
+-- =====================================================================
+
+BEGIN;
+
+DROP POLICY IF EXISTS accountant_clients_update ON public.accountant_clients;
+
+COMMIT;
+
+-- =====================================================================
+-- VERIFY (run separately after applying):
+--
+--   select polname, cmd
+--     from pg_policies
+--    where schemaname = 'public' and tablename = 'accountant_clients';
+--
+-- Expect exactly: accountant_clients_select (SELECT) and
+--                 accountant_clients_delete (DELETE).
+-- No INSERT policy (dropped by accountant_clients_insert_consent.sql) and no
+-- UPDATE policy. Linking happens only through the verified accept route on
+-- service_role; unlinking stays available to both sides.
+-- =====================================================================

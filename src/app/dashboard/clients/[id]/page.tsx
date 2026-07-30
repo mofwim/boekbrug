@@ -9,10 +9,15 @@ import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
+import { EL1, M3, R } from '@/lib/design/tokens'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
 export default function ClientDetailPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router = useRouter()
   const params = useParams()
   const clientId = params?.id as string
@@ -21,6 +26,10 @@ export default function ClientDetailPage() {
   const [client, setClient] = useState<ProfileRow | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  // [SEARCH-LANDING] A stale/unlinked client id (deleted, or an accountant not
+  // linked to it → RLS returns no row) must land on a real 404, not an empty
+  // card full of "—" placeholders that looks like a broken page.
+  const [missing, setMissing] = useState(false)
 
   const year = new Date().getFullYear()
   const currentQ = Math.ceil((new Date().getMonth() + 1) / 3)
@@ -34,6 +43,7 @@ export default function ClientDetailPage() {
       if (!user) { router.push('/login'); return }
       const { data: clientData } = await supabase.from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
+      else setMissing(true)
       const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId).eq('receiver_id', user.id).eq('read', false)
       setUnreadCount(count || 0)
@@ -43,7 +53,12 @@ export default function ClientDetailPage() {
   }, [clientId])
 
   async function removeClient() {
-    const confirmed = window.confirm(`Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`)
+    const confirmed = await dialog.confirm({
+      title: 'Klant ontkoppelen?',
+      message: `Je verliest daarmee de toegang tot de administratie van ${client?.company_name || client?.full_name || 'deze klant'}. De klant houdt alles zelf; jullie kunnen later opnieuw koppelen.`,
+      confirmLabel: 'Ontkoppelen',
+      danger: true,
+    })
     if (!confirmed) return
 
     // Call API — handles email + audit + notification server-side
@@ -57,7 +72,7 @@ export default function ClientDetailPage() {
       router.push('/dashboard')
     } else {
       const data = await res.json().catch(() => ({}))
-      alert(data.error || 'Ontkoppelen mislukt')
+      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
     }
   }
 
@@ -70,7 +85,7 @@ export default function ClientDetailPage() {
       actions: (
         <button
           onClick={removeClient}
-          style={{ fontSize: 13, fontWeight: 500, color: '#EA4335', background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          style={{ fontSize: 13, fontWeight: 500, color: M3.error, background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
           Ontkoppelen
         </button>
       ),
@@ -84,6 +99,10 @@ export default function ClientDetailPage() {
     </div>
   )
 
+  // Placed AFTER all hooks + the loading guard (never skips a hook): a stale/unlinked
+  // client id resolves to a real 404 instead of a card full of "—" placeholders.
+  if (missing) notFound()
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
@@ -91,7 +110,7 @@ export default function ClientDetailPage() {
 
         {/* ── Sectie 1: Klantgegevens ── */}
         {/* [BOEK-028] Design System — Workspace card — May 2026 */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
             <p style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
               Klantgegevens
@@ -146,7 +165,7 @@ export default function ClientDetailPage() {
               onClick={() => router.push(`/dashboard/messages/${clientId}`)}
               style={{
                 flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                padding: '12px', fontSize: 14, fontWeight: 500, color: '#34A853',
+                padding: '12px', fontSize: 14, fontWeight: 500, color: M3.success,
                 background: 'none', border: 'none', cursor: 'pointer',
                 transition: 'background 0.1s ease',
               }}
@@ -170,7 +189,7 @@ export default function ClientDetailPage() {
 
         {/* ── Sectie 2: Working Place ── */}
         {/* [BOEK-028] Design System — Workspace card + Q buttons — May 2026 */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>Working Place</h2>
             <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>Selecteer een kwartaal</p>

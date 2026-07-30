@@ -5,16 +5,18 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
-import { type Article, foldText } from '@/lib/articles'
+import { type Article } from '@/lib/articles'
+import { rowMatchesQuery } from '@/lib/search'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#ffffff', onSurface: '#202124', surfaceVariant: '#f1f3f4', outline: '#80868b',
-  error: '#B3261E', neutral: '#5F6368',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const RATES = [21, 9, 0]
@@ -23,6 +25,11 @@ type Form = { code: string; description: string; unit_price: string; btw_rate: n
 const EMPTY: Form = { code: '', description: '', unit_price: '', btw_rate: 21, unit: '' }
 
 export default function ArtikelenClient() {
+  const dialog = useDialog()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const setToast = useToast()
   const [articles, setArticles] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -31,7 +38,6 @@ export default function ArtikelenClient() {
   const [form, setForm] = useState<Form>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -45,11 +51,12 @@ export default function ArtikelenClient() {
   }
 
   const shown = useMemo(() => {
-    // Reuse the same picker ranking the invoice uses, but include archived in the manage view.
-    const q = foldText(search.trim())
+    // [SMART-FILTER] Dezelfde matcher als elke andere lijst: code + omschrijving (accent-loos)
+    // én de prijs, zodat "45" ook op het bedrag zoekt. Gearchiveerde artikelen blijven zichtbaar
+    // in dit beheerscherm.
+    const q = search.trim()
     if (!q) return [...articles].sort((a, b) => Number(b.active) - Number(a.active) || b.usage_count - a.usage_count)
-    return articles.filter((a) =>
-      foldText(a.code ?? '').includes(q) || foldText(a.description).includes(q))
+    return articles.filter((a) => rowMatchesQuery(q, [a.code, a.description], [a.unit_price]))
   }, [articles, search])
 
   function openNew() { setForm(EMPTY); setEditingId(null); setError(null); setShowForm(true) }
@@ -89,7 +96,13 @@ export default function ArtikelenClient() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Dit artikel verwijderen? Bestaande facturen blijven ongewijzigd.')) return
+    const ok = await dialog.confirm({
+      title: 'Dit artikel verwijderen?',
+      message: 'Facturen waarop dit artikel al staat, blijven ongewijzigd.',
+      confirmLabel: 'Verwijderen',
+      danger: true,
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/articles/${id}`, { method: 'DELETE' })
       if (!res.ok) { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
@@ -98,7 +111,6 @@ export default function ArtikelenClient() {
     finally { await load() }
   }
 
-  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2200); return () => clearTimeout(t) } }, [toast])
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -111,8 +123,16 @@ export default function ArtikelenClient() {
         </header>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op code of omschrijving…"
-            style={{ flex: 1, borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
+          {/* [SMART-FILTER] Zoekveld met label voor schermlezers en een wis-knop, net als bij facturen/categoriseren. */}
+          <div style={{ flex: 1, position: 'relative' }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op code, omschrijving of bedrag…"
+              aria-label="Artikelen zoeken"
+              style={{ width: '100%', boxSizing: 'border-box', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 36px 10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
+            )}
+          </div>
           <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuw</button>
         </div>
 
@@ -170,9 +190,6 @@ export default function ArtikelenClient() {
         )}
       </div>
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
-      )}
     </div>
   )
 }

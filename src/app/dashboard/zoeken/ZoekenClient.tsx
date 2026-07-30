@@ -257,7 +257,7 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 16, color: M3.onSurface, minWidth: 0 }}
           />
           {query && (
-            <button onClick={clear} aria-label="Wissen" style={{ background: M3.outlineVariant, border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M3.onSurfaceVariant, flexShrink: 0 }}>
+            <button className="tap-44" onClick={clear} aria-label="Wissen" style={{ background: M3.outlineVariant, border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M3.onSurfaceVariant, flexShrink: 0 }}>
               <IconX size={12} />
             </button>
           )}

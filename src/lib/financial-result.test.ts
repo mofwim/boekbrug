@@ -588,5 +588,65 @@ console.log("\n— [RUBRIEK-SPLIT][KASSTELSEL] a payment carries a share of EVER
   check("…with the same totals", near(plain.omzet, r.omzet) && near(plain.btwVerschuldigd, r.btwVerschuldigd));
 }
 
+console.log("\n— [CASH-DIRECTION] a refund goes the other way, in every figure —");
+{
+  const cash = (over: Partial<ResultCashEntry>): ResultCashEntry => ({
+    direction: "in", amount: 121, category: "omzet", btw_rate: 21, ...over,
+  });
+
+  // A cash sale of €121 incl. 21%, and a €121 refund of it from the same till. They must cancel:
+  // the owner sold nothing and owes no BTW. Before the fix the refund was added, so this quarter
+  // declared €200 omzet and €42 BTW on money that was handed back.
+  const sale = computeResult([], [], [cash({})]);
+  check("a cash sale books net omzet", near(sale.omzet, 100) && near(sale.btwVerschuldigd, 21));
+  const refunded = computeResult([], [], [cash({}), cash({ direction: "out" })]);
+  check("THE FIX: a refund cancels the sale", near(refunded.omzet, 0));
+  check("…and the BTW owed on it goes with it", near(refunded.btwVerschuldigd, 0));
+  check("…including in the per-rate bucket the aangifte reads",
+    refunded.salesByRate.every((b) => near(b.omzet, 0) && near(b.btw, 0)));
+  const refundOnly = computeResult([], [], [cash({ direction: "out" })]);
+  check("a standalone refund is NEGATIVE omzet, never positive", refundOnly.omzet < 0);
+
+  // Unrated cash omzet: the refund must also come off the "no rate yet" nudge, or the owner is
+  // asked to rate money that is no longer revenue.
+  const unrated = computeResult([], [], [
+    cash({ btw_rate: null, amount: 100 }),
+    cash({ btw_rate: null, amount: 100, direction: "out" }),
+  ]);
+  check("an unrated cash refund also reduces the no-rate figure", near(unrated.cashOmzetZonderBtw, 0));
+
+  // Costs mirror it, and this is the direction that ends in a naheffing: a supplier refund used
+  // to ADD cost and, with a bon and a rate, ADD voorbelasting — a deduction on money that came back.
+  const cost = computeResult([], [], [
+    cash({ category: "kosten", direction: "out", amount: 121, document_id: "bon-1" }),
+  ]);
+  check("a cash cost books net kosten + voorbelasting",
+    near(cost.kosten, 100) && near(cost.btwVoorbelasting, 21));
+  const costRefunded = computeResult([], [], [
+    cash({ category: "kosten", direction: "out", amount: 121, document_id: "bon-1" }),
+    cash({ category: "kosten", direction: "in", amount: 121, document_id: "bon-1" }),
+  ]);
+  check("THE FIX: a supplier refund cancels the cost", near(costRefunded.kosten, 0));
+  check("…and takes its voorbelasting back with it", near(costRefunded.btwVoorbelasting, 0));
+
+  // Undocumented cash cost: full gross, no deduction — the refund follows the same rule.
+  const noBon = computeResult([], [], [
+    cash({ category: "kosten", direction: "out", amount: 50, btw_rate: null }),
+    cash({ category: "kosten", direction: "in", amount: 50, btw_rate: null }),
+  ]);
+  check("an undocumented cash cost and its refund cancel too", near(noBon.kosten, 0));
+
+  const wages = computeResult([], [], [
+    cash({ category: "salaris", direction: "out", amount: 800, btw_rate: null }),
+    cash({ category: "salaris", direction: "in", amount: 300, btw_rate: null }),
+  ]);
+  check("repaid wages reduce the wage cost", near(wages.kosten, 500));
+  check("…and never touch BTW", near(wages.btwVoorbelasting, 0) && near(wages.btwVerschuldigd, 0));
+
+  // The amount column stays a magnitude — nothing here may depend on a negative being stored.
+  check("the fix reads `direction`, never a negative amount",
+    near(computeResult([], [], [cash({ direction: "out", amount: 121 })]).omzet, -100));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

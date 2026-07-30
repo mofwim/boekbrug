@@ -860,6 +860,33 @@ export type Database = {
           },
         ]
       }
+      email_sender_rules: {
+        Row: {
+          action: string
+          created_at: string
+          created_from_invoice_id: string | null
+          id: string
+          sender_email: string
+          user_id: string
+        }
+        Insert: {
+          action?: string
+          created_at?: string
+          created_from_invoice_id?: string | null
+          id?: string
+          sender_email: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          created_from_invoice_id?: string | null
+          id?: string
+          sender_email?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_connections: {
         Row: {
           access_token_secret_id: string | null
@@ -1125,6 +1152,8 @@ export type Database = {
           accountant_note: string | null
           accountant_status: string | null
           amount_paid: number
+          archive_reason: string | null
+          archived_at: string | null
           btw_amount: number | null
           client_address: string | null
           client_btw_number: string | null
@@ -1171,6 +1200,8 @@ export type Database = {
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
+          archive_reason?: string | null
+          archived_at?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
@@ -1217,6 +1248,8 @@ export type Database = {
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
+          archive_reason?: string | null
+          archived_at?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null

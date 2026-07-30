@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { SKIPPED_DOC_TYPES } from '@/lib/skipped-import'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,11 +29,16 @@ export async function GET() {
     .limit(100)
 
   // Could-not-read files kept in bestanden (visible there, counted here so the owner is nudged).
+  // [OBSERVABILITY] .in() over de gedeelde lijst, niet .eq() op één losse string: de camera-weg
+  // schrijft 'could_not_read' en de niet-ondersteunde-bestandsweg 'unsupported_type'. Op één
+  // waarde tellen liet de andere stil buiten beeld vallen — en dit paneel bestaat juist om niets
+  // buiten beeld te laten vallen. De lijst staat in src/lib/skipped-import.ts, samen met de
+  // functie die de schrijvers gebruiken, zodat de twee kanten niet opnieuw uit elkaar lopen.
   const { count: couldNotReadCount } = await supabase
     .from('documents')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', user.id)
-    .eq('ai_doc_type', 'could_not_read')
+    .in('ai_doc_type', SKIPPED_DOC_TYPES)
 
   const skipped = (skippedRows ?? []).map((r) => ({
     filename: r.filename ?? '(zonder naam)',

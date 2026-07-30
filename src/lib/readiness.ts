@@ -107,6 +107,17 @@ export interface ReadinessSignals {
   // optional (undefined → 0 → no block) so factuur callers/tests are unchanged.
   undatedPaidCount?: number;
   estimatedPaidCount?: number;
+  // [DATE-GAP] Geverifieerde facturen ZONDER factuurdatum. Postgres-bereikfilters
+  // (.gte/.lte op invoice_date) laten NULL-rijen stil vallen, dus zo'n factuur hoort bij deze
+  // eigenaar, is gecontroleerd, en zit tóch in GEEN enkel kwartaalpakket en in GEEN enkele
+  // concept-aangifte — haar BTW verdwijnt gewoon. Elke andere plek in de app rekent er al mee
+  // (het pakket waarschuwt erover); alleen dit scherm, dat het eindoordeel "ben ik klaar?"
+  // uitspreekt, wist er niets van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  //
+  // Bewust een RISICO en geen ontbrekend item: de telling is ALL-TIME, dus een harde blokkade
+  // zou al ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  // Als risico trekt hij de eerlijkheidsgrens hieronder (100 → 99) en is "stil klaar" onmogelijk.
+  datelessInvoiceCount?: number;
   // [BAD-DEBT] Sales invoices > 1 year past due and still unpaid (factuur only): the BTW paid on
   // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
   // get back, not a gap. Optional (undefined → none).
@@ -120,6 +131,10 @@ export interface ReadinessSignals {
   // a VAT number that cannot be right). The opgaaf itself is not a readiness matter; one that
   // will be REJECTED is, because a rejected opgaaf counts as not done. Optional (undefined → 0).
   icpProblems?: number;
+  // [DATE-GAP] Verified invoices with NO invoice_date. A date-range fetch drops them, so they are
+  // in NONE of this quarter's figures — omzet, kosten and voorbelasting are all quietly too low.
+  // /api/aangifte already warns about exactly this; readiness said nothing. Optional (→ 0).
+  datelessVerifiedCount?: number;
 }
 
 export interface ReconException {
@@ -440,6 +455,20 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       fix: FIX.bank,
     });
   }
+  const dateless = s.datelessInvoiceCount ?? 0;
+  if (dateless > 0) {
+    risks.push({
+      severity: "risk",
+      title: dateless === 1
+        ? "1 gecontroleerde factuur heeft geen datum"
+        : `${dateless} gecontroleerde facturen hebben geen datum`,
+      detail:
+        "Zonder factuurdatum valt een factuur buiten elk kwartaal: ze komt in geen enkel " +
+        "kwartaalpakket en in geen enkele concept-aangifte, dus haar BTW telt nergens mee. " +
+        "Vul de datum aan, dan telt ze weer gewoon mee.",
+      fix: FIX.facturen,
+    });
+  }
   const estimatedPaid = s.estimatedPaidCount ?? 0;
   if (estimatedPaid > 0) {
     risks.push({
@@ -562,6 +591,27 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [DATE-GAP] A verified invoice with no date is counted NOWHERE — not in omzet, not in kosten,
+  // not in voorbelasting — because the quarter is fetched by date range. That makes every figure
+  // on this page too low, so it is a blocking GAP, not a risk: "klaar" may not be reachable while
+  // a counted document is missing from the count. The aangifte screen already says so; this is
+  // the same sentence on the surface that decides whether the quarter is done.
+  // It is also entirely fixable by the owner — enter the date — which is what a gap should be.
+  if ((s.datelessVerifiedCount ?? 0) > 0) {
+    const n = s.datelessVerifiedCount ?? 0;
+    missing.push({
+      severity: "missing",
+      title: n === 1
+        ? "1 factuur heeft geen factuurdatum"
+        : `${n} facturen hebben geen factuurdatum`,
+      detail:
+        `${n === 1 ? "Deze factuur telt" : "Deze facturen tellen"} in GEEN enkel kwartaal mee — ` +
+        "omzet, kosten en voorbelasting zijn daardoor te laag. Vul de factuurdatum in, dan valt " +
+        `${n === 1 ? "hij" : "ze"} vanzelf in het juiste kwartaal.`,
+      fix: FIX.facturen,
     });
   }
 

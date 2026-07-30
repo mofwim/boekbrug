@@ -11,6 +11,7 @@
 // auth.uid(); bank/join writes + audit use the service-role pipeline.
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { reconcileCashSettlements, cashInstalmentsSupported } from "@/lib/cash-settle";
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     }
     const paymentMethod = body.paymentMethod === "kas" ? "kas" : "bank";
     const paymentDate = typeof body.paymentDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.paymentDate)
-      ? body.paymentDate : new Date().toISOString().slice(0, 10);
+      ? body.paymentDate : amsterdamToday();
 
     // [MANUAL-PARTIAL-PAY] An optional amount turns this into a DEELBETALING. Absent (the
     // empty field — the common case) it means "settle the whole remaining balance", which is

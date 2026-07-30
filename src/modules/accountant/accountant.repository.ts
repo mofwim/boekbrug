@@ -31,6 +31,8 @@ import type {
   TodoItem,
 } from './accountant.types'
 import { shouldBlockReinvite } from '@/lib/invite-guard'
+// [BANK-TELLING] Uitsluitend voor de bankTELLING in computeClientReadiness — zie daar waarom.
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest per-client facts for a quarter.
@@ -56,6 +58,8 @@ async function computeClientReadiness(
   const { start, end } = getQuarterRange(year, quarter)
   // clientId is a verified-linkage UUID from our own DB — safe to embed in .or().
   const bothDirections = `sender_id.eq.${clientId},receiver_id.eq.${clientId}`
+  // [BANK-TELLING] Zie de toelichting bij de query zelf: alleen de bankTELLING gaat hierlangs.
+  const bankCounter = createPipelineClient()
 
   const [
     { count: sharedInvoices },
@@ -73,7 +77,24 @@ async function computeClientReadiness(
     supabase.from('invoices').select('id', { count: 'exact', head: true })
       .or(bothDirections).eq('shared', true).eq('accountant_status', 'vraag')
       .gte('invoice_date', start).lte('invoice_date', end),
-    supabase.from('bank_transactions').select('id', { count: 'exact', head: true })
+    // [BANK-TELLING] Deze ENE telling loopt via de pipeline-client (service_role), en dat is geen
+    // gemak maar een noodzaak: bank_transactions heeft uitsluitend eigenaar-policies
+    // (`user_id = auth.uid()`, database.sql:620-631). Onder de sessie van de boekhouder gaf deze
+    // query dus ALTIJD nul — niet omdat er geen bankgegevens waren, maar omdat hij ze niet mag
+    // zien. Gevolg: `hasBankData` was structureel false en élke klant op het werkbord droeg het
+    // label "zonder bank", ook een klant die zijn afschriften keurig elk kwartaal aanlevert. Een
+    // vaste onwaarheid op het commandocentrum van de boekhouder, zonder één signaal.
+    //
+    // Veilig omdat de koppeling al bewezen is voordat deze functie draait: aanroep 1 leest de
+    // rijen uit accountant_clients voor deze boekhouder, aanroep 2 doet een expliciete
+    // .eq('zzper_id', clientId) met `if (!link) return null`. En er komt niets méér mee dan een
+    // GETAL — geen tegenrekening, geen omschrijving, geen bedrag.
+    //
+    // Alleen deze telling. De documents-query hieronder MOET op de sessie blijven: die leunt op
+    // documents_accountant_read (shared = true AND trashed IS NOT TRUE), en met service_role zou
+    // "laatste upload" ineens privé en weggegooide bestanden gaan melden — een privacylek in ruil
+    // voor een bugfix.
+    bankCounter.from('bank_transactions').select('id', { count: 'exact', head: true })
       .eq('user_id', clientId).gte('date', start).lte('date', end),
     supabase.from('documents').select('created_at')
       .eq('user_id', clientId).order('created_at', { ascending: false }).limit(1),

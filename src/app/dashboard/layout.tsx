@@ -7,6 +7,7 @@ import SentryUserProvider from '@/components/providers/SentryUserProvider'
 import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
+import { BottomNav } from '@/components/nav/BottomNav'
 
 export default async function DashboardLayout({
   children,
@@ -47,11 +48,16 @@ export default async function DashboardLayout({
           The bar is placed before {children} so its sticky bar sits at top. */}
       <SubPageHeaderProvider>
         {profile && <DashboardChrome role={subnavRole} />}
-        {children}
+        {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
+            so the last row of a list is not left sitting behind it. */}
+        <div className="dash-content">{children}</div>
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
       {profile && <GlobalSearchLauncher />}
+      {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
+          links that hide below 640px. Role-aware destinations; see the component. */}
+      {profile && <BottomNav role={subnavRole} />}
     </>
   )
 }

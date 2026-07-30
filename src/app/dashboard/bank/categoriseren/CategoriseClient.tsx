@@ -9,7 +9,7 @@
 // true DB-wide remaining count is 0 — not merely because this page is empty. A capped
 // page with more behind it says so, and offers a one-tap sweep of the confident ones.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
@@ -122,7 +122,8 @@ export default function CategoriseClient() {
     await load(next)
   }
 
-  async function confirm(id: string) {
+  // [SHADOW] See BankClient: a local `confirm` shadows window.confirm module-wide.
+  async function confirmCategory(id: string) {
     const category = choice[id]
     if (!category) return
     setBusy(id)
@@ -178,10 +179,16 @@ export default function CategoriseClient() {
   // [SMART-FILTER] live filter over the LOADED transactions (tegenpartij /
   // omschrijving / bedrag). The list is server-capped (PAGE_SIZE), so when
   // hasMore is set this narrows only what's on screen — the empty-state says so.
+  // [PERF] useMemo: alleen herberekenen als de zoekterm of de geladen transacties
+  // wijzigen — niet bij elke render (categorie-chips tikken raakt dit filter niet).
   const rawC = search.trim()
-  const displayItems = rawC
-    ? items.filter((it) => rowMatchesQuery(rawC, [it.counterpart_name, it.description], [it.amount]))
-    : items
+  const displayItems = useMemo(
+    () =>
+      rawC
+        ? items.filter((it) => rowMatchesQuery(rawC, [it.counterpart_name, it.description], [it.amount]))
+        : items,
+    [rawC, items]
+  )
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -269,9 +276,18 @@ export default function CategoriseClient() {
             )}
 
             {mode === 'review' && (
-              <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
-                Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
-              </p>
+              <>
+                <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
+                  Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
+                </p>
+                {/* [HONEST-TRUNCATION] A >200 review page must say so — never let a
+                    search that misses the loaded page read as "niets gevonden". */}
+                {hasMore && (
+                  <div style={{ fontSize: 13, color: M3.neutral, margin: '0 0 14px' }}>
+                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> ingevulde transacties · we tonen de eerste {items.length}
+                  </div>
+                )}
+              </>
             )}
 
             {/* [SMART-FILTER] live filter over the loaded transactions */}
@@ -285,7 +301,7 @@ export default function CategoriseClient() {
                 style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14.5, outline: 'none', background: M3.surface, color: M3.onSurface, fontFamily: FONT }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
               )}
             </div>
 
@@ -342,7 +358,7 @@ export default function CategoriseClient() {
                 </div>
 
                 <button
-                  onClick={() => confirm(it.id)}
+                  onClick={() => confirmCategory(it.id)}
                   disabled={busy === it.id}
                   style={{
                     marginTop: 12, width: '100%', padding: '11px', borderRadius: 12, border: 'none',

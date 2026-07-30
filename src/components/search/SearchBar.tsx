@@ -302,7 +302,7 @@ function SearchInput({
         onKeyDown={onKeyDown}
       />
       {query && (
-        <button
+        <button className="tap-44"
           tabIndex={-1}
           aria-label="Wissen"
           onClick={onClear}
@@ -707,7 +707,10 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
 
   const mobileInputProps: SearchInputProps = {
     inputRef: mobileInputRef, query, open, loading, activeId,
-    placeholder: "Zoeken naar facturen, bestanden…",
+    // [SMART-FILTER] De API matcht ook bedragen — noem dat, anders raadt niemand
+    // dat "670,09" werkt. De desktop-placeholder blijft kort ("Zoeken…"): dat
+    // vakje is max. 320px breed en zou een langere tekst afkappen.
+    placeholder: "Zoeken naar facturen, bedragen, bestanden…",
     fontSize: 16,
     onChange: onInputChange,
     onKeyDown: handleKeyDown,

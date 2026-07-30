@@ -61,27 +61,29 @@ export default function SubPageHeader({
       }}
     >
       {/* Back → canonical parent (single source of truth, loop-safe) */}
+      {/* [MOTION] `pressable` replaces the onMouseEnter/onMouseLeave pair that
+          used to paint the hover tint from JavaScript. Mouse events never fire
+          for a finger, so on a phone the most-tapped control in the whole app
+          gave no feedback whatsoever between the tap and the next screen.
+          Hover now lives in CSS (:hover) and the press-scale in :active, which
+          a touch DOES fire. The tap target also grows to the 44px minimum —
+          it was a 38px box around a 22px glyph. */}
       <Link
         href={backHref}
         aria-label="Terug"
+        className="pressable nav-icon-btn"
         style={{
           background: "none",
           border: "none",
-          cursor: "pointer",
           padding: 8,
           borderRadius: 8,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
-          transition: "background 0.1s",
+          minWidth: 44,
+          minHeight: 44,
         }}
-        onMouseEnter={(e) =>
-          ((e.currentTarget as HTMLAnchorElement).style.backgroundColor = "#F1F3F4")
-        }
-        onMouseLeave={(e) =>
-          ((e.currentTarget as HTMLAnchorElement).style.backgroundColor = "transparent")
-        }
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
@@ -97,6 +99,7 @@ export default function SubPageHeader({
       {/* Brand / home */}
       <Link
         href={homeHref}
+        className="pressable"
         style={{
           fontWeight: 700,
           fontSize: 17,
@@ -106,10 +109,7 @@ export default function SubPageHeader({
           lineHeight: 1,
           textDecoration: "none",
           fontFamily: FONT,
-          transition: "opacity 0.15s",
         }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.opacity = "0.75")}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.opacity = "1")}
       >
         BoekBrug
       </Link>

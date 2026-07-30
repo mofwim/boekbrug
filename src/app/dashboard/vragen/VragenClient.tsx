@@ -15,10 +15,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { M3, FONT } from '@/lib/design/tokens'
+import { FONT, M3, R } from '@/lib/design/tokens'
 import { bouwAntwoordBericht, type OpenVraag } from '@/lib/vragen'
 
-const R = { md: 12, lg: 16 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 export interface VraagView extends OpenVraag {

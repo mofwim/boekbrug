@@ -22,7 +22,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
@@ -33,18 +33,14 @@ import { rowMatchesQuery } from "@/lib/search";
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
 // columns it actually selects (no created_at / payment_date here).
 import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
-const M3 = {
-  primary: "#1A73E8",
-  onSurface: "#202124",
-  onSurfaceVariant: "#5F6368",
-  warning: "#E37400", // soon-due (calm amber)
-  error: "#B3261E", // recently overdue (real attention)
-  hairline: "#E0E0E0",
-  hover: "#F1F3F4",
-};
 
 // [OWNER-DECISION] The old 30-day "Al langer open" tier (separate calm-amber
 // group rendered BELOW the active items) is gone: with real day counts on the
@@ -200,13 +196,26 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const rawV = search.trim();
   // [SMART-FILTER] shared matcher — klant / factuurnummer / bedrag
   // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
-  const matchV = (inv: VandaagInvoice) =>
-    rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]);
+  // [PERF] useCallback houdt de matcher stabiel per zoekterm, zodat de memo's hieronder
+  // niet bij elke render opnieuw filteren.
+  const matchV = useCallback(
+    (inv: VandaagInvoice) =>
+      rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]),
+    [rawV]
+  );
   const searching = rawV.length > 0;
   const canSearch = payable.length > 0 || remind.length > 0;
   // [SORT] Search results honour the chosen order too.
-  const displayPayable = searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable;
-  const displayRemind = searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind;
+  // [PERF] useMemo: alleen herberekenen als de zoekterm, de lijsten, de verborgen items,
+  // de sortering of het 3-daagse venster wijzigen.
+  const displayPayable = useMemo(
+    () => (searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable),
+    [searching, payable, dismissed, matchV, sortBy, visiblePayable]
+  );
+  const displayRemind = useMemo(
+    () => (searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind),
+    [searching, remind, dismissed, matchV, sortBy, visibleRemind]
+  );
   const noneShown = displayPayable.length === 0 && displayRemind.length === 0;
 
   return (
@@ -293,7 +302,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
           />
           {search && (
-            <button onClick={() => setSearch("")} aria-label="Wissen"
+            <button onClick={() => setSearch("")} aria-label="Wissen" className="tap-44"
               style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>

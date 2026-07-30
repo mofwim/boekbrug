@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendAccountantInvite } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { appOrigin } from '@/lib/app-origin'
 
 // إرسال دعوة للمحاسب
 export async function POST(request: NextRequest) {
@@ -83,7 +84,8 @@ export async function POST(request: NextRequest) {
     }
 
     // بناء رابط القبول — fallback to request origin if env var missing
-    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/+$/, '')
+    // [ORIGIN] Eén keten; een lege of kapotte waarde valt door naar de verzoek-origin.
+    const baseUrl = appOrigin(process.env, new URL(request.url).origin) ?? new URL(request.url).origin
     const acceptUrl = `${baseUrl}/invite/accept?token=${invitation.token}`
 
     // [TRUST-INVITE] The email IS the invite. On send failure, roll the pending row back — else the

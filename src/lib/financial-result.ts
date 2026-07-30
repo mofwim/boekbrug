@@ -431,8 +431,21 @@ export function computeResult(
   }
 
   // 3) Cash book.
+  //
+  // [CASH-DIRECTION] cash_entries.amount is ALWAYS POSITIVE — the sign lives in `direction`
+  // ('in' = money into the drawer, 'out' = money out of it). This loop used to read the magnitude
+  // and ignore the direction entirely, so a cash movement was booked with the sign of its
+  // category rather than its own:
+  //   · a REFUND paid to a customer from the till (omzet / out) ADDED omzet and BTW owed — the
+  //     owner declares and pays VAT on money he handed back;
+  //   · a refund RECEIVED from a supplier (kosten / in) ADDED cost, and with a bon and a rate it
+  //     also added voorbelasting — a deduction on money that came back, which is the direction
+  //     that ends in a naheffing.
+  // Refunds are the normal way a till goes the other way, so this is not an exotic case. The
+  // signed amount below flows through the same arithmetic; net, BTW and the per-rate bucket all
+  // carry the sign, exactly as a creditnota does on the invoice side.
   for (const c of cashEntries) {
-    const amt = c.amount ?? 0;
+    const magnitude = c.amount ?? 0;
     if (c.category === "omzet") {
       // [TURNOVER] cash omzet on a covered day is part of the till turnover already
       // counted — exclude it from omzet, BTW, AND the no-rate nudge (all three).
@@ -440,6 +453,8 @@ export function computeResult(
       // its cash sales inside the Z-report, so a dateless cash omzet is treated as covered
       // rather than double-counted; a ZZP (no turnover → covered empty) still counts it.
       if (c.date ? covered.has(c.date) : covered.size > 0) continue;
+      // Money IN is the sale; money OUT under 'omzet' is a refund OF a sale.
+      const amt = c.direction === "out" ? -magnitude : magnitude;
       if (c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         omzet += net;
@@ -454,6 +469,9 @@ export function computeResult(
       // voorbelasting (the reclaimable BTW), exactly like a purchase invoice. WITHOUT both a
       // document AND a rate it books at FULL GROSS with €0 voorbelasting — we never invent a
       // deduction from an undocumented cash line (the "no voorbelasting without a document" rule).
+      // Money OUT is the cost; money IN under 'kosten' is a refund OF a cost — and it takes its
+      // share of voorbelasting back with it.
+      const amt = c.direction === "in" ? -magnitude : magnitude;
       if (c.document_id && c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         kosten += net;
@@ -464,7 +482,8 @@ export function computeResult(
     } else if (c.category === "salaris") {
       // [CASH-COST-VAT] Wages paid in cash: a real business cost, but NEVER any BTW/voorbelasting
       // (wages carry no VAT). Rate-free by construction — a stray rate/document is ignored.
-      kosten += amt;
+      // Repaid wages (money back into the till) reduce the cost, same rule as above.
+      kosten += c.direction === "in" ? -magnitude : magnitude;
     }
     // transfer / prive → excluded
   }

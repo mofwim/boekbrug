@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
 // [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
 import { SnelStartCard } from '@/components/settings/SnelStartCard'
@@ -15,8 +16,12 @@ import {
   normalizeBtw, normalizeIban,
 } from '@/lib/validation'
 import type { ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 export default function SettingsPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router = useRouter()
   const supabase = createClient()
   const [accountant, setAccountant] = useState<ProfileRow | null>(null)
@@ -296,9 +301,12 @@ export default function SettingsPage() {
   }
   // إزالة ربط المحاسب مع تأكيد
   async function unlinkAccountant() {
-    const confirmed = window.confirm(
-      'Weet je zeker dat je de koppeling met je boekhouder wilt verwijderen?'
-    )
+    const confirmed = await dialog.confirm({
+      title: 'Koppeling met je boekhouder verwijderen?',
+      message: `${accountant?.full_name || accountant?.email || 'Je boekhouder'} kan je administratie daarna niet meer inzien. Je kunt later opnieuw uitnodigen.`,
+      confirmLabel: 'Ontkoppelen',
+      danger: true,
+    })
     if (!confirmed) return
 
     // Call API — handles email notification + audit log server-side
@@ -307,7 +315,7 @@ export default function SettingsPage() {
       setAccountant(null)
     } else {
       const data = await res.json().catch(() => ({}))
-      alert(data.error || 'Ontkoppelen mislukt')
+      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
     }
   }
 
@@ -718,6 +726,28 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+        )}
+
+        {/* [NAV] Facturering was reachable ONLY from a billing e-mail and the
+            Stripe return URL — nothing in the app linked to it, so a user who
+            wanted to see their plan had no way to get there. Boekhouders have no
+            plan or limits measured, so the row is for owners only (the page
+            itself makes the same distinction). */}
+        {profile.role === 'zzper' && (
+          <Link
+            href="/dashboard/settings/facturering"
+            className="pressable-row bg-white rounded-2xl p-5 shadow-sm flex items-center justify-between no-underline"
+          >
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                Facturering
+              </p>
+              <p className="text-sm font-medium text-gray-900">Je plan en je btw-facturen</p>
+            </div>
+            <span className="material-symbols-outlined text-gray-400" aria-hidden>
+              chevron_right
+            </span>
+          </Link>
         )}
 
         {/* [BOEK-032] Gevarenzone — gegevens exporteren + account verwijderen */}

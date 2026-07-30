@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { parseAmountNL } from "@/lib/parse-nl";
+import { amountOrConditions, foldText } from "@/lib/search";
 import type { SearchResult, SearchResultGroup, SearchTarget } from "@/lib/search";
 
 // ─── [SEARCH] Term sanitation ────────────────────────────────────────────────
@@ -49,43 +49,10 @@ function normalizeQuery(q: string): string[] {
 }
 
 // ─── [SEARCH] Amount matching ────────────────────────────────────────────────
-// DB stores total_inc_btw as numeric (e.g. "1500", "1500.5"). Users type NL money
-// ("1.500,00" / "1.500" / "1500,00"). Only kick in for money-shaped queries so a
-// normal name/number search never triggers a spurious amount match.
-function amountConditions(q: string): string[] {
-  // Strip spaces AND the euro sign so "1 500" / "€1.500,00" parse correctly
-  // (parseAmountNL doesn't strip currency). Gate to money-shaped input.
-  const trimmed = q.trim().replace(/[\s€]/g, "");
-  if (!/\d/.test(trimmed) || !/^[\d.,]+$/.test(trimmed)) return [];
-  const n = parseAmountNL(trimmed);
-  // Cap well below 1e21 where Number.toString() switches to exponential notation
-  // (which would emit a non-digit "1e+21" into the ILIKE pattern).
-  if (!(n > 0) || n >= 1e15) return [];
-  const intPart = Math.trunc(n).toString(); // digits only (n < 1e15) → safe to interpolate
-  return [
-    `total_inc_btw::text.ilike.${intPart}`,   // exact "1500"
-    `total_inc_btw::text.ilike.${intPart}.%`, // "1500.00", "1500.5"
-  ];
-}
-
-// Amount matching for an arbitrary signed numeric column (bank_transactions.amount is
-// SIGNED — a debit is stored negative — and cash_entries.amount is positive). Same
-// money-shaped gate as amountConditions, but emits both the positive and the negative
-// variants so "45" finds a "-45.50" bank debit as well as a "45.50" credit. Prefix/exact
-// (never a leading %) so "45" never spuriously matches "450".
-function amountConditionsCol(col: string, q: string): string[] {
-  const trimmed = q.trim().replace(/[\s€]/g, "");
-  if (!/\d/.test(trimmed) || !/^[\d.,]+$/.test(trimmed)) return [];
-  const n = parseAmountNL(trimmed);
-  if (!(n > 0) || n >= 1e15) return [];
-  const intPart = Math.trunc(n).toString();
-  return [
-    `${col}::text.ilike.${intPart}`,     // "45", "45.50"
-    `${col}::text.ilike.${intPart}.%`,
-    `${col}::text.ilike.-${intPart}`,    // "-45", "-45.50" (bank debit)
-    `${col}::text.ilike.-${intPart}.%`,
-  ];
-}
+// Amount → ILIKE conditions are built by the SHARED, tested helper amountOrConditions
+// (src/lib/search.ts), so the global bar matches amounts identically to the in-page
+// filters — decimal- and thousands-aware ("670,09" narrows to 670.09, not 670.50).
+// Bank/cash use { signed: true } because a debit is stored negative.
 
 // Builds Supabase .or() string: fields × terms cartesian product (terms pre-sanitised)
 function buildOr(fields: string[], terms: string[]): string {
@@ -115,8 +82,8 @@ function dedup(arr: SearchResult[]): SearchResult[] {
 
 // ─── [SEARCH] Relevance ranking ──────────────────────────────────────────────
 // Accent-insensitive fold so "café" ranks like "cafe".
-const fold = (s: string | null | undefined) =>
-  (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+// [SMART-FILTER] Uses the shared foldText from src/lib/search.ts (single source of
+// truth), so ranking folds exactly like every in-page filter.
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -129,9 +96,9 @@ function escapeRegex(s: string): string {
 // "2026-004 moha" — we fall back to how many query TOKENS appear across the fields,
 // so ranking still engages instead of degrading to pure recency.
 function rankScore(query: string, fields: Array<string | null | undefined>): number {
-  const needle = fold(query).trim();
+  const needle = foldText(query).trim();
   if (!needle) return 0;
-  const folded = fields.map(fold).filter(Boolean);
+  const folded = fields.map((f) => foldText(f)).filter(Boolean);
   if (folded.length === 0) return 0;
 
   const wb = new RegExp(`\\b${escapeRegex(needle)}`);
@@ -206,6 +173,24 @@ export async function GET(req: NextRequest) {
   const fmt = (n: number) =>
     new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
 
+  // invoice_lines pre-query — find invoice IDs matching on line descriptions.
+  // No explicit tenant column exists on invoice_lines; RLS scopes SELECT to the
+  // owner/receiver/accountant, and the final invoices query re-filters by
+  // sender/receiver ∈ senderIds, so this is safe (defence in depth).
+  // [PERF] This query depends ONLY on `terms`, never on the role/accountant
+  // lookups below — so fire it NOW (Promise.resolve() forces the lazy PostgREST
+  // builder to execute) and await it further down. Saves one serial round-trip.
+  const linesPromise =
+    target === "all" || target === "invoices"
+      ? Promise.resolve(
+          supabase
+            .from("invoice_lines")
+            .select("invoice_id")
+            .or(buildOr(["description"], terms))
+            .limit(30)
+        )
+      : null;
+
   // Role check
   const { data: profile } = await supabase
     .from("profiles")
@@ -228,26 +213,17 @@ export async function GET(req: NextRequest) {
     senderIds = [user.id, ...clientIds];
   }
 
-  // invoice_lines pre-query — find invoice IDs matching on line descriptions.
-  // No explicit tenant column exists on invoice_lines; RLS scopes SELECT to the
-  // owner/receiver/accountant, and the final invoices query re-filters by
-  // sender/receiver ∈ senderIds, so this is safe (defence in depth).
-  let invoiceIdsFromLines: string[] = [];
-  if (target === "all" || target === "invoices") {
-    const { data: lineMatches } = await supabase
-      .from("invoice_lines")
-      .select("invoice_id")
-      .or(buildOr(["description"], terms))
-      .limit(30);
-    // [BOEK-FOUNDATION-TYPES] invoice_id is nullable — filter out nulls
-    invoiceIdsFromLines = [
-      ...new Set(
-        (lineMatches ?? [])
-          .map((l) => l.invoice_id)
-          .filter((id): id is string => id !== null)
-      ),
-    ];
-  }
+  // [PERF] Collect the invoice_lines result kicked off above (already in flight
+  // while the role/accountant queries ran). Gate unchanged: no promise → [].
+  const lineMatches = linesPromise ? (await linesPromise).data : null;
+  // [BOEK-FOUNDATION-TYPES] invoice_id is nullable — filter out nulls
+  const invoiceIdsFromLines: string[] = [
+    ...new Set(
+      (lineMatches ?? [])
+        .map((l) => l.invoice_id)
+        .filter((id): id is string => id !== null)
+    ),
+  ];
 
   const idList = senderIds.join(",");
 
@@ -264,7 +240,7 @@ export async function GET(req: NextRequest) {
           .or(
             [
               buildOr(["invoice_number", "client_name", "client_email"], terms),
-              ...amountConditions(q),
+              ...amountOrConditions("total_inc_btw", q),
               invoiceIdsFromLines.length > 0
                 ? `id.in.(${invoiceIdsFromLines.join(",")})`
                 : null,
@@ -317,7 +293,7 @@ export async function GET(req: NextRequest) {
           .or(
             [
               buildOr(["counterpart_name", "description", "counterpart_iban", "reference"], terms),
-              ...amountConditionsCol("amount", q),
+              ...amountOrConditions("amount", q, { signed: true }),
             ]
               .filter(Boolean)
               .join(",")
@@ -336,7 +312,7 @@ export async function GET(req: NextRequest) {
           .or(
             [
               buildOr(["description", "category"], terms),
-              ...amountConditionsCol("amount", q),
+              ...amountOrConditions("amount", q, { signed: true }),
             ]
               .filter(Boolean)
               .join(",")

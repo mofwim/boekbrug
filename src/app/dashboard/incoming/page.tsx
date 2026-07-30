@@ -48,6 +48,9 @@ interface IncomingInvoiceRow {
   // [INCOMING-BEVESTIGD] Only set on the "Bevestigd" list — 'received' (verified, te betalen)
   // or 'paid' (settled). NULL/absent on pending (always 'processing') + ignored ('archived').
   status?: string | null;
+  // [NEGEER-REDEN] Alleen op de Genegeerd-lijst geselecteerd, en ook daar optioneel: oude rijen
+  // hebben hem niet, en zolang de migratie niet gedraaid is bestaat de kolom nog niet.
+  archive_reason?: string | null;
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
@@ -111,16 +114,27 @@ export default async function IncomingPage() {
   // [QUEUE-COMPLETE] Also uncapped (was 50): an archived invoice beyond the
   // cap was invisible on the only surface that can restore it (Bewaarplicht —
   // archive is the app's "delete", so recovery must always be reachable).
-  const ignoredRaw = await fetchAllRows((from, to) => supabase
-    .from("invoices")
-    .select(INVOICE_COLUMNS)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .eq("status", "archived")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: true })
-    .range(from, to)
-  ).catch(() => null);
+  //
+  // [NEGEER-REDEN] Deze lijst — en alleen deze — leest ook archive_reason, want dat label hoort
+  // bij "waarom staat dit hier". De migratie invoice_archive_reason.sql wordt met de hand
+  // toegepast, dus zolang die nog niet gedraaid is bestaat de kolom niet en zou de hele query
+  // falen → een LEEG Genegeerd-tabblad, precies de plek waar niets verloren mag lijken. Daarom:
+  // probeer mét de kolom, val bij een fout terug op de kale kolomlijst. Dan ontbreekt hooguit
+  // het label.
+  const ignoredColumns = `${INVOICE_COLUMNS}, archive_reason`;
+  const fetchIgnored = (columns: string) =>
+    fetchAllRows((from, to) => supabase
+      .from("invoices")
+      .select(columns)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "archived")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to)
+    );
+  const ignoredRaw = await fetchIgnored(ignoredColumns)
+    .catch(() => fetchIgnored(INVOICE_COLUMNS).catch(() => null));
 
   // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
   // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),

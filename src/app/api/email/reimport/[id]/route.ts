@@ -18,7 +18,14 @@ import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+// [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
+// [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
+import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
+// [HERLEES-ARCHIVEER] Blijkt het geen factuur, dan archiveren we hem zelf — maar nooit als er geld
+// op staat. Dezelfde predicaat als de negeer-route, zodat de twee niet uit elkaar kunnen lopen.
+import { hasSettledMoney } from "@/lib/invoice-removal";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -33,25 +40,6 @@ const REREAD_MODEL = "claude-sonnet-5";
 // [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
 // route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
 export const maxDuration = 120;
-
-// A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
-// to the bucket-relative path. (Mirror of the helper in api/email/file/[id].)
-function toStoragePath(stored: string): string {
-  if (stored.startsWith("http")) {
-    const signMarker = "/object/sign/documents/";
-    const publicMarker = "/object/public/documents/";
-    let idx = stored.indexOf(signMarker);
-    if (idx !== -1) {
-      idx += signMarker.length;
-    } else {
-      idx = stored.indexOf(publicMarker);
-      if (idx === -1) return stored;
-      idx += publicMarker.length;
-    }
-    return decodeURIComponent(stored.slice(idx).split("?")[0]);
-  }
-  return stored;
-}
 
 // [HUNT-Q4] Identify a file by its magic bytes — authoritative over a filename/extension
 // guess. Returns null when the header isn't one the classifier can read (leave the guess).
@@ -90,7 +78,9 @@ export async function POST(
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, field_confidence")
+    // [HERLEES-ARCHIVEER] amount_paid meegenomen: het auto-archiveren hieronder mag nooit een
+    // factuur wegzetten waarop al (deels) betaald is.
+    .select("id, receiver_id, direction, status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, field_confidence")
     .eq("id", id)
     .single();
 
@@ -154,8 +144,18 @@ export async function POST(
 
   // Download the stored bytes. Storage bucket RLS is separate from table RLS; ownership is
   // already proven above, so the pipeline client is used only to read this one proven file.
-  const pipeline = createPipelineClient();
   const storagePath = toStoragePath(invoice.pdf_url);
+  // [SEC-STORAGE-PATH] "Ownership is already proven above" was proven of the ROW, not of the path
+  // it points at — and pdf_url is writable by the very caller whose row this is. The pipeline
+  // client bypasses the bucket policy, so without this the caller could name another tenant's key
+  // and have its bytes read (and, worse, re-imported onto their own invoice). See storage-path.ts.
+  if (!pathBelongsToOwner(storagePath, invoice.receiver_id)) {
+    console.error("[SEC-STORAGE-PATH] refused to read a path outside the authorized owner", {
+      invoiceId: id, receiverId: invoice.receiver_id, storagePath, callerId: user.id,
+    });
+    return NextResponse.json({ error: "Kon het bestand niet lezen" }, { status: 403 });
+  }
+  const pipeline = createPipelineClient();
   const { data: blob, error: dlErr } = await pipeline.storage.from("documents").download(storagePath);
   if (dlErr || !blob) {
     console.error("[REIMPORT] download failed", { invoiceId: id, storagePath, dlErr });
@@ -186,13 +186,82 @@ export async function POST(
     return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });
   }
 
-  // If the fresh read now says this is NOT a bookable invoice (e.g. it's a statement of
-  // account, or it could not be read), do NOT wipe the row — report so the human decides
-  // whether to keep or ignore it. Nothing is changed.
+  // [HERLEES-ARCHIVEER] De verse lezing zegt: dit is geen boekbaar stuk — een rekeningoverzicht,
+  // een herinnering, een reclamemail. Voorheen bleef de rij dan staan en vertelde een melding de
+  // eigenaar dat hij hem zelf maar moest negeren. Dat is werk verschuiven, niet werk wegnemen: hij
+  // heeft net op "opnieuw inlezen" gedrukt precies om dit te laten uitzoeken.
+  //
+  // Dus archiveren we hem nu zelf, met reden 'geen_factuur' erbij, zodat het Genegeerd-tabblad
+  // meteen uitlegt waarom hij daar staat. Dat mag, want archiveren in deze app is omkeerbaar: de
+  // rij, het bestand en het nummer blijven zeven jaar staan en één tik zet hem terug. Als de verse
+  // lezing het mis had, kost dat de eigenaar één tik — geen document.
+  //
+  // Twee hekken blijven: GUARD 1 hierboven heeft al vastgesteld dat de factuur nog in de
+  // controlewachtrij staat ('processing'), en hasSettledMoney weigert alles waarop al geld is
+  // afgeboekt. Geen van beide zou hier mogen voorkomen, maar geld verdwijnt niet op een aanname.
   if (!c.isInvoice) {
+    if (hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid })) {
+      return NextResponse.json({
+        ok: false,
+        notInvoice: true,
+        archived: false,
+        reason: c.reason ?? null,
+        detail: "Er is al betaald op deze factuur, dus hij is niet automatisch verwijderd — draai eerst de betaling terug.",
+      });
+    }
+
+    const archiveNow = new Date().toISOString();
+    const archivePatch: InvoiceUpdate = {
+      status: "archived",
+      archive_reason: "geen_factuur",
+      archived_at: archiveNow,
+      updated_at: archiveNow,
+    };
+    const archive = (patch: InvoiceUpdate) =>
+      supabase
+        .from("invoices")
+        .update(patch)
+        .eq("id", id)
+        .eq("receiver_id", user.id)
+        .eq("status", "processing")
+        .select("id");
+
+    // Zelfde terugval als de negeer-route: bestaan archive_reason/archived_at nog niet op deze
+    // database, dan archiveren we zonder notitie in plaats van de hele actie te laten mislukken.
+    let { data: archived, error: archErr } = await archive(archivePatch);
+    if (archErr && (archErr.code === "PGRST204" || archErr.code === "42703")) {
+      ({ data: archived, error: archErr } = await archive({ status: "archived", updated_at: archiveNow }));
+    }
+
+    if (archErr || !archived || archived.length === 0) {
+      // Niet gelukt → eerlijk zeggen dat er niets is veranderd, zoals voorheen.
+      return NextResponse.json({
+        ok: false,
+        notInvoice: true,
+        archived: false,
+        reason: c.reason ?? null,
+      });
+    }
+
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.status_changed",
+      entityType: "invoice",
+      entityId: id,
+      oldValue: { status: invoice.status },
+      newValue: {
+        status: "archived",
+        archive_reason: "geen_factuur",
+        via: "reimport_not_invoice",
+        detail: c.reason ?? null,
+      },
+      ipAddress: getClientIP(req),
+    });
+
     return NextResponse.json({
       ok: false,
       notInvoice: true,
+      archived: true,
       reason: c.reason ?? null,
     });
   }
@@ -209,37 +278,27 @@ export async function POST(
   const verdict = freshHasTotal
     ? evaluateArithmetic(c, { isCreditNote: c.isCreditNote === true })
     : null;
-  // [DOUBLE-CHECK #3] Preserve non-AI keys already on field_confidence that the fresh AI read
-  // does not carry: the camera-intake hints (_intake_*) always, and — only when we are KEEPING
-  // the stored amounts (no fresh total) — the prior _safecore/_dedup note, so the verdict on
-  // those unchanged amounts stays valid instead of being silently dropped.
+  // [REIMPORT-CARRY] Wat blijft er staan, en wat wordt opnieuw bepaald? Die regel woont in
+  // src/lib/reimport-carry.ts, puur en getest — want hier ging het mis: `_safecore` werd in zijn
+  // geheel vervangen door het verse rekenoordeel, terwijl er DRIE soorten waarheid in dat ene
+  // object wonen. De dubbel-signalen (possible_duplicate*, dedup) gaan over de relatie met een
+  // ándere factuur, en deze route draait geen enkele dedup-query — die konden dus niet opnieuw
+  // worden afgeleid en verdwenen gewoon. Een factuur met "mogelijk dubbel met X" werd door één
+  // druk op deze knop schoon, mocht weer auto-boeken, en dezelfde kostenpost kon een tweede keer
+  // de administratie in. De knop die het vertrouwen moest herstellen, wiste juist de waarschuwing.
   const priorFc = (invoice.field_confidence ?? null) as Record<string, unknown> | null;
-  const carried: Record<string, unknown> = {};
-  if (priorFc) {
-    for (const k of Object.keys(priorFc)) {
-      if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      // [BTW-SUM-FIX] _btw_derived explains the STORED amounts ("this BTW is ours, not the
-      // invoice's"). Keep it alongside _safecore when we keep those amounts — dropping it would
-      // leave a derived BTW sitting in the row with nothing left saying so.
-      else if (!freshHasTotal && (k === "_safecore" || k === "_btw_derived" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
-    }
-  }
   const aiConfidence = (c.fieldConfidence ?? null) as Record<string, unknown> | null;
-  let fieldConfidenceValue: Record<string, unknown> | null =
-    aiConfidence || Object.keys(carried).length ? { ...(aiConfidence ?? {}), ...carried } : null;
-  // A FRESH verdict (amounts were re-read) is the authority on _safecore: set it when the
-  // fresh amounts don't reconcile; a clean fresh read carries no stale hold.
-  if (verdict && !verdict.ok) {
-    fieldConfidenceValue = {
-      ...(fieldConfidenceValue ?? {}),
-      _safecore: {
-        arithmetic_ok: false,
-        reason: verdict.reason,
-        flags: verdict.flags,
-        held_at: new Date().toISOString(),
-      },
-    };
-  }
+  const fieldConfidenceValue = buildReimportFieldConfidence({
+    priorFc,
+    aiConfidence,
+    freshHasTotal,
+    verdict,
+    heldAt: new Date().toISOString(),
+    // De herinneringsvlag komt WÉL van de verse lezing: een ten onrechte gezette vlag moet te
+    // wissen zijn door precies dit middel, anders is hij onherstelbaar.
+    freshIsReminder: c.isReminder === true,
+    freshReminderOf: c.reminderOfInvoiceNumber ?? null,
+  });
 
   // The effective invoice date the patch writes (fresh-or-keep) — also drives due_date.
   const freshDate = (typeof c.invoiceDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.invoiceDate))

@@ -31,6 +31,10 @@
 // CSV, so the router and the parser can never disagree about what a bank CSV is.
 import { looksLikeBankCsv } from "./bank-csv"
 
+// [BON-BETAALWIJZE] De vertaling van de afgedrukte tenderregel naar bank|kas. Pure module,
+// getest tegen echte kassabonnen, zodat deze beslissing niet met het model meebeweegt.
+import { gokBetaalwijze, normaliseerBetaalwijze } from "./bon-betaalwijze"
+
 const BANK_EXTENSIONS = [".mt940", ".sta", ".camt", ".053"]
 
 export function looksLikeBankFile(filename: string, mimeType: string, textHead?: string): boolean {
@@ -71,6 +75,11 @@ export interface IntakeClassification {
   // [PEN-MARK] Payment hints read from a handwritten note or a shop stamp on a PAPER invoice.
   paid_method?: "bank" | "kas" | "pin" | null
   paid_date?: string | null
+  // [BON-BETAALWIJZE] De tenderregel die een kassabon AFDRUKT, letterlijk overgenomen
+  // ("Bankpas 70,29", "KONTANT 120,00 Afronding 0,02 Wisselgeld 7,10"). Bewust ruwe tekst:
+  // het classificeren gebeurt in bon-betaalwijze.ts, die puur en getest is.
+  paid_evidence?: string | null
+  paid_card_last4?: string | null
   confidence?: number
 }
 
@@ -83,8 +92,18 @@ export interface IntakeDecision {
   suggestPaid: boolean
   // [PEN-MARK] When the paid suggestion comes from a written/stamped mark, carry HOW and WHEN
   // so the verify modal can pre-fill method + date. Null when unknown.
-  paidMethod?: "bank" | "kas" | "pin" | null
+  // [BON-BETAALWIJZE] Normalised to the two values the rest of the app knows — 'pin' collapses
+  // to 'bank' here, so no downstream writer can ever put a third value in payment_method.
+  paidMethod?: "bank" | "kas" | null
   paidDate?: string | null
+  // [BON-BETAALWIJZE] True only when the PAPER itself says how it was settled ("Bankpas",
+  // "Kontant", "Wisselgeld"). That is the difference between writing payment_method without
+  // asking and asking the owner one question: gok slim, vraag alleen als we het niet weten.
+  paidMethodZeker?: boolean
+  /** Het woord op de bon waar de gok op rust — naleesbaar bij een geschil. */
+  paidEvidence?: string | null
+  /** Laatste 4 cijfers van de pas, als de bon ze afdrukt. Maakt de bankmatch betrouwbaar. */
+  paidCardLast4?: string | null
   reason: string // short, for audit/debug
 }
 
@@ -112,11 +131,19 @@ export function decideFromAi(ai: IntakeClassification): IntakeDecision {
   }
 
   // Paid receipt/kassabon → verify queue, pre-suggest paid (human confirms).
+  // [BON-BETAALWIJZE] De betaalwijze komt van het PAPIER, niet van de interpretatie: de
+  // afgedrukte tenderregel wint van ai.paid_method (zie bon-betaalwijze.ts). Staat er niets,
+  // dan valt hij terug op het model — maar dan met zeker=false, zodat het scherm het vraagt
+  // in plaats van het te beweren.
   if (ai.document_kind === "receipt") {
+    const gok = gokBetaalwijze(ai.paid_evidence, ai.paid_method)
     return {
       destination: "receipt",
       suggestPaid: ai.is_paid === true,
-      paidMethod: ai.is_paid ? (ai.paid_method ?? null) : null,
+      paidMethod: ai.is_paid ? gok.method : null,
+      paidMethodZeker: ai.is_paid ? gok.zeker : false,
+      paidEvidence: gok.bewijs ?? ai.paid_evidence ?? null,
+      paidCardLast4: gok.kaartLaatste4 ?? ai.paid_card_last4 ?? null,
       paidDate: ai.is_paid ? (ai.paid_date ?? null) : null,
       reason: ai.is_paid ? "ai_receipt_paid" : "ai_receipt_unpaid",
     }
@@ -129,7 +156,11 @@ export function decideFromAi(ai: IntakeClassification): IntakeDecision {
     return {
       destination: "invoice",
       suggestPaid: true,
-      paidMethod: ai.paid_method ?? null,
+      // [BON-BETAALWIJZE] Ook hier genormaliseerd: een pen-streep "pin" is een bankbetaling.
+      // Een handgeschreven merk is nooit "zeker" in de zin van deze vlag — het is een lezing
+      // van iemands pen, niet van een kassaregel.
+      paidMethod: normaliseerBetaalwijze(ai.paid_method),
+      paidMethodZeker: false,
       paidDate: ai.paid_date ?? null,
       reason: "ai_invoice_pen_paid",
     }

@@ -5,20 +5,19 @@
 // Cash sales (in) and cash expenses (out); deposits/withdrawals to the bank are
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
 // an "unsupported type" and be filed unreadable — the contant-betaald flow then never books. Convert
 // to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
-  surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
-  warning: '#E37400', // [COHERENCE-KAS-UPLOAD] calm amber for "couldn't read — check bestanden"
-  primaryContainer: '#D3E3FD',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -267,20 +266,28 @@ export default function KasClient() {
   // payment on the invoice instead; the kasboek then reconciles it away).
   // A 'transfer' is disambiguated by DIRECTION so the accountant sees the real move: cash OUT of
   // the drawer to the bank = storting, cash INTO the drawer from the bank = opname.
-  const catLabel = (k: string, dir?: 'in' | 'out') => {
+  // [PERF] useCallback houdt catLabel stabiel (hij hangt alleen van de constante CATS af),
+  // zodat de gememoïseerde filter hieronder een vaste dependency heeft.
+  const catLabel = useCallback((k: string, dir?: 'in' | 'out') => {
     if (k === 'betaling') return 'Factuurbetaling (contant)'
     if (k === 'transfer') return dir === 'in' ? 'Opname (van bank)' : dir === 'out' ? 'Storting (naar bank)' : 'Naar/van bank'
     return CATS.find((c) => c.key === k)?.label ?? k
-  }
+  }, [])
 
   // [SEARCH] In-page live filter over the cash ledger (omschrijving / categorie / bedrag).
   // [SMART-FILTER] shared matcher — decimaal- én duizendtal-bewust (src/lib/search.ts)
+  // [PERF] useMemo: alleen herberekenen als de zoekterm of de boekingen wijzigen —
+  // niet bij elke render (typen in het add-formulier raakt dit filter niet).
   const rawK = search.trim()
-  const filteredEntries = rawK
-    ? entries.filter((e) =>
-        rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
-      )
-    : entries
+  const filteredEntries = useMemo(
+    () =>
+      rawK
+        ? entries.filter((e) =>
+            rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
+          )
+        : entries,
+    [rawK, entries, catLabel]
+  )
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -479,7 +486,7 @@ export default function KasClient() {
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen"
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>
@@ -572,21 +579,34 @@ export default function KasClient() {
                   ) : kb.months.map((m) => (
                     <div key={m.key} style={{ marginTop: 14 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 4 }}>{m.label}</div>
+                      {/* [LEDGER-SCROLL] A day with BOTH a receipt and an expense packs the fixed
+                          date + three nowrap money columns (ontvangsten / uitgaven / eindsaldo)
+                          wider than a phone, which starved the description to 0 and clipped the
+                          running balance. This is a ledger — the columns must stay aligned — so the
+                          strip scrolls horizontally (hidden scrollbar, swipe) below its min width
+                          instead of wrapping. On a wide screen the min width is exceeded and nothing
+                          scrolls. */}
                       <div style={{ border: `1px solid ${M3.outlineVariant}`, borderRadius: 10, overflow: 'hidden' }}>
+                        <div className="inv-strip">
+                          {/* One shared min width so every row is the same width and the columns
+                              line up; below it the strip scrolls as a unit (see [LEDGER-SCROLL]). */}
+                          <div style={{ minWidth: 320 }}>
                         {m.rows.map((r, i) => (
                           <div key={r.date} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 10px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none', fontSize: 13 }}>
                             <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(r.date)}</span>
                             <span style={{ flex: 1, minWidth: 0, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {r.descriptions.length ? r.descriptions.join(' · ') : (r.ontvangsten > 0 ? 'Kasontvangsten' : 'Kasuitgave')}
                             </span>
-                            {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap' }}>+{eur.format(r.ontvangsten)}</span>}
-                            {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap' }}>−{eur.format(r.uitgaven)}</span>}
-                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'right', whiteSpace: 'nowrap' }}>{eur.format(r.eindsaldo)}</span>
+                            {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap', flexShrink: 0 }}>+{eur.format(r.ontvangsten)}</span>}
+                            {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap', flexShrink: 0 }}>−{eur.format(r.uitgaven)}</span>}
+                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'right', whiteSpace: 'nowrap', flexShrink: 0 }}>{eur.format(r.eindsaldo)}</span>
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', borderTop: `1px solid ${M3.outlineVariant}`, background: '#FAFAFA', fontSize: 12.5, fontWeight: 600, color: M3.neutral }}>
                           <span>Totaal {m.label}</span>
                           <span style={{ fontFamily: FONT_NUM }}>+{eur.format(m.totalIn)} · −{eur.format(m.totalOut)}</span>
+                        </div>
+                          </div>
                         </div>
                       </div>
                     </div>

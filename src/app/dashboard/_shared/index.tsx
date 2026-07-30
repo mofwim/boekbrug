@@ -294,7 +294,8 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            ⚙️ Instellingen
+            <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginRight: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
+            Instellingen
           </button>
 
           {/* Uitloggen */}
@@ -367,7 +368,14 @@ function NotificationsBell({
         onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
         onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
       >
-        🔔
+        {/* [DESIGN] Was an emoji. The app ships a subsetted Material Symbols
+            font and uses it for every other icon; an emoji here is drawn by the
+            operating system, so its weight, colour and shape changed per device
+            and could not be tinted to match the bar it sits in. These three sat
+            in the chrome of every single page. */}
+        <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.onSurfaceVariant }} aria-hidden>
+          notifications
+        </span>
         {(() => {
           const effectiveUnread = notifications.filter(n => !(readOverride[n.id] ?? n.read)).length
           return effectiveUnread > 0 ? (
@@ -427,17 +435,25 @@ function NotificationsBell({
               {notifications.map(n => (
                 <div
                   key={n.id}
+                  // [MOTION] A notification row is a link in everything but tag
+                  // name. It now presses like one (pressable-row tints on
+                  // :active, which touch fires — the old JS hover never did),
+                  // and can be reached and opened from the keyboard.
+                  role={n.link ? 'button' : undefined}
+                  tabIndex={n.link ? 0 : undefined}
+                  className={n.link ? 'pressable-row notification-row' : undefined}
                   onClick={() => {
                     if (n.link) { router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id) }
                   }}
+                  onKeyDown={e => {
+                    if (!n.link || (e.key !== 'Enter' && e.key !== ' ')) return
+                    e.preventDefault()
+                    router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id)
+                  }}
                   style={{
                     padding: '12px 16px', borderBottom: '1px solid #F1F3F4',
-                    cursor: n.link ? 'pointer' : 'default',
                     backgroundColor: !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent',
-                    transition: 'background 0.1s',
                   }}
-                  onMouseEnter={e => { if (n.link) (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#D2E3FC' : '#F8F9FA' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent' }}
                 >
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}
@@ -581,7 +597,15 @@ export function DashboardHeader({
 
   // [HEADER-SYSTEM] Home top bar. Height + surface/border/font come from the
   // shared tokens so it stays in lockstep with the sub-page bar (SubPageHeader);
-  // see docs/header-system.md.
+  // see docs/HEADER_SYSTEM.md.
+  //
+  // [SAFE-AREA] The two bars must handle the notch identically. SubPageHeader
+  // already padded itself by env(safe-area-inset-top) and grew its height to
+  // match; this one did not — it just sat at top:0 with a fixed height. That
+  // difference was invisible while viewportFit was unset (every inset resolved
+  // to 0), but the moment cover is enabled in app/layout.tsx it becomes the one
+  // bar in the app that renders underneath the status bar. Same two lines as
+  // SubPageHeader, so the two homes and every sub-page now clear the notch.
   return (
     <header style={{
       position: 'sticky',
@@ -589,10 +613,13 @@ export function DashboardHeader({
       zIndex: 50,
       backgroundColor: M3.surface,
       borderBottom: `1px solid ${M3.outlineVariant}`,
-      height: PAGE_HEADER_HEIGHT,
+      height: `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`,
       display: 'flex',
       alignItems: 'center',
+      // NB: the `padding` shorthand must stay ABOVE paddingTop — it resets all
+      // four sides, so listing it after would wipe the safe-area inset out.
       padding: '0 16px',
+      paddingTop: 'env(safe-area-inset-top)',
       gap: 8,
       fontFamily: FONT,
     }}>
@@ -641,7 +668,9 @@ export function DashboardHeader({
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            💬
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.onSurfaceVariant }} aria-hidden>
+              forum
+            </span>
           </button>
           {unreadMessages > 0 && (
             <span style={{

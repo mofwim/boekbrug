@@ -14,11 +14,15 @@ import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { syncUserEmails } from "@/lib/email-integration";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   // [CRON-OBSERVABILITY] Distinguish a MISCONFIG (secret not set → the whole circle silently
@@ -116,6 +120,9 @@ export async function GET(req: NextRequest) {
       Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "email-sync" }, extra: { uid } });
     }
   }
+
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "email-sync", { startedAt: cronStartedAt, ok: true, result: { ok: true, connections: userIds.length, synced, failed, saved, truncated } });
 
   return NextResponse.json({ ok: true, connections: userIds.length, synced, failed, saved, truncated });
 }

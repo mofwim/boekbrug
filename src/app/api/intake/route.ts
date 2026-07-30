@@ -43,6 +43,11 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+// [BON-BETAALWIJZE] Eén normalisator voor elke weg waarlangs een betaalwijze binnenkomt.
+import { normaliseerBetaalwijze } from "@/lib/bon-betaalwijze"
+// [OBSERVABILITY] Eén bron voor "dit bestand is bewaard maar niet gelezen" — gedeeld met het
+// overgeslagen-paneel, dat vroeger op een andere waarde las dan hier werd geschreven.
+import { docTypeForStoredFile, DOC_TYPE_UNSUPPORTED } from "@/lib/skipped-import"
 // [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
@@ -62,6 +67,11 @@ import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // email path, so the camera/file path also blocks "same invoice, different file".
 import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
+// [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
+// "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
+import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
+// [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer → needs-review (en dus nooit auto-boeken).
+import { detectIbanChange } from "@/lib/iban-change"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -214,7 +224,7 @@ export async function POST(req: NextRequest) {
         user_id: user.id, file_name: file.name, file_url: storagePath,
         file_size: buffer.length, file_type: contentType,
         doc_type: "overig", folder_id: folderId, source: "camera",
-        ai_processed: false, ai_doc_type: "unsupported_type", content_hash: hash,
+        ai_processed: false, ai_doc_type: DOC_TYPE_UNSUPPORTED, content_hash: hash,
       })
       .select("id").single()
     if (docErr || !doc) {
@@ -233,7 +243,7 @@ export async function POST(req: NextRequest) {
   const contentHash = computeContentHash(buffer)
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id")
+    .select("id, file_name, folder_id, invoice_id")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
@@ -249,11 +259,15 @@ export async function POST(req: NextRequest) {
       newValue: { file_name: file.name, content_hash: contentHash, path: "intake" },
       ipAddress: getClientIP(req),
     })
+    // [DUP-ARCHIVED] Hoort er een GENEGEERDE factuur bij dit bestand? Dan is "staat al in map X"
+    // niet het antwoord op de vraag die de eigenaar heeft. De blokkade blijft (identieke bytes,
+    // en deze poort is met opzet niet te forceren) — maar nu mét de handeling die wél werkt.
+    const archived = await archivedInvoiceForDocument(supabase, user.id, existingDoc)
     const where = folderPath.length
       ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
       : "Dit bestand is al toegevoegd"
     return NextResponse.json({
-      error: where,
+      error: archived ? archivedDuplicateMessage(archived) : where,
       duplicate: true,
       // [INTAKE-FEEDBACK] structured target so the client can deep-link + focus
       existing: {
@@ -261,6 +275,8 @@ export async function POST(req: NextRequest) {
         folder_id: existingDoc.folder_id ?? null,
         folder_name: folderPath.length ? folderPath[folderPath.length - 1] : null,
       },
+      // [DUP-ARCHIVED] aanwezig ⇒ de client biedt "Terugzetten" aan (PATCH /api/email/confirm/[id]).
+      ...(archived ? { archived } : {}),
     }, { status: 409 })
   }
 
@@ -340,12 +356,17 @@ export async function POST(req: NextRequest) {
   // invoice→kasboek cash settlement — NOT a separate cash 'kosten' entry (which would drop the
   // voorbelasting and double-count). A file the AI does not recognise as an invoice is untouched
   // (stays in documents) — we never force-mark an unrecognised file as paid.
+  // [BON-BETAALWIJZE] Genormaliseerd naar bank|kas: de UI mag "pin" sturen, maar wat de
+  // beslissing in gaat is wat de rest van de app kan lezen — cash-settle zoekt letterlijk op
+  // payment_method = 'kas', bank/confirm schrijft 'bank'. Een derde waarde valt tussen wal en schip.
   const forcedMethodRaw = formData.get("paid_method");
   const forcedMethod =
-    forcedMethodRaw === "kas" || forcedMethodRaw === "bank" || forcedMethodRaw === "pin" ? forcedMethodRaw : null;
+    typeof forcedMethodRaw === "string" ? normaliseerBetaalwijze(forcedMethodRaw) : null;
   if (forcedMethod && (decision.destination === "invoice" || decision.destination === "receipt")) {
     decision.suggestPaid = true;
     decision.paidMethod = forcedMethod;
+    // De ondernemer koos dit zelf in de UI — dat is het stevigste bewijs dat er is.
+    decision.paidMethodZeker = true;
     const forcedDateRaw = formData.get("paid_date");
     if (typeof forcedDateRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(forcedDateRaw)) {
       decision.paidDate = forcedDateRaw;
@@ -491,9 +512,16 @@ export async function POST(req: NextRequest) {
         // omit `existing` — the link simply doesn't render
       }
 
+      // [DUP-ARCHIVED] Is de gevonden origineel een factuur die de eigenaar zelf genegeerd heeft?
+      // Dan wijst "bestaat al" naar een lijst waar hij niet in kijkt. canForce blijft staan — een
+      // semantische match kán een andere factuur zijn — maar terugzetten is nu de eerste keuze.
+      const archived = await archivedInvoiceById(supabase, user.id, dup.match.id)
+
       return NextResponse.json(
         {
-          error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
+          error: archived
+            ? archivedDuplicateMessage(archived)
+            : `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
           duplicate: true,
           original_id: dup.match.id,
           // [INTAKE-FORCE] This is a SEMANTIC match (same invoice, different file) — it can
@@ -501,6 +529,7 @@ export async function POST(req: NextRequest) {
           // The byte-hash 409 above (exact same file) deliberately omits this flag.
           canForce: true,
           ...(existing ? { existing } : {}),
+          ...(archived ? { archived } : {}),
         },
         { status: 409 }
       )
@@ -590,7 +619,14 @@ export async function POST(req: NextRequest) {
         source: "camera",
         // Only claim we processed it when we actually read it.
         ai_processed: !couldNotRead,
-        ai_doc_type: v.document_kind ?? "other",
+        // [OBSERVABILITY] En schrijf de REDEN weg, niet de gok. Hier stond
+        // `v.document_kind ?? "other"`, óók wanneer couldNotRead waar was — precies de vlag
+        // ernaast. Een gefotografeerde bon die niet te lezen was, kwam dus als "other" in
+        // bestanden, en /api/email/skipped telt op 'could_not_read'. Het bestand was daarmee
+        // nergens geteld en het overgeslagen-paneel meldde "Niets overgeslagen — alles wat
+        // binnenkwam is verwerkt". Dat is de zin die een ondernemer laat ophouden met zoeken
+        // naar de bon die zijn boekhouder mist.
+        ai_doc_type: docTypeForStoredFile(couldNotRead, v.document_kind),
         content_hash: contentHash,
       })
       .select("id")
@@ -724,6 +760,13 @@ export async function POST(req: NextRequest) {
     fieldConfidence._intake_suggest = "paid"
     if (decision.paidMethod) fieldConfidence._intake_paid_method = decision.paidMethod
     if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
+    // [BON-BETAALWIJZE] Het bewijs waarop de gok rust, en de pascijfers. Bewaard zodat een
+    // geschil naleesbaar is ("waarom staat hier kas?") en zodat de latere bankmatch de vier
+    // cijfers kan gebruiken die ook op het rekeningafschrift staan.
+    if (decision.paidEvidence) fieldConfidence._intake_paid_evidence = decision.paidEvidence
+    if (decision.paidCardLast4) fieldConfidence._intake_paid_card4 = decision.paidCardLast4
+    // Alleen als het PAPIER het zei mag het zonder vraag worden weggeschreven (zie hieronder).
+    if (decision.paidMethodZeker) fieldConfidence._intake_paid_method_zeker = true
   }
   // [DEDUP-SOFT] Merge the possible-duplicate signal into _safecore BEFORE the auto-advance check
   // below, so classifyImportHealth reads it → needs-review → the invoice can NEVER auto-book as a
@@ -731,6 +774,25 @@ export async function POST(req: NextRequest) {
   if (possibleDup) {
     const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
     fieldConfidence._safecore = merged._safecore
+  }
+  // [IBAN-WISSEL] Kennen we deze leverancier al onder een ander rekeningnummer? Ook hier VÓÓR de
+  // auto-advance check: een gewisseld IBAN maakt de health needs-review, en daarmee kan deze
+  // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
+  // doorgestuurde vervalste factuur komt net zo goed via dit pad binnen als via de mailsync.
+  {
+    const ibanChange = await detectIbanChange(supabase, user.id, {
+      name: v.vendor,
+      kvk: v.vendor_kvk ?? null,
+      iban: v.vendor_iban ?? null,
+    })
+    if (ibanChange) {
+      fieldConfidence._safecore = {
+        ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
+        iban_changed: true,
+        iban_changed_from: ibanChange.from,
+        iban_changed_to: ibanChange.to,
+      }
+    }
   }
 
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
@@ -782,7 +844,14 @@ export async function POST(req: NextRequest) {
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
       // backbone of the "Vandaag" screen; null is honest when nothing is stated.
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
-      invoice_number: v.invoice_number || `CAMERA-${Date.now()}`,
+      // [BON-NUMMER] Leeg blijft leeg. Vroeger stond hier `|| \`CAMERA-${Date.now()}\`` — een
+      // VERZONNEN documentkenmerk, en dat is erger dan een leeg veld: snelstart-mapping weigert
+      // een LEEG nummer aan de grens (MISSING_NUMBER), maar "CAMERA-1784373782895" glipt erdoor
+      // en landt als factuurnummer op een inkoopboeking in het wettelijke inkoopboek van de
+      // boekhouder — een kenmerk dat op geen enkel papier terug te vinden is. De audit-regels
+      // van deze zelfde upload noteerden intussen invoice_number: null, dus het spoor en het
+      // record spraken elkaar tegen over de identiteit van hetzelfde document.
+      invoice_number: v.invoice_number?.trim() || null,
       // [BRIDGE-CREDITNOTA-SIGN] mark the type; amounts stay NEGATIVE as
       // extracted for a creditnota (one sign convention with [BOEK-031]).
       // The read-time health classifier (import-health) applies the
@@ -795,6 +864,19 @@ export async function POST(req: NextRequest) {
       document_id: documentId,
       vendor_iban: v.vendor_iban ?? null,
       payment_reference: v.payment_reference ?? null,
+      // [BON-BETAALWIJZE] HOE er is betaald — de eerste vraag van de boekhouder over een bon, en
+      // de enige die hij niet zelf kan afleiden: een contante aankoop laat geen bankregel na.
+      // Het antwoord staat op het papier ("Bankpas", "Kontant", "Wisselgeld") en werd tot nu toe
+      // gelezen, in field_confidence gezet — een jsonb die geen enkele voorwaarde in de app leest
+      // — en vervolgens vergeten, terwijl deze kolom leeg bleef.
+      //
+      // Alleen wegschrijven als het PAPIER het zei (paidMethodZeker). Zei het niets, dan blijft
+      // dit null en vraagt het scherm het: gok slim, vraag alleen als we het niet weten.
+      //
+      // Dit beweert GEEN betaling — status blijft 'processing'. Elke lezer van deze kolom
+      // (cash-settle, bank/unlink, bank/delete-statement, cron/reconcile) filtert óók op
+      // status='paid', dus deze rij is voor allemaal onzichtbaar tot de mens bevestigt.
+      payment_method: decision.paidMethodZeker ? (decision.paidMethod ?? null) : null,
       // Cast to the jsonb column type (Json | null) — sanitized, JSON-compatible
       // content. Same pattern as email-integration.ts / audit.ts.
       field_confidence: fieldConfidence as InvoiceFieldConfidence,
@@ -1011,9 +1093,15 @@ async function handleUblInvoice(
         ipAddress: getClientIP(req),
       }).catch(() => {})
       const nr = dup.match.invoice_number ? `factuur ${dup.match.invoice_number}` : "deze factuur"
+      // [DUP-ARCHIVED] Zelfde eerlijkheid als de PDF-route: een genegeerde factuur staat in
+      // Genegeerd, niet "gewoon in je lijst" — noem terugzetten als de weg vooruit.
+      const archivedUbl = await archivedInvoiceById(supabase, userId, dup.match.id)
       return NextResponse.json({
-        error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
+        error: archivedUbl
+          ? archivedDuplicateMessage(archivedUbl)
+          : `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
         duplicate: true, original_id: dup.match.id, canForce: true,
+        ...(archivedUbl ? { archived: archivedUbl } : {}),
       }, { status: 409 })
     } else {
       // Not a confident duplicate — is it a POSSIBLE one? (soft flag, never blocks; held from auto-confirm)

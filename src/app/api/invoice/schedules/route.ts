@@ -15,6 +15,7 @@
 // and a feature that is merely absent is fine; one that throws is not.
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { anchorDayOf, firstRunAfter, isCadence, type Cadence } from "@/lib/recurring";
 
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const sourceDate = (inv.invoice_date as string | null) ?? new Date().toISOString().slice(0, 10);
+  const sourceDate = (inv.invoice_date as string | null) ?? amsterdamToday();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
   const { data: created, error } = await db

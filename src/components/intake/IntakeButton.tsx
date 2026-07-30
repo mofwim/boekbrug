@@ -19,16 +19,14 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF',
-  primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#ffffff', onSurface: '#202124',
-  surfaceVariant: '#f1f3f4',
-  success: '#34A853', error: '#B3261E',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { md: 12, lg: 16, full: 9999 }
 
 type Variant = 'card' | 'fab' | 'compact'
 
@@ -40,12 +38,21 @@ export default function IntakeButton({
   onDone?: (result: IntakeResult) => void
 }) {
   const router = useRouter()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
-  const [dupModal, setDupModal] = useState<{ message: string; originalId?: string; canForce?: boolean; file?: File } | null>(null)
+  // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
+  // maar onbruikbaar (hij staat in geen enkele gewone lijst), en bij een identiek bestand is
+  // terugzetten de enige weg vooruit — de byte-hash-poort is met opzet niet te forceren.
+  const [dupModal, setDupModal] = useState<
+    { message: string; originalId?: string; canForce?: boolean; archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }; file?: File } | null
+  >(null)
+  const [restoring, setRestoring] = useState(false)
   // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
   // the owner needs to KNOW where it landed — a persistent modal (iOS-styled,
   // matching /incoming) with the destination folder + a deep-link that
@@ -67,9 +74,29 @@ export default function IntakeButton({
   const mpFileRef = useRef<HTMLInputElement>(null)
   const MAX_PAGES = 20
 
-  function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3500)
+
+  // [DUP-ARCHIVED] "Terugzetten" — de upload botste op een factuur die de eigenaar zelf genegeerd
+  // heeft. Opnieuw uploaden lost dat niet op (bij identieke bytes kán het niet eens); de bestaande
+  // factuur terugzetten wél. Daarna staat hij weer in de controlewachtrij op Inkomend.
+  async function restoreIgnored(invoiceId: string) {
+    if (restoring) return
+    setRestoring(true)
+    try {
+      const res = await fetch(`/api/email/confirm/${invoiceId}`, { method: 'PATCH' })
+      if (res.ok) {
+        setDupModal(null)
+        showToast('Teruggezet — staat weer in je controlewachtrij ✓')
+        setTimeout(() => router.push('/dashboard/incoming'), 600)
+      } else {
+        // [UI-HONESTY] 409 = hij staat niet (meer) in Genegeerd. Nooit een succes tonen dat er niet was.
+        const data = await res.json().catch(() => ({}))
+        showToast(data.error || 'Terugzetten mislukt — ververs de pagina')
+      }
+    } catch {
+      showToast('Terugzetten mislukt — controleer je verbinding')
+    } finally {
+      setRestoring(false)
+    }
   }
 
   function addMpPages(fl: FileList | null) {
@@ -133,13 +160,17 @@ export default function IntakeButton({
         //   - an invoice duplicate (data.original_id) → link to the invoice in
         //     the incoming manage view.
         let outcome: 'duplicate' | 'error' = 'error'
-        if (res.status === 409 && data.duplicate && (data.original_id || data.canForce)) {
+        // [DUP-ARCHIVED] `data.archived` telt hier mee als reden voor de FACTUUR-modal: een
+        // byte-hash-duplicaat van een genegeerde factuur draagt geen original_id/canForce en zou
+        // anders in de bestandslocatie-modal belanden ("staat in map X") — precies de melding die
+        // de eigenaar niet verder helpt, en zónder de knop die dat wél doet.
+        if (res.status === 409 && data.duplicate && (data.original_id || data.canForce || data.archived)) {
           // SEMANTIC invoice duplicate (same invoice, DIFFERENT file — possibly a false
           // positive). Must be checked BEFORE data.existing: the semantic 409 usually ALSO
           // carries `existing` (the original's document), and routing on that first sent it
           // to the file-location modal — hiding the "Toch toevoegen" override and
           // mislabelling a genuinely different file as "al toegevoegd".
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
@@ -153,7 +184,7 @@ export default function IntakeButton({
           })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file })
           outcome = 'duplicate'
         } else {
           showToast(data.error || 'Toevoegen mislukt')
@@ -226,7 +257,7 @@ export default function IntakeButton({
         aria-label="Toevoegen"
         style={{
           position: 'fixed',
-          bottom: 'calc(88px + env(safe-area-inset-bottom))',
+          bottom: 'calc(88px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
           right: 20,
           background: M3.primary, color: M3.onPrimary,
           borderRadius: 16, padding: '16px 20px',
@@ -435,10 +466,26 @@ export default function IntakeButton({
             <div style={{ width: 56, height: 56, borderRadius: R.full, background: '#FEE8C4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#7C5800' }}>content_copy</span>
             </div>
-            <p style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>Deze factuur bestaat al</p>
+            <p style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
+              {/* [DUP-ARCHIVED] Genegeerd is een ándere situatie dan "bestaat al" — de kop zegt welke. */}
+              {dupModal.archived ? 'Deze factuur staat in Genegeerd' : 'Deze factuur bestaat al'}
+            </p>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 24, lineHeight: 1.5 }}>{dupModal.message}</p>
 
-            {dupModal.originalId && (
+            {/* [DUP-ARCHIVED] De handeling die hier werkt, als eerste knop. Bij een identiek bestand
+                is dit de enige — de byte-hash-poort kent geen "toch toevoegen". */}
+            {dupModal.archived && (
+              <button
+                onClick={() => restoreIgnored(dupModal.archived!.invoice_id)}
+                disabled={restoring}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: restoring ? 'default' : 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10, opacity: restoring ? 0.6 : 1 }}
+              >
+                {restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
+                {!restoring && <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>}
+              </button>
+            )}
+
+            {dupModal.originalId && !dupModal.archived && (
               <button
                 onClick={() => { const id = dupModal.originalId; setDupModal(null); router.push(`/dashboard/incoming/manage?focus=${id}`) }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10 }}
@@ -480,7 +527,7 @@ export default function IntakeButton({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
-              paddingBottom: 'calc(24px + env(safe-area-inset-bottom))',
+              paddingBottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
               width: '100%', maxWidth: 430,
             }}
           >
@@ -537,11 +584,6 @@ export default function IntakeButton({
         </div>
       )}
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
     </>
   )
 }
@@ -562,6 +604,9 @@ export interface IntakeResult {
   auto_verified?: boolean
   original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
   canForce?: boolean    // [INTAKE-FORCE] a semantic dup that may be overridden ("toch toevoegen")
+  // [DUP-ARCHIVED] present ⇒ the invoice this upload collides with sits in Genegeerd. The block
+  // itself is unchanged; this only lets the client name the situation and offer "Terugzetten".
+  archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }
   suggest_paid?: boolean
   // [INTAKE-DEST-MODAL] present for destination 'document' → deep-link + highlight
   document_id?: string
