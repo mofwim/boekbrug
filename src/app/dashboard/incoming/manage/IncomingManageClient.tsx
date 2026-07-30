@@ -125,9 +125,9 @@ function isAutoVerified(inv: IncomingRow): boolean {
 }
 
 // Pay confirm context — payment fields only (defense in depth: never amounts)
-// [MOVE-PAYMENT] Wat /api/invoice/payment/move teruggeeft: één geboekte betaling plus de facturen
-// waar hij heen KAN. De server rangschikt ze (zelfde leverancier eerst, dan een exact passend
-// bedrag, dan de dichtstbijzijnde datum) — het scherm toont die volgorde en verzint er niets bij.
+// [MOVE-PAYMENT] What /api/invoice/payment/move returns: one booked payment plus the invoices it
+// CAN go to. The server ranks them (same supplier first, then an exactly-fitting amount, then the
+// nearest date) — the screen shows that order and invents nothing on top of it.
 interface MoveTarget {
   id: string
   invoice_number?: string | null
@@ -142,7 +142,7 @@ interface MovePayment {
   transaction_id?: string | null
   paid_on?: string | null
   method?: string | null
-  /** false voor een koppelrij van vóór [PARTIAL-PAY]: geen vastgelegd bedrag, dus niets te verplaatsen. */
+  /** false for a pre-[PARTIAL-PAY] link row: no recorded amount, so there is nothing to move. */
   movable: boolean
   targets: MoveTarget[]
 }
@@ -241,7 +241,7 @@ export default function IncomingManageClient({
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
   // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
   const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
-  // [MOVE-PAYMENT] Welke betaling(en) staan op deze factuur, en waar mogen ze heen.
+  // [MOVE-PAYMENT] Which payment(s) sit on this invoice, and where they are allowed to go.
   const [moveCtx, setMoveCtx]           = useState<{ inv: IncomingRow; payments: MovePayment[] } | null>(null)
   const [moveLoadingId, setMoveLoadingId] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
@@ -605,14 +605,14 @@ export default function IncomingManageClient({
     setRemoveCtx({ id: inv.id, decision: decideRemoval(inv as RemovalInvoice) })
   }
 
-  // ── [MOVE-PAYMENT] Een geboekte betaling naar de juiste factuur verplaatsen ────────────────
-  // Het geld is echt en de boeking klopt — alleen de factuur eronder niet. Tot nu toe was het
-  // antwoord drie handelingen (terugdraaien, de banklijn opnieuw zoeken, opnieuw boeken) met
-  // daartussen een administratie waarin het geld nergens staat. Eén verplaatsing dus, en de
-  // schrijfactie zelf is één transactie in de database (move_invoice_payment).
+  // ── [MOVE-PAYMENT] Move a booked payment to the invoice it belongs to ──────────────────────
+  // The money is real and the booking is right — only the invoice under it is not. The answer used
+  // to be three actions (undo, find the bank line again, re-book) with books in between where the
+  // money sits nowhere. So: one move, and the write itself is one database transaction
+  // (move_invoice_payment).
   //
-  // De server bepaalt WELKE facturen in aanmerking komen — dezelfde regels als de RPC, zodat het
-  // lijstje niets aanbiedt wat de database zou weigeren. Hier staat alleen wat de eigenaar ziet.
+  // The SERVER decides which invoices qualify — the same rules the RPC applies, so the list can
+  // never offer something the database would refuse. Only what the owner sees lives here.
   async function openMovePayment(inv: IncomingRow) {
     if (moveLoadingId) return
     setMoveLoadingId(inv.id)
@@ -1628,11 +1628,11 @@ export default function IncomingManageClient({
         />
       )}
 
-      {/* ── [MOVE-PAYMENT] Naar welke factuur hoort deze betaling? ──
-          Geen vrij zoekveld: de server geeft alleen facturen terug die het geld ook echt kúnnen
-          ontvangen (zelfde richting, betaalbare status, genoeg openstaand, niet verwerkt), in de
-          volgorde waarin ze waarschijnlijk bedoeld zijn. De regel toont het bedrag én wat er open
-          staat, zodat kiezen een geïnformeerde keuze is en niet een gok met een bevestiging erna. */}
+      {/* ── [MOVE-PAYMENT] Which invoice does this payment belong to? ──
+          No free-text search: the server returns only invoices that can genuinely receive the money
+          (same direction, payable status, enough left open, not locked by the accountant), in the
+          order they are most likely meant. Each row shows the amount AND what is still open, so
+          picking is an informed choice rather than a guess followed by a confirmation. */}
       {moveCtx && (
         <div
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
@@ -1658,8 +1658,8 @@ export default function IncomingManageClient({
                   {p.method === 'kas' ? ' · Contant' : p.transaction_id ? ' · Bank' : ''}
                 </div>
 
-                {/* Een koppeling van vóór [PARTIAL-PAY] draagt geen bedrag. Verplaatsen zou dan
-                    moeten raden hoeveel er verhuist, en dat is precies wat hier niet mag. */}
+                {/* A pre-[PARTIAL-PAY] link carries no amount. Moving it would mean guessing how
+                    much travels, and guessing is the one thing this must never do. */}
                 {!p.movable ? (
                   <p style={{ fontSize: 13, color: '#9a5b00', background: '#fff4e5', border: '1px solid #ffd9a8', borderRadius: R.md, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
                     Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Draai hem terug

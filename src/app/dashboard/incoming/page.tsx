@@ -51,9 +51,9 @@ interface IncomingInvoiceRow {
   // [NEGEER-REDEN] Alleen op de Genegeerd-lijst geselecteerd, en ook daar optioneel: oude rijen
   // hebben hem niet, en zolang de migratie niet gedraaid is bestaat de kolom nog niet.
   archive_reason?: string | null;
-  // [SUPERSEDE] Het factuurnummer dat deze verving. Zelfde voorwaarden als archive_reason:
-  // alleen op de Genegeerd-lijst, en ook daar optioneel (oude rijen, en de migratie kan nog
-  // niet gedraaid zijn).
+  // [SUPERSEDE] The invoice number that replaced this one. Same conditions as archive_reason:
+  // only on the Genegeerd list, and optional even there (older rows, and the migration may not
+  // have been applied yet).
   superseded_by_number?: string | null;
 }
 

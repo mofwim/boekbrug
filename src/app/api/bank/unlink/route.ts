@@ -134,6 +134,12 @@ export async function POST(req: Request) {
   //          date + payment_method; if nothing remains it is a clean unpaid invoice (dates cleared).
   //      (b) the invoice was already partial-open (never 'paid') → status is untouched; we only
   //          lower amount_paid (to 0 when this was its only instalment).
+  // [PAYDATE-REDERIVE] The payment_date written below is the invoice's CURRENT one, which after
+  // removing the first of several instalments describes money that just left. It is deliberately
+  // left as an optimistic value: recompute_invoice_amount_paid runs a few lines down and re-derives
+  // both date and method from the EARLIEST surviving link, so the correct value lands there.
+  // Writing null here instead would be worse on the failure path — if that best-effort recompute
+  // ever fails we would have dropped the date entirely rather than merely kept a stale one.
   const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
   const stillHasPayment = newPaid > 0;
   if (inv.status === "paid") {

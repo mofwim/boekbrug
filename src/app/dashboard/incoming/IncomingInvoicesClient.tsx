@@ -113,7 +113,7 @@ interface IncomingInvoice {
   // [NEGEER-REDEN] Waarom deze factuur genegeerd is. Alleen gevuld op de Genegeerd-lijst, en ook
   // daar mag hij ontbreken: oude rijen weten het niet meer, en de vraag is vrijwillig.
   archive_reason?: string | null;
-  // [SUPERSEDE] Welke factuur deze verving. Alleen op de Genegeerd-lijst, en ook daar optioneel.
+  // [SUPERSEDE] Which invoice replaced this one. Only on the Genegeerd list, optional even there.
   superseded_by_number?: string | null;
 }
 
@@ -1359,7 +1359,7 @@ function InvoiceCard({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // The server asked the same questions of fresher data — show ITS answer, not ours. This
-        // is where "er is al betaald op de oude" lands, with the exit named.
+        // is where "the old one is already paid" lands, with the exit named.
         await dialog.alert({
           title: "Vervangen kan nu niet",
           message: data?.detail || "Vervangen mislukt — ververs de pagina en probeer het opnieuw.",

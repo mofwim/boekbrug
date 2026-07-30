@@ -1,47 +1,46 @@
 -- =====================================================================
--- [MOVE-PAYMENT] Een geboekte betaling van de ENE factuur naar de ANDERE verplaatsen.
--- BoekBrug · Juli 2026
+-- [MOVE-PAYMENT] Move a booked payment from ONE invoice to ANOTHER.
+-- BoekBrug - July 2026
 -- =====================================================================
--- WAAROM: geld belandt op de verkeerde factuur. Een leverancier stuurt dezelfde rekening twee
--- keer (de tweede gecorrigeerd), de matcher kiest de verkeerde van twee gelijke bedragen, of de
--- eigenaar tikt de betaling handmatig op de bovenste rij. Tot nu toe was het antwoord: draai de
--- betaling terug op A, zoek de banklijn opnieuw op, boek hem op B. Drie handelingen, en tussen de
--- eerste en de laatste bestaat het geld nergens — de factuur die het wél kreeg staat open, de
--- banklijn staat weer bij "Te bevestigen", en als de eigenaar daar stopt (telefoon gaat, batterij
--- leeg) blijft de administratie in die halve staat achter. Precies het soort stille schade waar
--- een boekhoudapp niet in mag handelen.
+-- WHY: money lands on the wrong invoice. A supplier sends the same bill twice (the second one
+-- corrected), the matcher picks the wrong one of two equal amounts, or the owner taps the payment
+-- onto the row above. Until now the answer was: undo the payment on A, find the bank line again,
+-- book it on B. Three actions - and between the first and the last the money exists nowhere: the
+-- invoice that did receive it reads as open, the bank line is back under "Te bevestigen", and an
+-- owner who stops there (the phone rings, the battery dies) leaves the books in that half state.
+-- Exactly the kind of silent damage a bookkeeping app must not deal in.
 --
--- Verplaatsen is één handeling en hoort dus één TRANSACTIE te zijn. Alles hieronder gebeurt in
--- deze functie: de koppelrij verhuist, beide facturen krijgen hun amount_paid opnieuw afgeleid uit
--- de OVERGEBLEVEN koppelingen, en beide statussen volgen dat. Er is geen moment waarop het geld
--- op nul facturen staat, en geen moment waarop het op twee staat.
+-- Moving is one action and therefore has to be one TRANSACTION. Everything below happens inside
+-- this function: the link row moves, both invoices have their amount_paid RE-DERIVED from the
+-- surviving links, and both statuses follow. There is no moment where the money sits on zero
+-- invoices, and none where it sits on two.
 --
--- MODEL: een betaling IS een rij in bank_tx_invoices (amount_applied), met of zonder banklijn
--- erachter (een handmatige deelbetaling heeft transaction_id NULL + paid_on + method). Verplaatsen
--- = die ene rij een andere invoice_id geven. Daarmee blijft de ene waarheid staan die de rest van
--- het systeem al gebruikt:
+-- MODEL: a payment IS a row in bank_tx_invoices (amount_applied), with or without a bank line
+-- behind it (a manual instalment has transaction_id NULL + paid_on + method). Moving = giving
+-- that one row a different invoice_id. That keeps intact the single truth the rest of the system
+-- already relies on:
 --
 --     invoices.amount_paid = SUM(bank_tx_invoices.amount_applied)
 --
--- WAT DEZE FUNCTIE WEIGERT, en waarom ze weigert in plaats van iets slims te doen:
---   · De doelfactuur heeft niet genoeg open staan. Dan zou verplaatsen ofwel overbetalen, ofwel
---     het bedrag stilletjes splitsen (deel verplaatsen, rest laten staan). Allebei zijn een
---     antwoord dat de eigenaar niet gegeven heeft, en het tweede is niet eens zichtbaar. Dus:
---     weigeren, met beide bedragen erbij, zodat het scherm kan zeggen wat er wél open staat.
---   · Dezelfde banklijn is al aan de doelfactuur gekoppeld. Samenvoegen zou twee boekingen tot
---     één maken zonder spoor; dat is geen verplaatsing meer.
---   · Andere richting. Geld dat naar een leverancier ging kan nooit een verkoopfactuur voldoen.
---   · De boekhouder heeft een van beide verwerkt. Zijn grendel gaat voor, aan beide kanten.
+-- WHAT THIS FUNCTION REFUSES, and why it refuses instead of doing something clever:
+--   - The target invoice does not have enough left open. Moving would either over-pay it, or
+--     silently SPLIT the amount (move part, leave the rest). Both are an answer the owner never
+--     gave, and the second one is not even visible. So: refuse, with both amounts in the message,
+--     so the screen can say what IS still open.
+--   - The same bank line is already linked to the target. Merging would turn two bookings into
+--     one with no trace; that is not a move any more.
+--   - Different direction. Money that went to a supplier can never settle a sales invoice.
+--   - The accountant has processed one of the two. That lock wins, on either side.
 --
--- APPLY: draai dit hele bestand in de Supabase SQL editor (één transactie).
--- Niets hier verwijdert data. Idempotent / opnieuw te draaien.
+-- APPLY: run this whole file in the Supabase SQL editor (one transaction).
+-- Nothing here deletes data. Idempotent / re-runnable.
 -- =====================================================================
 
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.move_invoice_payment(
   p_user_id           uuid,
-  p_link_id           uuid,   -- bank_tx_invoices.id — DE betaling, niet "de betalingen van"
+  p_link_id           uuid,   -- bank_tx_invoices.id - THE payment, not "the payments of"
   p_target_invoice_id uuid
 )
 RETURNS TABLE (
@@ -85,19 +84,19 @@ DECLARE
   v_src_method   text;
   v_pay_method   text;
   v_tx_left      integer;
-  -- Eén cent speling, gelijk aan apply_bank_payment: OCR-totalen kunnen een afrondingstik
-  -- schelen, en "binnen een cent gedekt" is betaald.
+  -- One cent of slack, same as apply_bank_payment: OCR totals can be a rounding tick short, and
+  -- "covered within a cent" counts as paid.
   v_eps          numeric := 0.01;
 BEGIN
-  -- Aanroepgarantie, gelijk aan apply_bank_payment/book_bank_batch: sessieclient → auth.uid() =
-  -- gebruiker; service-role → NULL (vastgezet via p_user_id). Een andere ingelogde gebruiker: nee.
+  -- Caller guard, same contract as apply_bank_payment/book_bank_batch: session client -> auth.uid()
+  -- = the user; service-role -> NULL (pinned via p_user_id). A different logged-in user: refused.
   IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] caller % may not move payments for %', auth.uid(), p_user_id
       USING ERRCODE = '42501';
   END IF;
 
-  -- ── De betaling zelf. Vergrendeld: een gelijktijdige ontkoppeling of tweede verplaatsing van
-  --    dezelfde rij blokkeert hier en ziet daarna de nieuwe werkelijkheid.
+  -- The payment itself. Locked: a concurrent unlink or a second move of the same row blocks here
+  -- and sees the new reality once we commit.
   SELECT l.transaction_id, l.invoice_id, coalesce(l.amount_applied, 0), l.paid_on, l.method
     INTO v_tx_id, v_src_id, v_amount, v_paid_on, v_method
   FROM public.bank_tx_invoices l
@@ -111,15 +110,15 @@ BEGIN
     RAISE EXCEPTION '[MOVE-PAYMENT] same invoice' USING ERRCODE = '55000';
   END IF;
 
-  -- Een koppelrij van vóór [PARTIAL-PAY] draagt geen bedrag. We weten dan niet WAT we verplaatsen,
-  -- en een bedrag verzinnen is het ene wat hier niet mag. Ontkoppelen en opnieuw boeken is voor
-  -- die rijen de eerlijke weg.
+  -- A link row from before [PARTIAL-PAY] carries no amount. We would not know WHAT we are moving,
+  -- and inventing an amount is the one thing forbidden here. For those rows, unlinking and
+  -- re-booking is the honest route.
   IF v_amount <= 0 THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] payment has no recorded amount' USING ERRCODE = '55000';
   END IF;
 
-  -- Dezelfde banklijn al op de doelfactuur? Dan zou de verplaatsing botsen met
-  -- bank_tx_invoices_unique_pair, en samenvoegen maakt van twee boekingen stilletjes één.
+  -- Same bank line already on the target? The move would collide with
+  -- bank_tx_invoices_unique_pair, and merging silently turns two bookings into one.
   IF v_tx_id IS NOT NULL AND EXISTS (
     SELECT 1 FROM public.bank_tx_invoices
     WHERE transaction_id = v_tx_id AND invoice_id = p_target_invoice_id AND user_id = p_user_id
@@ -127,9 +126,9 @@ BEGIN
     RAISE EXCEPTION '[MOVE-PAYMENT] target already linked to this transaction' USING ERRCODE = '55000';
   END IF;
 
-  -- ── Beide facturen vergrendelen, in VASTE volgorde op id. Twee eigenaren die tegelijk in
-  --    tegengestelde richting verplaatsen zouden elkaar anders klemzetten; oplopend op id kan dat
-  --    per definitie niet.
+  -- Lock BOTH invoices, in a FIXED order by id. Two moves running concurrently in opposite
+  -- directions would otherwise deadlock each other; ascending by id makes that impossible by
+  -- construction.
   v_first_id  := LEAST(v_src_id, p_target_invoice_id);
   v_second_id := GREATEST(v_src_id, p_target_invoice_id);
   PERFORM 1 FROM public.invoices
@@ -155,20 +154,20 @@ BEGIN
     RAISE EXCEPTION '[MOVE-PAYMENT] target invoice not found / not owned' USING ERRCODE = '55000';
   END IF;
 
-  -- De grendel van de boekhouder gaat voor, aan BEIDE kanten: verplaatsen verandert het bedrag
-  -- waar hij al mee gerekend heeft, of dat nu de bron of het doel is.
+  -- The accountant's lock wins, on BOTH sides: moving changes a figure they have already worked
+  -- with, whether that is the source or the target.
   IF v_src_acc = 'verwerkt' OR v_tgt_acc = 'verwerkt' THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] invoice locked by accountant (verwerkt)' USING ERRCODE = '55000';
   END IF;
 
-  -- Geld dat naar een leverancier ging kan geen verkoopfactuur voldoen, en omgekeerd.
+  -- Money that went to a supplier cannot settle a sales invoice, and vice versa.
   IF v_src_dir IS DISTINCT FROM v_tgt_dir THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] direction mismatch' USING ERRCODE = '55000';
   END IF;
 
-  -- Het doel moet een factuur zijn die geld KAN ontvangen. 'processing' staat er bewust niet bij:
-  -- een nog ongecontroleerde inkoopfactuur mag niet via deze weg betaald raken (haar bedragen
-  -- komen ongezien uit de AI, en betaald telt mee in de BTW). 'archived' en 'draft' evenmin.
+  -- The target has to be an invoice that CAN receive money. 'processing' is deliberately absent:
+  -- an unverified purchase invoice must not become paid through this door (its amounts came from
+  -- the AI and nobody has read them, and 'paid' feeds the BTW figures). Nor 'archived' or 'draft'.
   IF v_tgt_status NOT IN ('received', 'sent', 'overdue') THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] target not payable' USING ERRCODE = '55000';
   END IF;
@@ -176,24 +175,24 @@ BEGIN
     RAISE EXCEPTION '[MOVE-PAYMENT] target has no total to settle' USING ERRCODE = '55000';
   END IF;
 
-  -- Past het? Niet passen betekent overbetalen óf stilletjes splitsen. Allebei zijn een antwoord
-  -- dat de eigenaar niet gaf. Het bedrag dat wél open staat gaat mee in de melding, zodat het
-  -- scherm kan zeggen wat er kan in plaats van alleen dat het niet kan.
+  -- Does it fit? Not fitting means over-paying OR silently splitting. Both are an answer the owner
+  -- never gave. The amount that IS still open travels with the message, so the screen can say what
+  -- is possible instead of only that this is not.
   v_tgt_remain := v_tgt_total - v_tgt_paid;
   IF v_amount > v_tgt_remain + v_eps THEN
     RAISE EXCEPTION '[MOVE-PAYMENT] target remaining % is less than payment %', v_tgt_remain, v_amount
       USING ERRCODE = '55000';
   END IF;
 
-  -- ── De verplaatsing zelf: één rij, één kolom. Bedrag, datum en methode gaan ongewijzigd mee —
-  --    het is dezelfde betaling, hij hoort alleen ergens anders.
+  -- The move itself: one row, one column. Amount, date and method travel unchanged - it is the
+  -- same payment, it just belongs somewhere else.
   UPDATE public.bank_tx_invoices
   SET invoice_id = p_target_invoice_id
   WHERE id = p_link_id AND user_id = p_user_id;
 
-  -- De banklijn draagt één "representatieve" invoice_id voor het scherm. Wees hij naar de bron en
-  -- is er van deze lijn niets meer op die bron over, dan moet hij mee — anders wijst de Bank-pagina
-  -- naar een factuur die deze betaling niet meer heeft.
+  -- The bank line carries one "representative" invoice_id for the screen. If it pointed at the
+  -- source and nothing of this line is left on that source, it has to follow - otherwise the Bank
+  -- page points at an invoice that no longer holds this payment.
   IF v_tx_id IS NOT NULL THEN
     SELECT count(*) INTO v_tx_left
     FROM public.bank_tx_invoices
@@ -205,9 +204,9 @@ BEGIN
     END IF;
   END IF;
 
-  -- ── Beide amount_paid opnieuw AFLEIDEN uit de overgebleven koppelingen. Niet optellen en
-  --    aftrekken: afleiden. Zo kan deze functie geen drift introduceren, ook niet als er naast
-  --    deze betaling nog termijnen op een van beide facturen staan.
+  -- RE-DERIVE both amount_paid values from the surviving links. Not add-and-subtract: derive.
+  -- That way this function cannot introduce drift, not even when other instalments sit on either
+  -- invoice alongside this payment.
   SELECT coalesce(sum(coalesce(amount_applied, 0)), 0) INTO v_src_sum
   FROM public.bank_tx_invoices WHERE invoice_id = v_src_id AND user_id = p_user_id;
   IF v_src_total > 0 AND v_src_sum > v_src_total THEN v_src_sum := v_src_total; END IF;
@@ -218,10 +217,10 @@ BEGIN
   IF v_tgt_total > 0 AND v_tgt_sum > v_tgt_total THEN v_tgt_sum := v_tgt_total; END IF;
   IF v_tgt_sum < 0 THEN v_tgt_sum := 0; END IF;
 
-  -- ── Bron: het geld is weg, dus een 'paid' die op deze betaling steunde mag niet blijven staan.
-  --    Terug naar de open status die de richting bewijst (gelijk aan /api/bank/unlink). Blijft er
-  --    niets over, dan gaan ook de betaalvelden leeg — anders leest de factuur als betaald op een
-  --    datum waarop er niets meer geboekt staat.
+  -- Source: the money is gone, so a 'paid' that rested on this payment must not stand. Back to
+  -- the open status the direction proves (same rule as /api/bank/unlink). If nothing survives, the
+  -- payment fields are cleared too - otherwise the invoice reads as paid on a date where nothing
+  -- is booked any more.
   v_src_new_st := v_src_status;
   IF v_src_status = 'paid' AND v_src_sum < v_src_total - v_eps THEN
     v_src_new_st := CASE WHEN v_src_dir = 'incoming' THEN 'received' ELSE 'sent' END;
@@ -232,13 +231,12 @@ BEGIN
         payment_method = NULL, marked_paid_at = NULL, payment_date = NULL
     WHERE id = v_src_id;
   ELSE
-    -- Blijven er termijnen achter, dan moet de betaaldatum van de bron OPNIEUW worden afgeleid.
-    -- Hem laten staan is een stille fout met gevolgen: payment_date bepaalt in welk kwartaal een
-    -- betaling meetelt onder het kasstelsel, en na het weghalen van de EERSTE termijn zou de
-    -- factuur blijven beweren dat er in mei betaald is terwijl het overgebleven geld in juni
-    -- binnenkwam. Dat is een verkeerde aangifte die nergens een melding geeft. Dus: de vroegste
-    -- OVERGEBLEVEN betaling bepaalt datum én methode — een banklijn levert zijn eigen datum, een
-    -- handmatige termijn draagt paid_on/method zelf.
+    -- If instalments remain, the source's payment date has to be RE-DERIVED. Leaving it is a
+    -- silent error with consequences: payment_date decides which quarter a payment counts in under
+    -- the kasstelsel, and after removing the FIRST instalment the invoice would keep claiming it
+    -- was paid in May while the money still on it arrived in June. That is a wrong return with no
+    -- warning anywhere. So: the EARLIEST surviving payment sets both date and method - a bank line
+    -- supplies its own date, a manual instalment carries paid_on/method itself.
     SELECT coalesce(l.paid_on, bt.date), coalesce(l.method, 'bank')
       INTO v_src_date, v_src_method
     FROM public.bank_tx_invoices l
@@ -255,9 +253,9 @@ BEGIN
     WHERE id = v_src_id;
   END IF;
 
-  -- ── Doel: de datum en methode van DEZE betaling, niet van vandaag. Een banklijn levert zijn
-  --    eigen datum; een handmatige termijn draagt paid_on/method zelf. De kasstelsel-aangifte
-  --    hangt aan die datum, dus "nu" invullen zou de betaling naar een ander kwartaal schuiven.
+  -- Target: the date and method of THIS payment, not of today. A bank line supplies its own date;
+  -- a manual instalment carries paid_on/method itself. The kasstelsel return hangs on that date, so
+  -- filling in "now" would shift the payment into a different quarter.
   v_pay_method := coalesce(v_method, 'bank');
   v_pay_date   := v_paid_on;
   IF v_pay_date IS NULL AND v_tx_id IS NOT NULL THEN
@@ -286,16 +284,16 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.move_invoice_payment(uuid, uuid, uuid) IS
-  '[MOVE-PAYMENT] Verplaatst ATOMAIR één geboekte betaling (bank_tx_invoices-rij, bank of handmatig) naar een andere factuur: de koppelrij verhuist, de banklijn volgt als er van hem niets op de bron overblijft, en beide amount_paid worden opnieuw afgeleid uit de overgebleven koppelingen met de statussen erachteraan. Weigert (55000) bij te weinig openstaand op het doel, een doel dat al aan dezelfde banklijn hangt, een richtingsverschil, een niet-betaalbare doelstatus, een verwerkt-grendel aan een van beide kanten, en bij een koppelrij zonder vastgelegd bedrag.';
+  '[MOVE-PAYMENT] ATOMICALLY moves one booked payment (a bank_tx_invoices row, bank or manual) to another invoice: the link row moves, the bank line follows when nothing of it is left on the source, and both amount_paid values are re-derived from the surviving links with the statuses following. Refuses (55000) on too little left open at the target, a target already linked to the same bank line, a direction mismatch, a non-payable target status, an accountant lock on either side, and on a link row with no recorded amount.';
 
 REVOKE ALL ON FUNCTION public.move_invoice_payment(uuid, uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.move_invoice_payment(uuid, uuid, uuid) TO authenticated, service_role;
 
 COMMIT;
 
--- ── CONTROLE ────────────────────────────────────────────────────────────────────────────────
--- De functie bestaat. Moet true zijn.
+-- ── VERIFY ──────────────────────────────────────────────────────────────────────────────────
+-- The function exists. Must be true.
 SELECT EXISTS (
   SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public' AND p.proname = 'move_invoice_payment'
-) AS heeft_move_invoice_payment;
+) AS has_move_invoice_payment;

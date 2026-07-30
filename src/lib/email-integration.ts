@@ -3143,12 +3143,12 @@ export async function syncUserEmails(
         }
         // [DEDUP-SOFT] Carry the possible-duplicate flag → classifyImportHealth turns it into a
         // "mogelijk dubbel met X" needs-review warning that also blocks auto-advance.
-        // [SUPERSEDE] Via mergePossibleDuplicate — het ENIGE bestand dat weet welke sleutels een
-        // dubbel-signaal draagt. Deze drie regels stonden hier met de hand overgeschreven, en dat
-        // ging meteen mis toen er een vierde bij kwam (possible_duplicate_id, de id die de knop
-        // "Deze vervangt factuur X" aanstuurt): upload en intake kregen hem via de helper, de
-        // E-MAILSYNC niet — en dat is nu juist het pad waar de meeste facturen binnenkomen. De
-        // waarschuwing zou dan wél staan en de knop niet, zonder dat iets uitlegt waarom.
+        // [SUPERSEDE] Through mergePossibleDuplicate — the ONE file that knows which keys carry a
+        // duplicate signal. These three lines used to be a hand-copy of it, and that broke the
+        // moment a fourth key arrived (possible_duplicate_id, the id behind the "Deze vervangt
+        // factuur X" button): upload and intake got it via the helper, the EMAIL SYNC did not —
+        // and that is the path most invoices actually arrive on. The warning would show and the
+        // button would not, with nothing on screen to explain why.
         if (possibleDup) {
           const merged = mergePossibleDuplicate({ _safecore: safecore }, possibleDup) as {
             _safecore?: Record<string, unknown>

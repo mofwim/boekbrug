@@ -116,8 +116,15 @@ export function rankMoveTargets(
  * An unrecognised failure gets an honest "it did not happen" rather than a reassuring guess —
  * the move is atomic, so a failure always means nothing changed.
  */
-export function moveFailureText(rawMessage: string | null | undefined): string {
+export function moveFailureText(rawMessage: string | null | undefined, code?: string | null): string {
   const m = (rawMessage ?? "").toLowerCase();
+  // [DEPLOY-SAFE] invoice_move_payment.sql is applied by hand in this project, so code can ship
+  // before the function exists. Postgres answers 42883 (undefined_function) and PostgREST PGRST202
+  // (no matching function in the schema cache) — without this the owner would read "nothing was
+  // changed, try again" forever and there is nothing to try. Name the real reason instead.
+  if (code === "42883" || code === "PGRST202" || m.includes("could not find the function")) {
+    return "Deze functie is nog niet ingeschakeld op de server. Er is niets gewijzigd — neem contact op zodat we hem aanzetten.";
+  }
   if (m.includes("payment not found")) {
     return "Deze betaling bestaat niet meer — ververs de pagina.";
   }

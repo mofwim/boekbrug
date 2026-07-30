@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
     // The move is atomic: a failure always means NOTHING changed. Say which reason it was, in
     // words the owner can act on — never a bare code, never a shrug.
     return NextResponse.json(
-      { error: "move_failed", detail: moveFailureText(error.message) },
+      { error: "move_failed", detail: moveFailureText(error.message, (error as { code?: string }).code) },
       { status: 409 },
     );
   }
