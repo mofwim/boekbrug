@@ -1356,6 +1356,34 @@ export default function BankClient() {
             </p>
           )}
 
+          {/* [BANK-IGNORE-TRIAGE] Negeren is één tik en de regel is daarna weg uit ELKE lijst die
+              hem nog had kunnen verklaren — de matcher, auto-confirm, auto-categorize, de
+              nachtelijke sweep en elke categorize-lezing — én uit undocumentedCount, dus ook de
+              BTW-waarschuwing voor die regel verdwijnt. Wat overblijft is een stapel die niemand
+              ooit terugziet, zonder reden erbij, met soms honderden euro's erin.
+
+              Dit telt die stapel één keer hardop: hoeveel regels, en hoeveel geld. Geen
+              beschuldiging en geen blokkade — een genegeerde regel is vaak volkomen terecht
+              genegeerd. Maar het bedrag hoort zichtbaar te zijn vóór het kwartaal dichtgaat, en
+              tot nu toe was het dat nergens. Alleen tonen als er iets te tonen valt. */}
+          {bankTab === 'ignored' && ignoredInQ.length > 0 && (() => {
+            const total = Math.round(ignoredInQ.reduce((a, x) => a + Math.abs(x.amount), 0) * 100) / 100
+            const big = ignoredInQ.filter((x) => Math.abs(x.amount) >= 500).length
+            return (
+              <div style={{
+                margin: '12px 2px 0', padding: '10px 12px', borderRadius: R.md,
+                background: '#FEF7E0', border: '1px solid #FCE8B2', fontFamily: FONT,
+                fontSize: 12.5, color: '#7C5800', lineHeight: 1.5,
+              }}>
+                {ignoredInQ.length === 1 ? '1 genegeerde regel' : `${ignoredInQ.length} genegeerde regels`}
+                {' '}van samen {eur.format(total)}
+                {big > 0 && <>, waarvan {big === 1 ? 'één' : big} boven de € 500</>}.
+                {' '}Deze staan in geen enkel cijfer en je boekhouder ziet ze niet — loop ze nog
+                even na voordat je het kwartaal afsluit.
+              </div>
+            )
+          })()}
+
           {/* Active group */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
             {/* [BANK-BATCH-CONFIRM] Bulk-confirm bar — only in "Te bevestigen", only
