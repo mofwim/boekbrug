@@ -1,7 +1,7 @@
 # [CI] BoekBrug continuous integration.
 # Runs the same three hard gates the project uses locally before every merge:
 #   1. `tsc --noEmit`  — full TypeScript type-check.
-#   2. `tsx --test`    — the unit-test suite under src/lib.
+#   2. `tsx --test`    — the unit-test suite: src/lib plus src/content/legal.
 #   3. `next build`    — the production build, WITHOUT any secrets.
 # Lint is intentionally NOT a blocking gate here (the repo carries known
 # pre-existing eslint findings).
