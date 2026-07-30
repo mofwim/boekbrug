@@ -22,12 +22,31 @@ export async function GET() {
   }
 
   const pipeline = createPipelineClient();
-  const { data: rows, error } = await pipeline
-    .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, reference")
-    .eq("user_id", user.id)
-    .eq("status", "not_found")
-    .order("date", { ascending: false });
+  // [BANK-IGNORE-REDEN] ignore_reason komt mee zodat de Genegeerd-lijst kan zeggen WAAROM een
+  // regel daar staat. [DEPLOY-SAFE] Draait bank_ignore_reason.sql nog niet, dan bestaat de kolom
+  // niet en weigert PostgREST de hele select — dan zou het tabblad leeg zijn in plaats van
+  // labelloos, en dat is precies het verschil tussen "geen reden" en "geen regels". Eén keer
+  // opnieuw zonder de kolom.
+  const COLS = "id, date, amount, description, counterpart_name, reference";
+  // ignore_reason staat nog niet in de gegenereerde types (die worden uit een live database
+  // afgeleid), dus dezelfde cast die match/route.ts voor auto_match_reason gebruikt.
+  type IgnoredRow = {
+    id: string; date: string | null; amount: number | null; description: string | null;
+    counterpart_name: string | null; reference: string | null; ignore_reason?: string | null;
+  };
+  const query = (cols: string) =>
+    pipeline
+      .from("bank_transactions")
+      .select(cols)
+      .eq("user_id", user.id)
+      .eq("status", "not_found")
+      .order("date", { ascending: false });
+
+  let { data, error } = await query(`${COLS}, ignore_reason`);
+  if (error && /ignore_reason/i.test(error.message)) {
+    ({ data, error } = await query(COLS));
+  }
+  const rows = data as unknown as IgnoredRow[] | null;
 
   if (error) {
     return NextResponse.json(
@@ -47,6 +66,8 @@ export async function GET() {
     outcome: "none" as const,
     best: null,
     candidates: [] as never[],
+    // [BANK-IGNORE-REDEN] null voor een rij van vóór deze kolom — het scherm toont dan niets.
+    ignoreReason: r.ignore_reason ?? null,
   }));
 
   return NextResponse.json({ ok: true, suggestions });

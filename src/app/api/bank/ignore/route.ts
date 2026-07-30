@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { logAuditAction } from "@/lib/audit";
+import { toBankIgnoreReason } from "@/lib/bank-ignore-reason";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 
 export async function POST(req: NextRequest) {
@@ -38,10 +39,12 @@ export async function POST(req: NextRequest) {
   // 2. Body: which transaction, and ignore vs restore.
   let transactionId: string | undefined;
   let action: string | undefined;
+  let reasonRaw: unknown;
   try {
     const body = await req.json();
     transactionId = body?.transactionId;
     action = body?.action; // 'ignore' | 'restore'
+    reasonRaw = body?.reason; // [BANK-IGNORE-REDEN] optioneel
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
@@ -84,12 +87,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unexpected_state", status: tx.status }, { status: 409 });
   }
 
-  const { error: updErr } = await pipeline
-    .from("bank_transactions")
-    .update({ status: to })
-    .eq("id", transactionId)
-    .eq("user_id", user.id)
-    .eq("status", from); // guard against a concurrent change
+  // [BANK-IGNORE-REDEN] De reden is een NOTITIE, geen besluit. Nooit verplicht: een afgedwongen
+  // reden levert een antwoord op dat slechter is dan geen antwoord (zie archive-reason.ts). Een
+  // onbekende waarde wordt stil null in plaats van een 400 — de database kent dezelfde vijf via een
+  // CHECK, dus doorlaten zou een 500 geven en dan blijft de regel ONgenegeerd om een label.
+  // Bij 'restore' wissen we hem: de regel komt terug in de actieve lijst, en een reden die daar
+  // blijft hangen zou de volgende keer een oude verklaring aan een nieuw besluit plakken.
+  const reason = action === "ignore" ? toBankIgnoreReason(reasonRaw) : null;
+
+  const applyUpdate = (withReason: boolean) =>
+    pipeline
+      .from("bank_transactions")
+      .update((withReason ? { status: to, ignore_reason: reason } : { status: to }) as never)
+      .eq("id", transactionId)
+      .eq("user_id", user.id)
+      .eq("status", from); // guard against a concurrent change
+
+  let { error: updErr } = await applyUpdate(true);
+
+  // [DEPLOY-SAFE] Draait bank_ignore_reason.sql nog niet op deze database, dan bestaat de kolom
+  // niet en weigert PostgREST de hele update (PGRST204 / 42703). Het negeren zelf mag daar niet op
+  // stuklopen: dat is de handeling, de reden is de aantekening erbij. Eén keer opnieuw zonder de
+  // kolom, precies zoals de rest van dit project met een nog-niet-toegepaste migratie omgaat.
+  if (updErr && /ignore_reason/i.test(updErr.message)) {
+    ({ error: updErr } = await applyUpdate(false));
+  }
 
   if (updErr) {
     return NextResponse.json({ error: "update_failed", detail: updErr.message }, { status: 500 });
@@ -110,6 +132,9 @@ export async function POST(req: NextRequest) {
     oldValue: { status: from },
     newValue: {
       status: to,
+      // [BANK-IGNORE-REDEN] Ook in het audit-spoor: "wie zette dit opzij en wanneer" is pas een
+      // antwoord als er staat waaróm.
+      ...(reason ? { reason } : {}),
       tx_date: tx.date ?? null,
       tx_amount: tx.amount ?? null,
       tx_counterpart: tx.counterpart_name ?? null,
