@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendMessageNotification } from '@/lib/email'
+import { appUrl } from "@/lib/app-origin"
 
 // ── GET: جلب رسائل المحادثة ───────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
@@ -127,7 +128,12 @@ export async function POST(request: NextRequest) {
         receiverName: receiverProfile.full_name || 'Gebruiker',
         senderName,
         messagePreview: content.trim().slice(0, 120),
-        conversationUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/messages/${user.id}`
+        // [ORIGIN] Was `${process.env.NEXT_PUBLIC_APP_URL}/...` zonder vangnet: ontbrak de
+        // variabele, dan vertrok deze mail met de link "undefined/dashboard/messages/...".
+        // appUrl geeft null als er geen origin is; de mail gaat dan zonder link i.p.v. met een
+        // kapotte — sendMessageNotification valt terug op de tekst zelf.
+        conversationUrl:
+          appUrl(process.env, `/dashboard/messages/${user.id}`, new URL(request.url).origin) ?? ''
       }).catch(() => null)
     }
     return NextResponse.json({ success: true, message })

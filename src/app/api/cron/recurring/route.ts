@@ -27,6 +27,8 @@ import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from
 // [TZ] One definition of "today in Amsterdam", shared with the screens — a cron and a form that
 // disagree about the date would put an invoice and its concept in different quarters.
 import { amsterdamToday } from "@/lib/format-nl";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -44,6 +46,8 @@ type ScheduleRow = {
 };
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
@@ -225,6 +229,9 @@ export async function GET(req: NextRequest) {
       console.error("[CRON-RECURRING] schedule threw (non-fatal)", { schedule: s.id, error: e instanceof Error ? e.message : String(e) });
     }
   }
+
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "recurring", { startedAt: cronStartedAt, ok: true, result: { ok: true, available: true, due: schedules.length, generated, skipped, finished, failed } });
 
   return NextResponse.json({ ok: true, available: true, due: schedules.length, generated, skipped, finished, failed });
 }

@@ -42,6 +42,8 @@ import { sendInvoiceReminder } from "@/lib/email";
 // [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
 import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long" });
@@ -81,6 +83,8 @@ type CandidateInvoice = {
 };
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   // ── Auth — fail-closed, constant-time (same as reconcile/email-sync) ──
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -418,6 +422,18 @@ export async function GET(req: NextRequest) {
       }
     }
   }
+
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "reminders", { startedAt: cronStartedAt, ok: true, result: {
+    ok: true,
+    enabledOwners: owners.length,
+    candidates: invoices.length,
+    sent,
+    failed,
+    skippedDuplicate,
+    ownersProcessed,
+    truncated,
+  } });
 
   return NextResponse.json({
     ok: true,

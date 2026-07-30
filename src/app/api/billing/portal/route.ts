@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { isBillingConfigured, createPortalSession } from "@/lib/billing";
+import { appOrigin } from "@/lib/app-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +56,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+    // [ORIGIN] Eén keten (APP_URL → SITE_URL → VERCEL_URL → dit verzoek), zodat een lege of
+    // kapotte waarde doorvalt in plaats van als origin door te gaan.
+    const origin = appOrigin(process.env, req.nextUrl.origin) ?? req.nextUrl.origin;
     const session = await createPortalSession({
       customerId,
       returnUrl: `${origin}/dashboard/settings/facturering`,
