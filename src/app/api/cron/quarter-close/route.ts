@@ -205,8 +205,8 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: true, result: {
-    ok: true,
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: {
+    ok: failed === 0,
     quarter: `Q${period.quarter} ${period.year}`,
     owners: ownerIds.length,
     notifiedOwners,
