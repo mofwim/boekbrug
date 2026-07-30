@@ -201,7 +201,15 @@ export function decideRemoval(inv: RemovalInvoice): RemovalDecision {
   // ── Never a bookkeeping record → really delete ─────────────────────────────────────────────
   // A concept has no legal number and never left the building; an offerte is not a factuur at
   // all. Both may be deleted for real — that is the rule this app already had.
-  if (!incoming && (status === "draft" || isOfferte)) {
+  //
+  // [OFFERTE-SENT-ARCHIVE] But only while the row is still a DRAFT. The RLS policy
+  // invoices_zzp_delete (database.sql) permits a delete ONLY for status='draft', while
+  // invoice_lines_delete_own carries no status test at all. A SENT offerte therefore lost its
+  // LINES and kept its row: the list showed "Verwijderd", a refresh brought the offerte back
+  // empty, and "Maak factuur aan" — which reads exactly those lines — produced an invoice with
+  // no items. A sent offerte reaches the customer, so it is archived like any other sent
+  // document: out of the list, nothing destroyed, and the database agrees with the screen.
+  if (!incoming && status === "draft") {
     return {
       mode: "delete",
       allowed: true,
@@ -211,6 +219,19 @@ export function decideRemoval(inv: RemovalInvoice): RemovalDecision {
         : `Dit concept is nooit verstuurd en telt nergens in mee. Het wordt definitief verwijderd.`,
       warning: "Dit kan niet ongedaan worden gemaakt.",
       confirmLabel: "Definitief verwijderen",
+    };
+  }
+
+  // [OFFERTE-SENT-ARCHIVE] A sent offerte: archived, not deleted. Still not a factuur, so it
+  // never touched omzet or BTW — the wording says so rather than borrowing the invoice text.
+  if (!incoming && isOfferte) {
+    return {
+      mode: "archive",
+      allowed: true,
+      title: "Offerte verwijderen?",
+      body: `${what.charAt(0).toUpperCase() + what.slice(1)} verdwijnt uit je lijst. Een offerte is geen factuur — er verandert niets aan je omzet of BTW. ${KEPT}`,
+      warning: "Je klant heeft deze offerte al gekregen; die krijgt hier geen bericht van.",
+      confirmLabel: "Ja, verwijderen",
     };
   }
 
@@ -266,6 +287,17 @@ export type ArchiveRefusal =
 export function refuseArchive(inv: RemovalInvoice): ArchiveRefusal | null {
   if ((inv.status ?? "") === "archived") return "already_archived";
   if (inv.accountant_status === "verwerkt") return "verwerkt";
+  // [OFFERTE-SENT-ARCHIVE] An outgoing OFFERTE is the one outgoing document that may be archived:
+  // it carries no number from the doorlopende reeks, so removing it leaves no hole — the very
+  // reason [ISSUED-STAYS] exists does not apply to it. decideRemoval sends a sent offerte down
+  // the archive path (a delete would strip its lines and leave the row behind, because the RLS
+  // delete policy only permits status='draft'), so this side must allow the same thing or the
+  // dialog would promise what the route refuses.
+  const offerte = inv.invoice_type === "pro_forma" || inv.invoice_type === "offerte";
+  if (offerte && (inv.direction ?? "") !== "incoming") {
+    if (hasSettledMoney(inv)) return "money_settled";
+    return new Set(["sent", "overdue"]).has(inv.status ?? "") ? null : "not_archivable";
+  }
   // [ISSUED-STAYS] The route is a public API; the rule above must hold here too, not only in the
   // dialog. An issued sales invoice is corrected with a creditnota — never taken out of the
   // doorlopende nummering.

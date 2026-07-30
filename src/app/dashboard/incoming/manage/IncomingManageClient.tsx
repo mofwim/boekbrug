@@ -447,7 +447,14 @@ export default function IncomingManageClient({
           payment_prepared_at: null,
         })
       }
-      if (json.byInvoice) applyMap(json.byInvoice)
+      // [RECON-MAP-HONEST] applyMap REPLACES the whole badge map (by design — the run's map is
+      // the complete post-engine truth). But /api/reconcile/run returns `byInvoice: {}` when the
+      // map phase itself threw, and `{}` is truthy: applying it wiped every
+      // "In bankafschrift" badge on the page. Worse, the summary sheet names a failed bank/kas/
+      // categorize phase but never named `map`, so a run that lost its map read as a clean one
+      // that simply found nothing — "Geen open banktransacties om tegen te matchen" while the
+      // owner's statement was full of them. Only apply a map the run actually built.
+      if (json.byInvoice && !(json.failed ?? []).includes('map')) applyMap(json.byInvoice)
       setMatchResult(json)
     } catch {
       showToast('Matchen mislukt — probeer het opnieuw')
@@ -626,17 +633,35 @@ export default function IncomingManageClient({
     // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
     // a still-'matched' tx that the owner could pay a second time). The old direct client write did
     // neither.
-    const res = await fetch('/api/invoice/pay-toggle', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId: ctx.id,
-        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
-        paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? amsterdamToday(),
-        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
-        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
-      }),
-    })
+    //
+    // [PAY-NETWORK-SAFE] fetch REJECTS on a dropped connection — the normal case for a shop
+    // owner on a phone, not an exotic one. Unguarded, that rejection left this function before
+    // the optimistic flip was rolled back and before processingId was cleared: the row kept
+    // claiming "Betaald" while nothing was written, and every later tap died on the
+    // `processingId === inv.id` guard, so the button stayed a spinner until a reload. Every
+    // sibling action on this page (executeBundlePay, executeRemoval, archiveDuplicate,
+    // runReconciliation, openPdf) already guarded this; the most important write did not.
+    let res: Response
+    try {
+      res = await fetch('/api/invoice/pay-toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: ctx.id,
+          action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+          paymentMethod: ctx.paymentMethod ?? 'bank',
+          paymentDate: ctx.paymentDate ?? amsterdamToday(),
+          ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+          ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+        }),
+      })
+    } catch {
+      // The request never completed. It may or may not have reached the server, and we cannot
+      // know which — so say exactly that instead of guessing, and put the row back as it was.
+      if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus === 'paid' ? 'received' : 'paid' })
+      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      setProcessingId(null)
+      return
+    }
     const json = await res.json().catch(() => ({} as { error?: string }))
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
@@ -691,7 +716,12 @@ export default function IncomingManageClient({
       showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
       }
     } else {
-      patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
+      // [PARTIAL-PAY] amount_paid must go with it. The server clears every recorded instalment
+      // on an undo (pay-toggle → recompute_invoice_amount_paid); leaving the local value behind
+      // turns a fully-undone invoice into a phantom part-payment — the row reads
+      // "Deels betaald · € X open" for money nobody paid, and the pay dialog then caps the
+      // owner at that invented remainder instead of the full total.
+      patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null, amount_paid: 0 })
       showToast(`Betaling ongedaan gemaakt`)
     }
     // [CASH-SETTLE] Keep the kasboek in sync with this cash pay/undo — create/heal the linked
@@ -1736,13 +1766,21 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
   const cashTouched = cash.created + cash.updated + cash.deleted
   const bankFailed = failed.includes('bank')
   const kasFailed  = failed.includes('kas')
+  // [RECON-MAP-HONEST] The map pass builds the post-run state (which invoices are now in the
+  // statement, how many transactions are still open). When it throws, the route still answers
+  // 200 with byInvoice {} and pendingTransactions 0 — which reads here as "Geen open
+  // banktransacties om tegen te matchen", a sentence that is simply false. Named like every
+  // other pass, so a partial run can never read as a clean one.
+  const mapFailed  = failed.includes('map')
   const changedNothing = bookedCount === 0 && cashTouched === 0 && categorized === 0
   const nFact = (n: number) => (n === 1 ? '1 factuur' : `${n} facturen`)
 
   const title = bookedCount > 0
     ? `${nFact(bookedCount)} gekoppeld`
     : changedNothing
-      ? (pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
+      // [RECON-MAP-HONEST] "Niets om te matchen" is a claim about the data; with a failed map
+      // pass we do not have the data to make it.
+      ? (mapFailed ? 'Deels bijgewerkt' : pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
       : 'Bijgewerkt'
 
   return (
@@ -1758,15 +1796,17 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
           {/* 1) Bank ↔ facturen */}
           <ResultLine
             icon="account_balance"
-            tone={bankFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
+            tone={bankFailed || mapFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
             text={
               bankFailed
                 ? 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.'
                 : bookedCount > 0
                   ? `${nFact(bookedCount)} herkend in je bankafschrift en op betaald gezet.`
-                  : pendingTransactions === 0
-                    ? 'Geen open banktransacties om tegen te matchen.'
-                    : 'Geen nieuwe betalingen herkend in je bankafschrift.'
+                  : mapFailed
+                    ? 'De stand kon niet worden opgehaald — we weten niet of er nog open banktransacties zijn.'
+                    : pendingTransactions === 0
+                      ? 'Geen open banktransacties om tegen te matchen.'
+                      : 'Geen nieuwe betalingen herkend in je bankafschrift.'
             }
           />
           {/* Booked on amount + name only — real bookings, but the ones worth checking. */}
@@ -1810,7 +1850,10 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
             />
           )}
           {/* Nothing to work with at all → say what to do about it. */}
-          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && (
+          {/* [RECON-MAP-HONEST] Not when the map pass failed: pendingTransactions is 0 there
+              because nothing could be counted, not because there is nothing to count — and
+              "upload een bankafschrift" to someone who just uploaded one is worse than silence. */}
+          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && !mapFailed && (
             <ResultLine
               icon="upload_file"
               tone="neutral"

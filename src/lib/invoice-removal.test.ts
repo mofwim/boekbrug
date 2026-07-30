@@ -100,9 +100,17 @@ console.log("\n— what was never a bookkeeping record is really deleted —");
   check("it says the concept counted nowhere", /telt nergens in mee/.test(d.body));
 }
 {
+  // [OFFERTE-SENT-ARCHIVE] This case used to assert `mode === "delete"`, and that expectation was
+  // wrong rather than merely outdated: the delete it locked in could not complete. The RLS delete
+  // policy on `invoices` permits status='draft' only, while the one on `invoice_lines` has no
+  // status test — so a SENT offerte lost its lines, kept its row, and the screen said "Verwijderd".
+  // A sent offerte is archived now; the full rule is exercised in its own block below.
   const d = decideRemoval(out({ invoice_type: "pro_forma", status: "sent" }));
-  check("an offerte is deleted even when sent", d.mode === "delete");
+  check("a SENT offerte is archived, not deleted", d.mode === "archive" && d.allowed === true);
   check("it explains an offerte is not a factuur", /geen factuur/.test(d.body));
+  const draft = decideRemoval(out({ invoice_type: "pro_forma", status: "draft" }));
+  check("a DRAFT offerte is still deleted for real", draft.mode === "delete");
+  check("...and it explains an offerte is not a factuur too", /geen factuur/.test(draft.body));
 }
 {
   // A draft that already has money against it is still not a plain delete.
@@ -142,6 +150,36 @@ console.log("\n— refuseArchive: the server's own answer (it never trusts the c
   check("an unknown status is refused", refuseArchive(inc({ status: "zzz" })) === "not_archivable");
   check("the lock is checked before everything else",
     refuseArchive(out({ status: "paid", accountant_status: "verwerkt" })) === "verwerkt");
+}
+
+console.log("\n— [OFFERTE-SENT-ARCHIVE] a SENT offerte is archived, never deleted —");
+{
+  // The delete path strips invoice_lines from the browser, but the RLS delete policy on
+  // `invoices` permits status='draft' only — so a sent offerte lost its lines and kept its row.
+  // The screen said "Verwijderd"; a refresh brought back an EMPTY offerte, and "Maak factuur aan"
+  // (which reads exactly those lines) then produced an invoice with no items.
+  const offerte = (o: Partial<RemovalInvoice> = {}): RemovalInvoice =>
+    out({ invoice_type: "offerte", invoice_number: null, ...o });
+
+  check("a DRAFT offerte is still really deleted", decideRemoval(offerte({ status: "draft" })).mode === "delete");
+  check("a DRAFT pro_forma too", decideRemoval(offerte({ status: "draft", invoice_type: "pro_forma" })).mode === "delete");
+  check("a SENT offerte is archived instead", decideRemoval(offerte({ status: "sent" })).mode === "archive");
+  check("...and is allowed", decideRemoval(offerte({ status: "sent" })).allowed === true);
+  check("a SENT pro_forma too", decideRemoval(offerte({ status: "sent", invoice_type: "pro_forma" })).mode === "archive");
+  check("the dialog says it is not a factuur (no omzet/BTW claim)",
+    /geen factuur/i.test(decideRemoval(offerte({ status: "sent" })).body));
+
+  // The two layers must agree: the dialog offering an archive that the route refuses is the
+  // same class of lie as the delete that silently half-succeeded.
+  check("the SERVER allows archiving a sent offerte", refuseArchive(offerte({ status: "sent" })) === null);
+  check("...an overdue one too", refuseArchive(offerte({ status: "overdue" })) === null);
+  check("a PAID offerte is still refused (money moved)",
+    refuseArchive(offerte({ status: "sent", amount_paid: 500 })) === "money_settled");
+  check("a DRAFT offerte is NOT archivable (it goes down the delete path)",
+    refuseArchive(offerte({ status: "draft" })) === "not_archivable");
+  check("verwerkt still outranks it", refuseArchive(offerte({ status: "sent", accountant_status: "verwerkt" })) === "verwerkt");
+  // CONTROL: the ordinary sales invoice must be unaffected by the new branch.
+  check("CONTROL a sent FACTUUR is still refused", refuseArchive(out()) === "issued_sales_invoice");
 }
 
 console.log("\n— restoreStatus: derived from what the row proves, never guessed —");

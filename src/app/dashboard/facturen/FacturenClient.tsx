@@ -21,7 +21,7 @@ type ArchivedRow = {
   invoice_type: string | null
 }
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
-import { ReconBadge } from '@/components/invoice/InvoiceRow'
+import { ReconBadge, getDisplayStatus } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -463,19 +463,36 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     // [PAY-TOGGLE] Route through the audited server endpoint (same as Crediteuren). On UNDO it also
     // detaches any bank transaction matched to this invoice — the old direct client write undid the
     // invoice side only, stranding the tx as 'matched' (payable a second time) and left no audit row.
-    const res = await fetch('/api/invoice/pay-toggle', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId: ctx.id,
-        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
-        paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? amsterdamToday(),
-        // null / absent = settle the whole open balance (unchanged behaviour).
-        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
-        // Idempotency: a double tap or a retried POST must not book twice.
-        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
-      }),
-    })
+    //
+    // [PAY-NETWORK-SAFE] fetch REJECTS on a dropped connection — the normal case for a shop owner
+    // on a phone, not an exotic one. Unguarded, that rejection left this function before the
+    // optimistic flip was rolled back and before processingId was cleared: the row kept claiming
+    // "Betaald" while nothing was written, and every later tap died on the
+    // `processingId === inv.id` guard, so the button stayed a spinner until a reload. Every
+    // sibling action here (executeSend, executeRemoval, createBundle) already guarded this.
+    let res: Response
+    try {
+      res = await fetch('/api/invoice/pay-toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: ctx.id,
+          action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+          paymentMethod: ctx.paymentMethod ?? 'bank',
+          paymentDate: ctx.paymentDate ?? amsterdamToday(),
+          // null / absent = settle the whole open balance (unchanged behaviour).
+          ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+          // Idempotency: a double tap or a retried POST must not book twice.
+          ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+        }),
+      })
+    } catch {
+      // The request never completed. It may or may not have reached the server, and we cannot
+      // know which — so say exactly that instead of guessing, and put the row back as it was.
+      if (!isPartialIntent) updateOptimistic(ctx.id, { status: ctx.newStatus === 'paid' ? 'sent' : 'paid' })
+      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      setProcessingId(null)
+      return
+    }
     const json = await res.json().catch(() => ({} as { error?: string }))
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
@@ -521,6 +538,14 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         } catch { /* non-blocking — payment already succeeded */ }
         showToast(`Factuur ${ctx.number} betaald ✓`)
       }
+    } else {
+      // [PARTIAL-PAY] An undo also clears every recorded instalment server-side
+      // (pay-toggle → recompute_invoice_amount_paid). Without mirroring that here, a
+      // previously part-paid invoice came back as 'sent' while the row still held the old
+      // amount_paid: openAmount() then reported a smaller balance than is really open, the
+      // row read "Deels betaald · € X open" for a payment that no longer exists, and the pay
+      // dialog capped the owner at that invented remainder.
+      updateOptimistic(ctx.id, { amount_paid: 0 })
     }
     setProcessingId(null)
   }
@@ -648,11 +673,31 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     }
 
     if (decision.mode === 'delete') {
-      // A concept / offerte was never a bookkeeping record — really gone, lines and all.
-      removeOptimistic(id)
-      await supabase.from('invoice_lines').delete().eq('invoice_id', id)
-      await supabase.from('invoices').delete().eq('id', id)
-      showToast('Verwijderd')
+      // A concept was never a bookkeeping record — really gone, lines and all.
+      //
+      // [DELETE-CHECKED] Via the audited route, and the answer is READ. The old code deleted
+      // invoice_lines and then invoices straight from the browser, checked neither result, and
+      // toasted 'Verwijderd' unconditionally. That is only harmless while the two RLS policies
+      // agree — and they do not: invoice_lines_delete_own has no status test, invoices_zzp_delete
+      // permits status='draft' only. Anything else lost its LINES and kept its row, while the
+      // screen said it was gone. The route refuses non-drafts with 409 and a sentence, so a
+      // mismatch now surfaces instead of destroying data quietly.
+      setProcessingId(id)
+      try {
+        const res = await fetch(`/api/invoice/${id}`, { method: 'DELETE' })
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          showToast(json?.error || 'Verwijderen mislukt — ververs de pagina')
+          await refresh()
+          return
+        }
+        removeOptimistic(id)
+        showToast('Verwijderd')
+      } catch {
+        showToast('Geen verbinding — verwijderen niet gelukt')
+      } finally {
+        setProcessingId(null)
+      }
       return
     }
 
@@ -746,11 +791,22 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         const displayNumber = result.invoice_number || ctx.number
         // [SEND-PDF-HONEST] A pdf_failed response means the number was issued but the PDF/email did
         // NOT go out — never toast "verzonden ✓". Tell the owner to resend so the state is honest.
-        if (result.warning === 'pdf_failed' || result.delivered === false) {
+        //
+        // [SEND-EMAIL-HONEST] email_failed is the SAME class of half-success and was falling
+        // through to the "verzonden ✓" branch: the route issues the legal number, builds the PDF,
+        // and only then fails to hand it to the mail provider — it carries no `delivered: false`,
+        // so the old test missed it. The owner was told a legally-numbered invoice had reached
+        // their customer when nothing left the building. /dashboard/invoice/new already handled
+        // both warnings together; this page did not.
+        if (result.warning === 'pdf_failed' || result.warning === 'email_failed' || result.delivered === false) {
           showToast(
-            displayNumber
-              ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
-              : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
+            result.warning === 'email_failed'
+              ? (displayNumber
+                  ? `Factuur ${displayNumber} kreeg een nummer, maar de e-mail is niet verstuurd — verstuur opnieuw`
+                  : 'De e-mail is niet verstuurd — verstuur de factuur opnieuw')
+              : displayNumber
+                ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
+                : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
           )
         } else {
           showToast(
@@ -971,6 +1027,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               // Row tint
               const rowBg = isCredit ? '#FFF8F0' : isOfferte ? '#F8F9FA' : '#fff'
 
+              // [OVERDUE-DERIVED] What the row should SAY it is — 'overdue' exists only as a
+              // derivation, never as a stored status.
+              const displayStatus = getDisplayStatus(inv)
+
               return (
                 <div
                   key={inv.id}
@@ -1003,10 +1063,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         <InvoiceTypeBadge type={invoiceType} />
-                        {/* Status chip */}
-                        {CHIP[inv.status] && (
-                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
-                            {inv.status === 'paid' ? 'Betaald' : inv.status === 'sent' ? 'Verzonden' : inv.status === 'overdue' ? 'Verlopen' : 'Concept'}
+                        {/* Status chip — [OVERDUE-DERIVED] 'overdue' is never STORED (see the
+                            note in api/bank/unlink): it is derived from sent + due_date in the
+                            past, exactly as the Verlopen tab's own query derives it. Reading
+                            inv.status raw therefore labelled every row in that tab a blue
+                            "Verzonden" — the list said overdue, each row denied it. getDisplayStatus
+                            is the shared derivation the row component already exports. */}
+                        {CHIP[displayStatus] && (
+                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[displayStatus].bg, color: CHIP[displayStatus].color }}>
+                            {displayStatus === 'paid' ? 'Betaald' : displayStatus === 'sent' ? 'Verzonden' : displayStatus === 'overdue' ? 'Verlopen' : 'Concept'}
                           </span>
                         )}
                         {recon[inv.id] && (
