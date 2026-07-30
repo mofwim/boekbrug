@@ -23,6 +23,7 @@ import {
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -51,7 +52,9 @@ export async function GET() {
     txRows = await fetchAllRows<BankTransactionDbRow>((from, to) =>
       pipeline
         .from("bank_transactions")
-        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+        // [BANK-COUNTERPART-HISTORY] `category` rides along so the card can say what the owner did
+        // with this counterpart before. No extra query: these rows are already read in full.
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .order("id", { ascending: true })
@@ -208,6 +211,15 @@ export async function GET() {
     }
   }
 
+  // [BANK-COUNTERPART-HISTORY] What the owner already decided about each counterpart. Computed
+  // from the rows we ALREADY hold — no extra round trip — and only over lines that carry a
+  // category, so it reports answers rather than a pile of other open questions.
+  const historyPool: HistoryLine[] = (txRows as unknown as HistoryLine[]).map((r) => ({
+    counterpart_name: r.counterpart_name ?? null,
+    counterpart_iban: r.counterpart_iban ?? null,
+    category: r.category ?? null,
+  }));
+
   // 5. Shape a lean DTO for the UI. transactionId === bank_transactions.id.
   const suggestions = result.matches.map((m) => {
     const txId = m.transaction.transactionId;
@@ -220,6 +232,13 @@ export async function GET() {
       counterpart: m.transaction.counterpartName,
       // [SEARCH] The tegenrekening IBAN — carried so the in-page zoekbalk can find a line by IBAN.
       iban: m.transaction.counterpartIban ?? null,
+      // [BANK-COUNTERPART-HISTORY] "Wat deed ik hier de vorige keer mee?" — null when there is
+      // nothing honest to say. Reported, never applied: counterpart_memory drives the actual
+      // suggestion, and a second hint that could contradict it would be worse than none.
+      history: counterpartHistory(
+        { counterpart_name: m.transaction.counterpartName, counterpart_iban: m.transaction.counterpartIban ?? null },
+        historyPool,
+      ),
       // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
       // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
       // raw description so the owner sees the real reference, not "USTD//...".

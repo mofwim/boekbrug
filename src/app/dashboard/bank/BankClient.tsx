@@ -13,6 +13,7 @@ import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
+import { categoryLabel } from '@/lib/bank-categories'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -82,6 +83,9 @@ interface Suggestion {
   counterpart: string | null
   // [SEARCH] tegenrekening IBAN — so the zoekbalk can match a line by IBAN as well.
   iban?: string | null
+  // [BANK-COUNTERPART-HISTORY] What the owner decided about this counterpart before. Server-
+  // computed over lines that already carry a category; null when there is nothing honest to say.
+  history?: { count: number; topCategory: string; topCount: number; matchedBy: 'iban' | 'naam' } | null
   reference: string | null
   outcome: Outcome
   best: Candidate | null
@@ -1841,6 +1845,32 @@ function TxCard({
             OMSCHRIJVING
           </div>
           {cleanBankDescription(s.description)}
+        </div>
+      )}
+
+      {/* [BANK-COUNTERPART-HISTORY] "Wat deed ik hier de vorige keer mee?" — the app has always
+          known this (counterpart_iban is stored on every import and an IBAN hit is a CERTAIN-tier
+          signal in the matcher) and never showed it. For an unidentifiable line this is the
+          cheapest resolution there is, and it comes before any heavier answer.
+
+          Reported, never applied: no tap, no pre-fill. counterpart_memory already drives the
+          actual suggestion, and a second hint the owner could act on separately would eventually
+          contradict it. The wording keeps two things apart that must not blur — an IBAN is an
+          identity ("deze tegenrekening"), a name is only a resemblance ("deze naam"), because the
+          bank rewrites counterpart names constantly. And when the past was NOT unanimous we say
+          so rather than rounding a 2-of-3 into "altijd". */}
+      {s.history && (
+        <div style={{
+          marginTop: 8, padding: '8px 10px', borderRadius: R.md, background: '#F1F6FE',
+          fontSize: 12, color: '#1F4E8C', lineHeight: 1.5, fontFamily: FONT, border: '1px solid #D6E4FA',
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#1A73E8', flexShrink: 0, marginTop: 1 }}>history</span>
+          <span>
+            {s.history.topCount === s.history.count
+              ? <>Eerder {s.history.count === 1 ? 'één keer' : `${s.history.count} keer`} van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'}, {s.history.count === 1 ? 'geboekt' : 'steeds geboekt'} als <b>{categoryLabel(s.history.topCategory)}</b>.</>
+              : <>Eerder {s.history.count} keer van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'} — {s.history.topCount}× als <b>{categoryLabel(s.history.topCategory)}</b>, de rest anders.</>}
+          </span>
         </div>
       )}
 

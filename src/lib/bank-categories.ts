@@ -42,6 +42,20 @@ export const SELECTABLE_CATEGORIES: readonly SelectableCategory[] = [
 ] as const;
 
 // The set of accepted category keys — derive it from the list so it can never drift.
+/**
+ * The owner-facing Dutch name of a stored category. Falls back to the raw key so an unknown or
+ * future value still renders as something rather than blank — a label is never worth a crash,
+ * and a bare key is at least honest about what is stored.
+ *
+ * [BANK-COUNTERPART-HISTORY] Exists because the history hint on a bank card must speak the same
+ * words as the category picker two taps away. A second, separately-written label list is exactly
+ * how "Zakelijke kost" and "Kosten" end up naming the same thing on one screen.
+ */
+export function categoryLabel(key: string | null | undefined): string {
+  if (!key) return "";
+  return SELECTABLE_CATEGORIES.find((c) => c.key === key)?.label ?? key;
+}
+
 export const ALLOWED_CATEGORIES: ReadonlySet<BankCategory> = new Set(
   SELECTABLE_CATEGORIES.map((c) => c.key),
 );
