@@ -4,7 +4,7 @@
 // all. The pure assessor is tested in possible-duplicate.test.ts; what is at stake here is
 // whether its candidates arrive — and whether they arrive exactly once.
 
-import { collectPossibleDuplicate } from './possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate } from './possible-duplicate-collect'
 import type { PossibleDupCandidate, SemanticDedupInput } from './safecore'
 
 let passed = 0, failed = 0
@@ -71,6 +71,49 @@ async function run() {
   {
     const r = await collectPossibleDuplicate(input({ totalIncBtw: null }), none, async () => [cand()])
     check('no usable total → no assessment at all', r === null)
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // [SUPERSEDE] mergePossibleDuplicate writes the keys the queue reads. The id among them is what
+  // the "Deze vervangt factuur X" button acts on, and it is the one key that CANNOT be recovered
+  // from anything else on the row — `_of` falls back to a vendor name and an invoice number is
+  // not unique across suppliers, so neither can select a row. Every ingestion path must go
+  // through this helper; the e-mail sync once wrote these keys by hand and silently missed the id.
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  console.log('\n— the stored flag carries an ACTIONABLE target —')
+  {
+    const merged = mergePossibleDuplicate(null, {
+      match: { id: 'inv-42', invoice_number: '26302050', client_name: 'Atapack' },
+      reason: 'zelfde factuurnummer, ander bedrag — mogelijk een gecorrigeerde versie',
+    }) as { _safecore?: Record<string, unknown> }
+    const s = merged._safecore ?? {}
+    check('possible_duplicate is set', s.possible_duplicate === true)
+    check('the id is stored — the button has something exact to act on', s.possible_duplicate_id === 'inv-42')
+    check('the display label is the number', s.possible_duplicate_of === '26302050')
+    check('the reason survives', typeof s.possible_duplicate_reason === 'string')
+  }
+  {
+    // A match with NO invoice number: the label falls back to the vendor, but the id must still
+    // be the id — that fallback is exactly why the button may never resolve by label.
+    const merged = mergePossibleDuplicate(null, {
+      match: { id: 'inv-7', invoice_number: null, client_name: 'Atapack B.V.' },
+      reason: 'zelfde bedrag en datum',
+    }) as { _safecore?: Record<string, unknown> }
+    const s = merged._safecore ?? {}
+    check('label falls back to the vendor name', s.possible_duplicate_of === 'Atapack B.V.')
+    check('the id does NOT fall back to anything', s.possible_duplicate_id === 'inv-7')
+  }
+  {
+    // Existing _safecore content (the arithmetic verdict) must survive the merge untouched.
+    const merged = mergePossibleDuplicate(
+      { _safecore: { arithmetic_ok: false, reason: 'excl + btw ≠ incl' }, vendor: 0.9 },
+      { match: { id: 'inv-9', invoice_number: 'F-1', client_name: 'X' }, reason: 'r' },
+    ) as { _safecore?: Record<string, unknown>; vendor?: number }
+    check('sibling _safecore keys survive', merged._safecore?.arithmetic_ok === false)
+    check('flat AI confidences survive', merged.vendor === 0.9)
+  }
+  {
+    check('no match → nothing invented', mergePossibleDuplicate(null, null) === null)
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`)

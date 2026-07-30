@@ -71,6 +71,12 @@ export function mergePossibleDuplicate(
   // vendor name, then the id — never leave it blank when we have a match.
   safecore.possible_duplicate_of =
     possible.match.invoice_number || possible.match.client_name || possible.match.id;
+  // [SUPERSEDE] The id of the invoice we matched against, so "Deze vervangt factuur X" can ACT on
+  // it. `_of` above is a display string that falls back to a vendor name — it can never identify
+  // a row, and an invoice number is not unique across suppliers, so resolving the target by name
+  // or number at click time would risk archiving the wrong invoice. The id is the only anchor
+  // that cannot mean two things.
+  safecore.possible_duplicate_id = possible.match.id;
   safecore.possible_duplicate_reason = possible.reason;
   fc._safecore = safecore;
   return fc;

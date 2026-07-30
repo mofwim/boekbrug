@@ -223,13 +223,30 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
   }
 
   const status = restoreStatus(invoice);
-  const { data: updated, error } = await pipeline
-    .from("invoices")
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .eq("status", "archived")
-    .select("id");
+  // `superseded_by_number` is not in the generated types until invoice_superseded_by.sql has run.
+  // The cast covers the PATCH only; every WHERE clause below stays fully typed.
+  const restore = (patch: Record<string, unknown>) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pipeline as any)
+      .from("invoices")
+      .update(patch)
+      .eq("id", id)
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .eq("status", "archived")
+      .select("id");
+
+  const basePatch = { status, updated_at: new Date().toISOString() };
+  // [SUPERSEDE] Clear the "vervangen door X" label on the way back. That label is only true of an
+  // ARCHIVED row: an invoice that is live in the books again while still claiming something
+  // replaced it is a contradiction the owner would have to resolve from memory. Superseding is
+  // meant to be reversible — being wrong about which of two invoices is the correction should
+  // cost one tap, not leave a permanent mark.
+  // [DEPLOY-SAFE] The column arrives with invoice_superseded_by.sql, applied by hand. Until then
+  // a missing-column error (PGRST204 / 42703) must not break RESTORE itself — retry without it.
+  let { data: updated, error } = await restore({ ...basePatch, superseded_by_number: null });
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    ({ data: updated, error } = await restore(basePatch));
+  }
   if (error) return NextResponse.json({ error: "restore_failed", detail: error.message }, { status: 500 });
   if (!updated || updated.length === 0) {
     return NextResponse.json({ error: "not_archived" }, { status: 409 });

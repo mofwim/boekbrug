@@ -24,7 +24,7 @@ import {
   deriveDueDate,
   type PossibleDuplicate,
 } from '@/lib/safecore'
-import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
@@ -3143,10 +3143,17 @@ export async function syncUserEmails(
         }
         // [DEDUP-SOFT] Carry the possible-duplicate flag → classifyImportHealth turns it into a
         // "mogelijk dubbel met X" needs-review warning that also blocks auto-advance.
+        // [SUPERSEDE] Via mergePossibleDuplicate — het ENIGE bestand dat weet welke sleutels een
+        // dubbel-signaal draagt. Deze drie regels stonden hier met de hand overgeschreven, en dat
+        // ging meteen mis toen er een vierde bij kwam (possible_duplicate_id, de id die de knop
+        // "Deze vervangt factuur X" aanstuurt): upload en intake kregen hem via de helper, de
+        // E-MAILSYNC niet — en dat is nu juist het pad waar de meeste facturen binnenkomen. De
+        // waarschuwing zou dan wél staan en de knop niet, zonder dat iets uitlegt waarom.
         if (possibleDup) {
-          safecore.possible_duplicate = true
-          safecore.possible_duplicate_of = possibleDup.match.invoice_number || possibleDup.match.client_name || possibleDup.match.id
-          safecore.possible_duplicate_reason = possibleDup.reason
+          const merged = mergePossibleDuplicate({ _safecore: safecore }, possibleDup) as {
+            _safecore?: Record<string, unknown>
+          }
+          Object.assign(safecore, merged._safecore ?? {})
         }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.

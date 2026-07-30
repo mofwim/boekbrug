@@ -35,6 +35,11 @@ const ARITHMETIC_KEYS = ["arithmetic_ok", "reason", "flags", "held_at"] as const
 const RELATION_KEYS = [
   "possible_duplicate",
   "possible_duplicate_of",
+  // [SUPERSEDE] De id van de tweeling. Die draagt de knop "Deze vervangt factuur X" — de re-import
+  // kan hem net zomin opnieuw afleiden als de rest van deze lijst, en zonder hem verdwijnt de knop
+  // (niet de waarschuwing) na één druk op "Opnieuw inlezen". Precies de stille verdwijning waar
+  // dit bestand voor bestaat.
+  "possible_duplicate_id",
   "possible_duplicate_reason",
   "dedup",
   "dedup_reason",
