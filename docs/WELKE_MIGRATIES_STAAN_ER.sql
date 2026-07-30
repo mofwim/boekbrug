@@ -54,7 +54,27 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
        'table', 'invoice_schedules'),
   (18, 'search_engine_clients_kvk_city.sql',
        'Zoeken op KVK-nummer en plaats van een klant',
-       'index', 'clients_kvk_number_trgm')
+       'index', 'clients_kvk_number_trgm'),
+
+  -- ── De bestandsbeveiliging ──────────────────────────────────────────────────────────────
+  -- Deze twee stonden er eerder NIET in, en dat was een gat in precies het verkeerde ding: de
+  -- vraag "is de bescherming van mijn bestanden live?" kon dit bestand niet beantwoorden. De
+  -- policy-tak hieronder keek namelijk hard naar schemaname='public', terwijl storage-policies
+  -- in schemaname='storage' wonen — het gereedschap was blind voor de bucket, per constructie.
+  (19, 'documents_shared_and_storage_policies.sql',
+       'De policies op storage.objects — zonder deze kan iedere ingelogde gebruiker bij andermans bestanden',
+       'storage_policy', 'documents_read'),
+  (20, 'storage_bucket_hardening.sql',
+       'Legt vast dat de documents-bucket privé is (stond alleen als vinkje in een dashboard)',
+       'bucket_private', 'documents'),
+
+  -- ── De ontdubbeling van documenten ──────────────────────────────────────────────────────
+  -- LET OP bij deze: als hij "toegepast" is, kan dat de OUDE versie zijn geweest, met een te
+  -- ruime DELETE. Zie het PRE-CHECK-blok in het migratiebestand zelf, en vooral de sluitende
+  -- test op cash_entries die daar staat.
+  (21, 'documents_content_hash_unique.sql',
+       'Race-veilige ontdubbeling op bytehash — LEES het bestand voordat je hem (opnieuw) draait',
+       'index', 'uq_documents_user_content_hash')
 )
 select
   nr                                                        as "#",
@@ -77,6 +97,15 @@ from (
                            where table_schema = 'public'
                              and table_name   = split_part(v.object, '.', 1)
                              and column_name  = split_part(v.object, '.', 2))
+      -- Storage-policies leven in het schema 'storage', niet in 'public'. Zonder deze tak was
+      -- dit bestand blind voor de enige bescherming die de bestanden zelf hebben.
+      when 'storage_policy' then exists (
+                          select 1 from pg_policies
+                           where schemaname = 'storage' and policyname = v.object)
+      -- En de bucket zelf: 'toegepast' betekent hier "hij staat op privé".
+      when 'bucket_private' then exists (
+                          select 1 from storage.buckets
+                           where id = v.object and public = false)
     end as aanwezig
   from verwacht v
 ) t

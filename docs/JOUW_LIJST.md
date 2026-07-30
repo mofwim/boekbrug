@@ -25,6 +25,37 @@ plaats van een scan. Het bestand zegt het zelf: *"puur snelheid"* — geen schem
 gedragswijziging. Zoeken werkt vandaag al. Twee regels, vijf seconden, geen risico; doe het
 wanneer je klantenregister groeit, of nu omdat het niets kost.
 
+**⚠ Één ding om NU te controleren — één query**
+
+De ontdubbelings-migratie `documents_content_hash_unique.sql` heeft hier al gelopen (de index
+`uq_documents_user_content_hash` bestaat). De versie die toen liep, verwijderde documenten en
+spaarde er één alleen als `documents.invoice_id` gezet was — met als argument "geen boekhoudregel
+hangt ervan af". Dat argument was fout: er zijn zes verwijzingen naar een document, en vijf laten
+`invoice_id` leeg. Een contante bon die aan een kasregel hing, kon dus als wees worden verwijderd.
+
+Deze query zegt of dat is gebeurd:
+
+```sql
+select id, entry_date, amount, btw_rate, description
+  from public.cash_entries
+ where category = 'kosten' and btw_rate is not null and document_id is null
+ order by entry_date;
+```
+
+**Nul rijen = er is geen contante bon geraakt.** Dat is het verwachte antwoord: byte-identieke
+duplicaten zijn zeldzaam (twee foto's van dezelfde bon hebben verschillende bytes), dus dit treft
+vooral een tweemaal geüploade PDF.
+
+Komt er wél iets uit, dan is dat sluitend bewijs — deze toestand kan de app niet maken
+(`/api/cash/route.ts:119` zet het tarief op null zodra er geen bon is). Die bonnen zijn weg en niet
+terug te halen; wat je nog kunt doen is het papier opnieuw fotograferen en aan de kasregel koppelen,
+zodat de voorbelasting terugkomt. De migratie is inmiddels gerepareerd en veilig opnieuw te draaien.
+
+**☑ Wat de meting verder liet zien — allemaal goed**
+De bucket staat op privé met een limiet van 25 MB · de drie storage-policies staan er ·
+**élke tabel in `public` heeft RLS aan** (`relrowsecurity = false` gaf nul rijen). Dat laatste
+beantwoordt in één regel de hele beveiligingsvraag van het doorgestuurde readiness-rapport.
+
 **☐ `AI_DAILY_BUDGET_EUR=0` in Vercel**
 Nul betekent: **wél tellen, niet begrenzen**. Dat is de juiste stand voor je eerste weken —
 je leert je echte uitgaven kennen voordat je een getal kiest. Laat je hem leeg, dan geldt

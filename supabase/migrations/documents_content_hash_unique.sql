@@ -129,9 +129,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_user_content_hash
 --   union all
 --   select 'eft_settlements', count(*) from public.eft_settlements where document_id is null;
 --
--- Let op: een lege document_id is niet automatisch bewijs van schade (veel regels hebben er nooit
--- een gehad). Het is een plek om te kijken, geen verdict. De contante kostenregels MET een
--- btw-tarief zijn de scherpste: daar hing de voorbelasting aan het document.
+-- Let op: een lege document_id is niet automatisch bewijs van schade — veel regels hebben er nooit
+-- een gehad. Op één na. Die ene is wél een verdict:
+--
+-- ── DE SLUITENDE TEST ────────────────────────────────────────────────────────────────────────
+--   select id, entry_date, amount, btw_rate, description
+--     from public.cash_entries
+--    where category = 'kosten'
+--      and btw_rate is not null
+--      and document_id is null
+--    order by entry_date;
+--
+-- Deze toestand KAN de app niet maken. /api/cash/route.ts:119 zegt:
+--     const rateAllowed = category === "omzet" || (category === "kosten" && documentId !== null)
+-- — een contante kostenpost zonder bon krijgt zijn tarief op null gezet, altijd. Een rij met een
+-- tarief én zonder document is dus bewijs dat het document er ooit WAS en later is verdwenen. En
+-- juist daar is de schade dubbel: financial-result.ts claimt de voorbelasting op een contante
+-- kostenpost alleen wanneer document_id gezet is, dus met het document verdween stil ook de aftrek.
+--
+-- Komt hier iets uit: die bonnen zijn weg en zijn niet terug te halen. Wat je nog wél kunt doen is
+-- de aftrek herstellen door het papier opnieuw te fotograferen en aan de kasregel te koppelen.
+-- Nul rijen betekent dat deze migratie geen contante bon heeft geraakt.
 --
 -- CONTROLE (na het toepassen):
 --
