@@ -2340,8 +2340,11 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
             color: amountMatches ? M3.success : M3.warning,
             display: 'inline-flex', alignItems: 'center', gap: 3,
           }}>
+            {/* Both glyphs must be in the icon_names subset in layout.tsx or they render as
+                their raw ligature text. 'check'/'close' are the canonical pair and both are
+                already in the subset — no font change, and it reads as ✓/✕ against the debit. */}
             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-              {amountMatches ? 'check' : 'do_not_disturb_on'}
+              {amountMatches ? 'check' : 'close'}
             </span>
             {eur.format(Math.abs(cand.amount))}
           </span>
