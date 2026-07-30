@@ -125,6 +125,28 @@ function isAutoVerified(inv: IncomingRow): boolean {
 }
 
 // Pay confirm context — payment fields only (defense in depth: never amounts)
+// [MOVE-PAYMENT] Wat /api/invoice/payment/move teruggeeft: één geboekte betaling plus de facturen
+// waar hij heen KAN. De server rangschikt ze (zelfde leverancier eerst, dan een exact passend
+// bedrag, dan de dichtstbijzijnde datum) — het scherm toont die volgorde en verzint er niets bij.
+interface MoveTarget {
+  id: string
+  invoice_number?: string | null
+  client_name?: string | null
+  invoice_date?: string | null
+  total_inc_btw?: number | null
+  amount_paid?: number | null
+}
+interface MovePayment {
+  id: string
+  amount_applied: number
+  transaction_id?: string | null
+  paid_on?: string | null
+  method?: string | null
+  /** false voor een koppelrij van vóór [PARTIAL-PAY]: geen vastgelegd bedrag, dus niets te verplaatsen. */
+  movable: boolean
+  targets: MoveTarget[]
+}
+
 interface PayCtx {
   id: string
   number: string
@@ -219,6 +241,9 @@ export default function IncomingManageClient({
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
   // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
   const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
+  // [MOVE-PAYMENT] Welke betaling(en) staan op deze factuur, en waar mogen ze heen.
+  const [moveCtx, setMoveCtx]           = useState<{ inv: IncomingRow; payments: MovePayment[] } | null>(null)
+  const [moveLoadingId, setMoveLoadingId] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
@@ -578,6 +603,77 @@ export default function IncomingManageClient({
   // accountant-verwerkt invoice is refused with the way out named instead.
   function handleRemoveRequest(inv: IncomingRow) {
     setRemoveCtx({ id: inv.id, decision: decideRemoval(inv as RemovalInvoice) })
+  }
+
+  // ── [MOVE-PAYMENT] Een geboekte betaling naar de juiste factuur verplaatsen ────────────────
+  // Het geld is echt en de boeking klopt — alleen de factuur eronder niet. Tot nu toe was het
+  // antwoord drie handelingen (terugdraaien, de banklijn opnieuw zoeken, opnieuw boeken) met
+  // daartussen een administratie waarin het geld nergens staat. Eén verplaatsing dus, en de
+  // schrijfactie zelf is één transactie in de database (move_invoice_payment).
+  //
+  // De server bepaalt WELKE facturen in aanmerking komen — dezelfde regels als de RPC, zodat het
+  // lijstje niets aanbiedt wat de database zou weigeren. Hier staat alleen wat de eigenaar ziet.
+  async function openMovePayment(inv: IncomingRow) {
+    if (moveLoadingId) return
+    setMoveLoadingId(inv.id)
+    try {
+      const res = await fetch(`/api/invoice/payment/move?invoiceId=${encodeURIComponent(inv.id)}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast(json?.detail || 'Betalingen ophalen mislukt — probeer opnieuw')
+        return
+      }
+      const payments = (json?.payments ?? []) as MovePayment[]
+      if (payments.length === 0) {
+        // amount_paid > 0 without a single link row: a payment recorded before the join table
+        // existed. There is nothing to move, and saying so beats an empty sheet.
+        showToast('Van deze betaling is geen boeking gevonden om te verplaatsen')
+        return
+      }
+      setMoveCtx({ inv, payments })
+    } catch {
+      showToast('Geen verbinding — probeer opnieuw')
+    } finally {
+      setMoveLoadingId(null)
+    }
+  }
+
+  async function executeMovePayment(linkId: string, target: MoveTarget, inv: IncomingRow) {
+    setMoveCtx(null)
+    setProcessingId(inv.id)
+    try {
+      const res = await fetch('/api/invoice/payment/move', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkId, targetInvoiceId: target.id }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The move is atomic — a refusal means nothing changed, and the server's sentence says
+        // which reason it was. Never our guess: it re-decided on fresher data than we hold.
+        showToast(json?.detail || 'Verplaatsen mislukt — er is niets gewijzigd')
+        return
+      }
+      // Both invoices changed. Patch what the server actually reported rather than assuming:
+      // the source may still hold other instalments, and the target may or may not be settled.
+      patchLocal(inv.id, {
+        amount_paid: Number(json.source_amount_paid ?? 0),
+        status: json.source_status ?? inv.status,
+        ...(Number(json.source_amount_paid ?? 0) <= 0.005
+          ? { payment_method: null, payment_date: null }
+          : {}),
+      })
+      patchLocal(target.id, {
+        amount_paid: Number(json.target_amount_paid ?? 0),
+        status: json.target_status ?? 'received',
+      })
+      showToast(
+        `${fmtEur(Number(json.applied ?? 0))} verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}`,
+      )
+    } catch {
+      showToast('Geen verbinding — er is niets gewijzigd')
+    } finally {
+      setProcessingId(null)
+    }
   }
 
   // ── [REMOVAL-ALTERNATIVE] "Draai eerst de betaling terug, daarna kun je hem verwijderen" ──
@@ -1383,6 +1479,25 @@ export default function IncomingManageClient({
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
+                            real but sits on the wrong invoice: a supplier's corrected re-issue, a
+                            matcher picking the wrong one of two equal amounts, a tap on the row
+                            above. It stands HERE, next to Betaaldatum and Methode, because that is
+                            where the owner is looking when they realise it. The alternative was
+                            three steps (undo, find the bank line, re-book) with the money existing
+                            nowhere in between — this is one atomic move. Offered only when there
+                            is money to move. */}
+                        {Math.max(0, inv.amount_paid ?? 0) > 0.005 && (
+                          <button
+                            onClick={e => { e.stopPropagation(); openMovePayment(inv) }}
+                            disabled={moveLoadingId === inv.id}
+                            style={{ fontSize: 13, color: M3.primary, background: '#fff', border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full, padding: '8px 16px', cursor: moveLoadingId === inv.id ? 'default' : 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                              {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
+                            </span>
+                            {moveLoadingId === inv.id ? 'Bezig…' : 'Betaling verplaatsen'}
+                          </button>
+                        )}
                         {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
                             the QR + copy sheet. No DB write; pure preparation. */}
                         {inv.status === 'received' && (
@@ -1511,6 +1626,86 @@ export default function IncomingManageClient({
           onCancel={() => setBundlePayRows(null)}
           paymentChoice={(method, paymentDate) => executeBundlePay(bundlePayRows, method, paymentDate)}
         />
+      )}
+
+      {/* ── [MOVE-PAYMENT] Naar welke factuur hoort deze betaling? ──
+          Geen vrij zoekveld: de server geeft alleen facturen terug die het geld ook echt kúnnen
+          ontvangen (zelfde richting, betaalbare status, genoeg openstaand, niet verwerkt), in de
+          volgorde waarin ze waarschijnlijk bedoeld zijn. De regel toont het bedrag én wat er open
+          staat, zodat kiezen een geïnformeerde keuze is en niet een gok met een bevestiging erna. */}
+      {moveCtx && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+          onClick={() => setMoveCtx(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
+          >
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
+              Betaling verplaatsen
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 18px' }}>
+              Van inkoopfactuur {moveCtx.inv.invoice_number || '—'} naar de factuur waar deze betaling bij hoort.
+              Het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.
+            </p>
+
+            {moveCtx.payments.map(p => (
+              <div key={p.id} style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
+                  {fmtEur(p.amount_applied)}
+                  {p.paid_on ? ` · ${fmtDate(p.paid_on)}` : ''}
+                  {p.method === 'kas' ? ' · Contant' : p.transaction_id ? ' · Bank' : ''}
+                </div>
+
+                {/* Een koppeling van vóór [PARTIAL-PAY] draagt geen bedrag. Verplaatsen zou dan
+                    moeten raden hoeveel er verhuist, en dat is precies wat hier niet mag. */}
+                {!p.movable ? (
+                  <p style={{ fontSize: 13, color: '#9a5b00', background: '#fff4e5', border: '1px solid #ffd9a8', borderRadius: R.md, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
+                    Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Draai hem terug
+                    en boek hem opnieuw op de juiste factuur.
+                  </p>
+                ) : p.targets.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#5F6368', background: '#F8F9FA', borderRadius: R.md, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
+                    Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling
+                    ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {fmtEur(p.amount_applied)} op
+                    open staat.
+                  </p>
+                ) : (
+                  p.targets.map(t => {
+                    const open = Math.max(0, Math.abs(Number(t.total_inc_btw ?? 0)) - Math.max(0, Number(t.amount_paid ?? 0)))
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => executeMovePayment(p.id, t, moveCtx.inv)}
+                        style={{
+                          width: '100%', textAlign: 'left', marginBottom: 8, padding: '12px 14px',
+                          borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
+                          cursor: 'pointer', fontFamily: FONT, display: 'block',
+                        }}
+                      >
+                        <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
+                          {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: '#5F6368', marginTop: 2 }}>
+                          {t.invoice_date ? `${fmtDateSmart(t.invoice_date)} · ` : ''}
+                          {fmtEur(t.total_inc_btw ?? null)} · nog {fmtEur(open)} open
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            ))}
+
+            <button
+              onClick={() => setMoveCtx(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ── */}
