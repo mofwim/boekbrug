@@ -69,6 +69,32 @@ Dit is de enige schakelaar in de app die data vernietigt. Leeg = dry run. Er kan
 2033 aan de beurt zijn; meldt een dry run nu al een kandidaat, dan is er een datum verkeerd
 gezet — uitzoeken, niet aanzetten.
 
+**☐ `boekbrug.nl` kan geen post ONTVANGEN — en dat is het enige punt op deze lijst dat
+iets kapots repareert**
+
+Op 30 juli gemeten, niet aangenomen: `boekbrug.nl` heeft **geen enkel MX-record**
+(`dig MX boekbrug.nl` → leeg; ter controle geeft `google.com` in dezelfde omgeving wél
+antwoord). Het domein staat overeind — de A-records wijzen netjes naar Vercel — maar
+inkomende mail heeft nergens om te landen.
+
+Ondertussen publiceert de app drie adressen als het officiële loket:
+
+| Adres | Waar het staat | Wat er beloofd wordt |
+|---|---|---|
+| `privacy@boekbrug.nl` | Privacyverklaring §1, §6, §12, §13 | AVG-verzoek: antwoord binnen 30 dagen; klacht: binnen 7 dagen |
+| `legal@boekbrug.nl` | Algemene Voorwaarden | het juridische contactpunt |
+| `support@boekbrug.nl` | Voorwaarden + privacy §13 | algemene hulp |
+
+Alle drie bouncen vandaag. Dat is niet hetzelfde als een leeg KVK-veld: "(volgt)" is een
+eerlijke lege plek, maar een gepubliceerd adres dat weigert is een belofte die de app niet
+waarmaakt. Het is bovendien precies het kanaal dat de AVG (art. 13) verplicht stelt, dus het
+telt vanaf je eerste gebruiker — niet pas vanaf je eerste euro.
+
+Let op waar dit *niet* aan ligt: Resend is voor **verzenden** (`noreply@boekbrug.nl`) en
+werkt. Ontvangen is een losse zaak; Resend doet het niet. Twee MX-regels bij je
+domeinregistrar die doorsturen naar een mailbox die je al hebt, is genoeg — de doorstuur
+bestemming is niets dat gepubliceerd wordt. Vijf minuten, geen code, geen KVK nodig.
+
 ## 2. Voordat je geld kunt aannemen
 
 **☐ KVK-inschrijving en een zakelijke bankrekening**
@@ -79,6 +105,21 @@ bewust een 404: er wordt nooit om geld gevraagd zonder identificeerbare rechtspe
 `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` · `_ADDRESS` · `_CITY`
 Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit als een
 echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand.
+
+Twee dingen die hier eerder onduidelijk stonden, want ze vallen niet allebei onder "geld":
+
+*Het werkt al, en er staat nergens een blokhaak op je scherm.* De vervanging zit in
+`src/content/legal/company.ts` en draait bij het bouwen over de drie juridische teksten
+(voorwaarden, privacy, eerlijk gebruik). Zonder ingevulde variabelen leest de bezoeker
+vandaag "geëxploiteerd door **BoekBrug**, gevestigd te Tilburg, KVK-nummer **(volgt)**" —
+niet `[JOUW NAAM]`. Nagemeten door de drie modules te importeren en op overgebleven
+placeholders te zoeken: nul.
+
+*Alleen `_KVK` en `_BTW` horen echt bij "voordat je geld aanneemt".* `_LEGAL_NAME` en
+`_ADDRESS` staan in de privacyverklaring als de verwerkingsverantwoordelijke, en die vraag
+stelt de AVG bij de eerste gebruiker. Zolang je nog niets int, is "(volgt)" verdedigbaar
+mits het loket hierboven wél openstaat — een bereikbaar adres is waar een betrokkene je
+daadwerkelijk mee vindt.
 
 **☐ Stripe: twee prijzen, niet één**
 

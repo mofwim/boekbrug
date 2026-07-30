@@ -214,9 +214,21 @@ kort na de 5e van januari/april/juli/oktober.
 - **KVK-inschrijving en een zakelijke bankrekening.** Zonder deze twee keert Stripe niet uit, en
   `/steun` blijft bewust een 404 zolang er geen echt KVK-nummer is: er wordt nooit om geld gevraagd
   zonder identificeerbare rechtspersoon.
+- **MX-records voor `boekbrug.nl`, vóór de eerste gebruiker.** Op 30 juli gemeten: het domein
+  heeft er **geen**, terwijl de app `privacy@`, `legal@` en `support@boekbrug.nl` publiceert als
+  het officiële loket — inclusief de AVG-termijnen van 30 en 7 dagen die de privacyverklaring
+  belooft. Alle drie bouncen. Resend verzorgt het *verzenden* en werkt; ontvangen is een losse
+  zaak die Resend niet doet. Twee doorstuurregels bij je registrar naar een mailbox die je al
+  hebt, is genoeg — en dit is het enige punt in dit hoofdstuk dat niet iets mogelijk maakt maar
+  iets repareert.
 - **De bedrijfsidentiteit in Vercel** — `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` ·
   `_ADDRESS` · `_CITY`. Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit
-  als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand.
+  als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand. De
+  vervanging zélf is af en getest: `src/content/legal/company.ts` vult de drie juridische teksten
+  bij het bouwen, dus er staat nergens een `[JOUW NAAM]` op het scherm — zonder variabelen leest
+  het "geëxploiteerd door BoekBrug, gevestigd te Tilburg, KVK-nummer (volgt)". Alleen `_KVK` en
+  `_BTW` horen bij "voordat je geld aanneemt"; `_LEGAL_NAME` en `_ADDRESS` staan in de
+  privacyverklaring als verwerkingsverantwoordelijke en gelden vanaf de eerste gebruiker.
 - **Twee Stripe-prijzen**, exact gelijk aan wat de voorwaarden publiceren: Plus **€ 12,99 per
   maand** (terugkerend) en de Bewaarkluis **€ 19 per bewaarjaar** (eenmalig). De checkout dwingt
   acceptatie van die voorwaarden af, dus een verschil is precies het gat waar de klant gelijk in
