@@ -199,10 +199,30 @@ export default function IntakeButton({
       // Route the owner to where the item landed, so they can confirm/see it.
       if (data.destination === 'invoice' || data.destination === 'receipt') {
         showToast(data.message || 'Toegevoegd ✓')
-        setTimeout(() => router.push('/dashboard/incoming'), 600)
+        // [AUTO-ADVANCE-HONESTY] An auto-verified invoice is booked ('received') and so
+        // is NOT in the verify queue. Sending the owner to /dashboard/incoming — as this
+        // did for every invoice — landed them on a queue that does not contain the file
+        // they just photographed, right after a toast saying it was processed. Route to
+        // the surface that actually holds it, focused on the row.
+        const target = data.auto_verified && data.invoice_id
+          ? `/dashboard/incoming/manage?focus=${data.invoice_id}`
+          : '/dashboard/incoming'
+        setTimeout(() => router.push(target), 600)
       } else if (data.destination === 'bank') {
         showToast(data.message || 'Toegevoegd ✓')
         setTimeout(() => router.push('/dashboard/bank'), 600)
+      } else if (data.destination === 'statement') {
+        // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt maar vergeleken:
+        // de uitkomst ("2 van de 9 facturen heb je niet") is het hele punt en mag niet in een
+        // toast van drie seconden verdwijnen. Zelfde blijvende modal als een gewoon bestand —
+        // die toont de boodschap én de link naar het bestand in Mijn bestanden.
+        setDestModal({
+          fileName: file.name,
+          message: data.message || 'Rekeningoverzicht gecontroleerd',
+          folderName: data.folder_name ?? null,
+          folderId: data.folder_id ?? null,
+          documentId: data.document_id ?? null,
+        })
       } else if (data.destination === 'document') {
         // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
         // went. Show a persistent modal with the destination + a deep-link that
@@ -571,11 +591,17 @@ export default function IntakeButton({
 // Result shape from /api/intake
 export interface IntakeResult {
   ok?: boolean
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document'
+  // [STATEMENT-RECONCILE] 'statement' = een leveranciersoverzicht: niet geboekt, maar vergeleken
+  // met wat we van die leverancier hebben (welke factuur mis ik?).
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement'
   message?: string
   error?: string
   duplicate?: boolean
   invoice_id?: string
+  // [AUTO-ADVANCE-HONESTY] true when the app verified AND booked this invoice itself
+  // ([AUTO-ADVANCE] in /api/intake): status 'received', so it is NOT in the verify
+  // queue but on Inkoopfacturen. Drives where we send the owner afterwards.
+  auto_verified?: boolean
   original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
   canForce?: boolean    // [INTAKE-FORCE] a semantic dup that may be overridden ("toch toevoegen")
   // [DUP-ARCHIVED] present ⇒ the invoice this upload collides with sits in Genegeerd. The block
