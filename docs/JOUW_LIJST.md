@@ -81,16 +81,24 @@ adres dat weigert is een belofte die de app niet waarmaakt — en het is precies
 dat de AVG (art. 13) verplicht stelt, dus het telde vanaf de eerste gebruiker, niet vanaf de
 eerste euro.
 
-Opgelost met doorsturen in plaats van mailboxen: drie regels in de TransIP DNS-tabel, en de
+Opgelost met doorsturen in plaats van mailboxen: vier regels in de TransIP DNS-tabel, en de
 aliassen bij de doorstuurdienst. Nagemeten vanaf een externe resolver, niet aangenomen:
 
 | Record | Stand |
 |---|---|
 | `MX boekbrug.nl` | `10 mx1.improvmx.com` · `20 mx2.improvmx.com` |
+| `TXT boekbrug.nl` (SPF) | `v=spf1 include:spf.improvmx.com ~all` — en **precies één** |
 | `TXT _dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@boekbrug.nl; fo=1` |
 | CONTROLE `MX send.boekbrug.nl` | ongewijzigd (Resend-retourpad) |
-| CONTROLE `TXT resend._domainkey` | ongewijzigd (DKIM) |
-| CONTROLE `A boekbrug.nl` | ongewijzigd (Vercel) |
+| CONTROLE `TXT send.boekbrug.nl` | ongewijzigd (`include:amazonses.com`) |
+| CONTROLE `TXT resend._domainkey` | ongewijzigd (DKIM, 218 tekens) |
+| CONTROLE `A boekbrug.nl` + `www` | ongewijzigd (Vercel) |
+
+Twee dingen aan die SPF-regel zijn het onthouden waard. Een domein mag er **maar één** hebben:
+een tweede maakt ze allebei ongeldig, dus een latere afzender wordt in dezelfde regel gemengd
+en er komt nooit een rij bij. En er staat bewust géén `include:amazonses.com` in — dat zou
+iedere SES-klant ter wereld laten afzenden namens dit domein. Resend zet die include daarom
+zelf op de subnaam `send.`, en daar hoort hij te blijven.
 
 Die laatste drie staan er met opzet bij. Een MX op de hoofdnaam en het verzendpad van Resend
 lijken op elkaar te botsen maar doen dat niet — Resend hangt op de subnaam `send.` — en dat

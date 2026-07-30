@@ -216,12 +216,15 @@ kort na de 5e van januari/april/juli/oktober.
   zonder identificeerbare rechtspersoon.
 - **~~MX-records voor `boekbrug.nl`~~ — gedaan op 30 juli.** Het domein had er geen, terwijl de
   app `privacy@`, `legal@` en `support@boekbrug.nl` publiceert als het officiële loket, mét de
-  AVG-termijnen van 30 en 7 dagen. Alle drie bouncden. Opgelost met doorsturen (`mx1/mx2.improvmx.com`)
-  in plaats van mailboxen, en `_dmarc` meteen meegenomen — die stond al in `AUTH_SETUP_GUIDE.md §C.3`
-  beschreven maar was nooit aangezet. Extern nagemeten, inclusief de controle dat het Resend-pad
-  (`send.` MX + DKIM) en het Vercel A-record ongemoeid bleven: een MX op de hoofdnaam botst niet
-  met een verzendpad op een subnaam. Blijft over: de catch-all `*@` uitzetten (spam) en één echte
-  testmail sturen — DNS dat klopt is geen bewijs dat een bericht aankomt.
+  AVG-termijnen van 30 en 7 dagen. Alle drie bouncden. Opgelost met doorsturen (`mx1/mx2.improvmx.com`
+  plus één SPF-regel op de hoofdnaam) in plaats van mailboxen, en `_dmarc` meteen meegenomen — die
+  stond al in `AUTH_SETUP_GUIDE.md §C.3` beschreven maar was nooit aangezet. Extern nagemeten,
+  inclusief de controle dat het Resend-pad (`send.` MX + SPF + DKIM) en de Vercel-records ongemoeid
+  bleven: een MX op de hoofdnaam botst niet met een verzendpad op een subnaam, want SPF wordt tegen
+  het envelop-domein gecontroleerd en dat is bij Resend `send.boekbrug.nl`. Let op bij later
+  uitbreiden: één SPF-record per domein, dus mengen in dezelfde regel en nooit een tweede erbij.
+  Blijft over: de catch-all `*@` uitzetten (spam) en één echte testmail sturen — DNS dat klopt is
+  geen bewijs dat een bericht aankomt.
 - **De bedrijfsidentiteit in Vercel** — `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` ·
   `_ADDRESS` · `_CITY`. Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit
   als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand. De
