@@ -1,10 +1,21 @@
 # [CI] BoekBrug continuous integration.
-# Runs the same two hard gates the project uses locally before every merge:
+# Runs the same three hard gates the project uses locally before every merge:
 #   1. `tsc --noEmit`  — full TypeScript type-check.
 #   2. `tsx --test`    — the unit-test suite under src/lib.
+#   3. `next build`    — the production build, WITHOUT any secrets.
 # Lint is intentionally NOT a blocking gate here (the repo carries known
-# pre-existing eslint findings); Vercel's per-PR preview build covers the
-# production `next build`. Keep this workflow to the checks that must be green.
+# pre-existing eslint findings).
+#
+# [BUILD-NO-SECRETS] Gate 3 is new, and it was impossible until the build stopped needing the
+# production keys. Five sign-in pages constructed a Supabase browser client during render, and
+# Next prerenders exactly those pages — so `next build` needed NEXT_PUBLIC_SUPABASE_URL and would
+# die without it. The only real build check was therefore a Vercel preview, i.e. after the push,
+# on infrastructure a contributor cannot run. A prerender error could reach main and only surface
+# as a failed deploy.
+#
+# The build now runs on a clean checkout with an empty environment, which is precisely what makes
+# it a gate: it proves the app compiles and every static page renders without depending on a live
+# project. Missing keys are a RUNTIME concern — /api/health reports them by name.
 name: CI
 
 on:
@@ -39,3 +50,9 @@ jobs:
 
       - name: Unit tests
         run: npx tsx --test src/lib/*.test.ts
+
+      # No env is provided on purpose — see [BUILD-NO-SECRETS] above. If this step ever needs a
+      # secret again, something started building a client at render time; fix that rather than
+      # adding the key here, or the gate quietly stops proving anything.
+      - name: Production build (no secrets)
+        run: npx next build

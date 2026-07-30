@@ -9,6 +9,50 @@ onbekend is, staat dat er.*
 
 ---
 
+## 0. Wat je zelf kunt vaststellen vóór je iets deployt
+
+*Toegevoegd 30 juli. Dit blok kon er eerder niet staan — de productiebuild had de sleutels van de
+productiedatabase nodig.*
+
+```bash
+npm ci
+npx tsc --noEmit                     # types
+npx tsx --test src/lib/*.test.ts     # de hele suite
+npx next build                       # de PRODUCTIEBUILD, zonder één geheim
+node scripts/nav-audit.mjs           # dode links
+```
+
+Die vierde regel is nieuw. Vijf inlogpagina's bouwden een Supabase-client tijdens het renderen, en
+Next prerendert juist die pagina's — dus `next build` viel om zonder `NEXT_PUBLIC_SUPABASE_URL`.
+Gevolg: de enige echte bouwcontrole was een Vercel-preview, dus ná de push, op infrastructuur die
+een meelezer niet kan draaien. Een prerender-fout kon `main` halen en pas opvallen als een deploy
+die niet vertrok.
+
+De client wordt nu gebouwd waar hij gebruikt wordt (`src/lib/supabase.ts`), de build draait op een
+schone checkout met een lege omgeving, en **CI draait hem nu als derde poort**.
+
+> Vraagt `next build` ooit weer om een sleutel, zet hem dan **niet** in CI. Dat is het signaal dat
+> iemand opnieuw een client in een component-body heeft gezet; herstel de oorzaak, anders bewijst
+> de poort niets meer.
+
+### De twee openstaande CVE's, eerlijk
+
+`npm audit` meldt er twee als high. Geen van beide is met een upgrade op te lossen, en dat is geen
+nalatigheid:
+
+- **`xlsx@0.18.5`** — "No fix available" klopt: de gerepareerde releases staan alleen op
+  `cdn.sheetjs.com`, niet op npm. De mitigatie is daarom structureel in plaats van een versienummer:
+  álles gaat door `src/lib/xlsx-adapter.ts`, dat de prototype-pollution op de parsergrens terugdraait
+  en de ReDoS begrenst met een groottedrempel. Dat is nagelopen én vastgelegd — een test loopt de
+  broncode af en faalt zodra één bestand SheetJS rechtstreeks importeert. Het adapterpad is dus niet
+  een afspraak maar de enige deur, en dat blijft zo of iemand het onthoudt of niet.
+- **`sharp` <0.35.0** — dit is **niet onze** sharp. Wij staan op 0.35.3 (gepatcht); de gemelde 0.34.5
+  zit in `node_modules/next/node_modules/`, komt mee met `next@16.2.6` en bedient Next's
+  image-optimizer, die op Vercel op hun eigen infrastructuur draait. Op te lossen door Next te
+  upgraden, niet door hier iets te veranderen. Geen livegang-blokkade.
+
+---
+
 ## 1. De crons — op Pro, dus dit klopt gewoon
 
 `vercel.json` declareert zes crons:
@@ -177,10 +221,12 @@ kort na de 5e van januari/april/juli/oktober.
   maand** (terugkerend) en de Bewaarkluis **€ 19 per bewaarjaar** (eenmalig). De checkout dwingt
   acceptatie van die voorwaarden af, dus een verschil is precies het gat waar de klant gelijk in
   krijgt. En zet **iDEAL** aan: kaart-alleen verliest Nederlandse klanten bij de laatste klik.
-- **`xlsx` naar 0.20.3.** Twee CVE's op de gepinde 0.18.5; de reparatie staat alleen op
-  `cdn.sheetjs.com`, die in deze omgeving 403 geeft. Je bent intussen niet blootgesteld aan de
-  ergste helft (prototype-pollution is ingedamd op de parsergrens, de ReDoS is begrensd), maar doe
-  dit vóór je mensen onboardt die bestanden uploaden.
+- **`xlsx` naar 0.20.3** — *bijgewerkt 30 juli.* Nog steeds niet via npm te doen: de reparatie
+  staat alleen op `cdn.sheetjs.com`. Wat er sindsdien bij is gekomen, is dat de containment nu
+  bewaakt wordt in plaats van beloofd: een test loopt de broncode af en faalt zodra één bestand
+  SheetJS rechtstreeks importeert, dus het gedempte pad is aantoonbaar het enige. Dat maakt de
+  upgrade minder dringend dan hierboven stond — doe hem alsnog wanneer je de bron vertrouwt, maar
+  hij hoeft je eerste tien gebruikers niet tegen te houden.
 
 ---
 

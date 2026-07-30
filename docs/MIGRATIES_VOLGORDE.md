@@ -41,7 +41,24 @@
 > | 16 | `cash_settlement_per_instalment.sql` | Kasboekregels per termijn in plaats van één per factuur |
 > | 17 | `invoice_schedules.sql` | Terugkerende facturen |
 >
-> ### Nog open: twee, en beide mogen wachten
+> ### Nog open: vijf — één daarvan vóór de eerste echte gebruiker
+>
+> **`storage_bucket_hardening.sql`** — de enige op deze lijst die vóór livegang moet. Hij
+> verandert vandaag NIETS: op 29 juli is gemeten dat de `documents`-bucket privé staat en de app
+> deelt uitsluitend via ondertekende URL's. Het probleem is de herkomst van die stand — één
+> vinkje in een dashboard, in geen enkel bestand, door geen enkele test bewaakt. Zet je ooit een
+> tweede omgeving op (staging, herstel na een incident), dan begint die op de Supabase-standaard
+> en staat elk bonnetje, elk bankafschrift en elke factuur-PDF publiek zonder dat er iets misgaat
+> op een manier die opvalt. Dit legt de stand vast in code. Draai hem.
+>
+> **`cron_runs.sql`** — legt vast DÁT een cron gedraaid heeft. Zonder deze tabel blijft de
+> hartslag in `/api/health` leeg: valt email-sync, reminders of quarter-close stil, dan is er geen
+> scherm dat het toont en geen mail die uitblijft die iemand mist. Je merkt het bij de
+> kwartaalafsluiting die nooit kwam. Niet stukmakend, wel de reden dat je health-pagina anders
+> minder weet dan ze suggereert.
+>
+> **`bank_ignore_reason.sql`** — een reden bij een genegeerde bankregel. Kolom is NULL voor alles
+> wat er al staat; zonder de migratie blijft de reden simpelweg leeg. Mag wachten.
 >
 > **19 · `bank_statement_periods.sql`** — onthoudt per bankafschrift welke periode het beslaat
 > en met welke begin- en eindsaldi. Zonder deze tabel kan niemand zien dat er een MAAND
