@@ -41,7 +41,19 @@
 > | 16 | `cash_settlement_per_instalment.sql` | Kasboekregels per termijn in plaats van één per factuur |
 > | 17 | `invoice_schedules.sql` | Terugkerende facturen |
 >
-> ### Nog open: één, en die mag wachten
+> ### Nog open: twee, en beide mogen wachten
+>
+> **19 · `bank_statement_periods.sql`** — onthoudt per bankafschrift welke periode het beslaat
+> en met welke begin- en eindsaldi. Zonder deze tabel kan niemand zien dat er een MAAND
+> ontbreekt: wie januari en maart uploadt heeft twee bestanden die allebei perfect kloppen, en
+> `bankTxCount` is niet nul, dus ook de readiness zwijgt. De parser las die saldi al; ze werden
+> nergens bewaard.
+>
+> Draait de migratie niet, dan vervalt stil alleen deze ene controle — de app draait er verder
+> ongewijzigd zonder. Genummerd 19, niet 13: die tak was los ontstaan en had 13 al vergeven aan
+> `invoice_archive_reason.sql`. Dat is precies het soort botsing waar de waarschuwing bovenaan
+> dit document over gaat, dus geldt ook hier: `WELKE_MIGRATIES_STAAN_ER.sql` is de waarheid,
+> deze regel is een bewering.
 >
 > **18 · `search_engine_clients_kvk_city.sql`** — twee trigram-indexen op `clients.kvk_number`
 > en `clients.city`, plus `CREATE EXTENSION IF NOT EXISTS pg_trgm`.

@@ -262,6 +262,14 @@ export async function POST(req: NextRequest) {
           ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
           : `Deelbetaling van € ${row.applied.toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
         type: "payment",
+        // [NOTIF-DEADEND] This bell announces a booking on ONE invoice but carried no
+        // link, so the only notification about the owner's money was the one you could
+        // not open — while its own sibling below ("Er bleef een bedrag over") did link.
+        // Route by direction, exactly like the other invoice deep links in the app:
+        // an inkoopfactuur lives on Inkoopfacturen, a sales invoice on its detail page.
+        link: inv.direction === "incoming"
+          ? `/dashboard/incoming/manage?focus=${invoiceId}`
+          : `/dashboard/invoice/${invoiceId}`,
       });
       if (hasResidue) {
         await pipeline.from("notifications").insert({
@@ -472,6 +480,11 @@ export async function POST(req: NextRequest) {
       title: "Factuur betaald",
       body: `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`,
       type: "payment",
+      // [NOTIF-DEADEND] Same fix as the partial-payment branch above: link to the
+      // invoice this bell is about, by direction.
+      link: inv.direction === "incoming"
+        ? `/dashboard/incoming/manage?focus=${invoiceId}`
+        : `/dashboard/invoice/${invoiceId}`,
     });
     // [BANK-ONE-PAYMENT-MANY-INVOICES] Money of this payment is still unassigned. The bank line
     // stays in "Te bevestigen" so the next invoice can take it — say so, so the owner knows the

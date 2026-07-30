@@ -490,6 +490,12 @@ export async function POST(req: NextRequest) {
       title: "Factuur gekoppeld",
       body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
       type: "payment",
+      // [NOTIF-DEADEND] This route CREATES a paid invoice out of a bank line — the one
+      // row the owner is most likely to want to check — and the bell announcing it had
+      // no link. Point at the new invoice, by direction.
+      link: isOutgoing
+        ? `/dashboard/invoice/${invoice.id}`
+        : `/dashboard/incoming/manage?focus=${invoice.id}`,
     });
   } catch {
     /* non-blocking */

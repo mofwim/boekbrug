@@ -345,6 +345,12 @@ export async function runBankAutoConfirm(args: {
         title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
         body,
         type: "payment",
+        // [NOTIF-DEADEND] The body says "bekijk ze onder Bevestigd" — so the bell must
+        // actually go there. It carried no link at all, which made the one notification
+        // about money the app moved by itself the one you could not open. ?tab=done
+        // opens the Bevestigd tab directly (BankClient reads it), where every automatic
+        // link is listed and reversible with one tap.
+        link: "/dashboard/bank?tab=done",
       });
       if (error) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId, error: error.message });
     } catch (e) {
