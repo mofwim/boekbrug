@@ -48,6 +48,14 @@ export type AuditAction =
   | 'bank.overpayment_residue'        // ← [PARTIAL-PAY-RESIDUE] payment exceeded the balance; the excess was NOT booked
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
+  // [BANK-IGNORE-AUDIT] Ignoring a bank line moves a financial record out of every queue that
+  // could still explain it — the matcher, auto-confirm, auto-categorize, the nightly sweep, and
+  // every categorize read. It also deletes the [VOORBELASTING-RISK] warning for that line, since
+  // undocumentedCount is pending-scoped. That is the most consequential one-tap disposition in
+  // the bank folder, and it was the only one writing no audit row at all: six bank actions were
+  // logged, this one silently. An auditor asking "who set this line aside, and when" had nothing.
+  | 'bank.ignored'                    // ← [BANK-IGNORE] owner set an unmatched line aside ('not_found')
+  | 'bank.restored'                   // ← [BANK-IGNORE] owner took it back into the active list
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
   | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back

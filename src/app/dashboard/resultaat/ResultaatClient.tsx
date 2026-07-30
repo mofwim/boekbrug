@@ -119,7 +119,7 @@ export default function ResultaatClient() {
                   <Metric label="Acquirer-commissie" value={eur.format(data.reconciliation.commissionBooked)} color={M3.onSurface} />
                   <Metric label="Terminal-afrekeningen" value={String(data.reconciliation.eftSettlements)} color={M3.onSurface} />
                 </div>
-                <div style={{ fontSize: 12.5, color: '#9aa0a6', marginTop: 8, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 12.5, color: '#70757a', marginTop: 8, lineHeight: 1.5 }}>
                   De commissie is verwerkt in het resultaat hierboven en is BTW-vrij (vrijstelling betalingsverkeer).
                 </div>
                 {data.reconciliation.grossMismatchDays > 0 && (
@@ -153,7 +153,7 @@ export default function ResultaatClient() {
               </div>
             )}
 
-            <p style={{ fontSize: 12.5, color: '#9aa0a6', margin: '4px 2px 16px', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 12.5, color: '#70757a', margin: '4px 2px 16px', lineHeight: 1.5 }}>
               Voorbelasting komt alleen van facturen en bonnen (een kale bank- of kasregel levert geen BTW-aftrek op).
               Overboekingen, privé en belasting tellen niet mee als omzet of kosten.
             </p>

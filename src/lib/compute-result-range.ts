@@ -144,12 +144,24 @@ export async function computeResultForRange(args: {
   // the acquirer commission is booked in the quarter that owns the sale (see the triangle call).
   const startBuffer = isoShiftDays(start, -5);
   const endBuffer = isoShiftDays(end, 5);
-  const { data: turnoverRows } = await pipeline
+  // [TURNOVER-READ-ERROR] The error was discarded here, and this is the engine BEHIND
+  // /api/result, /api/truth and the closing package. A failed read left turnoverRows null and
+  // allTurnover empty, so a till shop's kassa-omzet silently disappeared from the result, the
+  // waarheid screen and the concept aangifte at once — every one of them answering 200 with a
+  // smaller number and no warning. Missing data must never render as less revenue. fetchAllRows
+  // throws, so the caller fails loudly and the screen says it could not load.
+  const turnoverRows = await fetchAllRows<{
+    turnover_date: string; base_0: number | null; base_9: number | null; base_21: number | null;
+    btw_9: number | null; btw_21: number | null; total_incl: number | null;
+    pin_amount: number | null; cash_amount: number | null; other_amount: number | null;
+  }>((from, to) => pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
     .gte("turnover_date", startBuffer)
-    .lte("turnover_date", endBuffer);
+    .lte("turnover_date", endBuffer)
+    .order("turnover_date", { ascending: true })
+    .range(from, to));
 
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,

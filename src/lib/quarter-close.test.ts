@@ -37,6 +37,20 @@ console.log("\n— notice copy is honest: clean vs gaps vs empty —");
   const gaps = buildQuarterCloseNotice("Q2 2026", { warnings: [{ message: "2 facturen nog te controleren" }, { message: "bankafschrift ontbreekt" }], outgoingCount: 1, incomingCount: 0 });
   check("gaps → clean=false, gapCount 2", gaps.clean === false && gaps.gapCount === 2);
   check("gaps owner body lists the concrete reasons", /nog te controleren/.test(gaps.ownerBody) && /bankafschrift/.test(gaps.ownerBody));
+  // [GAP-NAMES] The accountant's mail used to carry the COUNT and nothing else, so four missing
+  // PDFs and five missing PDFs sent byte-identical mail to the one reader who could act on the
+  // difference. It must name the same gaps the owner's mail names.
+  check("gaps accountant body lists them too", /nog te controleren/.test(gaps.accountantBody) && /bankafschrift/.test(gaps.accountantBody));
+  check("...and still says how many", /2 aandachtspunt/.test(gaps.accountantBody));
+  // Truncation parity: both mails show at most three and then say there is more.
+  const many = buildQuarterCloseNotice("Q2 2026", {
+    warnings: [{ message: "een" }, { message: "twee" }, { message: "drie" }, { message: "vier" }],
+    outgoingCount: 1, incomingCount: 0,
+  });
+  check("accountant body truncates at three, like the owner's", /een · twee · drie …/.test(many.accountantBody));
+  check("...and does not leak the fourth", !/vier/.test(many.accountantBody));
+  // A clean quarter must stay a clean sentence — no empty ": " tail.
+  check("clean accountant body names no gaps", !/aandachtspunt/.test(clean.accountantBody));
 
   // [REGRESSION] A dormant quarter is NOT warning-free: summarizeClosingPackage emits no_invoices +
   // no_bank_statement. `empty` must key on invoice ACTIVITY only, or the anti-nag guard is dead code.

@@ -23,6 +23,7 @@ import {
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -51,7 +52,9 @@ export async function GET() {
     txRows = await fetchAllRows<BankTransactionDbRow>((from, to) =>
       pipeline
         .from("bank_transactions")
-        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+        // [BANK-COUNTERPART-HISTORY] `category` rides along so the card can say what the owner did
+        // with this counterpart before. No extra query: these rows are already read in full.
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .order("id", { ascending: true })
@@ -79,15 +82,30 @@ export async function GET() {
   // 3. Candidate invoices: this user's own (sent or received), not already paid.
   //    isEligible() in the matcher still enforces direction/sign, draft/archived,
   //    and the B.4 'verwerkt' guard — this query is just a fast-path payload reducer.
-  const { data: invRows, error: invErr } = await pipeline
-    .from("invoices")
-    .select(
-      // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
-      // instalment matches on amount.
-      "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
-    )
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .neq("status", "paid");
+  // [SEARCH-FULL-COVERAGE] Page past PostgREST's silent ~1000-row cap — the five other reads in
+  // this file already do. A truncated CANDIDATE set is the worst kind of truncation: the correct
+  // invoice is simply absent from the matcher's input, so a real payment renders as
+  // "Geen factuur" with no error anywhere. An owner past 1000 open invoices would see matching
+  // quietly stop working for their oldest ones.
+  let invRows: unknown[] = [];
+  let invErr: { message: string } | null = null;
+  try {
+    invRows = await fetchAllRows((from, to) =>
+      pipeline
+        .from("invoices")
+        .select(
+          // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
+          // instalment matches on amount.
+          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
+        )
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .neq("status", "paid")
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+  } catch (e) {
+    invErr = { message: e instanceof Error ? e.message : String(e) };
+  }
   if (invErr) {
     return NextResponse.json(
       { error: "invoices_lookup_failed", detail: invErr.message },
@@ -139,11 +157,17 @@ export async function GET() {
     // isFullyCovered does equality on normalized numbers; direction already fixed
     // the candidate set when each link was confirmed, so a plain paid-number set is
     // sufficient here for the presence check.
-    const { data: paidRows } = await pipeline
-      .from("invoices")
-      .select("invoice_number")
-      .eq("status", "paid")
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+    // [SEARCH-FULL-COVERAGE] Paged: a truncated paid-set makes isFullyCovered answer "no" for a
+    // transaction whose invoices are all settled, so it never leaves "Te bevestigen".
+    const paidRows = await fetchAllRows<{ invoice_number: string | null }>((from, to) =>
+      pipeline
+        .from("invoices")
+        .select("invoice_number")
+        .eq("status", "paid")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
     const paidSet = new Set(
       (paidRows ?? [])
@@ -187,6 +211,15 @@ export async function GET() {
     }
   }
 
+  // [BANK-COUNTERPART-HISTORY] What the owner already decided about each counterpart. Computed
+  // from the rows we ALREADY hold — no extra round trip — and only over lines that carry a
+  // category, so it reports answers rather than a pile of other open questions.
+  const historyPool: HistoryLine[] = (txRows as unknown as HistoryLine[]).map((r) => ({
+    counterpart_name: r.counterpart_name ?? null,
+    counterpart_iban: r.counterpart_iban ?? null,
+    category: r.category ?? null,
+  }));
+
   // 5. Shape a lean DTO for the UI. transactionId === bank_transactions.id.
   const suggestions = result.matches.map((m) => {
     const txId = m.transaction.transactionId;
@@ -199,6 +232,13 @@ export async function GET() {
       counterpart: m.transaction.counterpartName,
       // [SEARCH] The tegenrekening IBAN — carried so the in-page zoekbalk can find a line by IBAN.
       iban: m.transaction.counterpartIban ?? null,
+      // [BANK-COUNTERPART-HISTORY] "Wat deed ik hier de vorige keer mee?" — null when there is
+      // nothing honest to say. Reported, never applied: counterpart_memory drives the actual
+      // suggestion, and a second hint that could contradict it would be worse than none.
+      history: counterpartHistory(
+        { counterpart_name: m.transaction.counterpartName, counterpart_iban: m.transaction.counterpartIban ?? null },
+        historyPool,
+      ),
       // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
       // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
       // raw description so the owner sees the real reference, not "USTD//...".

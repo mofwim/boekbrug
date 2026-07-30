@@ -96,7 +96,7 @@ export default function ArticleLayout({
 
       <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px', fontFamily: locale === 'ar' ? 'var(--font-arabic), var(--font-sans), system-ui, sans-serif' : undefined }}>
         {/* 1. Breadcrumb: Blog › [article title] */}
-        <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#9aa0a6', marginBottom: 20 }}>
+        <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#70757a', marginBottom: 20 }}>
           <Link href={indexPath(locale)} style={{ color: '#1a73e8', textDecoration: 'none' }}>{t.blog}</Link>
           <span style={{ margin: '0 8px' }}>›</span>
           <span>{frontmatter.title}</span>
@@ -109,7 +109,7 @@ export default function ArticleLayout({
           </h1>
 
           {/* 3. Meta line: date · reading time · author */}
-          <div style={{ fontSize: 13, color: '#9aa0a6', marginBottom: alternates.length > 0 ? 12 : 24 }}>
+          <div style={{ fontSize: 13, color: '#70757a', marginBottom: alternates.length > 0 ? 12 : 24 }}>
             {formatDate(frontmatter.publishedAt, locale)}
             {' · '}{readingMinutes} {t.readTime}
             {' · '}{t.by} {frontmatter.author}
@@ -176,7 +176,7 @@ export default function ArticleLayout({
             topic mesh and spreads internal-link equity to sibling articles. */}
         {siblings.length > 0 && (
           <section style={{ marginTop: 28 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#9aa0a6', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#70757a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
               {t.more}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>

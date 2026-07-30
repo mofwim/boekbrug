@@ -297,7 +297,7 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
             <div style={{ textAlign: "center", padding: "56px 16px", color: M3.outline }}>
               <div style={{ opacity: 0.5, marginBottom: 10 }}><IconSearch size={34} /></div>
               <p style={{ fontSize: 14.5, margin: 0 }}>Begin met typen om overal in de app te zoeken.</p>
-              <p style={{ fontSize: 13, margin: "4px 0 0", color: "#9aa0a6" }}>Facturen, bestanden en klanten — op naam, nummer of bedrag.</p>
+              <p style={{ fontSize: 13, margin: "4px 0 0", color: "#70757a" }}>Facturen, bestanden en klanten — op naam, nummer of bedrag.</p>
             </div>
           ) : error ? (
             <div style={{ textAlign: "center", padding: "48px 16px" }}>

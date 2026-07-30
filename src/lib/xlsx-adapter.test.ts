@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+
 // [SEC-XLSX / C1] Tests for the SheetJS containment guards.
 //   run: npx tsx --test src/lib/xlsx-adapter.test.ts
 //
@@ -212,6 +215,34 @@ check(
   "the backstop sits ABOVE the routes' own 10MB cap, so it never rejects a file they accepted",
   MAX_PARSE_BYTES > 10 * 1024 * 1024
 );
+
+// ── The containment only holds while it is the ONLY door ────────────────────────
+//
+// [SEC-XLSX] Every guard above is worth exactly nothing if one route imports SheetJS directly.
+// The CVE has no npm fix — the patched releases live only on cdn.sheetjs.com — so this wrapper
+// is not a convenience, it IS the mitigation, and its value is structural: no unguarded parse
+// exists anywhere. That property is invisible in a diff (adding `import * as XLSX from "xlsx"`
+// to a new upload route looks perfectly ordinary) and nothing else in the toolchain would object.
+//
+// So assert it as a fact about the source tree, not as a convention someone has to remember.
+{
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const full = join(dir, e);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|tsx)$/.test(e)) continue;
+      if (full.endsWith("xlsx-adapter.ts") || full.endsWith("xlsx-adapter.test.ts")) continue;
+      const src = readFileSync(full, "utf8");
+      if (/from\s+["']xlsx["']|require\(\s*["']xlsx["']\s*\)/.test(src)) offenders.push(full);
+    }
+  };
+  walk("src");
+  check(
+    `nothing imports SheetJS directly — the adapter is the only door${offenders.length ? " (found: " + offenders.join(", ") + ")" : ""}`,
+    offenders.length === 0,
+  );
+}
 
 console.log(`\n[SEC-XLSX] ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

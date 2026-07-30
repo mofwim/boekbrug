@@ -196,14 +196,37 @@ export default function KasClient() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_date: date, direction, amount: val, category, description, btw_rate: category === 'omzet' ? btwRate : undefined }),
       })
-      if (res.ok) { setAmount(''); setDescription(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
-      else { setError('Kon de boeking niet opslaan. Probeer opnieuw.') }
+      if (res.ok) { setAmount(''); setDescription(''); setError(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
+      else {
+        // [CASH-ADD-HONEST] The route answers with the actual reason ("ongeldige categorie",
+        // "beginsaldo moet 0 of hoger zijn", …). Replacing it with "probeer opnieuw" told the
+        // owner to repeat the one thing that cannot work.
+        const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+        setError(json?.detail || json?.error || 'Kon de boeking niet opslaan. Probeer opnieuw.')
+      }
     } catch { setError('Er ging iets mis.') } finally { setSaving(false) }
   }
 
   async function remove(id: string) {
     setEntries((prev) => prev.filter((e) => e.id !== id)) // optimistic
-    try { await fetch(`/api/cash?id=${id}`, { method: 'DELETE' }); await load(); if (kbOpen) void loadKasboek(kbPeriod) } catch { await load() }
+    // [CASH-DELETE-HONEST] The response was thrown away. A refusal (a 'betaling' row, which
+    // belongs to an invoice and is recreated by the reconciler on the next read) or a server
+    // error looked exactly like a success: the row disappeared, load() brought it back, and
+    // nothing explained why. Read the answer and say it.
+    try {
+      const res = await fetch(`/api/cash?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+        setError(json?.detail || json?.error || 'Kon de boeking niet verwijderen.')
+      } else {
+        setError('')
+      }
+      await load()
+      if (kbOpen) void loadKasboek(kbPeriod)
+    } catch {
+      setError('Geen verbinding — de boeking is niet verwijderd.')
+      await load()
+    }
   }
 
   // [KAS-UPLOAD] Add a receipt/invoice the owner ALREADY paid in cash. It runs through the normal
@@ -521,10 +544,10 @@ export default function KasClient() {
                 </div>
                 {e.category === 'betaling' ? (
                   <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
-                    style={{ flexShrink: 0, color: '#9aa0a6', fontSize: 16, lineHeight: 1 }}>🔗</span>
+                    style={{ flexShrink: 0, color: '#70757a', fontSize: 16, lineHeight: 1 }}>🔗</span>
                 ) : (
                   <button onClick={() => remove(e.id)} aria-label="Verwijderen"
-                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
                 )}
               </div>
             ))}
@@ -545,7 +568,7 @@ export default function KasClient() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KASBOEK — KWARTAAL</div>
                 <button onClick={() => setKbOpen(false)} aria-label="Sluiten"
-                  style={{ border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
               </div>
 
               {/* Quarter selector */}

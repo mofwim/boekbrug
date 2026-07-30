@@ -21,7 +21,7 @@ type ArchivedRow = {
   invoice_type: string | null
 }
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
-import { ReconBadge } from '@/components/invoice/InvoiceRow'
+import { ReconBadge, getDisplayStatus } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -40,6 +40,22 @@ const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // Status chip colors — Material You
+// [PAY-IDEMPOTENT] A fresh key per dialog OPENING — this is the whole point of the key, and it
+// was not happening. The key used to be minted inside the confirm handler as
+// `payCtx.clientKey ?? crypto.randomUUID()`, but nothing ever set payCtx.clientKey, so every tap
+// produced a new UUID and apply_manual_payment could never recognise a repeat. For a FULL
+// settlement the invoice's own 'paid' status still blocks a second write; for a DEELBETALING
+// there is no such guard, so a double tap recorded the instalment twice. Minting it here, where
+// the dialog is opened, gives one key per attempt.
+//
+// It does not cover a retry after an unknown outcome (a reopened dialog is a new attempt and gets
+// a new key) — that is deliberate: reusing the key there would silently swallow a genuine second
+// instalment of the same amount, which is worse. The network-error toast says "controleer of de
+// betaling is opgeslagen" for exactly that reason.
+function newPayKey(): string | undefined {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined
+}
+
 const CHIP: Record<string, { bg: string; color: string }> = {
   paid:    { bg: '#CEEAD6', color: '#137333' },
   sent:    { bg: '#D3E3FD', color: '#1967D2' },
@@ -52,9 +68,14 @@ const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'E
 const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
-// [BOEK-029] btw_rate does not exist in DB
-const calcBtw = (btw: number | null, ex: number | null) =>
-  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
+// [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
+// [BTW-NO-GUESS] Returns null when there is no grondslag to compute from. It used to fall back
+// to 21, printing "BTW (21%)" for an invoice whose total_ex_btw was 0, null or negative (a
+// creditnota, or an OCR read that found no net amount) — a tax rate nobody read, shown as fact.
+// A 9%-invoice missing its grondslag was labelled 21%. The caller drops the percentage from the
+// label rather than inventing one; the AMOUNT beside it is stored and stays exact either way.
+const calcBtw = (btw: number | null, ex: number | null): number | null =>
+  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : null
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
@@ -449,19 +470,36 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     // [PAY-TOGGLE] Route through the audited server endpoint (same as Crediteuren). On UNDO it also
     // detaches any bank transaction matched to this invoice — the old direct client write undid the
     // invoice side only, stranding the tx as 'matched' (payable a second time) and left no audit row.
-    const res = await fetch('/api/invoice/pay-toggle', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId: ctx.id,
-        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
-        paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? amsterdamToday(),
-        // null / absent = settle the whole open balance (unchanged behaviour).
-        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
-        // Idempotency: a double tap or a retried POST must not book twice.
-        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
-      }),
-    })
+    //
+    // [PAY-NETWORK-SAFE] fetch REJECTS on a dropped connection — the normal case for a shop owner
+    // on a phone, not an exotic one. Unguarded, that rejection left this function before the
+    // optimistic flip was rolled back and before processingId was cleared: the row kept claiming
+    // "Betaald" while nothing was written, and every later tap died on the
+    // `processingId === inv.id` guard, so the button stayed a spinner until a reload. Every
+    // sibling action here (executeSend, executeRemoval, createBundle) already guarded this.
+    let res: Response
+    try {
+      res = await fetch('/api/invoice/pay-toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: ctx.id,
+          action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+          paymentMethod: ctx.paymentMethod ?? 'bank',
+          paymentDate: ctx.paymentDate ?? amsterdamToday(),
+          // null / absent = settle the whole open balance (unchanged behaviour).
+          ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+          // Idempotency: a double tap or a retried POST must not book twice.
+          ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+        }),
+      })
+    } catch {
+      // The request never completed. It may or may not have reached the server, and we cannot
+      // know which — so say exactly that instead of guessing, and put the row back as it was.
+      if (!isPartialIntent) updateOptimistic(ctx.id, { status: ctx.newStatus === 'paid' ? 'sent' : 'paid' })
+      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      setProcessingId(null)
+      return
+    }
     const json = await res.json().catch(() => ({} as { error?: string }))
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
@@ -507,6 +545,14 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         } catch { /* non-blocking — payment already succeeded */ }
         showToast(`Factuur ${ctx.number} betaald ✓`)
       }
+    } else {
+      // [PARTIAL-PAY] An undo also clears every recorded instalment server-side
+      // (pay-toggle → recompute_invoice_amount_paid). Without mirroring that here, a
+      // previously part-paid invoice came back as 'sent' while the row still held the old
+      // amount_paid: openAmount() then reported a smaller balance than is really open, the
+      // row read "Deels betaald · € X open" for a payment that no longer exists, and the pay
+      // dialog capped the owner at that invented remainder.
+      updateOptimistic(ctx.id, { amount_paid: 0 })
     }
     setProcessingId(null)
   }
@@ -634,11 +680,31 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     }
 
     if (decision.mode === 'delete') {
-      // A concept / offerte was never a bookkeeping record — really gone, lines and all.
-      removeOptimistic(id)
-      await supabase.from('invoice_lines').delete().eq('invoice_id', id)
-      await supabase.from('invoices').delete().eq('id', id)
-      showToast('Verwijderd')
+      // A concept was never a bookkeeping record — really gone, lines and all.
+      //
+      // [DELETE-CHECKED] Via the audited route, and the answer is READ. The old code deleted
+      // invoice_lines and then invoices straight from the browser, checked neither result, and
+      // toasted 'Verwijderd' unconditionally. That is only harmless while the two RLS policies
+      // agree — and they do not: invoice_lines_delete_own has no status test, invoices_zzp_delete
+      // permits status='draft' only. Anything else lost its LINES and kept its row, while the
+      // screen said it was gone. The route refuses non-drafts with 409 and a sentence, so a
+      // mismatch now surfaces instead of destroying data quietly.
+      setProcessingId(id)
+      try {
+        const res = await fetch(`/api/invoice/${id}`, { method: 'DELETE' })
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          showToast(json?.error || 'Verwijderen mislukt — ververs de pagina')
+          await refresh()
+          return
+        }
+        removeOptimistic(id)
+        showToast('Verwijderd')
+      } catch {
+        showToast('Geen verbinding — verwijderen niet gelukt')
+      } finally {
+        setProcessingId(null)
+      }
       return
     }
 
@@ -732,11 +798,22 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         const displayNumber = result.invoice_number || ctx.number
         // [SEND-PDF-HONEST] A pdf_failed response means the number was issued but the PDF/email did
         // NOT go out — never toast "verzonden ✓". Tell the owner to resend so the state is honest.
-        if (result.warning === 'pdf_failed' || result.delivered === false) {
+        //
+        // [SEND-EMAIL-HONEST] email_failed is the SAME class of half-success and was falling
+        // through to the "verzonden ✓" branch: the route issues the legal number, builds the PDF,
+        // and only then fails to hand it to the mail provider — it carries no `delivered: false`,
+        // so the old test missed it. The owner was told a legally-numbered invoice had reached
+        // their customer when nothing left the building. /dashboard/invoice/new already handled
+        // both warnings together; this page did not.
+        if (result.warning === 'pdf_failed' || result.warning === 'email_failed' || result.delivered === false) {
           showToast(
-            displayNumber
-              ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
-              : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
+            result.warning === 'email_failed'
+              ? (displayNumber
+                  ? `Factuur ${displayNumber} kreeg een nummer, maar de e-mail is niet verstuurd — verstuur opnieuw`
+                  : 'De e-mail is niet verstuurd — verstuur de factuur opnieuw')
+              : displayNumber
+                ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
+                : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
           )
         } else {
           showToast(
@@ -957,6 +1034,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               // Row tint
               const rowBg = isCredit ? '#FFF8F0' : isOfferte ? '#F8F9FA' : '#fff'
 
+              // [OVERDUE-DERIVED] What the row should SAY it is — 'overdue' exists only as a
+              // derivation, never as a stored status.
+              const displayStatus = getDisplayStatus(inv)
+
               return (
                 <div
                   key={inv.id}
@@ -989,10 +1070,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         <InvoiceTypeBadge type={invoiceType} />
-                        {/* Status chip */}
-                        {CHIP[inv.status] && (
-                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
-                            {inv.status === 'paid' ? 'Betaald' : inv.status === 'sent' ? 'Verzonden' : inv.status === 'overdue' ? 'Verlopen' : 'Concept'}
+                        {/* Status chip — [OVERDUE-DERIVED] 'overdue' is never STORED (see the
+                            note in api/bank/unlink): it is derived from sent + due_date in the
+                            past, exactly as the Verlopen tab's own query derives it. Reading
+                            inv.status raw therefore labelled every row in that tab a blue
+                            "Verzonden" — the list said overdue, each row denied it. getDisplayStatus
+                            is the shared derivation the row component already exports. */}
+                        {CHIP[displayStatus] && (
+                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[displayStatus].bg, color: CHIP[displayStatus].color }}>
+                            {displayStatus === 'paid' ? 'Betaald' : displayStatus === 'sent' ? 'Verzonden' : displayStatus === 'overdue' ? 'Verlopen' : 'Concept'}
                           </span>
                         )}
                         {recon[inv.id] && (
@@ -1056,7 +1142,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             // The chip IS the way back in: tapping it reopens the same dialog,
                             // now offering the REMAINING balance. Recording the next instalment
                             // (or finishing the invoice) is one tap from where the owner reads it.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
                           }}
                           title={`Deelbetaling: ${fmtEur(inv.amount_paid ?? 0)} van ${fmtEur(Math.abs(inv.total_inc_btw ?? 0))} betaald — tik om de rest te noteren`}
                           style={{
@@ -1125,7 +1211,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the total on a
                             // fully open invoice, the remainder on a partly paid one) — the field's
                             // hint and its cap.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
@@ -1162,6 +1248,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                               number: inv.invoice_number ?? '',
                               newStatus: isPaid ? 'sent' : 'paid',
                               invoiceType: 'creditnota',
+                              // Only a settlement writes money; an undo needs no idempotency key.
+                              ...(isPaid ? {} : { clientKey: newPayKey() }),
                             })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: isPaid ? M3.successContainer : '#FEF7E0', color: isPaid ? '#137333' : '#EA8600' }}>
@@ -1245,7 +1333,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         <InfoLine label="Aan"       value={inv.client_name} />
                         {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label="BTW" value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDate(inv.due_date)} />}
                       </div>
@@ -1313,7 +1401,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             {filter === 'all' && !searching && archivedInvoices.length > 0 && (
               <>
                 <div style={{ padding: '8px 4px 2px' }}>
-                  <p style={{ fontSize: 11, color: '#9AA0A6', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
+                  <p style={{ fontSize: 11, color: '#70757a', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
                 </div>
                 {archivedInvoices.map(inv => (
                   <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: inv.replaced_by_number ? 0.4 : 0.6 }}>
@@ -1436,7 +1524,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               </button>
             </div>
 
-            <p style={{ fontSize: 11.5, color: '#9AA0A6', lineHeight: 1.5, margin: '0 0 16px' }}>
+            <p style={{ fontSize: 11.5, color: '#70757a', lineHeight: 1.5, margin: '0 0 16px' }}>
               BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN
               ({bundle.iban.replace(/(.{4})/g, '$1 ').trim()}).
             </p>
@@ -1481,9 +1569,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           paymentChoice={
             payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid'
               ? (method, paymentDate, amount) => executePay({
+                  // [PAY-IDEMPOTENT] The key rides along from payCtx, minted when this dialog was
+                  // opened (see newPayKey). It is deliberately NOT generated here: doing so gave
+                  // every tap its own key, which is the one thing an idempotency key must not do.
                   ...payCtx, paymentMethod: method, paymentDate, amount,
-                  // One key per dialog opening — a retry of the same tap is a no-op server-side.
-                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
                 })
               : undefined
           }
@@ -1583,7 +1672,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               ))}
             </div>
             )}
-            <p style={{ fontSize: 12, color: '#9AA0A6', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 12, color: '#70757a', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
               {repeatCtx.scheduleId
                 ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
                 : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
@@ -1613,6 +1702,35 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             : (removeCtx.decision.mode === 'creditnota' ? M3.primary : '#5F6368')}
           onConfirm={() => executeRemoval(removeCtx)}
           onCancel={() => setRemoveCtx(null)}
+          /* [REMOVAL-ALTERNATIVE] decideRemoval names the way forward for every dead end it
+             produces, and this call site discarded all three. The 'creditnota' kind was already
+             reachable because executeRemoval routes a blocked creditnota decision on confirm —
+             but 'ask-accountant' had NO path at all: the sheet offered "Sluiten" and nothing
+             else, so an invoice the accountant had locked was a wall with a door drawn on it.
+             The machinery to open it (requestUnverwerkt → a message to the linked accountant)
+             has existed all along, one state away. */
+          alternative={(() => {
+            const alt = removeCtx.decision.alternative
+            if (!alt) return undefined
+            if (alt.kind === 'ask-accountant') {
+              return {
+                label: alt.label,
+                onClick: () => {
+                  const id = removeCtx.id
+                  const number = invoices.find(i => i.id === id)?.invoice_number ?? ''
+                  setRemoveCtx(null)
+                  setRequestSent(false)
+                  setVerwerktCtx({ id, number })
+                },
+              }
+            }
+            if (alt.kind === 'creditnota') {
+              return { label: alt.label, onClick: () => { const id = removeCtx.id; setRemoveCtx(null); router.push(`/dashboard/invoice/${id}?action=credit`) } }
+            }
+            // 'undo-payment' — the money has to come back off the invoice first, and the one
+            // place that can do that for a bank-settled invoice is the bank page.
+            return { label: alt.label, onClick: () => { setRemoveCtx(null); router.push('/dashboard/bank') } }
+          })()}
         />
       )}
 
@@ -1674,7 +1792,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice, openAmount: openBalance }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice, openAmount: openBalance, alternative }: {
   title: string
   body: string
   confirmLabel: string
@@ -1690,6 +1808,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // [MANUAL-PARTIAL-PAY] What is still open on this invoice. Present → the "Betaald bedrag"
   // field is offered. Absent → no field at all (a bundle stays all-or-nothing).
   openAmount?: number
+  // [REMOVAL-ALTERNATIVE] The way FORWARD when the answer is no. decideRemoval has always
+  // computed this ("Creditnota maken", "Betaling terugdraaien", "Vraag je boekhouder") and this
+  // sheet never accepted it, so every one of them was thrown away at the call site — the dialog
+  // said what the owner could not do and stayed silent about what they could. On a blocked
+  // decision both buttons then just closed the sheet, which is a dead end with two exits.
+  alternative?: { label: string; onClick: () => void }
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
@@ -1800,7 +1924,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               <button
                 onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
                 disabled={!!entry && !entry.valid}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
@@ -1814,7 +1938,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant
@@ -1825,6 +1949,11 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         ) : (
           <>
             <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
+            {/* [REMOVAL-ALTERNATIVE] The route forward, when there is one. Outlined, not filled:
+                it is an offer, never the recommended tap. */}
+            {alternative && (
+              <button onClick={alternative.onClick} style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{alternative.label}</button>
+            )}
             <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
           </>
         )}

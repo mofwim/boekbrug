@@ -12,7 +12,12 @@
 
   --color-text-primary:  #202124;
   --color-text-secondary:#5f6368;
-  --color-text-tertiary: #80868b;
+  /* [A11Y-CONTRAST] Was #80868b: 3.68:1 on white, which fails WCAG AA for normal text
+     (4.5:1). It is the placeholder colour and the app's quietest text, i.e. exactly the
+     text a reader is least able to guess from context. #70757a measures 4.65:1 and is a
+     barely perceptible darkening — the hierarchy between primary, secondary and tertiary
+     is untouched, it just becomes readable. */
+  --color-text-tertiary: #70757a;
   --color-separator:     #e0e0e0;
 
   --color-blue:          #1a73e8;
@@ -25,16 +30,6 @@
   --color-orange-light:  #fef7e0;
   --color-purple:        #7b1fa2;
   --color-purple-light:  #f3e8fd;
-
-  /* Invoice status colors */
-  --color-status-paid-bg:    #e6f4ea;
-  --color-status-paid-bar:   #34a853;
-  --color-status-sent-bg:    #ffffff;
-  --color-status-sent-bar:   #1a73e8;
-  --color-status-draft-bg:   #ffffff;
-  --color-status-draft-bar:  #dadce0;
-  --color-status-overdue-bg: #fce8e6;
-  --color-status-overdue-bar:#ea4335;
 
   /* Radius */
   --radius-card:   16px;
@@ -152,14 +147,7 @@ body {
 }
 
 /* ── Typography ────────────────────────────────────────────────────────────── */
-
-.text-h1 { font-size: 24px; font-weight: 700; color: var(--color-text-primary); }
-.text-h2 { font-size: 20px; font-weight: 600; color: var(--color-text-primary); }
 .text-h3 { font-size: 17px; font-weight: 600; color: var(--color-text-primary); }
-.text-body{ font-size: 15px; font-weight: 400; color: var(--color-text-primary); }
-.text-sub { font-size: 13px; font-weight: 400; color: var(--color-text-secondary); }
-.text-cap { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
-
 /* ── Card ───────────────────────────────────────────────────────────────────── */
 
 .card {
@@ -306,81 +294,9 @@ input::placeholder, textarea::placeholder {
   font-weight: 400 !important;
 }
 
-/* ── Invoice Row Colors ─────────────────────────────────────────────────────── */
-
-.invoice-row {
-  position: relative;
-  transition: background-color 0.15s ease;
-}
-
-.invoice-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-}
-
-.invoice-row-paid    { background-color: var(--color-status-paid-bg); }
-.invoice-row-paid::before { background-color: var(--color-status-paid-bar); }
-
-.invoice-row-sent    { background-color: var(--color-status-sent-bg); }
-.invoice-row-sent::before { background-color: var(--color-status-sent-bar); }
-
-.invoice-row-draft   { background-color: var(--color-status-draft-bg); }
-.invoice-row-draft::before { background-color: var(--color-status-draft-bar); }
-
-.invoice-row-overdue { background-color: var(--color-status-overdue-bg); }
-.invoice-row-overdue::before { background-color: var(--color-status-overdue-bar); }
-
-.invoice-row-worked  { background-color: var(--color-status-paid-bg); }
-.invoice-row-worked::before { background-color: var(--color-status-paid-bar); }
-
-.invoice-row:hover { filter: brightness(0.98); }
-
 /* ── Status Badges ───────────────────────────────────────────────────────────── */
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 10px;
-  border-radius: var(--radius-badge);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.badge-paid    { background: #ceead6; color: #137333; }
-.badge-sent    { background: var(--color-blue-light); color: #1967d2; }
-.badge-draft   { background: #f1f3f4; color: #5f6368; }
-.badge-overdue { background: var(--color-red-light); color: #c5221f; }
-
 /* ── Stats Card ──────────────────────────────────────────────────────────────── */
-
-.stat-card {
-  background: var(--color-surface);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  padding: 20px;
-}
-
-.stat-card .stat-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 4px;
-}
-
-.stat-card .stat-value {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  line-height: 1.2;
-}
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────────── */
 /* Visible, on-brand scrollbar. The old 5px #e0e0e0 thumb was the same tone as the
@@ -415,12 +331,6 @@ input::placeholder, textarea::placeholder {
    the toast rise twice (fadeInUp / m3fadeUp). Each copy shipped in a different
    bundle and drifted from the others. Import nothing — these are global. */
 
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.animate-fade-in { animation: fade-in var(--dur-base) var(--ease-decelerate) both; }
-
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 0.7s linear infinite; }
 
@@ -448,18 +358,6 @@ input::placeholder, textarea::placeholder {
 .animate-rise-out { animation: bb-rise-out var(--dur-fast) var(--ease-accelerate) both; }
 
 /* A full-height sheet sliding in from the bottom edge of the viewport. */
-@keyframes bb-sheet-in {
-  from { translate: 0 100%; }
-  to   { translate: 0 0; }
-}
-.animate-sheet-in { animation: bb-sheet-in var(--dur-slow) var(--ease-decelerate) both; }
-
-@keyframes bb-sheet-out {
-  from { translate: 0 0; }
-  to   { translate: 0 100%; }
-}
-.animate-sheet-out { animation: bb-sheet-out var(--dur-base) var(--ease-accelerate) both; }
-
 /* The dimmed backdrop behind a dialog or sheet. Fading it rather than snapping
    it on is most of what stops a modal from feeling like a page swap. */
 @keyframes bb-backdrop-in  { from { opacity: 0; } to   { opacity: 1; } }
@@ -522,10 +420,7 @@ input::placeholder, textarea::placeholder {
      position instead of sliding or scaling into it. */
   .animate-scale-in,
   .animate-rise-in,
-  .animate-rise-out,
-  .animate-sheet-in,
-  .animate-sheet-out,
-  .animate-fade-in {
+  .animate-rise-out {
     animation: none !important;
   }
 }

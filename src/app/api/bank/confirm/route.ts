@@ -41,6 +41,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // definition — no drift between "is this tx done?" answered in two places.
 import { isEligible, normalizeRef, isFullyCovered, parseReferenceNumbers } from "@/lib/bank-matching";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
 import { logAuditAction } from "@/lib/audit";
 
@@ -133,7 +134,13 @@ export async function POST(req: NextRequest) {
     {
       id: inv.id,
       invoice_number: inv.invoice_number,
-      total_inc_btw: null,
+      // [M7-CREDITNOTA] The REAL total, never null. isEligible derives "is this a creditnota"
+      // from the sign of this field; passing null made every creditnota look like a normal
+      // invoice, flipped the required direction, and rejected every credit-note refund with
+      // `not_eligible` — the matcher (which passes the real amount) suggested it, and this
+      // guard then refused it. Auto-confirm passes the full row and worked; only the human
+      // path was blocked.
+      total_inc_btw: inv.total_inc_btw ?? null,
       invoice_date: null,
       due_date: null,
       client_name: null,
@@ -389,12 +396,25 @@ export async function POST(req: NextRequest) {
     const requiredDirection: "outgoing" | "incoming" =
       (tx.amount ?? 0) > 0 ? "outgoing" : "incoming";
 
-    const { data: paidRows, error: paidErr } = await pipeline
-      .from("invoices")
-      .select("invoice_number")
-      .eq("status", "paid")
-      .eq("direction", requiredDirection)
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+    // [SEARCH-FULL-COVERAGE] Page past PostgREST's silent ~1000-row cap. A plain .select()
+    // truncates without an error, and a truncated paid-set makes isFullyCovered answer "no"
+    // for a transaction that IS fully settled — it then stays in "Te bevestigen" forever.
+    let paidRows: { invoice_number: string | null }[] = [];
+    let paidErr: { message: string } | null = null;
+    try {
+      paidRows = await fetchAllRows<{ invoice_number: string | null }>((from, to) =>
+        pipeline
+          .from("invoices")
+          .select("invoice_number")
+          .eq("status", "paid")
+          .eq("direction", requiredDirection)
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
+    } catch (e) {
+      paidErr = { message: e instanceof Error ? e.message : String(e) };
+    }
 
     if (paidErr) {
       // Don't fail the (completed) payment over a coverage read. Be conservative:
@@ -438,7 +458,17 @@ export async function POST(req: NextRequest) {
     // consistent and the owner can simply retry — never a paid invoice with no proof.
     const { error: rollbackErr } = await supabase
       .from("invoices")
-      .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
+      .update({
+        status: inv.status,
+        payment_method: null,
+        marked_paid_at: null,
+        payment_date: null,
+        // [PARTIAL-PAY] The payment write above also set amount_paid to the full total. Leaving
+        // it there gives a 'sent' invoice an open balance of 0: it vanishes from the debtor list,
+        // and a retry takes the wrong branch because invOpen reads 0. Restore the value this
+        // request found, so the rollback returns the invoice to exactly its prior state.
+        amount_paid: inv.amount_paid ?? 0,
+      })
       .eq("id", invoiceId)
       .eq("status", "paid");
     if (rollbackErr) {

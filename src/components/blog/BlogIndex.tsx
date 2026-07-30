@@ -67,7 +67,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
 
         <div style={{ paddingBottom: 48 }}>
           {posts.length === 0 ? (
-            <p style={{ textAlign: 'center', color: '#9aa0a6', fontSize: 15 }}>{t.empty}</p>
+            <p style={{ textAlign: 'center', color: '#70757a', fontSize: 15 }}>{t.empty}</p>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
               {posts.map((post) => (

@@ -4,7 +4,7 @@
 // [Google-OAuth] Add Google OAuth registration — May 2026
 
 import { Suspense, useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase'
+import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 import {
@@ -38,7 +38,6 @@ function RegisterContent() {
   const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
 
   // [KLUIS] Waarvoor deze bezoeker komt. /bewaarplicht stuurt hier naartoe met ?doel=archief:
   // iemand wiens zaak gestopt is komt zijn administratie WEGZETTEN, niet boekhouden. Hij
@@ -97,7 +96,7 @@ function RegisterContent() {
     const callback = new URL('/api/auth/callback', window.location.origin)
     if (redirectUrl) callback.searchParams.set('next', redirectUrl)
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await getBrowserClient().auth.signInWithOAuth({
       provider: 'google',
       options: {
         // Basic sign-in only — we no longer request Gmail inbox access here.
@@ -138,7 +137,7 @@ function RegisterContent() {
     // Previously the browser did a profiles.upsert right after signUp, but with email
     // confirmation ON there is no session yet, so the anon client hit RLS and the flow
     // dead-ended before the "check your e-mail" screen. The trigger has no such problem.
-    const { data, error: signUpError } = await supabase.auth.signUp({
+    const { data, error: signUpError } = await getBrowserClient().auth.signUp({
       email,
       password,
       options: {
@@ -191,7 +190,7 @@ function RegisterContent() {
     // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
     // but NO active session. Check and guide the user instead of a silent
     // redirect to /dashboard that would just bounce back to /login.
-    const { data: sessionData } = await supabase.auth.getSession()
+    const { data: sessionData } = await getBrowserClient().auth.getSession()
     if (!sessionData.session) {
       setEmailSent(true)
       setLoading(false)
@@ -205,7 +204,7 @@ function RegisterContent() {
     // that migration hasn't been applied yet — closing the silent-wrong-data window. The
     // no-session (confirmation-ON) path above can't do this (anon RLS) and relies on the
     // trigger. Best-effort: a failure here never blocks the redirect.
-    await supabase
+    await getBrowserClient()
       .from('profiles')
       .upsert({
         id: data.user.id,

@@ -274,9 +274,13 @@ export async function POST(request: NextRequest) {
     if (pdfBuffer) {
       try {
         const pdfPath = `${user.id}/facturen/${creditnotaNumber}.pdf`
+        // [PDF-IMMUTABLE] Zie de toelichting in invoice/send: er is geen UPDATE-policy op
+        // storage.objects, dus een overschrijving kan niet slagen. Hier is dat sowieso nooit aan
+        // de orde — creditnotaNumber komt vers uit de reeks, dus het pad is per definitie nieuw —
+        // maar `upsert: true` suggereerde een mogelijkheid die niet bestaat.
         const { error: uploadError } = await supabase.storage
           .from(PDF_BUCKET)
-          .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: true })
+          .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
         if (!uploadError) {
           await supabase
             .from('invoices')

@@ -11,7 +11,9 @@ import Link from 'next/link'
 import { reconcileBatch, resolveBatchNumbers } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
-import { isPartialPaymentHint } from '@/lib/bank-matching'
+import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
+import { isPosPayoutDescription } from '@/lib/bank-identity'
+import { categoryLabel } from '@/lib/bank-categories'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -81,6 +83,9 @@ interface Suggestion {
   counterpart: string | null
   // [SEARCH] tegenrekening IBAN — so the zoekbalk can match a line by IBAN as well.
   iban?: string | null
+  // [BANK-COUNTERPART-HISTORY] What the owner decided about this counterpart before. Server-
+  // computed over lines that already carry a category; null when there is nothing honest to say.
+  history?: { count: number; topCategory: string; topCount: number; matchedBy: 'iban' | 'naam' } | null
   reference: string | null
   outcome: Outcome
   best: Candidate | null
@@ -192,7 +197,21 @@ export default function BankClient() {
   // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
   // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
   // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
-  const [quarterSel, setQuarterSel] = useState<string>('auto')
+  //
+  // [BANK-QUARTER-LINK] ?year&quarter pins it, because 'auto' resolves to the LAST COMPLETED
+  // quarter and a link that arrives from elsewhere usually means a different one. Readiness
+  // sends the owner here to fix a specific quarter's bank gap; in August a Q1 blocker opened
+  // Q2, every list read 0, and the honest conclusion was "this is already handled" — the worst
+  // possible answer to a blocker. Same pattern the excluded-review link already uses. An
+  // out-of-range or malformed pair falls through to 'auto' rather than showing an empty quarter.
+  const yearParam = Number(searchParams.get('year'))
+  const quarterParam = Number(searchParams.get('quarter'))
+  const linkedQuarter =
+    Number.isInteger(yearParam) && yearParam >= 2000 && yearParam <= 2100 &&
+    Number.isInteger(quarterParam) && quarterParam >= 1 && quarterParam <= 4
+      ? `${yearParam}-Q${quarterParam}`
+      : null
+  const [quarterSel, setQuarterSel] = useState<string>(linkedQuarter ?? 'auto')
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
@@ -280,7 +299,10 @@ export default function BankClient() {
       const amountOnly = sig.includes('amount') && sig.includes('counterpart') && !sig.includes('reference') && !sig.includes('iban')
       if (!certain && !amountOnly) return false
       // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
-      if (s.reference && s.reference.split(',').map((x) => x.trim()).filter(Boolean).length > 1) return false
+      // [BANK-REF-ONE-SOURCE] The server's own count — a raw comma split counted free-text
+      // fragments and any part under four characters as invoice numbers, so this gate fired on
+      // rows the server considers single-invoice.
+      if (parseReferenceNumbers(s.reference).length > 1) return false
       if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
       return true
     })
@@ -293,7 +315,7 @@ export default function BankClient() {
     // exactly one unpaid invoice, one supplier, sum to the cent). This just decides "is it worth
     // calling now". A non-tie / incomplete batch simply books nothing — the call is idempotent.
     const hasBatch = (data.suggestions ?? []).some((s) => {
-      const refCount = (s.reference ?? '').split(',').map((x) => x.trim()).filter(Boolean).length
+      const refCount = parseReferenceNumbers(s.reference).length // [BANK-REF-ONE-SOURCE]
       if (refCount < 2) return false
       if (s.allCovered === true || confirmed[s.transactionId]?.allCovered === true) return false
       return true
@@ -532,8 +554,9 @@ export default function BankClient() {
     if (s.outcome !== 'auto' || !s.best) return false
     if (isPartiallyLinked(s)) return false
     // Multi-invoice (reference lists >1 number) → per-number action, never bulk.
-    // Count the same way the card does (comma-separated, trimmed, non-empty).
-    const refCount = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean).length
+    // [BANK-REF-ONE-SOURCE] Counted by the shared parser, so the card, this gate and the server
+    // can never disagree about how many invoices a reference names.
+    const refCount = parseReferenceNumbers(s.reference).length
     if (refCount > 1) return false
     if (confirmed[s.transactionId]) return false // already acted on this session
     return true
@@ -865,15 +888,11 @@ export default function BankClient() {
   // bulk every day and never have a supplier invoice. Keeping them in "Geen
   // factuur" buries the real work (actual supplier payments). Detect them and
   // give them their own tab so the owner focuses on invoices that matter.
-  const isPosReceipt = (s: Suggestion) => {
-    const name = (s.counterpart ?? '').toLowerCase()
-    const desc = (s.description ?? '').toLowerCase()
-    return (
-      name.includes('ing dd&c') ||
-      desc.includes('betaalautomaat') ||
-      desc.includes('afrek. betaalautomaat')
-    )
-  }
+  // [BANK-POS-ONE-SOURCE] Ask the classifier, not a private three-phrase list. The server knows
+  // sixteen acquirers (Mollie, Adyen, Stripe, Worldline, Buckaroo, …) and books their payouts as
+  // 'pos_income'; this list knew three. A Mollie settlement was therefore income on the server
+  // and sat in the "Geen factuur" tab here, as work the owner could never finish.
+  const isPosReceipt = (s: Suggestion) => isPosPayoutDescription(s.description, s.counterpart)
 
   // [BANK-TABS] Split the (often long) list into purpose-driven groups so the
   // owner isn't drowned in one endless list. Order: the action tab first.
@@ -917,7 +936,7 @@ export default function BankClient() {
     !!s.best &&
     s.best.signals.includes('reference') &&
     s.best.signals.includes('amount') &&
-    (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+    parseReferenceNumbers(s.reference).length <= 1 && // [BANK-REF-ONE-SOURCE]
     !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
   ).length
 
@@ -1100,7 +1119,7 @@ export default function BankClient() {
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                <span style={{ fontSize: 11.5, color: '#9aa0a6', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 11.5, color: '#70757a', whiteSpace: 'nowrap' }}>
                   {fmtUploadDate(st.uploadedAt)}
                 </span>
                 {/* [BANK-STATEMENT-DELETE] Delete this statement (replace a wrong
@@ -1292,7 +1311,7 @@ export default function BankClient() {
             <div style={{ position: 'relative', marginTop: 12 }}>
               <span
                 className="material-symbols-outlined"
-                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#9aa0a6', pointerEvents: 'none' }}
+                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#70757a', pointerEvents: 'none' }}
               >
                 search
               </span>
@@ -1326,7 +1345,7 @@ export default function BankClient() {
           )}
           {/* Empty-filter hint — any tab */}
           {filterText.trim() && activeListRaw.length > 0 && activeList.length === 0 && (
-            <p style={{ fontSize: 13, color: '#9aa0a6', margin: '14px 2px 0' }}>
+            <p style={{ fontSize: 13, color: '#70757a', margin: '14px 2px 0' }}>
               Geen transacties gevonden voor “{filterText.trim()}”.
             </p>
           )}
@@ -1336,6 +1355,34 @@ export default function BankClient() {
               Pinontvangsten via de betaalautomaat (ING DD&C). Deze hebben geen factuur — ze staan hier zodat ze je openstaande werk niet in de weg zitten.
             </p>
           )}
+
+          {/* [BANK-IGNORE-TRIAGE] Negeren is één tik en de regel is daarna weg uit ELKE lijst die
+              hem nog had kunnen verklaren — de matcher, auto-confirm, auto-categorize, de
+              nachtelijke sweep en elke categorize-lezing — én uit undocumentedCount, dus ook de
+              BTW-waarschuwing voor die regel verdwijnt. Wat overblijft is een stapel die niemand
+              ooit terugziet, zonder reden erbij, met soms honderden euro's erin.
+
+              Dit telt die stapel één keer hardop: hoeveel regels, en hoeveel geld. Geen
+              beschuldiging en geen blokkade — een genegeerde regel is vaak volkomen terecht
+              genegeerd. Maar het bedrag hoort zichtbaar te zijn vóór het kwartaal dichtgaat, en
+              tot nu toe was het dat nergens. Alleen tonen als er iets te tonen valt. */}
+          {bankTab === 'ignored' && ignoredInQ.length > 0 && (() => {
+            const total = Math.round(ignoredInQ.reduce((a, x) => a + Math.abs(x.amount), 0) * 100) / 100
+            const big = ignoredInQ.filter((x) => Math.abs(x.amount) >= 500).length
+            return (
+              <div style={{
+                margin: '12px 2px 0', padding: '10px 12px', borderRadius: R.md,
+                background: '#FEF7E0', border: '1px solid #FCE8B2', fontFamily: FONT,
+                fontSize: 12.5, color: '#7C5800', lineHeight: 1.5,
+              }}>
+                {ignoredInQ.length === 1 ? '1 genegeerde regel' : `${ignoredInQ.length} genegeerde regels`}
+                {' '}van samen {eur.format(total)}
+                {big > 0 && <>, waarvan {big === 1 ? 'één' : big} boven de € 500</>}.
+                {' '}Deze staan in geen enkel cijfer en je boekhouder ziet ze niet — loop ze nog
+                even na voordat je het kwartaal afsluit.
+              </div>
+            )
+          })()}
 
           {/* Active group */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
@@ -1402,7 +1449,7 @@ export default function BankClient() {
               />
             ))}
             {activeList.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
+              <div style={{ textAlign: 'center', padding: '32px 20px', color: '#70757a', fontSize: 13.5 }}>
                 {bankTab === 'confirm' ? 'Niets te bevestigen.'
                   : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
                   : bankTab === 'pin' ? 'Geen pinontvangsten.'
@@ -1589,7 +1636,10 @@ function TxCard({
   // Normalize a reference number the same way the matcher does (lowercase, keep
   // [a-z0-9]) — used for candidate matching AND for the dismiss set.
   const normRef = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const allRefParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean)
+  // [BANK-REF-ONE-SOURCE] Show the RAW text the bank wrote (normalizing it on screen would be
+  // unreadable), but only the parts the server would accept as an invoice number — otherwise a
+  // reference like "Huur juli, Kerkstraat 12" advertised "2 facturen" that do not exist.
+  const allRefParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(isReferenceNumberToken)
   // [BANK-SLOT-DISMISS] Hide any number the owner removed with ✗ (view-only). The
   // raw reference is untouched; this only changes what THIS card shows this session.
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
@@ -1716,7 +1766,7 @@ function TxCard({
           <button
             onClick={onUnlink}
             disabled={processing}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#9aa0a6', padding: '2px 4px' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
             {processing ? 'Bezig…' : 'Ontkoppelen'}
@@ -1819,10 +1869,36 @@ function TxCard({
           fontSize: 12, color: '#5F6368', lineHeight: 1.5, wordBreak: 'break-word',
           fontFamily: FONT, border: '1px solid #EEE',
         }}>
-          <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9aa0a6', marginBottom: 3, letterSpacing: 0.4 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: '#70757a', marginBottom: 3, letterSpacing: 0.4 }}>
             OMSCHRIJVING
           </div>
           {cleanBankDescription(s.description)}
+        </div>
+      )}
+
+      {/* [BANK-COUNTERPART-HISTORY] "Wat deed ik hier de vorige keer mee?" — the app has always
+          known this (counterpart_iban is stored on every import and an IBAN hit is a CERTAIN-tier
+          signal in the matcher) and never showed it. For an unidentifiable line this is the
+          cheapest resolution there is, and it comes before any heavier answer.
+
+          Reported, never applied: no tap, no pre-fill. counterpart_memory already drives the
+          actual suggestion, and a second hint the owner could act on separately would eventually
+          contradict it. The wording keeps two things apart that must not blur — an IBAN is an
+          identity ("deze tegenrekening"), a name is only a resemblance ("deze naam"), because the
+          bank rewrites counterpart names constantly. And when the past was NOT unanimous we say
+          so rather than rounding a 2-of-3 into "altijd". */}
+      {s.history && (
+        <div style={{
+          marginTop: 8, padding: '8px 10px', borderRadius: R.md, background: '#F1F6FE',
+          fontSize: 12, color: '#1F4E8C', lineHeight: 1.5, fontFamily: FONT, border: '1px solid #D6E4FA',
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#1A73E8', flexShrink: 0, marginTop: 1 }}>history</span>
+          <span>
+            {s.history.topCount === s.history.count
+              ? <>Eerder {s.history.count === 1 ? 'één keer' : `${s.history.count} keer`} van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'}, {s.history.count === 1 ? 'geboekt' : 'steeds geboekt'} als <b>{categoryLabel(s.history.topCategory)}</b>.</>
+              : <>Eerder {s.history.count} keer van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'} — {s.history.topCount}× als <b>{categoryLabel(s.history.topCategory)}</b>, de rest anders.</>}
+          </span>
         </div>
       )}
 
@@ -2037,7 +2113,7 @@ function TxCard({
             style={{
               marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
-              cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+              cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#70757a',
               fontFamily: FONT,
             }}
           >
@@ -2053,7 +2129,7 @@ function TxCard({
           {isIgnoredTab ? (
             /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
             <>
-              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
                 Genegeerd — staat niet in de actieve lijst.
               </div>
@@ -2075,7 +2151,7 @@ function TxCard({
             </>
           ) : (
             <>
-              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
                 Geen factuur gevonden voor deze transactie.
               </div>
@@ -2119,7 +2195,7 @@ function TxCard({
                 style={{
                   marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
-                  cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+                  cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#70757a',
                   fontFamily: FONT,
                 }}
               >
@@ -2223,7 +2299,7 @@ function TxCard({
             marginTop: 12, width: '100%', padding: '11px', borderRadius: R.full, border: 'none',
             cursor: !selectedInvoiceId || processing ? 'default' : 'pointer',
             background: !selectedInvoiceId ? M3.surfaceVariant : M3.primary,
-            color: !selectedInvoiceId ? '#9aa0a6' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
+            color: !selectedInvoiceId ? '#70757a' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           }}
         >

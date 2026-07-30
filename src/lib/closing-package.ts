@@ -37,6 +37,7 @@ import {
 } from "./quarterly";
 import { calcBtwRate } from "./export";
 import { csvCell } from "./csv-safe";
+import { formatEuroNL } from "./format-nl";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
@@ -1044,6 +1045,33 @@ export async function summarizeClosingPackage(args: {
     .lte("date", end)
     .limit(1);
   const hasBankData = (bankTx ?? []).length > 0;
+
+  // [BANK-ONOPGELOST] A bank line that reached the end of the quarter still PENDING and still
+  // uncategorised is a euro nobody placed: it contributes 0 to omzet, kosten and voorbelasting
+  // (financial-result.ts drops any line without a category), it asserts no payment, and nothing
+  // in the handover says so. Seventeen warning codes covered other completeness gaps and none
+  // covered this one — so the single thing the accountant most needs to be asked about arrived
+  // as silence, and the owner's own "ik weet niet wat dit is" had nowhere to land.
+  //
+  // Deliberately counts EVERY unresolved line, not a flagged subset: the gap exists today, for
+  // every owner, whether or not they ever press a button. Ignored lines (status 'not_found') are
+  // out — those the owner answered, even if the answer was "not mine".
+  const unresolvedBank = await fetchAllRows<{ id: string; amount: number | null }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("id, amount")
+      .eq("user_id", ownerId)
+      .eq("status", "pending")
+      .is("category", null)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => [] as { id: string; amount: number | null }[]);
+  const unresolvedBankCount = unresolvedBank.length;
+  const unresolvedBankTotal =
+    Math.round(unresolvedBank.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0) * 100) / 100;
+
   // Whether the statement FILE will actually be attached — separate from "we have bank
   // data". Reported truthfully so the preview matches the ZIP (which two-tiers the same way).
   const bankFilePaths = await bankStatementPaths(supabase, ownerId, year, quarter);
@@ -1087,6 +1115,20 @@ export async function summarizeClosingPackage(args: {
     warnings.push({ code: "no_bank_statement", message: "Geen banktransacties gevonden voor dit kwartaal — upload het bankafschrift." });
   } else if (!bankStatementIncluded) {
     warnings.push({ code: "bank_file_missing", message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand is (nog) niet bijgevoegd — upload het bankafschrift." });
+  }
+  // [BANK-ONOPGELOST] unshift, not push — and the reason is arithmetic, not taste. gapCount is
+  // warnings.length, but both the owner mail and the accountant mail render only
+  // `.slice(0, 3)` of the messages (quarter-close.ts). A busy quarter is exactly the one that
+  // pushes this past index 3, and a busy quarter is exactly when an unplaced euro matters most —
+  // so a plain push would truncate the owner's own open question away precisely when it counts.
+  if (unresolvedBankCount > 0) {
+    warnings.unshift({
+      code: "bank_unresolved",
+      message:
+        `${unresolvedBankCount} banktransactie(s) van samen ${formatEuroNL(unresolvedBankTotal)} zijn nog niet ` +
+        `geplaatst: geen factuur en geen categorie. Ze tellen daardoor in geen enkel cijfer mee — ` +
+        `niet in omzet, niet in kosten en niet in de voorbelasting.`,
+    });
   }
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
   const sharedOutside = sharedOutsideWarning(shared.outsideCount);

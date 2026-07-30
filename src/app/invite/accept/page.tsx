@@ -2,7 +2,7 @@
 
 import { Suspense } from 'react'
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase'
+import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { InvitationRow } from '@/types/rows'
 import type { User } from '@supabase/supabase-js'
@@ -12,7 +12,6 @@ function AcceptInviteContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
-  const supabase = createClient()
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'accepted' | 'error'>('loading')
   // Deze pagina bewaart alleen het token; de rest van de uitnodiging wordt server-side
@@ -36,7 +35,7 @@ function AcceptInviteContent() {
       // Also verify invitation exists (info route already checks pending status)
       setInvitation({ token })
 
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getBrowserClient().auth.getUser()
       setUser(user)
       setStatus('ready')
     }

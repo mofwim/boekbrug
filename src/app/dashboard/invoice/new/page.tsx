@@ -346,7 +346,7 @@ function DateField({
       />
       {/* Dutch DD-MM-YYYY caption — the unambiguous read of the value */}
       {value && (
-        <p style={{ fontSize: 11, color: '#9AA0A6', margin: '2px 0 0', fontFamily: 'Roboto Mono, monospace' }}>
+        <p style={{ fontSize: 11, color: '#70757a', margin: '2px 0 0', fontFamily: 'Roboto Mono, monospace' }}>
           {formatDateNL(value)}
         </p>
       )}
@@ -1134,8 +1134,8 @@ function NewInvoicePageContent() {
                   {profile.address && <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{profile.address}</p>}
                   {(profile.postal_code || profile.city) && <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{[profile.postal_code, profile.city].filter(Boolean).join(' ')}</p>}
                   <div style={{ display: 'flex', gap: 16, marginTop: 2 }}>
-                    {profile.kvk_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>KVK: {profile.kvk_number}</p>}
-                    {profile.btw_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>BTW: {profile.btw_number}</p>}
+                    {profile.kvk_number && <p style={{ fontSize: 12, color: '#70757a', margin: 0 }}>KVK: {profile.kvk_number}</p>}
+                    {profile.btw_number && <p style={{ fontSize: 12, color: '#70757a', margin: 0 }}>BTW: {profile.btw_number}</p>}
                   </div>
                   {/* [FACTUUR-A] Non-blocking legal-completeness warning on the
                       sender's own data — a malformed BTW-id or missing KVK
@@ -1249,7 +1249,7 @@ function NewInvoicePageContent() {
                   (an offerte uses "Geldig tot", not a payment term). */}
               {invoiceType !== 'offerte' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, color: '#9AA0A6' }}>Betalingstermijn:</span>
+                  <span style={{ fontSize: 12, color: '#70757a' }}>Betalingstermijn:</span>
                   {BETALINGSTERMIJNEN.map(days => {
                     const active = betalingstermijn === days
                     return (
@@ -1274,7 +1274,7 @@ function NewInvoicePageContent() {
                     )
                   })}
                   {betalingstermijn === null && (
-                    <span style={{ fontSize: 12, color: '#9AA0A6', fontStyle: 'italic' }}>Aangepast</span>
+                    <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
                   )}
                 </div>
               )}
@@ -1292,7 +1292,7 @@ function NewInvoicePageContent() {
                 />
               )}
               {invoiceType === 'factuur' && (
-                <p style={{ fontSize: 11, color: '#9AA0A6', margin: '-4px 0 0' }}>
+                <p style={{ fontSize: 11, color: '#70757a', margin: '-4px 0 0' }}>
                   Leverdatum = datum waarop de levering of dienst is verricht.
                 </p>
               )}
@@ -1301,14 +1301,14 @@ function NewInvoicePageContent() {
             {/* [DS] Factuurregels card */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}</p>
-              <p style={{ fontSize: 12, color: '#9AA0A6', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
+              <p style={{ fontSize: 12, color: '#70757a', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
 
               {lines.map((line, i) => {
                 const sug = pickerLine === i ? matchArticles(catalog, line.description) : []
                 return (
                 <div key={i} style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
                   {lines.length > 1 && (
-                    <button onClick={() => removeLine(i)} style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#9AA0A6', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => (e.currentTarget.style.color = '#EA4335')} onMouseLeave={e => (e.currentTarget.style.color = '#9AA0A6')}>×</button>
+                    <button onClick={() => removeLine(i)} style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#70757a', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => (e.currentTarget.style.color = '#EA4335')} onMouseLeave={e => (e.currentTarget.style.color = '#70757a')}>×</button>
                   )}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                     <div style={{ flex: 1, position: 'relative' }} onFocusCapture={() => setPickerLine(i)} onBlur={() => setTimeout(() => setPickerLine(cur => (cur === i ? null : cur)), 150)}>
@@ -1343,7 +1343,7 @@ function NewInvoicePageContent() {
                       </select>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#9AA0A6' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#70757a' }}>
                     {line.description.trim()
                       ? <button type="button" onClick={() => saveLineToCatalog(i, line)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>
                       : <span>Totaal excl.</span>}
@@ -1452,7 +1452,7 @@ function NewInvoicePageContent() {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => { setShowSendConfirm(false); handleSubmit('sent') }} disabled={loading}
-                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading ? '#9AA0A6' : '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}>
+                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading ? '#70757a' : '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}>
                 {loading ? 'Versturen...' : '✉ Ja, verstuur'}
               </button>
               <button onClick={() => setShowSendConfirm(false)} disabled={loading}

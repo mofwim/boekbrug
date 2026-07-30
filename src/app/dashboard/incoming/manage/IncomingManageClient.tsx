@@ -74,9 +74,14 @@ const fmtDateSmart = (s: string | null) => {
   if (Number.isNaN(d.getTime())) return '—'
   return d.getFullYear() === new Date().getFullYear() ? NL_DATE.format(d) : NL_DATE_Y.format(d)
 }
-// [BOEK-029] btw_rate does not exist in DB — always compute
-const calcBtw = (btw: number | null, ex: number | null) =>
-  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
+// [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
+// [BTW-NO-GUESS] Returns null when there is no grondslag to compute from. It used to fall back
+// to 21, printing "BTW (21%)" for an invoice whose total_ex_btw was 0, null or negative (a
+// creditnota, or an OCR read that found no net amount) — a tax rate nobody read, shown as fact.
+// A 9%-invoice missing its grondslag was labelled 21%. The caller drops the percentage from the
+// label rather than inventing one; the AMOUNT beside it is stored and stays exact either way.
+const calcBtw = (btw: number | null, ex: number | null): number | null =>
+  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : null
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface IncomingRow {
@@ -349,11 +354,21 @@ export default function IncomingManageClient({
   // Runs once the row is present in the list. Uses the SAME requestPay() as the
   // manual button (no logic duplicated). Separate effect so the focus/scroll
   // behaviour above is untouched.
+  //
+  // [ACTION-PAY-ONCE] It must fire ONCE. `actionParam` lives in the URL and never leaves it, and
+  // `invoices.length` is in the dependency list, so every archive or delete re-ran this effect:
+  // the owner arrived from Vandaag, dismissed the dialog, removed some other invoice — and the
+  // pay dialog reopened on the first one, unasked. A ref is the right guard here rather than
+  // rewriting the URL: it survives the re-render without a navigation, and the intent ("this
+  // link asked to pay ONE invoice") is per visit, not per render.
+  const payActionDone = useRef<string | null>(null)
   useEffect(() => {
     if (actionParam !== 'pay' || !focusId) return
+    if (payActionDone.current === focusId) return
     const target = invoices.find(i => i.id === focusId)
     if (!target) return
     if (target.status !== 'received') return
+    payActionDone.current = focusId
     // Small delay so the row is expanded/scrolled first, then the dialog opens.
     const t = setTimeout(() => { requestPay(target) }, 150)
     return () => clearTimeout(t)
@@ -388,12 +403,14 @@ export default function IncomingManageClient({
   // below the counter names the difference instead of passing 200 off as "everything".
   // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
   // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
-  // clock itself). Local date, not toISOString(): near midnight UTC those are different days, and
-  // "te laat" must follow the owner's calendar, not UTC's.
-  const todayIso = (() => {
-    const n = new Date()
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
-  })()
+  // clock itself). Not toISOString(): near midnight UTC that is a different day, and "te laat"
+  // must follow the owner's calendar, not UTC's.
+  //
+  // [TZ] amsterdamToday(), not the DEVICE's local date. The device clock is whatever the traveller
+  // or a mis-set phone says it is, and this file already uses amsterdamToday() for the betaaldatum
+  // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
+  // calendar while recording payments against another. One clock for the whole page.
+  const todayIso = amsterdamToday()
 
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
@@ -446,7 +463,14 @@ export default function IncomingManageClient({
           payment_prepared_at: null,
         })
       }
-      if (json.byInvoice) applyMap(json.byInvoice)
+      // [RECON-MAP-HONEST] applyMap REPLACES the whole badge map (by design — the run's map is
+      // the complete post-engine truth). But /api/reconcile/run returns `byInvoice: {}` when the
+      // map phase itself threw, and `{}` is truthy: applying it wiped every
+      // "In bankafschrift" badge on the page. Worse, the summary sheet names a failed bank/kas/
+      // categorize phase but never named `map`, so a run that lost its map read as a clean one
+      // that simply found nothing — "Geen open banktransacties om tegen te matchen" while the
+      // owner's statement was full of them. Only apply a map the run actually built.
+      if (json.byInvoice && !(json.failed ?? []).includes('map')) applyMap(json.byInvoice)
       setMatchResult(json)
     } catch {
       showToast('Matchen mislukt — probeer het opnieuw')
@@ -464,7 +488,21 @@ export default function IncomingManageClient({
   async function requestPay(inv: IncomingRow) {
     // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the full total on an untouched
     // invoice, the remainder once instalments were recorded) — the amount field's hint and cap.
-    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', openAmount: openAmount(inv) }
+    // [PAY-IDEMPOTENT] One key per dialog OPENING, minted here. It used to be produced inside the
+    // confirm handler as `payCtx.clientKey ?? crypto.randomUUID()`, but nothing ever set
+    // payCtx.clientKey — so every tap got a fresh UUID and apply_manual_payment could never
+    // recognise a repeat. A full settlement is still protected by the invoice's own 'paid' status;
+    // a DEELBETALING had no guard at all, so a double tap booked the instalment twice.
+    //
+    // A reopened dialog is a new attempt and gets a new key, on purpose: reusing it would silently
+    // swallow a genuine second instalment of the same amount, which is the worse failure.
+    const ctx: PayCtx = {
+      id: inv.id,
+      number: inv.invoice_number ?? '',
+      newStatus: 'paid',
+      openAmount: openAmount(inv),
+      clientKey: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined,
+    }
     setCheckingId(inv.id)
     try {
       const res = await fetch('/api/incoming/check-paid', {
@@ -625,17 +663,35 @@ export default function IncomingManageClient({
     // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
     // a still-'matched' tx that the owner could pay a second time). The old direct client write did
     // neither.
-    const res = await fetch('/api/invoice/pay-toggle', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId: ctx.id,
-        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
-        paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? amsterdamToday(),
-        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
-        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
-      }),
-    })
+    //
+    // [PAY-NETWORK-SAFE] fetch REJECTS on a dropped connection — the normal case for a shop
+    // owner on a phone, not an exotic one. Unguarded, that rejection left this function before
+    // the optimistic flip was rolled back and before processingId was cleared: the row kept
+    // claiming "Betaald" while nothing was written, and every later tap died on the
+    // `processingId === inv.id` guard, so the button stayed a spinner until a reload. Every
+    // sibling action on this page (executeBundlePay, executeRemoval, archiveDuplicate,
+    // runReconciliation, openPdf) already guarded this; the most important write did not.
+    let res: Response
+    try {
+      res = await fetch('/api/invoice/pay-toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: ctx.id,
+          action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+          paymentMethod: ctx.paymentMethod ?? 'bank',
+          paymentDate: ctx.paymentDate ?? amsterdamToday(),
+          ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+          ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+        }),
+      })
+    } catch {
+      // The request never completed. It may or may not have reached the server, and we cannot
+      // know which — so say exactly that instead of guessing, and put the row back as it was.
+      if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus === 'paid' ? 'received' : 'paid' })
+      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      setProcessingId(null)
+      return
+    }
     const json = await res.json().catch(() => ({} as { error?: string }))
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
@@ -690,7 +746,12 @@ export default function IncomingManageClient({
       showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
       }
     } else {
-      patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
+      // [PARTIAL-PAY] amount_paid must go with it. The server clears every recorded instalment
+      // on an undo (pay-toggle → recompute_invoice_amount_paid); leaving the local value behind
+      // turns a fully-undone invoice into a phantom part-payment — the row reads
+      // "Deels betaald · € X open" for money nobody paid, and the pay dialog then caps the
+      // owner at that invented remainder instead of the full total.
+      patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null, amount_paid: 0 })
       showToast(`Betaling ongedaan gemaakt`)
     }
     // [CASH-SETTLE] Keep the kasboek in sync with this cash pay/undo — create/heal the linked
@@ -1271,7 +1332,7 @@ export default function IncomingManageClient({
                         <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date)} />
                         {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.payment_date && <InfoLine label="Betaaldatum" value={fmtDate(inv.payment_date)} />}
                         {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
@@ -1437,8 +1498,10 @@ export default function IncomingManageClient({
           paymentChoice={
             payCtx.newStatus === 'paid'
               ? (method, paymentDate, amount) => executePay({
+                  // [PAY-IDEMPOTENT] The key rides along from payCtx, minted when this dialog was
+                  // opened (see requestPay). Generating it here gave every tap its own key, which
+                  // is the one thing an idempotency key must not do.
                   ...payCtx, paymentMethod: method, paymentDate, amount,
-                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
                 })
               : undefined
           }
@@ -1611,6 +1674,14 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
+  // [PAY-NO-TOTAL] An invoice whose total is 0 or missing (an OCR read that found no amount) has
+  // nothing to settle: interpretAmountEntry returns valid:false with error:null, so BOTH pay
+  // buttons went grey while the hint cheerfully read "Leeg laten = alles betaald (€ 0,00)" and
+  // nothing said why. The database agrees with the refusal — apply_manual_payment raises
+  // 'invoice has no total to settle' — but that English sentence was the owner's only clue, and
+  // only if they found a way past the disabled buttons. Say it here instead, in Dutch, with the
+  // way out: fix the amount on the invoice first.
+  const noOpenBalance = openBalance != null && openBalance <= 0
   // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
   // [CASH-INSTALMENT] A cash instalment is a real, dated drawer movement now — see cash.ts.
   const canPayCash = !entry || entry.valid
@@ -1640,7 +1711,16 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
             {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
                 balance (unchanged behaviour); a number records an instalment and leaves the
                 invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
-            {entry && openBalance != null && (
+            {noOpenBalance && (
+              <div style={{ background: '#FCE8E6', borderRadius: 12, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+                <p style={{ fontSize: 12.5, color: '#B3261E', lineHeight: 1.5, margin: 0 }}>
+                  Op deze factuur staat geen bedrag, dus er valt niets af te boeken. Vul eerst het
+                  factuurbedrag in — dan kun je hem als betaald markeren.
+                </p>
+              </div>
+            )}
+            {entry && openBalance != null && !noOpenBalance && (
               <>
                 <label htmlFor="ink-betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
                   Betaald bedrag
@@ -1674,7 +1754,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
               <button
                 onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
                 disabled={!!entry && !entry.valid}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
@@ -1688,7 +1768,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant
               </button>
@@ -1733,13 +1813,21 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
   const cashTouched = cash.created + cash.updated + cash.deleted
   const bankFailed = failed.includes('bank')
   const kasFailed  = failed.includes('kas')
+  // [RECON-MAP-HONEST] The map pass builds the post-run state (which invoices are now in the
+  // statement, how many transactions are still open). When it throws, the route still answers
+  // 200 with byInvoice {} and pendingTransactions 0 — which reads here as "Geen open
+  // banktransacties om tegen te matchen", a sentence that is simply false. Named like every
+  // other pass, so a partial run can never read as a clean one.
+  const mapFailed  = failed.includes('map')
   const changedNothing = bookedCount === 0 && cashTouched === 0 && categorized === 0
   const nFact = (n: number) => (n === 1 ? '1 factuur' : `${n} facturen`)
 
   const title = bookedCount > 0
     ? `${nFact(bookedCount)} gekoppeld`
     : changedNothing
-      ? (pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
+      // [RECON-MAP-HONEST] "Niets om te matchen" is a claim about the data; with a failed map
+      // pass we do not have the data to make it.
+      ? (mapFailed ? 'Deels bijgewerkt' : pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
       : 'Bijgewerkt'
 
   return (
@@ -1755,15 +1843,17 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
           {/* 1) Bank ↔ facturen */}
           <ResultLine
             icon="account_balance"
-            tone={bankFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
+            tone={bankFailed || mapFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
             text={
               bankFailed
                 ? 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.'
                 : bookedCount > 0
                   ? `${nFact(bookedCount)} herkend in je bankafschrift en op betaald gezet.`
-                  : pendingTransactions === 0
-                    ? 'Geen open banktransacties om tegen te matchen.'
-                    : 'Geen nieuwe betalingen herkend in je bankafschrift.'
+                  : mapFailed
+                    ? 'De stand kon niet worden opgehaald — we weten niet of er nog open banktransacties zijn.'
+                    : pendingTransactions === 0
+                      ? 'Geen open banktransacties om tegen te matchen.'
+                      : 'Geen nieuwe betalingen herkend in je bankafschrift.'
             }
           />
           {/* Booked on amount + name only — real bookings, but the ones worth checking. */}
@@ -1807,7 +1897,10 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
             />
           )}
           {/* Nothing to work with at all → say what to do about it. */}
-          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && (
+          {/* [RECON-MAP-HONEST] Not when the map pass failed: pendingTransactions is 0 there
+              because nothing could be counted, not because there is nothing to count — and
+              "upload een bankafschrift" to someone who just uploaded one is worse than silence. */}
+          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && !mapFailed && (
             <ResultLine
               icon="upload_file"
               tone="neutral"

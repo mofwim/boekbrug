@@ -61,7 +61,7 @@ export default function DagomzetImportClient() {
       // [LEDGER] The Z-report parser recognised a bookkeeper grootboek export → route the SAME
       // file to the ledger import (a PIN/kas cross-check), not a dead-end error.
       if (json?.wrongKind === 'ledger') { await previewLedger(file); return }
-      if (!res.ok) { setError(json.error ?? 'Kon het bestand niet lezen'); return }
+      if (!res.ok) { setError(json.detail ?? json.error ?? 'Kon het bestand niet lezen'); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError('Er ging iets mis bij het lezen van het bestand')
@@ -74,7 +74,7 @@ export default function DagomzetImportClient() {
       fd.append('file', file)
       const res = await fetch('/api/ledger/import', { method: 'POST', body: fd })
       const json = await res.json()
-      if (!res.ok || !json.ok) { setError(json.error ?? 'Kon het grootboek niet lezen'); return }
+      if (!res.ok || !json.ok) { setError(json.detail ?? json.error ?? 'Kon het grootboek niet lezen'); return }
       setLedgerPreview({ kind: json.kind, accountNr: json.accountNr ?? null, title: json.title ?? null, rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError('Er ging iets mis bij het lezen van het grootboek')
@@ -90,7 +90,7 @@ export default function DagomzetImportClient() {
         body: JSON.stringify({ kind: ledgerPreview.kind, accountNr: ledgerPreview.accountNr, rows: ledgerPreview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Opslaan mislukt'); return }
+      if (!res.ok) { setError(json.detail ?? json.error ?? 'Opslaan mislukt'); return }
       setDone({ committed: json.committed ?? ledgerPreview.rows.length, ledger: ledgerPreview.kind })
       setLedgerPreview(null); setFileName(null)
     } catch {
@@ -108,7 +108,7 @@ export default function DagomzetImportClient() {
         body: JSON.stringify({ rows: preview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Opslaan mislukt'); return }
+      if (!res.ok) { setError(json.detail ?? json.error ?? 'Opslaan mislukt'); return }
       setDone({ committed: json.committed ?? preview.rows.length })
       setPreview(null); setFileName(null); setRefreshTick((t) => t + 1)
     } catch {

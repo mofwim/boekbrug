@@ -248,10 +248,19 @@ export async function GET(req: NextRequest) {
 
   // ── 4) Turnover (+ buffered covered set for cross-quarter settlement lag) ──
   const startBuffer = shiftDays(start, -5);
-  const { data: turnoverRows } = await pipeline
+  // [TURNOVER-READ-ERROR] Not a discarded error — this route decides whether the owner is READY
+  // to hand the quarter over. A failed read left turnoverRows null and the till's omzet absent,
+  // so readiness judged a quarter it could not see and could answer "klaar" on data that never
+  // arrived. fetchAllRows throws instead, which is the only honest outcome here.
+  const turnoverRows = await fetchAllRows<{
+    turnover_date: string; base_0: number | null; base_9: number | null; base_21: number | null;
+    btw_9: number | null; btw_21: number | null; total_incl: number | null;
+    pin_amount: number | null; cash_amount: number | null; other_amount: number | null;
+  }>((from, to) => pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
-    .eq("user_id", ownerId).gte("turnover_date", startBuffer).lte("turnover_date", end);
+    .eq("user_id", ownerId).gte("turnover_date", startBuffer).lte("turnover_date", end)
+    .order("turnover_date", { ascending: true }).range(from, to));
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,

@@ -625,7 +625,7 @@ export default function InvoiceDetailPage() {
                 },
               ].map(section => (
                 <div key={section.title}>
-                  <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{section.title}</p>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{section.title}</p>
                   {section.lines.filter(Boolean).map((line, i) => (
                     <p key={i} style={{ fontSize: 13, color: i === 0 ? '#202124' : '#5F6368', fontWeight: i === 0 ? 600 : 400, margin: '2px 0' }}>{line}</p>
                   ))}
@@ -657,7 +657,7 @@ export default function InvoiceDetailPage() {
             {/* Header row */}
             <div style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
               {['Omschrijving','Aantal','Prijs','BTW','Totaal'].map((h, i) => (
-                <p key={h} style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, textAlign: i > 0 ? 'right' : 'left' }}>{h}</p>
+                <p key={h} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, textAlign: i > 0 ? 'right' : 'left' }}>{h}</p>
               ))}
             </div>
             {lines.map((line, index) => (
@@ -694,7 +694,7 @@ export default function InvoiceDetailPage() {
               not the ZZP'er's own profile. */}
           {!isIncoming && profile?.iban && invoice?.invoice_type !== 'creditnota' && (
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
                 Gelieve te betalen op{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}

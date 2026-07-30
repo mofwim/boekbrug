@@ -15,13 +15,28 @@ export default function WachtwoordHerstellenPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
-  const supabase = createClient()
+
+  // [BUILD-NO-SECRETS] The client is built where it is USED, never during render.
+  //
+  // `createClient()` sat in the component body, and this is the one page in the app that Next
+  // still prerenders statically — so `next build` constructed a Supabase browser client at BUILD
+  // time and threw when the keys were absent, failing the whole export on a page that needs
+  // Supabase only in a browser, after a click. The build therefore depended on runtime secrets:
+  // it could not run in CI, could not run locally without a live .env, and a single missing
+  // variable turned a config mistake into a deploy that never shipped.
+  //
+  // Nothing here needs a client while rendering: all three calls live in an effect or a handler,
+  // both of which run only in the browser. Missing keys now surface at RUNTIME, where
+  // /api/health already names them — instead of at build time, where the message was a stack
+  // trace pointing at a page that has nothing to do with the problem.
+  const getSupabase = () => createClient()
 
   // Turn the recovery link into an active session. The browser client
   // auto-detects the link on load; if it used the PKCE ?code= form we
   // exchange it here as a fallback.
   useEffect(() => {
     const init = async () => {
+      const supabase = getSupabase()
       const { data } = await supabase.auth.getSession()
       if (data.session) return
       const code = new URLSearchParams(window.location.search).get('code')
@@ -30,7 +45,8 @@ export default function WachtwoordHerstellenPage() {
       }
     }
     init()
-  }, [supabase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function handleUpdate() {
     if (password.length < 6) {
@@ -45,7 +61,7 @@ export default function WachtwoordHerstellenPage() {
     setLoading(true)
     setError('')
 
-    const { error: updateError } = await supabase.auth.updateUser({ password })
+    const { error: updateError } = await getSupabase().auth.updateUser({ password })
 
     if (updateError) {
       setError('Opslaan mislukt. Vraag een nieuwe link aan.')

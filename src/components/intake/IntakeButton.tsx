@@ -421,7 +421,7 @@ export default function IntakeButton({
                         <span style={{ fontSize: 12.5, fontWeight: 700, color: M3.primary, minWidth: 62 }}>Pagina {i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                         <button onClick={() => setMpPages((prev) => prev.filter((_, j) => j !== i))} disabled={combining} aria-label="Verwijder pagina"
-                          style={{ border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: combining ? 'default' : 'pointer', lineHeight: 1 }}>×</button>
+                          style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: combining ? 'default' : 'pointer', lineHeight: 1 }}>×</button>
                       </div>
                     ))}
                   </div>

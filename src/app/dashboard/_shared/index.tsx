@@ -457,7 +457,7 @@ function NotificationsBell({
                 >
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}
-                  <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0' }}>
+                  <p style={{ fontSize: 11, color: '#70757a', margin: '4px 0 0' }}>
                     {n.created_at ? new Date(n.created_at).toLocaleDateString('nl-NL') : ''}
                   </p>
                 </div>

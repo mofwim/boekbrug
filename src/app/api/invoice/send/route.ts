@@ -417,9 +417,22 @@ export async function POST(request: NextRequest) {
     // Never blocks delivery; failure → Sentry breadcrumb only.
     try {
       const pdfPath = `${user.id}/facturen/${finalNumber}.pdf`
+      // [PDF-IMMUTABLE] upsert:false, and that is not a downgrade — it is what this write can
+      // actually do, and what it should do.
+      //
+      // RLS staat aan op storage.objects (gemeten) en er zijn precies drie policies:
+      // documents_upload (INSERT), documents_read (SELECT), documents_delete (DELETE). Er is GEEN
+      // UPDATE-policy. Een upsert op een pad dat al bestaat is een UPDATE, dus die kon nooit
+      // slagen — bij elke HERVERZENDING van dezelfde factuur liep deze regel tegen een weigering
+      // aan, die de best-effort-catch eromheen stil opat.
+      //
+      // Het herstel is niet een vierde policy maar de erkenning dat overschrijven hier verkeerd
+      // zou zijn: een verstuurde factuur ligt vast ([ISSUED-STAYS]), dus de PDF die onder dit
+      // nummer staat hoort nooit te veranderen. Bestaat het object al, dan is dat de JUISTE
+      // eindtoestand en niet een mislukking — pdf_url wijst er al naar sinds de eerste verzending.
       const { error: uploadError } = await supabase.storage
         .from(PDF_BUCKET)
-        .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: true })
+        .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
 
       if (!uploadError) {
         await supabase

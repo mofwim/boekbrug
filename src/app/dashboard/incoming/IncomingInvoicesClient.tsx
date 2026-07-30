@@ -2170,7 +2170,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                   <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
                   <button onClick={() => removeMpPage(i)} aria-label="Verwijder pagina"
                     disabled={combining}
-                    style={{ border: "none", background: "transparent", color: "#9aa0a6", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
+                    style={{ border: "none", background: "transparent", color: "#70757a", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
                 </div>
               ))}
             </div>
