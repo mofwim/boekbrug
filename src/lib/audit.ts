@@ -164,6 +164,37 @@ function sanitizeForAudit(
   return cleaned as Json
 }
 
+/**
+ * [AUDIT-ENTITY-REF] audit_logs.entity_id is een `uuid`-kolom, maar niet elke gebeurtenis gaat
+ * over één rij. Drie aanroepers gaven een SAMENGESTELDE sleutel mee:
+ *
+ *     'alle-klanten:Q2 2026'          (de boekhouder downloadt alle klanten)
+ *     '<ownerId>:2026-Q2'             (de boekhouder downloadt één kwartaalpakket)
+ *     '2026-Q2'                       (de aangifte wordt vastgelegd)
+ *
+ * Postgres antwoordde daarop met 22P02 (invalid input syntax for type uuid), logAuditAction
+ * slikte die fout in een console.error — want een audit-fout mag de hoofdactie nooit breken — en
+ * de rij landde NOOIT. Uitgerekend de twee gebeurtenissen waarvan het [BEWIJS]-blok zegt dat ze
+ * bestaan omdat "de klant nergens kon zien wat zijn boekhouder had ingezien of gedownload",
+ * schreven dus niets. Een audit-spoor dat er niet is, is erger dan geen belofte van een spoor.
+ *
+ * Het lag niet aan die drie aanroepers maar aan de vorm: een uuid-kolom kan dit niet dragen, en
+ * de volgende aanroeper zou in dezelfde val lopen. Daarom staat de reparatie hier, op één plek:
+ * een waarde die geen uuid is gaat NIET in entity_id, maar wordt bewaard als `entity_ref` in
+ * new_value. De rij landt, en niets van de betekenis gaat verloren.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function splitEntityRef(entityId: string | null | undefined): {
+  entityId: string | null
+  entityRef: string | null
+} {
+  const raw = (entityId ?? '').trim()
+  if (!raw) return { entityId: null, entityRef: null }
+  if (UUID_RE.test(raw)) return { entityId: raw, entityRef: null }
+  return { entityId: null, entityRef: raw }
+}
+
 // ── Main function ─────────────────────────────────────
 
 /**
@@ -186,13 +217,22 @@ export async function logAuditAction(params: AuditParams): Promise<void> {
   try {
     const supabase = createPipelineClient()
 
+    // [AUDIT-ENTITY-REF] Een niet-uuid verwijzing hoort in new_value, niet in de uuid-kolom —
+    // zie splitEntityRef hierboven voor de vier gebeurtenissen die hierdoor nooit landden.
+    const { entityId, entityRef } = splitEntityRef(params.entityId)
+    const newValue = sanitizeForAudit(params.newValue)
+    const newValueWithRef =
+      entityRef === null
+        ? newValue
+        : ({ ...(newValue && typeof newValue === 'object' && !Array.isArray(newValue) ? newValue : { value: newValue }), entity_ref: entityRef } as Json)
+
     const { error } = await supabase.from('audit_logs').insert({
       user_id:     params.userId,
       action:      params.action,
       entity_type: params.entityType,
-      entity_id:   params.entityId,
+      entity_id:   entityId,
       old_value:   sanitizeForAudit(params.oldValue),
-      new_value:   sanitizeForAudit(params.newValue),
+      new_value:   newValueWithRef,
       ip_address:  params.ipAddress,
     })
 

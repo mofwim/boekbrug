@@ -468,7 +468,78 @@ export interface PossibleDuplicate {
 // A re-import usually arrives close to the original; a monthly RECURRING bill (same
 // vendor + same amount) is ~a month apart. Keep the vendor-near-date window short so
 // recurring invoices are NOT flagged as possible duplicates.
+//
+// [ABONNEMENT] Die redenering dekt MAANDELIJKS, en daar houdt ze op. Een leverancier die ELKE
+// WEEK hetzelfde bedrag factureert valt met een tussenpoos van 7 dagen precies BINNEN dit venster,
+// en werd dus elke week opnieuw als "mogelijk dubbel" gevlagd — met een ander factuurnummer erop.
+// Dat is geen dubbele boeking, dat is een abonnement. Zie looksLikeRecurringSeries hieronder: het
+// venster blijft 14 dagen (dat hek is goed), maar een aantoonbaar ritme mag eronder uit.
 export const POSSIBLE_DUP_WINDOW_DAYS = 14
+
+// [ABONNEMENT] Hoeveel EERDERE facturen van dezelfde leverancier met hetzelfde bedrag er moeten
+// zijn voordat we van een ritme spreken. Drie, dus met de nieuwe erbij vier momenten en drie
+// tussenpozen. Een eerste per ongeluk dubbel verstuurde factuur wordt hierdoor NOOIT onderdrukt:
+// daarvoor is er simpelweg geen reeks.
+const RECURRING_MIN_PRIORS = 3
+
+// Een reeks met tussenpozen van één of twee dagen is geen factureerritme maar een uitbarsting
+// (iemand die zijn mailbox leegtrekt, een leverancier die drie keer hetzelfde stuurt).
+const RECURRING_MIN_GAP_DAYS = 3
+
+/**
+ * [ABONNEMENT] Factureert deze leverancier hetzelfde bedrag op een AANTOONBAAR ritme, met steeds
+ * een ANDER factuurnummer? Dan is een nieuwe factuur op de verwachte tussenpoos geen duplicaat maar
+ * de volgende termijn — en die hoort niet in de controlewachtrij te belanden met "mogelijk dubbel".
+ *
+ * Onderdrukken is de GEVAARLIJKE richting (een echte dubbele boeking zou erdoorheen glippen), dus
+ * elk hek hieronder staat streng:
+ *   1. De nieuwe factuur heeft een ECHT nummer (geen placeholder) dat in de reeks nog niet voorkomt.
+ *      Zonder eigen nummer kunnen we niet zeggen dat het een ander stuk is.
+ *   2. Minstens drie eerdere facturen, allemaal met een eigen, ONDERLING VERSCHILLEND nummer.
+ *      Herhaalde nummers betekenen juist dat er iets dubbel is.
+ *   3. Alle tussenpozen — inclusief die van de nieuwe factuur — liggen dicht bij de mediaan.
+ *   4. Het ritme is minstens drie dagen. Een burst is geen abonnement.
+ *
+ * Puur; `priors` zijn de kandidaten die al op leverancier + bedrag zijn gefilterd.
+ */
+function looksLikeRecurringSeries(
+  newDateIso: string | null,
+  newNumberKey: string,
+  priors: { dateIso: string | null; numberKey: string }[],
+): boolean {
+  if (!newDateIso || !newNumberKey) return false // hek 1
+
+  // Alleen priors met een echte datum én een echt nummer dragen bewijs.
+  const usable = priors.filter((p) => p.dateIso !== null && p.numberKey !== '')
+  if (usable.length < RECURRING_MIN_PRIORS) return false // hek 2
+
+  const numbers = new Set(usable.map((p) => p.numberKey))
+  if (numbers.size !== usable.length) return false // een nummer komt dubbel voor → geen reeks
+  if (numbers.has(newNumberKey)) return false // de nieuwe deelt een nummer → nooit onderdrukken
+
+  // Alle momenten op één rij, oplopend. Ontdubbeld: twee facturen op dezelfde dag zijn één moment
+  // en zouden als tussenpoos van nul dagen de mediaan omlaag trekken.
+  const days = Array.from(
+    new Set([...usable.map((p) => Date.parse(p.dateIso as string)), Date.parse(newDateIso)])
+  )
+    .filter((t) => !Number.isNaN(t))
+    .sort((a, b) => a - b)
+  if (days.length < RECURRING_MIN_PRIORS + 1) return false
+
+  const gaps: number[] = []
+  for (let i = 1; i < days.length; i++) gaps.push(Math.round((days[i] - days[i - 1]) / 86_400_000))
+  if (gaps.some((g) => g < RECURRING_MIN_GAP_DAYS)) return false // hek 4
+
+  const sorted = [...gaps].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+  if (median < RECURRING_MIN_GAP_DAYS) return false
+
+  // Hek 3 — elke tussenpoos dicht bij de mediaan. Ruim genoeg voor een factuur die van vrijdag
+  // naar maandag schuift, streng genoeg om een willekeurige verzameling eruit te houden.
+  const slack = Math.max(2, median * 0.35)
+  return gaps.every((g) => Math.abs(g - median) <= slack)
+}
 
 // Legal-suffix noise stripped for a format-insensitive vendor comparison (mirrors
 // supplier-registry / email-integration vendorCoreKey — kept local so safecore stays
@@ -514,6 +585,24 @@ export function assessPossibleDuplicate(
   const inCore = inVendorReliable ? vendorCore(input.vendor) : ''
   const inNum = normalizeInvoiceNumber(input.invoiceNumber)
 
+  // [ABONNEMENT] Eén keer vooraf, niet per kandidaat: factureert deze leverancier hetzelfde bedrag
+  // op een ritme? De reeks bestaat uit ALLE kandidaten met dit bedrag én deze leverancier, dus die
+  // vraag is niet te beantwoorden binnen de lus die er één tegelijk bekijkt.
+  const recurringSeries = inNum
+    ? looksLikeRecurringSeries(
+        inDate,
+        inNum,
+        candidates
+          .filter((c) => {
+            if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) return false
+            // Dezelfde leverancier, en dat moet aan BEIDE kanten betrouwbaar vast te stellen zijn —
+            // anders zou een reeks van een andere leverancier het bewijs kunnen leveren.
+            return inVendorReliable && isReliableVendor(c.client_name) && vendorCore(c.client_name) === inCore && inCore !== ''
+          })
+          .map((c) => ({ dateIso: isoDay(c.invoice_date), numberKey: normalizeInvoiceNumber(c.invoice_number) })),
+      )
+    : false
+
   let best: PossibleDuplicate | null = null
   let bestRank = 0
   for (const c of candidates) {
@@ -553,7 +642,18 @@ export function assessPossibleDuplicate(
     }
     else if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
     else if (sameDate) { rank = 3; reason = 'zelfde bedrag en datum' }
-    else if (sameVendor && nearDate) { rank = 2; reason = 'zelfde bedrag en afzender, datum dichtbij' }
+    else if (sameVendor && nearDate) {
+      // [ABONNEMENT] Dit is de enige rang die een terugkerende factuur raakt: zelfde leverancier,
+      // zelfde bedrag, datum dichtbij — maar met een ANDER factuurnummer. Bij een aantoonbaar ritme
+      // is dat de volgende termijn, geen dubbele boeking, en dan hoort er geen vlag op.
+      //
+      // Alleen HIER onderdrukken. Rang 4 (zelfde DATUM én leverancier) blijft staan: een
+      // weekabonnement factureert niet twee keer op dezelfde dag, dus dat is nog steeds een echt
+      // signaal. En rang 5 (zelfde factuurnummer) al helemaal — dat is per definitie hetzelfde stuk.
+      if (recurringSeries) continue
+      rank = 2
+      reason = 'zelfde bedrag en afzender, datum dichtbij'
+    }
     else continue
 
     if (rank > bestRank) {

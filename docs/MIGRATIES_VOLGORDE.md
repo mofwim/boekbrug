@@ -1,34 +1,108 @@
 # Migraties — de volgorde waarin je ze toepast
 
-*Stand van tak `claude/snelstart-integration-opix9l`, 26 juli 2026.*
+*Stand van tak `claude/snelstart-integration-opix9l`, 29 juli 2026.*
 
-> **Stap 1 t/m 9 zijn toegepast en gecontroleerd op 26 juli 2026.** Daarbij kwam één echte
-> fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
-> stap 7.
+> ## ⚠️ LEES DIT EERST: DEZE LIJST IS NIET DE WAARHEID
 >
-> ## ⏳ VIJF MIGRATIES STAAN OPEN
+> Een handmatig bijgehouden "wat staat er nog open" is een BEWERING over een database die
+> niemand meer heeft bekeken. Hij loopt achter zodra iemand een migratie draait zonder deze
+> markdown bij te werken, of zodra een tweede tak er een migratie bij zet.
 >
-> Draai ze in deze volgorde. Alle vijf idempotent, alle vijf met een CONTROLE-blok onderaan
-> het bestand. Samen ongeveer een kwartier.
+> **En dat is precies wat er is gebeurd.** Twee takken werkten tegelijk aan deze lijst. De ene
+> meldde 13 en 14 als toegepast en noemde 10, 11 en 12 nog open; de eigenaar had 10, 11 en 12
+> op 26–28 juli juist wél toegepast, mét CONTROLE. Beide lijsten hadden het dus deels mis, en
+> geen van beide kon dat zelf weten. Een lijst die het mis heeft over de veiligheid van iemands
+> boekhouding is erger dan geen lijst.
 >
-> | # | Bestand | Waarom |
-> |---|---------|--------|
-> | 10 | `kluis_subscriptions.sql` | Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast. Ook het hek dat `RETENTION_PURGE_ENABLED` aan mag laten. |
-> | 11 | `accountant_write_holes.sql` | **Twee schrijfgaten** in de boekhoudersgrens + de vier ontbrekende invoices-indexen. |
-> | 12 | `invoice_lines_accountant_gate.sql` | De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset. |
-> | 13 | `invoice_archive_reason.sql` | `invoices.archive_reason` + `archived_at`: het Genegeerd-tabblad kan de reden pas tonen als deze kolommen er staan. |
-> | 14 | `email_sender_rules.sql` | De tabel voor "altijd negeren van deze afzender". Zonder deze migratie doet de knop niets. |
+> **Vraag het daarom aan de database zelf:**
 >
-> ### 13 en 14 zijn niet urgent — en dat is met opzet
+> ```
+> docs/WELKE_MIGRATIES_STAAN_ER.sql
+> ```
 >
-> De code voor allebei draait al zonder dat de migratie is toegepast, en gaat niet stuk:
-> de negeer-API valt bij een ontbrekende-kolom-fout terug op archiveren *zonder* notitie,
-> de Genegeerd-query valt terug op de kale kolomlijst (geen leeg tabblad), het regels-
-> eindpunt antwoordt "geen regels", en de mailsync past er simpelweg geen toe. De eigenaar
-> mist tot die tijd een label en een knop die niets doet — nooit een knop die stukgaat.
+> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. De
+> OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
+> altijd; dit document niet noodzakelijk.
 >
-> Toelichting op wat deze twee dragen: `docs/BoekBrug_Inkoopfactuur_Poorten.md`.
+> ### De stand op 29 juli 2026 — GELEZEN UIT DE DATABASE, niet gemeld
 >
+> Dit is de uitkomst van `WELKE_MIGRATIES_STAAN_ER.sql` tegen de productiedatabase. Dat is een
+> ander soort zekerheid dan de rest van dit document: geen bewering van een tak, maar wat er
+> daadwerkelijk staat.
+>
+> | # | Bestand | Wat het dichtte |
+> |---|---------|-----------------|
+> | 10 | `kluis_subscriptions.sql` | Geld aannemen zonder de bewaarverplichting ergens vast te leggen |
+> | 11 | `accountant_write_holes.sql` | Het IBAN-schrijfgat in de boekhoudersgrens + vier ontbrekende indexen |
+> | 12 | `invoice_lines_accountant_gate.sql` | Een verstuurde factuur toonde de boekhouder een lege regelset |
+> | 13 | `invoice_archive_reason.sql` | `archive_reason` + `archived_at` + CHECK + partiële index |
+> | 14 | `email_sender_rules.sql` | Tabel + unieke index + RLS met vier policies |
+> | 15 | `snelstart_claim_before_push.sql` | Twee gelijktijdige verzoeken konden dezelfde factuur twee keer in het wettelijke inkoopboek zetten |
+> | 16 | `cash_settlement_per_instalment.sql` | Kasboekregels per termijn in plaats van één per factuur |
+> | 17 | `invoice_schedules.sql` | Terugkerende facturen |
+>
+> ### Nog open: één, en die mag wachten
+>
+> **18 · `search_engine_clients_kvk_city.sql`** — twee trigram-indexen op `clients.kvk_number`
+> en `clients.city`, plus `CREATE EXTENSION IF NOT EXISTS pg_trgm`.
+>
+> Dit is de enige in de hele reeks die je met een gerust hart kunt laten liggen, en dat is geen
+> inschatting maar wat het bestand over zichzelf zegt: *"Geen schema-, data- of
+> gedragswijziging — puur snelheid."* Zoeken op KVK-nummer en plaats **werkt vandaag al**; het
+> doet een scan die door `.eq(user_id)` per gebruiker begrensd blijft. Bij een handvol klanten
+> is dat microseconden; bij een groot klantenregister loont de index. Twee CREATE INDEX-regels,
+> vijf seconden, geen risico — dus draai hem gerust, maar er is niets stuk tot je dat doet.
+>
+> ### De terugvalpaden blijven staan
+>
+> Ze kosten niets (ze vuren alleen op een fout) en ze houden een verse dev- of
+> staging-database werkend zolang die migraties daar nog niet gedraaid zijn. Elke migratie in
+> dit project is zo geschreven dat de code er ZONDER ook werkt: de negeer-API archiveert dan
+> zonder notitie, het kasboek maakt één regel per factuur in plaats van per termijn, de
+> SnelStart-push valt terug op het oude pad. De eigenaar mist dan een label of een verbetering
+> — nooit een functie die stukgaat, en nooit stille schade.
+>
+> Eén terugvalpad is bij het toepassen wél aangescherpt: het regels-eindpunt slikte vóórdien
+> élke fout en antwoordde "geen regels". Dat was verdedigbaar toen de tabel nog niet bestond,
+> maar nu gevaarlijk — bij een RLS- of verbindingsfout zou het beheerscherm "geen regels"
+> tonen terwijl er regels zijn die post tegenhouden, en dan kan de eigenaar ze niet opheffen.
+> Het onderscheidt nu "tabel bestaat niet" (stille lege lijst) van een echte fout (die wordt
+> gezegd).
+>
+> ### En draai altijd het CONTROLE-blok
+>
+> Onderaan elk migratiebestand staat er één. Dat is het verschil tussen "toegepast" en
+> "toegepast en gecontroleerd", en het heeft in deze codebase al twee echte fouten opgeleverd
+> die op geen andere manier zichtbaar waren: een 42P10 op een partiële index, en een functie
+> die vijf kolommen noemde die niet bestonden.
+>
+> ### Wat ik NIET weet
+>
+> `invoice_archive_reason.sql`, `email_sender_rules.sql`, en de drie die uit andere takken
+> bij kwamen (`cash_settlement_per_instalment.sql`, `invoice_schedules.sql`,
+> `search_engine_clients_kvk_city.sql`). Geen van deze is urgent — de code werkt er zonder
+> ook, zie de noot hieronder — maar raad er niet naar: draai de query.
+>
+> ### Waarom "niet urgent" hier echt niet urgent betekent
+>
+> Elke migratie in dit project is zo geschreven dat de code er ZONDER ook werkt. De
+> negeer-API valt bij een ontbrekende kolom terug op archiveren *zonder* notitie, de
+> Genegeerd-query op de kale kolomlijst (geen leeg tabblad), het regels-eindpunt antwoordt
+> "geen regels", het kasboek maakt één regel per factuur in plaats van per termijn, en de
+> SnelStart-push valt terug op het oude pad. De eigenaar mist tot die tijd een label of een
+> verbetering — nooit een functie die stukgaat, en nooit stille schade.
+>
+> De twee met een échte scherpe kant waren 11 (een gekoppelde boekhouder kon het IBAN op een
+> openstaande inkoopfactuur herschrijven) en 15 (twee gelijktijdige verzoeken konden dezelfde
+> factuur twee keer in het wettelijke inkoopboek zetten). **Beide zijn toegepast.**
+>
+> ### En draai altijd het CONTROLE-blok
+>
+> Onderaan elk migratiebestand staat er één. Dat is het verschil tussen "toegepast" en
+> "toegepast en gecontroleerd", en het heeft in deze codebase al twee echte fouten
+> opgeleverd die op geen andere manier zichtbaar waren: een 42P10 op een partiële index, en
+> een functie die vijf kolommen noemde die niet bestonden.
+
 > ### Over de urgentie van 11 — eerlijk bijgesteld
 >
 > Bij het overbrengen is dit gat te scherp gerapporteerd. De correctie, zelf geverifieerd:

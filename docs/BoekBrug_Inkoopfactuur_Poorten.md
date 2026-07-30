@@ -52,11 +52,71 @@ Deze vier draaien in deze volgorde. Ze kijken **bewust niet naar de status** van
 | B | **Semantisch** (nummer/leverancier + totaal + datum) | dezelfde factuur als ánder bestand | ja, "toch toevoegen" |
 | C | **Mogelijk dubbel** (zacht) | gelijkende factuur, te onzeker om te blokkeren | blokkeert niet — vlagt |
 
+### Het abonnement dat elke week "mogelijk dubbel" was
+
+Poort C kent vier rangen. Rang 2 — *zelfde bedrag, zelfde leverancier, datum dichtbij, ander factuurnummer* — hoort bij een re-import die net buiten de harde sleutel valt. Maar een leverancier die **elke week** hetzelfde bedrag factureert valt met een tussenpoos van 7 dagen precies binnen het 14-daagse venster, en werd dus **elke week opnieuw** gevlagd. Dat kostte de eigenaar wekelijks een beoordeling van iets dat geen dubbele boeking is maar de volgende termijn — en het hield de factuur ook buiten het automatisch boeken.
+
+Het venster blijft 14 dagen (dat hek is goed). Wat erbij komt is `looksLikeRecurringSeries`: factureert deze leverancier hetzelfde bedrag op een **aantoonbaar ritme**, met steeds een **ander** nummer? Dan geen vlag.
+
+Onderdrukken is de gevaarlijke richting, dus elk hek staat streng:
+
+1. De nieuwe factuur heeft een **echt** nummer dat in de reeks nog niet voorkomt.
+2. Minstens **drie** eerdere facturen, allemaal met een eigen, onderling verschillend nummer.
+3. Alle tussenpozen — de nieuwe meegerekend — liggen dicht bij de mediaan.
+4. Het ritme is minstens **drie dagen**: een dagelijkse burst is geen abonnement.
+
+En het geldt **alleen voor rang 2**. Rang 4 (zelfde *datum* én leverancier) blijft staan — een weekabonnement factureert niet twee keer op dezelfde dag. Rang 5 (zelfde factuurnummer) al helemaal: dat is per definitie hetzelfde stuk.
+
+Gevolg naast de rust: zonder die vlag is zo'n factuur weer `clean`, dus een schone termijn kan gewoon **automatisch boeken** in plaats van op een tik te wachten.
+
+> De harde poort raakte dit nooit: bij echte, verschillende factuurnummers kiest `findSemanticDuplicate` de nummer-tier, en die matcht niet. De vendor-tier komt alleen in beeld als het nummer een placeholder is.
+
 **Waarom de byte-hash niet te forceren is.** Identieke bytes zijn hetzelfde bestand. Er valt niets te overrulen, dus de 409 draagt bewust geen `canForce`. Poort B kan wél een vals positief zijn (twee echte bonnen, zelfde bedrag, zelfde dag, geen nummer) en heeft daarom een uitweg — met een `invoice.dedup_override` in het auditspoor.
 
 **Waar dit strenger is dan de markt.** Xero vergelijkt contact + referentie + bedrag exact, en verliest daardoor elke match zodra een nummer als `26 / 3958` in plaats van `26/3958` wordt gelezen. Moneybird zegt zelf dat twee foto's van dezelfde factuur niet herkend worden, en controleert factuurnummers helemaal niet. Deze app normaliseert het nummer (`normalizeInvoiceNumber`) én de leveranciersnaam (`vendorCoreKey`, wettelijke achtervoegsels eraf) en heeft daarnaast de byte-hash die geen van beide heeft.
 
 **Genegeerd is geen uitzondering — maar het wordt wel gezegd.** Botst een upload op een factuur die in Genegeerd staat, dan blijft de blokkade, maar de melding noemt dat en biedt "Terugzetten uit Genegeerd" aan (`src/lib/archived-duplicate.ts`). Bij een byte-hash-duplicaat is dat de enige weg vooruit; zonder die knop zat de eigenaar klem met een melding die niet klopte met wat hij zag.
+
+---
+
+## 1b. Geen factuur? — overzichten en de incassoladder
+
+`src/lib/ai.ts` (woordenlijsten) · `src/lib/reminder-original.ts`
+
+Twee soorten post die op een factuur lijken maar er geen zijn. Ze worden **verschillend** behandeld, en dat verschil is het punt.
+
+### Overzichten — nooit importeren
+
+Een `rekeningoverzicht`, `saldo-overzicht`, `debiteurenoverzicht`, `betalingsoverzicht`, `openstaande posten` of `overzicht openstaande facturen` somt **meerdere** facturen op onder één totaal. Dat totaal boeken telt de facturen dubbel die het samenvat, en er zit geen geldige btw-splitsing op. Dus: `is_invoice=false`, skip-registry, klaar.
+
+Drie backstops boven de modellezing, omdat een klein model hier kan wankelen: de **bestandsnaam** (`isStatementFilename`), de **PDF-tekst** (`looksLikeStatementText` — vereist meervoudsvocabulaire *plus* een gesommeerd saldo of meerdere factuurregels) en de **afwijsreden** van het model zelf (`looksLikeStatementReason`).
+
+> Bewust **niet** in de lijst: `maandoverzicht` en `jaaroverzicht`. Dat is vaak juist een **verzamelfactuur** — één factuurnummer over meerdere leverregels — en die *is* boekbaar. Eén factuur met veel regels is geen overzicht van veel facturen.
+
+### De incassoladder — importeren hangt af van één vraag
+
+De Nederlandse keten, nagelopen tegen deurwaarders- en incassobronnen:
+
+```
+betalingsherinnering → aanmaning → sommatie → ingebrekestelling
+                                   └─ WIK-brief / 14-dagenbrief / aanzegging
+```
+
+Alle treden worden nu herkend (`isReminderFilename` + de prompt). Eerder stonden er alleen `herinnering` en `aanmaning` in — een `sommatie.pdf` gleed er dus langs en kon als gewone factuur landen.
+
+Maar herkennen is niet hetzelfde als weggooien, en hier zit de enige echt subtiele beslissing van dit document. Een Nederlandse betalingsherinnering **herhaalt de hele factuur**: nummer, datum, bedragen, btw. Dus:
+
+| Staat de originele factuur al in de boeken? | Wat er gebeurt |
+|---|---|
+| **Ja** | **Niet importeren.** Geen tweede kost, en de eigenaar heeft er niets aan in zijn wachtrij. Wél een rij in de skip-registry, mét het factuurnummer. |
+| **Nee** | **Importeren, gevlagd.** Als de originele mail in de spam belandde, is deze herinnering het *enige* bewijs van een aftrekbare kost. Weggooien = voorbelasting kwijt, stil. |
+| **Herinnering zegt niet waarover** | **Importeren, gevlagd.** Nooit overslaan op een vermoeden. |
+
+Het antwoord hangt aan `reminder_of_invoice_number` — dat de uitlezer altijd al teruggaf, maar dat tot nu toe alleen in een melding belandde en nooit ergens tegen werd nagekeken.
+
+De verzameling bekende nummers wordt **lui** geladen (de meeste syncs bevatten geen herinnering, dan draait er geen query) en **groeit tijdens de sync mee**, zodat een origineel en zijn herinnering die in dezelfde batch aankomen elkaar nog vinden. Genegeerde facturen tellen niet mee: heeft de eigenaar het origineel weggezet, dan is de herinnering misschien juist wat hij wil houden.
+
+**Grens, bewust zo:** `normalizeInvoiceNumber` haalt alleen witruimte weg, geen scheidingstekens. `2026-0041` ≡ `2026 - 0041`, maar niet ≡ `20260041`. Ook streepjes strippen zou in het hóófd-dedup-pad `2026-1` en `20261` laten samenvallen en echte, verschillende facturen kunnen blokkeren. Een herinnering herhaalt in de praktijk hetzelfde gedrukte nummer, en de uitkomst bij niet-matchen is de veilige kant: importeren.
 
 ---
 
@@ -80,6 +140,8 @@ De melding noemt **beide nummers naast elkaar** en zegt erbij: bel de leverancie
 `src/lib/archive-reason.ts` · `supabase/migrations/invoice_archive_reason.sql`
 
 Negeren is **archiveren, nooit verwijderen** (bewaarplicht art. 52 AWR, zeven jaar). De rij, het bestand en het nummer blijven staan; alleen telt de factuur nergens meer mee.
+
+**Opnieuw inlezen archiveert zelf.** Blijkt een factuur bij *"Opnieuw inlezen"* geen boekbaar stuk (een overzicht, een reclamemail), dan wordt hij nu automatisch weggezet met reden **Geen factuur** — voorheen vertelde een melding de eigenaar dat hij het zelf maar moest negeren, en dat is werk verschuiven terwijl hij net op die knop drukte om dit te laten uitzoeken. Dat mag omdat archiveren omkeerbaar is: één tik zet hem terug, en had de verse lezing het mis, dan kost dat een tik — geen document. Twee hekken blijven: de factuur moet nog in de controlewachtrij staan, en `hasSettledMoney` weigert alles waarop al (deels) betaald is.
 
 **De reden** is een notitie, geen besluit — vier keuzes, bewust kort:
 
@@ -136,21 +198,23 @@ Genegeerde facturen tellen niet mee in het ritme — die heeft de eigenaar juist
 
 ## Migraties
 
-In volgorde. Allebei idempotent, allebei met een `CONTROLE`-blok onderaan.
+**Allebei toegepast en gecontroleerd op 29 juli 2026** — elk `CONTROLE`-blok gaf `true` op elke kolom.
 
 | Bestand | Wat |
 |---------|-----|
 | `invoice_archive_reason.sql` | `invoices.archive_reason` (+ `CHECK`) en `archived_at`, plus een partiële index |
 | `email_sender_rules.sql` | tabel `email_sender_rules` + RLS (vier policies) + unieke index |
 
-**De code draait vóór de migratie zonder stuk te gaan.** Dat is geen toeval maar ontwerp, omdat migraties in dit project met de hand worden toegepast:
+**De code draaide vóór de migratie zonder stuk te gaan**, en dat was geen toeval maar ontwerp, omdat migraties in dit project met de hand worden toegepast. Die terugvalpaden blijven staan — ze kosten niets (ze vuren alleen op een fout) en houden een verse dev- of staging-database werkend:
 
 - de negeer-API valt bij een ontbrekende-kolom-fout terug op archiveren *zonder* notitie;
 - de Genegeerd-query valt terug op de kale kolomlijst in plaats van een leeg tabblad te tonen;
-- het regels-eindpunt antwoordt "geen regels" als de tabel nog niet bestaat;
+- het regels-eindpunt antwoordt "geen regels" als de **tabel** niet bestaat;
 - de mailsync past geen regels toe en importeert alles gewoon.
 
 De eigenaar mist dan hooguit een label. Nooit een knop die stukgaat.
+
+**Eén ding veranderde toen de tabel er eenmaal was.** Het regels-eindpunt slikte vóórdien élke fout en antwoordde "geen regels". Dat was verdedigbaar zolang "tabel bestaat niet" de enige realistische oorzaak was. Nu de tabel bestaat is het gevaarlijk: bij een RLS- of verbindingsfout zou het beheerscherm "geen regels" tonen terwijl er regels zijn die op dat moment post tegenhouden — en dan kan de eigenaar ze niet opheffen. Precies het scenario waar dit beheerscherm tegen bedoeld is. Het onderscheidt nu `42P01`/`PGRST205` (stille lege lijst) van een echte fout, die hardop gezegd wordt.
 
 ---
 
@@ -171,9 +235,11 @@ Alles hierboven is puur getest, zonder database. Draai ze los met `npx tsx <best
 | Bestand | Bewaakt |
 |---------|---------|
 | `src/lib/archived-duplicate.test.ts` | de melding noemt altijd Genegeerd én terugzetten |
+| `src/lib/reminder-original.test.ts` | de volledige incassoladder, en dat overslaan *alleen* mag als het origineel er echt is |
 | `src/lib/iban-change.test.ts` | een wissel is nooit "clean", een eerste IBAN is geen wissel |
 | `src/lib/archive-reason.test.ts` | scherm ≡ API ≡ `CHECK`-constraint |
 | `src/lib/sender-rules.test.ts` | per adres, nooit per domein |
 | `src/lib/supplier-cadence.test.ts` | wanneer er gezwégen moet worden |
 | `src/lib/email-dedup.test.ts` | de nummer-tier duplicaatcheck |
+| `src/lib/possible-duplicate.test.ts` | het zachte signaal, en wanneer een abonnement er juist géén is |
 | `src/lib/import-health.test.ts` | het read-time gezondheidsoordeel |
