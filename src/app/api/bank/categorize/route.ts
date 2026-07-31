@@ -144,10 +144,32 @@ export async function GET(req: NextRequest) {
   const txs = rows ?? [];
 
   // One read of the memory, turned into a key → category map for O(1) suggestions.
-  const { data: mem } = await supabase
-    .from("counterpart_memory")
-    .select("counterpart_key, category")
-    .eq("user_id", user.id);
+  //
+  // [MEMORY-PAGINATE] Paged past PostgREST's silent ~1000-row cap. This table holds ONE row per
+  // counterpart the owner has ever answered for, so it only grows — a shop reaches a thousand
+  // distinct suppliers, customers and one-offs over a few years, and every row past the cap was
+  // simply forgotten. The failure is quiet and self-repeating: the counterpart's memorized answer
+  // is missing, so the line falls back to a "lijkt op" guess or a bare sign guess, comes back as
+  // NOT confident, and is therefore excluded from the one-tap sweep AND from the automatic
+  // coding. The owner answers the same counterpart again, which writes the row that already
+  // existed. Paged with a stable id order (counterpart_key is unique per user but text-ordered
+  // paging is fragile); the map is order-independent.
+  //
+  // Read best-effort, as before: a memory that cannot be read means no suggestions, never a
+  // broken screen — the categorisation page must still list the lines that need an answer.
+  let mem: { counterpart_key: string; category: string }[] = [];
+  try {
+    mem = await fetchAllRows((from, to) =>
+      supabase
+        .from("counterpart_memory")
+        .select("counterpart_key, category")
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    console.error("[MEMORY-PAGINATE] counterpart memory read failed — suggestions fall back to patterns", e);
+  }
 
   const memMap = new Map<string, string>();
   const memEntries: MemoryEntry[] = [];
@@ -251,12 +273,28 @@ async function bulkApply(
   userId: string,
 ) {
   // Memory map once.
-  const { data: mem } = await supabase
-    .from("counterpart_memory")
-    .select("counterpart_key, category")
-    .eq("user_id", userId);
+  // [MEMORY-PAGINATE] Paged, same as the GET above. Here the truncation is the more expensive
+  // one: a memory hit is what makes a suggestion CONFIDENT, and only confident suggestions are
+  // applied by this sweep. A forgotten row therefore does not merely lose a pre-select — it
+  // silently removes that line from the one-tap "N zekere invullen" entirely, so the sweep
+  // reports fewer than it could do and the owner keeps answering counterparts they already
+  // taught. The read stays best-effort: no memory means no confident lines and the sweep does
+  // nothing, which is exactly what it should do rather than guess.
+  let mem: { counterpart_key: string; category: string }[] = [];
+  try {
+    mem = await fetchAllRows((from, to) =>
+      supabase
+        .from("counterpart_memory")
+        .select("counterpart_key, category")
+        .eq("user_id", userId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    console.error("[MEMORY-PAGINATE] counterpart memory read failed — bulk applies nothing this run", e);
+  }
   const memMap = new Map<string, string>();
-  for (const m of mem ?? []) memMap.set(m.counterpart_key, m.category);
+  for (const m of mem) memMap.set(m.counterpart_key, m.category);
 
   // Pull the uncategorized lines (capped) and decide per line.
   // [BULK-PAGINATE] `.limit(BULK_MAX)` did NOT deliver BULK_MAX rows. PostgREST caps a response at
