@@ -68,7 +68,7 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -99,6 +99,11 @@ const MAX_BYTES = 10 * 1024 * 1024 // 10 MB
 // bestanden") while no invoice was ever created. The rollback further down covers a DB error —
 // it cannot run when the function is killed. So the ceiling has to be high enough that the
 // window never opens.
+//
+// [INTAKE-TIMEOUT] Nog een gevolg dat hierbij hoort: een gedode functie antwoordt geen JSON, dus de
+// uploadpagina hield een leeg object over en meldde "Lezen mislukt — probeer dit bestand opnieuw"
+// bij een bestand waar niets mis mee was. Zie describeUploadFailure: die vertaalt een 504 nu naar
+// wat er werkelijk gebeurde, in plaats van het bestand de schuld te geven.
 export const maxDuration = 120
 
 /** documents.source / invoices.source CHECK values this route may write. */
@@ -223,14 +228,16 @@ export async function POST(req: NextRequest) {
   if (!okForAi) {
     const hash = computeContentHash(buffer)
     const { data: dupDoc } = await supabase
-      .from("documents").select("id, folder_id")
+      .from("documents").select("id, folder_id, trashed")
       .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
     // The byte-hash gate is NEVER forceable (route contract): identical bytes are
     // the same file, and an unreadable file carries no invoice to "add again", so
     // `force` has nothing to override here. Short-circuiting regardless of force
     // returns the honest duplicate message instead of letting the re-insert trip
     // the (user_id, content_hash) unique index and surface a generic 500.
-    if (dupDoc) {
+    // [DUP-TRASHED] …tenzij het duplicaat in de prullenbak ligt: dan is dit geen duplicaat maar een
+    // doodlopende weg (zie trashedDuplicateCleared). Sleutel vrij → doorlopen als vers bestand.
+    if (dupDoc && !(await trashedDuplicateCleared(supabase, user.id, dupDoc))) {
       const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
       return NextResponse.json({
         duplicate: true, destination: "document",
@@ -296,13 +303,17 @@ export async function POST(req: NextRequest) {
   const contentHash = computeContentHash(buffer)
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id, invoice_id")
+    .select("id, file_name, folder_id, invoice_id, trashed")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle()
 
-  if (existingDoc) {
+  // [DUP-TRASHED] Een botsing met een WEGGEGOOID bestand is geen duplicaat maar een doodlopende weg
+  // — de eigenaar gooide het zelf weg en kan het zonder dit nooit meer toevoegen. Sleutel vrijgeven
+  // en doorlopen; hoort er nog een levende factuur bij, dan vangt de semantische poort dat verderop
+  // af (mét canForce). Zie trashedDuplicateCleared voor het waarom van de UPDATE.
+  if (existingDoc && !(await trashedDuplicateCleared(supabase, user.id, existingDoc))) {
     const folderPath = await buildFolderBreadcrumb(supabase, user.id, existingDoc.folder_id ?? null)
     await logAuditAction({
       userId: user.id,
@@ -458,11 +469,6 @@ export async function POST(req: NextRequest) {
           .eq("receiver_id", user.id)
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
-        if (q.tier === "vendor" && q.vendor) {
-          // [L2] Escape LIKE wildcards — an AI/OCR-parsed vendor containing `%`/`_`
-          // would otherwise act as a wildcard and broaden this dedup match.
-          query = query.ilike("client_name", escapeLikeValue(q.vendor))
-        }
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         // [DEDUP-NUMBER-NORM] The candidate set is already pinned by total (+date); for the
         // number tier compare the number WHITESPACE-NORMALIZED in JS, so "26 / 3958" is
@@ -470,13 +476,30 @@ export async function POST(req: NextRequest) {
         // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
         // outside the window (dropping the .eq removed the natural bound); 200 far exceeds
         // any realistic count of same-total invoices sharing one date.
-        const { data } = await query.order("id", { ascending: false }).limit(200)
-        const rows = data ?? []
-        const hit =
-          q.tier === "number" && q.invoiceNumber
-            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-            : rows[0]
-        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
+        //
+        // [DEDUP-RECENCY] Op created_at, niet meer op id. `order("id")` was stabiel maar
+        // betekenisloos: invoices.id is een uuid (gen_random_uuid()), dus "aflopend op id" is een
+        // willekeurige volgorde die niets met tijd te maken heeft. Twee gevolgen, en het tweede weegt
+        // zwaarder dan het eerste:
+        //   · pickDedupMatch pakt de EERSTE rij die matcht. Dat is de factuur die de eigenaar in zijn
+        //     409 te zien krijgt ("factuur X van Y is al toegevoegd") en waar original_id naar wijst.
+        //     Een willekeurige uit meerdere gelijkwaardige kandidaten stuurt hem naar ander papier
+        //     dan hij in handen heeft.
+        //   · zijn er méér kandidaten dan het venster, dan bepaalt deze volgorde WELKE 200 we
+        //     ophalen. Bij uuid-volgorde kan de factuur van vorige week buiten het venster vallen
+        //     terwijl er een van drie jaar terug in zit — en dan blokkeert de poort niet.
+        //
+        // nullsFirst: false is hier geen franje. invoices.created_at is NULLABLE (anders dan
+        // documents.created_at, dat NOT NULL is) en Postgres zet NULL bij DESC standaard VOORAAN.
+        // Zonder die vlag zouden juist de rijen zonder created_at het venster aanvoeren.
+        const { data } = await query
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .limit(200)
+        // [DEDUP-VENDOR-NORM] Nummer én leverancier worden in code vergeleken, niet in SQL — de
+        // leverancier stond hier als `.ilike(client_name, …)` en dat blokkeerde ten onrechte op elke
+        // naam met een `*` erin ("SUMUP *CAFE"). Het waarom staat volledig bij pickDedupMatch.
+        return pickDedupMatch(data ?? [], q)
       }
     )
 
@@ -617,14 +640,30 @@ export async function POST(req: NextRequest) {
             // in-code compare (assessPossibleDuplicate) ever sees it. ±0.01 guarantees it is fetched.
             .gte("total_inc_btw", total - 0.01)
             .lte("total_inc_btw", total + 0.01)
+            // [DEDUP-RECENCY] Hier telt de volgorde nóg zwaarder dan bij de harde poort: een bedrag
+            // als € 10,00 kan bij een winkel honderden keren voorkomen, dus dit venster loopt echt
+            // vol. Op uuid-volgorde haalden we dan 200 willekeurige facturen op en kon de aankomst
+            // van vorige week — precies de mogelijke dubbele — er structureel buiten vallen.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
             .limit(200)
           return data ?? []
         },
         // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
-        // corrected re-issue the amount-anchored query above can never return. ilike without
-        // wildcards is an exact, case-insensitive match; the pure assessor re-checks with full
-        // normalization before it flags anything.
+        // corrected re-issue the amount-anchored query above can never return.
+        //
+        // Deze regel zei "ilike without wildcards is an exact, case-insensitive match". Dat klopt
+        // niet: PostgREST vertaalt `*` naar `%` in like/ilike, en escapeLikeValue kan daar niets
+        // tegen doen (zie [DEDUP-VENDOR-NORM] hierboven). Anders dan bij de leverancier BLOKKEERT
+        // deze query niets — hij levert alleen kandidaten, en assessPossibleDuplicate hernormaliseert
+        // voor het iets vlagt. Een `*` maakt de zoekopdracht dus niet fout, maar wél ruimer, en dat
+        // is hier het echte risico: de ruis vult het venster en duwt de correctie die we zoeken
+        // erbuiten — dan blijft de zachte "mogelijk dubbel"-vlag uit en kan de factuur alsnog
+        // automatisch als tweede kostenpost boeken.
+        //
+        // Daarom blijft de ilike staan (hij levert altijd een SUPERset, hij mist nooit) en gaat het
+        // venster van 50 naar 200 — gelijk aan de bedrag-query hierboven, zodat verbreding geen
+        // gemiste vlag kan worden.
         async (invoiceNumber) => {
           const { data } = await supabase
             .from("invoices")
@@ -632,8 +671,12 @@ export async function POST(req: NextRequest) {
             .eq("receiver_id", user.id)
             .eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+            // [DEDUP-RECENCY] Zie de bedrag-query hierboven; en juist hier verbreedt een `*` in het
+            // nummer de ilike, dus is "de nieuwste eerst" wat voorkomt dat de gezochte correctie
+            // door de ruis uit het venster wordt geduwd.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
-            .limit(50)
+            .limit(200)
           return data ?? []
         }
       )
@@ -645,14 +688,27 @@ export async function POST(req: NextRequest) {
   // (so a duplicate costs no conversion). Wrapping only — full image fidelity,
   // no re-compression. One file per request → peak memory is a single image.
   // Best-effort: a failed conversion returns the original bytes unchanged.
-  const upload = await maybeImageToPdf(buffer, file.type, file.name)
+  // [MIME-HONEST] `effectiveType`, niet `file.type`. Een Android-deelmenu of mobiele WebView levert
+  // een prima leesbare PDF/JPEG aan met een LEEG of generiek MIME-type; sniffReadableMime heeft dat
+  // hierboven al uit de magic bytes afgeleid, en okForAi liet het bestand op grond daarvan door.
+  // Daarna viel de route terug op file.type — een waarde waarvan ze zojuist had vastgesteld dat hij
+  // niet klopt. maybeImageToPdf sniffed zelf, dus de CONVERSIE ging goed; maar bij passthrough (een
+  // PDF, die niets te converteren heeft) gaf hij dat lege type gewoon terug, en dat belandde in
+  // storage als contentType en in documents.file_type. Gevolg: een PDF die bij het openen niet als
+  // PDF wordt herkend en in plaats van te tonen wordt gedownload. Het onleesbare-pad hierboven deed
+  // het al goed (`file.type || "application/octet-stream"`); dit pad liep achter.
+  const upload = await maybeImageToPdf(buffer, effectiveType, file.name)
+  // Laatste vangnet: okForAi laat ook een bestand door dat alleen op `.pdf` eindigt zonder dat de
+  // bytes te sniffen waren. Dan is effectiveType nog steeds "" en is een leeg type nooit beter dan
+  // octet-stream — dezelfde keuze als het onleesbare-pad maakt.
+  const uploadType = upload.fileType || "application/octet-stream"
 
   // ── Store the file in Storage (shared by all destinations) ──────────────────
   const safeName = upload.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
   const { error: uploadError } = await supabase.storage
     .from("documents")
-    .upload(storagePath, upload.buffer, { contentType: upload.fileType, upsert: false })
+    .upload(storagePath, upload.buffer, { contentType: uploadType, upsert: false })
   // [R1] A swallowed storage failure was the silent-loss bug: the flow continued and
   // wrote a documents/invoice row whose file_url points at a file that was NEVER stored,
   // while telling the owner "opgeslagen" / "factuur herkend". The evidence is then gone
@@ -686,7 +742,7 @@ export async function POST(req: NextRequest) {
         file_name: upload.fileName,
         file_url: storagePath,
         file_size: upload.buffer.length,
-        file_type: upload.fileType,
+        file_type: uploadType, // [MIME-HONEST] hetzelfde type als waarmee het in storage staat
         doc_type: "overig",
         folder_id: folderId,
         source,
@@ -784,7 +840,7 @@ export async function POST(req: NextRequest) {
       file_name: upload.fileName,
       file_url: storagePath,
       file_size: upload.buffer.length,
-      file_type: upload.fileType,
+      file_type: uploadType, // [MIME-HONEST] hetzelfde type als waarmee het in storage staat
       doc_type: "factuur",
       folder_id: folderId,
       year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
@@ -1073,6 +1129,57 @@ export async function POST(req: NextRequest) {
   })
 }
 
+// ── [DUP-TRASHED] De byte-hash-poort en de prullenbak ────────────────────────────────────────
+//
+// Botst een upload op een bestand dat de eigenaar ZELF heeft weggegooid, dan is "dit bestand staat
+// al in: Facturen / 2026" niet waar. Het staat niet in die map — het staat in de prullenbak, en daar
+// kijkt hij niet als hij iets opnieuw probeert toe te voegen. De mapnaam in die melding werd zelfs
+// nog gewoon uit de weggegooide rij opgebouwd, dus we wezen hem naar een plek waar het bestand voor
+// hem onzichtbaar is.
+//
+// Erger dan verwarrend: dit is een doodlopende weg. De byte-hash-poort is met OPZET niet te forceren
+// (identieke bytes zijn hetzelfde bestand), dus zonder deze uitzondering kan de eigenaar dat bestand
+// nooit meer toevoegen. Weggooien is bij ons omkeerbaar — trashed=true, de rij en het bestand
+// blijven staan — dus "weg" mag nooit "voorgoed geblokkeerd" betekenen.
+//
+// Waarom een UPDATE en niet een filter op de SELECT: de UNIQUE index (user_id, content_hash) geldt
+// WHERE content_hash IS NOT NULL en kent het verschil tussen weggegooid en niet. Een weggegooide rij
+// bezet die sleutel dus nog steeds. Een `.eq("trashed", false)` in de SELECT zou de 409 alleen
+// verplaatsen naar een 23505 op de insert erna. We halen daarom de hash van díe ene rij af: de rij,
+// het bestand en de prullenbak blijven ongemoeid, alleen de claim op de dedup-sleutel vervalt.
+//
+// En de tweede poort blijft staan: hoort er nog een LEVENDE factuur bij het weggegooide bestand, dan
+// vangt de semantische duplicaatcontrole (SAFECORE Rule 2, verderop) de dubbele boeking af — met
+// canForce, zodat de eigenaar het gesprek kan winnen. Dat is precies de rolverdeling die we willen:
+// de bytes-poort blokkeert nooit onherroepelijk, de betekenis-poort mag dat wél (en is te overrulen).
+async function releaseTrashedHash(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  documentId: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("documents")
+    .update({ content_hash: null })
+    .eq("id", documentId)
+    .eq("user_id", userId)
+  // Lukt het vrijgeven niet, dan blokkeren we zoals vroeger. Dat is de oude (verwarrende) melding,
+  // maar nog altijd beter dan doorlopen naar een insert die even later op de UNIQUE index stukloopt
+  // en de eigenaar een 500 geeft. Nooit een nieuwe fout maken bij het repareren van een oude.
+  return !error
+}
+
+/** True wanneer de gevonden hash-botsing van een WEGGEGOOID bestand is én de sleutel is vrijgegeven,
+ *  zodat deze upload als vers bestand mag doorlopen. False = een levend duplicaat: blokkeren.
+ *  `trashed` kan NULL zijn op oude rijen, dus expliciet op `=== true` vergelijken — niet op falsy. */
+async function trashedDuplicateCleared(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  dup: { id: string; trashed?: boolean | null },
+): Promise<boolean> {
+  if (dup.trashed !== true) return false
+  return releaseTrashedHash(supabase, userId, dup.id)
+}
+
 // ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────
 // Pull a PDF's text layer. Fail-safe by design: ANY trouble returns null, and every caller
 // treats null as "no signal" — a text-extraction problem must never block or alter an import.
@@ -1103,8 +1210,13 @@ async function storeRawIncoming(
   const hash = computeContentHash(buffer)
   try {
     const { data: existing } = await supabase
-      .from("documents").select("id").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-    if (existing?.id) return existing.id
+      .from("documents").select("id, trashed").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
+    // [DUP-TRASHED] Een weggegooide rij teruggeven zou de boeking koppelen aan bewijs dat de eigenaar
+    // niet meer ziet staan. Sleutel vrijgeven en vers opslaan; lukt dat niet, dan loopt de insert
+    // hieronder op de UNIQUE index stuk en valt dit terug op "geen document" — dit is en blijft
+    // best-effort opslag, de boeking zelf is de money-truth.
+    if (existing?.id && existing.trashed !== true) return existing.id
+    if (existing?.id) await releaseTrashedHash(supabase, userId, existing.id)
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
     const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
     const { error: upErr } = await supabase.storage
@@ -1154,9 +1266,11 @@ async function handleUblInvoice(
   // camera path's byte-hash gate (route contract lines 92-96). "toch toevoegen" only overrides the
   // SEMANTIC gate below — the old `&& !force` here let a re-upload of the identical XML double-book.
   const { data: dupDoc } = await supabase
-    .from("documents").select("id, folder_id, invoice_id")
+    .from("documents").select("id, folder_id, invoice_id, trashed")
     .eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-  if (dupDoc) {
+  // [DUP-TRASHED] Zelfde uitzondering als de camera-route: een weggegooide e-factuur mag de sleutel
+  // niet levenslang bezet houden, anders kan de eigenaar zijn eigen XML nooit opnieuw importeren.
+  if (dupDoc && !(await trashedDuplicateCleared(supabase, userId, dupDoc))) {
     // [DUP-SHAPE] Carry folder_name like the other duplicate 409s, so the client can say WHERE
     // the e-invoice already is instead of only that it exists.
     const dupPath = await buildFolderBreadcrumb(supabase, userId, dupDoc.folder_id ?? null)
@@ -1194,15 +1308,14 @@ async function handleUblInvoice(
           .eq("receiver_id", userId)
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
-        if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor))
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
-        const { data } = await query.order("id", { ascending: false }).limit(200)
-        const rows = data ?? []
-        const hit =
-          q.tier === "number" && q.invoiceNumber
-            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-            : rows[0]
-        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
+        // [DEDUP-RECENCY] Nieuwste eerst, met NULL achteraan — zie de camera-route voor het waarom.
+        const { data } = await query
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .limit(200)
+        // [DEDUP-VENDOR-NORM] Dezelfde gedeelde vergelijking als de camera-route; zie pickDedupMatch.
+        return pickDedupMatch(data ?? [], q)
       },
     )
 
@@ -1240,17 +1353,24 @@ async function handleUblInvoice(
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
             .gte("total_inc_btw", total - 0.01).lte("total_inc_btw", total + 0.01)
+            // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false }).limit(200)
           return data ?? []
         },
         // [DEDUP-CORRECTED] Same number, ANY amount — the corrected re-issue the query above misses.
+        // Venster van 50 naar 200, om dezelfde reden als op de camera-route: een `*` in het nummer
+        // verbreedt de ilike (PostgREST leest hem als `%`) en mag de gezochte correctie niet uit het
+        // venster duwen. Blokkeren doet deze query niet; hij levert kandidaten voor de assessor.
         async (invoiceNumber) => {
           const { data } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
-            .order("id", { ascending: false }).limit(50)
+            // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
+            .order("created_at", { ascending: false, nullsFirst: false })
+            .order("id", { ascending: false }).limit(200)
           return data ?? []
         },
       )
