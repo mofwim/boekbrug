@@ -1139,9 +1139,9 @@ $$;
 --
 -- ⚠️ NIET DE NIEUWSTE VERSIE. migrations/account_purpose_archief.sql vervangt deze functie
 -- door een variant die ook `account_purpose` uit de metadata leest en `onboarding_done`
--- meteen op true zet voor een archiefaccount. Die migratie staat hier bewust niet in
--- verwerkt: dit bestand beschrijft wat er in productie staat, en of die migratie daar
--- gedraaid heeft beantwoordt alleen docs/WELKE_MIGRATIES_STAAN_ER.sql.
+-- meteen op true zet voor een archiefaccount. In productie IS die migratie toegepast — gemeten
+-- op 31 juli 2026 met de query onderaan docs/WELKE_MIGRATIES_STAAN_ER.sql, die zowel de kolom
+-- als de trigger-helft bevestigde. Dit bestand loopt op dat punt dus achter.
 --
 -- Bouw je hiermee een VERSE database (dev, staging, herstel na incident), draai dan ook die
 -- migratie. Doe je dat niet, dan werkt alles behalve het archiefpad van /bewaarplicht: wie
