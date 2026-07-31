@@ -118,12 +118,15 @@ function RegisterContent() {
   //
   // De controle staat in een effect en niet in de render, zodat er tijdens `next build` geen
   // Supabase-client wordt gebouwd. Zie de RULE in src/lib/supabase.ts.
+  // Mét zijn bestemming: wie hier komt via /invite/accept?token=… en al is ingelogd, hoort bij
+  // die uitnodiging uit te komen en niet op een dashboard waar de uitnodiging nergens meer staat.
   useEffect(() => {
     let afgebroken = false
     getBrowserClient().auth.getSession().then(({ data }) => {
-      if (!afgebroken && data.session) router.replace('/dashboard')
+      if (!afgebroken && data.session) router.replace(gevraagdeBestemming() ?? '/dashboard')
     })
     return () => { afgebroken = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
   // [Google-OAuth] Reset loading when user returns via browser back button
