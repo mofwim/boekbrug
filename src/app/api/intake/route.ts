@@ -69,6 +69,10 @@ import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
 import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+// [DUP-TRASHED] De uitzondering op de byte-hash-poort voor een bestand dat de eigenaar zelf heeft
+// weggegooid. Gedeeld met /api/email/upload, /api/bank/attach-invoice en de mailsync — vier kopieën
+// van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
+import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup"
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -1127,57 +1131,6 @@ export async function POST(req: NextRequest) {
             ? "Herkend, gecontroleerd en geboekt als inkoopfactuur — klaar voor de boekhouder (nog niet betaald)."
             : "Factuur herkend — controleer en bevestig.",
   })
-}
-
-// ── [DUP-TRASHED] De byte-hash-poort en de prullenbak ────────────────────────────────────────
-//
-// Botst een upload op een bestand dat de eigenaar ZELF heeft weggegooid, dan is "dit bestand staat
-// al in: Facturen / 2026" niet waar. Het staat niet in die map — het staat in de prullenbak, en daar
-// kijkt hij niet als hij iets opnieuw probeert toe te voegen. De mapnaam in die melding werd zelfs
-// nog gewoon uit de weggegooide rij opgebouwd, dus we wezen hem naar een plek waar het bestand voor
-// hem onzichtbaar is.
-//
-// Erger dan verwarrend: dit is een doodlopende weg. De byte-hash-poort is met OPZET niet te forceren
-// (identieke bytes zijn hetzelfde bestand), dus zonder deze uitzondering kan de eigenaar dat bestand
-// nooit meer toevoegen. Weggooien is bij ons omkeerbaar — trashed=true, de rij en het bestand
-// blijven staan — dus "weg" mag nooit "voorgoed geblokkeerd" betekenen.
-//
-// Waarom een UPDATE en niet een filter op de SELECT: de UNIQUE index (user_id, content_hash) geldt
-// WHERE content_hash IS NOT NULL en kent het verschil tussen weggegooid en niet. Een weggegooide rij
-// bezet die sleutel dus nog steeds. Een `.eq("trashed", false)` in de SELECT zou de 409 alleen
-// verplaatsen naar een 23505 op de insert erna. We halen daarom de hash van díe ene rij af: de rij,
-// het bestand en de prullenbak blijven ongemoeid, alleen de claim op de dedup-sleutel vervalt.
-//
-// En de tweede poort blijft staan: hoort er nog een LEVENDE factuur bij het weggegooide bestand, dan
-// vangt de semantische duplicaatcontrole (SAFECORE Rule 2, verderop) de dubbele boeking af — met
-// canForce, zodat de eigenaar het gesprek kan winnen. Dat is precies de rolverdeling die we willen:
-// de bytes-poort blokkeert nooit onherroepelijk, de betekenis-poort mag dat wél (en is te overrulen).
-async function releaseTrashedHash(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  userId: string,
-  documentId: string,
-): Promise<boolean> {
-  const { error } = await supabase
-    .from("documents")
-    .update({ content_hash: null })
-    .eq("id", documentId)
-    .eq("user_id", userId)
-  // Lukt het vrijgeven niet, dan blokkeren we zoals vroeger. Dat is de oude (verwarrende) melding,
-  // maar nog altijd beter dan doorlopen naar een insert die even later op de UNIQUE index stukloopt
-  // en de eigenaar een 500 geeft. Nooit een nieuwe fout maken bij het repareren van een oude.
-  return !error
-}
-
-/** True wanneer de gevonden hash-botsing van een WEGGEGOOID bestand is én de sleutel is vrijgegeven,
- *  zodat deze upload als vers bestand mag doorlopen. False = een levend duplicaat: blokkeren.
- *  `trashed` kan NULL zijn op oude rijen, dus expliciet op `=== true` vergelijken — niet op falsy. */
-async function trashedDuplicateCleared(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  userId: string,
-  dup: { id: string; trashed?: boolean | null },
-): Promise<boolean> {
-  if (dup.trashed !== true) return false
-  return releaseTrashedHash(supabase, userId, dup.id)
 }
 
 // ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────

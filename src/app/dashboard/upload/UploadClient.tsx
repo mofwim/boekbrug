@@ -145,6 +145,32 @@ export default function UploadClient() {
   const objectUrls = useRef<string[]>([])
   useEffect(() => () => { for (const u of objectUrls.current) URL.revokeObjectURL(u) }, [])
 
+  // [BLOB-CLEANUP] …maar "op unmount" is op deze pagina niet vaak. Wie een ochtend bonnen verwerkt
+  // blijft hier staan en doet batch na batch; elke foto houdt intussen zijn volledige bytes in het
+  // geheugen vast, want een objectURL is een harde referentie. Op een telefoon met tweehonderd
+  // bonnen is dat honderden MB's die pas vrijkomen als het tabblad dichtgaat.
+  //
+  // De lijst leegmaken is dus niet alleen opruimen op het scherm — het is de enige plek waar dit
+  // geheugen tussentijds terug kan. Daarom hoort de knop hier en niet alleen bij de opmaak.
+  // [QUEUE-PURITY] Het intrekken gebeurt BUITEN de state-updater, om dezelfde reden als bij
+  // retryAllFailed: React mag een updater meer dan eens aanroepen voor één klik. Twee keer intrekken
+  // is op zich onschadelijk, maar de ref eronder muteren niet — en een updater met neveneffecten is
+  // hier al een keer duur geweest.
+  const clearFinished = useCallback(() => {
+    const keep = items.filter((i) => i.status === 'queued' || i.status === 'busy')
+    if (keep.length === items.length) return
+    // Alleen de URL's van rijen die ECHT weggaan. Een rij die nog in de wachtrij staat heeft zijn
+    // preview straks nog nodig — en na "toch toevoegen" DELEN twee rijen dezelfde URL, dus de vraag
+    // is niet "gaat deze rij weg" maar "blijft er nog iemand naar kijken".
+    const kept = new Set(keep.map((i) => i.preview).filter((u): u is string => !!u))
+    const gone = items
+      .map((i) => i.preview)
+      .filter((u): u is string => !!u && !kept.has(u))
+    for (const u of gone) URL.revokeObjectURL(u)
+    objectUrls.current = objectUrls.current.filter((u) => !gone.includes(u))
+    setItems(keep)
+  }, [items])
+
   // [MULTI-PAGE] Collect the photos of ONE paper invoice, combine → one PDF → one invoice.
   const [mpMode, setMpMode] = useState(false)
   const [mpPages, setMpPages] = useState<File[]>([])
@@ -563,10 +589,22 @@ export default function UploadClient() {
 
         {/* Progress banner */}
         {items.length > 0 && (
-          <div style={{ marginTop: 16, fontSize: 13, color: M3.neutral }}>
-            {busyCount > 0
-              ? `Bezig met verwerken… ${items.length - busyCount}/${items.length} klaar`
-              : `Klaar — ${items.length} bestand(en) verwerkt`}
+          <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: M3.neutral }}>
+              {busyCount > 0
+                ? `Bezig met verwerken… ${items.length - busyCount}/${items.length} klaar`
+                : `Klaar — ${items.length} bestand(en) verwerkt`}
+            </span>
+            {/* [BLOB-CLEANUP] De lijst opruimen zonder de pagina te verlaten. Naast het schoonvegen
+                van het scherm is dit de enige plek waar het geheugen van de vorige batch tussentijds
+                terugkomt: elke miniatuur houdt zijn volledige bestand vast tot de URL is ingetrokken.
+                Rijen die nog in de wachtrij staan blijven staan — die zijn nog niet af. */}
+            {items.length - busyCount > 0 && (
+              <button onClick={clearFinished}
+                style={{ background: 'transparent', border: `1px solid ${M3.outlineVariant}`, color: M3.neutral, borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
+                Lijst opruimen
+              </button>
+            )}
           </div>
         )}
 
