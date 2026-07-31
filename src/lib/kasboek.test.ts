@@ -98,5 +98,51 @@ console.log("\n— [KAS-NEGATIEF] lowestDrawerPoint (the readiness-gate witness)
   check("float honored: €500 opening − €400 out stays positive → null (no false flag)", lowestDrawerPoint(float) === null);
 }
 
+// ── [PAGE-KEY] Why the readers must page on `id` and never on `entry_date` ────────────────────
+// entry_date is not unique — several cash entries on one day is the ordinary case for a shop —
+// so across separate .range() windows Postgres may serve a tie twice or not at all. The builders
+// below are order-independent, which is exactly what makes that corruption invisible: the wrong
+// SET of rows still produces a perfectly well-formed cash book. These lock what such a set costs,
+// so the reason the reads key on `id` stays written down and testable.
+console.log("\n— [PAGE-KEY] a duplicated / dropped row is a wrong RUNNING balance, not one wrong day —");
+{
+  const day = (entry_date: string, direction: "in" | "out", amount: number) =>
+    ({ entry_date, direction, amount, category: "kosten", description: null }) as const;
+  // Three entries on ONE day, then movement on later days — the shape an unstable paging key
+  // scrambles. Truth: 1000 opening, −100 −200 −300 on the 5th, +50 on the 10th.
+  const truthful = buildKasboek({
+    turnover: [],
+    entries: [day("2026-01-05", "out", 100), day("2026-01-05", "out", 200), day("2026-01-05", "out", 300), day("2026-01-10", "in", 50)],
+    year: 2026, quarter: 1, openingBalance: 1000,
+  });
+  check("baseline: closing = 1000 − 600 + 50", truthful.closingBalance === 450);
+
+  // The same read, one tie served TWICE across the page boundary.
+  const duplicated = buildKasboek({
+    turnover: [],
+    entries: [day("2026-01-05", "out", 100), day("2026-01-05", "out", 200), day("2026-01-05", "out", 200), day("2026-01-05", "out", 300), day("2026-01-10", "in", 50)],
+    year: 2026, quarter: 1, openingBalance: 1000,
+  });
+  check("a duplicated tie shifts the closing balance by its amount", duplicated.closingBalance === 250);
+  // …and every day AFTER it, not just its own — the property that makes this expensive.
+  const lastTruth = truthful.months[0].rows[truthful.months[0].rows.length - 1];
+  const lastDup = duplicated.months[0].rows[duplicated.months[0].rows.length - 1];
+  check("the drift reaches the LAST day of the quarter", lastTruth.date === lastDup.date && lastTruth.eindsaldo - lastDup.eindsaldo === 200);
+  check("the book still looks perfectly well-formed (same days, same shape)",
+    truthful.months[0].rows.length === duplicated.months[0].rows.length);
+
+  // A dropped tie can invent a negative day that never happened — the witness that blocks filing.
+  const dropped = buildKasboek({
+    turnover: [], entries: [day("2026-01-05", "out", 100), day("2026-01-10", "in", 500)],
+    year: 2026, quarter: 1, openingBalance: 50,
+  });
+  const complete = buildKasboek({
+    turnover: [], entries: [day("2026-01-05", "in", 400), day("2026-01-05", "out", 100), day("2026-01-10", "in", 500)],
+    year: 2026, quarter: 1, openingBalance: 50,
+  });
+  check("dropping a same-day RECEIPT fabricates a negative day", lowestDrawerPoint(dropped) !== null);
+  check("…which the complete read does not have", lowestDrawerPoint(complete) === null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
