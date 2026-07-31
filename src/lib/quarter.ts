@@ -6,17 +6,40 @@
 // bug: the readiness card showed a concept-BTW figure for the last-completed quarter but
 // its "Bekijk de concept-aangifte" link opened a near-empty current quarter).
 //
-// Pure + UTC (matches the API routes' own quarter math). Testable — inject `now`.
+// Pure. Testable — inject `now`.
+//
+// [TZ] "Which quarter is it?" is answered on the owner's AMSTERDAM day, not the server's UTC day.
+// This used to read getUTCMonth(), and it runs in two places where that is wrong:
+//   · in API routes on Vercel, which runs in UTC;
+//   · in the BROWSER, where it is the visitor's clock read as UTC.
+// Between 00:00 and 02:00 Dutch time the UTC date is still YESTERDAY, so on 1 January 00:30 in
+// Amsterdam this returned Q3 instead of Q4 — a whole quarter wrong, on the night the year turns,
+// as the default period for /api/result, /api/aangifte, /api/readiness, klaar, the bank filter and
+// three screens. It is only a DEFAULT, and it self-corrects an hour later, which is exactly why it
+// could sit here unnoticed. Every other date-sensitive surface already pins Europe/Amsterdam
+// (format-nl.ts, the crons, Kas, Vandaag), and /api/truth now does too — so a truth screen and a
+// result screen could disagree about the current quarter at that same boundary.
+
+import { amsterdamToday } from "./format-nl";
 
 export type QuarterNo = 1 | 2 | 3 | 4;
 export interface YearQuarter { year: number; quarter: QuarterNo }
 
+/** The calendar year + quarter `now` falls in, on the Amsterdam day. */
+function amsterdamYearQuarter(now: Date): { year: number; quarter: QuarterNo } {
+  const iso = amsterdamToday(now); // 'YYYY-MM-DD'
+  return {
+    year: Number(iso.slice(0, 4)),
+    quarter: (Math.floor((Number(iso.slice(5, 7)) - 1) / 3) + 1) as QuarterNo,
+  };
+}
+
 /** The last COMPLETED quarter as of `now`. In Q1 that's Q4 of the previous year. */
 export function lastCompletedQuarter(now: Date = new Date()): YearQuarter {
-  const q = (Math.floor(now.getUTCMonth() / 3) + 1) as QuarterNo;
-  return q === 1
-    ? { year: now.getUTCFullYear() - 1, quarter: 4 }
-    : { year: now.getUTCFullYear(), quarter: (q - 1) as QuarterNo };
+  const { year, quarter } = amsterdamYearQuarter(now);
+  return quarter === 1
+    ? { year: year - 1, quarter: 4 }
+    : { year, quarter: (quarter - 1) as QuarterNo };
 }
 
 /**

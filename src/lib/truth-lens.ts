@@ -32,9 +32,9 @@ export const ALL_TIME_FLOOR = "2015-01-01";
  */
 export const ALL_TIME_CEILING = "9999-12-31";
 
-export type Lens = "this-quarter" | "last-quarter" | "ytd" | "year" | "all" | "custom";
+export type Lens = "this-quarter" | "last-quarter" | "quarter" | "ytd" | "year" | "all" | "custom";
 
-export const LENSES: readonly Lens[] = ["this-quarter", "last-quarter", "ytd", "year", "all", "custom"];
+export const LENSES: readonly Lens[] = ["this-quarter", "last-quarter", "quarter", "ytd", "year", "all", "custom"];
 
 /** Narrow an untrusted ?lens value, falling back to the default lens. */
 export function parseLens(raw: string | null | undefined): Lens {
@@ -95,6 +95,23 @@ export function resolveWindow(
       const q = curQ === 1 ? 4 : curQ - 1;
       const qy = curQ === 1 ? y - 1 : y;
       return quarterWindow(qy, q);
+    }
+    // [NAMED-QUARTER] An EXPLICIT ?year&quarter, so any historical quarter is reachable.
+    //
+    // The relative lenses only ever reach this quarter and the previous one — there was no way to
+    // look at Q1 2024 on this screen at all. The one surface that could was /dashboard/resultaat,
+    // whose quarter picker was its only capability the truth screen lacked; absorbing it here is
+    // what lets that duplicate screen become a redirect instead of a second place to forget a
+    // completeness warning. Same bounds as quarterWindow, so a named quarter and the relative lens
+    // that happens to point at it are byte-identical.
+    //
+    // Out-of-range or malformed values fall back to the current quarter rather than inventing a
+    // window: a truth screen must never answer a question it could not parse.
+    case "quarter": {
+      const qy = Number(params.get("year"));
+      const q = Number(params.get("quarter"));
+      const valid = Number.isInteger(qy) && qy >= 2000 && qy <= 2100 && Number.isInteger(q) && q >= 1 && q <= 4;
+      return valid ? quarterWindow(qy, q) : quarterWindow(y, curQ);
     }
     case "ytd":
       return yearWindow(y);

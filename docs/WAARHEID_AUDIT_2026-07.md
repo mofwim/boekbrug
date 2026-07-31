@@ -299,3 +299,106 @@ npm run build             compiled successfully
 New coverage: `truth-lens.test.ts` (48 assertions, including the containment invariant at five
 boundary dates and the Amsterdam-day quarter boundaries), plus 15 in `btw-filing.test.ts` for the
 divergence split and 5 in `card-reconcile.test.ts` for the exception counters.
+
+---
+
+# Round 2 — `/dashboard/resultaat`, and why it is now a redirect
+
+*Same review applied to the sibling screen. It ended in a merge, so this section records both what
+was found and why the page stopped existing as a destination.*
+
+## The finding that decided it
+
+`/dashboard/resultaat` and `/dashboard/waarheid` rendered **the same six numbers**. Both called
+`computeResultForRange` over identical quarter bounds, so no arithmetic could ever differ between
+them. Everything that differed was what each screen said *around* those numbers — and there the
+second screen was a full round behind:
+
+| | waarheid | resultaat |
+| --- | --- | --- |
+| kasstelsel basis stated | ✅ | ❌ never mentioned |
+| `undatedPaidCount` (kas: money that can't be placed) | ✅ | ❌ |
+| `unconfirmedIncomingCount` (what the filing gate blocks on) | ✅ | ❌ — `/api/result` didn't even forward it |
+| `estimatedPortionCount` | ✅ | ❌ |
+| `commissionIssueDays` | ✅ | ❌ |
+| `pinLedgerAvailable` | ✅ | ❌ |
+| `datelessVerifiedCount` | ✅ | ✅ |
+
+Note the shape of that table: resultaat warned for the accrual case and stayed silent for the cash
+one. Two screens over one engine is not a second view — it is a second place to forget a
+completeness warning, and it had already happened.
+
+## Its own bug: the card that hid its own instruction
+
+The KAART-CONTROLE block appeared only when
+`eftSettlements > 0 || commissionBooked > 0 || grossMismatchDays > 0` — while the sentence telling
+the owner to **upload the terminal receipt** lived *inside* it.
+
+A till shop that had never uploaded one produces none of those three: no EFT rows, no commission
+(Leg B needs an `eftGross`), no mismatch (nothing to compare). Only `incompleteDays > 0`, which was
+not in the condition. So the card stayed hidden — the only shop that needed the instruction was the
+only one that could not see it, and its acquirer commission was absent from kosten in silence.
+
+Fixed in the absorbed version by widening the condition to any card activity at all.
+
+## Its other bug: a cost claimed but not booked
+
+Under kasstelsel the triangle delta is deliberately not auto-booked (the fee is deductible when the
+acquirer's own invoice is paid). After round 1 that means `commissionBooked === 0` while
+`totalCommission` can be hundreds of euros. resultaat showed only the booked figure, next to the
+flat sentence *"De commissie is verwerkt in het resultaat hierboven"* — so a kasstelsel shop read
+**€ 0,00** on a control surface that had in fact measured a real cost.
+
+The absorbed version shows **Gemeten commissie** (`totalCommission`) and explains separately what
+happened to it: booked, already on an acquirer invoice, or waiting on that invoice under kas.
+
+## Smaller findings, all resolved by the merge
+
+- `BTW DIT KWARTAAL` was a fixed heading over a free quarter picker — pick Q1 2024, still read
+  "dit kwartaal". The loading fallback printed `'Dit kwartaal'` too.
+- A quarter that had not started was selectable and rendered a confident `+€ 0,00`, indistinguishable
+  from a genuinely empty closed quarter. waarheid has the loopt-nog / afgesloten badge.
+- No 401 handling and no retry button: `catch { /* silent */ }` → a dead-end error state.
+
+## What moved before the link was removed
+
+The dashboard header had already recorded this decision as deferred, and named the mechanism:
+
+> *"Truly merging waarheid+resultaat is a separate product+page decision; do that at the page level
+> (redirect resultaat → waarheid) before removing this link, never by orphaning."*
+
+Two capabilities were genuinely resultaat-only, so both were ported **first**:
+
+1. **Reaching an arbitrary historical quarter.** waarheid's lenses were relative only
+   (this-quarter / last-quarter / this-year / all) — Q1 2024 was unreachable. Now a `quarter` lens
+   (`truth-lens.ts`) plus a Q1–Q4 + year picker. `/api/truth` already supported the window shape; it
+   was a UI gap, not an engine gap. Filing works on it, so a historical quarter can be marked filed.
+2. **The card-reconciliation block**, with the two fixes above.
+
+Then `/dashboard/resultaat` became a server redirect that **carries `?year&quarter` across**, so an
+existing bookmark of a specific quarter still lands on that quarter. The route stays — deleting it
+would 404 those bookmarks. `ResultaatClient.tsx` and its `loading.tsx` are removed as dead code.
+
+## Fixed regardless of the merge
+
+- **`quarter.ts` read `getUTCMonth()`** — and it runs both on Vercel (UTC) and in the browser. At
+  00:30 Amsterdam on 1 January it returned Q3 instead of Q4: a whole quarter wrong, on the night the
+  year turns, as the default period for `/api/result`, `/api/aangifte`, `/api/readiness`, klaar, the
+  bank filter and three screens. Round 1 moved `/api/truth` to Amsterdam, which meant the truth
+  screen and the result screen could disagree about the current quarter at that same boundary. Now
+  on `amsterdamToday()`, with four boundary assertions (winter UTC+1 and summer UTC+2).
+- **`/api/result` now forwards `unconfirmedIncomingCount`** — a parity gap introduced in round 1,
+  when the counter was added to the engine and wired only into `/api/truth`.
+
+## Verification
+
+```
+npx tsc --noEmit     clean
+npx eslint <changed> clean (only pre-existing warnings in ZzpDashboard)
+npx next build       compiled successfully
+npx tsx --test       350 tests, 0 failed
+```
+
+New coverage: 11 assertions for the `quarter` lens (including that a named quarter is byte-identical
+to the relative lens pointing at the same period, and that malformed input never invents a window),
+plus 4 for the Amsterdam quarter boundary in `quarter.test.ts`.
