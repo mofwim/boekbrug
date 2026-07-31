@@ -59,7 +59,7 @@ import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
-import { detectMultipleInvoices } from "@/lib/multi-invoice-pdf"
+import { detectMultipleInvoices, cannotVerifySingleInvoice } from "@/lib/multi-invoice-pdf"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -355,9 +355,13 @@ export async function POST(req: NextRequest) {
   // [MULTI-INVOICE] The text layer is pulled ONCE here and reused: the daily-sales check needs
   // it, and so does the "is this really one invoice?" check further down. Extracting it twice
   // would parse every uploaded PDF twice for no gain.
+  // [ONE-INVOICE-UNVERIFIED] Het paginacijfer komt uit diezelfde ene keer openen mee.
   let pdfText: string | null = null
+  let pdfPages = 0
   if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    pdfText = await extractPdfText(buffer)
+    const read = await readPdf(buffer)
+    pdfText = read.text
+    pdfPages = read.pages
     const dailyResp = await handleDailySalesPdf(pdfText, buffer, file, user.id, supabase, req, source)
     if (dailyResp) return dailyResp
   }
@@ -931,6 +935,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // [ONE-INVOICE-UNVERIFIED] …en de keerzijde: KON die controle hierboven wel draaien?
+  //
+  // detectMultipleInvoices leest de tekstlaag. Een gescande stapel heeft er geen, dus bij precies
+  // het geval waarvoor die controle is geschreven — de kop van multi-invoice-pdf.ts noemt de
+  // scanner met zoveel woorden — kijkt hij nergens naar en geeft hij null terug. Dat null is tot nu
+  // toe gelezen als "alles in orde", en daarmee stond de weg naar automatisch boeken open.
+  //
+  // Een ontbrekende controle is geen geslaagde controle. Alleen een meerpagina-PDF zonder tekstlaag
+  // wacht op een mens; één pagina of een leesbare tekstlaag verandert er niets aan.
+  const oneInvoiceUnverified =
+    !multiInvoice && (decision.destination === "invoice" || decision.destination === "receipt")
+      ? cannotVerifySingleInvoice({ pages: pdfPages, hasTextLayer: !!pdfText })
+      : null
+  if (oneInvoiceUnverified) {
+    fieldConfidence._safecore = {
+      ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
+      one_invoice_unverified: true,
+      one_invoice_unverified_reason: oneInvoiceUnverified.reason,
+      one_invoice_unverified_pages: pdfPages,
+    }
+  }
+
   // [IBAN-WISSEL] Kennen we deze leverancier al onder een ander rekeningnummer? Ook hier VÓÓR de
   // auto-advance check: een gewisseld IBAN maakt de health needs-review, en daarmee kan deze
   // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
@@ -957,7 +983,7 @@ export async function POST(req: NextRequest) {
   // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
   // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
   const autoAdv =
-    decision.destination === "invoice" && !decision.suggestPaid && !multiInvoice
+    decision.destination === "invoice" && !decision.suggestPaid && !multiInvoice && !oneInvoiceUnverified
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,
           is_statement: v.is_statement,
@@ -1136,15 +1162,20 @@ export async function POST(req: NextRequest) {
 // ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────
 // Pull a PDF's text layer. Fail-safe by design: ANY trouble returns null, and every caller
 // treats null as "no signal" — a text-extraction problem must never block or alter an import.
-async function extractPdfText(buffer: Buffer): Promise<string | null> {
+// [ONE-INVOICE-UNVERIFIED] Geeft nu ook het AANTAL PAGINA'S terug, uit dezelfde geopende PDF. Dat
+// getal is het verschil tussen "één beeld, dus één factuur" en "een stapel die we niet konden
+// lezen" — zie cannotVerifySingleInvoice. `pages: 0` bij een onleesbaar of niet-PDF bestand, wat
+// daar als "geen meerpagina-bestand" telt.
+async function readPdf(buffer: Buffer): Promise<{ text: string | null; pages: number }> {
   try {
     const unpdf = await import("unpdf")
     const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
+    const pages = typeof doc.numPages === "number" ? doc.numPages : 0
     const { text } = await unpdf.extractText(doc, { mergePages: true })
     const t = (text ?? "").trim()
-    return t.length > 0 ? t : null
+    return { text: t.length > 0 ? t : null, pages }
   } catch {
-    return null
+    return { text: null, pages: 0 }
   }
 }
 

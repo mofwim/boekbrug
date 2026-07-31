@@ -2,7 +2,7 @@
 // Locks BOTH directions of the detector, and the second one matters most: this is a soft flag on
 // the busiest path in the app, so a false positive would nag on ordinary invoices until the
 // warning stops being read. Every "normal invoice" case below must stay silent.
-import { detectMultipleInvoices } from "./multi-invoice-pdf";
+import { detectMultipleInvoices, cannotVerifySingleInvoice } from "./multi-invoice-pdf";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -97,6 +97,37 @@ console.log("\n— FLAGS a scanned stack: several invoices in one file —");
     Te betalen € 10,00
   `);
   check("case/space-insensitive: one number, no flag", same === null);
+}
+
+// ── [ONE-INVOICE-UNVERIFIED] Kon de controle hierboven überhaupt draaien? ─────────────────────
+// De detector leest de tekstlaag, en een gescande stapel heeft er geen — dus juist bij het geval
+// waarvoor hij is geschreven geeft hij null terug. Deze functie is het eerlijke antwoord daarop.
+// Ook hier telt de STILTE het zwaarst: automatisch boeken is de moeite waard om te behouden, dus
+// alles wat één beeld is of wél leesbaar was, moet ongemoeid blijven.
+{
+  // HET GEVAL. Meerdere pagina's, geen tekstlaag → we hebben niet gekeken.
+  const scan = cannotVerifySingleInvoice({ pages: 4, hasTextLayer: false });
+  check("gescande stapel zonder tekstlaag → vlag", scan !== null);
+  check("de reden noemt het aantal pagina's", !!scan && /4 pagina/.test(scan.reason));
+  check("de reden bewéért niet dat we meerdere facturen zagen", !!scan && !/bevat \d+ verschillende/.test(scan.reason));
+
+  // DE STILTES.
+  check("één pagina zonder tekstlaag → stil (een foto is één factuur)",
+    cannotVerifySingleInvoice({ pages: 1, hasTextLayer: false }) === null);
+  check("meerdere pagina's MET tekstlaag → stil (de detector heeft echt gekeken)",
+    cannotVerifySingleInvoice({ pages: 9, hasTextLayer: true }) === null);
+  check("geen PDF (pages 0) → stil",
+    cannotVerifySingleInvoice({ pages: 0, hasTextLayer: false }) === null);
+  check("één pagina MET tekstlaag → stil",
+    cannotVerifySingleInvoice({ pages: 1, hasTextLayer: true }) === null);
+
+  // De grens ligt op twee, niet op drie.
+  check("twee pagina's zonder tekstlaag → vlag (de grens is 2)",
+    cannotVerifySingleInvoice({ pages: 2, hasTextLayer: false }) !== null);
+
+  // Onzin uit een kapotte PDF mag geen vlag opleveren.
+  check("NaN pagina's → stil, geen vlag op een rekenfout",
+    cannotVerifySingleInvoice({ pages: NaN, hasTextLayer: false }) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

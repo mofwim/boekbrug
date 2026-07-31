@@ -146,6 +146,12 @@ export interface FieldConfidence {
     // add them separately.
     multiple_invoices?: boolean
     multiple_invoices_reason?: string
+    // [ONE-INVOICE-UNVERIFIED] De keerzijde van de vlag hierboven: niet "we zagen meerdere
+    // facturen", maar "we konden het niet nagaan". Een gescande meerpagina-PDF heeft geen
+    // tekstlaag, en detectMultipleInvoices leest juist die tekstlaag — dus bij precies de stapel
+    // waarvoor die controle bestaat, kijkt hij nergens naar.
+    one_invoice_unverified?: boolean
+    one_invoice_unverified_reason?: string
   }
 }
 
@@ -239,6 +245,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     reasons.push(
       storedSafecore.multiple_invoices_reason ||
         'dit bestand lijkt meerdere facturen te bevatten — er is er maar één ingelezen; voeg de andere los toe'
+    )
+  }
+  // [ONE-INVOICE-UNVERIFIED] Zelfde as, andere grond: hierboven ZAGEN we meerdere facturen, hier
+  // konden we het niet nagaan. Dezelfde vlag, want de vraag die de eigenaar moet beantwoorden is
+  // dezelfde ("zitten er meer facturen in dit bestand?") en elke lezer van deze as — de badge, de
+  // needs-review, het uitsluiten van auto-bevestigen — hoort er hetzelfde op te reageren. Alleen
+  // de reden verschilt, en die is wat hij leest: nooit beweren dat we iets zagen wat we niet zagen.
+  else if (storedSafecore?.one_invoice_unverified === true) {
+    flags.multipleInvoices = true
+    reasons.push(
+      storedSafecore.one_invoice_unverified_reason ||
+        'we konden niet nagaan of dit bestand één factuur bevat of meerdere — controleer het zelf'
     )
   }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
