@@ -38,7 +38,10 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }
 
 // [DS] NL formatting — fixed, never changes
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const NL_DATE   = new Intl.DateTimeFormat('nl-NL')
+// [TZ] timeZone PINNED. This formats invoice_date / due_date / payment_date — all DATE-ONLY
+// columns, so `new Date(...)` is midnight UTC and an unpinned format renders a day early west of
+// UTC. It feeds the copy/share text of a legal invoice, which is the last place to be a day off.
+const NL_DATE   = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' })
 
 const CREDITABLE_STATUSES = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
 

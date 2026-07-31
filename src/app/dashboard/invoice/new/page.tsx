@@ -1463,7 +1463,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
                 <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Betalingsinformatie</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], ['Vervaldatum', new Intl.DateTimeFormat('nl-NL').format(new Date(dueDate || today))], ...(invoiceNumber ? [['Betalingskenmerk', invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
+                  {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], ['Vervaldatum', new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' }).format(new Date(dueDate || today))], ...(invoiceNumber ? [['Betalingskenmerk', invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.8 }}>{label}</span>
                       <span style={{ fontSize: label === 'IBAN' ? 13 : 14, fontWeight: 500, color: '#202124', fontFamily: label === 'IBAN' ? 'Roboto Mono, monospace' : 'inherit', maxWidth: '55%', textAlign: 'right' }}>{value}</span>

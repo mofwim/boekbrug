@@ -128,7 +128,12 @@ export interface WikNotice {
 }
 
 const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
-const DATE = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long", year: "numeric" });
+// [TZ] timeZone PINNED. formatDay() below builds midnight UTC from the ISO parts and formats it,
+// which is right only as long as the RUNTIME's zone is UTC — true on the current host, and not a
+// property of this code. On any other zone west of UTC the aanmaning would print the day before
+// the one it is chasing. Pinning makes it independent of where it runs; on a UTC host the output
+// is byte-identical.
+const DATE = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Amsterdam" });
 
 function formatDay(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");

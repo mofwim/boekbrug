@@ -50,7 +50,11 @@ const QUARTER_RANGES: Record<number, { start: string; end: string; label: string
 
 // [BOEK-028] Fixed Dutch formatting — never changes
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const NL_DATE   = new Intl.DateTimeFormat('nl-NL')
+// [TZ] timeZone PINNED. fmt() is called with BOTH a date-only column (invoice_date — midnight
+// UTC, so a day early west of UTC) and a real timestamp (marked_paid_at — the viewer's zone, so
+// a payment booked at 23:30 Amsterdam reads as the day before). One pin answers both, and this is
+// the accountant's quarter view: the day an invoice carries decides which quarter it is in.
+const NL_DATE   = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' })
 
 function fmt(d: string | null | undefined) {
   if (!d) return '—'

@@ -46,7 +46,10 @@ import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
-const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long" });
+// [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
+// ISO parts, which only renders the intended day while the runtime's zone is UTC. Identical output
+// on a UTC host, correct on any other.
+const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long", timeZone: "Europe/Amsterdam" });
 const formatEuroNL = (n: number) => EUR_NL.format(n);
 const formatDayNL = (iso: string) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
