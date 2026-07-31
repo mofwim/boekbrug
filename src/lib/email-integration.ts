@@ -10,6 +10,9 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
 import { escapeLikeValue } from '@/lib/sanitize'
+// [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
+// dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
+import { trashedDuplicateCleared } from '@/lib/trashed-dedup'
 import { logAuditAction } from '@/lib/audit'
 // [IMPORT-MONITOR Part 0] SAFECORE primitives moved to a shared module so the
 // read-time health classifier can reuse the EXACT same logic. Move-only: these
@@ -2287,9 +2290,11 @@ export async function syncUserEmails(
       const buf = Buffer.from(att.data, 'base64')
       const hash = computeContentHash(buf)
       const { data: dupDoc } = await supabase
-        .from('documents').select('id')
+        .from('documents').select('id, trashed')
         .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
-      if (!dupDoc) {
+      // [DUP-TRASHED] Ook het onleesbare-bijlage-pad: botst het op een weggegooide rij, dan is er
+      // niets meer om naar te verwijzen en hoort de bijlage gewoon opnieuw bewaard te worden.
+      if (!dupDoc || (await trashedDuplicateCleared(supabase, userId, dupDoc))) {
         const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
         const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
         const { error: upErr } = await supabase.storage
@@ -2561,13 +2566,19 @@ export async function syncUserEmails(
 
       const { data: existingByHash } = await supabase
         .from('documents')
-        .select('id')
+        .select('id, trashed')
         .eq('user_id', userId)
         .eq('content_hash', contentHash)
         .limit(1)
         .maybeSingle()
 
-      if (existingByHash) {
+      // [DUP-TRASHED] Hier weegt de uitzondering het zwaarst van alle vier de poorten. Op de andere
+      // drie STAAT er iemand: hij ziet "dit bestand staat al in …", snapt er niets van en meldt het.
+      // Hier kijkt niemand. Gooit de eigenaar een factuur weg en stuurt de leverancier hem opnieuw,
+      // dan werd die tweede aankomst stil als duplicaat geteld en overgeslagen — precies het
+      // "ontbrekende factuur"-geval dat deze app bestaat om te voorkomen, en het enige waar geen
+      // scherm ooit iets over zegt.
+      if (existingByHash && !(await trashedDuplicateCleared(supabase, userId, existingByHash))) {
         await logAuditAction({
           userId,
           action: 'document.duplicate_blocked',

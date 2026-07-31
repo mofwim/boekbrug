@@ -34,6 +34,9 @@ import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { escapeLikeValue } from "@/lib/sanitize";
+// [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
+// dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
+import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -136,13 +139,15 @@ export async function POST(req: NextRequest) {
 
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id")
+    .select("id, file_name, folder_id, trashed")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
-  if (existingDoc) {
+  // [DUP-TRASHED] Een weggegooid bestand is hier geen duplicaat maar een doodlopende weg — en op
+  // dit scherm extra hinderlijk, want de eigenaar probeert juist bewijs aan een bankregel te hangen.
+  if (existingDoc && !(await trashedDuplicateCleared(supabase, user.id, existingDoc))) {
     const folderPath = await buildFolderBreadcrumb(supabase, user.id, existingDoc.folder_id ?? null);
     await logAuditAction({
       userId: user.id,

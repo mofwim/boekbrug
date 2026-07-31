@@ -24,6 +24,9 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { gateFairUse } from "@/lib/fair-use-gate";
 import { escapeLikeValue } from "@/lib/sanitize";
+// [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
+// dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
+import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -94,13 +97,17 @@ export async function POST(req: NextRequest) {
 
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id, invoice_id")
+    .select("id, file_name, folder_id, invoice_id, trashed")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
-  if (existingDoc) {
+  // [DUP-TRASHED] Botst dit op een bestand dat de eigenaar zelf heeft weggegooid, dan is dit geen
+  // duplicaat maar een doodlopende weg: de melding wijst naar een map waar het bestand niet meer te
+  // zien is, en deze poort is met opzet niet te forceren. Sleutel vrijgeven en doorlopen als vers
+  // bestand; zie trashedDuplicateCleared voor waarom dat een UPDATE is en geen SELECT-filter.
+  if (existingDoc && !(await trashedDuplicateCleared(supabase, user.id, existingDoc))) {
     // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, leaf name
     // alone is ambiguous. Walk parent_id up the chain.
     const folderPath = await buildFolderBreadcrumb(

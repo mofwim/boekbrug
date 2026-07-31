@@ -60,6 +60,13 @@ export const RATE_LIMITS = {
   // vaker tikken verandert niets; de limiet houdt alleen het herhaald hameren van die leespas
   // binnen de perken. 20/uur is ruim: één ronde is genoeg, en de cron draait toch elk uur.
   RECONCILE_RUN:       { maxRequests: 20, windowMinutes: 60 },    // 20 matchrondes / uur
+  // [REPROCESS] "Boek mijn opgeslagen bestanden" downloadt in één klik tot 600 opgeslagen bestanden
+  // uit Storage en haalt de tekst uit maximaal 250 PDF's. Qua bandbreedte en rekentijd de zwaarste
+  // knop van de app — en hij had als enige zware route helemaal geen plafond. Er zit geen AI achter,
+  // dus de AI-hekken raken hem niet; hij hoefde er alleen zelf nog een.
+  // Ruim gekozen omdat de handeling idempotent is (upserts per dag): vaker klikken kán niets
+  // toevoegen, dus 6 per uur remt alleen het herhaald hameren, nooit een eerlijke poging.
+  DOCUMENTS_REPROCESS: { maxRequests: 6, windowMinutes: 60 },     // 6 boekrondes / uur
 } as const
 
 // ── Main function ─────────────────────────────────────

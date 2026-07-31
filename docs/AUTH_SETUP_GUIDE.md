@@ -77,11 +77,30 @@ waarschuwing weg voor iedereen.
 - **Redirect URLs** (allowlist — voeg alle toe):
   ```
   https://boekbrug.nl/api/auth/callback
+  https://boekbrug.nl/wachtwoord-herstellen          ← ANDERS WERKT WACHTWOORD VERGETEN NIET
   http://localhost:3000/api/auth/callback
+  http://localhost:3000/wachtwoord-herstellen
   https://*.vercel.app/api/auth/callback      ← preview-deploys (optioneel)
   ```
+  (Draait de site ook op `www.boekbrug.nl`? Zet dan beide paden er óók met `www.` bij — de
+  code bouwt zijn redirect uit `window.location.origin`, dus uit het adres waarop de bezoeker
+  binnenkwam.)
+
   Zonder deze staan wordt de bevestigings-/OAuth-redirect geweigerd en landt de code
   ongebruikt op de homepage.
+
+  ⚠️ **De tweede regel is nieuw en stond hier eerder niet.** Deze lijst noemde alleen de
+  callback, terwijl `/wachtwoord-vergeten` Supabase om een heel ander pad vraagt:
+  `resetPasswordForEmail({ redirectTo: '…/wachtwoord-herstellen' })`. Staat dat pad niet in de
+  allowlist, dan geldt precies de regel hierboven — de redirect wordt geweigerd en de link uit
+  de herstelmail komt uit op de Site URL, dus op de homepage. De bezoeker is dan uitgelogd, er
+  staat niets over wachtwoorden op zijn scherm, en er is geen enkele weg om alsnog een nieuw
+  wachtwoord te kiezen. **Wachtwoord vergeten is dan volledig kapot**, terwijl elk scherm in de
+  app werkt en de mail netjes aankomt.
+
+  Controleren duurt een halve minuut en is de enige manier om het te zien: klik op
+  "Wachtwoord vergeten?", open de mail, klik de link, en kijk of je op
+  `/wachtwoord-herstellen` uitkomt of op de homepage.
 
   **De callback draagt querystring-parameters.** `/register` hangt er `?next=` aan (de
   bestemming) en sinds `[OAUTH-ROL]` ook `?rol=` (de keuze uit stap 1, die anders bij

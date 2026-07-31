@@ -2261,7 +2261,16 @@ Return JSON only.`;
 // 8. Extract company registration details from invoice
 // [BOEK-015] extractCompanyDetails — May 2026
 //
-// Used by: BOEK-015 Onboarding — Step 3A (AI upload flow)
+// ⚠️ ZONDER AANROEPER sinds [TRUST-ONBOARDING]. Stap 3A ("upload een factuur, de AI vult je
+// gegevens in") is verwijderd omdat hij op een ONTVANGEN factuur de KvK/BTW/IBAN van de
+// LEVERANCIER als die van de eigenaar vastlegde — ongevalideerde juridische identiteit, die
+// later op een factuur wordt afgedrukt. De route /api/onboarding/extract die deze functie
+// aanriep is daarna blijven staan zonder scherm dat hem gebruikte, en is nu ook weg.
+//
+// Wie hem opnieuw wil inzetten: niet op de identiteit van de eigenaar. Daar is dit fout voor
+// gebleken. Op INKOMENDE documenten verdient AI-extractie zijn geld wel.
+//
+// Was: BOEK-015 Onboarding — Step 3A (AI upload flow)
 // Reads actual PDF or image content and extracts the SENDER's
 // business registration data: bedrijfsnaam, KVK, BTW, IBAN
 //

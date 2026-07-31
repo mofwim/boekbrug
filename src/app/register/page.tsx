@@ -11,6 +11,7 @@ import { ErrorMessage } from '@/components/ui/Feedback'
 import { readHandoff, hasInvoiceContent } from '@/lib/factuur-handoff'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
 import { ROLE_PARAM } from '@/lib/register-intent'
+import { EMAIL_REGEX } from '@/lib/validation'
 import {
   PURPOSE_PARAM,
   landingPath,
@@ -19,15 +20,6 @@ import {
   ARCHIEF_ROLE,
 } from '@/lib/account-purpose'
 
-// Bewust ruim: iets vóór de @, iets erachter, en daarin een punt met minstens twee tekens erna.
-// De controle die hier stond was `includes('@') && includes('.')`, en die liet "jan.de@vries"
-// door — een adres zonder domeinnaam. Dat kwam pas bij Supabase aan het licht, en dat is een
-// ronde langs de server voor iets wat hier al te zien is.
-//
-// Strenger dan dit hoort het niet te worden. Het echte oordeel over een adres is of er post
-// aankomt, en dat weet alleen de bevestigingsmail. Een regex die "te slim" is, weigert vooral
-// geldige adressen van mensen met een ongebruikelijk domein.
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 function RegisterContent() {
   const searchParams = useSearchParams()
