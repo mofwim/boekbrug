@@ -42,17 +42,32 @@ export const MAX_INTAKE_UPLOAD_BYTES = 10 * 1024 * 1024;
 // 300 dpi ≈ 2480×3508, so 2500 loses nothing legible.
 export const MAX_EDGE = 2500;
 
+/** Default JPEG quality — high enough that a re-encode stays legible for OCR/AI. */
+export const DEFAULT_QUALITY = 0.92;
+
+/** Bounds for ONE re-encode. Defaults reproduce the original behaviour exactly. */
+export interface JpegBounds {
+  maxEdge?: number;
+  quality?: number;
+}
+
 // Decode any browser-displayable image (WebP/HEIC/GIF/BMP/TIFF/…) and re-encode as
 // JPEG so both the reader and pdf-lib can handle it. Only used when the bytes are NOT
 // already a baseline JPG/PNG that fits the cap (those pass through losslessly).
-export async function toJpegBytes(file: File): Promise<Uint8Array> {
+//
+// [MULTI-PAGE-FIT] `bounds` lets the multi-page combiner re-encode a page TIGHTER than
+// the default when N pages must together fit one upload cap. Omitted → the exact
+// defaults every existing caller already relied on (MAX_EDGE, quality 0.92).
+export async function toJpegBytes(file: File, bounds?: JpegBounds): Promise<Uint8Array> {
+  const maxEdge = Math.max(1, Math.round(bounds?.maxEdge ?? MAX_EDGE));
+  const quality = Math.min(1, Math.max(0.3, bounds?.quality ?? DEFAULT_QUALITY));
   const bitmap = await createImageBitmap(file);
   try {
     let w = bitmap.width;
     let h = bitmap.height;
     const longEdge = Math.max(w, h);
-    if (longEdge > MAX_EDGE) {
-      const k = MAX_EDGE / longEdge;
+    if (longEdge > maxEdge) {
+      const k = maxEdge / longEdge;
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
     }
@@ -63,7 +78,7 @@ export async function toJpegBytes(file: File): Promise<Uint8Array> {
     if (!ctx) throw new Error("canvas 2d context unavailable");
     ctx.drawImage(bitmap, 0, 0, w, h); // scaled draw into the bounded canvas
     const blob: Blob = await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas toBlob failed"))), "image/jpeg", 0.92),
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas toBlob failed"))), "image/jpeg", quality),
     );
     // A byte-trivial blob means the encode produced nothing real — refuse it rather
     // than embed an empty page (belt-and-braces on top of the size bound above).
