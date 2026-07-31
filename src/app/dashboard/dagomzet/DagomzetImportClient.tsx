@@ -61,7 +61,9 @@ export default function DagomzetImportClient() {
       // [LEDGER] The Z-report parser recognised a bookkeeper grootboek export → route the SAME
       // file to the ledger import (a PIN/kas cross-check), not a dead-end error.
       if (json?.wrongKind === 'ledger') { await previewLedger(file); return }
-      if (!res.ok) { setError(json.detail ?? json.error ?? 'Kon het bestand niet lezen'); return }
+      // Clear the remembered name on a failed read: the upload label reads
+      // "Ander bestand kiezen (x.xls)" off it, which claimed a file was loaded when none was.
+      if (!res.ok) { setFileName(null); setError(json.detail ?? json.error ?? 'Kon het bestand niet lezen'); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError('Er ging iets mis bij het lezen van het bestand')
