@@ -1,7 +1,7 @@
 // src/lib/fair-use-gate.ts
 // [FAIR-USE] De poort die de routes gebruiken: één regel per route in plaats van zes.
 //
-// Er zijn zes routes die een betaalde Claude-call doen (intake, onboarding/extract,
+// Er zijn vijf routes die een betaalde Claude-call doen (intake,
 // email/upload, email/reimport, eft/import, bank/attach-invoice) en één die een factuur
 // verstuurt. Zonder een gedeelde poort zou elk van die zeven zijn eigen versie krijgen van
 // "welk plan heeft deze gebruiker, wat is zijn stand, mag dit door" — en zeven versies van

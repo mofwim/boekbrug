@@ -8,7 +8,7 @@
 // exposure, because the exposure is the SUM over users and paths:
 //
 //   · Six route buckets share RATE_LIMITS.AI_OCR at 240/hour — intake,
-//     onboarding/extract, email/upload, email/reimport, eft/import,
+//     email/upload, email/reimport, eft/import,
 //     bank/attach-invoice. Summed: 1,440 AI reads/hour from one account.
 //   · /api/cron/email-sync selects EVERY row of email_connections with no plan
 //     filter and classifies up to ~240 documents per user per run, twelve runs

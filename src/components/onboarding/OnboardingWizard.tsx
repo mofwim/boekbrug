@@ -19,14 +19,14 @@
 
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
 // [TRUST-ONBOARDING] Validate the owner's OWN identity at entry — these validators
 // already exist but the onboarding capture path never used them, so garbage BTW/IBAN
 // was stored and later printed on a legal invoice. KvK stays the local KVK_REGEX.
-import { BTW_REGEX } from "@/lib/validation";
+import { BTW_REGEX, EMAIL_REGEX } from "@/lib/validation";
 import { isValidIban, normalizeIban } from "@/lib/epc-qr";
 import Link from 'next/link'
 import { M3 } from '@/lib/design/tokens'
@@ -46,10 +46,11 @@ interface CompanyData {
 
 interface OnboardingWizardProps {
   userName: string;
-  userEmail?: string;
   initialStep?: number;
   initialRole?: Role;
   roleWasSet?: boolean; // [BOEK-015] P2: true if user already chose role (skip step 2)
+  /** [HERVATTEN] De bedrijfsgegevens die al in het profiel staan — zie useState hieronder. */
+  initialCompany?: CompanyData;
 }
 
 // ── Progress mapping ─────────────────────────────────────
@@ -85,6 +86,7 @@ export function OnboardingWizard({
   initialStep = 1,
   initialRole = "zzp",
   roleWasSet = false,
+  initialCompany,
 }: OnboardingWizardProps) {
   const firstName = userName.split(" ")[0] || "daar";
   // [BOEK-015] fix: DB default is 0 — clamp to 1 so Step 1 always renders
@@ -94,9 +96,24 @@ export function OnboardingWizard({
   // [BOEK-015] P2 fix: skip step 2 only when role was genuinely chosen before
   // roleWasSet comes from page.tsx (checks profile.role + onboarding_step)
   const roleAlreadySet = roleWasSet;
-  const [company, setCompany] = useState<CompanyData>({
-    company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
-  });
+  // [HERVATTEN] Begint bij wat er AL in het profiel staat, niet leeg.
+  //
+  // Dit stond hard op lege strings, en dat had een gevolg dat op de meest voorkomende route
+  // altijd optrad. Wie zich met e-mail registreert vult daar zijn bedrijfsnaam, KVK en BTW in;
+  // die worden opgeslagen en de registratie zet onboarding_step op 4. De wizard opent dus op
+  // stap 4 — mét een leeg `company`-object, want de pagina las die kolommen niet eens.
+  //
+  // Op het slotscherm bouwt StepDone zijn "dit ontbreekt nog"-lijst uit precies dit object. De
+  // gebruiker kreeg daardoor te lezen dat hij zijn bedrijfsnaam, BTW-nummer, KvK-nummer én adres
+  // nog moest invullen "want dat is wettelijk verplicht op een factuur" — over gegevens die hij
+  // tien minuten eerder had ingetikt en die gewoon in de database stonden.
+  //
+  // Datzelfde gold voor iedereen die de wizard hervat: een dag later terugkomen betekende een
+  // leeg formulier en een slotscherm dat loog. Het comment boven StepDone zegt "Be HONEST about
+  // readiness" — dat kan alleen als het scherm weet wat er al staat.
+  const [company, setCompany] = useState<CompanyData>(
+    initialCompany ?? { company_name: "", kvk_number: "", btw_number: "", iban: "", address: "" }
+  );
   // [FUNNEL-OVERDRACHT] Kwam deze gebruiker binnen via de gratis factuurgenerator, dan tikte
   // hij zijn bedrijfsblok daar al in — bedrijfsnaam, adres, KVK, BTW, IBAN. Dat is exact deze
   // stap. Hem hetzelfde nóg een keer laten invullen was de duurste wrijving in de hele trechter:
@@ -109,6 +126,12 @@ export function OnboardingWizard({
   //
   // localStorage bestaat alleen in de browser, dus dit gebeurt na mount. Alleen lege velden
   // worden gevuld: wat de gebruiker hier zelf al typte wint altijd.
+  // Alleen om het te kúnnen zeggen. Stil voorvullen zonder uitleg voelt als een systeem dat
+  // meer van je weet dan je dacht; één zin erbij maakt er herkenning van.
+  // (Stond onder het effect dat hem gebruikt — vandaar de eslint-fout "Cannot access variable
+  // before it is declared". Werkte in de praktijk, want het effect draait na mount, maar de
+  // volgorde hoort te kloppen met het gebruik.)
+  const [prefilledFromFactuur, setPrefilledFromFactuur] = useState(false);
   const [prefillDone, setPrefillDone] = useState(false);
   useEffect(() => {
     if (prefillDone) return;
@@ -129,9 +152,6 @@ export function OnboardingWizard({
       /* geblokkeerde opslag — de gebruiker vult het gewoon zelf in */
     }
   }, [prefillDone]);
-  // Alleen om het te kúnnen zeggen. Stil voorvullen zonder uitleg voelt als een systeem dat
-  // meer van je weet dan je dacht; één zin erbij maakt er herkenning van.
-  const [prefilledFromFactuur, setPrefilledFromFactuur] = useState(false);
   const [kvkError, setKvkError] = useState("");
   const [btwError, setBtwError] = useState("");
   const [ibanError, setIbanError] = useState("");
@@ -139,6 +159,8 @@ export function OnboardingWizard({
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  // [UITNODIGING] Apart van saveError: dit gaat over het adres in het veld, niet over de stap.
+  const [inviteError, setInviteError] = useState("");
 
   // [BOEK-015] Reset saving state whenever step changes — safety net for all transitions
   // Placed after useState declaration to avoid hoisting confusion
@@ -159,7 +181,6 @@ export function OnboardingWizard({
   // [BOEK-011] Fix 2: detect gmail=connected from OAuth callback
   const [gmailConnected, setGmailConnected] = useState(false);
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const progress = stepToProgress(step, role);
   const counter = stepCounter(step, role, roleAlreadySet);
@@ -256,9 +277,15 @@ export function OnboardingWizard({
 
   // ── "Volgende" logic per step ──
   async function handleNext() {
+    // [DUBBEL] Loopt er al een opslag, dan houdt het hier op. De knop is dan uitgeschakeld, maar
+    // een tweede klik vóór de her-render — of straks een Enter uit het formulier — kwam er
+    // langs, en dan staan er twee PATCH'es op dezelfde stap in de lucht.
+    if (saving || finishing) return;
+
     // [BOEK-015] fix: always wrap in try/finally so saving resets even on error
     setSaving(true);
     setSaveError("");
+    setInviteError("");
     try {
     if (role === "zzp") {
       if (step === 1) {
@@ -311,12 +338,38 @@ export function OnboardingWizard({
       }
       if (step === 4) { await persistStep(5); setStep(5); return; }
       if (step === 5) {
-        if (accountantEmail.trim()) {
-          await fetch("/api/invite/accountant", {
+        // [UITNODIGING] Verstuurd is verstuurd, en anders zeggen we het.
+        //
+        // Hier stond `.catch(() => {})` en daarna gewoon door naar het slotscherm. Wie het adres
+        // van zijn boekhouder intikte kreeg dus "je bent klaar" te zien, ook als die uitnodiging
+        // nooit is aangemaakt — een verkeerd adres, een ratelimiet, een 500, allemaal stil. Dat
+        // is precies het gat dat het [COHERENCE-ONBOARDING]-comment hierboven al een keer heeft
+        // gedicht voor één oorzaak (de verkeerde veldnaam); de vorm bleef staan voor alle andere.
+        //
+        // Het is en blijft optioneel: leeg laten mag, "Sla over" mag. Maar wie hem invult moet
+        // erop kunnen rekenen, of horen dat het niet lukte.
+        const boekhouder = accountantEmail.trim();
+        if (boekhouder) {
+          if (!EMAIL_REGEX.test(boekhouder)) {
+            setInviteError("Dit e-mailadres klopt niet — controleer het of laat het leeg.");
+            setSaving(false);
+            return;
+          }
+          const res = await fetch("/api/invite/accountant", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accountant_email: accountantEmail.trim() }),
-          }).catch(() => {}); // non-blocking
+            body: JSON.stringify({ accountant_email: boekhouder }),
+          });
+          if (!res.ok) {
+            setInviteError(
+              res.status === 429
+                ? "Te veel uitnodigingen achter elkaar — wacht even, of sla deze stap over."
+                : "De uitnodiging kon niet verstuurd worden. Probeer het opnieuw of sla over."
+            );
+            setSaving(false);
+            return;
+          }
+          setInviteError("");
         }
         await persistStep(6);
         setStep(6);
@@ -345,16 +398,37 @@ export function OnboardingWizard({
         return;
       }
       if (step === 4) {
-        if (clientEmail.trim()) {
-          // [COHERENCE-ONBOARDING] The route reads `clientEmail` (see /api/invite/client
-          // and InviteClient.tsx). Sending `client_email` made it 400 "Email verplicht",
-          // which the .catch swallowed → the invite was never created while onboarding
-          // showed success. Send the field name the route actually expects.
-          await fetch("/api/invite/client", {
+        // [COHERENCE-ONBOARDING] The route reads `clientEmail` (see /api/invite/client
+        // and InviteClient.tsx). Sending `client_email` made it 400 "Email verplicht",
+        // which the .catch swallowed → the invite was never created while onboarding
+        // showed success. Send the field name the route actually expects.
+        //
+        // [UITNODIGING] En het antwoord wordt nu ook gelezen. Dat die veldnaam ooit fout kón
+        // staan zonder dat iemand het merkte, kwam door de `.catch` eronder: die maakte van elke
+        // mislukking een succes op het scherm. De veldnaam is gerepareerd, de vorm die hem
+        // verborg tot nu toe niet.
+        const klant = clientEmail.trim();
+        if (klant) {
+          if (!EMAIL_REGEX.test(klant)) {
+            setInviteError("Dit e-mailadres klopt niet — controleer het of laat het leeg.");
+            setSaving(false);
+            return;
+          }
+          const res = await fetch("/api/invite/client", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ clientEmail: clientEmail.trim() }),
-          }).catch(() => {});
+            body: JSON.stringify({ clientEmail: klant }),
+          });
+          if (!res.ok) {
+            setInviteError(
+              res.status === 429
+                ? "Te veel uitnodigingen achter elkaar — wacht even, of sla deze stap over."
+                : "De uitnodiging kon niet verstuurd worden. Probeer het opnieuw of sla over."
+            );
+            setSaving(false);
+            return;
+          }
+          setInviteError("");
         }
         await persistStep(5);
         setStep(5);
@@ -373,6 +447,16 @@ export function OnboardingWizard({
   }
 
   async function handleSkip() {
+    // [STIL-STRANDEN] Dit hele blok stond BUITEN een try/catch, terwijl persistStep met opzet
+    // gooit als het opslaan mislukt (zie daar). Een verlopen sessie of een wegvallende
+    // verbinding leverde dus een onafgevangen rejection op: de knop deed niets, er kwam geen
+    // melding, er draaide geen wieltje. De gebruiker klikt dan nog eens, en nog eens, en sluit
+    // het tabblad. handleNext had die afhandeling al — "Sla over" is dezelfde handeling met
+    // dezelfde risico's, en hoorde hem net zo goed te hebben.
+    if (saving || finishing) return;
+    setSaving(true);
+    setSaveError("");
+    try {
     if (role === "zzp") {
       // [COLD-START] "Sla over" on "Hoe wil je beginnen?" means SKIP the setup —
       // go straight to Gmail (step 4). It used to silently drop the user into the
@@ -382,21 +466,49 @@ export function OnboardingWizard({
       if (step === "3A" || step === "3B") { await persistStep(4); setStep(4); return; }
       if (step === "3C") { await persistStep(4); setStep(4); return; } // [FACTUUR-B]
       if (step === 4) { await persistStep(5); setStep(5); return; }
-      if (step === 5) { await finish(); return; }
+      // Overslaan betekent hier: géén boekhouder uitnodigen — niet: de rest overslaan. Dit riep
+      // finish() aan en sprong dus regelrecht naar het dashboard, langs het slotscherm heen. Juist
+      // daar staat welke wettelijk verplichte gegevens nog ontbreken voordat je een factuur kunt
+      // versturen; dat is het enige scherm dat dat zegt. Twee knoppen naast elkaar op hetzelfde
+      // scherm hoorden niet op twee verschillende plekken uit te komen.
+      if (step === 5) { await persistStep(6); setStep(6); return; }
     }
     if (role === "accountant") {
       if (step === 3) { await persistStep(4); setStep(4); return; }
       if (step === 4) { await finish(); return; }
     }
+    } catch (err) {
+      console.error("[STIL-STRANDEN] handleSkip error:", err);
+      setSaving(false);
+      setSaveError("Overslaan mislukt — controleer je verbinding en probeer opnieuw.");
+    }
   }
 
   // [BOEK-015] Reset — clears all onboarding data and starts from Step 1
   async function handleReset() {
+    // Een wis die niet lukte, mag niet als gelukt ogen. Hier stond `catch { /* silent — redirect
+    // anyway */ }`: mislukte de DELETE, dan werd er tóch hard genavigeerd, en kwam de gebruiker
+    // terug op precies dezelfde gegevens waarvan hij zojuist had bevestigd dat ze gewist mochten
+    // worden. Niets legde uit waarom ze er nog stonden.
+    if (resetting) return;
     setResetting(true);
     try {
-      await fetch("/api/onboarding/reset", { method: "DELETE" });
+      const res = await fetch("/api/onboarding/reset", { method: "DELETE" });
+      if (!res.ok) {
+        setSaveError(
+          res.status === 401
+            ? "Je sessie is verlopen — log opnieuw in om opnieuw te beginnen."
+            : "Opnieuw beginnen is niet gelukt. Je gegevens staan er nog; probeer het zo opnieuw."
+        );
+        setResetting(false);
+        setShowResetConfirm(false);
+        return;
+      }
     } catch {
-      // silent — redirect anyway
+      setSaveError("Opnieuw beginnen is niet gelukt — controleer je verbinding.");
+      setResetting(false);
+      setShowResetConfirm(false);
+      return;
     }
     // Hard reload to clear all state and re-fetch profile
     window.location.href = "/onboarding";
@@ -471,8 +583,22 @@ export function OnboardingWizard({
         />
       </div>
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col px-6 pt-10 pb-8 w-full" style={{ maxWidth: "480px", margin: "0 auto" }}>
+      {/* Content
+          In een <form>, zodat Enter uit een veld doet wat "Volgende" doet. Er stond geen enkele
+          onKeyDown en geen enkel formulier in dit hele bestand: over zes schermen met tien velden
+          deed de Enter-toets nergens iets, en mobiele toetsenborden toonden een regeleinde waar
+          een verzendtoets hoort. De submit doet precies wat de knop doet — inclusief dezelfde
+          voorwaarden, dus Enter kan niet langs een uitgeschakelde knop heen. */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (isDone) { void finish(); return; }
+          if (hideNextButton || isNextDisabled || saving || finishing) return;
+          void handleNext();
+        }}
+        className="flex-1 flex flex-col px-6 pt-10 pb-8 w-full"
+        style={{ maxWidth: "480px", margin: "0 auto" }}
+      >
         <div className="flex-1">
 
           {step === 1 && <StepWelcome firstName={firstName} />}
@@ -502,7 +628,11 @@ export function OnboardingWizard({
           )}
           {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} onNext={handleNext} />}
           {role === "zzp" && step === 5 && (
-            <StepAccountant accountantEmail={accountantEmail} setAccountantEmail={setAccountantEmail} />
+            <StepAccountant
+              accountantEmail={accountantEmail}
+              setAccountantEmail={(v) => { setAccountantEmail(v); setInviteError(""); }}
+              error={inviteError}
+            />
           )}
           {role === "zzp" && step === 6 && (
             <StepDone
@@ -522,7 +652,11 @@ export function OnboardingWizard({
             <StepOfficeDetails company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
           )}
           {role === "accountant" && step === 4 && (
-            <StepInviteClient clientEmail={clientEmail} setClientEmail={setClientEmail} />
+            <StepInviteClient
+              clientEmail={clientEmail}
+              setClientEmail={(v) => { setClientEmail(v); setInviteError(""); }}
+              error={inviteError}
+            />
           )}
           {role === "accountant" && step === 5 && <StepDone firstName={firstName} role="accountant" missingSendFields={[]} />}
         </div>
@@ -539,6 +673,7 @@ export function OnboardingWizard({
           )}
           {showSkip && (
             <button
+              type="button"
               onClick={handleSkip}
               style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#5f6368", background: "none", border: "none", cursor: "pointer" }}
             >
@@ -549,6 +684,7 @@ export function OnboardingWizard({
           {/* [BOEK-015] Reset button — shown from step 2 onwards, hidden on done */}
           {!isDone && step !== 1 && (
             <button
+              type="button"
               onClick={() => setShowResetConfirm(true)}
               disabled={resetting || saving}
               style={{ width: "100%", padding: "8px", fontSize: "13px", color: "#dadce0", background: "none", border: "none", cursor: "pointer" }}
@@ -557,7 +693,7 @@ export function OnboardingWizard({
             </button>
           )}
         </div>
-      </div>
+      </form>
 
       {/* [BOEK-015] Reset confirmation dialog */}
       {showResetConfirm && (
@@ -578,6 +714,7 @@ export function OnboardingWizard({
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <button
+                type="button"
                 onClick={handleReset}
                 disabled={resetting}
                 style={{
@@ -590,6 +727,7 @@ export function OnboardingWizard({
                 {resetting ? "Bezig…" : "Ja, begin opnieuw"}
               </button>
               <button
+                type="button"
                 onClick={() => setShowResetConfirm(false)}
                 disabled={resetting}
                 style={{
@@ -617,6 +755,7 @@ function Btn({ onClick, loading, children, secondary, disabled }: {
   const isOff = !!loading || !!disabled;
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={isOff}
       style={{
@@ -640,23 +779,33 @@ function Btn({ onClick, loading, children, secondary, disabled }: {
 
 // ── Input ────────────────────────────────────────────────
 
-function Input({ label, placeholder, value, onChange, inputMode, maxLength, error, type }: {
-  label: string; placeholder: string; value: string; onChange: (v: string) => void;
+// De label hoorde bij niets. Er stond geen htmlFor en geen id, dus een tik op het opschrift
+// zette de cursor niet in het veld (op een telefoon een groot doelwit dat niets doet) en een
+// schermlezer noemde het veld ongelabeld. En `autoComplete` ontbrak overal, dus de browser bood
+// nooit het adres of de bedrijfsnaam aan die hij allang kent — in een formulier dat juist om die
+// gegevens vraagt.
+function Input({ id, label, placeholder, value, onChange, inputMode, maxLength, error, type, autoComplete }: {
+  id: string; label: string; placeholder: string; value: string; onChange: (v: string) => void;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-  maxLength?: number; error?: string; type?: string;
+  maxLength?: number; error?: string; type?: string; autoComplete?: string;
 }) {
+  const foutId = error ? `${id}-fout` : undefined;
   return (
     <div>
-      <label style={{ display: "block", fontSize: "14px", fontWeight: 500, color: "#202124", marginBottom: "8px" }}>
+      <label htmlFor={id} style={{ display: "block", fontSize: "14px", fontWeight: 500, color: "#202124", marginBottom: "8px" }}>
         {label}
       </label>
       <input
+        id={id}
         type={type ?? (inputMode === "email" ? "email" : "text")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         inputMode={inputMode}
         maxLength={maxLength}
+        autoComplete={autoComplete}
+        aria-describedby={foutId}
+        aria-invalid={error ? true : undefined}
         style={{
           width: "100%",
           padding: "14px 16px",
@@ -670,7 +819,7 @@ function Input({ label, placeholder, value, onChange, inputMode, maxLength, erro
           boxSizing: "border-box",
         }}
       />
-      {error && <p style={{ fontSize: "13px", color: M3.error, marginTop: "6px" }}>{error}</p>}
+      {error && <p id={foutId} role="alert" style={{ fontSize: "13px", color: M3.error, marginTop: "6px" }}>{error}</p>}
     </div>
   );
 }
@@ -682,6 +831,7 @@ function ChoiceCard({ active, onClick, icon, title, desc }: {
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         width: "100%",
@@ -767,6 +917,7 @@ function StepInvoiceStart({ value, onChange, error }: {
       </div>
 
       <Input
+        id="ob-factuurnummer"
         label="Je volgende factuurnummer"
         placeholder="bijv. 045-2026"
         value={value}
@@ -830,16 +981,16 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
         </div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
+        <Input id="ob-bedrijfsnaam" autoComplete="organization" label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
+        <Input id="ob-kvk" label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
-        <Input label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number} error={btwError}
+        <Input id="ob-btw" label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number} error={btwError}
           onChange={(v) => { setCompany((p) => ({ ...p, btw_number: v })); setBtwError(""); }} />
-        <Input label="Wat is je IBAN? (voor betaalverzoeken)" placeholder="NL91ABNA0417164300" value={company.iban} error={ibanError}
+        <Input id="ob-iban" label="Wat is je IBAN? (voor betaalverzoeken)" placeholder="NL91ABNA0417164300" value={company.iban} error={ibanError}
           onChange={(v) => { setCompany((p) => ({ ...p, iban: v })); setIbanError(""); }} />
-        <Input label="Wat is je adres? (nodig om facturen te versturen)" placeholder="Straat 1, 1234 AB Stad" value={company.address}
+        <Input id="ob-adres" autoComplete="street-address" label="Wat is je adres? (nodig om facturen te versturen)" placeholder="Straat 1, 1234 AB Stad" value={company.address}
           onChange={(v) => setCompany((p) => ({ ...p, address: v }))} />
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
@@ -864,9 +1015,9 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is nodig — de rest kun je later aanpassen.</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <Input label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
+        <Input id="ob-kantoornaam" autoComplete="organization" label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input label="KVK-nummer van je kantoor (optioneel)" placeholder="12345678" value={company.kvk_number}
+        <Input id="ob-kantoor-kvk" label="KVK-nummer van je kantoor (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
       </div>
@@ -913,6 +1064,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         </div>
         {/* [BOEK-015] fix: explicit button — auto-advance may not fire if step wasn't set */}
         <button
+          type="button"
           onClick={onNext}
           style={{
             width: "100%", padding: "16px", borderRadius: "16px",
@@ -949,6 +1101,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         </div>
       ) : (
         <button
+          type="button"
           onClick={() => {
             setLoading(true);
             window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding";
@@ -974,8 +1127,8 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
   );
 }
 
-function StepAccountant({ accountantEmail, setAccountantEmail }: {
-  accountantEmail: string; setAccountantEmail: (v: string) => void;
+function StepAccountant({ accountantEmail, setAccountantEmail, error }: {
+  accountantEmail: string; setAccountantEmail: (v: string) => void; error?: string;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -998,14 +1151,15 @@ function StepAccountant({ accountantEmail, setAccountantEmail }: {
           voor hem is BoekBrug altijd gratis.
         </p>
       </div>
-      <Input label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"
-        value={accountantEmail} inputMode="email" onChange={setAccountantEmail} />
+      <Input id="ob-boekhouder" label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"
+        value={accountantEmail} inputMode="email" autoComplete="email" error={error}
+        onChange={setAccountantEmail} />
     </div>
   );
 }
 
-function StepInviteClient({ clientEmail, setClientEmail }: {
-  clientEmail: string; setClientEmail: (v: string) => void;
+function StepInviteClient({ clientEmail, setClientEmail, error }: {
+  clientEmail: string; setClientEmail: (v: string) => void; error?: string;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -1015,8 +1169,9 @@ function StepInviteClient({ clientEmail, setClientEmail }: {
           Je klant ontvangt een e-mail om zijn account aan te maken.
         </p>
       </div>
-      <Input label="E-mailadres klant" placeholder="klant@bedrijf.nl"
-        value={clientEmail} inputMode="email" onChange={setClientEmail} />
+      <Input id="ob-klant" label="E-mailadres klant" placeholder="klant@bedrijf.nl"
+        value={clientEmail} inputMode="email" autoComplete="email" error={error}
+        onChange={setClientEmail} />
     </div>
   );
 }
