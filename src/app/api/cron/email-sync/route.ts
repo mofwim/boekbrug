@@ -53,7 +53,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
   }
 
-  let userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
+  // [PORT-RESIDU] `const`, niet `let`. Dit stond hier als const (34fcd15) en werd bij het overnemen
+  // uit de billing-tak (8a7483d) naar let gezet omdat DAAR een regel volgde die opnieuw toekende: het
+  // rechtenfilter uit de toelichting hieronder. Dat filter is bewust niet meegekomen, de `let` wel —
+  // een leesbaar restant van een tak die we niet volgen.
+  //
+  // En const is hier het veiligere antwoord, niet alleen het nettere. userIds voedt verderop
+  // `connections: userIds.length` in zowel de cron-hartslag als het JSON-antwoord, en `connections`
+  // betekent "aantal gekoppelde mailboxen". Wie ooit alsnog een filter toevoegt (de maandteller uit
+  // het open punt hieronder) en dat doet door userIds opnieuw toe te kennen, laat dat getal stilletjes
+  // "aantal dat door het filter kwam" betekenen — zelfde naam, andere waarheid, en een hartslag die
+  // iets anders rapporteert dan hij zegt. Met const kan dat niet per ongeluk: filteren dwingt dan een
+  // nieuwe naam af (`const eligible = userIds.filter(...)`) en de lus draait daarop.
+  const userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
 
   // ── [COST-GUARD] Wat de kosten van dit script begrenst ─────────────────
   //
