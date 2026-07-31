@@ -82,6 +82,11 @@ export async function POST(
     // [BRIDGE-QUARTER] real payment date (Axis 2 / cash). Distinct from
     // marked_paid_at (in-system confirmation timestamp).
     payment_date?: string;
+    // [AUTO-CONFIRM-ONCE] The caller promises to run ONE bank auto-confirm pass itself after this
+    // request (a bulk verify runs one after the whole batch). Opt-IN on purpose: absent or false —
+    // an older client, or the pay path, which has no client-side pass at all — keeps today's
+    // inline behaviour exactly. See the gate further down.
+    deferAutoConfirm?: boolean;
   } = {};
   try {
     body = await req.json();
@@ -248,26 +253,45 @@ export async function POST(
   // keep the kasboek in sync immediately — create the linked 'betaling' entry (balance-only,
   // never a cost) or remove an orphan. Self-healing + best-effort; the kasboek load also
   // reconciles, so this only makes it instant.
-  if (action === "pay" || action === "verify") {
-    await reconcileCashSettlements(supabase, user.id);
-    // [BANK-LINK] A just-verified invoice may already have its payment sitting in an imported bank
-    // statement — including as part of a multi-invoice batch. Run the SAME safe engine the cron runs
-    // (only books provably-exact reference+amount / iban+amount / exact-batch matches), inline, so
-    // the invoice flips to 'betaald · gekoppeld' IMMEDIATELY instead of waiting up to a day for the
-    // daily cron. This is exactly the gap where an already-paid invoice showed "24 dagen te laat".
-    // Best-effort: a failure just defers the link to the cron / the /bank page, never blocks verify.
+  // The kasboek settlement is UNCONDITIONAL and stays that way: it is what turns a
+  // `payment_method: 'kas'` confirmation into a drawer movement, and the pay path has nothing else
+  // that would do it. Only the bank scan below is skippable.
+  await reconcileCashSettlements(supabase, user.id);
+  // [BANK-LINK] A just-verified invoice may already have its payment sitting in an imported bank
+  // statement — including as part of a multi-invoice batch. Run the SAME safe engine the cron runs
+  // (only books provably-exact reference+amount / iban+amount / exact-batch matches), inline, so
+  // the invoice flips to 'betaald · gekoppeld' IMMEDIATELY instead of waiting up to a day for the
+  // daily cron. This is exactly the gap where an already-paid invoice showed "24 dagen te laat".
+  // Best-effort: a failure just defers the link to the cron / the /bank page, never blocks verify.
+  //
+  // [AUTO-CONFIRM-ONCE] …but ONCE per user action, not once per invoice. runBankAutoConfirm is a
+  // FULL-ACCOUNT pass: every pending bank line and every non-paid invoice of this owner, paginated,
+  // then matched pairwise. Running it here on every confirm meant a bulk verify of N invoices did
+  // N of those scans — while the client that drives that loop states the opposite in its own code
+  // ("ONE auto-confirm pass after the whole batch — never per invoice, which would re-scan the full
+  // set N times"), and then runs its single pass anyway. The client's intent was right; this call
+  // silently defeated it. A caller that will run its own pass now says so and we skip ours.
+  //
+  // Deliberately opt-IN: an older client, and the pay path (which has no client-side pass), send
+  // nothing and keep the inline scan exactly as before.
+  if (!body.deferAutoConfirm) {
     try {
       await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id });
     } catch { /* non-fatal — cron / bank page still catches it */ }
   }
 
   // ── Notify (service_role — notifications has no authenticated INSERT policy) ──
+  // [ZERO-ROWS-NORMAL] .maybeSingle(), because "no accountant linked" is the ordinary case for a
+  // ZZP'er — .single() treats it as an error (PostgREST 406) that this call site then discards.
+  // The .limit(1) STAYS: accountant_clients is UNIQUE(accountant_id, zzper_id), so an owner may
+  // legitimately have two accountants, and maybeSingle() without a limit fetches a list and nulls
+  // the result when it finds more than one row — which would silently stop notifying either of them.
   const { data: link } = await supabase
     .from("accountant_clients")
     .select("accountant_id")
     .eq("zzper_id", user.id)
     .limit(1)
-    .single();
+    .maybeSingle();
 
   const pipeline = createPipelineClient();
 
@@ -301,12 +325,22 @@ export async function POST(
 
   // Quarter for the accountant deep-link, derived from invoice_date (fallback: today).
   // The row lives in /dashboard/clients/{zzper}/kwartaal?q=&year=&focus={id}.
-  const baseDate =
-    typeof invoice.invoice_date === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.invoice_date)
-      ? new Date(invoice.invoice_date)
-      : new Date();
-  const dlYear = baseDate.getFullYear();
-  const dlQuarter = Math.ceil((baseDate.getMonth() + 1) / 3);
+  // [TZ] Read the year/month off the ISO STRING, not off a Date. `new Date("2026-01-01")` is UTC
+  // midnight and .getFullYear()/.getMonth() then answer in the SERVER's zone — one hour west of
+  // UTC and this invoice lands in Q4 of the previous year, so the accountant's notification opens
+  // the wrong quarter and the row it promises to focus is not in it. The string already holds the
+  // answer; falling back to the Amsterdam day (never the host's) when there is no invoice date.
+  // `effectiveDate`, not invoice.invoice_date: that row was read BEFORE the update, and the whole
+  // reason [DATE-GATE] exists is that ingestion stores null when the AI could not read a date — the
+  // reviewer types it in the modal and this request writes it. Reading the stale row would send the
+  // accountant to today's quarter for exactly the invoices whose date was just supplied. The gate
+  // above already guarantees effectiveDate is a real ISO day, so the fallback is only a belt.
+  const isoDay =
+    typeof effectiveDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(effectiveDate)
+      ? effectiveDate.slice(0, 10)
+      : amsterdamToday();
+  const dlYear = Number(isoDay.slice(0, 4));
+  const dlQuarter = Math.ceil(Number(isoDay.slice(5, 7)) / 3);
   const accountantLink = `/dashboard/clients/${user.id}/kwartaal?q=${dlQuarter}&year=${dlYear}&focus=${id}`;
 
   // Client deep-link — always the management surface, focused on this row.

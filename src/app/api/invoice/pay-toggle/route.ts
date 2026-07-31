@@ -33,6 +33,30 @@ export const maxDuration = 60;
 // letting a junk key through as "no key" (which would silently re-enable double booking).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * [CASH-RETRY] Reconcile the kasboek, and if the pass reported it bailed, ask exactly once more.
+ *
+ * One retry, not a loop: the failure this covers is a transient read (a chunked invoice fetch that
+ * errored), and a pass that fails twice is a real outage the hourly cron and the Kas page load are
+ * there for. Still best-effort by contract — the invoice write already succeeded and must never be
+ * undone over a drawer entry that will heal by itself.
+ */
+async function reconcileCashWithRetry(
+  client: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+): Promise<void> {
+  try {
+    const first = await reconcileCashSettlements(client, userId);
+    if (first.ok) return;
+    console.warn("[CASH-RETRY] kasboek reconcile bailed — retrying once", { userId });
+    const second = await reconcileCashSettlements(client, userId);
+    if (!second.ok) console.error("[CASH-RETRY] kasboek reconcile bailed twice — the cron/Kas load will heal it", { userId });
+  } catch (e) {
+    // Documented as never-throwing, but a contract is not a guarantee: a payment must not fail here.
+    console.error("[CASH-RETRY] kasboek reconcile threw (non-fatal)", e);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -160,10 +184,19 @@ export async function POST(req: NextRequest) {
     const fullyPaid = row.is_paid === true;
     const remaining = Math.max(0, Math.round(((row.total ?? 0) - (row.amount_paid ?? 0)) * 100) / 100);
 
-    // A replayed request changed nothing — report the already-booked state, never a second
-    // audit row or a second kasboek reconcile. Same shape as the real booking below: both go
-    // through buildPaymentResult so the two answers can never drift apart again.
+    // A replayed request changed nothing on the INVOICE — report the already-booked state, never a
+    // second audit row. Same shape as the real booking below: both go through buildPaymentResult so
+    // the two answers can never drift apart again.
+    //
+    // [CASH-RETRY] It does still reconcile the kasboek, and that is not a contradiction. A replay
+    // exists precisely because the FIRST attempt did not finish: apply_manual_payment committed the
+    // instalment and the handler was then cut off before its reconcile ran. The drawer entry for
+    // that cash payment is exactly what would be missing. The pass is idempotent (it heals or
+    // creates, it does not duplicate — cash-settle.ts), so running it here costs nothing and closes
+    // the one gap a replay is for. Until now the only thing covering this branch was the manage
+    // screen firing a second /api/cash/settle of its own — which no other caller of this route did.
     if (row.duplicate === true) {
+      await reconcileCashWithRetry(supabase, user.id);
       return NextResponse.json(buildPaymentResult(row, inv.status));
     }
 
@@ -184,7 +217,14 @@ export async function POST(req: NextRequest) {
       ipAddress: getClientIP(req),
     });
     // Keep the kasboek in sync when paid in cash (create/heal the 'betaling' entry). Best-effort.
-    try { await reconcileCashSettlements(supabase, user.id); } catch { /* non-fatal */ }
+    // [CASH-RETRY] …but not deaf. reconcileCashSettlements NEVER throws — it catches internally and
+    // reports `ok:false` (cash-settle.ts:167 bails on a failed id-chunk read, :261 after an internal
+    // throw). That value was dropped on the floor here, so a bailed pass looked identical to a
+    // successful one and this route still answered 200. The only thing that repaired it was the
+    // SECOND reconcile the manage screen fired straight after — an accidental retry that the
+    // client had no idea it was providing. Ask once more here instead, so the retry is deliberate
+    // and every caller of this route gets it (not just the one screen that happened to double-call).
+    await reconcileCashWithRetry(supabase, user.id);
     // [MANUAL-PARTIAL-PAY] Report what ACTUALLY happened. This used to be a bare
     // {ok, status:'paid'} — correct while the toggle was all-or-nothing, a lie the moment a
     // deelbetaling became possible: both clients read `partial` to decide between "still open
@@ -345,6 +385,6 @@ export async function POST(req: NextRequest) {
     oldValue: { status: "paid" }, newValue: { status: restoredStatus, via: "manual_undo_toggle", detached_transactions: [...linkedTxIds] },
     ipAddress: getClientIP(req),
   });
-  try { await reconcileCashSettlements(supabase, user.id); } catch { /* non-fatal */ }
+  await reconcileCashWithRetry(supabase, user.id);
   return NextResponse.json({ ok: true, status: restoredStatus, detached: linkedTxIds.size });
 }

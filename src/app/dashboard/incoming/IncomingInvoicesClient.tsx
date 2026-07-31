@@ -144,10 +144,17 @@ const NL_CURRENCY = new Intl.NumberFormat("nl-NL", {
   currency: "EUR",
 });
 
+// [TZ] timeZone PINNED. formatDate below feeds this a DATE-ONLY string, and `new Date("2026-01-01")`
+// is midnight UTC — formatted in the BROWSER's zone, every date west of UTC rendered a day early.
+// This formatter prints the YEAR, so on a new-year boundary that is "31 december 2025" on an
+// invoice dated 2026: the wrong TAX YEAR, on the screen where the tax period is being confirmed.
+// format-nl.ts opens with this exact warning ("We never let that happen on a legal document").
+// The Dutch long-date SHAPE is unchanged — only the day it names is now the owner's.
 const NL_DATE = new Intl.DateTimeFormat("nl-NL", {
   day: "numeric",
   month: "long",
   year: "numeric",
+  timeZone: "Europe/Amsterdam",
 });
 
 function formatDate(dateStr: string): string {
@@ -160,6 +167,31 @@ function formatDate(dateStr: string): string {
 
 function formatAmount(amount: number): string {
   return NL_CURRENCY.format(amount);
+}
+
+/**
+ * [SERVER-REASON] What the owner reads when /api/email/confirm/[id] refuses.
+ *
+ * That route writes real, owner-facing Dutch for the cases it decides itself — "Factuurdatum
+ * ontbreekt — voer eerst de factuurdatum in", the 409 "Deze factuur is al bevestigd — ververs de
+ * pagina", the DELETE's "draai eerst de betaling terug". Those are the whole point of showing the
+ * server's message instead of a fixed sentence: they name the way out.
+ *
+ * Its 5xx are a different animal — `{ error: error.message }` is whatever supabase-js said, in
+ * English, about a schema cache or a statement timeout. And a 502/504 comes from the platform as
+ * HTML, so there is no JSON at all. Neither belongs on a shop owner's phone, so above 4xx we keep
+ * our own sentence. `field` is which key carries the sentence on that verb (POST/PATCH use `error`,
+ * DELETE uses `error` for the code and `detail` for the sentence).
+ */
+async function confirmFailureMessage(
+  res: Response,
+  fallback: string,
+  field: "error" | "detail" = "error",
+): Promise<string> {
+  if (res.status >= 500) return fallback;
+  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  const sentence = data?.[field];
+  return typeof sentence === "string" && sentence.trim() ? sentence.trim() : fallback;
 }
 
 // [BRIDGE-CREDITNOTA-SIGN] Amount display that keeps the SIGN. The old
@@ -649,6 +681,8 @@ function ConfirmPaidModal({
   // [QUEUE-EDIT-UX] open with edit fields active (card "Bewerken" entry point)
   startEditing?: boolean;
 }) {
+  // [DATE-GATE-FEEDBACK] This modal had no snackbar of its own — see nudgeForDate below.
+  const showToast = useToast();
   const [exBtw, setExBtw] = useState(invoice.total_ex_btw || 0);
   const [btwAmount, setBtwAmount] = useState(invoice.btw_amount || 0);
   // [BRIDGE-EXTRACT] inline edit of the AI-extracted vendor / number / date.
@@ -723,13 +757,32 @@ function ConfirmPaidModal({
   // date (the date sets the tax period). Mirror of the server gate: nudge inline
   // and open the editor instead of firing a raw server error.
   const dateMissing = !invoiceDate.trim();
+  // [DATE-GATE-FEEDBACK] Opening the editor was the whole response — and the editor is ALREADY open
+  // in this case (`editing` initialises to !invoiceDate), so tapping the green button produced no
+  // visible reaction at all. There is a red line by the field, but a button that answers nothing
+  // reads as broken, not as refused. Say it, and put the cursor where the answer goes.
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const nudgeForDate = () => {
+    // Come BACK to the review step first. handlePay is only reachable once payStep is true, and
+    // the whole review section — the date input this points at included — lives in the !payStep
+    // branch. Without this, setEditing(true) changed nothing on screen, the ref was null so the
+    // focus/scroll did nothing, and the toast asked the owner to fill in a field that was not
+    // being rendered. A message about an invisible field is worse than the silence it replaced.
+    setPayStep(false);
+    setEditing(true);
+    showToast("Vul eerst de factuurdatum in — die bepaalt in welk kwartaal deze factuur telt");
+    setTimeout(() => {
+      dateInputRef.current?.focus();
+      dateInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  };
   const handleVerify = () => {
-    if (dateMissing) { setEditing(true); return; }
+    if (dateMissing) { nudgeForDate(); return; }
     setSubmitting(true);
     onVerify(amounts);
   };
   const handlePay = (method: "bank" | "kas") => {
-    if (dateMissing) { setEditing(true); return; }
+    if (dateMissing) { nudgeForDate(); return; }
     setSubmitting(true);
     onPay(amounts, method, paymentDate);
   };
@@ -948,6 +1001,7 @@ function ConfirmPaidModal({
                 {editing ? (
                   <input
                     type="date"
+                    ref={dateInputRef}
                     value={invoiceDate}
                     onChange={(e) => setInvoiceDate(e.target.value)}
                     style={{
@@ -2620,6 +2674,14 @@ export default function IncomingInvoicesClient({
         const res = await fetch(`/api/email/confirm/${invoice.id}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // [AUTO-CONFIRM-ONCE] NO deferAutoConfirm here, deliberately. A single verify does cost
+          // two full-account scans (the server's inline one, then ours below, which does strictly
+          // more — /api/bank/auto-confirm also applies the learned bank categories). Skipping the
+          // server's would halve that, but it would also trade a guarantee that ships with the
+          // write itself for a second, separate request that can simply fail. For ONE invoice that
+          // is a bad trade: the cost is one extra scan, the risk is an already-paid invoice reading
+          // as unpaid until the hourly cron. The N+1 that actually hurt is the BULK loop, and that
+          // is where the flag is sent.
           body: JSON.stringify({ action: "verify", ...amounts }),
         });
         if (res.ok) {
@@ -2635,8 +2697,18 @@ export default function IncomingInvoicesClient({
         } else {
           // [UI-HONESTY] The server rejected it — roll back the optimistic remove so the invoice
           // stays visible in the queue instead of vanishing on a lie.
+          //
+          // Roll back FIRST, then read the body: a non-JSON error page (a platform 502, an auth
+          // redirect) makes .json() throw, and if that threw before the rollback the invoice would
+          // disappear from the only screen that can verify it. The .catch keeps it from throwing
+          // at all — the same shape used everywhere else in this file.
           setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-          showToast("Verificatie mislukt — factuur staat nog in de wachtrij");
+          // [SERVER-REASON] Say WHAT the server said. It answers with precise, owner-facing Dutch —
+          // "Factuurdatum ontbreekt — voer eerst de factuurdatum in", or the 409 "Deze factuur is al
+          // bevestigd — ververs de pagina". None of it used to arrive: the fixed sentence below
+          // claimed the invoice was "still in the queue" and invited a retry, which on that 409 is
+          // a retry that can never succeed — the row is already confirmed on the server.
+          showToast(await confirmFailureMessage(res, "Verificatie mislukt — factuur staat nog in de wachtrij"));
         }
       } catch {
         setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
@@ -2708,6 +2780,18 @@ export default function IncomingInvoicesClient({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "verify",
+            // [AUTO-CONFIRM-ONCE] The whole point of this loop's own comment below: ONE pass after
+            // the batch, never one per invoice. The server ran a full-account scan on every single
+            // POST, so a batch of 50 did 50 of them — and then we added a 51st. Now it does none
+            // and the one after the loop is the only one.
+            //
+            // The trade this accepts, stated plainly: if the tab is closed part-way through a
+            // batch, those invoices get no scan until the hourly cron (api/cron/reconcile) or the
+            // next /bank load picks them up. That is a delay, never a loss — and it is the design
+            // the loop already documented for itself. Per-invoice scanning was never the guarantee
+            // it looked like: it re-read the owner's whole account N times to find, at most, what
+            // one pass at the end finds anyway.
+            deferAutoConfirm: true,
             total_ex_btw: inv.total_ex_btw,
             btw_amount: inv.btw_amount,
             total_inc_btw: inv.total_inc_btw,
@@ -2776,8 +2860,11 @@ export default function IncomingInvoicesClient({
           showToast("✓ Factuur gemarkeerd als betaald");
         } else {
           // [UI-HONESTY] Roll back the optimistic remove — the payment was NOT recorded.
+          // [SERVER-REASON] …and then say why, in the server's own words (see handleVerify).
+          // NB: no deferAutoConfirm on this path — it runs no pass of its own, so the server's
+          // inline one is the only one there is.
           setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-          showToast("Bevestiging mislukt — factuur staat nog in de wachtrij");
+          showToast(await confirmFailureMessage(res, "Bevestiging mislukt — factuur staat nog in de wachtrij"));
         }
       } catch {
         setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
@@ -2807,8 +2894,10 @@ export default function IncomingInvoicesClient({
       if (res.ok) {
         showToast("Factuur teruggezet");
       } else {
+        // [SERVER-REASON] The PATCH answers "Deze factuur staat niet (meer) in Genegeerd — ververs
+        // de pagina" on a 409. "Probeer opnieuw" is the one thing that will NOT help there.
         rollback();
-        showToast("Terugzetten mislukt — probeer opnieuw");
+        showToast(await confirmFailureMessage(res, "Terugzetten mislukt — probeer opnieuw"));
       }
     } catch {
       rollback();
@@ -2857,8 +2946,14 @@ export default function IncomingInvoicesClient({
           });
         }
       } else {
+        // [SERVER-REASON] DELETE refuses with money_settled / bank_linked and a `detail` that names
+        // the way out ("draai eerst de betaling terug", "ontkoppel die eerst op de Bank-pagina").
+        // Both are PERMANENT — retrying is exactly what cannot work. Prefer `detail`: this route's
+        // `error` is a CODE (or, at the 500, a raw Postgres string), never a sentence for a phone.
         rollback();
-        showToast("Negeren mislukt — factuur staat nog in de wachtrij");
+        // DELETE answers with a CODE in `error` and the written sentence in `detail` — so this one
+        // reads `detail`, and the same 5xx rule applies (there `detail` is a raw Postgres string).
+        showToast(await confirmFailureMessage(res, "Negeren mislukt — factuur staat nog in de wachtrij", "detail"));
       }
     } catch {
       rollback();

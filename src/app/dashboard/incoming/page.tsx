@@ -84,13 +84,19 @@ export default async function IncomingPage() {
     profile?.role === "accountant" ? "accountant" : "zzper";
 
   // Email connection status
+  // [ZERO-ROWS-NORMAL] .maybeSingle(): "no mailbox connected" is the ordinary state for most
+  // owners, and .single() reports it as an error (PostgREST 406) that this call site discards.
+  // The .limit(1) STAYS — email_connections is UNIQUE(user_id, provider), so an owner may have
+  // BOTH Gmail and Outlook, and maybeSingle() without a limit fetches a list and returns null
+  // once it sees more than one row: that owner's connection banner would silently read
+  // "niet verbonden" while their mail was importing fine.
   const { data: connection } = await supabase
     .from("email_connections")
     // needs_reauth post-dates the generated types → cast on read (as the sync path does).
     .select("provider, email, connected_at, needs_reauth")
     .eq("user_id", user.id)
     .limit(1)
-    .single();
+    .maybeSingle();
 
   // [BOEK-011] Pending invoices — status 'processing', awaiting confirmation.
   // Sorted by invoice_date (newest first): created_at is the IMPORT moment,
