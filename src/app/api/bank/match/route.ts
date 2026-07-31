@@ -23,7 +23,7 @@ import {
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
 
 export async function GET() {
@@ -147,15 +147,37 @@ export async function GET() {
   const amountUnknown = new Set<string>();
 
   if (linkedTxRows.length > 0) {
-    const { data: appliedRows } = await pipeline
-      .from("bank_tx_invoices")
-      .select("transaction_id, amount_applied")
-      .eq("user_id", user.id)
-      .in("transaction_id", linkedTxRows.map((r) => (r as BankTransactionDbRow).id));
-    for (const r of (appliedRows ?? []) as { transaction_id: string; amount_applied: number | null }[]) {
-      hasLinkRow.add(r.transaction_id);
-      if (r.amount_applied == null) { amountUnknown.add(r.transaction_id); continue; } // pre-[PARTIAL-PAY] link: amount unknown, don't guess
-      appliedByTx.set(r.transaction_id, (appliedByTx.get(r.transaction_id) ?? 0) + Math.max(0, Number(r.amount_applied)));
+    // [IN-CHUNK] Chunked + paged. A plain `.in()` over every partially-linked line hits both
+    // silent ceilings: the ~1000-row response cap and the URL length of the id list. A truncated
+    // read UNDERSTATES amount_applied, so bankLineFullyApplied answers "not covered" for a line
+    // whose every euro is booked and it never leaves "Te bevestigen".
+    // Wrapped, because fetchAllRowsForIds THROWS where the old `data`-only destructuring
+    // swallowed — and this GET renders the whole bank page. A failed measurement is not a reason
+    // to show the owner nothing: it has a documented fallback (measuredAllCovered returns null →
+    // isFullyCovered's token rule), which is conservative and keeps every line visible. Leaving
+    // hasLinkRow empty is exactly that fallback, so the page degrades instead of dying.
+    let appliedRows: { transaction_id: string | null; amount_applied: number | null }[] = [];
+    try {
+      appliedRows = await fetchAllRowsForIds<{ transaction_id: string | null; amount_applied: number | null }, string>(
+        linkedTxRows.map((r) => (r as BankTransactionDbRow).id),
+        (chunk, from, to) =>
+          pipeline
+            .from("bank_tx_invoices")
+            .select("transaction_id, amount_applied")
+            .eq("user_id", user.id)
+            .in("transaction_id", chunk)
+            .order("id", { ascending: true }) // bank_tx_invoices.id is the PK — invoice_id is NOT unique (two payments can settle one invoice), so paging on it could repeat or skip a link row
+            .range(from, to),
+      );
+    } catch (e) {
+      console.error("[BANK-COVERAGE-BY-MONEY] applied-amount read failed — falling back to the reference-token rule", e);
+    }
+    for (const r of appliedRows) {
+      const txId = r.transaction_id;
+      if (!txId) continue;
+      hasLinkRow.add(txId);
+      if (r.amount_applied == null) { amountUnknown.add(txId); continue; } // pre-[PARTIAL-PAY] link: amount unknown, don't guess
+      appliedByTx.set(txId, (appliedByTx.get(txId) ?? 0) + Math.max(0, Number(r.amount_applied)));
     }
   }
   /** Is every euro of this bank line sitting on an invoice? Measured, not guessed —
@@ -318,14 +340,28 @@ export async function GET() {
   const idsByTx = new Map<string, Set<string>>();
   for (const r of matchedTx) idsByTx.set(r.id, new Set(r.invoice_id ? [r.invoice_id as string] : []));
   if (matchedTx.length > 0) {
+    // [IN-CHUNK] matchedTx is fully paged above, so on a real account it holds thousands of ids —
+    // and a plain `.in()` over them fails twice over: the response caps at ~1000 join rows, and
+    // the id list itself outgrows the request URL long before that. Both come back as an ordinary
+    // error (supabase-js does not throw), which this `data`-only destructuring reads as "no
+    // links" — so the Gekoppeld tab quietly lost the invoice numbers of every batch. Chunked +
+    // paged; the try/catch still covers a genuinely missing pre-migration table.
     try {
-      const { data: linkRows } = await pipeline
-        .from("bank_tx_invoices")
-        .select("transaction_id, invoice_id")
-        .eq("user_id", user.id)
-        .in("transaction_id", matchedTx.map((r) => r.id));
-      for (const lr of (linkRows ?? []) as { transaction_id: string; invoice_id: string }[]) {
-        (idsByTx.get(lr.transaction_id) ?? idsByTx.set(lr.transaction_id, new Set()).get(lr.transaction_id)!).add(lr.invoice_id);
+      const linkRows = await fetchAllRowsForIds<{ transaction_id: string | null; invoice_id: string }, string>(
+        matchedTx.map((r) => r.id),
+        (chunk, from, to) =>
+          pipeline
+            .from("bank_tx_invoices")
+            .select("transaction_id, invoice_id")
+            .eq("user_id", user.id)
+            .in("transaction_id", chunk)
+            .order("id", { ascending: true }) // bank_tx_invoices.id is the PK — invoice_id is NOT unique (two payments can settle one invoice), so paging on it could repeat or skip a link row
+            .range(from, to),
+      );
+      for (const lr of linkRows) {
+        const txId = lr.transaction_id;
+        if (!txId) continue;
+        (idsByTx.get(txId) ?? idsByTx.set(txId, new Set()).get(txId)!).add(lr.invoice_id);
       }
     } catch {
       /* pre-migration: keep the invoice_id fallback already seeded above */
@@ -335,12 +371,25 @@ export async function GET() {
   for (const s of idsByTx.values()) for (const id of s) allWantIds.add(id);
   const numById = new Map<string, string>();
   if (allWantIds.size > 0) {
-    const { data: linkedInvs } = await pipeline
-      .from("invoices")
-      .select("id, invoice_number")
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      .in("id", [...allWantIds]);
-    for (const i of linkedInvs ?? []) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+    // [IN-CHUNK] Same two ceilings, same silence — a truncated read here left `numById` empty for
+    // the dropped ids, so those cards fell back to the raw reference tokens instead of the
+    // invoice numbers the payment actually settled.
+    try {
+      const linkedInvs = await fetchAllRowsForIds<{ id: string; invoice_number: string | null }, string>(
+        [...allWantIds],
+        (chunk, from, to) =>
+          pipeline
+            .from("invoices")
+            .select("id, invoice_number")
+            .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+            .in("id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to),
+      );
+      for (const i of linkedInvs) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+    } catch {
+      /* display only — the card falls back to the parsed reference numbers */
+    }
   }
   const linkedNumbersByTx = new Map<string, string[]>();
   for (const [txId, ids] of idsByTx) {
@@ -352,14 +401,25 @@ export async function GET() {
   // not-yet-applied migration (no auto_match_reason column) just yields no flags, never an error.
   const reasonByTx = new Map<string, string>();
   if (matchedTx.length > 0) {
+    // [IN-CHUNK] This one is not cosmetic: the flag it carries is the "controleer" warning on a
+    // line the app booked on amount + supplier NAME alone, which [BANK-AMOUNT-ONLY] added
+    // precisely because such a match can be the right supplier's WRONG month. Truncating this
+    // read removed the warning while leaving the booking — the one combination that must never
+    // happen. Chunked + paged; the catch still covers the not-yet-applied migration.
     try {
-      const { data: reasonRows } = await pipeline
-        .from("bank_transactions")
-        .select("id, auto_match_reason")
-        .eq("user_id", user.id)
-        .in("id", matchedTx.map((r) => r.id));
-      // auto_match_reason is added by bank_auto_match_reason.sql — not yet in the generated types.
-      for (const rr of (reasonRows ?? []) as unknown as { id: string; auto_match_reason: string | null }[]) {
+      const reasonRows = await fetchAllRowsForIds<{ id: string; auto_match_reason: string | null }, string>(
+        matchedTx.map((r) => r.id),
+        (chunk, from, to) =>
+          pipeline
+            .from("bank_transactions")
+            // auto_match_reason is added by bank_auto_match_reason.sql — not in the generated types.
+            .select("id, auto_match_reason")
+            .eq("user_id", user.id)
+            .in("id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<{ data: { id: string; auto_match_reason: string | null }[] | null; error: { message: string } | null }>,
+      );
+      for (const rr of reasonRows) {
         if (rr.auto_match_reason) reasonByTx.set(rr.id, rr.auto_match_reason);
       }
     } catch {
