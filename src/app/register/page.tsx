@@ -48,6 +48,17 @@ function RegisterContent() {
   const purpose = parsePurpose(searchParams.get(PURPOSE_PARAM))
   const copy = purposeCopy(purpose)
 
+  // Welke stap er te zien is. Op het archiefpad is dat altijd stap 2, wat er ook in `step`
+  // staat — die bezoeker heeft geen rolkeuze, dus stap 1 wordt niet gerenderd.
+  //
+  // Afgeleid en niet uit de state gelezen, want anders is "geen enkele stap" een mogelijke
+  // uitkomst: stap 1 rendert niet op het archiefpad, stap 2 rendert niet bij step === 1, en dan
+  // blijft er een kaart over met alleen de kop erin. Geen foutmelding, geen weg terug, alleen
+  // opnieuw laden — en dan is alles wat er ingevuld stond weg. Zo lag het, en het kostte één
+  // setStep(1) uit de terugknop om er te komen. Dit maakt die toestand onmogelijk in plaats van
+  // onbereikbaar, zodat de volgende setStep(1) hem niet opnieuw opent.
+  const zichtbareStap = isArchief ? 2 : step
+
   // Keep any ?redirect= when we link over to /login.
   // [SEC-REDIRECT] Alleen een bestemming die wij ook zouden honoreren reist mee. Dit was al
   // ongevaarlijk (de link wijst hoe dan ook naar ons eigen /login), maar een waarde doorgeven
@@ -381,7 +392,7 @@ function RegisterContent() {
         </div>
 
         {/* Stap 1 — Rol kiezen */}
-        {step === 1 && !isArchief && (
+        {zichtbareStap === 1 && (
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
             <button
@@ -402,7 +413,7 @@ function RegisterContent() {
         )}
 
         {/* Stap 2 — Kies methode */}
-        {step === 2 && (
+        {zichtbareStap === 2 && (
           <div className="space-y-4">
 
             {/* [Google-OAuth] Google register button — shown prominently in step 2 */}
@@ -517,10 +528,27 @@ function RegisterContent() {
               <a href={loginHref} className="text-blue-600 font-medium underline">Inloggen</a>
             </p>
 
-            <button onClick={() => setStep(1)}
-              className="w-full text-gray-500 text-sm hover:text-gray-700">
-              ← Terug
-            </button>
+            {/* Terug naar de rolkeuze — en alleen als er een rolkeuze IS.
+                Op het archiefpad is er geen stap 1: die bezoeker is per definitie een
+                ondernemer met een eigen administratie, dus stap 1 wordt overgeslagen én niet
+                gerenderd (zie de voorwaarde `!isArchief` hierboven). Deze knop zette hem
+                daar toch naartoe, en dan viel de kaart leeg: geen stap 1, geen stap 2, alleen
+                de kop. Geen foutmelding, geen weg terug — alleen de pagina opnieuw laden hielp,
+                en dan was alles wat hij had ingevuld weg.
+
+                Voor hem is /bewaarplicht het scherm waar hij vandaan komt, en dat is waar
+                "terug" hoort uit te komen. */}
+            {isArchief ? (
+              <a href="/bewaarplicht"
+                className="block w-full text-center text-gray-500 text-sm hover:text-gray-700">
+                ← Terug
+              </a>
+            ) : (
+              <button onClick={() => setStep(1)}
+                className="w-full text-gray-500 text-sm hover:text-gray-700">
+                ← Terug
+              </button>
+            )}
           </div>
         )}
 
