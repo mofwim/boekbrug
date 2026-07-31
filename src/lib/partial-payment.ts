@@ -76,6 +76,31 @@ export function openAmountSigned(invoice: PartialPayInvoice): number {
 }
 
 /**
+ * [OPEN-TOTAL] The other half of the invoice: what has already been SETTLED on it, with the same
+ * sign. Built so that, for every invoice,
+ *
+ *     openAmountSigned(inv) + settledAmountSigned(inv) === signed total
+ *
+ * exactly, in cents. That identity is the whole reason this function exists rather than "sum the
+ * paid ones": a screen that prints "nog te betalen", "betaald" and "totaal" next to each other
+ * invites the reader to add the first two, and on a partly-paid invoice a betaald-figure that only
+ * counted invoices marked 'paid' would leave the €200 already transferred out of BOTH columns
+ * while it sits inside the total. Three figures that do not add up cost more trust than the third
+ * one buys.
+ *
+ * A 'paid' invoice settles its full magnitude even when amount_paid was never populated (legacy
+ * rows predate partial payments), and an over-payment cannot settle more than the invoice is
+ * worth — both are what keeps the identity true.
+ */
+export function settledAmountSigned(invoice: PartialPayInvoice): number {
+  const total = totalAmount(invoice);
+  const magnitude = invoice.status === "paid" ? total : Math.min(paidAmount(invoice), total);
+  const settled = toCents(magnitude);
+  if (settled === 0) return 0;
+  return (invoice.total_inc_btw ?? 0) < 0 ? -settled : settled;
+}
+
+/**
  * Money left over that is too small to be another invoice. A customer who rounds €99,95 up to
  * €100 has not paid two invoices — keeping their bank line open "for the rest" would leave five
  * cents haunting the te-bevestigen list forever. Above this, a leftover is treated as money that

@@ -38,7 +38,7 @@ import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
-import { openAmount, openAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
+import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
@@ -555,13 +555,14 @@ export default function IncomingManageClient({
   // betaalde factuur voor niets, en een creditnota van je leverancier gaat eraf — precies zoals
   // hij een regel lager met zijn minteken staat afgedrukt.
   const openSumDisplayed = Math.round(displayed.reduce((s, i) => s + openAmountSigned(i), 0) * 100) / 100
-  // Wat er in de getoonde set al betaald IS. Alleen de rijen die op 'paid' staan: dat is wat het
-  // tabblad Betaald laat zien, en het is het bedrag dat op die rijen staat afgedrukt.
-  const paidSumDisplayed = Math.round(
-    displayed.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100,
-  ) / 100
+  // Wat er op de getoonde rijen AL is afgerekend — inclusief het deel van een deelbetaling. Niet
+  // "de facturen die op betaald staan": dan zou de €200 die je al hebt overgemaakt op een halve
+  // factuur in geen van beide kolommen staan, terwijl hij wel in het totaal zit. Zie
+  // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
+  const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
+  const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
   const showsOpen = displayed.some(i => i.status !== 'paid')
-  const showsPaid = displayed.some(i => i.status === 'paid')
+  const showsPaid = paidSumDisplayed !== 0 || displayed.some(i => i.status === 'paid')
 
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
@@ -1330,11 +1331,13 @@ export default function IncomingManageClient({
                   ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
                   : `${displayed.length} van ${nFacturen(listedCount)}`}
             </p>
-            {/* [OPEN-TOTAL] Het bedrag onder de aantallen: hoeveel er van deze rijen nog te betalen
-                is, en hoeveel er al betaald is. Groter en donkerder dan de regel erboven, want dit
-                is de vraag waarmee iemand deze pagina opent — het aantal facturen is context.
-                Het openstaande bedrag staat in de kleur van de "Te betalen"-chip, zodat het bij de
-                rijen hoort waar het uit komt. */}
+            {/* [OPEN-TOTAL] Het bedrag onder de aantallen: wat er van deze rijen nog te betalen is,
+                wat er al betaald is, en — zodra die twee allebei bestaan — het totaal. Groter en
+                donkerder dan de regel erboven, want dit is de vraag waarmee iemand deze pagina
+                opent; het aantal facturen is context.
+                De kleuren zijn die van de statuschips ("Te betalen" amber, "Betaald" groen), zodat
+                elk bedrag zichtbaar bij de rijen hoort waar het uit komt, en het totaal neutraal
+                blijft omdat het over allebei gaat. */}
             {(showsOpen || showsPaid) && (
               <p style={{ fontSize: 14, fontFamily: FONT, margin: '4px 0 0', fontWeight: 700, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '0 10px' }}>
                 {showsOpen && (
@@ -1345,6 +1348,16 @@ export default function IncomingManageClient({
                 {showsPaid && (
                   <span style={{ color: '#137333' }}>
                     {fmtEur(paidSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>betaald</span>
+                  </span>
+                )}
+                {/* Het totaal staat erbij zodra het IETS toevoegt: als er alleen openstaande rijen
+                    in beeld zijn is het totaal exact het openstaande bedrag, en dan is hetzelfde
+                    getal twee keer afdrukken geen extra informatie maar ruis. Staat het er wél,
+                    dan klopt de optelling: nog te betalen + betaald = totaal, tot op de cent
+                    (settledAmountSigned in partial-payment.ts bewaakt precies die identiteit). */}
+                {showsOpen && showsPaid && (
+                  <span style={{ color: M3.onSurface }}>
+                    {fmtEur(totalSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>totaal</span>
                   </span>
                 )}
               </p>
