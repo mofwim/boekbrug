@@ -39,7 +39,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // [BANK-MULTI-LINK-PERSIST] Coverage logic (parseReferenceNumbers + isFullyCovered)
 // now lives in bank-matching.ts so this confirm path and the match path share ONE
 // definition — no drift between "is this tx done?" answered in two places.
-import { isEligible, normalizeRef, isFullyCovered, parseReferenceNumbers } from "@/lib/bank-matching";
+import { isEligible, normalizeRef, isFullyCovered, bankLineFullyApplied, parseReferenceNumbers } from "@/lib/bank-matching";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
@@ -385,9 +385,16 @@ export async function POST(req: NextRequest) {
   //    amount_applied existed (or when the read fails): is EVERY invoice number listed in the
   //    reference now backed by a PAID invoice of this user, in the direction the sign implies?
   //    Conservative by design — an unresolved number keeps the tx visible, never hides on doubt.
+  //    [BANK-COVERAGE-BY-MONEY] The arithmetic now lives in bank-matching.bankLineFullyApplied, so
+  //    /api/bank/match answers "is this line finished?" with the IDENTICAL rule on reload. It used
+  //    to answer it from the reference tokens alone, which disagreed with this branch the moment a
+  //    token was not a paid invoice number — and a line the money says is finished then never left
+  //    "Te bevestigen".
   const settledByThisBooking = appliedElsewhere + invOpen;
   const moneyRemaining = Math.round((payAmount - settledByThisBooking) * 100) / 100;
-  let allCovered = appliedElsewhereKnown ? moneyRemaining <= 0.01 : true;
+  let allCovered = appliedElsewhereKnown
+    ? bankLineFullyApplied(payAmount, settledByThisBooking) === true
+    : true;
 
   if (!appliedElsewhereKnown && refNumbers.length > 1) {
     // Direction the bank movement implies (mirrors isEligible's sign guard):

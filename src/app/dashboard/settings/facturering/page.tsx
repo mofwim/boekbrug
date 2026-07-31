@@ -39,7 +39,9 @@ const dateNL = (iso: string | null | undefined) => {
   if (!iso) return null
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return null
-  return new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(ms))
+  // [TZ] timeZone PINNED — this formats a subscription TIMESTAMP, so without it the renewal date
+  // shifts a day for anyone whose device sits west of UTC (and differs between server and client).
+  return new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Amsterdam' }).format(new Date(ms))
 }
 
 export default async function FactureringPage({

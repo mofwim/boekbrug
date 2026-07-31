@@ -16,6 +16,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import {
   matchTransactions,
   isFullyCovered,
+  bankLineFullyApplied,
   coveredReferenceNumbers,
   parseReferenceNumbers,
   normalizeRef,
@@ -139,6 +140,11 @@ export async function GET() {
   // the owner cannot act on "still here" without knowing how much is left. Read from the join
   // table's amount_applied — the same figure every booking path now writes.
   const appliedByTx = new Map<string, number>();
+  // [BANK-COVERAGE-BY-MONEY] Can this line's applied total be MEASURED? Only when it has join
+  // rows and every one of them carries an amount. A single amount-less (pre-[PARTIAL-PAY]) link
+  // makes the sum a lower bound, not the truth — then we must not answer "covered" from it.
+  const hasLinkRow = new Set<string>();
+  const amountUnknown = new Set<string>();
 
   if (linkedTxRows.length > 0) {
     const { data: appliedRows } = await pipeline
@@ -147,10 +153,17 @@ export async function GET() {
       .eq("user_id", user.id)
       .in("transaction_id", linkedTxRows.map((r) => (r as BankTransactionDbRow).id));
     for (const r of (appliedRows ?? []) as { transaction_id: string; amount_applied: number | null }[]) {
-      if (r.amount_applied == null) continue; // pre-[PARTIAL-PAY] link: amount unknown, don't guess
+      hasLinkRow.add(r.transaction_id);
+      if (r.amount_applied == null) { amountUnknown.add(r.transaction_id); continue; } // pre-[PARTIAL-PAY] link: amount unknown, don't guess
       appliedByTx.set(r.transaction_id, (appliedByTx.get(r.transaction_id) ?? 0) + Math.max(0, Number(r.amount_applied)));
     }
   }
+  /** Is every euro of this bank line sitting on an invoice? Measured, not guessed —
+   *  null when the line has no measurable applied total (caller falls back). */
+  const measuredAllCovered = (row: BankTransactionDbRow): boolean | null =>
+    !hasLinkRow.has(row.id) || amountUnknown.has(row.id)
+      ? null
+      : bankLineFullyApplied(row.amount, appliedByTx.get(row.id) ?? 0);
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -177,7 +190,21 @@ export async function GET() {
 
     for (const r of linkedTxRows) {
       const row = r as BankTransactionDbRow;
-      partialLink.set(row.id, isFullyCovered(row.reference, paidSet));
+      // [BANK-COVERAGE-BY-MONEY] Is this bank line finished? Answer it with the SAME arithmetic
+      // /api/bank/confirm uses to decide it (`payAmount − Σ amount_applied ≤ 0.01`), because the
+      // two must never disagree — and they did. confirm was moved to money by
+      // [BANK-ONE-PAYMENT-MANY-INVOICES]; this route was left counting number-shaped tokens in the
+      // reference, so a line whose every euro was booked still reported allCovered=false whenever a
+      // reference token was not a paid invoice number (a customer/order number, a POS batch counter,
+      // or free text the extractor fell back to). The UI keeps such a line in "Te bevestigen"
+      // forever; confirming it again only earns a 409 (`payment_fully_applied` /
+      // `invoice_already_paid`), which the client treats as done and then re-fetches — so the card
+      // reappears on every single confirm, with no action able to clear it. The reference cannot
+      // answer "is the money spent?"; only the money can. The token rule survives ONLY as the
+      // fallback for links written before amount_applied existed, where nothing is measurable —
+      // there it stays conservative (an unresolved number keeps the line visible, never hides on
+      // doubt), exactly as confirm's own fallback does.
+      partialLink.set(row.id, measuredAllCovered(row) ?? isFullyCovered(row.reference, paidSet));
       coveredByTx.set(row.id, coveredReferenceNumbers(row.reference, paidSet));
     }
   }

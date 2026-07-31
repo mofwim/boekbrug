@@ -47,7 +47,11 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
+// [TZ] timeZone PINNED. fmtDate below feeds this a DATE-ONLY string, and `new Date('2026-01-01')`
+// is midnight UTC — formatted in the viewer's zone, every invoice date west of UTC renders a day
+// early, and with the year shown that is the wrong TAX YEAR on the accountant's own bridge.
+// format-nl.ts:17-23 forbids exactly this.
+const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Amsterdam' })
 const fmtEur = (n: number | null) => (n == null ? '' : NL_EUR.format(n))
 const fmtDate = (s: string | null) => (s ? NL_DATE.format(new Date(s)) : '')
 

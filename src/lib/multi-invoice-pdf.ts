@@ -94,3 +94,60 @@ export function detectMultipleInvoices(text: string | null | undefined): MultiIn
       `${found.length > 3 ? ", …" : ""}) — er is er maar ÉÉN ingelezen; voeg de andere los toe`,
   };
 }
+
+// ── [ONE-INVOICE-UNVERIFIED] Het gat in de controle hierboven ────────────────────────────────
+//
+// De kop van dit bestand noemt het geval zelf: "wie een stapel inkoopfacturen in één keer door de
+// SCANNER haalt, krijgt één PDF". Precies die stapel is wat detectMultipleInvoices nooit kan zien.
+// Hij leest de tekstlaag, en een scan heeft er geen — extractPdfText geeft dan null terug, en de
+// functie hierboven stapt bij `typeof text !== "string"` meteen weer uit. Geen tekst, geen nummers,
+// geen signaal. De controle die voor de scanner is geschreven, zwijgt juist bij de scanner.
+//
+// En zwijgen is hier niet neutraal. Zonder vlag is er niets dat automatisch boeken tegenhoudt, dus
+// de uitkomst van een gescande stapel is: één factuur wordt gelezen, zonder mens geboekt, en de
+// andere bestaan nergens — geen rij, geen bestand-met-waarschuwing, geen regel in "Overgeslagen".
+// Dat is exact het scenario dat de kop hierboven beschrijft, alleen langs de weg waar de controle
+// blind is.
+//
+// Dit is dus geen tweede detector maar het eerlijke antwoord op "ik kon het niet controleren".
+// shouldAutoAdvanceInvoice noemt zichzelf "fail-closed by construction": elke twijfel, elk ontbrekend
+// signaal → de mens. Een ONTBREKENDE controle is geen geslaagde controle, en zo hoort hij ook te
+// tellen.
+//
+// Bewust smal, want automatisch boeken is de moeite waard om te behouden:
+//   · ÉÉN pagina → één factuur. Een foto van een bon, een gewone factuur-PDF: niets aan de hand,
+//     ook zonder tekstlaag. Dit raakt ze niet.
+//   · MEER pagina's MÉT tekstlaag → detectMultipleInvoices heeft echt gekeken en niets gevonden.
+//     Dat is een uitspraak, en die vertrouwen we.
+//   · MEER pagina's ZONDER tekstlaag → we hebben niet gekeken. Alleen dít geval wacht op een mens.
+//
+// Het kost de eigenaar één bevestigende tik op een gescande meerpagina-factuur, en niet meer dan
+// dat: de factuur komt gewoon binnen, precies zoals bij het signaal hierboven. Blokkeren doet ook
+// deze nooit.
+
+/** Waarom we niet kunnen zeggen dat dit bestand één factuur is. */
+export interface UnverifiedSingleInvoice {
+  reason: string;
+}
+
+/**
+ * Kon er überhaupt gecontroleerd worden of dit ene bestand één factuur bevat?
+ *
+ * `null` = ja (of de vraag speelt niet) → de aanroeper doet niets.
+ * Een object = nee → vlag zetten en niet automatisch boeken.
+ *
+ * Puur. `pages` is 0 wanneer het bestand geen PDF is of niet te openen was; dat telt als "geen
+ * meerpagina-bestand", want een niet-PDF is per definitie één beeld.
+ */
+export function cannotVerifySingleInvoice(input: {
+  pages: number;
+  hasTextLayer: boolean;
+}): UnverifiedSingleInvoice | null {
+  if (input.hasTextLayer) return null;
+  if (!Number.isFinite(input.pages) || input.pages <= 1) return null;
+  return {
+    reason:
+      `dit is een gescand bestand van ${input.pages} pagina's zonder leesbare tekstlaag — we konden ` +
+      `niet nagaan of het één factuur is of een stapel. Controleer of alle facturen erin zijn geboekt`,
+  };
+}

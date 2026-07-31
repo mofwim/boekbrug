@@ -70,10 +70,17 @@ function formatDate(iso: string, locale: Locale): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
+  // [TZ] timeZone PINNED — and this one is required by the comment above, not despite it.
+  // publishedAt is a DATE-ONLY frontmatter string ("2026-07-15", blog.ts:45), so `new Date(iso)`
+  // is midnight UTC. Fixing the LOCALE makes the wording deterministic but not the DAY: the server
+  // renders in its own zone and the browser in the reader's, so a reader west of UTC saw the
+  // previous date — a hydration mismatch, which is exactly what that comment says this formatting
+  // exists to prevent. The publisher's day is the Amsterdam one, for every locale.
   return new Intl.DateTimeFormat(LOCALE_META[locale].intl, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+    timeZone: 'Europe/Amsterdam',
   }).format(d)
 }
 
