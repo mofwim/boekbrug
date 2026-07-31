@@ -12,6 +12,8 @@ import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
 import { quarterFromParams } from "@/lib/quarter";
+// [TZ] The filing date pinned to Europe/Amsterdam — a legal record's date is the record.
+import { formatDateNL } from "@/lib/format-nl";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 
@@ -102,6 +104,10 @@ function ZzpView({ role }: { role: Role }) {
     filedAt: string;
     divergence: { changed: boolean; btwSaldoDelta: number; needsSuppletie: boolean };
   } | null>(null);
+  // [FILING-NO-OVERWRITE] `filed === null` used to mean two things — "not filed" and "we could not
+  // read it" — and the second one puts the file button back on screen, where one tap replaces a
+  // frozen snapshot. Kept apart, so an unreadable state disables the button instead of inviting it.
+  const [filedUnknown, setFiledUnknown] = useState(false);
   const [filing, setFiling] = useState(false);
   const [filingTick, setFilingTick] = useState(0);
 
@@ -160,12 +166,16 @@ function ZzpView({ role }: { role: Role }) {
       // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
       // zonder synchrone setState in de effect-body.
       setFiled(null);
+      setFiledUnknown(false);
       try {
         const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`);
-        if (!res.ok) return;
+        // [FILING-NO-OVERWRITE] A failed lookup is not "niet ingediend". Both of these paths used
+        // to leave `filed` null and say nothing, which is the state that offers to file again.
+        if (!res.ok) { if (!cancelled) setFiledUnknown(true); return; }
         const j = await res.json();
         if (!cancelled && j?.ok) setFiled(j.filed ?? null);
-      } catch { /* leave null — no badge, never a wrong claim */ }
+        else if (!cancelled) setFiledUnknown(true);
+      } catch { if (!cancelled) setFiledUnknown(true); }
     })();
     return () => { cancelled = true; };
   }, [quarter, year, filingTick]);
@@ -178,15 +188,49 @@ function ZzpView({ role }: { role: Role }) {
         // [FILING-GATE] The server warns (409) when the quarter still has unconfirmed invoices whose
         // money isn't in the figures yet. Surface that instead of freezing an incomplete snapshot;
         // the owner can still proceed (their declaration) → re-POST with acknowledge.
-        const res = await fetch("/api/btw/file", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ year, quarter }),
-        });
-        if (res.status === 409) {
+        //
+        // [FILING-NO-OVERWRITE] Same three-answer flow as the Waarheid screen, because this is the
+        // same record: a quarter that has not ended is refused outright (no override exists for
+        // it), replacing an existing filing is confirmed on its own terms, and an incompleteness
+        // warning is the owner's judgement call. This door used to offer the override dialog for
+        // ALL of them — including "kwartaal loopt nog", where confirming led to a second refusal
+        // and a generic "niet gelukt": an override that could not work, and a failure that
+        // explained nothing.
+        const post = (extra: Record<string, unknown>) =>
+          fetch("/api/btw/file", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year, quarter, ...extra }),
+          });
+        const flags: { acknowledge?: true; replace?: true } = {};
+        let filedOk = false;
+        for (let attempt = 0; attempt < 3 && !filedOk; attempt++) {
+          const res = await post(flags);
+          if (res.ok) { filedOk = true; break; }
+          if (res.status !== 409) {
+            // Never leave a failed freeze looking successful.
+            toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
+          }
           const j = await res.json().catch(() => ({}));
+          if (j?.error === "quarter_not_ended") {
+            toast(j?.reason ?? "Dit kwartaal loopt nog — je kunt het pas na afloop als ingediend markeren.", { tone: "error" });
+            return;
+          }
+          if (j?.error === "already_filed") {
+            if (flags.replace) { toast(j?.reason ?? "Opnieuw indienen is niet gelukt.", { tone: "error" }); return; }
+            const proceed = await dialog.confirm({
+              title: "Vervang je eerdere indiening?",
+              message: j?.reason ?? "Dit kwartaal staat al als ingediend. Opnieuw indienen vervangt die vastgelegde cijfers.",
+              confirmLabel: "Ja, vervang",
+              danger: true,
+            });
+            if (!proceed) return;
+            flags.replace = true;
+            continue;
+          }
           // [FILING-GATE] The owner is declaring a quarter finished while the
           // server says it is not — the app's own dialog, with the server's
           // reason as the body instead of glued on with \n\n.
+          if (flags.acknowledge) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
           const proceed = await dialog.confirm({
             title: "Toch als ingediend markeren?",
             message: j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd.",
@@ -194,17 +238,24 @@ function ZzpView({ role }: { role: Role }) {
             danger: true,
           });
           if (!proceed) return;
-          const res2 = await fetch("/api/btw/file", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ year, quarter, acknowledge: true }),
-          });
-          if (!res2.ok) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
-        } else if (!res.ok) {
-          // Never leave a failed freeze looking successful.
-          toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
+          flags.acknowledge = true;
         }
+        if (!filedOk) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
       } else {
-        await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
+        // [UNFILE-FEEDBACK] The response was discarded here — the exact bug the Waarheid screen
+        // documents as fixed on its side, still live on this one: a failed unlock re-rendered the
+        // still-filed quarter, so the owner concluded the button does nothing.
+        const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          toast(
+            typeof j?.reason === "string" && j.reason.trim()
+              ? j.reason.trim()
+              : "Indiening ongedaan maken is niet gelukt — probeer het opnieuw.",
+            { tone: "error" },
+          );
+          return;
+        }
       }
       setFilingTick((t) => t + 1);
     } finally {
@@ -472,7 +523,7 @@ function ZzpView({ role }: { role: Role }) {
                 {filed ? (
                   <>
                     <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
-                      🔒 Ingediend op {new Date(filed.filedAt).toLocaleDateString("nl-NL")} · definitief
+                      🔒 Ingediend op {formatDateNL(filed.filedAt)} · definitief
                     </span>
                     <button
                       onClick={() => toggleFiled(false)}
@@ -483,6 +534,13 @@ function ZzpView({ role }: { role: Role }) {
                       {filing ? "Bezig…" : "Indiening ongedaan maken"}
                     </button>
                   </>
+                ) : filedUnknown ? (
+                  /* [FILING-NO-OVERWRITE] We could not read the filing state, and this button is
+                     the one that can replace a frozen aangifte. Say so instead of offering it. */
+                  <p style={{ fontSize: 12.5 }} className="text-muted-foreground">
+                    We konden niet controleren of dit kwartaal al is ingediend, dus we laten je het nu
+                    niet vastleggen — anders zou je een eerdere indiening kunnen overschrijven. Ververs de pagina.
+                  </p>
                 ) : (
                   <button
                     onClick={() => toggleFiled(true)}

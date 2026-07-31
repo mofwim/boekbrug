@@ -1,5 +1,5 @@
 // [TRUTH-FILED] Pure test for btw-filing.ts — run: npx tsx src/lib/btw-filing.test.ts
-import { computeFilingDivergence, SUPPLETIE_THRESHOLD, type FilingFigures } from "./btw-filing";
+import { computeFilingDivergence, decideFilingWrite, SUPPLETIE_THRESHOLD, type FilingFigures } from "./btw-filing";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -104,6 +104,22 @@ console.log("— sub-cent noise never trips either flag —");
   const d = computeFilingDivergence(base, { ...base, omzet: base.omzet + 0.004, btwSaldo: base.btwSaldo + 0.004 });
   check("btwChanged false on noise", d.btwChanged === false);
   check("resultaatChanged false on noise", d.resultaatChanged === false);
+}
+
+console.log("— [FILING-NO-OVERWRITE] wat een indiening met een bestaande indiening mag doen —");
+{
+  // Niets om te vervangen → gewoon wegschrijven. INSERT, niet upsert: dat is wat een tweede
+  // tabblad laat verliezen op de unieke sleutel in plaats van er stilletjes overheen te schrijven.
+  check("geen bestaande indiening → insert", decideFilingWrite({ hasExisting: false }) === "insert");
+  check("…ook als replace meekomt: er valt niets te vervangen",
+    decideFilingWrite({ hasExisting: false, replace: true }) === "insert");
+
+  // Bestaat er wel een: dan is de default VRAGEN, nooit overschrijven. Dit is de hele fix.
+  check("bestaande indiening zonder replace → vragen", decideFilingWrite({ hasExisting: true }) === "ask");
+  check("…replace:false is ook vragen", decideFilingWrite({ hasExisting: true, replace: false }) === "ask");
+  check("…en alleen een ECHTE true vervangt (geen truthy waarde)",
+    decideFilingWrite({ hasExisting: true, replace: "ja" as unknown as boolean }) === "ask");
+  check("expliciet replace:true → vervangen", decideFilingWrite({ hasExisting: true, replace: true }) === "replace");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

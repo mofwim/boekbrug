@@ -15,6 +15,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { FONT, COLUMN } from "@/lib/design/tokens";
+// [TZ] Amsterdam's day/year and the DD-MM-YYYY filing date — never the reader's own zone.
+import { amsterdamToday, formatDateNL } from "@/lib/format-nl";
 import { assessBtwCertainty } from "@/lib/btw-certainty";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
@@ -71,6 +73,10 @@ interface TruthResponse {
   lens: Lens; label: string; quarter: number | null; year: number | null;
   isLiveWindow: boolean;
   filed: FiledInfo | null;
+  // [FILING-NO-OVERWRITE] TRUE when the server could not read the filing state. `filed: null` then
+  // means UNKNOWN, not "not filed" — and the difference matters here more than anywhere: the file
+  // button is what overwrites a frozen snapshot, so it must not be offered on a guess.
+  filedUnknown?: boolean;
   // [FILING-WINDOW] null unless the lens is a single quarter; false while that quarter still runs.
   quarterEnded: boolean | null;
   result: TruthResult;
@@ -147,7 +153,11 @@ export default function WaarheidClient() {
   // Open the picker when we arrived ON a named quarter, so the control that produced the period is
   // visible rather than the owner wondering where "Q1 2024" came from.
   const [pickerOpen, setPickerOpen] = useState(initialPeriod.lens === "quarter");
-  const [pickYear, setPickYear] = useState(initialPeriod.year ?? new Date().getFullYear());
+  // [TZ] The Amsterdam year, never the device's: this bounds which quarters are reachable, and
+  // a phone in another zone must not be able to open — or hide — a period the rest of the app
+  // judges by the Dutch calendar (format-nl.ts).
+  const curYear = Number(amsterdamToday().slice(0, 4));
+  const [pickYear, setPickYear] = useState(initialPeriod.year ?? curYear);
   const [data, setData] = useState<TruthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -204,11 +214,27 @@ export default function WaarheidClient() {
       if (mark) {
         // [FILING-GATE] Server warns (409) when the quarter has unconfirmed invoices not yet in the
         // figures. Surface it; the owner can still proceed (their declaration) → re-POST acknowledge.
-        const res = await fetch("/api/btw/file", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ year: data.year, quarter: data.quarter }),
-        });
-        if (res.status === 409) {
+        //
+        // [FILING-NO-OVERWRITE] There are now two distinct 409s that the owner may answer, and they
+        // ask different questions: "are the figures complete enough?" (acknowledge) and "may we
+        // replace the aangifte you already filed?" (replace). Each is confirmed on its own, and
+        // whatever was confirmed rides along on every retry — so answering the second question can
+        // never quietly undo the first.
+        const post = (extra: Record<string, unknown>) =>
+          fetch("/api/btw/file", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year: data.year, quarter: data.quarter, ...extra }),
+          });
+        const flags: { acknowledge?: true; replace?: true } = {};
+        let filedOk = false;
+        // At most three passes: the first attempt plus one per question the server can ask.
+        for (let attempt = 0; attempt < 3 && !filedOk; attempt++) {
+          const res = await post(flags);
+          if (res.ok) { filedOk = true; break; }
+          if (res.status !== 409) {
+            toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" });
+            return;
+          }
           const j = await res.json().catch(() => ({}));
           // [FILING-WINDOW] A quarter that has not ended yet is NOT the owner's judgement call —
           // there is no aangifte to have filed. Say so and stop; do not offer to override.
@@ -216,10 +242,26 @@ export default function WaarheidClient() {
             toast(j?.reason ?? "Dit kwartaal loopt nog — je kunt het pas na afloop als ingediend markeren.", { tone: "error" });
             return;
           }
+          // [FILING-NO-OVERWRITE] Replacing a filing destroys the record of what was declared —
+          // the very thing the divergence banner on this page is computed from. So the dialog
+          // states the two figures rather than asking an abstract "weet je het zeker?".
+          if (j?.error === "already_filed") {
+            if (flags.replace) { toast(j?.reason ?? "Opnieuw indienen is niet gelukt.", { tone: "error" }); return; }
+            const proceed = await dialog.confirm({
+              title: "Vervang je eerdere indiening?",
+              message: j?.reason ?? "Dit kwartaal staat al als ingediend. Opnieuw indienen vervangt die vastgelegde cijfers.",
+              confirmLabel: "Ja, vervang",
+              danger: true,
+            });
+            if (!proceed) return;
+            flags.replace = true;
+            continue;
+          }
           // [FILING-GATE] This is the most consequential confirmation in the
           // app — the owner is declaring a quarter finished while the server
           // says it is not. It deserves the app's own dialog, with the server's
           // reason as the body rather than glued onto the question with \n\n.
+          if (flags.acknowledge) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
           const proceed = await dialog.confirm({
             title: "Toch als ingediend markeren?",
             message: j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd.",
@@ -227,20 +269,27 @@ export default function WaarheidClient() {
             danger: true,
           });
           if (!proceed) return;
-          const res2 = await fetch("/api/btw/file", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ year: data.year, quarter: data.quarter, acknowledge: true }),
-          });
-          if (!res2.ok) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
-        } else if (!res.ok) {
-          toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
+          flags.acknowledge = true;
         }
+        // A loop that ran out of passes never wrote anything — never let that look like success.
+        if (!filedOk) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
       } else {
         // [UNFILE-FEEDBACK] The response used to be discarded, so a failed unlock looked exactly
         // like a successful one: the reload simply re-rendered the still-filed quarter and the
-        // owner was left to conclude the button does nothing. Mirror the file path — say it failed.
+        // owner was left to conclude the button does nothing. Mirror the file path — say it failed,
+        // and in the server's own words when it wrote them (the route distinguishes "this quarter
+        // is not filed (any more)" from "we could not read it", and those are different problems).
         const res = await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
-        if (!res.ok) { toast("Indiening ongedaan maken is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          toast(
+            typeof j?.reason === "string" && j.reason.trim()
+              ? j.reason.trim()
+              : "Indiening ongedaan maken is niet gelukt — probeer het opnieuw.",
+            { tone: "error" },
+          );
+          return;
+        }
       }
       await load(period);
     } finally {
@@ -366,14 +415,14 @@ export default function WaarheidClient() {
             >‹</button>
             <span style={{ fontSize: 13.5, fontWeight: 700, minWidth: 38, textAlign: "center" }}>{pickYear}</span>
             <button
-              onClick={() => setPickYear((y) => Math.min(y + 1, new Date().getFullYear()))}
-              disabled={pickYear >= new Date().getFullYear()}
+              onClick={() => setPickYear((y) => Math.min(y + 1, curYear))}
+              disabled={pickYear >= curYear}
               title="Volgend jaar"
               style={{
                 width: 26, height: 26, border: "none", background: "none", fontSize: 18, lineHeight: 1,
-                cursor: pickYear >= new Date().getFullYear() ? "default" : "pointer",
-                color: pickYear >= new Date().getFullYear() ? M.line : M.primary,
-                opacity: pickYear >= new Date().getFullYear() ? 0.5 : 1,
+                cursor: pickYear >= curYear ? "default" : "pointer",
+                color: pickYear >= curYear ? M.line : M.primary,
+                opacity: pickYear >= curYear ? 0.5 : 1,
               }}
             >›</button>
           </div>
@@ -396,6 +445,12 @@ export default function WaarheidClient() {
             {data.filed ? (
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#3730a3", background: "#e8eaf6", borderRadius: 980, padding: "2px 10px" }}>
                 🔒 Ingediend · definitief
+              </span>
+            ) : data.filedUnknown ? (
+              /* [FILING-NO-OVERWRITE] Not "loopt nog" and not "afgesloten": both are claims about a
+                 period whose state we could not read. */
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>
+                indienstatus onbekend
               </span>
             ) : data.isLiveWindow ? (
               <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>loopt nog</span>
@@ -667,8 +722,11 @@ export default function WaarheidClient() {
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${M.line}` }}>
               {data.filed ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  {/* [TZ] formatDateNL pins Europe/Amsterdam; toLocaleDateString used the reader's
+                      own zone, so a filing stamped near midnight showed a different day depending
+                      on where the phone was. On a legal record the date is the record. */}
                   <span style={{ fontSize: 12.5, color: M.muted }}>
-                    Ingediend op {new Date(data.filed.filedAt).toLocaleDateString("nl-NL")}
+                    Ingediend op {formatDateNL(data.filed.filedAt)}
                   </span>
                   <button
                     onClick={() => setFiled(false)}
@@ -685,24 +743,30 @@ export default function WaarheidClient() {
                    past €1.000 the screen starts demanding a suppletie for an aangifte that does not
                    exist. A quarter can only have been filed once it is over — the server enforces
                    this (409 quarter_not_ended); here we simply do not offer it. */
+                /* [FILING-NO-OVERWRITE] …and not while the filing state is UNKNOWN. This button is
+                   the one that can replace a frozen aangifte, and `filed === null` used to mean
+                   both "not filed" and "we could not read it". Offering it on the second one is
+                   how a failed read turned into a lost record. */
                 <button
                   onClick={() => setFiled(true)}
-                  disabled={filing || data.quarterEnded === false}
+                  disabled={filing || data.quarterEnded === false || data.filedUnknown === true}
                   style={{
                     width: "100%", padding: "13px 0", borderRadius: 12,
-                    background: data.quarterEnded === false ? "#f1f3f4" : M.primary,
-                    border: "none", color: data.quarterEnded === false ? "#9aa0a6" : "#fff",
+                    background: data.quarterEnded === false || data.filedUnknown ? "#f1f3f4" : M.primary,
+                    border: "none", color: data.quarterEnded === false || data.filedUnknown ? "#9aa0a6" : "#fff",
                     fontWeight: 700, fontSize: 14,
-                    cursor: filing || data.quarterEnded === false ? "default" : "pointer",
+                    cursor: filing || data.quarterEnded === false || data.filedUnknown ? "default" : "pointer",
                   }}
                 >
                   {filing ? "Bezig…" : "Markeer als ingediend bij de Belastingdienst"}
                 </button>
               )}
               <p style={{ fontSize: 11.5, color: M.muted, margin: "8px 2px 0", lineHeight: 1.5 }}>
-                {!data.filed && data.quarterEnded === false
-                  ? "Dit kwartaal loopt nog. Zodra het is afgelopen kun je het hier als ingediend markeren en leggen we de cijfers vast."
-                  : "Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan zien we het verschil en zeggen we of een suppletie nodig is."}
+                {data.filedUnknown
+                  ? "We konden niet controleren of dit kwartaal al is ingediend, dus we laten je het nu niet vastleggen — anders zou je een eerdere indiening kunnen overschrijven. Ververs de pagina."
+                  : !data.filed && data.quarterEnded === false
+                    ? "Dit kwartaal loopt nog. Zodra het is afgelopen kun je het hier als ingediend markeren en leggen we de cijfers vast."
+                    : "Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan zien we het verschil en zeggen we of een suppletie nodig is."}
               </p>
             </div>
           )}
