@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
@@ -18,6 +18,9 @@ import { useToast } from '@/components/ui/Toast'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+// [BAR-ALIGN] This page's column: the klantenlijst and the sticky toolbar above
+// it both measure from here — see columnInner() in @/lib/design/tokens.
+const COLUMN = 680
 
 interface Client {
   id: string; name: string; email: string | null
@@ -193,37 +196,44 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px 10px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
-          <button
-            onClick={() => { setShowForm(p => !p); setError(null) }}
-            style={{ background: M3.primaryContainer, color: M3.onPrimaryContainer, border: 'none', borderRadius: R.full, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span>
-            Nieuw
-          </button>
-        </div>
-
-        {/* Material You search bar */}
-        <div style={{ position: 'relative' }}>
-          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
-            aria-label="Klanten zoeken"
-            placeholder="Zoek op naam, e-mail, KVK, IBAN..."
-            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: search ? '10px 40px 10px 40px' : '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
-          />
-          {/* [SMART-FILTER] Wissen-knop — alleen zichtbaar zodra er iets getypt is. */}
-          {search && (
+        {/* [BAR-ALIGN] The shell spans the viewport (blur + hairline), the
+            CONTENT does not: without this column the search field ran the full
+            width of the screen and "Nieuw" sat against the far right edge, both
+            of them hundreds of pixels away from the klantenlijst they belong to.
+            Same width as <main> below. */}
+        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
             <button
-              onClick={() => setSearch('')}
-              aria-label="Zoekopdracht wissen"
-              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              onClick={() => { setShowForm(p => !p); setError(null) }}
+              style={{ background: M3.primaryContainer, color: M3.onPrimaryContainer, border: 'none', borderRadius: R.full, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span>
+              Nieuw
             </button>
-          )}
+          </div>
+
+          {/* Material You search bar */}
+          <div style={{ position: 'relative' }}>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              aria-label="Klanten zoeken"
+              placeholder="Zoek op naam, e-mail, KVK, IBAN..."
+              style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: search ? '10px 40px 10px 40px' : '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+            />
+            {/* [SMART-FILTER] Wissen-knop — alleen zichtbaar zodra er iets getypt is. */}
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="Zoekopdracht wissen"
+                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 80px' }}>
+      <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px 80px' }}>
 
         {/* Add form — Material You card */}
         {showForm && (

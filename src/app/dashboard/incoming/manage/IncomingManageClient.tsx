@@ -24,7 +24,7 @@
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
-import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
@@ -52,6 +52,10 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+// [BAR-ALIGN] This page's column. The list, the sticky filter/sort toolbar above
+// it and the selection bar below it all measure from here — see columnInner() in
+// @/lib/design/tokens.
+const COLUMN = 680
 
 // Status chip colors — Material You
 const CHIP: Record<string, { bg: string; color: string; label: string }> = {
@@ -965,147 +969,155 @@ export default function IncomingManageClient({
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
-        {/* [BUNDEL-BETALING] The multi-select toggle — the entry point for paying
-            several facturen van één leverancier with one QR. Given a clear
-            affordance (blue tint + border in rest, solid blue when active) and put
-            FIRST so it reads first, not tucked in a corner.
-            [TOOLBAR-ROW] The two actions and the Verificatie shortcut share ONE
-            wrapping row. They used to be two separate blocks stacked on top of
-            each other, which is right on a phone but wasted a whole line of a
-            sticky toolbar on a desktop — and that toolbar sits above the list, so
-            the line it wasted pushed every invoice down.
-            Layout lives in globals.css (.inko-actions), not inline: the media
-            query has to be able to win, and an inline style outranks a class. */}
-        <div className="inko-actions">
-          <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+        {/* [BAR-ALIGN] The shell spans the viewport — the blur and the hairline
+            should — but its CONTENT lines up with the list underneath. Without
+            this column the filter and sort dropdowns stretched the full width of
+            the screen above a 680px list, and "Matchen met bank & kas" ended up
+            a long way from the invoices it matches. Same width as <main> below,
+            and as the selection bar at the bottom of the file. */}
+        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>
+          {/* [BUNDEL-BETALING] The multi-select toggle — the entry point for paying
+              several facturen van één leverancier with one QR. Given a clear
+              affordance (blue tint + border in rest, solid blue when active) and put
+              FIRST so it reads first, not tucked in a corner.
+              [TOOLBAR-ROW] The two actions and the Verificatie shortcut share ONE
+              wrapping row. They used to be two separate blocks stacked on top of
+              each other, which is right on a phone but wasted a whole line of a
+              sticky toolbar on a desktop — and that toolbar sits above the list, so
+              the line it wasted pushed every invoice down.
+              Layout lives in globals.css (.inko-actions), not inline: the media
+              query has to be able to win, and an inline style outranks a class. */}
+          <div className="inko-actions">
+            <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+              style={{
+                background: selectMode ? M3.primary : M3.primaryContainer,
+                border: `1px solid ${selectMode ? M3.primary : '#A8C7FA'}`,
+                borderRadius: R.full, padding: '8px 16px', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                color: selectMode ? M3.onPrimary : M3.onPrimaryContainer,
+                display: 'flex', alignItems: 'center', gap: 6,
+                boxShadow: selectMode ? 'none' : EL1,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                {selectMode ? 'close' : 'checklist'}
+              </span>
+              {selectMode ? 'Klaar' : 'Meerdere betalen'}
+            </button>
+            <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
+            </Link>
+
+          {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
+              The one tap that turns the whole matching circle now instead of waiting
+              for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
+              cash-paid invoices, plus categorization of the recognizable bank lines.
+              Sized EXACTLY like "Meerdere betalen" above it (same pill geometry, same
+              13px label) so the toolbar reads as one family, but kept solid primary
+              because it is the only ACTION here that moves the books forward —
+              everything else on this screen filters or decides one row. */}
+          <button
+            onClick={runReconciliation}
+            disabled={matchBusy}
+            className="inko-match"
+            title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
             style={{
-              background: selectMode ? M3.primary : M3.primaryContainer,
-              border: `1px solid ${selectMode ? M3.primary : '#A8C7FA'}`,
-              borderRadius: R.full, padding: '8px 16px', cursor: 'pointer',
-              fontSize: 13, fontWeight: 600, fontFamily: FONT,
-              color: selectMode ? M3.onPrimary : M3.onPrimaryContainer,
               display: 'flex', alignItems: 'center', gap: 6,
-              boxShadow: selectMode ? 'none' : EL1,
-            }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-              {selectMode ? 'close' : 'checklist'}
-            </span>
-            {selectMode ? 'Klaar' : 'Meerdere betalen'}
-          </button>
-          <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
-          </Link>
-
-        {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
-            The one tap that turns the whole matching circle now instead of waiting
-            for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
-            cash-paid invoices, plus categorization of the recognizable bank lines.
-            Sized EXACTLY like "Meerdere betalen" above it (same pill geometry, same
-            13px label) so the toolbar reads as one family, but kept solid primary
-            because it is the only ACTION here that moves the books forward —
-            everything else on this screen filters or decides one row. */}
-        <button
-          onClick={runReconciliation}
-          disabled={matchBusy}
-          className="inko-match"
-          title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px',
-            borderRadius: R.full, border: 'none',
-            background: matchBusy ? M3.surfaceVariant : M3.primary,
-            color: matchBusy ? '#9AA0A6' : M3.onPrimary,
-            fontSize: 13, fontWeight: 600, fontFamily: FONT,
-            cursor: matchBusy ? 'default' : 'pointer',
-            boxShadow: matchBusy ? 'none' : EL1,
-          }}
-        >
-          {/* Icons come from the SUBSET font in layout.tsx (icon_names=…) — 'link' (koppelen, the
-              exact verb this action performs) and a spinning 'refresh' are both already in it, so
-              no shared allowlist change is needed and nothing can render as raw ligature text. */}
-          <span
-            className="material-symbols-outlined"
-            style={{ fontSize: 18, animation: matchBusy ? 'spin 1s linear infinite' : undefined }}
+              padding: '8px 16px',
+              borderRadius: R.full, border: 'none',
+              background: matchBusy ? M3.surfaceVariant : M3.primary,
+              color: matchBusy ? '#9AA0A6' : M3.onPrimary,
+              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+              cursor: matchBusy ? 'default' : 'pointer',
+              boxShadow: matchBusy ? 'none' : EL1,
+            }}
           >
-            {matchBusy ? 'refresh' : 'link'}
-          </span>
-          {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
-        </button>
-      </div>
-
-        {/* Filter + Sort dropdowns (side by side) */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          {/* Filter */}
-          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-            <button
-              onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            {/* Icons come from the SUBSET font in layout.tsx (icon_names=…) — 'link' (koppelen, the
+                exact verb this action performs) and a spinning 'refresh' are both already in it, so
+                no shared allowlist change is needed and nothing can render as raw ligature text. */}
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 18, animation: matchBusy ? 'spin 1s linear infinite' : undefined }}
             >
-              {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
-                  screen even with the menu closed and the list scrolled away. */}
-              <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'} · {tabCount(filter)}
-              </span>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
-                {showFilterMenu ? 'expand_less' : 'expand_more'}
-              </span>
-            </button>
-            {showFilterMenu && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
-                {FILTERS.map(f => (
-                  <button
-                    key={f.id}
-                    onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
-                  >
-                    <span>{f.label}</span>
-                    {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
-                        sees the split without having to pick each tab to find out. */}
-                    <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: FONT_NUM, color: filter === f.id ? M3.onPrimaryContainer : '#5F6368', background: filter === f.id ? 'rgba(255,255,255,0.6)' : M3.surfaceVariant, borderRadius: R.full, padding: '1px 8px', flexShrink: 0 }}>
-                      {tabCount(f.id)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+              {matchBusy ? 'refresh' : 'link'}
+            </span>
+            {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
+          </button>
+        </div>
 
-          {/* [SORT] Sorteren op — invoice/payment/due date, amount, vendor, or date added */}
-          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-            <button
-              onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false) }}
-              title="Sorteren"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>swap_vert</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {SORTS.find(s => s.id === sortBy)?.label ?? 'Sorteren'}
+          {/* Filter + Sort dropdowns (side by side) */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* Filter */}
+            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+              <button
+                onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+              >
+                {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
+                    screen even with the menu closed and the list scrolled away. */}
+                <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'} · {tabCount(filter)}
                 </span>
-              </span>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>
-                {showSortMenu ? 'expand_less' : 'expand_more'}
-              </span>
-            </button>
-            {showSortMenu && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden', maxHeight: '60vh', overflowY: 'auto' }}>
-                {SORTS.map(s => (
-                  <button
-                    key={s.id}
-                    onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
-                    style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            )}
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
+                  {showFilterMenu ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
+              {showFilterMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                  {FILTERS.map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                    >
+                      <span>{f.label}</span>
+                      {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
+                          sees the split without having to pick each tab to find out. */}
+                      <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: FONT_NUM, color: filter === f.id ? M3.onPrimaryContainer : '#5F6368', background: filter === f.id ? 'rgba(255,255,255,0.6)' : M3.surfaceVariant, borderRadius: R.full, padding: '1px 8px', flexShrink: 0 }}>
+                        {tabCount(f.id)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* [SORT] Sorteren op — invoice/payment/due date, amount, vendor, or date added */}
+            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+              <button
+                onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false) }}
+                title="Sorteren"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>swap_vert</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {SORTS.find(s => s.id === sortBy)?.label ?? 'Sorteren'}
+                  </span>
+                </span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>
+                  {showSortMenu ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
+              {showSortMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden', maxHeight: '60vh', overflowY: 'auto' }}>
+                  {SORTS.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
+                      style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── List ── */}
-      <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+      <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px 100px' }}>
         {/* [AUTO-ADVANCE] Review nudge — the opt-in double-check for what the app booked itself. */}
         {autoCount > 0 && filter !== 'auto' && (
           <button
@@ -1560,7 +1572,9 @@ export default function IncomingManageClient({
       {selectMode && (
         <div style={{
           position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
-          maxWidth: 648, margin: '0 auto', zIndex: 60,
+          // [BAR-ALIGN] Same 648 as before, now derived from the column — this bar
+          // was already the one that lined up with the list.
+          maxWidth: columnInner(COLUMN), margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
         }}>

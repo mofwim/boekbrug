@@ -6,7 +6,7 @@
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect, useRef } from 'react'
-import { M3, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -22,6 +22,10 @@ const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
   { ssr: false }
 )
+
+// [BAR-ALIGN] This page's column — the context toolbar and the invoice body both
+// measure from here. See columnInner() in @/lib/design/tokens.
+const COLUMN = 720
 
 // [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
@@ -391,7 +395,12 @@ export default function InvoiceDetailPage() {
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px',
       }}>
-        <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* [BAR-ALIGN] This bar already centred its content — but at the column's
+            OUTER width, while the body below spends 16px of that on its gutters.
+            The factuurnummer therefore started one gutter left of the card under
+            it and the PDF button ended one gutter right of it. columnInner is the
+            width the reader actually sees. */}
+        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {loading ? (
               <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
@@ -496,7 +505,7 @@ export default function InvoiceDetailPage() {
       {loading ? (
         <InvoiceDetailSkeleton />
       ) : (
-        <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
+        <div style={{ maxWidth: COLUMN, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
 
           {/* [FACTUUR-A] Delivery recovery banner — shows when ?delivery=pdf_failed|email_failed — June 2026 */}
           {deliveryWarning && (

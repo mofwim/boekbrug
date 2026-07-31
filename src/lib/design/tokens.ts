@@ -178,3 +178,32 @@ export const PAGE_HEADER_HEIGHT = 56
 // including the notch inset on standalone PWA. Use as:
 //   position: 'sticky', top: STICKY_BELOW_HEADER
 export const STICKY_BELOW_HEADER = `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`
+
+// ── Page column ─────────────────────────────────────────────────────────────
+// [BAR-ALIGN] The gutter every dashboard page leaves between its column and the
+// screen edge. A page column is a border-box `maxWidth: N` centred with
+// `margin: '0 auto'` and `padding: '… 16px'`, so the rows the reader actually
+// sees are N − 2×PAGE_GUTTER wide.
+export const PAGE_GUTTER = 16
+
+/**
+ * How wide a sticky/fixed bar's INNER row must be to line up with the page
+ * column underneath it.
+ *
+ * A bar spans the viewport on purpose — its blur, its fill and its hairline
+ * should run edge to edge. Its CONTENT must not: a search field, a filter
+ * dropdown or an action row that stretches the full width of a 1900px screen
+ * sits above a 680px list it has no visual relationship with, and the controls
+ * end up hundreds of pixels away from the rows they act on. Cap the inner row
+ * at `columnInner(column)` and centre it inside the bar's own PAGE_GUTTER
+ * padding, and the two edges meet exactly:
+ *
+ *   <div style={{ position: 'sticky', top: STICKY_BELOW_HEADER, padding: '12px 16px' }}>
+ *     <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>…</div>
+ *   </div>
+ *   <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px' }}>…</main>
+ *
+ * Below `column + 2×PAGE_GUTTER` the cap does not bind, so a phone is untouched.
+ * See docs/HEADER_SYSTEM.md, "Where things sit in the bar".
+ */
+export const columnInner = (column: number) => column - 2 * PAGE_GUTTER
