@@ -58,6 +58,24 @@ export function openAmount(invoice: PartialPayInvoice): number {
 }
 
 /**
+ * [OPEN-TOTAL] Openstaand WITH its sign — for adding several invoices together.
+ *
+ * openAmount above is a magnitude, and that is right for everything it was written for: a payment
+ * has to reach a positive figure, a QR cannot request a negative one, "nog € X open" on a row is
+ * an amount you hand over. Add a column of them, though, and a supplier's creditnota starts
+ * INCREASING what you owe that supplier — which is the opposite of what a creditnota is, and the
+ * opposite of what the same screen shows on that row, where the amount is printed with its minus.
+ *
+ * A total that does not add up to what the eye can add up is worse than no total, so summing uses
+ * this one: the same magnitude, carrying the direction the invoice itself states.
+ */
+export function openAmountSigned(invoice: PartialPayInvoice): number {
+  const open = openAmount(invoice);
+  if (open === 0) return 0;
+  return (invoice.total_inc_btw ?? 0) < 0 ? -open : open;
+}
+
+/**
  * Money left over that is too small to be another invoice. A customer who rounds €99,95 up to
  * €100 has not paid two invoices — keeping their bank line open "for the rest" would leave five
  * cents haunting the te-bevestigen list forever. Above this, a leftover is treated as money that

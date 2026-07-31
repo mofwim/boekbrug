@@ -1,6 +1,7 @@
 // [PARTIAL-PAY] Pure node test — run: npx tsx src/lib/partial-payment.test.ts
 import {
   openAmount,
+  openAmountSigned,
   isPartiallyPaid,
   parseAmountInput,
   interpretAmountEntry,
@@ -227,6 +228,35 @@ console.log("\n— [PARTIAL-PAY] een teruggedraaide betaling laat geen spookbeta
   // Een ECHTE deelbetaling blijft gewoon een deelbetaling — de reparatie mag die niet wissen.
   check("een deelbetaling blijft staan", openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === 300);
   check("en telt als gedeeltelijk betaald", isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === true);
+}
+
+console.log("\n— [OPEN-TOTAL] optellen: het teken van de factuur telt mee —");
+{
+  // Een gewone openstaande inkoopfactuur telt gewoon op.
+  check("openstaand positief blijft positief",
+    openAmountSigned({ status: "received", total_inc_btw: 500, amount_paid: 0 }) === 500);
+  // Een creditnota van je leverancier VERLAAGT wat je hem schuldig bent — en op de rij zelf staat
+  // hij al met zijn minteken. Een totaal dat hem optelt, klopt niet met wat je eronder ziet staan.
+  check("een creditnota telt eraf, niet erbij",
+    openAmountSigned({ status: "received", total_inc_btw: -121, amount_paid: 0 }) === -121);
+  // Deelbetaling: alleen de rest, met hetzelfde teken.
+  check("een deelbetaling draagt alleen de rest",
+    openAmountSigned({ status: "received", total_inc_btw: 500, amount_paid: 200 }) === 300);
+  check("…ook aan de creditkant",
+    openAmountSigned({ status: "received", total_inc_btw: -500, amount_paid: 200 }) === -300);
+  // Betaald is nul, en nul heeft geen teken: anders zou -0 in een som opduiken.
+  check("betaald telt niet mee", openAmountSigned({ status: "paid", total_inc_btw: -500, amount_paid: 500 }) === 0);
+  check("…en levert geen negatieve nul op",
+    Object.is(openAmountSigned({ status: "paid", total_inc_btw: -500, amount_paid: 500 }), 0));
+  // Een som van de drie soorten door elkaar is precies wat het scherm boven de lijst laat zien.
+  const rows = [
+    { status: "received", total_inc_btw: 1000, amount_paid: 0 },
+    { status: "received", total_inc_btw: -121, amount_paid: 0 },
+    { status: "received", total_inc_btw: 500, amount_paid: 200 },
+    { status: "paid", total_inc_btw: 999, amount_paid: 999 },
+  ];
+  const som = rows.reduce((t, r) => t + openAmountSigned(r), 0);
+  check("gemengde lijst telt op tot 1179", Math.round(som * 100) / 100 === 1179);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
