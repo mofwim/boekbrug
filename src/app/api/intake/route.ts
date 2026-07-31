@@ -431,7 +431,26 @@ export async function POST(req: NextRequest) {
         // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
         // outside the window (dropping the .eq removed the natural bound); 200 far exceeds
         // any realistic count of same-total invoices sharing one date.
-        const { data } = await query.order("id", { ascending: false }).limit(200)
+        //
+        // [DEDUP-RECENCY] Op created_at, niet meer op id. `order("id")` was stabiel maar
+        // betekenisloos: invoices.id is een uuid (gen_random_uuid()), dus "aflopend op id" is een
+        // willekeurige volgorde die niets met tijd te maken heeft. Twee gevolgen, en het tweede weegt
+        // zwaarder dan het eerste:
+        //   · pickDedupMatch pakt de EERSTE rij die matcht. Dat is de factuur die de eigenaar in zijn
+        //     409 te zien krijgt ("factuur X van Y is al toegevoegd") en waar original_id naar wijst.
+        //     Een willekeurige uit meerdere gelijkwaardige kandidaten stuurt hem naar ander papier
+        //     dan hij in handen heeft.
+        //   · zijn er méér kandidaten dan het venster, dan bepaalt deze volgorde WELKE 200 we
+        //     ophalen. Bij uuid-volgorde kan de factuur van vorige week buiten het venster vallen
+        //     terwijl er een van drie jaar terug in zit — en dan blokkeert de poort niet.
+        //
+        // nullsFirst: false is hier geen franje. invoices.created_at is NULLABLE (anders dan
+        // documents.created_at, dat NOT NULL is) en Postgres zet NULL bij DESC standaard VOORAAN.
+        // Zonder die vlag zouden juist de rijen zonder created_at het venster aanvoeren.
+        const { data } = await query
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .limit(200)
         // [DEDUP-VENDOR-NORM] Nummer én leverancier worden in code vergeleken, niet in SQL — de
         // leverancier stond hier als `.ilike(client_name, …)` en dat blokkeerde ten onrechte op elke
         // naam met een `*` erin ("SUMUP *CAFE"). Het waarom staat volledig bij pickDedupMatch.
@@ -576,6 +595,11 @@ export async function POST(req: NextRequest) {
             // in-code compare (assessPossibleDuplicate) ever sees it. ±0.01 guarantees it is fetched.
             .gte("total_inc_btw", total - 0.01)
             .lte("total_inc_btw", total + 0.01)
+            // [DEDUP-RECENCY] Hier telt de volgorde nóg zwaarder dan bij de harde poort: een bedrag
+            // als € 10,00 kan bij een winkel honderden keren voorkomen, dus dit venster loopt echt
+            // vol. Op uuid-volgorde haalden we dan 200 willekeurige facturen op en kon de aankomst
+            // van vorige week — precies de mogelijke dubbele — er structureel buiten vallen.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
             .limit(200)
           return data ?? []
@@ -602,6 +626,10 @@ export async function POST(req: NextRequest) {
             .eq("receiver_id", user.id)
             .eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+            // [DEDUP-RECENCY] Zie de bedrag-query hierboven; en juist hier verbreedt een `*` in het
+            // nummer de ilike, dus is "de nieuwste eerst" wat voorkomt dat de gezochte correctie
+            // door de ruis uit het venster wordt geduwd.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
             .limit(200)
           return data ?? []
@@ -1182,7 +1210,11 @@ async function handleUblInvoice(
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
-        const { data } = await query.order("id", { ascending: false }).limit(200)
+        // [DEDUP-RECENCY] Nieuwste eerst, met NULL achteraan — zie de camera-route voor het waarom.
+        const { data } = await query
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .limit(200)
         // [DEDUP-VENDOR-NORM] Dezelfde gedeelde vergelijking als de camera-route; zie pickDedupMatch.
         return pickDedupMatch(data ?? [], q)
       },
@@ -1222,6 +1254,8 @@ async function handleUblInvoice(
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
             .gte("total_inc_btw", total - 0.01).lte("total_inc_btw", total + 0.01)
+            // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false }).limit(200)
           return data ?? []
         },
@@ -1235,6 +1269,8 @@ async function handleUblInvoice(
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+            // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
+            .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false }).limit(200)
           return data ?? []
         },

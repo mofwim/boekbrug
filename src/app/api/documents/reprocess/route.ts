@@ -25,6 +25,7 @@ import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report";
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,16 @@ export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // [REPROCESS] Het plafond dat deze route als enige zware handeling niet had. Zie de toelichting bij
+  // RATE_LIMITS.DOCUMENTS_REPROCESS: één klik haalt tot 600 bestanden uit Storage en leest 250 PDF's.
+  // Er komt geen Claude aan te pas, dus geen van de AI-hekken raakte hem ooit.
+  const rl = await checkRateLimit({
+    userId: user.id,
+    endpoint: "/api/documents/reprocess",
+    ...RATE_LIMITS.DOCUMENTS_REPROCESS,
+  });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // The owner's stored documents, oldest first (so a partial cap keeps the earliest history).
   //
