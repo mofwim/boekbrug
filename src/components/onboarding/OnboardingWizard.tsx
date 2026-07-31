@@ -30,6 +30,8 @@ import { BTW_REGEX } from "@/lib/validation";
 import { isValidIban, normalizeIban } from "@/lib/epc-qr";
 import Link from 'next/link'
 import { M3 } from '@/lib/design/tokens'
+// [FUNNEL-OVERDRACHT] Wat op /factuur-maken is ingevuld, hier terugzien in plaats van opnieuw tikken.
+import { readHandoff, hasSenderContent, toOnboardingCompany } from "@/lib/factuur-handoff";
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -95,6 +97,41 @@ export function OnboardingWizard({
   const [company, setCompany] = useState<CompanyData>({
     company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
   });
+  // [FUNNEL-OVERDRACHT] Kwam deze gebruiker binnen via de gratis factuurgenerator, dan tikte
+  // hij zijn bedrijfsblok daar al in — bedrijfsnaam, adres, KVK, BTW, IBAN. Dat is exact deze
+  // stap. Hem hetzelfde nóg een keer laten invullen was de duurste wrijving in de hele trechter:
+  // het gebeurt op het moment dat hij net besloot te blijven.
+  //
+  // Dit vult stil voor, zonder te vragen. Dat mag hier — het zijn zijn eigen gegevens van een
+  // paar minuten geleden, dus hij herkent ze in plaats van ervan te schrikken. De factuur zélf
+  // (klant + regels) wordt wél expliciet aangeboden, want een compleet ingevulde factuur die
+  // vanzelf verschijnt zou wel verrassen; zie dashboard/invoice/new.
+  //
+  // localStorage bestaat alleen in de browser, dus dit gebeurt na mount. Alleen lege velden
+  // worden gevuld: wat de gebruiker hier zelf al typte wint altijd.
+  const [prefillDone, setPrefillDone] = useState(false);
+  useEffect(() => {
+    if (prefillDone) return;
+    setPrefillDone(true);
+    try {
+      const h = readHandoff(localStorage);
+      if (!h || !hasSenderContent(h)) return;
+      const uit = toOnboardingCompany(h);
+      setCompany((p) => ({
+        company_name: p.company_name || uit.company_name,
+        kvk_number: p.kvk_number || uit.kvk_number,
+        btw_number: p.btw_number || uit.btw_number,
+        iban: p.iban || uit.iban,
+        address: p.address || uit.address,
+      }));
+      setPrefilledFromFactuur(true);
+    } catch {
+      /* geblokkeerde opslag — de gebruiker vult het gewoon zelf in */
+    }
+  }, [prefillDone]);
+  // Alleen om het te kúnnen zeggen. Stil voorvullen zonder uitleg voelt als een systeem dat
+  // meer van je weet dan je dacht; één zin erbij maakt er herkenning van.
+  const [prefilledFromFactuur, setPrefilledFromFactuur] = useState(false);
   const [kvkError, setKvkError] = useState("");
   const [btwError, setBtwError] = useState("");
   const [ibanError, setIbanError] = useState("");
@@ -437,6 +474,7 @@ export function OnboardingWizard({
               kvkError={kvkError} setKvkError={setKvkError}
               btwError={btwError} setBtwError={setBtwError}
               ibanError={ibanError} setIbanError={setIbanError}
+              prefilledFromFactuur={prefilledFromFactuur}
             />
           )}
           {role === "zzp" && step === "3C" && (
@@ -747,7 +785,8 @@ function StepInvoiceStart({ value, onChange, error }: {
   );
 }
 
-function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setBtwError, ibanError, setIbanError }: {
+function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setBtwError, ibanError, setIbanError, prefilledFromFactuur }: {
+  prefilledFromFactuur?: boolean;
   company: CompanyData; setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
   kvkError: string; setKvkError: (e: string) => void;
   btwError: string; setBtwError: (e: string) => void;
@@ -759,6 +798,21 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Jouw bedrijf</h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
       </div>
+      {/* [FUNNEL-OVERDRACHT] Stil voorvullen zonder het te zeggen voelt als een systeem dat meer
+          van je weet dan je dacht. Eén zin maakt er herkenning van — en noemt meteen dat het uit
+          zijn eigen browser komt, niet uit iets dat wij al hadden. */}
+      {prefilledFromFactuur && (
+        <div
+          role="status"
+          style={{
+            background: "#E6F4EA", border: "1px solid #137333", color: "#137333",
+            borderRadius: 10, padding: "10px 12px", fontSize: 14, lineHeight: 1.5,
+          }}
+        >
+          We hebben dit overgenomen uit de factuur die je net maakte. Controleer het even en pas
+          aan wat niet klopt.
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
