@@ -11,7 +11,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [SEC-STORAGE-PATH] A row you may read is not a path you may sign — see storage-path.ts.
 import { pathBelongsToOwner } from '@/lib/storage-path'
-import { fetchAllRows } from '@/lib/supabase-paginate'
+import { fetchAllRows, fetchAllRowsForIds, chunkIds } from '@/lib/supabase-paginate'
+import { lastCompletedQuarter, quarterKeyOf } from '@/lib/quarter'
 import {
   buildBridgeTree,
   type BridgeInvoice,
@@ -59,19 +60,37 @@ export default async function BrugServerPage() {
   // archive beyond 1000 invoices/documents — and the per-client summaries
   // computed from these arrays silently undercounted. Fail-soft: a failed
   // page-walk yields [] exactly like the old `data ?? []`.
+  // [NO-SILENT-EMPTY] …but "fail-soft" may not mean "fail SILENT". These three reads ARE the
+  // bridge, and on this screen an empty result is not a smaller answer, it is a different one:
+  // the accountant sees their client's bridge with no invoices and no documents, and the
+  // per-client summaries below — computed from this same array — report every client as 'Leeg'.
+  // A transient read error therefore tells a professional, in the app's own confident voice,
+  // that none of their clients has anything this quarter. The page still renders (a broken
+  // bridge is worse than a stale one), but it now SAYS so, the way the Kas page refuses to show
+  // a reassuring €0,00 in place of a failed load.
+  const readFailed: string[] = []
+  const readOrFlag = async <T,>(label: string, run: () => Promise<T[]>): Promise<T[]> => {
+    try {
+      return await run()
+    } catch (e) {
+      console.error('[NO-SILENT-EMPTY] bridge source read failed', { userId: user.id, source: label, error: e instanceof Error ? e.message : String(e) })
+      readFailed.push(label)
+      return []
+    }
+  }
   const [invoicesRaw, documentsRaw, foldersRaw] = await Promise.all([
-    fetchAllRows((from, to) => supabase
+    readOrFlag('facturen', () => fetchAllRows((from, to) => supabase
       .from('invoices').select(INVOICE_COLS)
       .order('id', { ascending: true }).range(from, to)
-    ).catch(() => []),
-    fetchAllRows((from, to) => supabase
+    )),
+    readOrFlag('documenten', () => fetchAllRows((from, to) => supabase
       .from('documents').select(DOCUMENT_COLS).eq('trashed', false)
       .order('id', { ascending: true }).range(from, to)
-    ).catch(() => []),
-    fetchAllRows((from, to) => supabase
+    )),
+    readOrFlag('mappen', () => fetchAllRows((from, to) => supabase
       .from('folders').select(FOLDER_COLS)
       .order('id', { ascending: true }).range(from, to)
-    ).catch(() => []),
+    )),
   ])
 
   // NOTE: cast via `unknown` because database.types.ts may predate the B.1
@@ -129,32 +148,43 @@ export default async function BrugServerPage() {
   // no unauthorized path is ever signed. service_role is used here strictly to
   // bypass STORAGE rls, not to widen which rows are visible.
   const pipeline = createPipelineClient()
-  const signUrl = async (path: string): Promise<string | null> => {
-    const { data } = await pipeline.storage.from('documents').createSignedUrl(path, 3600)
-    return data?.signedUrl ?? null
-  }
 
   // [SEC-STORAGE-PATH] "The rows already passed table RLS, so no unauthorized path is ever
   // signed" — the first half is true and the second does not follow from it. pdf_url/file_url
   // are plain text the ROW'S OWN OWNER may write, so an authorized row can still name another
   // tenant's storage key, and service_role signs whatever it is handed. Each node carries the
   // owner its bytes must belong to; a path outside that folder is dropped, not signed.
-  const signedNodes = await Promise.all(
-    nodes.map(async (n) => {
-      if (!n.pdfUrl) return n
-      // Already a full URL → keep (not ours to sign).
-      if (/^https?:\/\//i.test(n.pdfUrl)) return n
-      if (!pathBelongsToOwner(n.pdfUrl, n.ownerId)) {
-        console.error('[SEC-STORAGE-PATH] refused to sign a node path outside its owner', {
-          nodeId: n.id, source: n.source, ownerId: n.ownerId, path: n.pdfUrl,
-        })
-        return { ...n, pdfUrl: null }
-      }
-      // Storage path → sign it (documents bucket) via service_role.
-      const signed = await signUrl(n.pdfUrl)
-      return { ...n, pdfUrl: signed }
-    })
-  )
+  //
+  // [SIGN-BATCH] Signed in BATCHES, not one HTTP round-trip per node. This was
+  // `Promise.all(nodes.map(… createSignedUrl …))`, i.e. one storage call per file — and for an
+  // accountant that is every document of every linked client, fired concurrently, on a
+  // force-dynamic page that BrugClient re-runs on every tab focus. createSignedUrls takes the
+  // whole list at once; chunked so one request never carries an unbounded path array.
+  const toSign: string[] = []
+  for (const n of nodes) {
+    if (!n.pdfUrl || /^https?:\/\//i.test(n.pdfUrl)) continue
+    if (!pathBelongsToOwner(n.pdfUrl, n.ownerId)) continue
+    toSign.push(n.pdfUrl)
+  }
+  const signedByPath = new Map<string, string>()
+  for (const chunk of chunkIds(toSign, 100)) {
+    const { data } = await pipeline.storage.from('documents').createSignedUrls(chunk, 3600)
+    for (const s of data ?? []) {
+      if (s.path && s.signedUrl && !s.error) signedByPath.set(s.path, s.signedUrl)
+    }
+  }
+  const signedNodes = nodes.map((n) => {
+    if (!n.pdfUrl) return n
+    // Already a full URL → keep (not ours to sign).
+    if (/^https?:\/\//i.test(n.pdfUrl)) return n
+    if (!pathBelongsToOwner(n.pdfUrl, n.ownerId)) {
+      console.error('[SEC-STORAGE-PATH] refused to sign a node path outside its owner', {
+        nodeId: n.id, source: n.source, ownerId: n.ownerId, path: n.pdfUrl,
+      })
+      return { ...n, pdfUrl: null }
+    }
+    return { ...n, pdfUrl: signedByPath.get(n.pdfUrl) ?? null }
+  })
 
   // [BRIDGE-HUB] Layer 1 — per-client summaries for the accountant's overview.
   // Computed from the invoices already fetched (no extra query). For each linked
@@ -165,18 +195,26 @@ export default async function BrugServerPage() {
   //   Leeg           → no invoices this quarter
   let clientSummaries: ClientSummary[] | undefined
   if (isAccountant && clientNames) {
-    const now = new Date()
-    const q = (Math.floor(now.getMonth() / 3) + 1)
-    const qStart = new Date(now.getFullYear(), (q - 1) * 3, 1)
-    const qEnd = new Date(now.getFullYear(), q * 3, 0, 23, 59, 59)
+    // [BRIDGE-QUARTER-PICKER] The SAME quarter the hub opens on. This computed the CURRENT
+    // calendar quarter in server-local time, while BrugClient's picker defaults to the last
+    // completed one via the shared helper — the exact drift its own comment says was already
+    // fixed there and left here. The consequence was not subtle: in July the dropdown described
+    // Q3 (one month old, mostly empty) while Overzicht, Kwartaal and "Download kwartaal" behind
+    // it all opened Q2, so a client who had finished Q2 perfectly was labelled 'Leeg'.
+    //
+    // Membership is decided on the ISO date STRING via quarterKeyOf, not by building Date
+    // objects: invoice_date is date-only, `new Date('2026-01-01')` is midnight UTC, and it was
+    // being compared against a LOCAL-midnight quarter boundary — a mismatch that silently drops
+    // the first day(s) of a quarter on any server not running in UTC. Strings have no timezone.
+    const { year: sumYear, quarter: sumQuarter } = lastCompletedQuarter()
+    const summaryQuarterKey = `${sumYear}-Q${sumQuarter}`
     const VERIFIED = new Set(['sent', 'paid', 'overdue', 'received'])
 
     const acc = new Map<string, { verified: number; pending: number; total: number }>()
     for (const id of clientNames.keys()) acc.set(id, { verified: 0, pending: 0, total: 0 })
 
     for (const inv of invoices) {
-      const d = inv.invoice_date ? new Date(inv.invoice_date) : null
-      if (!d || d < qStart || d > qEnd) continue
+      if (quarterKeyOf(inv.invoice_date) !== summaryQuarterKey) continue
       // The invoice belongs to whichever linked client is sender or receiver.
       const owner = (inv.sender_id && acc.has(inv.sender_id)) ? inv.sender_id
                   : (inv.receiver_id && acc.has(inv.receiver_id)) ? inv.receiver_id
@@ -205,18 +243,43 @@ export default async function BrugServerPage() {
   if (isAccountant) {
     const docIds = signedNodes.filter(n => n.source === 'document').map(n => n.id)
     if (docIds.length > 0) {
-      const { data: statusRows } = await supabase
-        .from('accountant_subject_status')
-        .select('subject_id, status, vraag_text')
-        .eq('subject_type', 'document')
-        .in('subject_id', docIds)
-      for (const r of statusRows ?? []) {
-        docStatus[r.subject_id] = { status: r.status, vraag_text: r.vraag_text ?? null }
+      // [IN-CHUNK] Chunked + paged. This is one `.in()` over EVERY document of EVERY linked
+      // client, and a plain one hits both silent ceilings — the ~1000-row response cap and the
+      // length of the id list in the URL. Either way the map comes back short, and a document
+      // whose status simply fell off the end renders with no badge at all: indistinguishable
+      // from one the accountant has never touched.
+      try {
+        const statusRows = await fetchAllRowsForIds<{ subject_id: string; status: string; vraag_text: string | null }, string>(
+          docIds,
+          (chunk, from, to) => supabase
+            .from('accountant_subject_status')
+            .select('subject_id, status, vraag_text')
+            .eq('subject_type', 'document')
+            .in('subject_id', chunk)
+            .order('subject_id', { ascending: true })
+            .range(from, to),
+        )
+        for (const r of statusRows) {
+          docStatus[r.subject_id] = { status: r.status, vraag_text: r.vraag_text ?? null }
+        }
+      } catch (e) {
+        // Display-only: no badge is the honest default (bridge-tree never invents a status).
+        console.error('[READINESS-P3] document status read failed', { error: e instanceof Error ? e.message : String(e) })
       }
     }
   }
 
-  return <BrugClient nodes={signedNodes} role={profile.role} clientSummaries={clientSummaries} docStatus={docStatus} />
+  return (
+    <BrugClient
+      nodes={signedNodes}
+      role={profile.role}
+      clientSummaries={clientSummaries}
+      docStatus={docStatus}
+      // [NO-SILENT-EMPTY] Which sources could not be read, so the screen can say that an empty
+      // bridge is an unanswered question rather than an answer.
+      readFailed={readFailed}
+    />
+  )
 }
 
 // [BRIDGE-HUB] Per-client readiness summary for the accountant overview (Layer 1).
