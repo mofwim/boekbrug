@@ -2,6 +2,7 @@
 import {
   openAmount,
   openAmountSigned,
+  settledAmountSigned,
   isPartiallyPaid,
   parseAmountInput,
   interpretAmountEntry,
@@ -257,6 +258,42 @@ console.log("\n— [OPEN-TOTAL] optellen: het teken van de factuur telt mee —"
   ];
   const som = rows.reduce((t, r) => t + openAmountSigned(r), 0);
   check("gemengde lijst telt op tot 1179", Math.round(som * 100) / 100 === 1179);
+}
+
+console.log("— …en de drie bedragen op het scherm tellen op —");
+{
+  // De identiteit waar de hele regel op rust: open + betaald === totaal, per factuur en dus ook
+  // per lijst. Zonder die identiteit nodigt een scherm met drie bedragen uit tot een optelling
+  // die niet uitkomt.
+  const rows = [
+    { status: "received", total_inc_btw: 1000, amount_paid: 0 },      // niets betaald
+    { status: "received", total_inc_btw: 500, amount_paid: 200 },     // deelbetaling
+    { status: "paid", total_inc_btw: 999, amount_paid: 999 },         // betaald
+    { status: "paid", total_inc_btw: 250, amount_paid: 0 },           // legacy: betaald zonder amount_paid
+    { status: "received", total_inc_btw: -121, amount_paid: 0 },      // creditnota, open
+    { status: "paid", total_inc_btw: -60, amount_paid: 60 },          // creditnota, verrekend
+    { status: "received", total_inc_btw: 100, amount_paid: 130 },     // meer betaald dan de factuur
+  ];
+  for (const r of rows) {
+    const som = Math.round((openAmountSigned(r) + settledAmountSigned(r)) * 100) / 100;
+    const totaal = Math.round((r.total_inc_btw ?? 0) * 100) / 100;
+    check(`open + betaald === totaal (${r.status} ${r.total_inc_btw}/${r.amount_paid})`, som === totaal);
+  }
+
+  check("een legacy 'paid' zonder amount_paid telt tóch volledig als betaald",
+    settledAmountSigned({ status: "paid", total_inc_btw: 250, amount_paid: 0 }) === 250);
+  check("een verrekende creditnota draagt zijn minteken",
+    settledAmountSigned({ status: "paid", total_inc_btw: -60, amount_paid: 60 }) === -60);
+  check("te veel betaald verrekent nooit meer dan de factuur waard is",
+    settledAmountSigned({ status: "received", total_inc_btw: 100, amount_paid: 130 }) === 100);
+  check("niets betaald is nul, zonder teken",
+    Object.is(settledAmountSigned({ status: "received", total_inc_btw: -500, amount_paid: 0 }), 0));
+
+  // En op lijstniveau: de drie getallen die het scherm toont.
+  const open = Math.round(rows.reduce((t, r) => t + openAmountSigned(r), 0) * 100) / 100;
+  const betaald = Math.round(rows.reduce((t, r) => t + settledAmountSigned(r), 0) * 100) / 100;
+  const totaal = Math.round(rows.reduce((t, r) => t + (r.total_inc_btw ?? 0), 0) * 100) / 100;
+  check("de lijstsom klopt ook", Math.round((open + betaald) * 100) / 100 === totaal);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

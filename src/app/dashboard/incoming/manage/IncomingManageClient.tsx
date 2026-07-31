@@ -38,8 +38,11 @@ import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
-import { openAmount, openAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
+import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
+// getest, zodat de randen (januari → december, Q1 → Q4 vorig jaar, schrikkeljaar) vaststaan.
+import { INVOICE_PERIODS, resolveInvoicePeriod, isInPeriod, type InvoicePeriod } from '@/lib/invoice-period'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
 import { rowMatchesQuery } from '@/lib/search'
@@ -295,6 +298,12 @@ export default function IncomingManageClient({
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
   const [showSortMenu, setShowSortMenu] = useState(false)
+  // [PERIODE] De lijst toonde ALLE tijd. Dat is goed voor "wat moet ik betalen" en verkeerd voor
+  // elke andere vraag die iemand aan deze lijst stelt (wat kocht ik in maart, wat gaf ik dit jaar
+  // uit) — zeker nu er een bedrag boven staat: dan is de periode de helft van het antwoord.
+  // Default 'all', zodat het scherm zich precies zo gedraagt als voorheen tot je zelf kiest.
+  const [period, setPeriod]             = useState<InvoicePeriod>('all')
+  const [showPeriodMenu, setShowPeriodMenu] = useState(false)
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
   // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
@@ -496,19 +505,48 @@ export default function IncomingManageClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionParam, focusId, invoices.length])
 
+  // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
+  // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
+  // clock itself). Not toISOString(): near midnight UTC that is a different day, and "te laat"
+  // must follow the owner's calendar, not UTC's.
+  //
+  // [TZ] amsterdamToday(), not the DEVICE's local date. The device clock is whatever the traveller
+  // or a mis-set phone says it is, and this file already uses amsterdamToday() for the betaaldatum
+  // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
+  // calendar while recording payments against another. One clock for the whole page.
+  const todayIso = amsterdamToday()
+
   // [SEARCH] In-page live filter (leverancier / factuurnummer / bedrag), on top of the
   // status tabs — in place, no navigation.
   const rawS = search.trim()
+  // [PERIODE] Het venster van de gekozen periode, tegen de AMSTERDAMSE dag (todayIso hieronder komt
+  // van amsterdamToday) — nooit tegen de klok van het apparaat, want dan zou een telefoon in een
+  // andere tijdzone rond middernacht een andere maand tonen dan de rest van de app.
+  const periodWindow = resolveInvoicePeriod(period, todayIso)
   const displayed = sortRows(
     invoices.filter(inv => {
       const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
       if (!tabOk) return false
+      // [PERIODE] Op de FACTUURDATUM — de datum die op de rij staat afgedrukt en waarop de lijst
+      // standaard sorteert. Niet op de betaaldatum: dan zou een factuur van maart die je in april
+      // betaalde uit maart verdwijnen, terwijl je hem daar zoekt.
+      if (!isInPeriod(inv.invoice_date, periodWindow)) return false
       // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
       // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
       return rowMatchesQuery(rawS, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
     }),
     sortBy,
   )
+  // [PERIODE] Facturen die WEL aan filter en zoekopdracht voldoen maar geen datum hebben, vallen
+  // buiten elke periode. Ze verdwijnen dus uit beeld zodra je een periode kiest — en dat is precies
+  // het soort stille verdwijning waar de rest van dit scherm tegen beveiligd is, dus wordt het
+  // geteld en gezegd (met de knop om ze te zien).
+  const datelessHidden = period === 'all' ? 0 : invoices.filter(inv => {
+    const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
+    if (!tabOk) return false
+    if (inv.invoice_date) return false
+    return rowMatchesQuery(rawS, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
+  }).length
   // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
   const autoCount = invoices.filter(isAutoVerified).length
 
@@ -524,16 +562,6 @@ export default function IncomingManageClient({
   // paid ones), so on a long history these are the counts of THIS LIST. totalCount says what the
   // owner really has, and the note below the counter names the difference instead of passing 200
   // off as "everything".
-  // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
-  // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
-  // clock itself). Not toISOString(): near midnight UTC that is a different day, and "te laat"
-  // must follow the owner's calendar, not UTC's.
-  //
-  // [TZ] amsterdamToday(), not the DEVICE's local date. The device clock is whatever the traveller
-  // or a mis-set phone says it is, and this file already uses amsterdamToday() for the betaaldatum
-  // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
-  // calendar while recording payments against another. One clock for the whole page.
-  const todayIso = amsterdamToday()
   // The Amsterdam YEAR, derived from the day we already computed — so fmtDateSmart never has to
   // build its own formatter per row (see the note on that function).
   const thisYear = todayIso.slice(0, 4)
@@ -555,13 +583,14 @@ export default function IncomingManageClient({
   // betaalde factuur voor niets, en een creditnota van je leverancier gaat eraf — precies zoals
   // hij een regel lager met zijn minteken staat afgedrukt.
   const openSumDisplayed = Math.round(displayed.reduce((s, i) => s + openAmountSigned(i), 0) * 100) / 100
-  // Wat er in de getoonde set al betaald IS. Alleen de rijen die op 'paid' staan: dat is wat het
-  // tabblad Betaald laat zien, en het is het bedrag dat op die rijen staat afgedrukt.
-  const paidSumDisplayed = Math.round(
-    displayed.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100,
-  ) / 100
+  // Wat er op de getoonde rijen AL is afgerekend — inclusief het deel van een deelbetaling. Niet
+  // "de facturen die op betaald staan": dan zou de €200 die je al hebt overgemaakt op een halve
+  // factuur in geen van beide kolommen staan, terwijl hij wel in het totaal zit. Zie
+  // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
+  const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
+  const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
   const showsOpen = displayed.some(i => i.status !== 'paid')
-  const showsPaid = displayed.some(i => i.status === 'paid')
+  const showsPaid = paidSumDisplayed !== 0 || displayed.some(i => i.status === 'paid')
 
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
@@ -1182,6 +1211,50 @@ export default function IncomingManageClient({
           </button>
         </div>
 
+          {/* [PERIODE] De periodekiezer staat BOVEN filter en sorteren, op zijn eigen regel: hij
+              bepaalt WELKE facturen er zijn, terwijl die twee bepalen hoe je ze bekijkt — en het
+              bedrag boven de lijst hangt aan deze keuze. Volle breedte, want de gekozen periode is
+              het antwoord op "waar gaat dit bedrag over" en moet leesbaar blijven ("Vorig kwartaal
+              · Q2 2026"). */}
+          <div style={{ position: 'relative', marginBottom: 8 }}>
+            <button
+              onClick={() => { setShowPeriodMenu(p => !p); setShowFilterMenu(false); setShowSortMenu(false) }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: period === 'all' ? '#F1F3F4' : M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }}>date_range</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {INVOICE_PERIODS.find(p => p.id === period)?.label ?? 'Alle periodes'}
+                  {periodWindow.label ? ` · ${periodWindow.label}` : ''}
+                </span>
+              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }}>
+                {showPeriodMenu ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+            {showPeriodMenu && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                {INVOICE_PERIODS.map(p => {
+                  // De concrete periode naast de keuze ("Vorige maand · juni 2026"), zodat niemand
+                  // hoeft te raden welke maanden hij te zien krijgt.
+                  const win = resolveInvoicePeriod(p.id, todayIso)
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => { setPeriod(p.id); setShowPeriodMenu(false) }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: period === p.id ? 600 : 400, background: period === p.id ? M3.primaryContainer : '#fff', color: period === p.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                    >
+                      <span>{p.label}</span>
+                      {win.label && (
+                        <span style={{ fontSize: 12, color: period === p.id ? M3.onPrimaryContainer : '#80868B', fontFamily: FONT_NUM, flexShrink: 0 }}>{win.label}</span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Filter + Sort dropdowns (side by side) */}
           <div style={{ display: 'flex', gap: 8 }}>
             {/* Filter */}
@@ -1326,15 +1399,22 @@ export default function IncomingManageClient({
             <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
               {rawS
                 ? `${nFacturen(displayed.length)} gevonden`
-                : filter === 'all'
-                  ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
-                  : `${displayed.length} van ${nFacturen(listedCount)}`}
+                // [PERIODE] Met een periode aan gaat ALLES op deze regel over die periode. De
+                // "12 facturen · 5 te betalen · 7 betaald"-samenvatting hieronder telt de hele
+                // lijst, en die naast een bedrag zetten dat over juni gaat, is twee waarheden.
+                : period !== 'all'
+                  ? `${nFacturen(displayed.length)} in ${periodWindow.label}`
+                  : filter === 'all'
+                    ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
+                    : `${displayed.length} van ${nFacturen(listedCount)}`}
             </p>
-            {/* [OPEN-TOTAL] Het bedrag onder de aantallen: hoeveel er van deze rijen nog te betalen
-                is, en hoeveel er al betaald is. Groter en donkerder dan de regel erboven, want dit
-                is de vraag waarmee iemand deze pagina opent — het aantal facturen is context.
-                Het openstaande bedrag staat in de kleur van de "Te betalen"-chip, zodat het bij de
-                rijen hoort waar het uit komt. */}
+            {/* [OPEN-TOTAL] Het bedrag onder de aantallen: wat er van deze rijen nog te betalen is,
+                wat er al betaald is, en — zodra die twee allebei bestaan — het totaal. Groter en
+                donkerder dan de regel erboven, want dit is de vraag waarmee iemand deze pagina
+                opent; het aantal facturen is context.
+                De kleuren zijn die van de statuschips ("Te betalen" amber, "Betaald" groen), zodat
+                elk bedrag zichtbaar bij de rijen hoort waar het uit komt, en het totaal neutraal
+                blijft omdat het over allebei gaat. */}
             {(showsOpen || showsPaid) && (
               <p style={{ fontSize: 14, fontFamily: FONT, margin: '4px 0 0', fontWeight: 700, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '0 10px' }}>
                 {showsOpen && (
@@ -1347,6 +1427,31 @@ export default function IncomingManageClient({
                     {fmtEur(paidSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>betaald</span>
                   </span>
                 )}
+                {/* Het totaal staat erbij zodra het IETS toevoegt: als er alleen openstaande rijen
+                    in beeld zijn is het totaal exact het openstaande bedrag, en dan is hetzelfde
+                    getal twee keer afdrukken geen extra informatie maar ruis. Staat het er wél,
+                    dan klopt de optelling: nog te betalen + betaald = totaal, tot op de cent
+                    (settledAmountSigned in partial-payment.ts bewaakt precies die identiteit). */}
+                {showsOpen && showsPaid && (
+                  <span style={{ color: M3.onSurface }}>
+                    {fmtEur(totalSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>totaal</span>
+                  </span>
+                )}
+              </p>
+            )}
+            {/* [PERIODE] Facturen zonder factuurdatum vallen buiten elke periode. Ze staan er dus
+                niet meer bij — en dat mag niet stil gebeuren op een scherm waar een bedrag boven de
+                lijst staat: de knop zet je terug op "Alle periodes", waar ze wél staan. */}
+            {datelessHidden > 0 && (
+              <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
+                {datelessHidden === 1 ? '1 factuur heeft' : `${datelessHidden} facturen hebben`} geen factuurdatum en
+                {datelessHidden === 1 ? ' valt' : ' vallen'} buiten deze periode.{' '}
+                <button
+                  onClick={() => setPeriod('all')}
+                  style={{ background: 'none', border: 'none', padding: 0, color: M3.primary, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'underline' }}
+                >
+                  Toon alle periodes
+                </button>
               </p>
             )}
             {/* [NO-SILENT-EMPTY] Een bedrag leest als een feit, dus zegt het er zelf bij wanneer
@@ -1362,7 +1467,7 @@ export default function IncomingManageClient({
                 [NO-SILENT-EMPTY] Not while a source read failed: this sentence asserts that the
                 {receivedCount} openstaande facturen shown ARE all of them, which is exactly what
                 we do not know then. The banner at the top of the page has already said so. */}
-            {hiddenCount > 0 && !loadIncomplete && (
+            {hiddenCount > 0 && !loadIncomplete && period === 'all' && (
               <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
                 Je hebt er {totalCount} in totaal. Deze lijst toont de {receivedCount} openstaande en de {paidCount} meest recente betaalde.
               </p>
@@ -1378,6 +1483,24 @@ export default function IncomingManageClient({
             // failed read we have no basis for it, and on this screen the claim is the dangerous
             // direction: it tells someone with unpaid suppliers that they owe nobody anything.
             <LoadFailedState onRetry={() => router.refresh()} />
+          ) : period !== 'all' ? (
+            // [PERIODE] Ook dit is een claim: "Geen inkoopfacturen" terwijl je er twaalf hebt en er
+            // alleen geen in juni vallen. Zeg wat er aan de hand is, en bied de weg terug.
+            <div style={{ textAlign: 'center', padding: '48px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>date_range</span>
+              <p style={{ fontSize: 15.5, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>
+                Geen inkoopfacturen in {periodWindow.label}
+              </p>
+              <p style={{ fontSize: 13.5, color: '#5F6368', fontFamily: FONT, marginBottom: 14 }}>
+                Je hebt er {nFacturen(listedCount)} in andere periodes.
+              </p>
+              <button
+                onClick={() => setPeriod('all')}
+                style={{ padding: '9px 18px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+              >
+                Toon alle periodes
+              </button>
+            </div>
           ) : <EmptyState />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
