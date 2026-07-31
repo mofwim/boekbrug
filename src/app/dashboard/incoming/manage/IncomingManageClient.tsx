@@ -38,7 +38,7 @@ import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
-import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
+import { openAmount, openAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
@@ -542,6 +542,27 @@ export default function IncomingManageClient({
   // totaal" disclosure (which asserts completeness and must go quiet), and the empty state (which
   // must say "we konden niet kijken", not "je hebt niets").
   const loadIncomplete = readFailed.length > 0
+  // ── [OPEN-TOTAL] Wat staat er in totaal nog open? ────────────────────────────
+  // De vraag die deze lijst oproept en tot nu toe niet beantwoordde: je ziet twaalf rijen met
+  // twaalf bedragen en moet zelf optellen wat je vanmiddag kwijt bent.
+  //
+  // Berekend over `displayed` — dus over precies de rijen die op dit moment op het scherm staan,
+  // door het filter én de zoekopdracht heen. Typ je "DHL", dan is het het totaal van DHL. Sta je
+  // op "Betaald", dan gaat het over betaalde facturen. Een totaal dat iets anders optelt dan wat
+  // eronder staat, is een tweede waarheid op één scherm.
+  //
+  // openAmountSigned, niet het factuurbedrag: een deelbetaling telt alleen voor de REST mee, een
+  // betaalde factuur voor niets, en een creditnota van je leverancier gaat eraf — precies zoals
+  // hij een regel lager met zijn minteken staat afgedrukt.
+  const openSumDisplayed = Math.round(displayed.reduce((s, i) => s + openAmountSigned(i), 0) * 100) / 100
+  // Wat er in de getoonde set al betaald IS. Alleen de rijen die op 'paid' staan: dat is wat het
+  // tabblad Betaald laat zien, en het is het bedrag dat op die rijen staat afgedrukt.
+  const paidSumDisplayed = Math.round(
+    displayed.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100,
+  ) / 100
+  const showsOpen = displayed.some(i => i.status !== 'paid')
+  const showsPaid = displayed.some(i => i.status === 'paid')
+
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
   const listedCount   = invoices.length
@@ -1309,6 +1330,33 @@ export default function IncomingManageClient({
                   ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
                   : `${displayed.length} van ${nFacturen(listedCount)}`}
             </p>
+            {/* [OPEN-TOTAL] Het bedrag onder de aantallen: hoeveel er van deze rijen nog te betalen
+                is, en hoeveel er al betaald is. Groter en donkerder dan de regel erboven, want dit
+                is de vraag waarmee iemand deze pagina opent — het aantal facturen is context.
+                Het openstaande bedrag staat in de kleur van de "Te betalen"-chip, zodat het bij de
+                rijen hoort waar het uit komt. */}
+            {(showsOpen || showsPaid) && (
+              <p style={{ fontSize: 14, fontFamily: FONT, margin: '4px 0 0', fontWeight: 700, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '0 10px' }}>
+                {showsOpen && (
+                  <span style={{ color: '#7C5800' }}>
+                    {fmtEur(openSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>nog te betalen</span>
+                  </span>
+                )}
+                {showsPaid && (
+                  <span style={{ color: '#137333' }}>
+                    {fmtEur(paidSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>betaald</span>
+                  </span>
+                )}
+              </p>
+            )}
+            {/* [NO-SILENT-EMPTY] Een bedrag leest als een feit, dus zegt het er zelf bij wanneer
+                het over een onvolledige lijst gaat. De rode balk bovenaan zegt WAT er misging; deze
+                regel zorgt dat het TOTAAL niet los daarvan als compleet wordt gelezen. */}
+            {loadIncomplete && (showsOpen || showsPaid) && (
+              <p style={{ fontSize: 11.5, color: M3.error, fontFamily: FONT, margin: '2px 0 0', lineHeight: 1.4 }}>
+                Dit telt alleen op wat we konden ophalen — er ontbreken facturen.
+              </p>
+            )}
             {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
                 than let the counter imply the owner owns fewer facturen than he does.
                 [NO-SILENT-EMPTY] Not while a source read failed: this sentence asserts that the
