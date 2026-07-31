@@ -7,7 +7,8 @@ import { Suspense, useState, useEffect } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
-import { safeRedirect } from '@/lib/safe-redirect'
+import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
+import { callbackFoutTekst, herstelmailFout, inlogFout } from '@/lib/auth-errors'
 
 function LoginContent() {
   const [email, setEmail] = useState('')
@@ -17,8 +18,36 @@ function LoginContent() {
   const [error, setError] = useState('')
   const [needsConfirm, setNeedsConfirm] = useState(false)
   const [resendMsg, setResendMsg] = useState('')
+  const [resending, setResending] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
+
+  // De bestemming die de bezoeker meebracht. [SEC-REDIRECT] Alleen een pad op onze eigen origin;
+  // al het andere valt terug op /dashboard.
+  const gewenst = searchParams.get('redirect')
+  const bestemming = safeRedirect(gewenst, '/dashboard')
+
+  // [AUTH-FOUT] De reden waarmee de OAuth-callback iemand hier terugzette.
+  //
+  // Die callback stuurt bij een mislukking naar /login?error=no_code of ?error=auth_failed — en
+  // dit scherm las dat nooit. Wie met Google strandde kwam dus terug op een leeg inlogformulier
+  // zonder één woord over wat er zojuist misging, en probeerde precies hetzelfde nog eens.
+  //
+  // De parameter wordt VERTAALD, niet getoond: een querystring is invoer van buiten, en die hoort
+  // niet als melding terug op ons eigen inlogscherm te verschijnen.
+  const callbackFout = callbackFoutTekst(searchParams.get('error'))
+
+  // Wie al een sessie heeft, hoort hier niet naar een inlogformulier te kijken — en al helemaal
+  // niet naar de vraag om opnieuw zijn wachtwoord in te tikken. Mét zijn bestemming, zodat een
+  // uitnodiging ook hier blijft werken. (In een effect, niet in de render: dan bouwt `next build`
+  // geen Supabase-client — zie de RULE in src/lib/supabase.ts.)
+  useEffect(() => {
+    let afgebroken = false
+    getBrowserClient().auth.getSession().then(({ data }) => {
+      if (!afgebroken && data.session) router.replace(bestemming)
+    })
+    return () => { afgebroken = true }
+  }, [router, bestemming])
 
   // [Google-OAuth] Reset loading state when user returns via browser back button
   // pageshow + focus + visibilitychange covers all browsers
@@ -42,13 +71,20 @@ function LoginContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
+    // [BESTEMMING] Mét ?next=, want anders valt de bestemming hier stil weg. Een uitgenodigde
+    // boekhouder komt binnen via /login?redirect=/invite/accept?token=… (zie invite/accept), en
+    // koos hij dan "Inloggen met Google", dan kwam hij uit op zijn dashboard met de uitnodiging
+    // nergens meer in beeld — hij moest de mail opnieuw opzoeken. De callback leest `next` al.
+    const callback = new URL('/api/auth/callback', window.location.origin)
+    if (isSafeRedirect(gewenst)) callback.searchParams.set('next', gewenst)
+
     const { error } = await getBrowserClient().auth.signInWithOAuth({
       provider: 'google',
       options: {
         // Basic sign-in only — we no longer request Gmail inbox access here.
         // Gmail connecting is a separate, opt-in step during onboarding.
         scopes: 'email profile',
-        redirectTo: `${window.location.origin}/api/auth/callback`,
+        redirectTo: callback.toString(),
       },
     })
 
@@ -61,22 +97,35 @@ function LoginContent() {
   }
 
   async function handleLogin() {
+    // [DUBBEL-VERSTUREN] Loopt er al een poging, dan houdt het hier op. De knop is tijdens het
+    // wachten uitgeschakeld, maar Enter ging daar dwars doorheen — en twee inlogpogingen tellen
+    // allebei mee voor de ratelimiet van Supabase.
+    if (loading || googleLoading) return
+
     setLoading(true)
     setError('')
     setNeedsConfirm(false)
     setResendMsg('')
 
-    const { error } = await getBrowserClient().auth.signInWithPassword({ email, password })
+    // Hetzelfde adres als op het scherm staat. Zonder trim werd " jan@x.nl " door de server
+    // geweigerd en las de gebruiker dat zijn wachtwoord onjuist was.
+    const { error } = await getBrowserClient().auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
 
     if (error) {
-      // Distinguish "not confirmed yet" from a real wrong password/e-mail.
-      const code = (error as { code?: string }).code
-      const msg = error.message?.toLowerCase() ?? ''
-      if (code === 'email_not_confirmed' || msg.includes('confirm')) {
-        setNeedsConfirm(true)
-      } else {
-        setError('E-mail of wachtwoord is onjuist')
-      }
+      // [AUTH-FOUT] Zeg wat er werkelijk misging. Hier stond één `if` voor "nog niet bevestigd"
+      // en een `else` die al het andere "E-mail of wachtwoord is onjuist" noemde — óók een 429.
+      // Wie dát leest tikt zijn wachtwoord opnieuw, dus opnieuw een poging, dus een langere
+      // blokkade: de melding maakte het probleem groter dat ze beschreef. Zie src/lib/auth-errors.ts.
+      const fout = inlogFout({
+        code: (error as { code?: string }).code,
+        status: error.status,
+        message: error.message,
+      })
+      if (fout.bevestigNodig) setNeedsConfirm(true)
+      else setError(fout.tekst)
       setLoading(false)
       return
     }
@@ -87,20 +136,31 @@ function LoginContent() {
     // pagina, met de sessie die net is aangemaakt. De tweede decodeURIComponent is ook weg:
     // searchParams.get() heeft de waarde al gedecodeerd, en die dubbele slag liep stuk op een
     // letterlijk procentteken (URIError → het scherm bleef op "Bezig..." staan).
-    router.push(safeRedirect(searchParams.get('redirect'), '/dashboard'))
+    router.push(bestemming)
   }
 
   // Re-send the confirmation e-mail for an unconfirmed account.
   async function handleResend() {
+    // Zonder slot en zonder zichtbare voortgang tikt iemand deze knop drie keer aan omdat er
+    // niets lijkt te gebeuren — en loopt daarmee tegen de verzendlimiet van Supabase aan, die
+    // hem juist de mail onthoudt waar hij op wacht.
+    if (resending) return
+    setResending(true)
     setResendMsg('')
-    const { error } = await getBrowserClient().auth.resend({ type: 'signup', email })
-    setResendMsg(error ? 'Versturen mislukt — probeer opnieuw.' : 'We hebben de mail opnieuw gestuurd.')
+    const { error } = await getBrowserClient().auth.resend({ type: 'signup', email: email.trim() })
+    setResendMsg(
+      error
+        ? herstelmailFout({ status: error.status, message: error.message }).tekst
+        : 'We hebben de mail opnieuw gestuurd.'
+    )
+    setResending(false)
   }
 
   function goToRegister() {
-    const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl
-      ? `/register?redirect=${encodeURIComponent(redirectUrl)}`
+    // [SEC-REDIRECT] Alleen doorgeven wat de ontvanger ook zou accepteren — een waarde
+    // meegeven die daar wordt weggegooid is een belofte die je niet waarmaakt.
+    router.push(isSafeRedirect(gewenst)
+      ? `/register?redirect=${encodeURIComponent(gewenst)}`
       : '/register'
     )
   }
@@ -116,6 +176,7 @@ function LoginContent() {
 
         {/* [Google-OAuth] Google login button */}
         <button
+          type="button"
           onClick={handleGoogleLogin}
           disabled={googleLoading || loading}
           className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50 mb-6"
@@ -135,74 +196,87 @@ function LoginContent() {
           <div className="flex-1 h-px bg-gray-100" />
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-            <input
-              id="login-email"
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              autoComplete="email"
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="jouw@email.nl"
-              style={{ fontSize: '16px' }} // prevent iOS zoom
-            />
+        {/* De melding van de callback staat bovenaan, want ze gaat over wat er zojuist misging —
+            niet over wat je nu intikt. */}
+        {callbackFout && (
+          <div role="alert" className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-4">
+            <span aria-hidden className="text-amber-500 text-sm mt-0.5 flex-shrink-0">!</span>
+            <p className="text-sm text-amber-700">{callbackFout}</p>
           </div>
+        )}
 
-          <div>
-            <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-            <input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleLogin()}
-              autoComplete="current-password"
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="••••••••"
-              style={{ fontSize: '16px' }} // prevent iOS zoom
-            />
-            <div className="text-right mt-1">
-              <a href="/wachtwoord-vergeten" className="text-sm text-blue-600 hover:underline">
-                Wachtwoord vergeten?
-              </a>
+        {/* In een <form>: Enter verstuurt vanuit elk veld en een mobiel toetsenbord toont een
+            "Ga"-toets in plaats van een regeleinde. Stond als bekend punt in UX_REVIEW_2026. */}
+        <form onSubmit={e => { e.preventDefault(); handleLogin() }} className="space-y-4">
+            <div>
+              <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+              <input
+                id="login-email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="jouw@email.nl"
+                style={{ fontSize: '16px' }} // prevent iOS zoom
+              />
             </div>
-          </div>
 
-          <ErrorMessage message={error} />
-
-          {/* Unconfirmed e-mail — offer to re-send the confirmation link. */}
-          {needsConfirm && (
-            <div className="flex flex-col gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-              <p className="text-sm text-amber-700">Je moet eerst je e-mail bevestigen.</p>
-              <button
-                type="button"
-                onClick={handleResend}
-                className="self-start text-sm font-medium text-blue-600 hover:underline"
-              >
-                Stuur de mail opnieuw
-              </button>
-              {resendMsg && <p className="text-sm text-amber-700">{resendMsg}</p>}
+            <div>
+              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+              <input
+                id="login-password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password"
+                enterKeyHint="go"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="••••••••"
+                style={{ fontSize: '16px' }} // prevent iOS zoom
+              />
+              <div className="text-right mt-1">
+                <a href="/wachtwoord-vergeten" className="text-sm text-blue-600 hover:underline">
+                  Wachtwoord vergeten?
+                </a>
+              </div>
             </div>
-          )}
+
+            <ErrorMessage message={error} />
+
+            {/* Unconfirmed e-mail — offer to re-send the confirmation link. */}
+            {needsConfirm && (
+              <div className="flex flex-col gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                <p className="text-sm text-amber-700">Je moet eerst je e-mail bevestigen.</p>
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={resending}
+                  className="self-start text-sm font-medium text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  {resending ? 'Bezig met versturen...' : 'Stuur de mail opnieuw'}
+                </button>
+                {resendMsg && <p className="text-sm text-amber-700">{resendMsg}</p>}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || googleLoading}
+              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              {loading ? 'Bezig...' : 'Inloggen'}
+            </button>
+          </form>
 
           <button
-            onClick={handleLogin}
-            disabled={loading || googleLoading}
-            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {loading ? 'Bezig...' : 'Inloggen'}
-          </button>
-
-          <button
+            type="button"
             onClick={goToRegister}
             disabled={loading || googleLoading}
-            className="w-full border border-gray-200 text-gray-700 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            className="w-full border border-gray-200 text-gray-700 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 mt-4"
           >
             Nieuw account aanmaken
           </button>
-        </div>
 
       </div>
     </div>

@@ -26,6 +26,17 @@ export const BTW_REGEX = /^NL\d{9}B\d{2}$/;
 // [BRIDGE-POLISH 3a-3] Dutch IBAN: NL + 2 check digits + 4 bank letters + 10 digits.
 // Structural shape only — the mod-97 checksum is verified separately below.
 export const IBAN_NL_REGEX = /^NL\d{2}[A-Z]{4}\d{10}$/;
+// [AUTH] E-mail: iets vóór de @, iets erachter, en daarin een punt met minstens twee tekens erna.
+//
+// Bewust ruim. Op drie plekken stond `includes('@') && includes('.')`, en die liet "jan.de@vries"
+// door — een adres zonder domeinnaam. Bij registreren kost dat een ronde langs de server; bij een
+// herstelmail is het erger, want dan wacht iemand op post die nooit aankomt en is er geen enkele
+// andere aanwijzing dat er iets misging.
+//
+// Strenger hoort het niet te worden: het echte oordeel over een adres is of er post aankomt, en
+// dat weet alleen de bevestigingsmail. Een regex die "te slim" is weigert vooral geldige adressen
+// van mensen met een ongewoon domein.
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 // ── Dutch error messages (confirmed) ─────────────────────
 export const KVK_ERROR = "KVK-nummer moet uit 8 cijfers bestaan";

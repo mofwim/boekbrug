@@ -6,6 +6,8 @@
 import { useState } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import { herstelmailFout } from '@/lib/auth-errors'
+import { EMAIL_REGEX } from '@/lib/validation'
 
 export default function WachtwoordVergetenPage() {
   const [email, setEmail] = useState('')
@@ -14,20 +16,34 @@ export default function WachtwoordVergetenPage() {
   const [sent, setSent] = useState(false)
 
   async function handleReset() {
-    if (!email.trim() || !(email.includes('@') && email.includes('.'))) {
+    // [DUBBEL-VERSTUREN] Enter ging langs de uitgeschakelde knop heen, en elke poging telt mee
+    // voor de verzendlimiet van Supabase — die je juist de mail onthoudt waar je op wacht.
+    if (loading) return
+
+    const schoonEmail = email.trim()
+    if (!schoonEmail) {
       setError('Vul je e-mailadres in')
+      return
+    }
+    // De oude controle was `includes('@') && includes('.')` en liet "jan.de@vries" door: een
+    // adres zonder domeinnaam. Dan is de mail onderweg naar niets en wacht iemand op post die
+    // nooit komt — bij een herstelmail heb je geen enkele andere aanwijzing dat het misging.
+    if (!EMAIL_REGEX.test(schoonEmail)) {
+      setError('Dit e-mailadres klopt niet')
       return
     }
 
     setLoading(true)
     setError('')
 
-    const { error: resetError } = await getBrowserClient().auth.resetPasswordForEmail(email, {
+    const { error: resetError } = await getBrowserClient().auth.resetPasswordForEmail(schoonEmail, {
       redirectTo: `${window.location.origin}/wachtwoord-herstellen`,
     })
 
     if (resetError) {
-      setError('Versturen mislukt — probeer opnieuw')
+      // [AUTH-FOUT] Een ratelimiet is geen verzendstoring: "probeer opnieuw" is dan precies het
+      // verkeerde advies, want elke nieuwe poging verlengt de wachttijd.
+      setError(herstelmailFout({ status: resetError.status, message: resetError.message }).tekst)
       setLoading(false)
       return
     }
@@ -67,39 +83,39 @@ export default function WachtwoordVergetenPage() {
           </p>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="reset-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-            <input
-              id="reset-email"
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleReset()}
-              autoComplete="email"
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="jouw@email.nl"
-              style={{ fontSize: '16px' }} // prevent iOS zoom
-            />
-          </div>
+        <form onSubmit={e => { e.preventDefault(); handleReset() }} className="space-y-4">
+            <div>
+              <label htmlFor="reset-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+              <input
+                id="reset-email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
+                enterKeyHint="go"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="jouw@email.nl"
+                style={{ fontSize: '16px' }} // prevent iOS zoom
+              />
+            </div>
 
-          <ErrorMessage message={error} />
+            <ErrorMessage message={error} />
 
-          <button
-            onClick={handleReset}
-            disabled={loading || !email}
-            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {loading ? 'Bezig...' : 'Stuur de link'}
-          </button>
+            <button
+              type="submit"
+              disabled={loading || !email}
+              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              {loading ? 'Bezig...' : 'Stuur de link'}
+            </button>
 
-          <a
-            href="/login"
-            className="block text-center text-sm text-gray-500 hover:text-gray-700"
-          >
-            Terug naar inloggen
-          </a>
-        </div>
+            <a
+              href="/login"
+              className="block text-center text-sm text-gray-500 hover:text-gray-700"
+            >
+              Terug naar inloggen
+            </a>
+        </form>
 
       </div>
     </div>

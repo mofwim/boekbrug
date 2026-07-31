@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import { wachtwoordOpslaanFout } from '@/lib/auth-errors'
 
 export default function WachtwoordHerstellenPage() {
   const [password, setPassword] = useState('')
@@ -15,6 +16,8 @@ export default function WachtwoordHerstellenPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
+  // Of deze link ons daadwerkelijk een sessie heeft opgeleverd. 'bezig' tot we het weten.
+  const [linkStatus, setLinkStatus] = useState<'bezig' | 'goed' | 'verlopen'>('bezig')
 
   // [BUILD-NO-SECRETS] The client is built where it is USED, never during render.
   //
@@ -38,17 +41,24 @@ export default function WachtwoordHerstellenPage() {
     const init = async () => {
       const supabase = getSupabase()
       const { data } = await supabase.auth.getSession()
-      if (data.session) return
+      if (data.session) { setLinkStatus('goed'); return }
+
       const code = new URLSearchParams(window.location.search).get('code')
       if (code) {
-        await supabase.auth.exchangeCodeForSession(code).catch(() => {})
+        const { error } = await supabase.auth.exchangeCodeForSession(code)
+        setLinkStatus(error ? 'verlopen' : 'goed')
+        return
       }
+      // Geen sessie en geen code: hier is niemand via een herstelmail binnengekomen.
+      setLinkStatus('verlopen')
     }
     init()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleUpdate() {
+    // [DUBBEL-VERSTUREN] Enter ging langs de uitgeschakelde knop heen.
+    if (loading) return
+
     if (password.length < 6) {
       setError('Kies een wachtwoord van minstens 6 tekens')
       return
@@ -64,7 +74,17 @@ export default function WachtwoordHerstellenPage() {
     const { error: updateError } = await getSupabase().auth.updateUser({ password })
 
     if (updateError) {
-      setError('Opslaan mislukt. Vraag een nieuwe link aan.')
+      // [AUTH-FOUT] Hier stond één zin voor élke fout: "Opslaan mislukt. Vraag een nieuwe link
+      // aan." Dat is bij een te zwak wachtwoord ronduit verkeerd advies — je vraagt een nieuwe
+      // link aan, kiest hetzelfde wachtwoord, en komt precies even ver. Alleen een écht verlopen
+      // link stuurt nog naar een nieuwe aanvraag; de rest is hier gewoon opnieuw te proberen.
+      const fout = wachtwoordOpslaanFout({
+        code: (updateError as { code?: string }).code,
+        status: updateError.status,
+        message: updateError.message,
+      })
+      setError(fout.tekst)
+      if (fout.linkVerlopen) setLinkStatus('verlopen')
       setLoading(false)
       return
     }
@@ -91,6 +111,37 @@ export default function WachtwoordHerstellenPage() {
     )
   }
 
+  // Een link die het niet doet, zegt dat vóórdat je iets intikt.
+  //
+  // Dit scherm toonde altijd het formulier. Was de link verlopen, al gebruikt, of geopend op een
+  // ander apparaat dan waar hij is aangevraagd (de codeverifier staat in díé browser), dan merkte
+  // je dat pas nadat je twee keer een wachtwoord had ingetikt en op opslaan had gedrukt. En de
+  // melding die je dan kreeg — "Vraag een nieuwe link aan" — was voor élke fout dezelfde, dus ook
+  // als er niets mis was met de link.
+  if (linkStatus === 'verlopen') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
+          <div aria-hidden="true" style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
+          <h1 className="text-2xl font-bold text-gray-900">Deze link werkt niet meer</h1>
+          <p className="text-gray-500 text-sm mt-2">
+            Een herstellink is kort geldig en kan maar één keer gebruikt worden. Open hem ook in
+            dezelfde browser waarin je hem hebt aangevraagd.
+          </p>
+          <a
+            href="/wachtwoord-vergeten"
+            className="inline-block mt-6 px-6 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
+          >
+            Vraag een nieuwe link aan
+          </a>
+          <a href="/login" className="block mt-4 text-sm text-gray-500 hover:text-gray-700">
+            Terug naar inloggen
+          </a>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md">
@@ -100,46 +151,46 @@ export default function WachtwoordHerstellenPage() {
           <p className="text-gray-500 text-sm mt-2">Kies een nieuw wachtwoord voor je account.</p>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="new-password" className="block text-sm font-medium text-gray-700 mb-1">Nieuw wachtwoord</label>
-            <input
-              id="new-password"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              autoComplete="new-password"
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="••••••••"
-              style={{ fontSize: '16px' }} // prevent iOS zoom
-            />
-          </div>
+        <form onSubmit={e => { e.preventDefault(); handleUpdate() }} className="space-y-4">
+            <div>
+              <label htmlFor="new-password" className="block text-sm font-medium text-gray-700 mb-1">Nieuw wachtwoord</label>
+              <input
+                id="new-password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="••••••••"
+                style={{ fontSize: '16px' }} // prevent iOS zoom
+              />
+            </div>
 
-          <div>
-            <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700 mb-1">Herhaal wachtwoord</label>
-            <input
-              id="confirm-password"
-              type="password"
-              value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleUpdate()}
-              autoComplete="new-password"
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="••••••••"
-              style={{ fontSize: '16px' }} // prevent iOS zoom
-            />
-          </div>
+            <div>
+              <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700 mb-1">Herhaal wachtwoord</label>
+              <input
+                id="confirm-password"
+                type="password"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                autoComplete="new-password"
+                enterKeyHint="go"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="••••••••"
+                style={{ fontSize: '16px' }} // prevent iOS zoom
+              />
+            </div>
 
-          <ErrorMessage message={error} />
+            <ErrorMessage message={error} />
 
-          <button
-            onClick={handleUpdate}
-            disabled={loading || !password || !confirm}
-            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {loading ? 'Bezig...' : 'Wachtwoord opslaan'}
-          </button>
-        </div>
+            <button
+              type="submit"
+              disabled={loading || linkStatus === 'bezig' || !password || !confirm}
+              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              {loading ? 'Bezig...' : 'Wachtwoord opslaan'}
+            </button>
+        </form>
 
       </div>
     </div>
