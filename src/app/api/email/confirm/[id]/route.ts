@@ -486,11 +486,8 @@ export async function PATCH(
   // Without it this returned ok:true when the WHERE matched nothing (already restored,
   // wrong id, not archived) — and every caller that checks res.ok, including the
   // "Terugzetten" knop on a geweigerde upload, would claim a success that never happened.
-  // `superseded_by_number` is not in the generated types until invoice_superseded_by.sql has run.
-  // The cast covers the PATCH only; every WHERE clause below stays fully typed.
-  const restore = (patch: Record<string, unknown>) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
+  const restore = (patch: InvoiceUpdate) =>
+    supabase
       .from("invoices")
       .update(patch)
       .eq("id", id)

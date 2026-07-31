@@ -29,6 +29,11 @@ import {
   type SupersedeInvoice,
 } from "@/lib/invoice-supersede";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// The one file that knows which keys carry the duplicate signal — writer and clearer side by side.
+import { clearPossibleDuplicate } from "@/lib/possible-duplicate-collect";
+import type { Database, Json } from "@/types/database.types";
+
+type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +49,65 @@ function flaggedTwinId(fieldConfidence: unknown): string | null {
   if (s.possible_duplicate !== true) return null;
   const id = s.possible_duplicate_id;
   return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+// ── DELETE — "no, this is a different invoice" ────────────────────────────────────────────────
+//
+// The OTHER answer to the same question, and the reason confirming an invoice does not silently
+// clear the flag. Tapping "Bevestigen" means "the amounts are right"; it does not mean "I compared
+// this with the other invoice and they are genuinely different". Treating it as both would discard
+// a real signal on a tap that never carried it — and if that invoice were ever restored to the
+// queue the warning would be gone with no record of who dismissed it.
+//
+// So dismissal is its own act, with its own audit row. Nothing else changes: no status, no money,
+// no archive. Only the question stops being asked.
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const pipeline = createPipelineClient();
+  const { data: invoice } = await pipeline
+    .from("invoices")
+    .select("id, invoice_number, field_confidence")
+    .eq("id", id)
+    .eq("receiver_id", user.id)
+    .maybeSingle();
+  if (!invoice) return NextResponse.json({ error: "invoice_not_found" }, { status: 404 });
+
+  const twinId = flaggedTwinId((invoice as { field_confidence?: unknown }).field_confidence);
+  const next = clearPossibleDuplicate((invoice as { field_confidence?: unknown }).field_confidence);
+  if (!next) {
+    // Nothing flagged. Report it rather than claiming to have cleared something.
+    return NextResponse.json({ ok: true, alreadyClear: true });
+  }
+
+  const { error } = await pipeline
+    .from("invoices")
+    .update({ field_confidence: next as Json })
+    .eq("id", id)
+    .eq("receiver_id", user.id);
+  if (error) {
+    return NextResponse.json({ error: "dismiss_failed", detail: error.message }, { status: 500 });
+  }
+
+  await logAuditAction({
+    userId: user.id,
+    action: "invoice.duplicate_dismissed",
+    entityType: "invoice",
+    entityId: id,
+    newValue: {
+      invoice_number: (invoice as { invoice_number?: string | null }).invoice_number ?? null,
+      dismissed_twin_id: twinId,
+      via: "verify_queue_dismiss",
+    },
+    ipAddress: getClientIP(req),
+  });
+
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -126,12 +190,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // The WHERE clause re-asserts every gate: this runs on the service-role client (no auth.uid(),
   // so no verwerkt trigger) and the reads above can be seconds stale.
-  // `superseded_by_number` is not in the generated types until invoice_superseded_by.sql has run
-  // and the types are regenerated — the same reason /api/btw/file casts for btw_filings. The cast
-  // is on the PATCH only; every WHERE clause below stays fully typed.
-  const archiveOld = (patch: Record<string, unknown>) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (pipeline as any)
+  const archiveOld = (patch: InvoiceUpdate) =>
+    pipeline
       .from("invoices")
       .update(patch)
       .eq("id", oldId)
@@ -186,20 +246,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // this write fails the owner sees a warning that has become untrue — annoying, and visible —
   // rather than a second cost silently back in the books.
   try {
-    const fc = (replacement as { field_confidence?: unknown }).field_confidence;
-    if (fc && typeof fc === "object") {
-      const next = { ...(fc as Record<string, unknown>) };
-      const safecore = { ...((next._safecore ?? {}) as Record<string, unknown>) };
-      delete safecore.possible_duplicate;
-      delete safecore.possible_duplicate_of;
-      delete safecore.possible_duplicate_id;
-      delete safecore.possible_duplicate_reason;
-      next._safecore = safecore;
+    const next = clearPossibleDuplicate((replacement as { field_confidence?: unknown }).field_confidence);
+    if (next) {
       await pipeline
         .from("invoices")
-        // field_confidence is a jsonb; the generated Json type cannot express an object built
-        // from unknown-valued keys, so the cast is on the VALUE only — the row is still pinned.
-        .update({ field_confidence: next as never })
+        // field_confidence is jsonb. clearPossibleDuplicate builds a plain object of
+        // unknown-valued keys, which TypeScript cannot prove is Json-shaped — the cast is on the
+        // VALUE only, and the row stays pinned by the WHERE clauses.
+        .update({ field_confidence: next as Json })
         .eq("id", id)
         .eq("receiver_id", user.id);
     }

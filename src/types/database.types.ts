@@ -1184,6 +1184,8 @@ export type Database = {
           receiver_id: string | null
           reminders_paused: boolean
           replaced_by_number: string | null
+          /** [SUPERSEDE] invoice_superseded_by.sql — the invoice number that replaced this one. Only set while archived; the restore routes clear it. A label: no financial query reads it. */
+          superseded_by_number: string | null
           search_vector: unknown
           sender_id: string | null
           shared: boolean | null
@@ -1232,6 +1234,7 @@ export type Database = {
           receiver_id?: string | null
           reminders_paused?: boolean
           replaced_by_number?: string | null
+          superseded_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
           shared?: boolean | null
@@ -1280,6 +1283,7 @@ export type Database = {
           receiver_id?: string | null
           reminders_paused?: boolean
           replaced_by_number?: string | null
+          superseded_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
           shared?: boolean | null
@@ -1940,6 +1944,32 @@ export type Database = {
         Args: { p_type: string; p_user_id: string; p_year: number }
         Returns: number
       }
+      /**
+       * [MOVE-PAYMENT] invoice_move_payment.sql — moves ONE booked payment
+       * (a bank_tx_invoices row) to another invoice, atomically. Raises on every
+       * refusal (55000), so an error means nothing changed.
+       */
+      move_invoice_payment: {
+        Args: {
+          p_user_id: string
+          /** bank_tx_invoices.id — THE payment, not "the payments of" an invoice. */
+          p_link_id: string
+          p_target_invoice_id: string
+        }
+        Returns: {
+          applied: number
+          source_invoice_id: string
+          source_amount_paid: number
+          source_status: string
+          target_amount_paid: number
+          target_status: string
+          target_is_paid: boolean
+        }[]
+      }
+      /**
+       * [PAYDATE-REDERIVE] Also re-derives payment_date/payment_method from the
+       * earliest surviving link — the signature is unchanged.
+       */
       recompute_invoice_amount_paid: {
         Args: { p_user_id: string; p_invoice_id: string }
         Returns: number

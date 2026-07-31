@@ -42,10 +42,39 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const invoiceId = req.nextUrl.searchParams.get("invoiceId");
-  if (!invoiceId) return NextResponse.json({ error: "missing_invoice" }, { status: 400 });
-
   const pipeline = createPipelineClient();
+
+  // Two ways in, because the owner realises the mistake from two directions. From the INVOICE
+  // ("this payment does not belong here") the caller knows the invoice. From the BANK page ("this
+  // line is booked on the wrong invoice") it only knows the transaction, and which invoice that
+  // line paid is precisely what it is asking. Resolving the transaction to its invoice here keeps
+  // that lookup on the server, where the ownership check already lives.
+  let invoiceId = req.nextUrl.searchParams.get("invoiceId");
+  const transactionId = req.nextUrl.searchParams.get("transactionId");
+  if (!invoiceId && transactionId) {
+    const { data: txLinks } = await pipeline
+      .from("bank_tx_invoices")
+      .select("invoice_id")
+      .eq("user_id", user.id)
+      .eq("transaction_id", transactionId)
+      .limit(2);
+    const ids = [...new Set((txLinks ?? []).map((l) => l.invoice_id))];
+    // A BATCH line pays several invoices, and "move the payment" is then ambiguous — which of
+    // them? Say so instead of silently picking one; the owner can act per invoice from
+    // Inkoopfacturen, where each share is visible on its own row.
+    if (ids.length > 1) {
+      return NextResponse.json(
+        {
+          error: "batch_payment",
+          detail:
+            "Deze betaling is over meerdere facturen verdeeld. Verplaats hem per factuur vanuit Inkoopfacturen, dan blijft zichtbaar welk deel waar hoort.",
+        },
+        { status: 409 },
+      );
+    }
+    invoiceId = ids[0] ?? null;
+  }
+  if (!invoiceId) return NextResponse.json({ error: "missing_invoice" }, { status: 400 });
 
   const { data: source } = await pipeline
     .from("invoices")
@@ -166,11 +195,7 @@ export async function POST(req: NextRequest) {
   // apply_manual_payment is called under. The function is SECURITY DEFINER because
   // bank_tx_invoices has no UPDATE policy at all: moving a link is precisely the operation RLS
   // does not grant, and it must only ever happen through these guards.
-  // move_invoice_payment arrives with invoice_move_payment.sql, applied by hand — it is not in the
-  // generated types until they are regenerated. Same cast the /api/btw/file route uses for
-  // btw_filings; the arguments below are still checked by the function itself.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any).rpc("move_invoice_payment", {
+  const { data, error } = await supabase.rpc("move_invoice_payment", {
     p_user_id: user.id,
     p_link_id: linkId,
     p_target_invoice_id: targetInvoiceId,
@@ -185,19 +210,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const row = Array.isArray(data)
-    ? (data[0] as
-        | {
-            applied: number;
-            source_invoice_id: string;
-            source_amount_paid: number;
-            source_status: string;
-            target_amount_paid: number;
-            target_status: string;
-            target_is_paid: boolean;
-          }
-        | undefined)
-    : undefined;
+  // Typed by the generated definition now that the migration is applied — the shape below comes
+  // from the function signature itself, so a change to it becomes a compile error here.
+  const row = Array.isArray(data) ? data[0] : undefined;
   if (!row) {
     return NextResponse.json(
       { error: "move_failed", detail: moveFailureText(null) },
