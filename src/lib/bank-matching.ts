@@ -484,6 +484,22 @@ export function scorePair(
     // Without an exact amount and without a reference, a pair stays weak — even a matching IBAN,
     // because the same supplier can have several invoices of different amounts.
     if (!amtOk) confidence = Math.min(confidence, 0.35);
+    // [BANK-IDENTITY-OUTRANKS] A pair with NO identity signal (no printed number, no matching
+    // IBAN) is capped strictly BELOW the reference+amount score (0.97). Before this cap,
+    // amount (0.5) + date (≤0.25) + name (≤0.3) could sum to a full 1.0 — so a COINCIDENCE
+    // outranked a payment that literally prints the invoice number. That was not cosmetic:
+    // candidates sort by confidence, `best` is the top, and the one-to-one guard hands each
+    // invoice to the highest-confidence claimant. Concretely (reproduced): two payments to the
+    // same supplier, same amount — the one QUOTING the invoice number ended as "Geen factuur"
+    // while the reference-less one claimed the invoice and, via the amount_only tier,
+    // auto-booked it with no human. topReachesAuto's own doctrine already says a printed number
+    // "is decisive identity … immune to the same-amount collisions"; the numbers just didn't
+    // obey it. IBAN is exempt from the cap on purpose — a full account match IS identity, the
+    // same tier as a printed number (autoConfirmTier books both as 'certain'), so iban+amount
+    // (0.95) + date may still reach 1.0. Thresholds are untouched: 0.95 clears autoConfidence
+    // (0.7) exactly as before, so every single-candidate outcome is unchanged — only who WINS
+    // when identity competes with coincidence.
+    if (!ibanOk) confidence = Math.min(confidence, 0.95);
   }
 
   // [BANK-PARTIAL] A payment whose reference/description says it is an INSTALMENT

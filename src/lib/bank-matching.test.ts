@@ -707,5 +707,53 @@ console.log("\n— [BANK-COVERAGE-BY-MONEY] a fully-applied line is finished, wh
     isFullyCovered(line.reference, new Set(["26302050"])) === false);
 }
 
+console.log("\n— [BANK-IDENTITY-OUTRANKS] a printed invoice number beats a same-amount coincidence —");
+{
+  const supplier = "ATAPACK Cash & Carry B.V.";
+  const invoice = inv({
+    id: "the-invoice", invoice_number: "26302050", total_inc_btw: 242,
+    invoice_date: "2026-06-18", due_date: "2026-07-18",
+    client_name: supplier, direction: "incoming",
+  });
+  const quotes = tx({ amount: -242, date: "2026-06-20", reference: "factuur 26302050", counterpartName: supplier });
+  const coincidence = tx({ amount: -242, date: "2026-06-20", reference: null, counterpartName: supplier });
+
+  // The raw scores: identity must now OUTRANK the identity-less pair.
+  const sQuotes = scorePair(quotes, invoice, DEFAULT_OPTIONS);
+  const sCoin = scorePair(coincidence, invoice, DEFAULT_OPTIONS);
+  check("reference+amount still scores 0.97", Math.abs(sQuotes.confidence - 0.97) < 1e-9);
+  check("amount+name+date is capped strictly below it", sCoin.confidence < sQuotes.confidence);
+
+  // The reproduced end-to-end bug: two payments, one invoice. Before the cap, the coincidence
+  // claimed the invoice (1.0 > 0.97) and auto-booked it via amount_only, while the payment that
+  // QUOTED the number fell to "Geen factuur".
+  const r = matchTransactions([quotes, coincidence], [invoice]);
+  const mQuotes = r.matches.find((m) => m.transaction === quotes)!;
+  const mCoin = r.matches.find((m) => m.transaction === coincidence)!;
+  check("the payment quoting the number claims the invoice", mQuotes.outcome === "auto" && mQuotes.best?.invoiceId === "the-invoice");
+  check("…and books as 'certain'", autoConfirmTier(mQuotes) === "certain");
+  check("the coincidence does NOT claim it", mCoin.best?.invoiceId !== "the-invoice" || mCoin.outcome !== "auto");
+  check("…and is never auto-booked against it", autoConfirmTier(mCoin) === null);
+
+  // Candidate ORDER inside one transaction: the reference-matched invoice must sort first.
+  const refInv = inv({ id: "ref-inv", invoice_number: "26302050", total_inc_btw: 242, invoice_date: "2026-05-01", due_date: "2026-06-01", client_name: "Iemand Anders", direction: "incoming", status: "received" });
+  const coinInv = inv({ id: "coin-inv", invoice_number: "99999999", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: supplier, direction: "incoming", status: "received" });
+  const one = matchTransactions([quotes], [refInv, coinInv]).matches[0];
+  check("within one tx, the reference match is the top candidate", one.candidates[0]?.invoiceId === "ref-inv");
+
+  // IBAN is identity, same tier as a printed number — deliberately NOT capped.
+  const ibanInv = inv({ id: "iban-inv", invoice_number: "77777777", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: supplier, vendor_iban: "NL91ABNA0417164300", direction: "incoming", status: "received" });
+  const ibanTx = tx({ amount: -242, date: "2026-06-20", reference: null, counterpartName: supplier, counterpartIban: "NL91ABNA0417164300" });
+  const sIban = scorePair(ibanTx, ibanInv, DEFAULT_OPTIONS);
+  check("iban+amount is exempt from the cap (it IS identity)", sIban.confidence > 0.95);
+  check("…and still books as 'certain'", autoConfirmTier(matchTransactions([ibanTx], [ibanInv]).matches[0]) === "certain");
+
+  // CONTROL: with no identity competitor, the capped coincidence still reaches 'auto' — the cap
+  // changes who WINS, never whether a lone strong match is bookable.
+  const alone = matchTransactions([coincidence], [invoice]).matches[0];
+  check("CONTROL: a lone amount+name+date match still reaches 'auto'", alone.outcome === "auto");
+  check("CONTROL: …and still books via amount_only", autoConfirmTier(alone) === "amount_only");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
