@@ -45,8 +45,7 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase'
-import { DashboardHeader } from '../_shared'
-import { generateInvoiceFromPrompt } from '@/lib/ai'
+import { DashboardHeader, type HeaderProfile } from '../_shared'
 import IntakeButton from '@/components/intake/IntakeButton'
 // [HONEST-HOME] Re-enabled: the snapshot now shows only certain facts (exact stored
 // invoice totals + a task count), each linking to the action that resolves it. The
@@ -55,7 +54,7 @@ import DailyTruth from './DailyTruth'
 // [BRUG-RETOUR] De terugweg van de brug: een vraag van de boekhouder hoort op de home,
 // niet alleen in een notificatie die je één keer ziet.
 import { VRAAG_STATUS, vragenBannerTekst } from '@/lib/vragen'
-import type { ProfileRow, NotificationRow } from '@/types/rows'
+import type { NotificationRow } from '@/types/rows'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -64,12 +63,9 @@ import { M3, R, COLUMN } from '@/lib/design/tokens'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
-const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
-
-const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }) // reserved for future use
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
+export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
   const router   = useRouter()
   const supabase = createClient()
 
@@ -77,10 +73,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages]       = useState(0)
   const [accountantId, setAccountantId]           = useState<string | null>(null)
-  const [showAiPanel, setShowAiPanel]             = useState(false)
-  const [aiPrompt, setAiPrompt]                   = useState('')
-  const [aiLoading, setAiLoading]                 = useState(false)
-  const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
   // [BRUG-RETOUR] Openstaande vragen van de boekhouder over eigen documenten.
@@ -119,24 +111,20 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   useEffect(() => { void (async () => { await loadGlobal() })() }, [])
 
   async function markAllRead() {
-    await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
+    // Het scherm mag pas "gelezen" tonen als het ook echt is opgeslagen. De uitkomst werd hier
+    // genegeerd: de bel ging op nul, en bij de volgende keer openen stonden dezelfde meldingen
+    // er weer ongelezen bij — zonder dat iets uitlegde waarom. Bij een bel die zegt dat je
+    // boekhouder iets van je wil, is dat het verkeerde soort ruis om te negeren.
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', profile.id)
+      .eq('read', false)
+    if (error) {
+      console.error('[HOME] meldingen als gelezen markeren mislukt:', error.message)
+      return
+    }
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-  }
-
-  async function handleAiGenerate() {
-    if (!aiPrompt.trim()) return
-    setAiLoading(true); setAiError(null)
-    try {
-      const result = await generateInvoiceFromPrompt(aiPrompt)
-      const params = new URLSearchParams()
-      if (result.client_name) params.set('client_name', result.client_name)
-      if (result.description)  params.set('description', result.description)
-      if (result.amount)       params.set('amount', String(result.amount))
-      if (result.btw_rate)     params.set('btw_rate', String(result.btw_rate))
-      router.push(`/dashboard/invoice/new?${params.toString()}`)
-    } catch {
-      setAiError('Er ging iets mis. Probeer het opnieuw.')
-    } finally { setAiLoading(false) }
   }
 
   const unreadNotifCount = notifications.filter(n => !n.read).length
@@ -307,55 +295,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
               onClick={() => router.push('/dashboard/werkplek')}
             />
           </section>
-
-          {/* 4. Werken met AI
-          <ActionCard
-            icon="star" iconBg={M3.tertiary} iconColor="#fff"
-            label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
-            onClick={() => setShowAiPanel(p => !p)}
-            active={showAiPanel}
-            activeColor={M3.tertiary}
-            activeBg={M3.tertiaryContainer}
-          /> */}
-
-          {/* AI Panel */}
-          {showAiPanel && (
-            <div style={{
-              background: '#fff', borderRadius: R.lg, padding: '20px 16px',
-              boxShadow: EL1, marginTop: -4,
-              border: `1px solid ${M3.tertiaryContainer}`,
-            }}>
-              <p style={{ fontSize: 12, color: M3.tertiary, fontWeight: 600, marginBottom: 10, letterSpacing: 0.3 }}>
-                SCHRIJF IN JOUW TAAL
-              </p>
-              <textarea
-                value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} rows={3}
-                placeholder='"factuur voor Mohammed voor dakdekken, 3 uur à 85 euro"'
-                style={{
-                  width: '100%', borderRadius: R.md,
-                  border: `2px solid ${aiPrompt ? M3.tertiary : '#80868b'}`,
-                  padding: '14px 16px', fontSize: 16, resize: 'none',
-                  fontFamily: FONT, outline: 'none', boxSizing: 'border-box',
-                  background: M3.surface, color: M3.onSurface,
-                  transition: 'border-color 0.15s',
-                }}
-              />
-              {aiError && <p style={{ fontSize: 12, color: M3.error, marginTop: 6 }}>{aiError}</p>}
-              <button
-                onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
-                style={{
-                  marginTop: 12, width: '100%', padding: '14px',
-                  borderRadius: R.full, border: 'none',
-                  cursor: aiLoading || !aiPrompt.trim() ? 'default' : 'pointer',
-                  background: aiLoading || !aiPrompt.trim() ? '#f1f3f4' : M3.tertiary,
-                  color: aiLoading || !aiPrompt.trim() ? '#80868b' : '#fff',
-                  fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
-                }}
-              >
-                {aiLoading ? 'AI denkt na...' : 'Factuur aanmaken →'}
-              </button>
-            </div>
-          )}
 
         </div>
       </main>
