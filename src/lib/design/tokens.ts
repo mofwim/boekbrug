@@ -187,6 +187,60 @@ export const STICKY_BELOW_HEADER = `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area
 export const PAGE_GUTTER = 16
 
 /**
+ * [COLUMN-LADDER] How wide a dashboard page is allowed to be. Two steps, and
+ * the two-ness is the point: this replaced ELEVEN different widths (430, 480,
+ * 560, 600, 640, 672, 680, 720, 768, 800, 896), which is simply what "pick a
+ * number that looks right" produces once thirty screens have been written by
+ * hand. Two of those eleven had already drifted away from their own loading
+ * skeleton — /incoming rendered a 430 column behind a 720 skeleton and
+ * /quarterly an 896 one behind a 768 — so the page visibly jumped as it loaded.
+ * A page and its skeleton now read the same constant, which is what makes that
+ * class of bug impossible rather than merely fixed.
+ *
+ * `work` is 680 because that is the narrowest column every piece of content in
+ * this app fits inside — measured in Chromium, not estimated:
+ *
+ *   the densest money row (supplier + 3 chips + 3 dates + amount + 2 buttons)
+ *     stops truncating a 51-character name at 528px of content   → 560 column
+ *   the widest table in the app (dagomzet: date + 5 money columns)
+ *     is 628px at its natural width                              → 660 column
+ *   everything else (2–4 column grids, forms, the chat, quarter buttons)
+ *     needs under 600px                                          → < 640 column
+ *
+ * Nothing needs more, so nothing gets more — and the ceiling matters as much as
+ * the floor here. In a money list the label sits left and the amount right; the
+ * wider the row, the further the eye travels between them and the easier it is
+ * to read the amount off the wrong line. Ledgers answer that with zebra stripes
+ * or leader dots; this app is Material 3 cards and has neither, so the honest
+ * limit is roughly 650px of row. 680 lands there, and it is also what Mijn
+ * facturen, Mijn klanten and Inkoopfacturen — the three densest lists, the ones
+ * that would have complained first — had already settled on independently.
+ *
+ * Note that 640 was the more POPULAR width (nine pages) and would still have
+ * been the wrong pick: dagomzet's table needs 628 and a 640 column offers 608,
+ * which is why the only screen in the app with genuinely wide content was also
+ * the one scrolling sideways on a desktop monitor.
+ *
+ * Below 640px — the app's phone breakpoint, where the bottom nav takes over —
+ * no column binds and nothing here changes at all. This ladder is a desktop
+ * concern from top to bottom.
+ */
+export const COLUMN = {
+  /**
+   * 480 — a hub. The two home screens and Mijn werkplek: a menu of
+   * destinations with a small snapshot on top, not a screen of data. Kept
+   * narrow deliberately — the tiles are full-width rows, and the snapshot puts
+   * "Te betalen" next to "€ 62.305,96" instead of a hand-span apart. If a home
+   * ever feels lost on a large monitor, the answer is a two-column tile grid
+   * above ~1024px, not a wider single column.
+   */
+  hub: 480,
+  /** 680 — every other dashboard screen: lists, forms, details, settings,
+   *  tables, and the accountant's screens. See the note above for why 680. */
+  work: 680,
+} as const
+
+/**
  * How wide a sticky/fixed bar's INNER row must be to line up with the page
  * column underneath it.
  *

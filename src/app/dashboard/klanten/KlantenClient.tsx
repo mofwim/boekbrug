@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
@@ -18,9 +18,6 @@ import { useToast } from '@/components/ui/Toast'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-// [BAR-ALIGN] This page's column: the klantenlijst and the sticky toolbar above
-// it both measure from here — see columnInner() in @/lib/design/tokens.
-const COLUMN = 680
 
 interface Client {
   id: string; name: string; email: string | null
@@ -201,7 +198,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
             width of the screen and "Nieuw" sat against the far right edge, both
             of them hundreds of pixels away from the klantenlijst they belong to.
             Same width as <main> below. */}
-        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>
+        <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
             <button
               onClick={() => { setShowForm(p => !p); setError(null) }}
@@ -233,7 +230,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         </div>
       </div>
 
-      <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px 80px' }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 80px' }}>
 
         {/* Add form — Material You card */}
         {showForm && (

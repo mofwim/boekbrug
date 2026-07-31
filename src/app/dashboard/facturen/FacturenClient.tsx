@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -38,11 +38,6 @@ import { useToast } from "@/components/ui/Toast"
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-// [BAR-ALIGN] This page's column, declared once. The list <main>, the sticky
-// filter toolbar above it and the selection bar at the bottom all measure
-// themselves from it, so the three can no longer drift apart — see columnInner()
-// in @/lib/design/tokens for why a bar caps its inner row instead of its shell.
-const COLUMN = 680
 
 // Status chip colors — Material You
 // [PAY-IDEMPOTENT] A fresh key per dialog OPENING — this is the whole point of the key, and it
@@ -866,7 +861,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             from the rows they act on. Nothing in the toolbar lined up with
             anything in the list. This column matches <main> below exactly, and the
             selection bar at the bottom of the file was already doing it. */}
-        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>
+        <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
             <div style={{ display: 'flex', gap: 6 }}>
               {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
@@ -962,7 +957,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       </div>
 
       {/* ── Invoice list ── */}
-      <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px 100px' }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
         {/* [HERHAAL] Everything that repeats, in one place at the top.
             The per-row button can only be found by finding the invoice, and the invoice that
             started a monthly series is a year older every twelve concepts. This panel is the
@@ -1449,7 +1444,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           // [BAR-ALIGN] Same 648 as before, now derived from the column instead of
           // spelled out — this bar was the one that already lined up with the list.
-          maxWidth: columnInner(COLUMN), margin: '0 auto', zIndex: 60,
+          maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
         }}>

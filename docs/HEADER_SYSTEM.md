@@ -106,6 +106,12 @@ From `@/lib/design/tokens`:
   value for a **secondary** sticky bar that must sit below the header (search /
   filter / sort toolbars on list screens). Never write the `calc()` by hand.
 - `PAGE_GUTTER` (`16`) — the space every page column leaves to the screen edge.
+- `COLUMN` — the page-width ladder, and the only two widths a dashboard page may
+  be: `COLUMN.hub` (480, the two homes + werkplek) and `COLUMN.work` (680,
+  everything else). A page and its `loading.tsx` skeleton read the same step, so
+  they cannot disagree and make the content jump on load. Never invent a third
+  number; if a screen genuinely needs one, it needs a named step, and the
+  measurements in the token's own comment are the bar it has to clear.
 - `columnInner(column)` — the width a bar's inner row needs to line up with a
   `maxWidth: column` page column. Never write `column - 32` by hand.
 - `M3` — the Material palette (colours). `FONT` — Roboto. `FONT_NUM` — Roboto
@@ -119,17 +125,15 @@ hairline should run edge to edge. Its **content** must not — it belongs to the
 column underneath it.
 
 ```tsx
-import { STICKY_BELOW_HEADER, columnInner } from "@/lib/design/tokens";
-
-const COLUMN = 680;   // declare the page's column ONCE, at the top of the file
+import { STICKY_BELOW_HEADER, columnInner, COLUMN } from "@/lib/design/tokens";
 
 <div style={{ position: "sticky", top: STICKY_BELOW_HEADER, zIndex: 40, padding: "12px 16px" }}>
-  <div style={{ maxWidth: columnInner(COLUMN), margin: "0 auto" }}>
+  <div style={{ maxWidth: columnInner(COLUMN.work), margin: "0 auto" }}>
     {/* search / sort / filter controls */}
   </div>
 </div>
 
-<main style={{ maxWidth: COLUMN, margin: "0 auto", padding: "12px 16px 100px" }}>…</main>
+<main style={{ maxWidth: COLUMN.work, margin: "0 auto", padding: "12px 16px 100px" }}>…</main>
 ```
 
 Skip the inner column and the bar keeps growing after the list has stopped: on

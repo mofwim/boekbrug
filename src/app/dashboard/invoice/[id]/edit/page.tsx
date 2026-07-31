@@ -13,6 +13,7 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 import type { ProfileRow } from '@/types/rows'
+import { COLUMN } from '@/lib/design/tokens';
 
 type InvoiceLine = {
   description: string
@@ -246,7 +247,7 @@ export default function InvoiceEditPage() {
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
 
-      <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
+      <div className="mx-auto px-6 py-6 space-y-4" style={{ maxWidth: COLUMN.work }}>
 
         {/* Jouw gegevens — alleen-lezen */}
         {profile && (

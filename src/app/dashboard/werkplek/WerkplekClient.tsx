@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3 } from '@/lib/design/tokens'
+import { M3, COLUMN } from '@/lib/design/tokens'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const R    = { md: 12, lg: 16, xl: 24 }
@@ -32,7 +32,7 @@ export default function WerkplekClient() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
-      <main style={{ maxWidth: 480, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <main style={{ maxWidth: COLUMN.hub, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {ITEMS.map(item => (
             <button

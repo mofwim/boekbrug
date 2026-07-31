@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
-import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -52,7 +52,7 @@ export default function ResultaatClient() {
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 64px' }}>
         {/* [HEADER-SYSTEM] Title "Resultaat" + back live in the shared sub-page bar;
             the in-body h1 was removed. The period subtitle stays. */}
         <header style={{ margin: '16px 0 20px' }}>

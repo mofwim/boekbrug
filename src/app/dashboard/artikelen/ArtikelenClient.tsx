@@ -13,7 +13,7 @@ import { useToast } from '@/components/ui/Toast'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3, R } from '@/lib/design/tokens'
+import { M3, R, COLUMN } from '@/lib/design/tokens'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -114,7 +114,7 @@ export default function ArtikelenClient() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         {/* [HEADER-SYSTEM] Title "Artikelen" + back live in the shared sub-page bar;
             the in-body h1 was removed. Subtitle + the search / new-item controls
             row below stay. */}

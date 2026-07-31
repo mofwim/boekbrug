@@ -26,7 +26,7 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3 } from '@/lib/design/tokens'
+import { M3, COLUMN } from '@/lib/design/tokens'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
@@ -317,7 +317,7 @@ export default function UploadClient() {
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         {/* [HEADER-SYSTEM] Title "Uploaden" + back live in the shared sub-page bar;
             the in-body h1 was removed. The descriptive subtitle stays. */}
         <div style={{ margin: '16px 0 8px' }}>

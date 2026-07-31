@@ -19,14 +19,10 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
-import { M3, columnInner } from '@/lib/design/tokens'
+import { M3, columnInner, COLUMN } from '@/lib/design/tokens'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-
-// [BAR-ALIGN] This page's column — the form and the fixed send bar under it both
-// measure from here. See columnInner() in @/lib/design/tokens.
-const COLUMN = 600
 
 // ─── [FACTUUR-A] Numbering moved server-side — June 2026 ─────────────────────
 // The browser-side generateNumber() was removed: it did a SELECT-then-compute
@@ -1040,7 +1036,7 @@ function NewInvoicePageContent() {
           "Omzetten naar factuur" action now come from the shared sub-page header
           (registered via useSubPageHeader above). */}
 
-      <div data-form style={{ maxWidth: COLUMN, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
+      <div data-form style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
 
         {/* [DS] Segmented Button — Material You, één geheel */}
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
@@ -1407,7 +1403,7 @@ function NewInvoicePageContent() {
               {/* [BAR-ALIGN] The bar centred its content at the column's OUTER
                   width while the form spends 16px of that on its gutters, so the
                   send button sat one gutter wider than every field above it. */}
-              <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button onClick={() => {
                   // [FACTUUR-A] Factuur send is irreversible (number consumed
                   // + e-mail with PDF delivered) → confirm first. Offerte and

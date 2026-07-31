@@ -18,6 +18,7 @@
 // anything hydrates.
 
 import type { CSSProperties, ReactNode } from 'react'
+import { COLUMN } from '@/lib/design/tokens'
 
 // The shimmer sweep, in inline styles so a skeleton needs no Tailwind classes
 // and no client JS. Keyframes live in globals.css (`bb-shimmer`).
@@ -137,11 +138,17 @@ export function SkeletonStats({ count = 3 }: { count?: number }) {
  * The page frame. `maxWidth` MUST match the real page's container, otherwise
  * the content slides sideways the moment it replaces the skeleton.
  *
+ * [COLUMN-LADDER] "MUST" was doing no work while both sides were hand-written
+ * numbers: /incoming drew a 720 skeleton over a 430 page and /quarterly a 768
+ * one over an 896 page, and each of them jumped on every load. Pass a step of
+ * the ladder — `COLUMN.work`, or `COLUMN.hub` for a home — and the page reads
+ * the same constant, so the two cannot disagree again.
+ *
  * `aria-busy` + a visually-hidden label is how a screen reader learns that
  * something is on its way; a silent grey page tells it nothing at all.
  */
 export function SkeletonPage({
-  maxWidth = 640,
+  maxWidth = COLUMN.work,
   children,
 }: {
   maxWidth?: number

@@ -24,7 +24,7 @@
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
-import { M3, R, STICKY_BELOW_HEADER, columnInner } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
@@ -52,10 +52,6 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-// [BAR-ALIGN] This page's column. The list, the sticky filter/sort toolbar above
-// it and the selection bar below it all measure from here — see columnInner() in
-// @/lib/design/tokens.
-const COLUMN = 680
 
 // Status chip colors — Material You
 const CHIP: Record<string, { bg: string; color: string; label: string }> = {
@@ -975,7 +971,7 @@ export default function IncomingManageClient({
             the screen above a 680px list, and "Matchen met bank & kas" ended up
             a long way from the invoices it matches. Same width as <main> below,
             and as the selection bar at the bottom of the file. */}
-        <div style={{ maxWidth: columnInner(COLUMN), margin: '0 auto' }}>
+        <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
           {/* [BUNDEL-BETALING] The multi-select toggle — the entry point for paying
               several facturen van één leverancier with one QR. Given a clear
               affordance (blue tint + border in rest, solid blue when active) and put
@@ -1117,7 +1113,7 @@ export default function IncomingManageClient({
       </div>
 
       {/* ── List ── */}
-      <main style={{ maxWidth: COLUMN, margin: '0 auto', padding: '12px 16px 100px' }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
         {/* [AUTO-ADVANCE] Review nudge — the opt-in double-check for what the app booked itself. */}
         {autoCount > 0 && filter !== 'auto' && (
           <button
@@ -1574,7 +1570,7 @@ export default function IncomingManageClient({
           position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           // [BAR-ALIGN] Same 648 as before, now derived from the column — this bar
           // was already the one that lined up with the list.
-          maxWidth: columnInner(COLUMN), margin: '0 auto', zIndex: 60,
+          maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
         }}>

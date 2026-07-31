@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
+import { COLUMN } from '@/lib/design/tokens';
 
 // Eén gesprek in de lijst: samengesteld uit berichten + de naam van de tegenpartij.
 interface Conversation {
@@ -108,7 +109,7 @@ export default function MessagesPage() {
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
 
-      <div className="max-w-3xl mx-auto px-6 py-6">
+      <div className="mx-auto px-6 py-6" style={{ maxWidth: COLUMN.work }}>
         {/* Search — only when there's something to filter */}
         {!loading && conversations.length > 0 && (
           <div className="relative mb-4">
