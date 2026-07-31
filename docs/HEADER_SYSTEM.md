@@ -35,6 +35,27 @@ deliberately outside the shared chrome.
 Both header components and `BackLink` read their height, surface, border, font,
 and accent from `@/lib/design/tokens`, so they stay visually identical.
 
+### Where things sit in the bar
+
+Both bars are full-bleed flex rows — they span the viewport, they are **not**
+centred on the 480px page column, and the page column below them is centred as
+usual. What keeps them looking like one bar is a single rule:
+
+> The wordmark (and the back chevron) lead. Everything else — role nav links,
+> messages, notifications, avatar, a page's `actions` — trails at the right
+> edge. Exactly **one** cell in the row is flexible and absorbs the slack
+> between the two groups: the **search** cell on the home bar, the **title**
+> cell on the sub-page bar. Every other child is `flexShrink: 0`.
+
+Get that wrong and the bar silently breaks on wide screens only. It did: the
+home bar's search cell was capped at `maxWidth: 480` while `SearchBar` draws
+itself at `maxWidth: 320`, so no child could grow past ~790px total. Beyond
+that width the row simply stopped — the wordmark on the left edge, and the nav
+link, the two icons and the avatar stranded in the middle of an otherwise empty
+bar, while the same controls sat hard right on every sub-page. Give the
+flexible cell `flex: 1, minWidth: 0` and **no** max width; cap the control
+inside it instead, where the cap belongs.
+
 ## How the shared sub-page bar picks a title
 
 `DashboardChrome` (`src/components/nav/DashboardChrome.tsx`) resolves the title
@@ -105,6 +126,9 @@ import { STICKY_BELOW_HEADER } from "@/lib/design/tokens";
 - **No second back button.** The bar's chevron is the one back affordance.
   Don't add an in-body `← Terug` / `arrow_back` / "Home" link.
 - **No hardcoded `56`.** Use `PAGE_HEADER_HEIGHT` / `STICKY_BELOW_HEADER`.
+- **No `maxWidth` on the bar's flexible cell.** It is what pushes the trailing
+  controls to the right edge; a cap there strands them mid-bar on wide screens.
+  Cap the control inside the cell instead. See "Where things sit in the bar".
 - **No off-palette fonts or colours.** Use `FONT` (not `Inter`, not a
   `system-ui` stack) and `M3` (e.g. `M3.error` `#B3261E`, never `#EA4335`).
   This is not only about consistency: `#EA4335` measures 3.9:1 on white,
