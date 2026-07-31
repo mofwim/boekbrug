@@ -1672,11 +1672,14 @@ export async function buildClosingPackageZip(args: {
   // het blad de ene kant wel en de andere niet, en komt er een eindsaldo uit dat niemand kan
   // verklaren en dat niet strookt met de Kas-pagina — een blad met ontvangsten en zonder uitgaven
   // ziet er bovendien uit als winst. Dan liever helemaal geen blad, met de reden erbij.
-  const kasboekReadFailed = kasEntriesRaw == null || kasTurnoverRaw == null;
-
   // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
   // Kasboek eindsaldo matches the app's headline saldo and reality.
-  const { data: kasProf } = await supabase.from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  // [NO-EMPTY-LEDGER] …and its read counts as one of the two sources: a swallowed error becomes a
+  // silent €0 float, and the sheet then opens on a balance that is wrong by exactly the money the
+  // till started with — the unexplainable eindsaldo this guard exists to keep out of the package.
+  const { data: kasProf, error: kasProfErr } = await supabase.from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  if (kasProfErr) console.error("[CLOSING-PACKAGE] kas opening balance read failed", { ownerId, error: kasProfErr.message });
+  const kasboekReadFailed = kasEntriesRaw == null || kasTurnoverRaw == null || kasProfErr != null;
   const kasStartingBalance = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
 
   // Only emit the sheet when the drawer has any life this quarter (takings or movements).

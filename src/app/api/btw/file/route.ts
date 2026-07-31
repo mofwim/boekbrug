@@ -13,6 +13,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence } from "@/lib/btw-filing";
+// [KAS-NEGATIEF] The same drawer witness /dashboard/klaar blocks on — see the gate below.
+import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [TZ] "Has this quarter ended?" is an Amsterdam-day question — see the filing-window gate below.
 import { amsterdamToday } from "@/lib/format-nl";
@@ -136,6 +138,36 @@ export async function POST(req: NextRequest) {
     if (result.cashOmzetZonderBtw > 0) blockers.push(`er staat nog omzet zonder BTW-tarief (contant, bank of niet-gesplitste kassadag) — de verschuldigde BTW is daardoor mogelijk te laag`);
     if (datelessVerifiedCount > 0) blockers.push(`${datelessVerifiedCount} bevestigde factu(u)r(en) hebben geen datum en tellen niet mee in dit kwartaal`);
     if (undatedPaidCount > 0) blockers.push(`${undatedPaidCount} betaalde factu(u)r(en) missen een betaaldatum — onder kasstelsel kan de BTW niet in het juiste kwartaal worden geplaatst`);
+
+    // [KAS-NEGATIEF] …and the drawer. This gate listed four signals and not this one, while
+    // /dashboard/klaar counts a below-zero drawer as a MISSING item (it cannot reach "klaar"
+    // with one) and the Kas page tells the owner, in the app's own words, that "zolang dit
+    // openstaat, blokkeert de app je BTW-aangifte". It did not: the quarter froze as ingediend
+    // with nothing asked. A negative cash balance is physically impossible — you cannot pay out
+    // money that was never in the till — and it is the single strongest reason the
+    // Belastingdienst rejects a cash administration, so it belongs here more than most.
+    //
+    // Same witness the readiness verdict uses (loadDrawerWitness), so the two cannot drift, which
+    // is what this gate's own comment above asks for. It throws rather than guessing on a failed
+    // read: a filing gate that cannot see the drawer must not wave the quarter through.
+    let drawerLowPoint: { date: string; balance: number } | null = null;
+    try {
+      drawerLowPoint = (await loadDrawerWitness({ client: pipeline, ownerId: user.id, year, quarter })).lowestPoint;
+    } catch (e) {
+      console.error("[KAS-NEGATIEF] drawer witness unavailable at filing", { userId: user.id, year, quarter, error: e instanceof Error ? e.message : String(e) });
+      return NextResponse.json(
+        {
+          error: "readiness_check_failed",
+          reason: "We konden je kasboek nu niet controleren, en we markeren een kwartaal niet als ingediend zonder die controle. Probeer het zo meteen opnieuw.",
+        },
+        { status: 503 },
+      );
+    }
+    if (drawerLowPoint) {
+      blockers.push(
+        `je kassaldo stond op ${drawerLowPoint.date} op € ${drawerLowPoint.balance.toFixed(2)} — een kas kan niet onder nul komen, dus er ontbreekt een contante ontvangst of het beginsaldo klopt niet`,
+      );
+    }
 
     if (blockers.length > 0) {
       return NextResponse.json(

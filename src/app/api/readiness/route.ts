@@ -25,7 +25,7 @@ import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
-import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry, type Quarter } from "@/lib/kasboek";
+import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
@@ -444,28 +444,16 @@ export async function GET(req: NextRequest) {
   // and the accountant's kasboek agree on the drawer figure. Needs FULL HISTORY (everything up to
   // quarter end, not just in-quarter) to carry the correct opening balance, and MUST paginate
   // (fetchAllRows) — a truncated opening balance would be a wrong number (the task-#36 bug class).
-  const kasTurnoverRows = await fetchAllRows((from, to) => pipeline
-    .from("daily_turnover").select("turnover_date, cash_amount")
-    .eq("user_id", ownerId).lte("turnover_date", end)
-    .order("turnover_date", { ascending: true }).range(from, to));
-  // [PAGE-KEY] Ordered by id, not entry_date. entry_date is NOT unique (several cash entries on
-  // one day is ordinary for a shop) and Postgres defines no order among ties, so across separate
-  // .range() windows a row could come back twice or not at all. Here that lands in
-  // lowestDrawerPoint — the witness this route BLOCKS the aangifte on — where a duplicated or
-  // missing movement shifts every eindsaldo after it and can invent, or hide, a negative day.
-  // Every other paged cash_entries read in the app already keys on id; these two did not.
-  const kasEntryRows = await fetchAllRows((from, to) => pipeline
-    .from("cash_entries").select("entry_date, direction, amount, category, description")
-    .eq("user_id", ownerId).lte("entry_date", end)
-    .order("id", { ascending: true }).range(from, to));
-  const { data: kasProfile } = await pipeline
-    .from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
-  const kasTurnover = (kasTurnoverRows ?? []) as KasTurnoverDay[];
-  const kasEntries = (kasEntryRows ?? []) as unknown as KasEntry[];
-  const kasStarting = Number((kasProfile as { kas_opening_balance?: number | null } | null)?.kas_opening_balance) || 0;
-  const kasOpening = openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, startingBalance: kasStarting });
-  const kasboek = buildKasboek({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, openingBalance: kasOpening });
-  const negativeCashDay = lowestDrawerPoint(kasboek);
+  // [KAS-NEGATIEF] Via the shared witness, so this verdict and the filing gate that now refuses
+  // on it read the exact same number from the exact same rows. It also closes the one read here
+  // that swallowed its error: `const { data: kasProfile }` made a failed profile read look like a
+  // €0 starting float, which drags the whole running balance down and can INVENT a negative day
+  // on a drawer that was never negative — a fabricated blocker on the screen whose job is to say
+  // whether the owner may hand the quarter over. The helper throws instead; fetchAllRows already
+  // did, so the route's failure behaviour is unchanged for the two ledgers.
+  const { lowestPoint: negativeCashDay } = await loadDrawerWitness({
+    client: pipeline, ownerId, year, quarter,
+  });
 
   // ── 5c) [REGIME-FLAGS] Special BTW regimes the concept can't auto-compute (KOR / verlegd /
   // marge). Owner declares KOR (profiles.kor_active); verlegd/marge are phrase-gated on the
