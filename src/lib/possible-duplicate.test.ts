@@ -217,5 +217,114 @@ console.log("\n— [ABONNEMENT] de hekken die een echte dubbele boeking bescherm
   check("vreemde reeks pleit deze leverancier niet vrij", !!r2);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [DEDUP-CORRECTED] Same invoice NUMBER, DIFFERENT amount — the corrected re-issue.
+// The scenario: a supplier invoices the wrong total, then re-sends the SAME invoice number
+// with the corrected one. Every other gate in safecore is anchored on the amount (the hard
+// key matches number + total; every soft tier above starts by requiring cent-equal totals),
+// so both copies imported as two separate costs with two claims of voorbelasting.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— [DEDUP-CORRECTED] same number, corrected amount → flagged —");
+{
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26302050", totalIncBtw: 5900.0 }),
+    [cand({ id: "wrong", invoice_number: "26302050", total_inc_btw: 6662.8 })],
+  );
+  check("corrected re-issue flagged", !!r && r.match.id === "wrong");
+  check("reason names the amount difference", r?.reason === "zelfde factuurnummer, ander bedrag — mogelijk een gecorrigeerde versie");
+}
+{
+  // Direction of the correction is irrelevant — up or down, it is the same document twice.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26302050", totalIncBtw: 6662.8 }),
+    [cand({ id: "first", invoice_number: "26302050", total_inc_btw: 5900.0 })],
+  );
+  check("also flagged when the correction is upward", !!r);
+}
+{
+  // Number normalization applies here too: a re-rendered PDF printing "26 302050" is the same bill.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26 302050", totalIncBtw: 5900.0 }),
+    [cand({ invoice_number: "26302050", total_inc_btw: 6662.8 })],
+  );
+  check("spacing variant of the number still matches", !!r);
+}
+{
+  // A DATE that also moved must not weaken the signal — a corrected invoice is usually re-dated.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26302050", totalIncBtw: 5900.0, invoiceDate: "2026-05-11" }),
+    [cand({ invoice_number: "26302050", total_inc_btw: 6662.8, invoice_date: "2026-05-07" })],
+  );
+  check("re-dated correction still flagged", !!r);
+}
+
+console.log("\n— [DEDUP-CORRECTED] the hekken: what must NOT be flagged —");
+{
+  // Numbers are unique per SUPPLIER, not across them. Two suppliers both numbering from 1 is
+  // ordinary; flagging that would put a legitimate bill in the queue every time.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "2026-001", vendor: "Atapack B.V.", totalIncBtw: 5900 }),
+    [cand({ invoice_number: "2026-001", client_name: "Jansen Groothandel", total_inc_btw: 6662.8 })],
+  );
+  check("same number from a provably different supplier → not flagged", r === null);
+}
+{
+  // A placeholder number is minted per import (UPLOAD-17) and can never legitimately repeat, so
+  // it must never anchor this tier — otherwise every uploaded invoice would look like a
+  // correction of the previous one.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "UPLOAD-17", totalIncBtw: 5900 }),
+    [cand({ invoice_number: "UPLOAD-17", total_inc_btw: 6662.8 })],
+  );
+  check("placeholder number never anchors a correction", r === null);
+}
+{
+  // Different number AND different amount is simply the next bill from this supplier.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26302051", totalIncBtw: 5900 }),
+    [cand({ invoice_number: "26302050", total_inc_btw: 6662.8 })],
+  );
+  check("a genuinely different invoice → not flagged", r === null);
+}
+{
+  // A supplier who RESTARTS numbering each year: "001" in 2025 and "001" in 2026 are two real
+  // bills that happen to share a number. A correction never sits a year behind the invoice it
+  // corrects, so the window separates them — without it this fired every January.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: "2026-01-15" }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2025-01-14" })],
+  );
+  check("yearly numbering restart → not flagged", r === null);
+}
+{
+  // …but a correction inside the window still is, right up to the fence.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: "2026-06-01" }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2026-01-15" })],
+  );
+  check("a months-late correction is still inside the window", !!r);
+}
+{
+  // No date to fence with → keep the flag. A same-number pair from one supplier is worth a
+  // glance, and an invoice we could not read a date off needs a human regardless.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: null }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2020-01-01" })],
+  );
+  check("unreadable date → still flagged, never silently dropped", !!r);
+}
+{
+  // The weakest tier must never outrank a real same-amount signal: when both are present the
+  // stronger reason is the one the owner reads.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "26302050", totalIncBtw: 121, invoiceDate: "2026-03-10" }),
+    [
+      cand({ id: "corrected", invoice_number: "26302050", total_inc_btw: 6662.8 }),
+      cand({ id: "sameday", invoice_number: "F-9999", total_inc_btw: 121, invoice_date: "2026-03-10" }),
+    ],
+  );
+  check("a same-amount signal outranks the correction tier", r?.match.id === "sameday");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

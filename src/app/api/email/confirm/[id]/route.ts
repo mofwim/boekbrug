@@ -486,17 +486,27 @@ export async function PATCH(
   // Without it this returned ok:true when the WHERE matched nothing (already restored,
   // wrong id, not archived) — and every caller that checks res.ok, including the
   // "Terugzetten" knop on a geweigerde upload, would claim a success that never happened.
-  const { data: restored, error } = await supabase
-    .from("invoices")
-    .update({
-      status: "processing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .eq("status", "archived")
-    .select("id");
+  const restore = (patch: InvoiceUpdate) =>
+    supabase
+      .from("invoices")
+      .update(patch)
+      .eq("id", id)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "archived")
+      .select("id");
+
+  const basePatch = { status: "processing", updated_at: new Date().toISOString() };
+  // [SUPERSEDE] Clear "vervangen door X" on the way back — this is the restore the Genegeerd tab
+  // actually calls. That label is only true of an ARCHIVED row; an invoice back in the queue that
+  // still claims something replaced it is a contradiction the owner would have to resolve from
+  // memory. Superseding is meant to be reversible at the cost of one tap.
+  // [DEPLOY-SAFE] The column arrives with invoice_superseded_by.sql (applied by hand) — until
+  // then a missing-column error must not break restore itself.
+  let { data: restored, error } = await restore({ ...basePatch, superseded_by_number: null });
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    ({ data: restored, error } = await restore(basePatch));
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

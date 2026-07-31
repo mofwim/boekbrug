@@ -15,6 +15,12 @@ import {
 export async function collectPossibleDuplicate(
   input: SemanticDedupInput,
   fetchByTotal: (total: number) => Promise<PossibleDupCandidate[]>,
+  // [DEDUP-CORRECTED] Optional second lookup: invoices already held under THIS invoice number,
+  // whatever their amount. Without it the corrected-re-issue tier can never fire — the by-total
+  // query returns only rows whose amount already matches, and a correction is by definition the
+  // one case where it does not. Optional so a call site that cannot form the query (no real
+  // number) simply keeps the old behaviour instead of failing.
+  fetchByNumber?: (invoiceNumber: string) => Promise<PossibleDupCandidate[]>,
 ): Promise<PossibleDuplicate | null> {
   if (typeof input.totalIncBtw !== "number" || !Number.isFinite(input.totalIncBtw)) return null;
   let rows: PossibleDupCandidate[];
@@ -23,7 +29,22 @@ export async function collectPossibleDuplicate(
   } catch {
     return null;
   }
-  return assessPossibleDuplicate(input, rows ?? []);
+  let extra: PossibleDupCandidate[] = [];
+  const number = (input.invoiceNumber ?? "").trim();
+  if (fetchByNumber && number.length > 0) {
+    try {
+      extra = (await fetchByNumber(number)) ?? [];
+    } catch {
+      // Best-effort, exactly like the by-total read: a failed second query degrades to the
+      // amount-anchored tiers, never to a failed import.
+      extra = [];
+    }
+  }
+  // De-duplicate by id — a same-number invoice that ALSO has the same total is returned by both
+  // queries, and a doubled candidate would make looksLikeRecurringSeries see a phantom moment.
+  const seen = new Set((rows ?? []).map((r) => r.id));
+  const merged = [...(rows ?? []), ...extra.filter((r) => !seen.has(r.id))];
+  return assessPossibleDuplicate(input, merged);
 }
 
 /**
@@ -50,7 +71,49 @@ export function mergePossibleDuplicate(
   // vendor name, then the id — never leave it blank when we have a match.
   safecore.possible_duplicate_of =
     possible.match.invoice_number || possible.match.client_name || possible.match.id;
+  // [SUPERSEDE] The id of the invoice we matched against, so "Deze vervangt factuur X" can ACT on
+  // it. `_of` above is a display string that falls back to a vendor name — it can never identify
+  // a row, and an invoice number is not unique across suppliers, so resolving the target by name
+  // or number at click time would risk archiving the wrong invoice. The id is the only anchor
+  // that cannot mean two things.
+  safecore.possible_duplicate_id = possible.match.id;
   safecore.possible_duplicate_reason = possible.reason;
   fc._safecore = safecore;
   return fc;
+}
+
+/** The keys that together ARE the duplicate signal. One list, so writing and clearing agree. */
+const DUPLICATE_KEYS = [
+  "possible_duplicate",
+  "possible_duplicate_of",
+  "possible_duplicate_id",
+  "possible_duplicate_reason",
+] as const;
+
+/**
+ * The inverse of mergePossibleDuplicate: remove the duplicate signal and NOTHING else. Lives here
+ * next to the writer on purpose — this file is the one place that knows which keys carry that
+ * signal, and a second hand-written list would be a bug waiting for the next key (which is exactly
+ * how possible_duplicate_id went missing from the e-mail path).
+ *
+ * Everything else in `_safecore` survives: the arithmetic verdict, an IBAN change, a reminder
+ * marker. None of those is answered by an answer about duplication, and silently dropping one
+ * would take a real warning off an invoice the owner never looked at again.
+ *
+ * Returns null when there was nothing to work on, so a caller can tell "cleared" from "nothing
+ * there" instead of reporting an imaginary success.
+ */
+export function clearPossibleDuplicate(fieldConfidence: unknown): Record<string, unknown> | null {
+  if (!fieldConfidence || typeof fieldConfidence !== "object" || Array.isArray(fieldConfidence)) {
+    return null;
+  }
+  const next = { ...(fieldConfidence as Record<string, unknown>) };
+  const prior = next._safecore;
+  const safecore =
+    prior && typeof prior === "object" && !Array.isArray(prior)
+      ? { ...(prior as Record<string, unknown>) }
+      : {};
+  for (const k of DUPLICATE_KEYS) delete safecore[k];
+  next._safecore = safecore;
+  return next;
 }

@@ -126,6 +126,10 @@ export interface FieldConfidence {
     // reject), but the human should check it isn't a double booking. `_of` names the look-alike.
     possible_duplicate?: boolean
     possible_duplicate_of?: string
+    // [SUPERSEDE] The id of the look-alike, so the queue can offer "Deze vervangt factuur X" and
+    // the server can act on an exact row rather than on a display string. Absent on rows imported
+    // before this existed — the flag still shows, only the one-tap button does not.
+    possible_duplicate_id?: string
     possible_duplicate_reason?: string
     // [IBAN-WISSEL] Written at import time when a supplier we already hold under one bank account
     // sends an invoice with another one. `_from` / `_to` carry both numbers so the read-time reason

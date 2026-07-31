@@ -35,6 +35,11 @@ const ARITHMETIC_KEYS = ["arithmetic_ok", "reason", "flags", "held_at"] as const
 const RELATION_KEYS = [
   "possible_duplicate",
   "possible_duplicate_of",
+  // [SUPERSEDE] The twin's id. It is what drives the "Deze vervangt factuur X" button, and a
+  // re-import can no more re-derive it than the rest of this list. Without it, one tap on
+  // "Opnieuw inlezen" made the button disappear while the WARNING stayed — exactly the silent
+  // vanishing this file exists to prevent.
+  "possible_duplicate_id",
   "possible_duplicate_reason",
   "dedup",
   "dedup_reason",

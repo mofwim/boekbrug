@@ -33,6 +33,7 @@ import { gateFairUse } from "@/lib/fair-use-gate";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { escapeLikeValue } from "@/lib/sanitize";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -248,7 +249,11 @@ export async function POST(req: NextRequest) {
         .eq("direction", direction)
         .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
         .eq("total_inc_btw", q.total);
-      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+      // [LIKE-ESCAPE] escapeLikeValue, as the three sibling ingestion paths already do. A raw
+      // value here is a PATTERN, not a string: a vendor written "A_B" or "50% Korting" turns `_`
+      // and `%` into wildcards and matches a DIFFERENT supplier's invoice — and this is the
+      // duplicate gate, so the wrong match silently blocks a legitimate bill as "already added".
+      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       const { data } = await query.order("id", { ascending: false }).limit(200);
       const rows = data ?? [];
@@ -306,6 +311,19 @@ export async function POST(req: NextRequest) {
           .lte("total_inc_btw", total + 0.005)
           .order("id", { ascending: false })
           .limit(200);
+        return data ?? [];
+      },
+      // [DEDUP-CORRECTED] Same number, ANY amount — a corrected re-issue is precisely the case the
+      // amount-anchored fetch above cannot return, and the hard key cannot see either.
+      async (invoiceNumber) => {
+        const { data } = await pipeline
+          .from("invoices")
+          .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+          .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
+          .eq("direction", direction)
+          .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+          .order("id", { ascending: false })
+          .limit(50);
         return data ?? [];
       },
     );

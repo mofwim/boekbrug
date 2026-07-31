@@ -1727,9 +1727,27 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             if (alt.kind === 'creditnota') {
               return { label: alt.label, onClick: () => { const id = removeCtx.id; setRemoveCtx(null); router.push(`/dashboard/invoice/${id}?action=credit`) } }
             }
-            // 'undo-payment' — the money has to come back off the invoice first, and the one
-            // place that can do that for a bank-settled invoice is the bank page.
-            return { label: alt.label, onClick: () => { setRemoveCtx(null); router.push('/dashboard/bank') } }
+            // 'undo-payment' — the money has to come off the invoice first. Sending the owner to
+            // the Bank page assumed there is a bank line to unlink there, and for a MANUAL
+            // deelbetaling there is none: it lives in bank_tx_invoices with transaction_id NULL,
+            // so that page shows nothing and the advice dead-ends on an empty screen. The undo
+            // belongs on the invoice this dialog is already about, so it opens the pay sheet's
+            // existing "Betaling ongedaan maken?" confirmation — the same one a fully paid invoice
+            // already goes through, rather than a second, quieter route to the same write.
+            return {
+              label: alt.label,
+              onClick: () => {
+                const id = removeCtx.id
+                const row = invoices.find(i => i.id === id)
+                setRemoveCtx(null)
+                setPayCtx({
+                  id,
+                  number: row?.invoice_number ?? '',
+                  newStatus: 'sent',
+                  invoiceType: (row?.invoice_type === 'creditnota' ? 'creditnota' : 'factuur'),
+                })
+              },
+            }
           })()}
         />
       )}

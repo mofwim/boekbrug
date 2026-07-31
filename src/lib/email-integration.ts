@@ -24,7 +24,7 @@ import {
   deriveDueDate,
   type PossibleDuplicate,
 } from '@/lib/safecore'
-import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
@@ -2939,6 +2939,22 @@ export async function syncUserEmails(
               .order('id', { ascending: false })
               .limit(200)
             return data ?? []
+          },
+          // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount. A supplier
+          // who re-sends the same number with a corrected total is invisible to the by-total query
+          // above — and to the hard key — so without this both copies import as two costs. ilike
+          // without wildcards is an exact case-insensitive match; the pure assessor re-checks with
+          // full normalization before flagging.
+          async (invoiceNumber) => {
+            const { data } = await supabase
+              .from('invoices')
+              .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
+              .eq('receiver_id', userId)
+              .eq('direction', 'incoming')
+              .ilike('invoice_number', escapeLikeValue(invoiceNumber))
+              .order('id', { ascending: false })
+              .limit(50)
+            return data ?? []
           }
         )
       }
@@ -3127,10 +3143,17 @@ export async function syncUserEmails(
         }
         // [DEDUP-SOFT] Carry the possible-duplicate flag → classifyImportHealth turns it into a
         // "mogelijk dubbel met X" needs-review warning that also blocks auto-advance.
+        // [SUPERSEDE] Through mergePossibleDuplicate — the ONE file that knows which keys carry a
+        // duplicate signal. These three lines used to be a hand-copy of it, and that broke the
+        // moment a fourth key arrived (possible_duplicate_id, the id behind the "Deze vervangt
+        // factuur X" button): upload and intake got it via the helper, the EMAIL SYNC did not —
+        // and that is the path most invoices actually arrive on. The warning would show and the
+        // button would not, with nothing on screen to explain why.
         if (possibleDup) {
-          safecore.possible_duplicate = true
-          safecore.possible_duplicate_of = possibleDup.match.invoice_number || possibleDup.match.client_name || possibleDup.match.id
-          safecore.possible_duplicate_reason = possibleDup.reason
+          const merged = mergePossibleDuplicate({ _safecore: safecore }, possibleDup) as {
+            _safecore?: Record<string, unknown>
+          }
+          Object.assign(safecore, merged._safecore ?? {})
         }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.

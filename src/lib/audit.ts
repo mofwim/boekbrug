@@ -59,6 +59,9 @@ export type AuditAction =
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
   | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back
+  | 'invoice.payment_moved'             // ← [MOVE-PAYMENT] owner moved a booked payment from one invoice to another (atomic; newValue carries both ids and both resulting amount_paid)
+  | 'invoice.duplicate_dismissed'       // ← [SUPERSEDE] owner answered the duplicate warning the other way: "no, this is a different invoice". Its own act, never inferred from a plain confirm - that tap means the amounts are right, not that two documents were compared.
+  | 'invoice.superseded'               // ← [SUPERSEDE] owner said "deze vervangt die": the corrected re-issue replaced the old invoice, which was archived. newValue carries superseded_by_id — the id-exact link both ways, which the display column (superseded_by_number) deliberately does not.
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
