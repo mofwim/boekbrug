@@ -53,11 +53,45 @@ export default function KlaarClient() {
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
-  const curYear = new Date().getFullYear()
+  // [TZ] Amsterdam, not the device's zone: around New Year those differ, and "which years may I
+  // pick" would then be answered by whichever side of midnight the viewer happens to be on.
+  const todayNl = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const curYear = Number(todayNl.slice(0, 4))
+  const curQuarter = Math.floor((Number(todayNl.slice(5, 7)) - 1) / 3) + 1
   // [QUARTER] Refresh via a bump key so the manual "Vernieuwen" fetch runs through the
   // SAME cancellable effect — clicking refresh then quickly changing quarter can no longer
   // land stale-quarter data (the superseded request's cancelled flag is always set).
   const [reloadKey, setReloadKey] = useState(0)
+
+  // [PAKKET-STAY] Fetch the ZIP rather than navigating to it — see the button below.
+  const [pkgBusy, setPkgBusy] = useState(false)
+  const [pkgError, setPkgError] = useState<string | null>(null)
+  async function downloadPackage(y: number, q: number) {
+    setPkgBusy(true); setPkgError(null)
+    try {
+      const res = await fetch(`/api/closing-package?year=${y}&quarter=${q}`)
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as { error?: string }))
+        setPkgError(j?.error ?? 'Het pakket kon niet worden gemaakt. Probeer het opnieuw.')
+        return
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('content-disposition') ?? ''
+      const named = /filename="?([^";]+)"?/i.exec(cd)?.[1]
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = named || `BoekBrug-Q${q}-${y}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setPkgError('Geen verbinding — het pakket is niet gedownload.')
+    } finally {
+      setPkgBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -96,10 +130,17 @@ export default function KlaarClient() {
 
         {/* Quarter picker */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 18, alignItems: 'center' }}>
+          {/* A quarter that has not started cannot be assessed. Without this the picker offered
+              Q4 in January and answered with a confident 🔴 "Nog niet klaar · 0%" about a period
+              that does not exist yet — an alarm the owner can do nothing about. The app already
+              knows the rule: /api/btw/file refuses to file a quarter that has not ENDED
+              ([FILING-WINDOW]); this is the same idea one step earlier. The CURRENT quarter stays
+              selectable — checking your progress mid-quarter is the point of this screen. */}
           {[1, 2, 3, 4].map((q) => {
             const active = quarter === q
+            const future = year > curYear || (year === curYear && q > curQuarter)
             return (
-              <button key={q} onClick={() => setQuarter(q)} style={{ flex: 1, padding: '9px 0', borderRadius: 10, cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface }}>Q{q}</button>
+              <button key={q} onClick={() => !future && setQuarter(q)} disabled={future} title={future ? 'Dit kwartaal is nog niet begonnen' : undefined} style={{ flex: 1, padding: '9px 0', borderRadius: 10, cursor: future ? 'default' : 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, opacity: future ? 0.4 : 1 }}>Q{q}</button>
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 6 }}>
@@ -107,14 +148,32 @@ export default function KlaarClient() {
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>{year}</span>
-            <button onClick={() => setYear((y) => Math.min(y + 1, curYear))} disabled={year >= curYear} title="Volgend jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
+            {/* Stepping INTO the current year can strand the selection on a quarter that has not
+                started (Q4 2025 → 2026 in January), so the quarter is clamped with the year. */}
+            <button onClick={() => { const next = Math.min(year + 1, curYear); setYear(next); if (next === curYear && quarter > curQuarter) setQuarter(curQuarter) }} disabled={year >= curYear} title="Volgend jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
         </div>
 
         {loading && <div style={{ color: M3.neutral, fontSize: 14, padding: '32px 0', textAlign: 'center' }}>Controleren…</div>}
-        {!loading && (error || !report) && <div style={{ color: M3.neutral, fontSize: 14, padding: '32px 0', textAlign: 'center' }}>Kon de status niet laden.</div>}
+        {/* A bare sentence on the screen that decides whether the quarter may be handed over is a
+            dead end — and the retry it needed was already sitting in setReloadKey, driving the
+            "Vernieuwen" link above. Say what it does NOT mean, and offer the way out. */}
+        {!loading && (error || !report) && (
+          <div style={{ background: M3.errorContainer, borderRadius: 14, padding: '18px 20px', textAlign: 'center', margin: '12px 0' }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>Kon de status niet laden</div>
+            <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
+              Dit zegt <strong>niets</strong> over of je klaar bent — we konden het alleen niet controleren.
+            </div>
+            <button
+              onClick={() => setReloadKey((k) => k + 1)}
+              style={{ marginTop: 12, padding: '9px 18px', borderRadius: 10, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+            >
+              Opnieuw proberen
+            </button>
+          </div>
+        )}
 
         {report && (
           <>
@@ -136,14 +195,24 @@ export default function KlaarClient() {
               </div>
             </div>
 
-            {/* ── One-click handover ── */}
-            <a
-              href={`/api/closing-package?year=${year}&quarter=${quarter}`}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '15px 18px', borderRadius: 14, background: M3.primary, color: '#fff', fontSize: 15.5, fontWeight: 700, textDecoration: 'none', marginBottom: 8 }}
+            {/* ── One-click handover ──
+                [PAKKET-STAY] Fetched, not navigated to — the same fix the accountant's bridge
+                already carries. The route answers every refusal with JSON, so an <a href> replaced
+                this screen with a page of raw braces AND threw away the quarter and year the owner
+                had selected (both client state). A failure now stays a sentence under the button. */}
+            <button
+              onClick={() => downloadPackage(year, quarter)}
+              disabled={pkgBusy}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '15px 18px', borderRadius: 14, border: 'none', background: M3.primary, color: '#fff', fontSize: 15.5, fontWeight: 700, marginBottom: 8, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, opacity: pkgBusy ? 0.6 : 1 }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>inventory_2</span>
-              Download voor de boekhouder
-            </a>
+              {pkgBusy ? 'Pakket maken…' : 'Download voor de boekhouder'}
+            </button>
+            {pkgError && (
+              <div role="alert" style={{ fontSize: 13, color: M3.error, textAlign: 'center', marginBottom: 8, lineHeight: 1.45 }}>
+                {pkgError}
+              </div>
+            )}
             <div style={{ fontSize: 12.5, color: M3.neutral, textAlign: 'center', marginBottom: 22, lineHeight: 1.5 }}>
               Eén ZIP: facturen, bonnen, bankafschrift, dagomzet én je concept BTW-aangifte.
             </div>

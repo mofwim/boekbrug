@@ -65,11 +65,18 @@ export async function GET() {
   );
   // [KAS-OPENING] Add the drawer's starting float (beginsaldo) so the saldo matches reality from
   // day one — a shop that began with cash in the till isn't understated by that amount.
-  const { data: prof } = await supabase
+  // [COHERENCE-ERRSTATE] The error is read. A swallowed one becomes a €0 float, which understates
+  // the headline "SALDO IN KASSA" by exactly the money the shop started its till with — and the
+  // screen shows that figure with full confidence. Failing the read is the honest answer: the
+  // client already distinguishes a failed load from an empty drawer and shows '—'.
+  const { data: prof, error: profErr } = await supabase
     .from("profiles")
     .select("kas_opening_balance")
     .eq("id", user.id)
     .maybeSingle();
+  if (profErr) {
+    return NextResponse.json({ error: "opening_balance_lookup_failed", detail: profErr.message }, { status: 500 });
+  }
   const opening = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
 
   // [KAS-SALDO] One shared definition (computeDrawerBalance) so this page and the home snapshot

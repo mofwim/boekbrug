@@ -245,7 +245,7 @@ export async function GET() {
   // [PAGINATION] cash_entries / daily_turnover also page past the ~1000-row cap
   // (a cash-heavy shop exceeds it) — a truncated sum here showed a wrong drawer
   // saldo that disagreed with the Kas page.
-  const [cashRows, tillRows, { data: kasProf }] = await Promise.all([
+  const [cashRows, tillRows, { data: kasProf, error: kasProfErr }] = await Promise.all([
     fetchAllRows((from, to) => pipeline
       .from("cash_entries").select("direction, amount").eq("user_id", user.id)
       .order("id", { ascending: true }).range(from, to)
@@ -259,12 +259,16 @@ export async function GET() {
   // [NO-FALSE-CLEAR] Een half gelezen la is erger dan geen la. Faalt één van beide bronnen, dan
   // zou het saldo kloppen noch met de Kas-pagina noch met de werkelijkheid — en het staat er als
   // een hard bedrag. Dan liever de tegel helemaal niet tonen (kasUsed=false verderop).
-  const kasReadFailed = cashRows == null || tillRows == null;
+  // Het beginsaldo hoort bij diezelfde la: een gemiste leesbeurt daarvan wordt stil €0 en
+  // verlaagt het saldo met precies het geld waarmee de kassa ooit begon — even hard gepresenteerd
+  // als de rest. Dezelfde vlag, dezelfde uitkomst: dan tonen we de tegel niet.
+  const kasReadFailed = cashRows == null || tillRows == null || kasProfErr != null;
   if (kasReadFailed) {
     console.error("[DAILY-TRUTH] kas read failed — suppressing the drawer tile", {
       userId: user.id,
       cashFailed: cashRows == null,
       tillFailed: tillRows == null,
+      openingFailed: kasProfErr != null,
     });
   }
   const cash = cashRows ?? [];

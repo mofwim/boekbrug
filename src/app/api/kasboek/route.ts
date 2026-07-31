@@ -100,7 +100,19 @@ export async function GET(req: NextRequest) {
   // [KAS-OPENING] Seed the very first period with the drawer's starting float so the Kasboek
   // eindsaldo matches the headline saldo and reality. openingBalanceForQuarter then carries it
   // forward through every prior quarter's movements.
-  const { data: prof } = await supabase.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle();
+  // [NO-EMPTY-LEDGER] The float is part of the ledger, so its read is held to the same rule as
+  // the two above: a swallowed error becomes a €0 starting balance, and a cash book whose opening
+  // balance is silently wrong is exactly the kind of unexplainable eindsaldo this route refuses
+  // to hand the accountant.
+  const { data: prof, error: profErr } = await supabase.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle();
+  if (profErr) {
+    console.error("[NO-EMPTY-LEDGER] kas_opening_balance read failed — refusing to serve a cash book", { userId: user.id, error: profErr.message });
+    const detail = "We konden je beginsaldo nu niet lezen. Zonder dat klopt het eindsaldo niet, dus we tonen het kasboek liever niet. Probeer het zo meteen opnieuw.";
+    if (format === "xlsx") {
+      return new NextResponse(detail, { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+    }
+    return NextResponse.json({ error: "kasboek_unavailable", detail }, { status: 503 });
+  }
   const startingBalance = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
 
   const opening = openingBalanceForQuarter({ turnover, entries, year, quarter: quarter as Quarter, startingBalance });
