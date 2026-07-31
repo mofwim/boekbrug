@@ -17,7 +17,7 @@ import {
   matchTransactions,
   isFullyCovered,
   bankLineFullyApplied,
-  coveredReferenceNumbers,
+  coveredNumbersRecovered,
   parseReferenceNumbers,
   normalizeRef,
   type InvoiceForMatching,
@@ -117,7 +117,12 @@ export async function GET() {
   const invoices = (invRows ?? []) as InvoiceForMatching[];
 
   // 4. Run the pure matcher.
-  const result = matchTransactions(transactions, invoices);
+  // [BANK-BIG-BUNDLE] maxCandidates raised from the default 5: a wholesaler bundle routinely
+  // lists 6-10 invoice numbers in one debit, and the UI resolves its slots FROM this candidate
+  // list — a truncated list rendered existing invoices as "missing" slots with an upload
+  // control, inviting a duplicate import of a bill that was already there. Fifteen covers any
+  // realistic bundle; the choice-list UI still shows only the top few.
+  const result = matchTransactions(transactions, invoices, { maxCandidates: 15 });
 
   // [BANK-MULTI-LINK-PERSIST] Partial-link coverage. A multi-invoice tx that has
   // already had ONE invoice paid against it keeps status='pending' + an invoice_id.
@@ -227,7 +232,12 @@ export async function GET() {
       // there it stays conservative (an unresolved number keeps the line visible, never hides on
       // doubt), exactly as confirm's own fallback does.
       partialLink.set(row.id, measuredAllCovered(row) ?? isFullyCovered(row.reference, paidSet));
-      coveredByTx.set(row.id, coveredReferenceNumbers(row.reference, paidSet));
+      // [BANK-SLOT-RECOVERED] Answer in the PAID invoices' own full numbers, not in reference
+      // tokens. For a recovered bundle the two vocabularies never met: the extractor stores
+      // "2026-045" as the token "045", the slot key is the invoice's real number, and the paid
+      // set holds "2026045" — token-equality matched nothing, so after a reload a genuinely
+      // PAID slot reverted to an open "Koppelen" that invited booking the same bill twice.
+      coveredByTx.set(row.id, coveredNumbersRecovered(row.reference, paidSet));
     }
   }
 

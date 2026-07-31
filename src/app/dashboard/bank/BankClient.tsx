@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { reconcileBatch, resolveBatchNumbers } from '@/lib/bank-batch-reconcile'
+import { reconcileBatch, resolveBatchNumbers, settleableAmount } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
@@ -2007,7 +2007,13 @@ function TxCard({
         // kloppen niet" about a payment that was precisely right. `remaining` is absent on
         // candidates built outside matchTransactions → fall back to the total (open == total
         // for a fully open invoice anyway).
-        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.remaining ?? sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
+        // [BATCH-SIGN-KEPT] settleableAmount, NOT `remaining`: `remaining` is a magnitude, so a
+        // creditnota slot (negative gross) lost its sign here and the [BATCH-SIGN] netting in
+        // reconcileBatch — invoice €300 + creditnota −€20 against a −€280 debit — could never
+        // fire from this card: the only screen that reconciles a korting-bundle showed a false
+        // mismatch. settleableAmount carries the invoice's own sign through the open-balance
+        // arithmetic; for a normal (positive) invoice it equals `remaining` exactly.
+        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand ? settleableAmount(sl.cand.amount, sl.cand.amountPaid) : null, isConfirmed: sl.isConfirmed })),
         s.amount,
       )
     : null

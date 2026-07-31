@@ -92,6 +92,12 @@ export interface MatchCandidate {
   // score from one shared surname. The amount_only tier books money with no human, so it needs
   // this, not just the ratio. Optional: candidates built outside matchTransactions may omit it.
   nameIdentity?: boolean;
+  // [BANK-DEDUP-SUPPLIER] The invoice's counterpart, carried so dedupeCandidates can tell a
+  // re-imported duplicate (same number + amount + SAME supplier) from a cross-supplier
+  // collision (same number pattern + same amount, different supplier — a real second invoice
+  // that must never be hidden). Optional: candidates built outside matchTransactions omit it,
+  // and an absent supplier only ever merges with another absent one (the old behaviour).
+  clientName?: string | null;
   // [PARTIAL-PAY] What earlier instalments already settled (magnitude, 0 when fully open) and
   // what is therefore still OPEN on this invoice. scorePair already targets the remaining
   // balance (see amountTarget above) — it just never EXPORTED it, so the confirm UI compared
@@ -213,8 +219,13 @@ export function referenceMatches(
 // invoice — an instalment / down-payment / "second part". Word-boundary matched so
 // "termijn" doesn't fire inside an unrelated word. Used to keep a partial payment out of
 // one-tap auto-confirm (which would mark the whole invoice paid).
+// [BANK-PARTIAL-WORDS] `gedeeltelijke?` — the INFLECTED form is what people actually write
+// ("gedeeltelijke betaling"); the bare stem never matched it because \b sits between two
+// letters. `voorschot` (an advance) is the other real-world marker that was missing: an
+// advance is by definition not the full bill, and without the word an exact-amount voorschot
+// could auto-book an unrelated same-amount invoice.
 const PARTIAL_PAYMENT_RE =
-  /\b(deelbetaling|deelbetaald|gedeeltelijk|aanbetaling|termijn|termijnbetaling|\d+e?\s*termijn|\d+e\s*deel|deel\s*\d+|restbetaling|resterend|part\s*payment|installment|instalment)\b/i;
+  /\b(deelbetaling|deelbetaald|gedeeltelijke?|aanbetaling|voorschot|termijn|termijnbetaling|\d+e?\s*termijn|\d+e\s*deel|deel\s*\d+|restbetaling|resterend|part\s*payment|installment|instalment)\b/i;
 
 /** Does the payment text look like an instalment / partial payment? */
 export function isPartialPaymentHint(text: string | null | undefined): boolean {
@@ -302,6 +313,14 @@ function nameTokens(s: string): Set<string> {
   return new Set(tokens);
 }
 
+// [BANK-NAME-PARTICLES] Dutch name particles (tussenvoegsels). They appear in MILLIONS of
+// surnames — de Vries, van Dijk, van den Berg are the most common names in the country — so a
+// shared particle carries ZERO identity. They still count for general similarity (a candidate
+// may be LISTED on them), but never toward the "same party, book money with no human" bar.
+const NAME_PARTICLES = new Set([
+  "de", "den", "der", "van", "ten", "ter", "te", "het", "op", "aan", "tot", "in", "bij", "onder",
+]);
+
 /**
  * Counterpart name similarity 0..1.
  * Jaccard over tokens, boosted by containment (one name's tokens ⊆ the other's),
@@ -327,10 +346,23 @@ export function isStrongNameIdentity(a: string | null, b: string | null): boolea
   const setA = nameTokens(a);
   const setB = nameTokens(b);
   if (setA.size === 0 || setB.size === 0) return false;
+  // [BANK-NAME-PARTICLES] Identity is judged on the MEANINGFUL tokens only. "J. de Vries" and
+  // "De Vries Transport" share {de, vries} — two tokens, which cleared the old shared>=2 bar and
+  // auto-booked an unrelated private person's €150 (a Marktplaats sale) onto a transport
+  // company's invoice, unattended. One of those two tokens is a particle a third of the country
+  // carries; the REAL overlap is the single surname {vries}, exactly the asymmetric
+  // shared-surname case this function was built to reject. Stripping particles keeps every
+  // honest match working: "Van den Berg Installaties" ↔ "van den Berg Installaties B.V." still
+  // shares {berg, installaties} (>=2), and the single-word supplier ("KPN" ↔ "KPN") still passes
+  // via set equality — which now also demands at least one meaningful token, so two names that
+  // are ONLY particles can never identify anything.
+  const meaningfulA = new Set([...setA].filter((t) => !NAME_PARTICLES.has(t)));
+  const meaningfulB = new Set([...setB].filter((t) => !NAME_PARTICLES.has(t)));
+  if (meaningfulA.size === 0 || meaningfulB.size === 0) return false;
   let shared = 0;
-  for (const t of setA) if (setB.has(t)) shared++;
+  for (const t of meaningfulA) if (meaningfulB.has(t)) shared++;
   if (shared >= 2) return true;
-  return setA.size === setB.size && shared === setA.size;
+  return meaningfulA.size === meaningfulB.size && shared === meaningfulA.size;
 }
 
 export function nameSimilarity(a: string | null, b: string | null): number {
@@ -484,6 +516,29 @@ export function scorePair(
     // Without an exact amount and without a reference, a pair stays weak — even a matching IBAN,
     // because the same supplier can have several invoices of different amounts.
     if (!amtOk) confidence = Math.min(confidence, 0.35);
+    // [BANK-IDENTITY-OUTRANKS] A pair with NO identity signal (no printed number, no matching
+    // IBAN) is capped strictly BELOW the reference+amount score (0.97). Before this cap,
+    // amount (0.5) + date (≤0.25) + name (≤0.3) could sum to a full 1.0 — so a COINCIDENCE
+    // outranked a payment that literally prints the invoice number. That was not cosmetic:
+    // candidates sort by confidence, `best` is the top, and the one-to-one guard hands each
+    // invoice to the highest-confidence claimant. Concretely (reproduced): two payments to the
+    // same supplier, same amount — the one QUOTING the invoice number ended as "Geen factuur"
+    // while the reference-less one claimed the invoice and, via the amount_only tier,
+    // auto-booked it with no human. topReachesAuto's own doctrine already says a printed number
+    // "is decisive identity … immune to the same-amount collisions"; the numbers just didn't
+    // obey it.
+    //
+    // The full ordering is a three-step identity hierarchy, each strictly below the last:
+    //   0.97  printed invoice number + exact amount   — DOCUMENT identity (names the bill)
+    //   0.96  matching IBAN + exact amount (+date)    — SUPPLIER identity (names the account)
+    //   0.95  amount + name + date                    — coincidence, however pretty
+    // IBAN sits between on purpose: a full account match IS identity (autoConfirmTier books it
+    // 'certain'), but it identifies the SUPPLIER, not the bill — a same-supplier same-amount
+    // payment with an IBAN match must not steal an invoice from the payment that literally
+    // prints that invoice's number (reproduced: it did, and booked silently as 'certain').
+    // Thresholds are untouched: 0.95/0.96 clear autoConfidence (0.7) exactly as before, so
+    // every single-candidate outcome is unchanged — only who WINS when the ranks compete.
+    confidence = Math.min(confidence, ibanOk ? 0.96 : 0.95);
   }
 
   // [BANK-PARTIAL] A payment whose reference/description says it is an INSTALMENT
@@ -528,7 +583,14 @@ export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[]
       out.push(c); // no safe identity → keep (never hide something we can't prove is a dup)
       continue;
     }
-    const key = `${num}|${Math.round(Math.abs(c.amount) * 100)}`;
+    // [BANK-DEDUP-SUPPLIER] The SUPPLIER is part of the duplicate's identity. Two invoices from
+    // DIFFERENT suppliers can legitimately share a number pattern AND an amount ("2026-07" for a
+    // €121 monthly fee is not a rare shape) — collapsing those hid the real open invoice behind
+    // an unrelated one and manufactured a false "single clear winner" for the auto path. A
+    // genuine re-import of the same bill carries the same supplier, so the intended collapse
+    // (same doc twice) still happens; an unknown supplier ("") only ever merges with another
+    // unknown, which is the pre-existing conservative behaviour.
+    const key = `${num}|${Math.round(Math.abs(c.amount) * 100)}|${normalizeRef(c.clientName ?? "")}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(c);
@@ -612,6 +674,18 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
     // where one name's lone token is a subset of a different, longer one. Below the bar the pair
     // still lists and stays pre-selected — one human tap, which is the right cost here.
     const identityEnough = m.best.nameIdentity !== false;
+    // [BANK-REF-CONTRADICTS] The payment PRINTS a document number that is NOT this invoice's —
+    // then this tier must never book. The reproduced shape: a transfer quoting an invoice the
+    // owner had not imported yet ("factuur 20260812"), same supplier, same amount as an OLDER
+    // open invoice → amount_only booked the older one while the text named a different bill.
+    // The winner reached this branch WITHOUT the 'reference' signal, so by definition none of
+    // the printed number-tokens is its number; any such token is therefore a contradiction.
+    // (A bare klantnummer also vetoes — conservative on purpose: the line stays a pre-selected
+    // one-tap for the human, which is the documented cost of never booking against the text.)
+    const winnerNum = normalizeRef(m.best.invoiceNumber ?? "");
+    const printed = parseReferenceNumbers(m.transaction.reference);
+    const contradicts = printed.some((t) => !(winnerNum === t || winnerNum.includes(t)));
+    if (contradicts) return null;
     return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM && sig.includes("date") && identityEnough
       ? "amount_only"
       : null;
@@ -633,12 +707,38 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
 // This only promotes to 'auto'; isSafeAutoConfirm still gates what the app books without a tap
 // (reference+amount, single reference, not an instalment), so a wrong printed-number match is
 // impossible here — referenceMatches already requires a whole-token, digit-bounded hit.
-function topReachesAuto(free: MatchCandidate[], opts: MatchOptions): boolean {
+// [BANK-ELIMINATION-NO-PROMOTE] `phantomSecond` is the strongest confidence among candidates the
+// one-to-one guard CLAIMED AWAY from this transaction. A leftover candidate must beat the
+// removed competitor by the same margin it would have needed against a present one — otherwise
+// elimination MANUFACTURES the "single clear winner". The reproduced shape is the duplicate
+// payment: rent paid twice, the quoting payment claims July, and the second payment's July/June
+// near-tie collapses to June alone — which the old re-derivation promoted to 'auto' and the
+// amount_only tier then BOOKED: a never-paid June invoice marked paid by July's duplicate,
+// unattended. With the phantom in the margin, that leftover stays a human 'choice'. A printed
+// reference remains decisive (uniqueRef): the statement itself names the top's OWN document, an
+// identity no removed same-amount competitor can dilute. Callers outside the claim loop pass
+// nothing → -Infinity → behaviour identical to before.
+function topReachesAuto(
+  free: MatchCandidate[],
+  opts: MatchOptions,
+  phantomSecond: number = Number.NEGATIVE_INFINITY,
+): boolean {
   const top = free[0];
   if (!top || top.confidence < opts.autoConfidence) return false;
-  const second = free[1];
-  const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
+  // [BANK-REF-CONTRADICTS] A candidate list that CONTAINS a reference-matched invoice — the
+  // payment prints THAT invoice's number — while the TOP is a different, non-reference invoice
+  // is a contradiction, never an 'auto'. The concrete shape: a partial invoice whose number is
+  // printed in the statement is capped at 0.6 (completing a partial is a human decision), and a
+  // bare amount+date coincidence from another supplier then out-scored it (0.75) and became the
+  // pre-selected one-tap for the WRONG bill, with the true, name-printed invoice sitting right
+  // below it in the list. The statement told us which document this payment is for; a top pick
+  // that ignores that is exactly the ambiguity a human must resolve.
   const topHasRef = top.signals.includes("reference") && top.signals.includes("amount");
+  if (!top.signals.includes("reference") && free.some((c) => c.signals.includes("reference"))) {
+    return false;
+  }
+  const second = Math.max(free[1]?.confidence ?? Number.NEGATIVE_INFINITY, phantomSecond);
+  const strongLead = !Number.isFinite(second) || top.confidence - second >= opts.autoMargin;
   const uniqueRef = topHasRef && !free.slice(1).some((c) => c.signals.includes("reference"));
   return strongLead || uniqueRef;
 }
@@ -678,6 +778,7 @@ export function matchTransactions(
         reason,
         nameSim,
         nameIdentity: isStrongNameIdentity(tx.counterpartName, inv.client_name),
+        clientName: inv.client_name, // [BANK-DEDUP-SUPPLIER] dedupe key component
         amountPaid: alreadyPaid,
         remaining: stillOpen,
       });
@@ -720,6 +821,13 @@ export function matchTransactions(
     const m = matches[i];
     // Drop any candidate whose invoice is already claimed by a stronger tx.
     const free = m.candidates.filter((c) => !claimed.has(c.invoiceId));
+    // [BANK-ELIMINATION-NO-PROMOTE] The strongest confidence elimination took FROM this tx —
+    // fed into topReachesAuto as a phantom second, so a leftover cannot inherit a margin its
+    // removed competitor never granted it (see topReachesAuto's header for the duplicate-rent
+    // shape this closes).
+    const claimedAway = m.candidates
+      .filter((c) => claimed.has(c.invoiceId))
+      .reduce((mx, c) => Math.max(mx, c.confidence), Number.NEGATIVE_INFINITY);
 
     if (free.length === 0) {
       m.outcome = "none";
@@ -731,7 +839,7 @@ export function matchTransactions(
     // Re-derive outcome from the remaining free candidates.
     const top = free[0];
 
-    if (topReachesAuto(free, opts)) {
+    if (topReachesAuto(free, opts, claimedAway)) {
       m.outcome = "auto";
       m.best = top;
       claimed.add(top.invoiceId); // auto → this invoice is taken
@@ -888,4 +996,33 @@ export function coveredReferenceNumbers(
   const refNumbers = parseReferenceNumbers(reference);
   const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
   return refNumbers.filter((n) => paidSet.has(n));
+}
+
+/**
+ * [BANK-SLOT-RECOVERED] Which PAID invoice numbers does this reference cover — answered in the
+ * paid invoices' OWN (full, normalized) numbers, so the UI's bundle slots can recognise them.
+ *
+ * coveredReferenceNumbers above answers in reference TOKENS, and for a recovered bundle
+ * ([BUNDEL-REF-RECOVER]) those two vocabularies don't meet: the extractor stores "2026-045" as
+ * the fragment "045", the slot shows the invoice's real "2026-045", and the paid set holds
+ * "2026045". Equality matches nothing on either side, so after a reload a genuinely PAID
+ * invoice re-appeared as an open "Koppelen" slot — inviting the owner to upload (and book) the
+ * same bill twice. This helper closes the vocabulary gap with the SAME containment rule the
+ * slot recovery itself uses (a token is covered by a paid number that IS it or CONTAINS it —
+ * tokens are ≥4 chars with a digit, so "045" can only sit inside its own family of numbers
+ * within one transaction's context). Exact matches keep working unchanged: a full token equals
+ * the full paid number.
+ */
+export function coveredNumbersRecovered(
+  reference: string | null,
+  paidNumbers: Iterable<string>
+): string[] {
+  const refNumbers = parseReferenceNumbers(reference);
+  if (refNumbers.length === 0) return [];
+  const paid = paidNumbers instanceof Set ? [...paidNumbers] : [...paidNumbers];
+  const out = new Set<string>();
+  for (const p of paid) {
+    if (refNumbers.some((t) => p === t || p.includes(t))) out.add(p);
+  }
+  return [...out];
 }

@@ -176,20 +176,29 @@ function mapColumns(headers: string[]): ColumnMap {
   let amount = find(/bedrag|amount|mutatiebedrag/, /saldo|balance|na (trn|mutatie)/);
   if (amount < 0) amount = find(/bedrag|amount/, /saldo|balance/);
 
-  // Af/Bij debit-credit flag (ING, ABN).
-  const sign = find(/^af ?\/? ?bij$|debet\/credit|debit\/credit|bij\/af|af bij/);
+  // Af/Bij debit-credit flag (ING, ABN) — and Knab's "CreditDebet" (values C/D). Missing that
+  // one made every Knab debit import POSITIVE: the Bedrag column is unsigned, so without the
+  // flag a €53,20 pinbetaling counted as money received — every expense in the file flipped to
+  // income, silently.
+  const sign = find(/^af ?\/? ?bij$|debet\/credit|debit\/credit|creditdebet|credit ?debet|bij\/af|af bij|^c\/?d$|^d\/?c$/);
 
-  // Counterpart IBAN: must say "tegen" (tegenrekening / tegenpartij) or be an
-  // explicit destination account. Excludes the own IBAN.
-  let iban = find(/tegenrekening|tegen ?iban|counterparty ?iban|naar rekening/);
-  if (iban < 0) iban = find(/tegenrekening|account/, /^iban\/bban$|^rekening$|eigen/);
+  // Counterpart IBAN: must say "tegen" (tegenrekening / tegenpartij), an explicit counterparty
+  // word, or a destination account. bunq's layout is Date;…;Amount;Account;Counterparty;Name;…
+  // where "Account" is the OWN rekening and bare "Counterparty" holds the OTHER side's IBAN.
+  // The old fallback matched /account/ for the counterpart role, so every bunq row stored the
+  // owner's OWN IBAN as the tegenpartij: ibanMatches could never confirm a vendor, and every
+  // counterparty in the file collapsed onto one "party". The 'account' fallback is gone —
+  // "Account" belongs exclusively to the own-IBAN role.
+  const iban = find(/tegenrekening|tegen ?iban|counterparty ?iban|^counterparty$|naar rekening/);
 
   // Own IBAN: Rabo "IBAN/BBAN", ING "Rekening", bunq "Account".
   let ownIban = find(/^iban\/bban$|^rekening$|^account$|eigen rekening/);
   if (ownIban === iban) ownIban = -1;
 
-  // Counterpart name.
-  const name = find(/naam tegenpartij|tegenpartij|begunstigde|opdrachtgever|counterparty ?name|^name$|^naam$|naam ?\/ ?omschrijving/, /iban|rekening|bic/);
+  // Counterpart name. "Tegenrekeninghouder" (Knab) is the counterpart's NAME — the holder, not
+  // the account — so the exclusion must reject account-number columns (rekeningNUMMER, bare
+  // rekening) without rejecting the holder.
+  const name = find(/naam tegenpartij|tegenrekeninghouder|tegenpartij|begunstigde|opdrachtgever|counterparty ?name|^name$|^naam$|naam ?\/ ?omschrijving/, /iban|rekeningnummer|^rekening$|bic/);
 
   // Remittance / description: ING "Mededelingen", Rabo "Omschrijving-1/-2/-3",
   // bunq "Description"/"Omschrijving", plus "Betalingskenmerk".
@@ -268,15 +277,18 @@ export function looksLikeBankCsv(content: string): boolean {
   // sniffer and the parser can never disagree. Reading only the LITERAL first line meant a bank CSV
   // that begins with a leading blank line looked like "" here → not routed to bank → misfiled as an
   // opaque document, even though parseBankCsv would have read its transactions fine.
-  const firstLine = content.replace(/^﻿/, "").split(/\r?\n/).find((l) => l.trim().length > 0) ?? "";
-  if (!firstLine) return false;
   if (/^:\d{2}[A-Z]?:/.test(content.trimStart())) return false; // MT940
   if (/<\?xml|<Document|<BkToCstmrStmt/.test(content)) return false; // CAMT
-  const delim = detectDelimiter(firstLine);
-  // A header row with at least 3 delimited columns, containing date+amount words.
-  const cols = firstLine.split(delim).length;
-  const h = firstLine.toLowerCase();
-  return cols >= 3 && /datum|date/.test(h) && /bedrag|amount/.test(h);
+  // [CSV-PREAMBLE] The header row is not always the FIRST row: Knab prefixes its export with a
+  // "KNAB EXPORT;;;" banner line. Scan the first handful of non-empty lines for a row that has
+  // the header anatomy (≥3 delimited columns, a date word and an amount word) — the same rule
+  // parseBankCsv uses to locate the header, so the sniffer and the parser cannot disagree.
+  const candidates = content.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim().length > 0).slice(0, 5);
+  return candidates.some((line) => {
+    const delim = detectDelimiter(line);
+    const h = line.toLowerCase();
+    return line.split(delim).length >= 3 && /datum|date/.test(h) && /bedrag|amount/.test(h);
+  });
 }
 
 /**
@@ -288,7 +300,17 @@ export function parseBankCsv(content: string): ParseResult {
   const errors: string[] = [];
   const clean = content.replace(/^﻿/, ""); // strip UTF-8 BOM
   const lines = clean.split(/\r?\n/);
-  const headerLine = lines.find((l) => l.trim().length > 0) ?? "";
+  // [CSV-PREAMBLE] The header is the first line that LOOKS like one (date+amount words, ≥3
+  // columns) — not blindly the first non-empty line, which for Knab is the "KNAB EXPORT;;;"
+  // banner. Falling back to the first non-empty line keeps every bank without a banner exactly
+  // as before.
+  const nonEmpty = lines.filter((l) => l.trim().length > 0);
+  const headerLine =
+    nonEmpty.slice(0, 5).find((line) => {
+      const d = detectDelimiter(line);
+      const h = line.toLowerCase();
+      return line.split(d).length >= 3 && /datum|date/.test(h) && /bedrag|amount/.test(h);
+    }) ?? nonEmpty[0] ?? "";
   const delim = detectDelimiter(headerLine);
 
   const matrix = splitCsv(clean, delim).filter((r) => r.some((c) => c.trim() !== ""));
@@ -296,7 +318,14 @@ export function parseBankCsv(content: string): ParseResult {
     return { format: "CSV", accountIban: null, accountName: null, currency: "EUR", transactions: [], parseErrors: ["Leeg of onleesbaar CSV-bestand."] };
   }
 
-  const headers = matrix[0];
+  // Find the header ROW inside the matrix (banner rows sit before it) and start the data right
+  // after it. Row 0 still wins immediately for every bank without a banner.
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(5, matrix.length); i++) {
+    const m = mapColumns(matrix[i]);
+    if (m.date >= 0 && m.amount >= 0) { headerIdx = i; break; }
+  }
+  const headers = matrix[headerIdx];
   const map = mapColumns(headers);
   if (map.date < 0 || map.amount < 0) {
     // Honest, non-dismissive: we could NOT auto-recognise the columns — we do NOT
@@ -324,7 +353,7 @@ export function parseBankCsv(content: string): ParseResult {
   let ownIban: string | null = null;
   let dropped = 0;
 
-  for (let r = 1; r < matrix.length; r++) {
+  for (let r = headerIdx + 1; r < matrix.length; r++) {
     const row = matrix[r];
     if (ownIban == null && map.ownIban >= 0) {
       const v = cell(row, map.ownIban).replace(/\s/g, "");

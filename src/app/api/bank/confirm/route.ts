@@ -392,9 +392,18 @@ export async function POST(req: NextRequest) {
   //    "Te bevestigen".
   const settledByThisBooking = appliedElsewhere + invOpen;
   const moneyRemaining = Math.round((payAmount - settledByThisBooking) * 100) / 100;
+  // [BANK-COVERED-FAIL-CLOSED] When the sibling links are NOT measurable (a failed read, or a
+  // pre-amount_applied link) the default is `false` — the line stays visible. We are in the
+  // overpay branch, so by arithmetic THIS booking leaves money on the line; only measured
+  // sibling bookings could prove otherwise. The old default was `true`, which closed the line
+  // and silently swallowed the remainder whenever the reference carried ≤1 token and the link
+  // read hiccupped. Worst case of failing closed: an already-finished line lingers one more
+  // round in "Te bevestigen" and the next confirm answers 409 — benign; the reverse hid money.
+  // A multi-token reference still gets the legacy presence rule below (it can only ever KEEP a
+  // line visible, never hide one).
   let allCovered = appliedElsewhereKnown
     ? bankLineFullyApplied(payAmount, settledByThisBooking) === true
-    : true;
+    : false;
 
   if (!appliedElsewhereKnown && refNumbers.length > 1) {
     // Direction the bank movement implies (mirrors isEligible's sign guard):
@@ -508,6 +517,40 @@ export async function POST(req: NextRequest) {
   // the link counts as zero in recompute_invoice_amount_paid and a later unlink of any OTHER
   // payment on this invoice erases the money this one really settled.
   await recordPaymentLinks(pipeline, user.id, transactionId, [invoiceId], { [invoiceId]: invOpen });
+
+  // [BANK-OVERAPPLIED-LOUD] Two overlapping confirms of DIFFERENT invoices against the SAME bank
+  // line can each read the sibling links before either has written — both then believe they have
+  // the full line to spend, and Σ amount_applied ends ABOVE the line's own amount. The write
+  // path has no cross-request mutex (only an atomic RPC could close that fully — documented as
+  // deferred), so the next-best guarantee is that the state can never be silently wrong: re-read
+  // the sum AFTER our link landed and, if the line is over-applied, say so loudly — an audit row
+  // plus an owner notification naming the figures. Best-effort: a failed read changes nothing.
+  try {
+    const { data: sumRows } = await pipeline
+      .from("bank_tx_invoices")
+      .select("amount_applied")
+      .eq("user_id", user.id)
+      .eq("transaction_id", transactionId);
+    const appliedSum = (sumRows ?? []).reduce((t, r) => t + Math.max(0, Number(r.amount_applied ?? 0)), 0);
+    if (appliedSum > payAmount + 0.01) {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.overapplied",
+        entityType: "bank_transaction",
+        entityId: transactionId,
+        newValue: { transaction_amount: payAmount, applied_sum: Math.round(appliedSum * 100) / 100, invoice_id: invoiceId },
+      });
+      await pipeline.from("notifications").insert({
+        user_id: user.id,
+        title: "Controleer deze betaling",
+        body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
+        type: "payment",
+        link: "/dashboard/bank",
+      });
+    }
+  } catch {
+    /* best-effort — the bookings themselves are already recorded */
+  }
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   const unassigned = appliedElsewhereKnown && !allCovered ? Math.max(0, moneyRemaining) : 0;

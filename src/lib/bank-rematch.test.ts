@@ -79,21 +79,34 @@ console.log("\n— an AMBIGUOUS match is reported, never acted on —");
 
 console.log("\n— an invoice the ACTIVE list is working on is never taken away —");
 {
-  // The live line literally prints the invoice number; the set-aside one only matches on
-  // amount + name + date. Confidence does not rank those the way a human would — the reference
-  // path caps at 0.97 while amount+name+date reaches a full 1.0 — so the one-to-one guard would
-  // hand the invoice to the set-aside line and leave the line that quoted the number with
-  // nothing. Reviving a line the owner had already dismissed must never cost the active list a
-  // candidate, so this is reported and left alone rather than acted on.
-  const plan = planRematch({
+  // Case A — identity vs coincidence. The live line literally prints the invoice number; the
+  // set-aside one only matches on amount + name + date. Since [BANK-IDENTITY-OUTRANKS] capped the
+  // identity-less path below the reference score, the one-to-one guard now hands the invoice to
+  // the live line ON MERIT — the set-aside line ends with no candidate at all, so the honest
+  // answer is "unchanged", not "ambiguous". (Before that cap the coincidence scored 1.0 vs 0.97
+  // and would have STOLEN the invoice; the inPlay guard below was the only thing stopping it.)
+  const planA = planRematch({
     ignored: [tx({ transactionId: "t-ignored", reference: null })],
     pending: [tx({ transactionId: "t-live", reference: "factuur 26302050" })],
     invoices: [inv({ id: "i1" })],
   });
-  check("the set-aside line is NOT restored against an invoice in play", plan.restore.length === 0);
-  check("…but it IS reported, so nothing is hidden", plan.ambiguous.includes("t-ignored"));
+  check("identity wins: the set-aside line is NOT restored", planA.restore.length === 0);
+  check("…and with no candidate left it counts as unchanged", planA.unchanged === 1);
   check("no pending line is ever part of the plan",
-    !plan.restore.some((r) => r.transactionId === "t-live") && !plan.ambiguous.includes("t-live"));
+    !planA.restore.some((r) => r.transactionId === "t-live") && !planA.ambiguous.includes("t-live"));
+
+  // Case B — no identity on EITHER side, so the guard ranks on confidence alone. The set-aside
+  // line (payment near the invoice date) out-scores the live one (payment months later, date
+  // bonus 0) and wins outcome 'auto'. THIS is where the inPlay guard earns its keep: the invoice
+  // is a live line's candidate, so reviving the set-aside line would steal it from the active
+  // list — report it, never act on it.
+  const planB = planRematch({
+    ignored: [tx({ transactionId: "t-ignored", reference: null, date: "2026-06-20" })],
+    pending: [tx({ transactionId: "t-live", reference: null, date: "2026-10-05" })],
+    invoices: [inv({ id: "i1" })],
+  });
+  check("no-identity tie: the set-aside line is NOT restored against an invoice in play", planB.restore.length === 0);
+  check("…but it IS reported, so nothing is hidden", planB.ambiguous.includes("t-ignored"));
 
   // Control: with no live line competing, the very same set-aside line IS restored.
   const alone = planRematch({
