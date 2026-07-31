@@ -19,6 +19,9 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [UPLOAD-ERRORS] Eén vertaler van HTTP-status → wat de eigenaar leest, gedeeld met
+// /dashboard/upload. Puur en getest; zonder dit las een 402 of 413 hier als "Toevoegen mislukt".
+import { describeUploadFailure } from '@/lib/upload-failure'
 import { useToast } from '@/components/ui/Toast'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
@@ -61,7 +64,11 @@ export default function IntakeButton({
   // highlights the file in Mijn bestanden. A fleeting toast is not enough: the
   // owner uploads and wonders "where did that go?".
   const [destModal, setDestModal] = useState<
-    { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null; isDuplicate?: boolean } | null
+    // [UNREAD-HONESTY] couldNotRead: het bestand is bewaard maar NIET gelezen (onscherpe foto,
+    // mislukte AI-lezing). /api/intake zegt dat met could_not_read, en dit scherm negeerde het —
+    // kop "Bestand toegevoegd", mapje-icoon, en de eerlijke zin van de server werd hieronder zelfs
+    // WEGGEGOOID zodra er een mapnaam was. Zie de modal onderaan.
+    { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null; isDuplicate?: boolean; couldNotRead?: boolean } | null
   >(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -214,7 +221,12 @@ export default function IntakeButton({
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else {
-          showToast(data.error || 'Toevoegen mislukt')
+          // [UPLOAD-ERRORS] Dezelfde vertaler als /dashboard/upload. `data.error || 'Toevoegen
+          // mislukt'` klopte precies één keer: bij onze eigen 5xx. Een 402 (maandtegoed op) las als
+          // een storing terwijl de server de reden én de uitweg meestuurt, en een 413/504 komt van
+          // het platform met een HTML-body — dus data.error bestond daar niet eens en de eigenaar
+          // kreeg "Toevoegen mislukt" over een bestand waar niets mis mee was.
+          showToast(describeUploadFailure(res.status, data.error).message)
           outcome = 'error'
         }
         return outcome
@@ -284,6 +296,10 @@ export default function IntakeButton({
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
+          // [UNREAD-HONESTY] "Geen factuur herkend" en "we konden het niet lezen" zijn twee heel
+          // verschillende uitkomsten, en alleen de tweede vraagt om een handeling. De route zegt
+          // welke van de twee het is; dit scherm las dat veld niet.
+          couldNotRead: data.could_not_read === true,
         })
       } else {
         // Restbak. Sinds hierboven alle zeven bestemmingen van /api/intake een eigen tak hebben,
@@ -595,22 +611,44 @@ export default function IntakeButton({
               width: '100%', maxWidth: 430,
             }}
           >
+            {/* [UNREAD-HONESTY] "Bestand toegevoegd" is waar én misleidend als we het niet konden
+                lezen: er is niets van geboekt, en dit is juist het bestand waar de eigenaar nog iets
+                mee moet. De kop zegt dat nu. */}
             <div style={{ fontWeight: 700, fontSize: 19, color: '#202124', marginBottom: 4 }}>
-              {destModal.isDuplicate ? 'Dit bestand bestaat al' : 'Bestand toegevoegd'}
+              {destModal.isDuplicate ? 'Dit bestand bestaat al'
+                : destModal.couldNotRead ? 'Bewaard, maar niet gelezen'
+                : 'Bestand toegevoegd'}
             </div>
             <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
-              {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:' : 'Dit is er met je bestand gebeurd:'}
+              {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:'
+                : destModal.couldNotRead ? 'Het bestand is veilig opgeslagen, maar we konden er niets uit lezen:'
+                : 'Dit is er met je bestand gebeurd:'}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f8f9fa', marginBottom: 20 }}>
-              <span style={{ fontSize: 16, lineHeight: '20px' }}>{destModal.isDuplicate ? 'ℹ️' : '📁'}</span>
+            <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: destModal.couldNotRead ? '#FEF7E0' : '#f8f9fa', marginBottom: 20 }}>
+              <span style={{ fontSize: 16, lineHeight: '20px' }}>
+                {destModal.isDuplicate ? 'ℹ️' : destModal.couldNotRead ? '⚠️' : '📁'}
+              </span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {destModal.fileName}
                 </p>
-                <p style={{ fontSize: 12, color: '#1a73e8', margin: 0 }}>
-                  {destModal.folderName ? `Dit bestand staat in: ${destModal.folderName}` : destModal.message}
-                </p>
+                {/* De mapnaam WON hier van de boodschap, ook wanneer die boodschap "we konden dit
+                    document niet lezen — controleer het" was. Precies de zin die de eigenaar moet
+                    lezen verdween dus zodra het bestand netjes was opgeborgen. Nu wint de reden, en
+                    de plaats staat eronder. */}
+                {destModal.couldNotRead ? (
+                  <>
+                    <p style={{ fontSize: 12, color: '#8A5A00', margin: 0, lineHeight: 1.45 }}>{destModal.message}</p>
+                    {destModal.folderName && (
+                      <p style={{ fontSize: 12, color: '#1a73e8', margin: '4px 0 0' }}>Het staat in: {destModal.folderName}</p>
+                    )}
+                  </>
+                ) : (
+                  <p style={{ fontSize: 12, color: '#1a73e8', margin: 0 }}>
+                    {destModal.folderName ? `Dit bestand staat in: ${destModal.folderName}` : destModal.message}
+                  </p>
+                )}
                 {destModal.documentId && (
                   <button
                     type="button"
@@ -663,6 +701,10 @@ export interface IntakeResult {
   // 'ledger'   = grootboek/controle-check, nadrukkelijk GEEN geld → werkt door in de reconciliatie.
   destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement' | 'turnover' | 'ledger'
   message?: string
+  // [UNREAD-HONESTY] true wanneer het bestand wél is opgeslagen maar NIET gelezen kon worden. Dat is
+  // iets anders dan "geen factuur herkend": er is niets van geboekt en er moet nog iets gebeuren.
+  // De route stuurt dit al sinds [TRUST-INTAKE]; dit scherm las het niet.
+  could_not_read?: boolean
   error?: string
   duplicate?: boolean
   invoice_id?: string
