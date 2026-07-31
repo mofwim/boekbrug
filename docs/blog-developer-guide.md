@@ -195,6 +195,36 @@ PY
 
 ---
 
+## 9b. Multilingual SEO conventions (ar / tr — non-negotiable)
+
+The Arabic and Turkish articles target Arabic/Turkish-speaking freelancers **living
+in the Netherlands**. They see Dutch tax terms on their official paperwork and
+search with those exact Dutch words. Translating the term away loses the searcher.
+
+- **Keep the Dutch term as the primary, searchable token in `title` /
+  `description` / `keywords`.** Never replace it with a translation:
+  - `BTW` — not "ضريبة القيمة المضافة", not "KDV".
+  - `KvK` — not "غرفة التجارة", not "Ticaret Odası".
+  - Keep as-is: **ZZP, BTW, KvK, KOR, DBA, UBL, AVG, IBAN, aangifte, btw-id**.
+  - A short native gloss may appear **once** in parentheses after the Dutch term
+    for first-time clarity — e.g. `BTW (KDV)`, `KvK (غرفة التجارة)` — but the Dutch
+    term leads and is what repeats.
+  - Any `title` whose Dutch original carries ZZP/BTW/AVG must carry that same token.
+- **`title` = search intent, not a literal translation of the Dutch title.**
+- **`description` must earn the click and must not restate the title's opening.**
+- **`relatedTool` mirrors the Dutch article's `relatedTool`** (topic-matched:
+  tax→`/netto-inkomen-zzp`, BTW→`/btw-aangifte-berekenen`, invoices→`/factuur-maken`,
+  receipts→`/factuur-scannen`…), with a localized `relatedToolLabel`. Do **not**
+  flatten every article to `/register` — that breaks the read→free-tool→account funnel.
+
+Quick regression check (run from repo root; expects zero output):
+```bash
+grep -lE '"[^"]*(ضريبة القيمة المضافة|غرفة التجارة)' content/blog/ar/*.mdx
+grep -lE '^(title|description|keywords):.*(KDV|Ticaret Odası)' content/blog/tr/*.mdx
+```
+
+---
+
 ## 10. Content guardrails (non-negotiable)
 
 - **Only shipped features.** Product claims must map to a real route in
