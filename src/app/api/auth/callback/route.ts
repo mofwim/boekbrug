@@ -118,10 +118,11 @@ export async function GET(req: NextRequest) {
  * [KLUIS] Leg vast dat dit een archiefaccount is: geen wizard, en de kluis als eerste pagina.
  *
  * TWEE aparte schrijfacties, en dat is de hele reden dat deze functie bestaat.
- * `account_purpose` komt uit account_purpose_archief.sql en die migratie hoeft nog niet
- * toegepast te zijn. Zit die kolom er niet, dan weigert PostgREST de HELE rij (PGRST204) — dus
- * in één update zou ook `onboarding_done` niet geschreven worden, en dan staat de bezoeker
- * alsnog in de wizard waar hij niet hoort. Precies het gat dat dit commit dicht.
+ * `account_purpose` komt uit account_purpose_archief.sql. In productie staat die migratie
+ * (gemeten op 31 juli 2026, met de query onderaan docs/WELKE_MIGRATIES_STAAN_ER.sql) — maar een
+ * verse dev- of stagingdatabase begint zonder. Zit die kolom er niet, dan weigert PostgREST de
+ * HELE rij (PGRST204), dus in één update zou ook `onboarding_done` niet geschreven worden en
+ * stond de bezoeker alsnog in de wizard waar hij niet hoort.
  *
  * Daarom eerst de kolom die er altijd is. Ontbreekt de tweede, dan mist de bezoeker een andere
  * begroeting op zijn kluis — niet de kluis zelf. En de bestemming draagt ?doel=archief mee, dus
@@ -143,8 +144,7 @@ async function markArchief(
     console.error('[KLUIS] onboarding_done niet gezet na Google-registratie:', doneError.message)
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: purposeError } = await (supabase as any)
+  const { error: purposeError } = await supabase
     .from('profiles')
     .update({ account_purpose: 'archief' })
     .eq('id', userId)

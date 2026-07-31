@@ -352,7 +352,8 @@ function RegisterContent() {
     // trigger. Best-effort: a failure here never blocks the redirect.
     //
     // [VANGNET-SPLITSING] En daarom staat account_purpose NIET in deze rij. Die kolom komt uit
-    // account_purpose_archief.sql, en ontbreekt die migratie, dan weigert PostgREST de HELE rij
+    // account_purpose_archief.sql — in productie toegepast, maar een verse dev- of
+    // stagingdatabase begint zonder. Ontbreekt die migratie, dan weigert PostgREST de HELE rij
     // (PGRST204) — dus dan werd ook de rol, de bedrijfsnaam, het KVK- en het BTW-nummer niet
     // geschreven. Precies in het geval waarvoor dit vangnet bestaat ("mocht die migratie nog
     // niet zijn toegepast") viel het dus als eerste om, stil, met alleen een console-regel.
@@ -382,8 +383,7 @@ function RegisterContent() {
     if (purpose === 'archief') {
       const { error: purposeError } = await getBrowserClient()
         .from('profiles')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .update({ account_purpose: 'archief' } as any)
+        .update({ account_purpose: 'archief' })
         .eq('id', data.user.id)
       if (purposeError) {
         console.error('[KLUIS] account_purpose niet gezet (migratie toegepast?):', purposeError)
