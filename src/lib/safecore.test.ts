@@ -8,7 +8,7 @@
 //
 // Style: plain check() functions + process exit code — same as retention.test.ts.
 
-import { evaluateArithmetic, normalizeInvoiceNumber, normalizeToIso } from './safecore'
+import { evaluateArithmetic, normalizeInvoiceNumber, normalizeToIso, pickDedupMatch } from './safecore'
 
 let failures = 0
 function check(name: string, cond: boolean, detail?: string) {
@@ -235,6 +235,43 @@ console.log('\n═══ [DATE-ISO-SAFE / I6] tolerant date normalization (never
   check('garbage → null', normalizeToIso('not a date') === null)
   check('null → null', normalizeToIso(null) === null)
   check('empty → null', normalizeToIso('') === null)
+}
+
+console.log('\n═══ [DEDUP-VENDOR-NORM] pickDedupMatch — de vergelijking staat in code, niet in een LIKE ═══\n')
+{
+  const sumup = { id: 'b', invoice_number: 'F-2', client_name: 'SUMUP *CAFE' }
+  const lookalike = { id: 'a', invoice_number: 'F-1', client_name: 'SUMUP XCAFE' }
+
+  // DE REGRESSIE. Via `.ilike(client_name, 'SUMUP *CAFE')` maakte PostgREST er 'SUMUP %CAFE' van,
+  // en dan blokkeerde een wildvreemde factuur met hetzelfde totaal + dezelfde datum de upload.
+  check('een naam die alléén via het wildcard-patroon zou matchen, matcht niet',
+    pickDedupMatch([lookalike], { tier: 'vendor', total: 10, vendor: 'SUMUP *CAFE' }) === null)
+  check('de ster is een letterlijke ster — de échte leverancier matcht wél',
+    pickDedupMatch([lookalike, sumup], { tier: 'vendor', total: 10, vendor: 'SUMUP *CAFE' })?.id === 'b')
+  check('ook % en _ zijn nu letterlijk, niet alleen ontsnapt',
+    pickDedupMatch([{ id: 'x', invoice_number: null, client_name: '50XY KORTING' }],
+      { tier: 'vendor', total: 10, vendor: '50%_ KORTING' }) === null)
+
+  // De normalisatie die we WEL willen houden — dezelfde die isReliableVendor gebruikt.
+  check('hoofdletters, dubbele spaties en accenten vouwen samen',
+    pickDedupMatch([{ id: 'c', invoice_number: null, client_name: 'Café  de  Kroon' }],
+      { tier: 'vendor', total: 10, vendor: 'cafe de kroon' })?.id === 'c')
+
+  // De verwijderde terugval: zonder bruikbare sleutel NOOIT "dan maar de eerste rij" — dat zou
+  // blokkeren op totaal + datum alleen, wat findSemanticDuplicate "te los" noemt.
+  check('geen leverancier → geen match (nooit rows[0])',
+    pickDedupMatch([lookalike, sumup], { tier: 'vendor', total: 10 }) === null)
+  check('geen nummer op de nummer-tier → geen match (nooit rows[0])',
+    pickDedupMatch([lookalike, sumup], { tier: 'number', total: 10 }) === null)
+  check('lege kandidatenlijst → null', pickDedupMatch([], { tier: 'vendor', total: 10, vendor: 'X' }) === null)
+
+  // De nummer-tier blijft doen wat [DEDUP-NUMBER-NORM] hierboven vastlegde.
+  check('nummer-tier vergelijkt genormaliseerd door',
+    pickDedupMatch([{ id: 'n', invoice_number: '26 / 3958', client_name: 'Wie dan ook' }],
+      { tier: 'number', total: 10, invoiceNumber: '26/3958' })?.id === 'n')
+  check('een echt ander nummer matcht niet',
+    pickDedupMatch([{ id: 'n', invoice_number: '26/3959', client_name: 'Wie dan ook' }],
+      { tier: 'number', total: 10, invoiceNumber: '26/3958' }) === null)
 }
 
 console.log(`\n${failures === 0 ? '✅ ALLE TESTS GESLAAGD' : `❌ ${failures} FAILURES`}`)

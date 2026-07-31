@@ -271,11 +271,26 @@ export default function UploadClient() {
 
   // "Toch toevoegen" — re-submit an uncertain semantic duplicate with force=true as a NEW attempt.
   const forceAdd = useCallback((item: Item) => {
-    const retry: Item & { force?: boolean } = { id: nextId(), file: item.file, status: 'queued', force: true }
+    // De nieuwe poging erft de preview van het origineel: het is hetzelfde bestand, dus de miniatuur
+    // en "Bekijk bestand →" horen er ook op te staan. Zonder dit kreeg juist de regel met de échte
+    // uitkomst geen afbeelding en geen link — de regel waarop de eigenaar wil kunnen controleren.
+    const retry: Item = { id: nextId(), file: item.file, status: 'queued', force: true, preview: item.preview }
     setItems((prev) => [...prev, retry])
     pending.current.push(retry)
-    // Mark the original as resolved so it doesn't keep offering the button.
-    patch(item.id, { status: 'done', message: 'Toch toegevoegd — zie de nieuwe regel hieronder.', destination: item.destination })
+    // [UI-HONESTY] De oorspronkelijke regel blijft staan als wat hij is: geweigerd als duplicaat.
+    // Hier stond `status: 'done'` met "Toch toegevoegd", gezet op het moment van KLIKKEN — dus vóór
+    // de upload. Mislukte die daarna (429, leesfout, verbinding weg), dan bleef een groene regel een
+    // toevoeging claimen die nooit gebeurde, en telde het overzicht hem als geslaagd mee. De uitkomst
+    // hoort op de nieuwe regel, en nergens anders.
+    //
+    // canForce en archived gaan wél weg: beide knoppen zijn nu uitgewerkt. Nog een keer forceren zou
+    // een derde regel maken, en alsnog "terugzetten uit Genegeerd" zou de teruggezette factuur NAAST
+    // de zojuist geforceerde zetten — twee facturen voor één papier.
+    patch(item.id, {
+      canForce: false,
+      archived: undefined,
+      message: 'Je hebt dit toch toegevoegd — de uitkomst staat op de nieuwe regel hieronder.',
+    })
     void kick()
   }, [kick, patch])
 

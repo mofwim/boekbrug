@@ -65,7 +65,7 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -424,11 +424,6 @@ export async function POST(req: NextRequest) {
           .eq("receiver_id", user.id)
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
-        if (q.tier === "vendor" && q.vendor) {
-          // [L2] Escape LIKE wildcards — an AI/OCR-parsed vendor containing `%`/`_`
-          // would otherwise act as a wildcard and broaden this dedup match.
-          query = query.ilike("client_name", escapeLikeValue(q.vendor))
-        }
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         // [DEDUP-NUMBER-NORM] The candidate set is already pinned by total (+date); for the
         // number tier compare the number WHITESPACE-NORMALIZED in JS, so "26 / 3958" is
@@ -437,12 +432,10 @@ export async function POST(req: NextRequest) {
         // outside the window (dropping the .eq removed the natural bound); 200 far exceeds
         // any realistic count of same-total invoices sharing one date.
         const { data } = await query.order("id", { ascending: false }).limit(200)
-        const rows = data ?? []
-        const hit =
-          q.tier === "number" && q.invoiceNumber
-            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-            : rows[0]
-        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
+        // [DEDUP-VENDOR-NORM] Nummer én leverancier worden in code vergeleken, niet in SQL — de
+        // leverancier stond hier als `.ilike(client_name, …)` en dat blokkeerde ten onrechte op elke
+        // naam met een `*` erin ("SUMUP *CAFE"). Het waarom staat volledig bij pickDedupMatch.
+        return pickDedupMatch(data ?? [], q)
       }
     )
 
@@ -588,9 +581,20 @@ export async function POST(req: NextRequest) {
           return data ?? []
         },
         // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
-        // corrected re-issue the amount-anchored query above can never return. ilike without
-        // wildcards is an exact, case-insensitive match; the pure assessor re-checks with full
-        // normalization before it flags anything.
+        // corrected re-issue the amount-anchored query above can never return.
+        //
+        // Deze regel zei "ilike without wildcards is an exact, case-insensitive match". Dat klopt
+        // niet: PostgREST vertaalt `*` naar `%` in like/ilike, en escapeLikeValue kan daar niets
+        // tegen doen (zie [DEDUP-VENDOR-NORM] hierboven). Anders dan bij de leverancier BLOKKEERT
+        // deze query niets — hij levert alleen kandidaten, en assessPossibleDuplicate hernormaliseert
+        // voor het iets vlagt. Een `*` maakt de zoekopdracht dus niet fout, maar wél ruimer, en dat
+        // is hier het echte risico: de ruis vult het venster en duwt de correctie die we zoeken
+        // erbuiten — dan blijft de zachte "mogelijk dubbel"-vlag uit en kan de factuur alsnog
+        // automatisch als tweede kostenpost boeken.
+        //
+        // Daarom blijft de ilike staan (hij levert altijd een SUPERset, hij mist nooit) en gaat het
+        // venster van 50 naar 200 — gelijk aan de bedrag-query hierboven, zodat verbreding geen
+        // gemiste vlag kan worden.
         async (invoiceNumber) => {
           const { data } = await supabase
             .from("invoices")
@@ -599,7 +603,7 @@ export async function POST(req: NextRequest) {
             .eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
             .order("id", { ascending: false })
-            .limit(50)
+            .limit(200)
           return data ?? []
         }
       )
@@ -611,14 +615,27 @@ export async function POST(req: NextRequest) {
   // (so a duplicate costs no conversion). Wrapping only — full image fidelity,
   // no re-compression. One file per request → peak memory is a single image.
   // Best-effort: a failed conversion returns the original bytes unchanged.
-  const upload = await maybeImageToPdf(buffer, file.type, file.name)
+  // [MIME-HONEST] `effectiveType`, niet `file.type`. Een Android-deelmenu of mobiele WebView levert
+  // een prima leesbare PDF/JPEG aan met een LEEG of generiek MIME-type; sniffReadableMime heeft dat
+  // hierboven al uit de magic bytes afgeleid, en okForAi liet het bestand op grond daarvan door.
+  // Daarna viel de route terug op file.type — een waarde waarvan ze zojuist had vastgesteld dat hij
+  // niet klopt. maybeImageToPdf sniffed zelf, dus de CONVERSIE ging goed; maar bij passthrough (een
+  // PDF, die niets te converteren heeft) gaf hij dat lege type gewoon terug, en dat belandde in
+  // storage als contentType en in documents.file_type. Gevolg: een PDF die bij het openen niet als
+  // PDF wordt herkend en in plaats van te tonen wordt gedownload. Het onleesbare-pad hierboven deed
+  // het al goed (`file.type || "application/octet-stream"`); dit pad liep achter.
+  const upload = await maybeImageToPdf(buffer, effectiveType, file.name)
+  // Laatste vangnet: okForAi laat ook een bestand door dat alleen op `.pdf` eindigt zonder dat de
+  // bytes te sniffen waren. Dan is effectiveType nog steeds "" en is een leeg type nooit beter dan
+  // octet-stream — dezelfde keuze als het onleesbare-pad maakt.
+  const uploadType = upload.fileType || "application/octet-stream"
 
   // ── Store the file in Storage (shared by all destinations) ──────────────────
   const safeName = upload.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
   const { error: uploadError } = await supabase.storage
     .from("documents")
-    .upload(storagePath, upload.buffer, { contentType: upload.fileType, upsert: false })
+    .upload(storagePath, upload.buffer, { contentType: uploadType, upsert: false })
   // [R1] A swallowed storage failure was the silent-loss bug: the flow continued and
   // wrote a documents/invoice row whose file_url points at a file that was NEVER stored,
   // while telling the owner "opgeslagen" / "factuur herkend". The evidence is then gone
@@ -652,7 +669,7 @@ export async function POST(req: NextRequest) {
         file_name: upload.fileName,
         file_url: storagePath,
         file_size: upload.buffer.length,
-        file_type: upload.fileType,
+        file_type: uploadType, // [MIME-HONEST] hetzelfde type als waarmee het in storage staat
         doc_type: "overig",
         folder_id: folderId,
         source: "camera",
@@ -745,7 +762,7 @@ export async function POST(req: NextRequest) {
       file_name: upload.fileName,
       file_url: storagePath,
       file_size: upload.buffer.length,
-      file_type: upload.fileType,
+      file_type: uploadType, // [MIME-HONEST] hetzelfde type als waarmee het in storage staat
       doc_type: "factuur",
       folder_id: folderId,
       year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
@@ -1164,15 +1181,10 @@ async function handleUblInvoice(
           .eq("receiver_id", userId)
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
-        if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor))
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         const { data } = await query.order("id", { ascending: false }).limit(200)
-        const rows = data ?? []
-        const hit =
-          q.tier === "number" && q.invoiceNumber
-            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-            : rows[0]
-        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
+        // [DEDUP-VENDOR-NORM] Dezelfde gedeelde vergelijking als de camera-route; zie pickDedupMatch.
+        return pickDedupMatch(data ?? [], q)
       },
     )
 
@@ -1214,13 +1226,16 @@ async function handleUblInvoice(
           return data ?? []
         },
         // [DEDUP-CORRECTED] Same number, ANY amount — the corrected re-issue the query above misses.
+        // Venster van 50 naar 200, om dezelfde reden als op de camera-route: een `*` in het nummer
+        // verbreedt de ilike (PostgREST leest hem als `%`) en mag de gezochte correctie niet uit het
+        // venster duwen. Blokkeren doet deze query niet; hij levert kandidaten voor de assessor.
         async (invoiceNumber) => {
           const { data } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
             .ilike("invoice_number", escapeLikeValue(invoiceNumber))
-            .order("id", { ascending: false }).limit(50)
+            .order("id", { ascending: false }).limit(200)
           return data ?? []
         },
       )

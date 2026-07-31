@@ -435,6 +435,48 @@ export async function findSemanticDuplicate(
   }
 }
 
+/**
+ * [DEDUP-VENDOR-NORM] Kies uit een opgehaalde kandidatenlijst de rij die ECHT bij `q` hoort.
+ *
+ * De aanroeper haalt kandidaten op met een query die al vastzit op totaal (+ datum); deze functie
+ * doet de laatste vergelijking. Dat die vergelijking hier staat en niet in de SQL is een bewuste
+ * keuze, en ze is twee keer met schade betaald:
+ *
+ *  1. Het factuurnummer stond ooit als `.eq(...)` in de query. "26 / 3958" en "26/3958" zijn dan
+ *     twee verschillende facturen, dus de dubbele boeking ging er gewoon langs.
+ *  2. De leverancier stond als `.ilike(client_name, escapeLikeValue(...))`. Die escape dekt `%` en
+ *     `_`, maar niet `*` — en PostgREST VERTAALT `*` naar `%` in like/ilike, in zijn eigen parser,
+ *     nog voordat de waarde SQL bereikt. Een backslash helpt daar niet tegen; je kunt via ilike
+ *     eenvoudigweg niet op een letterlijke `*` matchen. Dat is geen randgeval: kassabonnen dragen
+ *     standaard de prefix van hun acquirer — "SUMUP *CAFE", "SQ *KAPSALON", "PAYPAL *ADOBE". Zo'n
+ *     naam werd een patroon, en déze tier blokkeert: een willekeurige andere factuur met hetzelfde
+ *     totaal en dezelfde datum kon een geldige upload weigeren. Een ten onrechte geweigerde factuur
+ *     is precies wat hierboven bij isReliableVendor "een missende crediteur" heet — de zwaardere
+ *     fout van de twee, want een dubbele ziet een mens nog in zijn lijst staan.
+ *
+ * Vandaar: de database levert een SUPERset, de regel staat in code, en beide velden gebruiken de
+ * normalizer die deze module zelf al hanteert (dezelfde normalizeVendor waarmee isReliableVendor
+ * bepaalt of deze tier überhaupt mag draaien).
+ *
+ * Zonder bruikbare sleutel is er GEEN match — nooit een terugval op "dan maar de eerste rij". Die
+ * terugval stond er ooit en betekende blokkeren op totaal + datum alleen: precies de combinatie die
+ * findSemanticDuplicate hieronder "te los om veilig te blokkeren" noemt.
+ *
+ * Puur en zonder I/O, zoals de rest van deze module.
+ */
+export function pickDedupMatch<T extends SemanticDedupMatch>(
+  rows: readonly T[],
+  q: SemanticDedupQuery
+): T | null {
+  const hit = rows.find((r) =>
+    q.tier === 'number'
+      ? !!q.invoiceNumber &&
+        normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber)
+      : !!q.vendor && normalizeVendor(r.client_name) === normalizeVendor(q.vendor)
+  )
+  return hit ?? null
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SAFECORE Rule 2b — POSSIBLE (soft) duplicate signal
 // ─────────────────────────────────────────────────────────────────────────────
