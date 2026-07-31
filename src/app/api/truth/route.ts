@@ -8,6 +8,11 @@
 // ?lens = this-quarter (default) | last-quarter | ytd | year | all | custom
 //   custom also needs ?from=YYYY-MM-DD&to=YYYY-MM-DD
 // ?year is honoured for lens=year (else the current calendar year).
+//
+// Two invariants this route owes the screen, both of which it used to break:
+//   · WINDOWS NEST — quarter ⊆ year ⊆ alles (see resolveWindow).
+//   · NO SILENT GAP — every reason a figure is incomplete travels in the response, at parity with
+//     /api/result and /api/readiness (see the completeness block at the bottom).
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -15,64 +20,13 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence } from "@/lib/btw-filing";
+// [TZ] "Today" is the owner's Amsterdam day, never the server's UTC day — see below.
+import { amsterdamToday } from "@/lib/format-nl";
+import { resolveWindow, parseLens, type Lens } from "@/lib/truth-lens";
 
-function pad(n: number): string { return String(n).padStart(2, "0"); }
-function iso(d: Date): string { return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; }
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// The earliest date "Alles" looks back to — before any real Dutch ZZP bookkeeping in this app.
-const ALL_TIME_FLOOR = "2015-01-01";
-
-type Lens = "this-quarter" | "last-quarter" | "ytd" | "year" | "all" | "custom";
-
-interface Window { start: string; end: string; label: string; quarter?: number; year?: number; isLiveWindow: boolean }
-
-/** Resolve the [start, end] window + a human label for a lens, relative to `now` (UTC today). */
-function resolveWindow(lens: Lens, now: Date, sp: URLSearchParams): Window {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth(); // 0-11
-  const todayIso = iso(now);
-  const curQ = Math.floor(m / 3) + 1; // 1-4
-
-  const quarterWindow = (qy: number, q: number): Window => {
-    const sm = (q - 1) * 3;
-    const startD = new Date(Date.UTC(qy, sm, 1));
-    const endD = new Date(Date.UTC(qy, sm + 3, 0));
-    // A quarter whose end is in the future (or is the current one) is still "living" — not final.
-    const isLive = iso(endD) >= todayIso;
-    return { start: iso(startD), end: iso(endD), label: `Kwartaal ${q} ${qy}`, quarter: q, year: qy, isLiveWindow: isLive };
-  };
-
-  switch (lens) {
-    case "last-quarter": {
-      const q = curQ === 1 ? 4 : curQ - 1;
-      const qy = curQ === 1 ? y - 1 : y;
-      return quarterWindow(qy, q);
-    }
-    case "ytd":
-      return { start: `${y}-01-01`, end: todayIso, label: `${y} tot nu`, year: y, isLiveWindow: true };
-    case "year": {
-      const yr = Math.min(2100, Math.max(2000, Number(sp.get("year")) || y));
-      // Up to today when it's the current year, else the full calendar year.
-      const end = yr === y ? todayIso : `${yr}-12-31`;
-      return { start: `${yr}-01-01`, end, label: `${yr}`, year: yr, isLiveWindow: yr >= y };
-    }
-    case "all":
-      return { start: ALL_TIME_FLOOR, end: todayIso, label: "Alles tot nu", isLiveWindow: true };
-    case "custom": {
-      const from = sp.get("from");
-      const to = sp.get("to");
-      const start = from && DATE_RE.test(from) ? from : `${y}-01-01`;
-      const end = to && DATE_RE.test(to) ? to : todayIso;
-      // Guard against a reversed range — swap so start ≤ end.
-      const [s, e] = start <= end ? [start, end] : [end, start];
-      return { start: s, end: e, label: `${s} — ${e}`, isLiveWindow: e >= todayIso };
-    }
-    case "this-quarter":
-    default:
-      return quarterWindow(y, curQ);
-  }
-}
+// [TRUTH-LENS] The lens → window rules live in a pure, tested module (truth-lens.ts). They used to
+// sit here, where a Next route cannot export them and nothing could test them — while carrying the
+// containment invariant (kwartaal ⊆ jaar ⊆ alles) that had quietly broken.
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -80,20 +34,32 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const sp = req.nextUrl.searchParams;
-  const lensParam = (sp.get("lens") ?? "this-quarter") as Lens;
-  const lens: Lens = ["this-quarter", "last-quarter", "ytd", "year", "all", "custom"].includes(lensParam)
-    ? lensParam
-    : "this-quarter";
+  const lens: Lens = parseLens(sp.get("lens"));
 
-  // new Date() (real "today") is fine in a route — it is NOT a workflow script.
-  const win = resolveWindow(lens, new Date(), sp);
+  // [TZ] The owner's Amsterdam day, never the server's UTC day. Vercel runs in UTC, so between
+  // 00:00 and 02:00 Dutch time getUTCDate() still reports YESTERDAY — and this value decides which
+  // QUARTER the owner is looking at. Opening the app at 00:30 on 1 July showed Kwartaal 2 as "dit
+  // kwartaal" and flipped the loopt-nog / afgesloten badge with it. Every other date-sensitive
+  // surface in the app already pins Europe/Amsterdam (format-nl.ts, the crons, Kas, Vandaag); this
+  // route was the outlier. new Date() itself is fine here — it is a route, not a workflow script.
+  // Read ONCE: the window and the quarterEnded flag below must agree about what day it is, even for
+  // a request that happens to straddle midnight.
+  const today = amsterdamToday();
+  const win = resolveWindow(lens, today, sp);
 
   // [ACCOUNTANT-TRUTH] Same dual-path + authorization as /api/result.
   const owner = await resolveQuarterOwner(supabase, user.id, sp.get("clientId"));
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const pipeline = createPipelineClient();
 
-  const { result, datelessVerifiedCount, reconciliation } = await computeResultForRange({
+  const {
+    result, datelessVerifiedCount, reconciliation,
+    // [HONESTY-PARITY] /api/result has always returned these; /api/truth dropped them on the floor.
+    // They are exactly the signals that make a figure INCOMPLETE, and this is the screen that
+    // promises no silent gaps — see the response note below.
+    scheme, undatedPaidCount, estimatedPortionCount, unconfirmedIncomingCount,
+    spansSchemeChange, schemeSince,
+  } = await computeResultForRange({
     pipeline,
     ownerId: owner.ownerId,
     start: win.start,
@@ -157,8 +123,29 @@ export async function GET(req: NextRequest) {
     isLiveWindow: win.isLiveWindow && !filed,
     // [TRUTH-FILED] present only for a single-quarter lens that has been filed.
     filed,
+    // [FILING-WINDOW] TRUE once the last day of this quarter has passed. A BTW-aangifte exists only
+    // for a period that is OVER, so the client uses this to stop offering "markeer als ingediend"
+    // for a quarter that is still running — freezing a mid-quarter snapshot would make every sale
+    // that follows look like a divergence, and could even raise a suppletie warning for a period
+    // the Belastingdienst has not asked for yet. Null when the lens is not a single quarter.
+    quarterEnded: win.quarter && win.year ? win.end < today : null,
     result,
     datelessVerifiedCount,
     reconciliation,
+    // [HONESTY-PARITY] The completeness signals, at parity with /api/result and /api/readiness.
+    //   scheme                   — the client's "based on invoice date" line is a LIE under kas.
+    //   undatedPaidCount         — kas: paid money that cannot be placed in a period.
+    //   estimatedPortionCount    — kas: the pay date is a guess (marked_paid_at).
+    //   unconfirmedIncomingCount — purchase invoices still in the verify queue; the filing gate
+    //                              blocks on this, so the screen has to show it or the owner meets
+    //                              a 409 about a problem nothing ever told them about.
+    scheme,
+    undatedPaidCount,
+    estimatedPortionCount,
+    unconfirmedIncomingCount,
+    // [SCHEME-SPAN] The window straddles the owner's factuur→kas switch: no single basis is right
+    // for it, so the client says so instead of presenting a one-basis figure as the truth.
+    spansSchemeChange,
+    schemeSince,
   });
 }
