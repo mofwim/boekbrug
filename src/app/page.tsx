@@ -15,7 +15,7 @@ import {
   BELOFTE_GERUST,
   BELOFTE_STAPPEN,
 } from '@/lib/belofte'
-import { redirect } from 'next/navigation'
+import { redirect, unstable_rethrow } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { TOOLS } from '@/lib/tools'
 import PublicFooter from '@/components/public-footer'
@@ -63,8 +63,36 @@ const features = [
 ]
 
 export default async function Home() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [ENV-DEGRADE] The landing page must render for a visitor even when the deployment cannot talk
+  // to Supabase at all. The middleware already degrades to "no session" when the keys are missing,
+  // but this page then threw one layer deeper: createServerSupabaseClient reads the same two keys
+  // with `!`, and the client library refuses to be constructed without them — so a single typo in
+  // an environment variable turned the front door into a 500 while /voorwaarden and /privacy (which
+  // do not build a client) kept working.
+  //
+  // The question this check asks is answerable without a backend: if we cannot verify any session,
+  // nobody is logged in, so the public landing is the correct page. That is a degradation of a
+  // ROUTING decision, never of data — no figure on this page comes from the database, and
+  // createServerSupabaseClient itself is deliberately left strict, because a screen that reads
+  // money must fail loudly rather than render an empty ledger.
+  //
+  // redirect() throws NEXT_REDIRECT internally, so it stays OUTSIDE the try: catching it here would
+  // silently keep a logged-in owner on the marketing page.
+  let user = null
+  try {
+    const supabase = await createServerSupabaseClient()
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch (e) {
+    // [DYNAMIC-SIGNAL] Next signals control flow by THROWING — and the build proved it: the first
+    // version of this catch swallowed the DynamicServerError that `cookies()` raises during the
+    // static prerender pass, which would have let this route be cached as a static page. A
+    // logged-in owner would then get the marketing landing out of the cache instead of the
+    // redirect to /dashboard. unstable_rethrow is the documented way to let those internal errors
+    // pass (node_modules/next/dist/docs/…/unstable_rethrow.md) and catch only ours.
+    unstable_rethrow(e)
+    console.error('[ENV-DEGRADE] homepage session check unavailable — rendering the public landing', e)
+  }
   if (user) redirect('/dashboard')
 
   return (
