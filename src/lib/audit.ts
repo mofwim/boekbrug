@@ -61,6 +61,7 @@ export type AuditAction =
   // because an invoice had since arrived. Same state change, different author — and only the
   // second one needs the run's whole id list to explain why several lines moved at once.
   | 'bank.rematch_restored'           // ← [BANK-REMATCH] a forced re-match put set-aside lines back
+  | 'bank.overapplied'                // ← [BANK-OVERAPPLIED-LOUD] Σ amount_applied exceeds the bank line (concurrent confirms) — flagged, never silent
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
   | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back

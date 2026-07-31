@@ -1,5 +1,5 @@
 // [BANK-BATCH-RECONCILE] Pure node test — run: npx tsx src/lib/bank-batch-reconcile.test.ts
-import { reconcileBatch, resolveBatchNumbers, resolveBatchNumbersDetailed, planBatchAutoConfirm, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+import { reconcileBatch, resolveBatchNumbers, resolveBatchNumbersDetailed, planBatchAutoConfirm, findSupplierSumMatch, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -308,6 +308,77 @@ console.log("\n— [BUNDEL] the app must recognise the payment IT generated —"
   ];
   check("a fully covered invoice blocks the automatic batch",
     planBatchAutoConfirm({ reference: "F-1001, F-1002", bankAmount: -200, invoices }) === null);
+}
+
+console.log("\n— [BANK-SUM-SUGGEST] same-supplier sum without quoted numbers —");
+{
+  const sInv = (id: string, total: number, o: Partial<import("./bank-batch-reconcile").SupplierSumCandidate> = {}) => ({
+    id, invoice_number: `F-${id}`, total_inc_btw: total, amount_paid: 0,
+    client_name: "ATAPACK Cash & Carry B.V.", direction: "incoming" as const, status: "received", ...o,
+  });
+
+  // The core case: €1.100 debit = €500 + €600 open, same supplier, nothing quoted.
+  const hit = findSupplierSumMatch({
+    amount: -1100, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 600), sInv("c", 999)],
+  });
+  check("a unique 2-invoice sum tie is found", hit?.invoiceIds.length === 2);
+  check("…naming the right invoices", !!hit && hit.invoiceIds.includes("a") && hit.invoiceIds.includes("b"));
+  check("…with the exact total", hit?.total === 1100);
+
+  // AMBIGUITY kills the suggestion: two different subsets tie the same payment.
+  const ambiguous = findSupplierSumMatch({
+    amount: -1100, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 600), sInv("c", 400), sInv("d", 700)],
+  });
+  check("two tying subsets → no suggestion (which would it be?)", ambiguous === null);
+
+  // Cross-supplier members never enter the pool.
+  const cross = findSupplierSumMatch({
+    amount: -1100, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 600, { client_name: "Iemand Anders B.V." })],
+  });
+  check("a member from ANOTHER supplier breaks the tie → null", cross === null);
+
+  // IBAN identity admits an invoice whose name is weak, when the account matches.
+  const viaIban = findSupplierSumMatch({
+    amount: -1100, counterpartName: "onleesbare naam",
+    counterpartIban: "NL91ABNA0417164300",
+    invoices: [
+      sInv("a", 500, { vendor_iban: "NL91ABNA0417164300" }),
+      sInv("b", 600, { vendor_iban: "NL91ABNA0417164300" }),
+    ],
+  });
+  check("the invoices' own IBAN identifies the pool when the name cannot", viaIban?.invoiceIds.length === 2);
+
+  // Partial-pay aware: it sums OPEN balances, not totals.
+  const partial = findSupplierSumMatch({
+    amount: -700, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500, { amount_paid: 400 }), sInv("b", 600)], // open: 100 + 600 = 700
+  });
+  check("open balances (not totals) make the tie", partial?.invoiceIds.length === 2 && partial.total === 700);
+
+  // Guards: a creditnota in the pool, a single-invoice tie, direction, cents.
+  check("a creditnota never joins the sum", findSupplierSumMatch({
+    amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 300), sInv("cn", -20)],
+  }) === null);
+  check("a single-invoice equality is NOT this feature's job", findSupplierSumMatch({
+    amount: -500, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 601)],
+  }) === null);
+  check("the sign guard holds (credit vs purchase invoices)", findSupplierSumMatch({
+    amount: 1100, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 600)],
+  }) === null);
+  check("a cent off is NOT a tie", findSupplierSumMatch({
+    amount: -1100.01, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 500), sInv("b", 600)],
+  }) === null);
+  check("an oversized pool proves nothing → null", findSupplierSumMatch({
+    amount: -1100, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: Array.from({ length: 13 }, (_, i) => sInv(`x${i}`, 100 + i)),
+  }) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

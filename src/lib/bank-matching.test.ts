@@ -9,6 +9,8 @@ import {
   isEligible,
   isFullyCovered,
   bankLineFullyApplied,
+  isStrongNameIdentity,
+  coveredNumbersRecovered,
   coveredReferenceNumbers,
   dedupeCandidates,
   isPartialPaymentHint,
@@ -705,6 +707,162 @@ console.log("\n— [BANK-COVERAGE-BY-MONEY] a fully-applied line is finished, wh
     matchRouteSays === true && confirmRouteSays === true);
   check("…where the old reference rule would have disagreed",
     isFullyCovered(line.reference, new Set(["26302050"])) === false);
+}
+
+console.log("\n— [BANK-IDENTITY-OUTRANKS] a printed invoice number beats a same-amount coincidence —");
+{
+  const supplier = "ATAPACK Cash & Carry B.V.";
+  const invoice = inv({
+    id: "the-invoice", invoice_number: "26302050", total_inc_btw: 242,
+    invoice_date: "2026-06-18", due_date: "2026-07-18",
+    client_name: supplier, direction: "incoming",
+  });
+  const quotes = tx({ amount: -242, date: "2026-06-20", reference: "factuur 26302050", counterpartName: supplier });
+  const coincidence = tx({ amount: -242, date: "2026-06-20", reference: null, counterpartName: supplier });
+
+  // The raw scores: identity must now OUTRANK the identity-less pair.
+  const sQuotes = scorePair(quotes, invoice, DEFAULT_OPTIONS);
+  const sCoin = scorePair(coincidence, invoice, DEFAULT_OPTIONS);
+  check("reference+amount still scores 0.97", Math.abs(sQuotes.confidence - 0.97) < 1e-9);
+  check("amount+name+date is capped strictly below it", sCoin.confidence < sQuotes.confidence);
+
+  // The reproduced end-to-end bug: two payments, one invoice. Before the cap, the coincidence
+  // claimed the invoice (1.0 > 0.97) and auto-booked it via amount_only, while the payment that
+  // QUOTED the number fell to "Geen factuur".
+  const r = matchTransactions([quotes, coincidence], [invoice]);
+  const mQuotes = r.matches.find((m) => m.transaction === quotes)!;
+  const mCoin = r.matches.find((m) => m.transaction === coincidence)!;
+  check("the payment quoting the number claims the invoice", mQuotes.outcome === "auto" && mQuotes.best?.invoiceId === "the-invoice");
+  check("…and books as 'certain'", autoConfirmTier(mQuotes) === "certain");
+  check("the coincidence does NOT claim it", mCoin.best?.invoiceId !== "the-invoice" || mCoin.outcome !== "auto");
+  check("…and is never auto-booked against it", autoConfirmTier(mCoin) === null);
+
+  // Candidate ORDER inside one transaction: the reference-matched invoice must sort first.
+  const refInv = inv({ id: "ref-inv", invoice_number: "26302050", total_inc_btw: 242, invoice_date: "2026-05-01", due_date: "2026-06-01", client_name: "Iemand Anders", direction: "incoming", status: "received" });
+  const coinInv = inv({ id: "coin-inv", invoice_number: "99999999", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: supplier, direction: "incoming", status: "received" });
+  const one = matchTransactions([quotes], [refInv, coinInv]).matches[0];
+  check("within one tx, the reference match is the top candidate", one.candidates[0]?.invoiceId === "ref-inv");
+
+  // IBAN is identity, same tier as a printed number — deliberately NOT capped.
+  const ibanInv = inv({ id: "iban-inv", invoice_number: "77777777", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: supplier, vendor_iban: "NL91ABNA0417164300", direction: "incoming", status: "received" });
+  const ibanTx = tx({ amount: -242, date: "2026-06-20", reference: null, counterpartName: supplier, counterpartIban: "NL91ABNA0417164300" });
+  const sIban = scorePair(ibanTx, ibanInv, DEFAULT_OPTIONS);
+  check("iban+amount is exempt from the cap (it IS identity)", sIban.confidence > 0.95);
+  check("…and still books as 'certain'", autoConfirmTier(matchTransactions([ibanTx], [ibanInv]).matches[0]) === "certain");
+
+  // CONTROL: with no identity competitor, the capped coincidence still reaches 'auto' — the cap
+  // changes who WINS, never whether a lone strong match is bookable.
+  const alone = matchTransactions([coincidence], [invoice]).matches[0];
+  check("CONTROL: a lone amount+name+date match still reaches 'auto'", alone.outcome === "auto");
+  check("CONTROL: …and still books via amount_only", autoConfirmTier(alone) === "amount_only");
+}
+
+console.log("\n— [BANK-NAME-PARTICLES] a tussenvoegsel is not identity —");
+{
+  check("'J. de Vries' is NOT the same party as 'De Vries Transport'",
+    !isStrongNameIdentity("J. de Vries", "De Vries Transport"));
+  check("'van Dijk' alone is NOT 'Van Dijk Bouw B.V.'",
+    !isStrongNameIdentity("van Dijk", "Van Dijk Bouw B.V."));
+  check("the honest multi-word supplier still passes ('Van den Berg Installaties')",
+    isStrongNameIdentity("Van den Berg Installaties", "van den Berg Installaties B.V."));
+  check("the single-word supplier still passes (KPN)", isStrongNameIdentity("KPN", "KPN B.V."));
+  check("two same-surname sole traders still pass ('De Vries Bouw' = 'de Vries Bouw')",
+    isStrongNameIdentity("De Vries Bouw", "de Vries Bouw"));
+  check("names that are ONLY particles identify nothing", !isStrongNameIdentity("van de", "van de"));
+  // The reproduced money shape: unrelated private person, exact amount, near date → must stay human.
+  const marktplaats = matchTransactions(
+    [tx({ amount: 150, date: "2026-07-06", counterpartName: "J. de Vries" })],
+    [inv({ id: "tv", total_inc_btw: 150, invoice_date: "2026-07-01", due_date: "2026-07-15", client_name: "De Vries Transport", direction: "outgoing", status: "sent" })],
+  ).matches[0];
+  check("…so a Marktplaats coincidence never auto-books a transport invoice",
+    autoConfirmTier(marktplaats) === null);
+}
+
+console.log("\n— [BANK-IDENTITY-OUTRANKS] the three-rank hierarchy: number > IBAN > coincidence —");
+{
+  const supplier = "ATAPACK Cash & Carry B.V.";
+  const target = inv({ id: "the-bill", invoice_number: "26302050", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: supplier, vendor_iban: "NL91ABNA0417164300", direction: "incoming", status: "received" });
+  const quotesNumber = tx({ transactionId: "t-num", amount: -242, date: "2026-06-20", reference: "factuur 26302050" });
+  const sameIban = tx({ transactionId: "t-iban", amount: -242, date: "2026-06-20", counterpartIban: "NL91ABNA0417164300", counterpartName: supplier });
+  const r = matchTransactions([sameIban, quotesNumber], [target]);
+  const mNum = r.matches.find((m) => m.transaction.transactionId === "t-num")!;
+  const mIban = r.matches.find((m) => m.transaction.transactionId === "t-iban")!;
+  check("the payment printing the NUMBER wins the invoice from the IBAN twin",
+    mNum.outcome === "auto" && mNum.best?.invoiceId === "the-bill");
+  check("…and the IBAN twin does not book it", autoConfirmTier(mIban) === null);
+  check("alone, the IBAN payment still books 'certain' (supplier identity intact)",
+    autoConfirmTier(matchTransactions([sameIban], [target]).matches[0]) === "certain");
+}
+
+console.log("\n— [BANK-PARTIAL-WORDS] voorschot + gedeeltelijke are instalment markers —");
+{
+  check("'gedeeltelijke betaling' is detected", isPartialPaymentHint("Gedeeltelijke betaling factuur 123"));
+  check("'voorschot' is detected", isPartialPaymentHint("Voorschot project keuken"));
+  check("an ordinary description still is not", !isPartialPaymentHint("Betaling factuur 26302050 met dank"));
+}
+
+console.log("\n— [BANK-DEDUP-SUPPLIER] same number+amount from DIFFERENT suppliers is not a duplicate —");
+{
+  const cand = (invoiceId: string, clientName: string): MatchCandidate =>
+    ({ invoiceId, invoiceNumber: "2026-07", amount: 121, invoiceDate: "2026-07-01", confidence: 0.8, signals: ["amount"], reason: "", clientName });
+  const twoSuppliers = dedupeCandidates([cand("a", "KPN B.V."), cand("b", "Ziggo B.V.")]);
+  check("cross-supplier collision keeps BOTH invoices", twoSuppliers.length === 2);
+  const reimport = dedupeCandidates([cand("a", "KPN B.V."), cand("a2", "KPN B.V.")]);
+  check("a genuine re-import (same supplier) still collapses", reimport.length === 1);
+}
+
+console.log("\n— [BANK-REF-CONTRADICTS] the statement names a document — no auto against it —");
+{
+  // A reference-matched (but partial-capped) invoice in the list blocks a coincidence top.
+  const partial = inv({ id: "partial", invoice_number: "26302050", total_inc_btw: 1000, amount_paid: 400, invoice_date: "2026-06-01", due_date: "2026-07-01", client_name: "Groothandel X", direction: "incoming", status: "received" });
+  const other = inv({ id: "other", invoice_number: "88880000", total_inc_btw: 600, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: "Andere Leverancier", direction: "incoming", status: "received" });
+  const pay = tx({ amount: -600, date: "2026-06-20", reference: "factuur 26302050", counterpartName: "Andere Leverancier" });
+  const m = matchTransactions([pay], [partial, other]).matches[0];
+  check("a coincidence top cannot go 'auto' past a reference-matched candidate", m.outcome === "choice");
+  // amount_only refuses a contradicting printed number outright.
+  const notImported = tx({ amount: -242, date: "2026-06-20", reference: "factuur 20260812", counterpartName: "ATAPACK Cash & Carry B.V." });
+  const older = inv({ id: "older", invoice_number: "26302050", total_inc_btw: 242, invoice_date: "2026-06-18", due_date: "2026-07-18", client_name: "ATAPACK Cash & Carry B.V.", direction: "incoming", status: "received" });
+  const m2 = matchTransactions([notImported], [older]).matches[0];
+  check("a payment quoting a NOT-imported number never books a different bill",
+    autoConfirmTier(m2) === null);
+}
+
+console.log("\n— [BANK-ELIMINATION-NO-PROMOTE] a manufactured single winner stays human —");
+{
+  const landlord = "Vastgoed Beheer B.V.";
+  const june = inv({ id: "june", invoice_number: "H-2026-06", total_inc_btw: 800, invoice_date: "2026-06-01", due_date: "2026-06-15", client_name: landlord, direction: "incoming", status: "received" });
+  const july = inv({ id: "july", invoice_number: "H-2026-07", total_inc_btw: 800, invoice_date: "2026-07-01", due_date: "2026-07-15", client_name: landlord, direction: "incoming", status: "received" });
+  const standing = tx({ transactionId: "t-standing", amount: -800, date: "2026-07-02", reference: "H-2026-07" });
+  const duplicate = tx({ transactionId: "t-dup", amount: -800, date: "2026-07-03", counterpartName: landlord });
+  const r = matchTransactions([standing, duplicate], [june, july]);
+  const mDup = r.matches.find((m) => m.transaction.transactionId === "t-dup")!;
+  check("the quoting payment claims July",
+    r.matches.find((m) => m.transaction.transactionId === "t-standing")?.best?.invoiceId === "july");
+  check("the duplicate does NOT silently become 'auto' on leftover June",
+    !(mDup.outcome === "auto" && autoConfirmTier(mDup) !== null));
+  check("…June stays reachable as a human choice", mDup.candidates.some((c) => c.invoiceId === "june"));
+}
+
+console.log("\n— [BANK-SLOT-RECOVERED] covered numbers answered in the PAID invoices' own numbers —");
+{
+  // Recovered bundle: extractor stored "045, 046"; the paid invoice is "2026-045" → "2026045".
+  const covered = coveredNumbersRecovered("2026-045, 2026-046", new Set(["2026045"]));
+  check("a paid recovered-bundle member is reported by its REAL number",
+    covered.length === 1 && covered[0] === "2026045");
+  check("exact tokens still work unchanged",
+    coveredNumbersRecovered("26302050, 26302362", new Set(["26302050"]))[0] === "26302050");
+  check("nothing paid → nothing covered", coveredNumbersRecovered("2026-045", new Set()).length === 0);
+}
+
+console.log("\n— [BANK-CENTS-EXACT] the one-cent tolerance is deterministic, not a float lottery —");
+{
+  // These two pairs are the SAME one-cent difference; raw float subtraction lands one a hair
+  // above 0.01 and the other a hair below. Both must match now.
+  check("242.00 vs 241.99 matches (used to lose the float lottery)", amountMatches(-242, 241.99, 0.01));
+  check("100.00 vs 99.99 matches (always did)", amountMatches(-100, 99.99, 0.01));
+  check("two cents off is still NOT a match", !amountMatches(-242, 241.98, 0.01));
+  check("exact stays exact", amountMatches(-242, 242, 0.01));
+  check("a wider epsilon still means what it says (0.02 → 2 cents)", amountMatches(-242, 241.98, 0.02));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

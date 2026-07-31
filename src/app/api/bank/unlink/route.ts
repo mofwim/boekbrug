@@ -78,7 +78,16 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-  if (refNums.length > 1 || linkedIds.length > 1) {
+  // [BANK-UNLINK-ROUTE-FACTS] The join table outranks the token count. A SINGLE deelbetaling
+  // whose transfer text happens to carry two number-shaped tokens ("Klantnr 884512 Factuur
+  // 20260041" → stored reference "884512, 20260041") used to be routed into unlinkBatch, which
+  // resolves its reversal set from PAID invoices only — a partly-paid invoice resolved to
+  // NOTHING: the line was detached, its €500 link row wiped, amount_paid/payment_method left
+  // standing as a phantom settlement, and {ok, restored:0} reported success. When the join
+  // table says exactly ONE invoice was paid, take the single path — it handles partials
+  // correctly. The token heuristic survives only for legacy lines with no join rows at all,
+  // where it is the only signal there is.
+  if (linkedIds.length > 1 || (linkedIds.length === 0 && refNums.length > 1)) {
     return unlinkBatch({ pipeline, payClient: supabase, userId: user.id, transactionId, tx, refNums });
   }
 
@@ -399,15 +408,38 @@ async function unlinkBatch(args: {
   // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.
   await clearPaymentLinks(pipeline, userId, transactionId);
 
-  // [PARTIAL-PAY] Authoritatively reconcile amount_paid for every invoice this batch touched, from
-  // its surviving links (0 here — the batch's links are gone). Belt-and-suspenders over the
-  // amount_paid:0 restore above, and it also heals any pre-migration invoice whose backfilled
-  // amount_paid never got a per-link basis. Best-effort + atomic (row-locked, order-independent).
-  for (const r of restored) {
+  // [PARTIAL-PAY] Authoritatively reconcile amount_paid for EVERY invoice this payment had a
+  // link to — the id-linked set, not only `restored`. The difference is exactly the invoices
+  // this payment settled PARTIALLY (status never 'paid', so the paid-by-bank batch resolution
+  // above cannot see them): their link rows were just wiped with clearPaymentLinks, and without
+  // a recompute their amount_paid kept claiming money whose links no longer exist — a phantom
+  // settlement that shrank the debiteuren/aging balance while the fully-detached bank line
+  // offered its full amount for re-booking: the same euros twice. delete-statement fixes this
+  // identical hole by iterating its whole affected set; this is the same rule here.
+  // Best-effort + atomic (row-locked, order-independent).
+  const affected = new Set<string>([...idSet, ...restored.map((r) => r.id)]);
+  for (const id of affected) {
     try {
-      await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: userId, p_invoice_id: r.id });
+      await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: userId, p_invoice_id: id });
     } catch {
-      /* non-fatal — the amount_paid:0 restore above already stands */
+      /* non-fatal — the amount_paid:0 restore above already stands for the restored set */
+    }
+  }
+  // A partial invoice whose settlement just dropped to zero must not keep advertising a payment
+  // method/date it no longer has — those fields would resurrect as "paid by bank on <date>" the
+  // moment anything re-reads them. Only rows the recompute left at 0 and that are not 'paid'
+  // (i.e. precisely the partials this payment alone had been feeding) are touched.
+  for (const id of affected) {
+    if (restored.some((r) => r.id === id)) continue; // fully-restored rows were already reset above
+    try {
+      await pipeline
+        .from("invoices")
+        .update({ payment_method: null, payment_date: null })
+        .eq("id", id)
+        .neq("status", "paid")
+        .eq("amount_paid", 0);
+    } catch {
+      /* non-fatal — display-only fields; the money figures are already correct */
     }
   }
 

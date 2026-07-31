@@ -39,8 +39,16 @@ const TRANSFER_RE =
 // counterpart. Cash withdrawals always name the machine or the cash itself, so the compounds
 // below still catch them — and a savings "Opname spaarrekening" is TRANSFER_RE's, not this one's.
 const ATM_RE = /geldautomaat|\bgea\b|\bcash\s?opname\b|geldopname|\bopname\s+(?:geld|kas|contant)|contante?\s+opname/;
+// [FEE-BETALINGSVERKEER] "Kosten Zakelijk Betalingsverkeer" is THE standard ING business-fee
+// line — literally the example bank-parser.ts's own [BANK-PARSE-FEE] path is built around — yet
+// this regex only knew the "…rekening" phrasings, so the most common fee wording in the target
+// bank classified 'unknown': the debit was nagged for a bon (needsDocument) and never auto-coded
+// as bankkosten. The compound stays anchored on "kosten … betalingsverkeer" (with the optional
+// zakelijk/particulier product word ING inserts) rather than bare "betalingsverkeer", so a
+// supplier whose NAME merely contains the word can never be swept into 'fee'; and since
+// [FEE-DEBIT-ONLY] the whole class is debit-gated anyway.
 const FEE_RE =
-  /\bbankkosten\b|kosten (?:betaal|zakelijke)?rekening|maandpakket|\bpakketkosten\b|debetrente|creditrente|\brente\b/;
+  /\bbankkosten\b|kosten (?:betaal|zakelijke)?rekening|kosten\s+(?:zakelijk|particulier)?\s*betalingsverkeer|maandpakket|\bpakketkosten\b|debetrente|creditrente|\brente\b/;
 // PSP / card-terminal SETTLEMENT credits (money paid out TO you). NOT the same as a
 // "betaalautomaat" DEBIT, which is you paying at a terminal — that is a purchase.
 //

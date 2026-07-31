@@ -188,7 +188,17 @@ export function parseMT940(content: string): ParseResult {
   let currency = "EUR";
 
   // Normalize line endings
-  const text = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // [MT940-TERMINATOR] SWIFT ends each message with a line holding a single '-' (some exports
+  // '-}'). The tag-splitter's lookahead ends a block at the NEXT tag or end-of-input, so that
+  // terminator glued onto the LAST tag's value — usually :62F:, whose "C260630EUR1200,00\n-"
+  // then failed parseMT940Balance and silently nulled the closing balance: the completeness
+  // check (opening + Σtx = closing) degraded to "not checkable" on every real bank export that
+  // ends properly. Strip terminator LINES before splitting; a remittance line consisting of
+  // exactly '-' does not occur in the wild (and would only lose a dash from free text).
+  const text = content
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/^\s*-\}?\s*$/gm, "");
 
   // Split into tag blocks — each tag starts with :XX: at line start
   // [BANK-PARSE-MULTILINE] The lookahead must end a tag block at the NEXT tag or
@@ -210,6 +220,15 @@ export function parseMT940(content: string): ParseResult {
     // Format: "NL91ABNA0417164300" or "ABNABNL2A/123456789"
     const ibanMatch = tag25.value.match(/([A-Z]{2}\d{2}[A-Z0-9]{4,})/);
     accountIban = ibanMatch ? ibanMatch[1] : tag25.value.split("/")[1] ?? null;
+    // [MT940-25-CURRENCY] ING writes :25:NL91INGB0001234567EUR — the account plus its currency,
+    // fused. The greedy class above swallows the suffix, and the polluted "IBAN" then flows to
+    // statement-period continuity grouping, where NL91...EUR and NL91... read as two different
+    // accounts. A Dutch IBAN is exactly 18 chars; strip a trailing ISO-4217 code only when what
+    // remains is a plausible IBAN, so a genuinely long foreign IBAN is never truncated.
+    if (accountIban && /(?:EUR|USD|GBP|CHF)$/.test(accountIban)) {
+      const stripped = accountIban.slice(0, -3);
+      if (/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(stripped)) accountIban = stripped;
+    }
   }
 
   // Extract currency from :60F: opening balance — format: C/DYYMMDDCCCAMOUNT
@@ -346,7 +365,14 @@ function parseMT940Description(rawLine86: string): {
   // logically ONE string — join the wrapped lines before parsing, otherwise the
   // name/IBAN/REMI extraction stops at the line break ("Metr" instead of
   // "Metro Markets GmbH"). Collapse newlines + surrounding spaces to a single space.
-  const line86 = rawLine86.replace(/\s*\r?\n\s*/g, "").replace(/\s{2,}/g, " ");
+  // [MT940-WRAP-SPACE] Remove ONLY the newline itself. The old join swallowed the whitespace
+  // AROUND the wrap too, which fused two space-separated tokens whenever the 65-char wrap point
+  // fell after a space: a verzamelbetaling's "26702781 \n26703066" became the 16-digit
+  // "2670278126703066" — one bogus reference, no batch resolution, both invoices left open, on
+  // an unmodified bank file. Keeping the file's own spaces preserves both cases: a mid-word wrap
+  // ("Metr\no Markets") still joins seamlessly (no space existed), and a wrap at a token
+  // boundary keeps its separator. The \s{2,} collapse below still tidies any doubling.
+  const line86 = rawLine86.replace(/\r?\n/g, "").replace(/\s{2,}/g, " ");
 
   // Structured format: /BENM//NAME/John Doe/IBAN/NL91.../REMI/invoice 123
   const fields: Record<string, string> = {};
@@ -362,7 +388,8 @@ function parseMT940Description(rawLine86: string): {
 
   // Extract known fields — varies per bank but common ones:
   let counterpartName: string | null =
-    fields["NAME"] ?? fields["BENM"] ?? fields["ORDP"] ?? null;
+    // [MT940-ABN-KEYWORDS] ABN's slashed variant writes /NAAM/ where ING writes /NAME/.
+    fields["NAME"] ?? fields["NAAM"] ?? fields["BENM"] ?? fields["ORDP"] ?? null;
   let counterpartIban: string | null =
     fields["IBAN"] ?? fields["BNAM"] ?? null;
 
@@ -401,6 +428,40 @@ function parseMT940Description(rawLine86: string): {
   // Incasso, multi-invoice, bare-year and POS cases. isCard is checked separately
   // below for the name; here we only need the POS flag (card terminals have no
   // /CNTP/ and their reference is cleared in the card branch further down).
+  // [MT940-ABN-KEYWORDS] ABN AMRO's plain-text :86: has no /FIELD/ markers at all — it is
+  // keyword text: "SEPA OVERBOEKING IBAN: NL46DEUT0136523093 BIC: DEUTNL2N NAAM: CAN
+  // Vleesgroothandel BV OMSCHRIJVING: FACTUUR 2026-088", the incasso variant with
+  // INCASSANT:/MACHTIGING:/KENMERK:, and the pin line "BEA NR:CCV12345 15.01.26/ALBERT HEIJN
+  // 1522/AMSTERDAM". The generic fallbacks below mangled all three (the stored name literally
+  // began "BIC: … NAAM: …", the merchant of a pin line vanished, a mandate kenmerk posed as the
+  // reference). Read the keywords FIRST; everything downstream (reference extraction,
+  // description, card handling) then flows through the normal REMI pipeline unchanged.
+  if (!counterpartName && !fields["REMI"]) {
+    const bea = line86.match(/^\s*(?:BEA|GEA)\b[^/]*\/([^/]+)/i);
+    if (bea) {
+      // Pin/geldautomaat: the merchant sits after the first slash. Terminal numbers are never
+      // an invoice reference, and REMI stays unset so none is invented.
+      const store = deriveReadableName(bea[1]);
+      if (store) counterpartName = store;
+    } else if (/\b(NAAM|OMSCHRIJVING)\s*:/.test(line86)) {
+      const grab = (key: string) =>
+        line86
+          .match(new RegExp(`\\b${key}\\s*:\\s*([\\s\\S]*?)(?=\\s*\\b(?:IBAN|BIC|NAAM|OMSCHRIJVING|INCASSANT|MACHTIGING|KENMERK|EREF|MARF|CSID)\\s*:|$)`, "i"))?.[1]
+          ?.trim() ?? null;
+      const naam = grab("NAAM");
+      const kwIban = line86.match(/\bIBAN\s*:\s*([A-Z]{2}\d{2}[A-Z0-9]{6,30})/i)?.[1] ?? null;
+      const oms = grab("OMSCHRIJVING");
+      const kenmerk = grab("KENMERK");
+      if (naam) counterpartName = naam;
+      if (kwIban && !counterpartIban) counterpartIban = kwIban;
+      // OMSCHRIJVING is the human remittance (invoice numbers live there); KENMERK is the
+      // fallback — an incasso kenmerk is usually a mandate id, and the shared extractor's
+      // bare-year/POS rules decide what of it survives as a reference.
+      if (oms) fields["REMI"] = oms;
+      else if (kenmerk) fields["REMI"] = kenmerk;
+    }
+  }
+
   const remi = fields["REMI"] ?? null;
   const isPos = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(line86);
   let reference: string | null = extractInvoiceReference(remi, { isPos, isCard: false });
@@ -734,6 +795,16 @@ function parseCAMT053Entry(
       const part = decodeXmlEntities(m[1].trim());
       if (part && !ustrdParts.includes(part)) ustrdParts.push(part);
     }
+    // [CAMT-STRD-REF] STRUCTURED remittance. A betaalverzoek/incasso often carries its
+    // betalingskenmerk ONLY as <Strd><CdtrRefInf><Ref> — no <Ustrd> at all — and that reference
+    // was never read: the transaction imported with an empty description and a null reference,
+    // unmatchable while the payment literally carried its invoice number in a machine-readable
+    // field. Append it to the remittance parts so extractInvoiceReference sees it through the
+    // exact same pipeline (POS guard, bare-year drop, multi-number join) as free text.
+    for (const m of dtls.matchAll(/<CdtrRefInf>[\s\S]*?<Ref>([^<]+)<\/Ref>/g)) {
+      const part = decodeXmlEntities(m[1].trim());
+      if (part && !ustrdParts.includes(part)) ustrdParts.push(part);
+    }
   }
   const description = ustrdParts.join(" ");
 
@@ -745,7 +816,12 @@ function parseCAMT053Entry(
   // For debit transactions, counterpart is the Creditor
   const partyTag = isCredit ? "Dbtr" : "Cdtr";
   const partyNameMatch = counterpartBlock.match(
-    new RegExp(`<${partyTag}>\\s*<Nm>([^<]+)<\\/Nm>`)
+    // [CAMT-V8-PTY] camt.053.001.08 — the current "new format" Rabobank/ABN offer — wraps the
+    // party as <Dbtr><Pty><Nm>; v2 has <Dbtr><Nm> directly. Without the optional wrapper the
+    // name silently missed and the [BANK-PARSE-READABLE] fallback installed the REMITTANCE TEXT
+    // as the counterpart ("factuur 26302050" as a payer name) on every line of every v8 file,
+    // while the IBAN still parsed — a fully-parsed-looking row with a wrong party.
+    new RegExp(`<${partyTag}>\\s*(?:<Pty>\\s*)?<Nm>([^<]+)<\\/Nm>`)
   );
   const partyIbanMatch = counterpartBlock.match(
     new RegExp(
@@ -860,7 +936,20 @@ export function parseBankFile(content: string, filename: string): ParseResult {
   }
 
   // MT940: .mt940, .sta, .txt, or starts with :20:
-  return parseMT940(content);
+  const result = parseMT940(content);
+  // [BANK-FORMAT-HONEST] A text file that is NOT MT940 at all — an ABN .TAB portal download, a
+  // copy-pasted overview, any delimited export the CSV sniffer didn't recognise — used to fall
+  // through here and "parse" to ZERO transactions with ZERO warnings: the import then looked
+  // successful while nothing was imported (the exact false-green trap [DETECT] closes for
+  // spreadsheets). If the parse produced nothing AND the content carries none of the MT940 tag
+  // anatomy, say so explicitly; a genuinely empty-but-real MT940 (has :20:/:25:/:60F:) stays
+  // warning-free.
+  if (result.transactions.length === 0 && !/^:\d{2}[A-Z]?:/m.test(content)) {
+    result.parseErrors.push(
+      "Dit bestand is niet herkend als bankafschrift (MT940/CAMT.053/CSV) — er zijn geen transacties geïmporteerd. Download het afschrift bij je bank als MT940 (.940/.sta) of CAMT.053 (.xml).",
+    );
+  }
+  return result;
 }
 
 // ─── Summary helper ───────────────────────────────────────────────────────────

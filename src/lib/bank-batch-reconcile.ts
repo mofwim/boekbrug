@@ -15,7 +15,7 @@
 //
 // Run: npx tsx src/lib/bank-batch-reconcile.test.ts
 
-import { normalizeRef, parseReferenceNumbers, referenceMatches } from "./bank-matching";
+import { normalizeRef, parseReferenceNumbers, referenceMatches, isStrongNameIdentity, ibanMatches } from "./bank-matching";
 
 /** The payment text a batch is read from: the extracted reference AND the raw remittance. */
 export interface BatchPaymentText {
@@ -339,4 +339,99 @@ export function planBatchAutoConfirm(args: {
   if (reconcileBatch(slots, bankAmount).status !== "ties") return null;
 
   return { invoiceIds: picked.map((p) => p.id) };
+}
+
+// ─── [BANK-SUM-SUGGEST] Same-supplier sum WITHOUT quoted numbers — a suggestion, never a booking ──
+//
+// The realistic gap this closes: a customer (or the owner, paying a supplier) transfers the sum
+// of two or three open invoices in ONE payment and writes nothing usable in the description.
+// No reference → resolveBatchNumbers finds nothing; no single invoice equals the amount → the
+// matcher scores every pair below the floor. Outcome 'none': a payment that is EXACTLY the sum
+// of open invoices from EXACTLY that counterparty renders as "Geen factuur", and the owner
+// reconstructs the arithmetic by hand.
+//
+// Why this is a SUGGESTION and can never auto-book: a sum-tie without a printed number is
+// arithmetic coincidence made likelier by combinatorics — with enough open invoices, SOME subset
+// sums to almost anything. Every guard here narrows that space, and the human still confirms
+// each invoice through the normal guarded path:
+//   · the counterparty must IDENTIFY: strong name identity or the invoice's own IBAN — a bare
+//     amount coincidence across suppliers never enters the pool;
+//   · only fully-usable open balances (positive; a creditnota in the mix makes the arithmetic
+//     ambiguous by sign);
+//   · subsets of 2..4 invoices, pool capped at 12 — beyond that the tie proves nothing;
+//   · the tie must be UNIQUE: two different subsets summing to the same payment → no suggestion
+//     (which one would it be?);
+//   · cents-exact, in integer cents (no float lottery).
+
+export interface SupplierSumCandidate extends BatchCandidateInvoice {
+  /** The invoice's own counterpart account, for IBAN-based supplier identity. */
+  vendor_iban?: string | null;
+}
+
+export interface SupplierSumMatch {
+  invoiceIds: string[];
+  invoiceNumbers: (string | null)[];
+  /** Σ open balances of the members = the payment, absolute euros. */
+  total: number;
+}
+
+const SUM_POOL_MAX = 12;
+const SUM_SUBSET_MAX = 4;
+
+export function findSupplierSumMatch(args: {
+  /** Signed bank amount (credit +, debit −). */
+  amount: number | null | undefined;
+  counterpartName: string | null;
+  counterpartIban?: string | null;
+  invoices: SupplierSumCandidate[];
+}): SupplierSumMatch | null {
+  const { amount, counterpartName, counterpartIban, invoices } = args;
+  if (amount == null || !Number.isFinite(amount) || amount === 0) return null;
+  const targetCents = Math.round(Math.abs(amount) * 100);
+  if (targetCents <= 0) return null;
+
+  const wantDirection: "incoming" | "outgoing" = amount < 0 ? "incoming" : "outgoing";
+
+  // The identified, usable pool. Identity is per-invoice: a strong NAME identity with the
+  // payment's counterpart, or the invoice's own vendor IBAN equal to the payment's.
+  const pool = invoices
+    .filter((i) => (i.status ?? "") !== "paid")
+    .filter((i) => (i.direction ?? "") === wantDirection)
+    .filter(
+      (i) =>
+        isStrongNameIdentity(counterpartName, i.client_name) ||
+        ibanMatches(counterpartIban, i.vendor_iban),
+    )
+    .map((i) => ({ inv: i, openCents: Math.round((settleableAmount(i.total_inc_btw, i.amount_paid) ?? 0) * 100) }))
+    .filter((x) => x.openCents > 0);
+
+  if (pool.length < 2 || pool.length > SUM_POOL_MAX) return null;
+
+  // Exhaustive subset walk, sizes 2..SUM_SUBSET_MAX, integer cents. The pool cap bounds this to
+  // C(12,2)+C(12,3)+C(12,4) ≈ 1.081 combinaties — trivial. Collect up to TWO ties: one is a
+  // suggestion, two is an ambiguity (→ null), more is irrelevant.
+  const ties: number[][] = [];
+  const idxs = pool.map((_, i) => i);
+  const walk = (start: number, chosen: number[], sum: number): void => {
+    if (ties.length >= 2) return;
+    if (chosen.length >= 2 && sum === targetCents) {
+      ties.push([...chosen]);
+      return; // a superset of an exact tie would overshoot anyway (all positive)
+    }
+    if (chosen.length >= SUM_SUBSET_MAX || sum >= targetCents) return;
+    for (let i = start; i < idxs.length; i++) {
+      chosen.push(i);
+      walk(i + 1, chosen, sum + pool[i].openCents);
+      chosen.pop();
+    }
+  };
+  walk(0, [], 0);
+
+  if (ties.length !== 1) return null; // nothing, or ambiguous — either way: no suggestion
+  const members = ties[0].map((i) => pool[i]);
+  return {
+    invoiceIds: members.map((m) => m.inv.id),
+    invoiceNumbers: members.map((m) => m.inv.invoice_number),
+    total: Math.round(members.reduce((t, m) => t + m.openCents, 0)) / 100,
+  };
 }

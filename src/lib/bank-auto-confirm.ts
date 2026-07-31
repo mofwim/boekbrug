@@ -20,6 +20,7 @@ import {
   matchTransactions,
   autoConfirmTier,
   isEligible,
+  ibanMatches,
   type AutoConfirmTier,
   type InvoiceForMatching,
   type TransactionMatch,
@@ -123,8 +124,78 @@ export async function runBankAutoConfirm(args: {
   // it, fell back to 'choice'/'none', and stayed there. Nothing changes between runs, so that was
   // a permanent block, not a transient one. Skipping them here costs nothing: the batch pass
   // reads txRows directly and skips these lines by the same rule.
-  const bookable = transactions.filter((t) => !t.transactionId || !partlyConsumedTxIds.has(t.transactionId));
-  const result = matchTransactions(bookable, invoices);
+  // ── [BANK-BATCH-FIRST] The BATCH pass runs BEFORE the 1:1 pass. A printed-number batch tie
+  // (every referenced number resolves, one supplier, open amounts sum to the debit TO THE CENT)
+  // is the strongest evidence the engine ever has — yet it ran LAST, so a same-supplier
+  // same-amount 1:1 line could claim (and amount_only-book) an invoice that provably belonged
+  // to a bundle: the bundle then never tied ('incomplete' forever) and its invoice sat linked
+  // to the wrong bank line. Strong evidence books first; the 1:1 pass works the leftovers.
+  const confirmed: AutoConfirmed[] = [];
+  const bookedInvoiceIds = new Set<string>();
+  const bookedTxIds = new Set<string>();
+  for (const row of txRows as BankTransactionDbRow[]) {
+    const txId = row.id;
+    if (!txId || row.status !== "pending" || row.invoice_id || bookedTxIds.has(txId)) continue;
+
+    // Candidates exclude anything already booked this run, so two batches can't claim one invoice.
+    // [PARTIAL-PAY] The batch pass draws from allInvoices, NOT the 1:1 pool: that pool drops every
+    // invoice with amount_paid > 0 because a lone payment against a half-paid invoice is genuinely
+    // ambiguous (the restant? a coincidental same-amount line?). A batch carries far stronger
+    // evidence — ≥2 referenced numbers, each resolving to exactly one invoice, one supplier, and
+    // the sum of the OPEN amounts equal to the cent — so that ambiguity does not exist here.
+    const candidates = allInvoices.filter((i) => !bookedInvoiceIds.has(i.id)) as BatchCandidateInvoice[];
+    // [BUNDEL-REF-RECOVER] The description travels with the reference: the extractor mutilates any
+    // invoice number that carries a prefix or a separator ("2026-045" → "045"), and the raw
+    // statement line is where the real number still is.
+    const plan = planBatchAutoConfirm({
+      reference: row.reference ?? null,
+      description: row.description ?? null,
+      bankAmount: row.amount ?? null,
+      invoices: candidates,
+    });
+    if (!plan) continue;
+
+    // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch
+    // containing a partly-paid invoice would otherwise lose it here and be skipped silently.
+    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is InvoiceForMatching => !!x);
+    if (planInvs.length !== plan.invoiceIds.length) continue;
+    const tx = rowToTransaction(row);
+    if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants
+
+    // [BANK-BATCH-ATOMIC] Book the whole tie in ONE database transaction via book_bank_batch —
+    // see the RPC's header for the lock/re-verify/all-or-nothing contract. Outcomes: rows ⇒
+    // booked · empty ⇒ tx claimed concurrently ⇒ skip · error ⇒ not payable / migration not
+    // applied ⇒ the batch stays for the human.
+    const { data: bookedRows, error: batchErr } = await payClient.rpc("book_bank_batch", {
+      p_user_id: userId,
+      p_tx_id: txId,
+      p_invoice_ids: plan.invoiceIds,
+      p_pay_date: tx.date || null,
+    });
+    if (batchErr) continue;
+    if (!bookedRows || (bookedRows as unknown[]).length === 0) continue;
+
+    for (const inv of planInvs) {
+      // A batch tie is 'certain' by construction (every number resolves + the sum equals the debit).
+      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain", paymentDate: tx.date || null });
+      bookedInvoiceIds.add(inv.id);
+    }
+    bookedTxIds.add(txId);
+    await logAuditAction({
+      userId,
+      action: "bank.auto_confirmed_batch",
+      entityType: "bank_transaction",
+      entityId: txId,
+      newValue: { invoice_ids: plan.invoiceIds, invoice_count: plan.invoiceIds.length, amount: row.amount ?? 0, reason: "exact_multi_invoice_batch_tie" },
+    });
+  }
+
+  // ── The 1:1 pass, over what the batch pass left ──────────────────────────────────────────
+  const bookable = transactions.filter(
+    (t) => !t.transactionId || (!partlyConsumedTxIds.has(t.transactionId) && !bookedTxIds.has(t.transactionId)),
+  );
+  const soloInvoices = invoices.filter((i) => !bookedInvoiceIds.has(i.id));
+  const result = matchTransactions(bookable, soloInvoices);
   // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
   // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
   // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
@@ -133,12 +204,11 @@ export async function runBankAutoConfirm(args: {
     .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
     .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
-  const confirmed: AutoConfirmed[] = [];
   for (const { m, tier } of autoMatches) {
     const txId = m.transaction.transactionId;
     const invoiceId = m.best?.invoiceId;
     if (!txId || !invoiceId) continue;
-    if (partlyConsumedTxIds.has(txId)) continue;
+    if (partlyConsumedTxIds.has(txId) || bookedTxIds.has(txId) || bookedInvoiceIds.has(invoiceId)) continue;
     const inv = invById.get(invoiceId);
     if (!inv) continue;
 
@@ -155,15 +225,35 @@ export async function runBankAutoConfirm(args: {
     // while the money paid THIS month's bill. When such a hidden same-amount competitor exists, an
     // 'amount_only' match is not genuinely unambiguous — leave it a human one-tap. 'certain'
     // (printed number / IBAN) is supplier-doc identity and stays immune to this.
-    if (tier === "amount_only") {
+    // [BANK-IBAN-COMPETITOR] The guard also covers a 'certain' that rests on IBAN alone. An
+    // IBAN identifies the SUPPLIER's account, not the document — for a recurring same-amount
+    // incasso (huur, lease) every month's invoice shares the vendor_iban AND the amount, so a
+    // hidden competitor (this month's bill still in the verify queue) makes an iban-certain
+    // exactly as ambiguous as an amount_only. Only a PRINTED NUMBER is document identity and
+    // stays immune. Scoped to competitors on the SAME account so an unrelated same-amount
+    // invoice never vetoes a genuine iban match.
+    const bestSig = m.best?.signals ?? [];
+    const ibanCertain = tier === "certain" && bestSig.includes("iban") && !bestSig.includes("reference");
+    if (tier === "amount_only" || ibanCertain) {
       const txAmt = m.transaction.amount ?? 0;
-      const hiddenCompetitor = allInvoices.some(
-        (i) =>
-          i.id !== invoiceId &&
-          (i.status === "processing" || Math.max(0, Number(i.amount_paid ?? 0)) > 0) &&
-          typeof i.total_inc_btw === "number" &&
-          Math.abs(Math.abs(txAmt) - Math.abs(i.total_inc_btw)) <= 0.01,
-      );
+      const hiddenCompetitor = allInvoices.some((i) => {
+        if (i.id === invoiceId) return false;
+        if (!(i.status === "processing" || Math.max(0, Number(i.amount_paid ?? 0)) > 0)) return false;
+        if (typeof i.total_inc_btw !== "number") return false;
+        // [BANK-OPEN-COMPETITOR] Compare against the OPEN balance as well as the gross total: a
+        // mid-instalment invoice whose RESTANT equals this payment is precisely the competitor a
+        // restant-sized transfer is likeliest to be paying — matching only the full total let it
+        // hide. (paymentExceedsOpenBalance semantics, inlined for the magnitude compare.)
+        const total = Math.abs(i.total_inc_btw);
+        const open = Math.max(0, total - Math.max(0, Number(i.amount_paid ?? 0)));
+        // [BANK-CENTS-EXACT] Integer cents, same rule as amountMatches — a raw float compare
+        // made the one-cent tolerance a lottery per euro-pair.
+        const near = (v: number) => Math.abs(Math.round(Math.abs(txAmt) * 100) - Math.round(v * 100)) <= 1;
+        if (!near(total) && !near(open)) return false;
+        // An iban-certain is only contested by an invoice on the SAME supplier account.
+        if (ibanCertain) return ibanMatches(m.transaction.counterpartIban, i.vendor_iban);
+        return true;
+      });
       if (hiddenCompetitor) continue;
     }
 
@@ -251,86 +341,6 @@ export async function runBankAutoConfirm(args: {
   // honours "human intervention at maximum ambiguity" — a partial is genuinely more ambiguous (which
   // instalment? the restant, or a coincidental same-amount line?). So partials stay a human confirm
   // on /bank, by design; the auto path books only fully-open invoices + exact multi-invoice batches.
-
-  // ── [BANK-BATCH] Automatic booking of unambiguous MULTI-invoice batches ──────────────────
-  // The 1:1 pass above deliberately skips any payment that settles several invoices (a wholesaler
-  // batching a week of deliveries into one debit — the common case for a shop). Those never
-  // auto-reconciled and piled up as manual work. Book the provably-exact ones here using the SAME
-  // tie-logic as the manual UI (planBatchAutoConfirm → reconcileBatch "ties"): every referenced
-  // number resolves to exactly one unpaid invoice of the right direction, one supplier, and the
-  // gross sum equals the debit to the cent. A short-payment (mismatch) or a not-yet-imported
-  // invoice (incomplete) returns null and stays for the human. Same reversibility + audit.
-  const bookedInvoiceIds = new Set(confirmed.map((c) => c.invoiceId));
-  const bookedTxIds = new Set(confirmed.map((c) => c.transactionId));
-  for (const row of txRows as BankTransactionDbRow[]) {
-    const txId = row.id;
-    if (!txId || row.status !== "pending" || row.invoice_id || bookedTxIds.has(txId)) continue;
-
-    // Candidates exclude anything already booked this run, so two batches can't claim one invoice.
-    // [PARTIAL-PAY] The batch pass draws from allInvoices, NOT the 1:1 pool: that pool drops every
-    // invoice with amount_paid > 0 because a lone payment against a half-paid invoice is genuinely
-    // ambiguous (the restant? a coincidental same-amount line?). A batch carries far stronger
-    // evidence — ≥2 referenced numbers, each resolving to exactly one invoice, one supplier, and
-    // the sum of the OPEN amounts equal to the cent — so that ambiguity does not exist here.
-    // Excluding partials made the app unable to auto-book the very payment it generates: a
-    // gebundeld betaalverzoek asks for the sum of the open amounts, so one prior instalment on any
-    // invoice in the bundle silently disabled automatic reconciliation for the whole payment.
-    // book_bank_batch settles each invoice fully and records amount_applied = its open balance.
-    const candidates = allInvoices.filter((i) => !bookedInvoiceIds.has(i.id)) as BatchCandidateInvoice[];
-    // [BUNDEL-REF-RECOVER] The description travels with the reference: the extractor mutilates any
-    // invoice number that carries a prefix or a separator ("2026-045" → "045"), and the raw
-    // statement line is where the real number still is.
-    const plan = planBatchAutoConfirm({
-      reference: row.reference ?? null,
-      description: row.description ?? null,
-      bankAmount: row.amount ?? null,
-      invoices: candidates,
-    });
-    if (!plan) continue;
-
-    // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch
-    // containing a partly-paid invoice would otherwise lose it here and be skipped silently.
-    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is InvoiceForMatching => !!x);
-    if (planInvs.length !== plan.invoiceIds.length) continue;
-    const tx = rowToTransaction(row);
-    if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants
-
-    // [BANK-BATCH-ATOMIC] Book the whole tie in ONE database transaction via book_bank_batch.
-    // The RPC locks the bank line FIRST (the mutex), re-verifies every invoice is still unpaid +
-    // not accountant-'verwerkt' under that lock, then pays them all, links the tx, and records the
-    // join rows — all-or-nothing. This closes the concurrent half-rollback the multi-statement
-    // path had: two overlapping runs over the same batch tx could leave one invoice unpaid while
-    // the tx showed 'matched' (and never retried). Now the loser blocks on the lock and gets an
-    // EMPTY result → skips. If any invoice turned unpayable in the window the whole batch aborts
-    // (error) and nothing is written. Reversal index (bank_tx_invoices) is written INSIDE the txn.
-    //
-    // Outcomes: rows returned ⇒ booked · empty (no error) ⇒ tx already claimed by a concurrent run
-    // ⇒ skip · error ⇒ an invoice is no longer payable (or the migration isn't applied yet) ⇒
-    // leave the whole batch for the human. Degrades safely: a missing function just means batches
-    // aren't auto-booked until book_bank_batch_atomic.sql is applied.
-    const { data: bookedRows, error: batchErr } = await payClient.rpc("book_bank_batch", {
-      p_user_id: userId,
-      p_tx_id: txId,
-      p_invoice_ids: plan.invoiceIds,
-      p_pay_date: tx.date || null,
-    });
-    if (batchErr) continue;                                        // not payable / not applied → skip
-    if (!bookedRows || (bookedRows as unknown[]).length === 0) continue; // tx already claimed → skip
-
-    for (const inv of planInvs) {
-      // A batch tie is 'certain' by construction (every number resolves + the sum equals the debit).
-      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain", paymentDate: tx.date || null });
-      bookedInvoiceIds.add(inv.id);
-    }
-    bookedTxIds.add(txId);
-    await logAuditAction({
-      userId,
-      action: "bank.auto_confirmed_batch",
-      entityType: "bank_transaction",
-      entityId: txId,
-      newValue: { invoice_ids: plan.invoiceIds, invoice_count: plan.invoiceIds.length, amount: row.amount ?? 0, reason: "exact_multi_invoice_batch_tie" },
-    });
-  }
 
   // ── [JET-GAP0] The bell lives HERE, inside the core, so it is IMPOSSIBLE to book an invoice
   // paid from ANY of the six entry points (import, verify, cron, /bank page, email) without the

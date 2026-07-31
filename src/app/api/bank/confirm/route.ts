@@ -153,6 +153,106 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not_eligible" }, { status: 409 });
   }
 
+  // ── [BANK-CONFIRM-ATOMIC] One RPC, the whole decision under one lock ─────────────────────
+  // confirm_bank_payment derives EVERYTHING under the bank line's row lock: what the line still
+  // has (Σ sibling links read under the lock), what the invoice can absorb, whether this books a
+  // deelbetaling, a completion, or an overpay-with-remainder, and whether the LINE is finished.
+  // That closes the race the multi-statement path below can only detect after the fact: two
+  // overlapping confirms of different invoices against one line each believed they had the full
+  // line to spend. Deploy-safe: an undefined function (bank_confirm_atomic.sql not applied yet)
+  // falls through to the previous path — which keeps its loud over-application detector, so an
+  // un-migrated database is exactly as safe as it was yesterday.
+  {
+    // confirm_bank_payment is added by bank_confirm_atomic.sql and not yet in the generated
+    // types — same convention as auto_match_reason. Regenerate types after applying.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: atomicRows, error: atomicErr } = await (supabase.rpc as any)("confirm_bank_payment", {
+      p_user_id: user.id,
+      p_tx_id: transactionId,
+      p_invoice_id: invoiceId,
+      p_pay_date: tx.date ?? null,
+    }) as { data: unknown; error: { code?: string; message?: string } | null };
+    const fnMissing =
+      atomicErr &&
+      ((atomicErr as { code?: string }).code === "42883" ||
+        /confirm_bank_payment/i.test(atomicErr.message ?? "") &&
+          /(does not exist|not find|schema cache)/i.test(atomicErr.message ?? ""));
+    if (atomicErr && !fnMissing) {
+      const msg = (atomicErr.message ?? "").toLowerCase();
+      if (msg.includes("verwerkt")) {
+        return NextResponse.json({ error: "verwerkt", invoiceNumber: inv.invoice_number }, { status: 409 });
+      }
+      if (msg.includes("already fully paid") || msg.includes("already covered")) {
+        return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
+      }
+      if (msg.includes("fully applied")) {
+        return NextResponse.json({ error: "payment_fully_applied" }, { status: 409 });
+      }
+      return NextResponse.json({ error: "payment_failed", detail: atomicErr.message }, { status: 500 });
+    }
+    if (!atomicErr) {
+      const row = Array.isArray(atomicRows)
+        ? (atomicRows[0] as { applied: number; amount_paid: number; total: number; is_paid: boolean; all_covered: boolean; line_remaining: number } | undefined)
+        : undefined;
+      if (!row) {
+        // Empty result ⇒ the tx was claimed between our checks and the lock. Nothing written.
+        return NextResponse.json({ error: "transaction_already_processed" }, { status: 409 });
+      }
+      const isPaid = row.is_paid === true;
+      const remaining = Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0));
+      const unassigned = row.all_covered ? 0 : Math.max(0, row.line_remaining ?? 0);
+      try {
+        await pipeline.from("notifications").insert({
+          user_id: user.id,
+          title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
+          body: isPaid
+            ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
+            : `Deelbetaling van € ${(row.applied ?? 0).toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+          type: "payment",
+        });
+        if (unassigned > 0.01) {
+          await pipeline.from("notifications").insert({
+            user_id: user.id,
+            title: "Nog een deel van deze betaling open",
+            body: `Van deze betaling is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
+            type: "payment",
+            link: "/dashboard/bank",
+          });
+        }
+      } catch {
+        /* non-blocking */
+      }
+      await logAuditAction({
+        userId: user.id,
+        action: isPaid ? "bank.confirmed" : "bank.partial_payment",
+        entityType: "invoice",
+        entityId: invoiceId,
+        newValue: {
+          transaction_id: transactionId,
+          invoice_number: inv.invoice_number,
+          applied: row.applied,
+          amount_paid: row.amount_paid,
+          total: row.total,
+          remaining,
+          fully_paid: isPaid,
+          all_covered: row.all_covered === true,
+          unassigned,
+          atomic: true,
+        },
+      });
+      return NextResponse.json({
+        ok: true,
+        allCovered: row.all_covered === true,
+        partial: !isPaid,
+        applied: row.applied,
+        remaining,
+        unassigned,
+        residue: 0,
+      });
+    }
+    // fnMissing → fall through to the previous, detector-guarded path below.
+  }
+
   // [PARTIAL-PAY] When the money this payment still has fits inside the invoice → the atomic
   // apply_bank_payment RPC. It applies LEAST(payment, remaining), so an amount SMALLER than the
   // invoice balance is recorded as a DEELBETALING — the invoice stays openstaand with the rest
@@ -392,9 +492,18 @@ export async function POST(req: NextRequest) {
   //    "Te bevestigen".
   const settledByThisBooking = appliedElsewhere + invOpen;
   const moneyRemaining = Math.round((payAmount - settledByThisBooking) * 100) / 100;
+  // [BANK-COVERED-FAIL-CLOSED] When the sibling links are NOT measurable (a failed read, or a
+  // pre-amount_applied link) the default is `false` — the line stays visible. We are in the
+  // overpay branch, so by arithmetic THIS booking leaves money on the line; only measured
+  // sibling bookings could prove otherwise. The old default was `true`, which closed the line
+  // and silently swallowed the remainder whenever the reference carried ≤1 token and the link
+  // read hiccupped. Worst case of failing closed: an already-finished line lingers one more
+  // round in "Te bevestigen" and the next confirm answers 409 — benign; the reverse hid money.
+  // A multi-token reference still gets the legacy presence rule below (it can only ever KEEP a
+  // line visible, never hide one).
   let allCovered = appliedElsewhereKnown
     ? bankLineFullyApplied(payAmount, settledByThisBooking) === true
-    : true;
+    : false;
 
   if (!appliedElsewhereKnown && refNumbers.length > 1) {
     // Direction the bank movement implies (mirrors isEligible's sign guard):
@@ -508,6 +617,40 @@ export async function POST(req: NextRequest) {
   // the link counts as zero in recompute_invoice_amount_paid and a later unlink of any OTHER
   // payment on this invoice erases the money this one really settled.
   await recordPaymentLinks(pipeline, user.id, transactionId, [invoiceId], { [invoiceId]: invOpen });
+
+  // [BANK-OVERAPPLIED-LOUD] Two overlapping confirms of DIFFERENT invoices against the SAME bank
+  // line can each read the sibling links before either has written — both then believe they have
+  // the full line to spend, and Σ amount_applied ends ABOVE the line's own amount. The write
+  // path has no cross-request mutex (only an atomic RPC could close that fully — documented as
+  // deferred), so the next-best guarantee is that the state can never be silently wrong: re-read
+  // the sum AFTER our link landed and, if the line is over-applied, say so loudly — an audit row
+  // plus an owner notification naming the figures. Best-effort: a failed read changes nothing.
+  try {
+    const { data: sumRows } = await pipeline
+      .from("bank_tx_invoices")
+      .select("amount_applied")
+      .eq("user_id", user.id)
+      .eq("transaction_id", transactionId);
+    const appliedSum = (sumRows ?? []).reduce((t, r) => t + Math.max(0, Number(r.amount_applied ?? 0)), 0);
+    if (appliedSum > payAmount + 0.01) {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.overapplied",
+        entityType: "bank_transaction",
+        entityId: transactionId,
+        newValue: { transaction_amount: payAmount, applied_sum: Math.round(appliedSum * 100) / 100, invoice_id: invoiceId },
+      });
+      await pipeline.from("notifications").insert({
+        user_id: user.id,
+        title: "Controleer deze betaling",
+        body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
+        type: "payment",
+        link: "/dashboard/bank",
+      });
+    }
+  } catch {
+    /* best-effort — the bookings themselves are already recorded */
+  }
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   const unassigned = appliedElsewhereKnown && !allCovered ? Math.max(0, moneyRemaining) : 0;
