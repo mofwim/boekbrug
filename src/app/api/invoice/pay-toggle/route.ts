@@ -190,6 +190,13 @@ export async function POST(req: NextRequest) {
       if (msg.includes("already fully paid") || msg.includes("already covered")) {
         return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
       }
+      // [PAY-DATE-SANE] The database has the same rule as a backstop (bookkeeping_date_sane.sql).
+      // It cannot fire from here — the window is checked above — but if it ever does, because a
+      // future caller skips that check or the two windows drift, the owner gets the Dutch sentence
+      // rather than a PL/pgSQL exception at a 500.
+      if (msg.includes("[pay-date-sane]")) {
+        return NextResponse.json({ error: "invalid_payment_date", detail: PAYMENT_DATE_REFUSAL }, { status: 400 });
+      }
       if (msg.includes("not payable")) {
         return NextResponse.json(
           { error: "not_payable", detail: `status '${inv.status}' kan niet als betaald worden gemarkeerd`, status: inv.status },
