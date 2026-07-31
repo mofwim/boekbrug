@@ -52,12 +52,21 @@ export async function GET(req: NextRequest) {
   let invoiceId = req.nextUrl.searchParams.get("invoiceId");
   const transactionId = req.nextUrl.searchParams.get("transactionId");
   if (!invoiceId && transactionId) {
-    const { data: txLinks } = await pipeline
+    const { data: txLinks, error: txLinksErr } = await pipeline
       .from("bank_tx_invoices")
       .select("invoice_id")
       .eq("user_id", user.id)
       .eq("transaction_id", transactionId)
       .limit(2);
+    // [MOVE-READ-HONEST] A failed read here used to leave invoiceId null and fall out as
+    // "missing_invoice" — a 400 that blames the request for a failure that was ours.
+    if (txLinksErr) {
+      console.error("[MOVE-READ-HONEST] transaction → invoice lookup failed", { transactionId, userId: user.id, error: txLinksErr.message });
+      return NextResponse.json(
+        { error: "move_lookup_failed", detail: "We konden nu niet zien bij welke factuur deze betaling hoort. Probeer het zo meteen opnieuw." },
+        { status: 503 },
+      );
+    }
     const ids = [...new Set((txLinks ?? []).map((l) => l.invoice_id))];
     // A BATCH line pays several invoices, and "move the payment" is then ambiguous — which of
     // them? Say so instead of silently picking one; the owner can act per invoice from
@@ -76,22 +85,44 @@ export async function GET(req: NextRequest) {
   }
   if (!invoiceId) return NextResponse.json({ error: "missing_invoice" }, { status: 400 });
 
-  const { data: source } = await pipeline
+  // [MOVE-READ-HONEST] Every read in this handler answers a question about MONEY, so none of them
+  // may fail into a confident sentence. They all did: the error was dropped and the empty result
+  // became the answer.
+  const readFailed = (what: string, message: string) => {
+    console.error("[MOVE-READ-HONEST] payment lookup failed", { what, invoiceId, userId: user.id, message });
+    return NextResponse.json(
+      {
+        error: "move_lookup_failed",
+        detail: "We konden de betalingen van deze factuur nu niet lezen. Probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  };
+
+  const { data: source, error: sourceErr } = await pipeline
     .from("invoices")
     .select(INVOICE_FIELDS)
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
+  if (sourceErr) return readFailed("source invoice", sourceErr.message);
   if (!source) return NextResponse.json({ error: "invoice_not_found" }, { status: 404 });
 
   // The payments actually booked on this invoice. A pre-[PARTIAL-PAY] row carries no amount and
   // cannot be moved (we would not know what we are moving) — it is returned WITH that fact rather
   // than hidden, so the screen can explain instead of silently offering less than the owner sees.
-  const { data: linkRows } = await pipeline
+  //
+  // [MOVE-READ-HONEST] This is the read that mattered most. A dropped error made `payments` empty,
+  // the handler answered 200, and the screen said "Van deze betaling is geen boeking gevonden om
+  // te verplaatsen" — a sentence reserved for one specific, permanent situation (a payment booked
+  // before the join table existed). A transient failure was telling the owner their booked
+  // payment does not exist.
+  const { data: linkRows, error: linkRowsErr } = await pipeline
     .from("bank_tx_invoices")
     .select("id, invoice_id, amount_applied, transaction_id, paid_on, method")
     .eq("user_id", user.id)
     .eq("invoice_id", invoiceId);
+  if (linkRowsErr) return readFailed("booked payments", linkRowsErr.message);
   const payments = ((linkRows ?? []) as MovablePayment[]).map((l) => ({
     ...l,
     amount_applied: Math.max(0, Number(l.amount_applied ?? 0)),
@@ -125,9 +156,18 @@ export async function GET(req: NextRequest) {
   const [sameVendor, recent] = await Promise.all([
     vendor
       ? base().eq("client_name", vendor).order("invoice_date", { ascending: false }).limit(200)
-      : Promise.resolve({ data: [] as MoveTargetCandidate[] }),
+      : Promise.resolve({ data: [] as MoveTargetCandidate[], error: null }),
     base().order("invoice_date", { ascending: false }).limit(300),
   ]);
+
+  // [MOVE-READ-HONEST] A failed candidate read is not "no invoice fits this payment" — and that
+  // is exactly what the sheet would have said, in a sentence that reads like a considered answer
+  // ("Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen…"). The owner would
+  // then reasonably conclude the move is impossible and reach for the undo instead.
+  const sameVendorErr = (sameVendor as { error?: { message: string } | null }).error;
+  const recentErr = (recent as { error?: { message: string } | null }).error;
+  if (sameVendorErr) return readFailed("same-vendor candidates", sameVendorErr.message);
+  if (recentErr) return readFailed("recent candidates", recentErr.message);
 
   const byId = new Map<string, MoveTargetCandidate>();
   for (const row of [
@@ -143,11 +183,15 @@ export async function GET(req: NextRequest) {
   const txIds = [...new Set(payments.map((p) => p.transaction_id).filter(Boolean))] as string[];
   const linkedByTx = new Map<string, Set<string>>();
   if (txIds.length > 0) {
-    const { data: siblings } = await pipeline
+    const { data: siblings, error: siblingsErr } = await pipeline
       .from("bank_tx_invoices")
       .select("transaction_id, invoice_id")
       .eq("user_id", user.id)
       .in("transaction_id", txIds);
+    // [MOVE-READ-HONEST] This read is what keeps an already-linked invoice OUT of the list. Losing
+    // it silently offers targets the database will refuse (bank_tx_invoices_unique_pair), so the
+    // owner picks, waits, and gets a refusal for a choice we should not have shown.
+    if (siblingsErr) return readFailed("existing links of this transaction", siblingsErr.message);
     for (const s of (siblings ?? []) as { transaction_id: string; invoice_id: string }[]) {
       const set = linkedByTx.get(s.transaction_id) ?? new Set<string>();
       set.add(s.invoice_id);

@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { computeDrawerBalance, isCashCategory } from "@/lib/cash";
+// [PAY-DATE-SANE] one tested window for every date that lands in the kasboek — see payment-date.ts
+import { paymentDateOutOfWindow } from "@/lib/payment-date";
+import { amsterdamToday } from "@/lib/format-nl";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
@@ -122,22 +125,23 @@ export async function POST(req: NextRequest) {
   // an inspector reads. The window is deliberately generous — anything a person could plausibly
   // mean is accepted, only the physically impossible is refused. Tomorrow is allowed because a
   // device clock or a timezone edge can legitimately be a day ahead.
-  const rawDate = typeof body.entry_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.entry_date)
-    ? body.entry_date
+  //
+  // [PAY-DATE-SANE] The window itself now lives in one tested place (payment-date.ts), because
+  // this is not the only door into this drawer: marking an inkoopfactuur "Contant betaald" writes
+  // a dated cash entry through /api/invoice/pay-toggle, which had no ceiling at all. Two doors,
+  // one kasboek — so one rule. Amsterdam's day, not UTC's: the client fills this field from an
+  // Amsterdam-pinned today (KasClient.todayIso), so a UTC ceiling would be a different day for
+  // part of the evening — and the one it would refuse is the owner's actual today.
+  // An ABSENT or empty field still means "no date given" — the DB default (today) then applies,
+  // exactly as before. Only a date the caller actually filled in is judged.
+  const rawDate = typeof body.entry_date === "string" && body.entry_date.trim() !== ""
+    ? body.entry_date.trim()
     : undefined;
-  if (rawDate) {
-    // Amsterdam's tomorrow, not UTC's. The client fills this field from an Amsterdam-pinned
-    // today (KasClient.todayIso), so a UTC ceiling would be a different day for part of the
-    // evening — and the one it would refuse is the owner's actual today.
-    const tomorrow = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date(Date.now() + 86_400_000));
-    if (rawDate < "2000-01-01" || rawDate > tomorrow) {
-      return NextResponse.json(
-        { error: "Controleer de datum — een kasboeking kan niet in de toekomst liggen." },
-        { status: 400 },
-      );
-    }
+  if (rawDate && paymentDateOutOfWindow(rawDate, amsterdamToday())) {
+    return NextResponse.json(
+      { error: "Controleer de datum — een kasboeking kan niet in de toekomst liggen." },
+      { status: 400 },
+    );
   }
   const entryDate = rawDate;
 

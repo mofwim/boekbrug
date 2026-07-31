@@ -26,6 +26,8 @@ import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
+// [PAY-DATE-SANE] the floor the betaaldatum picker offers — see payment-date.ts
+import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
@@ -1916,10 +1918,14 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         {paymentChoice ? (
           <>
             {/* [BRIDGE-QUARTER] Real payment date — the day money actually moved */}
+            {/* [PAY-DATE-SANE] A floor beside the ceiling, on the same date field the purchase
+                side has. Both only bound the picker — /api/invoice/pay-toggle is what refuses an
+                impossible day, for every caller. */}
             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
             <input
               type="date"
               value={paymentDate}
+              min={PAYMENT_DATE_FLOOR}
               max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}

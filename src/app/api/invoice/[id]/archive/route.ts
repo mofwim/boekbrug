@@ -55,16 +55,36 @@ const REFUSAL_TEXT: Record<string, string> = {
   not_archivable: "Deze factuur kan niet op deze manier verwijderd worden.",
 };
 
+// [MONEY-GUARD-CLOSED] `readFailed` travels with the row, because "we could not read it" and
+// "it is not there" are different answers and only one of them is the owner's fault. Reported as
+// a 404 they became the same sentence: "deze factuur is niet gevonden", about an invoice sitting
+// right there on the screen. Every gate below is decided FROM this row, so a failed read must
+// stop the route, not hand it an empty invoice to judge.
 async function loadOwned(id: string, userId: string) {
   const pipeline = createPipelineClient();
-  const { data } = await pipeline
+  const { data, error } = await pipeline
     .from("invoices")
     .select(SELECT)
     .eq("id", id)
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
     .maybeSingle();
-  return { pipeline, invoice: data as (RemovalInvoice & { id: string; invoice_date?: string | null }) | null };
+  if (error) console.error("[MONEY-GUARD-CLOSED] invoice read failed", { invoiceId: id, userId, error: error.message });
+  return {
+    pipeline,
+    invoice: data as (RemovalInvoice & { id: string; invoice_date?: string | null }) | null,
+    readFailed: !!error,
+  };
 }
+
+/** One answer for "we could not look" — never a 404, never a silent pass. */
+const readFailedResponse = () =>
+  NextResponse.json(
+    {
+      error: "read_failed",
+      detail: "We konden deze factuur nu niet lezen. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+    },
+    { status: 503 },
+  );
 
 // ── POST — archive ────────────────────────────────────────────────────────────────────────────
 
@@ -74,7 +94,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const { pipeline, invoice } = await loadOwned(id, user.id);
+  const { pipeline, invoice, readFailed } = await loadOwned(id, user.id);
+  if (readFailed) return readFailedResponse();
   if (!invoice) return NextResponse.json({ error: "invoice_not_found" }, { status: 404 });
 
   const refusal = refuseArchive(invoice);
@@ -84,12 +105,32 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // A booked payment always leaves a join row. Refusing on its mere existence covers the rows
   // written before amount_applied existed, whose amounts we cannot read.
-  const { data: links } = await pipeline
+  //
+  // [MONEY-GUARD-CLOSED] This read's error was dropped, and that turned the guard inside out: a
+  // failed read produced `null`, `null ?? []` produced an empty list, and an empty list is the
+  // ANSWER THAT PERMITS the archive. Nothing downstream catches it either — the write's WHERE
+  // clause re-asserts the status and the accountant lock (that was deliberate, see below) but it
+  // cannot re-assert a bank link. So a transient failure archived an invoice whose payment is
+  // booked: the invoice leaves every ledger (allow-lists, see the header) while the bank line
+  // that paid it is skipped as "payment of an already-counted invoice" — the debit then counts
+  // NOWHERE and the quarter's kosten and voorbelasting are quietly too low. A guard we could not
+  // run is not a guard that passed.
+  const { data: links, error: linksErr } = await pipeline
     .from("bank_tx_invoices")
     .select("transaction_id")
     .eq("user_id", user.id)
     .eq("invoice_id", id)
     .limit(1);
+  if (linksErr) {
+    console.error("[MONEY-GUARD-CLOSED] bank-link check failed — refusing to archive", { invoiceId: id, userId: user.id, error: linksErr.message });
+    return NextResponse.json(
+      {
+        error: "money_check_failed",
+        detail: "We konden nu niet controleren of er een betaling aan deze factuur hangt. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  }
   if ((links ?? []).length > 0) {
     return NextResponse.json({ error: "bank_linked", detail: REFUSAL_TEXT.bank_linked }, { status: 409 });
   }
@@ -201,7 +242,8 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const { pipeline, invoice } = await loadOwned(id, user.id);
+  const { pipeline, invoice, readFailed } = await loadOwned(id, user.id);
+  if (readFailed) return readFailedResponse();
   if (!invoice) return NextResponse.json({ error: "invoice_not_found" }, { status: 404 });
   if ((invoice.status ?? "") !== "archived") {
     return NextResponse.json({ error: "not_archived" }, { status: 409 });

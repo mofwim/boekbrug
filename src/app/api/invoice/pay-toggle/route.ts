@@ -12,6 +12,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
+// [PAY-DATE-SANE] one tested answer to "could a person have paid on this day?" — see payment-date.ts
+import { paymentDateOutOfWindow, PAYMENT_DATE_REFUSAL } from "@/lib/payment-date";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { reconcileCashSettlements, cashInstalmentsSupported } from "@/lib/cash-settle";
@@ -109,8 +111,28 @@ export async function POST(req: NextRequest) {
       );
     }
     const paymentMethod = body.paymentMethod === "kas" ? "kas" : "bank";
-    const paymentDate = typeof body.paymentDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.paymentDate)
-      ? body.paymentDate : amsterdamToday();
+    // [PAY-DATE-SANE] The shape test that stood here is not a date check: "2062-03-01" and
+    // "1926-07-04" pass it, and a slipped digit in a date field is an ordinary mistake. What that
+    // one digit moves is not cosmetic — payment_date decides the BTW quarter under the kasstelsel
+    // (vat-scheme.ts:7), and a 'kas' payment becomes a DATED drawer movement (cash-settle.ts), so
+    // an impossible day lands in the kasboek the accountant reads and in the negative-drawer
+    // witness that blocks the aangifte. /api/cash has refused exactly this since [CASH-DATE-SANE];
+    // this is the OTHER door into the same drawer, and it had no ceiling at all. One shared,
+    // tested window now (payment-date.ts), Amsterdam's day on both sides.
+    //
+    // An absent/empty date still falls back to today, unchanged — most callers send none. A date
+    // the caller DID fill in is answered honestly instead of being silently replaced by today:
+    // booking on a day the owner did not choose is the same class of quiet error.
+    const rawPaymentDate = typeof body.paymentDate === "string" && body.paymentDate.trim() !== ""
+      ? body.paymentDate.trim()
+      : null;
+    if (rawPaymentDate && paymentDateOutOfWindow(rawPaymentDate, amsterdamToday())) {
+      return NextResponse.json(
+        { error: "invalid_payment_date", detail: PAYMENT_DATE_REFUSAL },
+        { status: 400 }
+      );
+    }
+    const paymentDate = rawPaymentDate ?? amsterdamToday();
 
     // [MANUAL-PARTIAL-PAY] An optional amount turns this into a DEELBETALING. Absent (the
     // empty field — the common case) it means "settle the whole remaining balance", which is
@@ -273,18 +295,45 @@ export async function POST(req: NextRequest) {
   // meaningless for it — NULLs never conflict, so the upsert would INSERT duplicates and
   // inflate amount_paid. Keyed on the primary key instead, the restore is exact for both
   // kinds of row.
-  const { data: myLinkRowsRaw } = await pipeline
+  // [UNDO-READ-CLOSED] Every read below is FAIL-CLOSED, and that is the whole point of doing them
+  // first. They all ran with the error dropped, so a transient failure came back as an empty
+  // snapshot — which does not mean "no links", it means "we do not know the links". The undo then
+  // walked on anyway and did exactly the damage this route exists to prevent:
+  //   · the delete further down runs unconditionally, so the join rows go — while the snapshot
+  //     that the rollback restores from is empty, making the rollback a no-op;
+  //   · a tx linked ONLY through the join table never reaches linkedTxIds, so it stays 'matched'
+  //     with nothing pointing at it while the invoice returns to 'received' — the invoice is
+  //     payable a second time and its payment is unreachable to re-link. That is defect [15] in
+  //     this file's own header, reintroduced by a dropped error;
+  //   · a failed `otherRows` read reads as "not a batch", so a tx that also pays OTHER invoices
+  //     gets flipped back to 'pending' underneath them.
+  // Nothing has been written at this point, so refusing here is genuinely free: the owner gets
+  // "er is niets gewijzigd" and it is true.
+  const readFailed = (what: string, message: string) => {
+    console.error("[UNDO-READ-CLOSED] undo aborted before any write — could not read", { what, invoiceId, userId: user.id, message });
+    return NextResponse.json(
+      {
+        error: "undo_read_failed",
+        detail: "We konden de gekoppelde betalingen nu niet lezen. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+      },
+      { status: 503 }
+    );
+  };
+
+  const { data: myLinkRowsRaw, error: myLinksErr } = await pipeline
     .from("bank_tx_invoices")
     .select("id, transaction_id, amount_applied, paid_on, method, client_key")
     .eq("user_id", user.id)
     .eq("invoice_id", invoiceId);
+  if (myLinksErr) return readFailed("bank_tx_invoices", myLinksErr.message);
   const myLinks = (myLinkRowsRaw ?? []) as {
     id: string; transaction_id: string | null; amount_applied: number | null;
     paid_on: string | null; method: string | null; client_key: string | null;
   }[];
 
-  const { data: directTx } = await pipeline
+  const { data: directTx, error: directTxErr } = await pipeline
     .from("bank_transactions").select("id").eq("user_id", user.id).eq("invoice_id", invoiceId).eq("status", "matched");
+  if (directTxErr) return readFailed("bank_transactions", directTxErr.message);
 
   const linkedTxIds = new Set<string>();
   for (const t of directTx ?? []) if (t.id) linkedTxIds.add(t.id);
@@ -293,10 +342,14 @@ export async function POST(req: NextRequest) {
   // Per-tx prior state + "does it also pay other invoices?" (batch detection).
   const txPrev = new Map<string, { status: string | null; invoice_id: string | null; hasOthers: boolean }>();
   for (const txId of linkedTxIds) {
-    const [{ data: txRow }, { data: otherRows }] = await Promise.all([
+    const [{ data: txRow, error: txErr }, { data: otherRows, error: othersErr }] = await Promise.all([
       pipeline.from("bank_transactions").select("status, invoice_id").eq("id", txId).eq("user_id", user.id).maybeSingle(),
       pipeline.from("bank_tx_invoices").select("id").eq("user_id", user.id).eq("transaction_id", txId).neq("invoice_id", invoiceId).limit(1),
     ]);
+    if (txErr) return readFailed("bank_transactions row", txErr.message);
+    if (othersErr) return readFailed("bank_tx_invoices siblings", othersErr.message);
+    // No error and no row: the transaction genuinely is not there any more (a deleted statement).
+    // Nothing to detach, and nothing unknown about it.
     if (!txRow) continue;
     txPrev.set(txId, {
       status: (txRow as { status: string | null }).status,
@@ -305,26 +358,9 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Detach — scoped. Batch tx (hasOthers): keep it 'matched' for the siblings, only drop a
-  // direct pointer at US. Single-invoice tx: full detach back to 'pending'.
-  for (const [txId, prev] of txPrev) {
-    if (prev.hasOthers) {
-      if (prev.invoice_id === invoiceId) {
-        await pipeline.from("bank_transactions").update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
-      }
-    } else {
-      await pipeline.from("bank_transactions")
-        .update({ status: "pending", invoice_id: null })
-        .eq("id", txId).eq("user_id", user.id);
-    }
-  }
-  // Remove ONLY this invoice's join rows (never the whole tx's set).
-  await pipeline.from("bank_tx_invoices").delete().eq("user_id", user.id).eq("invoice_id", invoiceId);
-  // Reconcile amount_paid from surviving links (0 once all are cleared). Atomic + best-effort.
-  try { await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId }); } catch { /* non-fatal */ }
-
-  // [UNDO-SCOPED] Restore the captured bank state — called when the invoice write below fails,
-  // so the detach never survives a failed undo. Best-effort (service role).
+  // [UNDO-SCOPED] Restore the captured bank state — called when a write below fails, so the
+  // detach never survives a failed undo. Best-effort (service role). Defined BEFORE the first
+  // destructive write, because from here on every step needs a way back.
   const rollbackBankState = async () => {
     try {
       if (myLinks.length > 0) {
@@ -348,6 +384,48 @@ export async function POST(req: NextRequest) {
       await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
     } catch { /* best-effort */ }
   };
+
+  // Detach — scoped. Batch tx (hasOthers): keep it 'matched' for the siblings, only drop a
+  // direct pointer at US. Single-invoice tx: full detach back to 'pending'.
+  for (const [txId, prev] of txPrev) {
+    if (prev.hasOthers) {
+      if (prev.invoice_id === invoiceId) {
+        await pipeline.from("bank_transactions").update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
+      }
+    } else {
+      await pipeline.from("bank_transactions")
+        .update({ status: "pending", invoice_id: null })
+        .eq("id", txId).eq("user_id", user.id);
+    }
+  }
+  // Remove ONLY this invoice's join rows (never the whole tx's set).
+  // [UNDO-READ-CLOSED] The delete's own error was dropped too. If it fails, the transactions
+  // above are already detached while their links survive — so put the bank state back and say so,
+  // rather than continuing to mark the invoice unpaid on top of payments that still exist.
+  const { error: delErr } = await pipeline.from("bank_tx_invoices").delete().eq("user_id", user.id).eq("invoice_id", invoiceId);
+  if (delErr) {
+    await rollbackBankState();
+    console.error("[UNDO-READ-CLOSED] link delete failed — bank state restored", { invoiceId, userId: user.id, message: delErr.message });
+    return NextResponse.json(
+      { error: "undo_failed", detail: "De betaling kon niet worden losgekoppeld. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+      { status: 503 }
+    );
+  }
+  // Reconcile amount_paid from surviving links (0 once all are cleared). Atomic.
+  // [UNDO-READ-CLOSED] The try/catch around this never fired (supabase-js reports an rpc failure
+  // in `error`, it does not throw), so a failed recompute left amount_paid standing on links that
+  // no longer exist: the invoice would return to 'received' still claiming "Deels betaald · € X
+  // open" for money nobody paid, and the pay dialog would cap the owner at that invented
+  // remainder. Roll back and refuse instead — the invoice write has not happened yet.
+  const { error: recomputeErr } = await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
+  if (recomputeErr) {
+    await rollbackBankState();
+    console.error("[UNDO-READ-CLOSED] recompute failed — bank state restored", { invoiceId, userId: user.id, message: recomputeErr.message });
+    return NextResponse.json(
+      { error: "undo_failed", detail: "De betaling kon niet worden teruggedraaid. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+      { status: 503 }
+    );
+  }
 
   const restoredStatus = isIncoming ? "received" : "sent";
   // [MANUAL-PARTIAL-PAY] Two shapes of undo:

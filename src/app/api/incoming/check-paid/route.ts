@@ -18,6 +18,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { pickPaidTwin } from '@/lib/double-pay-check'
+// [TZ] the owner's day, never the UTC one — see format-nl.ts
+import { amsterdamToday } from '@/lib/format-nl'
 import { escapeLikeValue } from '@/lib/sanitize'
 
 // Recent window for "already paid" — a vendor re-sending an invoice happens
@@ -68,9 +70,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ duplicate: false })
   }
 
-  const sinceIso = new Date(Date.now() - RECENT_DAYS * 86_400_000)
-    .toISOString()
-    .slice(0, 10)
+  // [TZ] Counted back from the owner's Amsterdam day, not from UTC's. The window is 120 days wide
+  // so an hour cannot change the answer — but the rule in format-nl.ts:17-23 is that every date
+  // boundary in this app is Amsterdam's, and a boundary that is "usually the same" is exactly the
+  // kind that gets copied into a place where it is not.
+  const windowStart = new Date(`${amsterdamToday()}T00:00:00Z`)
+  windowStart.setUTCDate(windowStart.getUTCDate() - RECENT_DAYS)
+  const sinceIso = windowStart.toISOString().slice(0, 10)
 
   // Candidate = ANOTHER incoming invoice, already paid, same amount, recent.
   // Anchor on vendor_iban when present (precise); else fall back to client_name

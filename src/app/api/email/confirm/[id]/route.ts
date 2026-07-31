@@ -7,6 +7,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
+// [PAY-DATE-SANE] one tested answer to "could a person have paid on this day?" — see payment-date.ts
+import { paymentDateOutOfWindow, PAYMENT_DATE_REFUSAL } from "@/lib/payment-date";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -185,13 +187,26 @@ export async function POST(
     // only the last resort so a paid invoice never lacks a payment_date. marked_paid_at stays the
     // precise confirmation timestamp; payment_date is the accounting day. (Accrual BTW is on the
     // invoice date regardless, so this only fixes the settlement-quarter display.)
-    const isoRe = /^\d{4}-\d{2}-\d{2}$/;
-    const reviewedDate = typeof body.invoice_date === "string" && isoRe.test(body.invoice_date) ? body.invoice_date : null;
-    const invDate = typeof invoice.invoice_date === "string" && isoRe.test(invoice.invoice_date) ? invoice.invoice_date : null;
-    updatePatch.payment_date =
-      typeof body.payment_date === "string" && isoRe.test(body.payment_date)
-        ? body.payment_date
-        : reviewedDate ?? invDate ?? amsterdamToday();
+    // [PAY-DATE-SANE] The shape test (isoRe) accepts "2062-03-01" and "1926-07-04", and this is
+    // the third door that writes payment_date — the field that decides the kasstelsel quarter
+    // (vat-scheme.ts:7) and dates the kasboek entry for a cash payment. Two rules, because the
+    // two cases are not the same thing:
+    //   · a date the OWNER typed and that cannot be real is ANSWERED, not silently replaced by
+    //     today — booking on a day they did not choose is the quiet error we are removing;
+    //   · a FALLBACK (the reviewed or stored invoice date) that is out of window is simply not
+    //     used. That date came from OCR, so an impossible one is a reading mistake, and it must
+    //     not become the payment day — but it is no reason to refuse the confirmation itself.
+    const today = amsterdamToday();
+    const typedDate = typeof body.payment_date === "string" && body.payment_date.trim() !== "" ? body.payment_date.trim() : null;
+    if (typedDate && paymentDateOutOfWindow(typedDate, today)) {
+      // [SERVER-REASON] On this route's POST the SENTENCE lives in `error` (see the client's
+      // confirmFailureMessage and the betaalmethode refusal above) — a machine code here would
+      // reach the owner as "invalid_payment_date". The code rides along under its own key.
+      return NextResponse.json({ error: PAYMENT_DATE_REFUSAL, code: "invalid_payment_date" }, { status: 400 });
+    }
+    const sane = (d: unknown): string | null =>
+      typeof d === "string" && d !== "" && !paymentDateOutOfWindow(d, today) ? d : null;
+    updatePatch.payment_date = typedDate ?? sane(body.invoice_date) ?? sane(invoice.invoice_date) ?? today;
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";
@@ -426,12 +441,29 @@ export async function DELETE(
   // — the debit is then counted NOWHERE, and the quarter's kosten and voorbelasting are quietly
   // too low. The dedicated archive route refuses both cases; this one is the same act by another
   // door, so it applies the same two gates.
-  const { data: money } = await supabase
+  //
+  // [MONEY-GUARD-CLOSED] Both reads dropped their error, and for a GUARD that is the dangerous
+  // direction: supabase-js answers a failed read with `{ data: null, error }`, so `money` became
+  // null and `money && …` skipped the whole check — a read we could not perform came out as
+  // "no money on this invoice". The same for the link read one step below. This is the button the
+  // manage screen calls "Deze dubbele verwijderen", so the invoice it points at is one the owner
+  // has already been told is probably paid.
+  const { data: money, error: moneyErr } = await supabase
     .from("invoices")
     .select("status, amount_paid")
     .eq("id", id)
     .eq("receiver_id", user.id)
     .maybeSingle();
+  if (moneyErr) {
+    console.error("[MONEY-GUARD-CLOSED] money check failed — refusing to archive", { invoiceId: id, userId: user.id, error: moneyErr.message });
+    return NextResponse.json(
+      {
+        error: "money_check_failed",
+        detail: "We konden nu niet controleren of er al betaald is op deze factuur. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  }
   if (money && hasSettledMoney(money)) {
     return NextResponse.json(
       { error: "money_settled", detail: "Er is al betaald op deze factuur — draai eerst de betaling terug." },
@@ -440,12 +472,22 @@ export async function DELETE(
   }
   // A booked payment always leaves a join row. Refusing on its mere existence also covers rows
   // written before amount_applied existed, whose amounts cannot be read back.
-  const { data: bankLinks } = await supabase
+  const { data: bankLinks, error: bankLinksErr } = await supabase
     .from("bank_tx_invoices")
     .select("transaction_id")
     .eq("user_id", user.id)
     .eq("invoice_id", id)
     .limit(1);
+  if (bankLinksErr) {
+    console.error("[MONEY-GUARD-CLOSED] bank-link check failed — refusing to archive", { invoiceId: id, userId: user.id, error: bankLinksErr.message });
+    return NextResponse.json(
+      {
+        error: "money_check_failed",
+        detail: "We konden nu niet controleren of er een betaling aan deze factuur hangt. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  }
   if ((bankLinks ?? []).length > 0) {
     return NextResponse.json(
       { error: "bank_linked", detail: "Er is een banktransactie aan deze factuur gekoppeld — ontkoppel die eerst op de Bank-pagina." },
@@ -463,6 +505,12 @@ export async function DELETE(
   // label ontbreekt — niet dat de knop stuk is.
   const archiveNow = new Date().toISOString();
   const basePatch: InvoiceUpdate = { status: "archived", updated_at: archiveNow };
+  // [MONEY-GUARD-CLOSED] The WHERE clause re-asserts the money gate too, not just the status.
+  // `.in('status', …)` keeps a 'paid' row out, but a PARTLY paid invoice sits in 'received' with
+  // amount_paid > 0 and walked straight through it — the read above was the only thing stopping
+  // it, and a read can be seconds stale (or, until a moment ago, failed). Re-asserting it in the
+  // write is the same discipline /api/invoice/[id]/archive uses: a check that is not in the WHERE
+  // clause is a check that can be raced.
   const archiveInvoice = (patch: InvoiceUpdate) =>
     supabase
       .from("invoices")
@@ -471,6 +519,9 @@ export async function DELETE(
       .eq("receiver_id", user.id)
       .eq("direction", "incoming")
       .in("status", ["processing", "received"])
+      // 0.005 = the same cent of slack hasSettledMoney uses (invoice-removal.ts), so the SQL gate
+      // and the pure rule can never disagree about what "niets betaald" means.
+      .or("amount_paid.is.null,amount_paid.lte.0.005")
       .select("id");
 
   let { data: archData, error } = await archiveInvoice({
