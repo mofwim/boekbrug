@@ -37,14 +37,32 @@ export async function applyLearnedBankCategories(args: {
   const { pipeline, userId } = args;
 
   // The learned memory: counterpart_key → category, taught by every manual categorization.
-  const { data: mem } = await pipeline
-    .from("counterpart_memory")
-    .select("counterpart_key, category")
-    .eq("user_id", userId);
-  const memMap = new Map<string, string>();
-  for (const m of (mem ?? []) as { counterpart_key: string; category: string }[]) {
-    memMap.set(m.counterpart_key, m.category);
+  //
+  // [MEMORY-PAGINATE] Paged past the silent ~1000-row cap, with a stable id order. This table has
+  // one row per counterpart the owner ever answered for and only grows, so a shop passes a
+  // thousand distinct parties over a few years — and this whole function exists to spend that
+  // memory. A truncated map means the counterparts past the cap are never recognised, so their
+  // lines are never auto-coded from ANY entry point (import, cron, /bank load) and keep landing
+  // on the categorisation screen as work the owner has already done once. Everything below only
+  // ever writes a CONFIDENT suggestion, so the effect was pure silent loss, never a wrong code.
+  let memRows: { counterpart_key: string; category: string }[] = [];
+  try {
+    memRows = await fetchAllRows((from, to) =>
+      pipeline
+        .from("counterpart_memory")
+        .select("counterpart_key, category")
+        .eq("user_id", userId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    // Best-effort, as before: no memory means nothing is confident, so this pass codes nothing —
+    // the honest outcome. It must never break the import or the cron that calls it.
+    console.error("[MEMORY-PAGINATE] counterpart memory read failed — auto-categorize codes nothing this run", e);
+    return [];
   }
+  const memMap = new Map<string, string>();
+  for (const m of memRows) memMap.set(m.counterpart_key, m.category);
 
   // Uncategorized, not-yet-linked bank lines (paginated past the 1000-row cap — a big first import
   // can exceed it, and a silently-skipped tail would leave money uncoded with no signal).
