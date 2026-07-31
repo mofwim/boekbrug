@@ -21,7 +21,9 @@ import type { ProfileRow, NotificationRow } from '@/types/rows'
 // De header toont alleen naam, bedrijf, e-mail en rol. Door dát te vragen in plaats van een
 // volledige ProfileRow mogen aanroepers een gerichte select doen zonder te liegen over wat
 // ze hebben opgehaald.
-type HeaderProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email' | 'role'>
+// Geëxporteerd, want dit is de vorm die de home-keten al nodig had: de header werkte hier al
+// mee, terwijl dashboard/page.tsx `select('*')` deed en de HELE profielrij doorgaf.
+export type HeaderProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email' | 'role'>
 
 // ── NavButton ─────────────────────────────────────────────────────────────────
 

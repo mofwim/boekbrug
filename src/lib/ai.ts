@@ -4,6 +4,42 @@
 // Central Claude API client. Import from here only.
 // Do not call Claude API directly from any other file.
 //
+// ── SERVER-ONLY, EN NU OOK AFGEDWONGEN ──
+// De regel hierboven stond er al, maar niets hield hem tegen. Twee 'use client'-componenten
+// importeerden dit bestand toch, en het gevolg was onzichtbaar in plaats van luid:
+//
+//   · AccountantHome riep composeDraftEmail aan vanuit de browser. callClaude doet daar
+//     fetch('https://api.anthropic.com') met process.env.ANTHROPIC_API_KEY — een variabele die
+//     in een clientbundel niet bestaat (Next vervangt alleen NEXT_PUBLIC_*). De sleutel was dus
+//     leeg, en Anthropic staat sowieso geen browser-origin toe. De AI-assistent van de
+//     boekhouder kón nooit werken en zei "Probeer het opnieuw", wat niets oploste.
+//   · ZzpDashboard importeerde generateInvoiceFromPrompt voor een paneel dat al in commentaar
+//     stond — dus onbereikbare code, waarvoor élke bezoeker wel de hele AI-laag downloadde.
+//
+// Er lekte geen sleutel: niet-publieke variabelen blijven een runtime-lookup en zijn in de
+// browser undefined; er stond geen enkele sk-ant-waarde in de bundel. Maar api.anthropic.com en
+// alle systeemprompts stonden er wél in.
+//
+// Vandaar de grendel hieronder. Wie dit bestand voortaan vanuit de browser laadt, krijgt
+// meteen een luide fout in plaats van een scherm dat stil niets doet. Wat de browser nodig
+// heeft, hoort via een route te lopen; zie /api/ai/draft-email voor de vorm.
+//
+// NIET het `server-only`-pakket, hoewel de Next-documentatie dat aanraadt (data-security.md
+// §"Preventing client-side execution of server-only code"), en ik het eerst zo had gedaan. Dat
+// pakket gooit bij ELKE import buiten een react-server-omgeving, en dus ook onder
+// `tsx --test` — waarmee deze repo zeven testbestanden draait die pure functies uit dit
+// bestand halen (rescue-logica, btw-sommen, confidence-banden). Het brak ze alle zeven. De
+// bouwfout die het oplevert is netter dan een runtime-fout, maar niet ten koste van de tests
+// die de rekenkern bewaken. Deze controle doet hetzelfde werk waar het telt en is onzichtbaar
+// in Node.
+if (typeof window !== 'undefined') {
+  throw new Error(
+    '[AI] src/lib/ai.ts is serverkant. Importeer het niet vanuit een client component — ' +
+    'de Claude-sleutel bestaat daar niet en api.anthropic.com weigert een browser-origin. ' +
+    'Roep het aan via een API-route, zoals /api/ai/draft-email dat doet.'
+  );
+}
+//
 // Usage examples:
 //
 // BOEK-011 Email Integration:

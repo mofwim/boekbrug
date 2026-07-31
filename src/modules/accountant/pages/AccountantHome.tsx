@@ -18,7 +18,6 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { rowMatchesQuery } from '@/lib/search'
 import { DashboardHeader } from '@/app/dashboard/_shared'
-import { composeDraftEmail } from '@/lib/ai'
 // [DRAFT-QUEUE-HIDDEN] Draft Queue is hidden from the UI for now (decision deferred).
 // Component + /api/draft-queue + the draft_queue table are intentionally kept intact;
 // only the render below is disabled. Re-enable by restoring the import and the
@@ -175,14 +174,32 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
     setAiLoading(true)
     setAiResult(null)
     try {
-      const result = await composeDraftEmail(
-        profile.full_name || profile.company_name || 'Boekhouder',
-        aiPrompt,
-        [aiPrompt]
-      )
-      setAiResult(result)
+      // [AI-SERVERKANT] Via onze eigen route. Hier stond een RECHTSTREEKSE aanroep van
+      // composeDraftEmail — een functie die intern fetch('https://api.anthropic.com') doet met
+      // process.env.ANTHROPIC_API_KEY. In een browser bestaat die variabele niet (Next vervangt
+      // alleen NEXT_PUBLIC_*), dus ging het verzoek de deur uit met een LEGE sleutel — en zelfs
+      // met sleutel zou het stranden, want Anthropic staat geen browser-origin toe.
+      //
+      // Deze assistent kón dus nooit werken. De boekhouder typte zijn vraag, klikte, en las
+      // "AI niet beschikbaar — Probeer het opnieuw." Dat advies was onjuist: opnieuw proberen
+      // veranderde niets, want er was niets tijdelijks aan.
+      const res = await fetch('/api/ai/draft-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPrompt }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        // Zeg wat er aan de hand is. 429 is het enige geval waarin wachten wél helpt.
+        setAiResult({
+          subject: res.status === 429 ? 'Even te veel aanvragen' : 'Het lukte niet',
+          body: json?.error ?? 'Probeer het zo opnieuw.',
+        })
+        return
+      }
+      setAiResult(json)
     } catch {
-      setAiResult({ subject: 'AI niet beschikbaar', body: 'Probeer het opnieuw.' })
+      setAiResult({ subject: 'Geen verbinding', body: 'Controleer je internet en probeer opnieuw.' })
     } finally {
       setAiLoading(false)
     }
