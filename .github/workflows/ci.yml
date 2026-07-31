@@ -1,10 +1,18 @@
 # [CI] BoekBrug continuous integration.
-# Runs the same three hard gates the project uses locally before every merge:
+# Runs the same hard gates the project uses locally before every merge:
 #   1. `tsc --noEmit`  — full TypeScript type-check.
 #   2. `tsx --test`    — the unit-test suite: src/lib plus src/content/legal.
 #   3. `next build`    — the production build, WITHOUT any secrets.
+#   4. the public-surface smoke test — the first gate that SERVES A REQUEST.
 # Lint is intentionally NOT a blocking gate here (the repo carries known
 # pre-existing eslint findings).
+#
+# [PUBLIC-SMOKE] Why a fourth gate. The first three are all STATIC: none of them ever starts the
+# app. They therefore share one blind spot, and it is not theoretical — /eerlijk-gebruik was
+# written, type-checked, built, prerendered, linked from the footer of every public page and listed
+# in sitemap.xml, while the auth guard redirected every visitor and every crawler to /login. A page
+# that is correct and a guard that is correct can still be a broken pair, and only a request can
+# tell you. Gate 4 asks the server.
 #
 # [BUILD-NO-SECRETS] Gate 3 is new, and it was impossible until the build stopped needing the
 # production keys. Five sign-in pages constructed a Supabase browser client during render, and
@@ -33,7 +41,7 @@ jobs:
     # De naam noemt alle drie de poorten. Hij zei "Type-check & tests" terwijl de build er sinds
     # kort bij hoort, en een groene check die zijn eigen dekking verkeerd opgeeft is precies het
     # soort halve waarheid dat de rest van deze commits opruimt.
-    name: Type-check, tests & build
+    name: Type-check, tests, build & smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -63,3 +71,19 @@ jobs:
       # adding the key here, or the gate quietly stops proving anything.
       - name: Production build (no secrets)
         run: npx next build
+
+      # [PUBLIC-SMOKE] Gate 4 — the public surface, requested as a logged-out visitor.
+      #
+      # Runs against the build from the step above (playwright.config.ts starts `next start`), so
+      # it costs a server boot and a few dozen HEAD-sized requests, nothing more.
+      #
+      # NO `playwright install`: every assertion in tests/public-surface.spec.ts is a status code
+      # fetched through the `request` fixture, so no browser binary is launched. That is
+      # deliberate — a gate that begins by downloading Chromium is a gate people start skipping.
+      # (tests/combine-images-pdf.spec.ts DOES need a browser; it is not part of this step. Adding
+      # it means adding the install step with it, which is a separate, considered decision.)
+      #
+      # The dummy Supabase values live in playwright.config.ts, next to the explanation of why they
+      # are fake — the point of this gate is that the public surface needs no real backend.
+      - name: Public-surface smoke test
+        run: npx playwright test tests/public-surface.spec.ts

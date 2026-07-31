@@ -3,11 +3,27 @@
 > Saved on request ("احفظ طابور العمل لنعود اليه لاحقاً"). Return trigger: the user says
 > "عد الى الطابور" / "back to the queue". This is the durable copy of the in-session task list.
 
-## ⚠️ ACTION REQUIRED FROM THE OWNER — apply these migrations
-These are written but NOT yet applied to the database. Features run safely without them,
-but the new writes error until the tables/columns exist.
-1. `supabase/migrations/circle_integrity_and_indexes.sql` (content_hash / shared / needs_reauth / FK indexes)
-2. `supabase/migrations/ledger_daily.sql` (PIN/cash grootboek cross-check table — needed before a ledger upload can save)
+## ⚠️ ~~ACTION REQUIRED FROM THE OWNER — apply these migrations~~ — ACHTERHAALD (26 juli)
+
+> **Lees dit niet als een openstaande taak.** Dit bestand is een SNAPSHOT van een takenlijst uit
+> een sessie op 26 juli, geen meting. Op **29 juli** is de echte database uitgelezen met
+> `docs/WELKE_MIGRATIES_STAAN_ER.sql`, en dat resultaat staat in `docs/JOUW_LIJST.md` §1
+> ("de migraties zijn af" — *"niet gemeld, maar gemeten"*). Die meting is jonger dan deze lijst en
+> wint dus. Er stond volgens die meting nog één migratie open, en het is een pure snelheidsindex
+> (`search_engine_clients_kvk_city.sql`): geen schema-, data- of gedragswijziging.
+>
+> De twee hieronder blijven staan als geschiedenis, doorgestreept, omdat weggummen de volgende
+> lezer laat denken dat er nooit iets openstond. **Wat je wél doet als je twijfelt:** draai
+> `docs/WELKE_MIGRATIES_STAAN_ER.sql` opnieuw — het is één query en het antwoord is de waarheid,
+> niet dit bestand.
+>
+> Eén reden om dat te doen ook als je denkt dat het goed zit: `ledger_daily` wordt SOFT gelezen
+> (`compute-result-range.ts`, `[LEDGER-READ]`). Ontbreekt die tabel, dan schreeuwt er niets — het
+> rapport zet alleen `pinLedgerAvailable: false` en de PIN-kruiscontrole is stilletjes zwakker in
+> elk kwartaal. Precies het soort ontbreken dat je alleen vindt door te kijken.
+
+1. ~~`supabase/migrations/circle_integrity_and_indexes.sql`~~ (content_hash / shared / needs_reauth / FK indexes)
+2. ~~`supabase/migrations/ledger_daily.sql`~~ (PIN/cash grootboek cross-check table — needed before a ledger upload can save)
 
 ## ✅ Done + verified + pushed this session (branch `claude/boekbrug-file-architecture-4b8s6o`)
 - **HIGH money fix — covered-day card-payout double-count** (3 adversarial review rounds → SHIP). Budget-bounded suppression (pin_amount), shared `toResultBankTx` mapper across the 4 money surfaces, SETTLE_LAG=5, cardBudgetBound. 76 tests.

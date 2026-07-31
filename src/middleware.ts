@@ -5,68 +5,63 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// Login-free public lead-gen tools — reachable by anyone, no session required:
-// /factuur-maken (invoice generator), /btw-berekenen (VAT calculator),
-// /kilometervergoeding (mileage), /uurtarief-berekenen (ZZP hourly rate).
-const PUBLIC_PATHS = [
-  "/login",
-  "/register",
-  "/wachtwoord-vergeten",
-  "/wachtwoord-herstellen",
-  "/invite",
-  "/pay",
-  "/factuur-maken",
-  "/bankafschrift-naar-excel",
-  "/btw-berekenen",
-  "/kilometervergoeding",
-  "/uurtarief-berekenen",
-  "/btw-aangifte-berekenen",
-  "/netto-inkomen-zzp",
-  "/factuur-scannen",
-  "/tools",
-  // [EN-TOOLS] English versions of the public calculators, targeting expat /
-  // English search demand ("Dutch VAT calculator", etc). Same tool engines,
-  // English UI — must be reachable without a session, like their NL originals.
-  "/en/btw-berekenen",
-  "/en/netto-inkomen-zzp",
-  "/en/uurtarief-berekenen",
-  "/en/kilometervergoeding",
-  "/en/btw-aangifte-berekenen",
-  // [BLOG] The public blog (NL default + EN under /en/blog) must be reachable
-  // without a session — logged-out visitors AND search crawlers, otherwise the
-  // auth guard redirects them to /login and the SEO blog never gets indexed.
-  "/blog",
-  "/en/blog",
-  "/ar/blog",
-  "/tr/blog",
-  "/privacy",
-  // [BILLING] De prijzenpagina is in de eerste plaats een marketingpagina: een uitgelogde
-  // bezoeker (en een crawler) moet kunnen zien wat BoekBrug kost zonder account. Veilig
-  // tegen de startsWith()-regel hieronder: geen andere route begint met "/prijzen".
-  "/prijzen",
-  "/en/prijzen",
-  "/ar/prijzen",
-  "/tr/prijzen",
-  // [KLUIS] De voordeur voor mensen die geen boekhoudprogramma zoeken maar een oplossing voor
-  // hun bewaarplicht. Moet uitgelogd leesbaar zijn — dat is het hele punt van de pagina.
-  "/bewaarplicht",
-  "/voorwaarden",
-  "/cookies",
-];
+// [PUBLIC-SURFACE] The public path list moved to src/lib/public-paths.ts so the smoke test can
+// assert against the SAME array this guard enforces. It was unreachable from anywhere else, which
+// is how /eerlijk-gebruik ended up in the footer of every public page, in sitemap.xml and in the
+// terms as "volledig openbaar" while this guard redirected every logged-out visitor to /login.
+import { isPublic } from "@/lib/public-paths";
 
-function isPublic(pathname: string): boolean {
-  // The homepage is a public landing page. Match it EXACTLY — never via the
-  // prefix rule below, or "/" would make every route public.
-  if (pathname === "/") return true;
-  return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+/**
+ * [BESTEMMING] The login URL for a request, carrying where the visitor was going.
+ *
+ * This used to be inlined at the single redirect below; it is a function now because the
+ * env-degrade branch above sends people to the same place and must send them there the same way —
+ * a second, slightly different copy is how "?redirect=" quietly stops working on one of the paths.
+ *
+ * pathname + search, so a quarter filter or a search term travels along. The value comes from our
+ * own request, so it always starts with a single "/" — and /login re-checks it with safeRedirect
+ * regardless.
+ */
+function loginUrlFor(request: NextRequest): URL {
+  const login = new URL("/login", request.url);
+  const vandaan = request.nextUrl.pathname + request.nextUrl.search;
+  // "/" is de openbare homepage en geen bestemming om naar terug te keren.
+  if (vandaan !== "/") login.searchParams.set("redirect", vandaan);
+  return login;
 }
 
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });
 
+  // [ENV-DEGRADE] The two keys were read with `!`, which is a promise to TypeScript and nothing at
+  // all at runtime: with either one missing, createServerClient throws HERE — in middleware, before
+  // any route handler runs. And the matcher deliberately does NOT exclude /api (see [SESSION-REFRESH]
+  // at the bottom), so ONE typo in a Vercel environment variable takes down every page and every
+  // API route at once, including:
+  //   · /privacy and /voorwaarden — which AVG art. 13 requires to stay reachable;
+  //   · /api/health — the diagnostic built for exactly this outage, dead in the outage.
+  // A missing key is not "the session is invalid", it is "we cannot check any session". So degrade
+  // to the honest version of that: no session, public pages and API routes still served, everything
+  // else sent to the login it would have been sent to anyway. Loud in the logs, never a 500.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("[ENV-DEGRADE] Supabase env vars missing — serving without a session check", {
+      hasUrl: !!supabaseUrl,
+      hasAnonKey: !!supabaseAnonKey,
+      path: request.nextUrl.pathname,
+    });
+    // /api/* answers for itself (its handlers return their own 401/503 with a body a caller can
+    // read); a public page renders. Both keep working while the deployment is repaired.
+    if (request.nextUrl.pathname.startsWith("/api") || isPublic(request.nextUrl.pathname)) {
+      return response;
+    }
+    return NextResponse.redirect(loginUrlFor(request));
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll: () => request.cookies.getAll(),
@@ -92,25 +87,13 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Not logged in → send to login (except public paths)
+  // Not logged in → send to login (except public paths).
   //
-  // [BESTEMMING] Mét waar hij heen wilde. Deze regel stuurde naar een kaal /login, dus na het
-  // inloggen kwam iedereen op /dashboard uit — ook wie halverwege zijn werk zat. Een sessie
-  // verloopt (of een tabblad staat een nacht open), je klikt op een factuur, en je bent je plek
-  // kwijt: terugklikken helpt niet, want daar staat de inlogpagina.
-  //
-  // Het gereedschap lag er al: /login leest ?redirect= en /invite gebruikt het. Alleen de
-  // grendel die de meeste mensen tegenkomt deed er niets mee.
-  //
-  // pathname + search, zodat een kwartaalfilter of een zoekterm ook meegaat. De waarde komt uit
-  // ons eigen verzoek, dus hij begint altijd met één "/" — en /login controleert hem hoe dan ook
-  // nog een keer met safeRedirect.
+  // [BESTEMMING] Mét waar hij heen wilde: deze regel stuurde naar een kaal /login, dus na het
+  // inloggen kwam iedereen op /dashboard uit — ook wie halverwege zijn werk zat. Hoe dat wordt
+  // meegegeven staat bij loginUrlFor hierboven, zodat er één versie van die regel bestaat.
   if (!user && !isPublic(request.nextUrl.pathname)) {
-    const login = new URL("/login", request.url);
-    const vandaan = request.nextUrl.pathname + request.nextUrl.search;
-    // "/" is de openbare homepage en geen bestemming om naar terug te keren.
-    if (vandaan !== "/") login.searchParams.set("redirect", vandaan);
-    return NextResponse.redirect(login);
+    return NextResponse.redirect(loginUrlFor(request));
   }
 
   // Logged in, on dashboard → check onboarding

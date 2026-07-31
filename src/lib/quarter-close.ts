@@ -61,7 +61,12 @@ export function buildQuarterCloseNotice(
   // is precies de zin waarop wij worden aangesproken als er iets ontbrak.
   const ownerTitle = `${quarterLabel} staat klaar`;
   const ownerBody = clean
-    ? `Je facturen voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Controleer je cijfers op het kwartaaloverzicht en dien je BTW-aangifte in.`
+    // [ONE-FILING-DOOR] "…en dien je BTW-aangifte in" stond hier terwijl de melding naar het
+    // kwartaaloverzicht linkt — en indienen gebeurt sinds de samenvoeging alleen nog op Waarheid.
+    // De link blijft waar hij is (het eerste werkwoord is "controleer", en de cijfers, de export en
+    // het sluitpakket staan daar); alleen de zin wijst nu naar het scherm dat de handeling
+    // werkelijk heeft, in plaats van hem te beloven op de pagina waar je landt.
+    ? `Je facturen voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Controleer je cijfers op het kwartaaloverzicht en markeer het kwartaal daarna als ingediend op Waarheid.`
     : `${quarterLabel} heeft nog ${gapCount} aandachtspunt(en) voordat je kunt indienen: ${summary.warnings
         .map((w) => w.message)
         .slice(0, 3)
