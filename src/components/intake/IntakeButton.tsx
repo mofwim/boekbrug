@@ -50,7 +50,9 @@ export default function IntakeButton({
   // maar onbruikbaar (hij staat in geen enkele gewone lijst), en bij een identiek bestand is
   // terugzetten de enige weg vooruit — de byte-hash-poort is met opzet niet te forceren.
   const [dupModal, setDupModal] = useState<
-    { message: string; originalId?: string; canForce?: boolean; archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }; file?: File } | null
+    // `source` rides along so "Toch toevoegen" re-submits with the SAME provenance it was
+    // first sent with — a forced retry of a picked PDF must not turn into a "camera" row.
+    { message: string; originalId?: string; canForce?: boolean; archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }; file?: File; source?: 'camera' | 'upload' } | null
   >(null)
   const [restoring, setRestoring] = useState(false)
   // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
@@ -101,15 +103,20 @@ export default function IntakeButton({
 
   function addMpPages(fl: FileList | null) {
     if (!fl || fl.length === 0) return
+    // [MP-FILTER] Same set the upload page accepts — bmp/tiff belong here too: a flatbed scan
+    // often arrives as .bmp/.tif with an EMPTY mime, and this filter silently dropped it while
+    // /dashboard/upload took it. Two surfaces, one answer to "is this a page?".
     const imgs = Array.from(fl).filter(
-      (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(f.name),
+      (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name),
     )
     if (imgs.length === 0) { showToast('Kies foto’s van de pagina’s'); return }
-    setMpPages((prev) => {
-      const merged = [...prev, ...imgs]
-      if (merged.length > MAX_PAGES) { showToast(`Maximaal ${MAX_PAGES} pagina’s per factuur`); return merged.slice(0, MAX_PAGES) }
-      return merged
-    })
+    // [MP-PURE-UPDATER] Decide BEFORE updating state. showToast used to fire from inside the
+    // setMpPages updater — a reducer must be pure, and React may run it twice (StrictMode /
+    // concurrent rendering), which showed the cap warning twice for one pick.
+    const merged = [...mpPages, ...imgs]
+    const capped = merged.length > MAX_PAGES
+    setMpPages(capped ? merged.slice(0, MAX_PAGES) : merged)
+    if (capped) showToast(`Maximaal ${MAX_PAGES} pagina’s per factuur`)
   }
   function closeMultiPage() { setMpMode(false); setMpPages([]) }
   async function combineAndUpload() {
@@ -127,8 +134,10 @@ export default function IntakeButton({
         setMpMode(false); setMpPages([])
       }
     } catch (e) {
-      // Combine failure names the failing page; keep the other pages for a quick redo.
-      showToast(e instanceof Error && /Pagina/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe')
+      // Combine failure names either the failing page ("Pagina 2 kon niet…") or the reason the
+      // set cannot fit one upload ("Deze 20 pagina's passen samen niet…"). Both are actionable
+      // and specific, so surface them as-is; only a truly unknown error gets the generic line.
+      showToast(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe')
     } finally {
       setCombining(false)
     }
@@ -136,7 +145,7 @@ export default function IntakeButton({
 
   // Returns the outcome so the multi-page flow knows whether to KEEP the collected pages
   // (a transient 'error') or clear them ('ok' | 'duplicate' — no point retrying the same pages).
-  async function handleFile(file: File, force = false): Promise<'ok' | 'duplicate' | 'error'> {
+  async function handleFile(file: File, force = false, source: 'camera' | 'upload' = 'camera'): Promise<'ok' | 'duplicate' | 'error'> {
     if (busy) return 'error'
     setBusy(true)
     setOpen(false)
@@ -144,12 +153,30 @@ export default function IntakeButton({
       // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
       // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
       const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
+      // [SIZE-GUARD] The server refuses anything over the same shared cap. Say so HERE, before
+      // pushing megabytes over a mobile link only to be rejected — and say WHY, which the
+      // generic failure toast could not. Images were already shrunk above, so in practice this
+      // is a very large PDF; naming that is what makes the message actionable.
+      // /dashboard/upload has enforced this from the start; this surface never did.
+      if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
+        showToast(`Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`)
+        return 'error'
+      }
       const fd = new FormData()
       fd.append('file', uploadFile)
       // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
       if (force) fd.append('force', 'true')
+      // [INTAKE-SOURCE] Where this file actually came from. Every intake used to be recorded as
+      // 'camera', so a PDF picked from Files — or a combined multi-page scan — claimed to be a
+      // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
+      // CHECK constraint; the server validates and falls back to 'camera'.
+      fd.append('source', source)
       const res = await fetch('/api/intake', { method: 'POST', body: fd })
-      const data: IntakeResult = await res.json()
+      // [JSON-GUARD] A non-JSON error body (a platform 413, a proxy 502, an HTML error page)
+      // made res.json() THROW, which fell through to the generic catch below and replaced the
+      // real reason with "probeer opnieuw". Degrade to an empty object instead, exactly as
+      // /dashboard/upload does, so the status-code branches below still run.
+      const data: IntakeResult = await res.json().catch(() => ({} as IntakeResult))
 
       if (!res.ok) {
         // A duplicate (409) is a decision point — show a persistent modal, not a
@@ -170,7 +197,7 @@ export default function IntakeButton({
           // carries `existing` (the original's document), and routing on that first sent it
           // to the file-location modal — hiding the "Toch toevoegen" override and
           // mislabelling a genuinely different file as "al toegevoegd".
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file })
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
@@ -184,7 +211,7 @@ export default function IntakeButton({
           })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file })
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else {
           showToast(data.error || 'Toevoegen mislukt')
@@ -353,14 +380,20 @@ export default function IntakeButton({
         accept="image/*"
         capture="environment"
         style={{ display: 'none' }}
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = '' }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f, false, 'camera'); e.currentTarget.value = '' }}
       />
+      {/* [INTAKE-ACCEPT] The same set /dashboard/upload offers, because /api/intake handles the
+          same set: a kassa Z-report / grootboek export (.xls/.xlsx/.csv → handleSpreadsheet) and
+          a bank CSV export (ING/Rabo/bunq → the bank pipeline). Those were missing here, so this
+          sheet promised "PDF, afbeelding of bankafschrift" while the most common bankafschrift —
+          a CSV export — could not even be selected, and a shop could not add its monthly till
+          file from the button it is told to use. */}
       <input
         ref={fileRef}
         type="file"
-        accept="image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt"
+        accept="image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt,.940,.xls,.xlsx,.csv"
         style={{ display: 'none' }}
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = '' }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f, false, 'upload'); e.currentTarget.value = '' }}
       />
       {/* [MULTI-PAGE] pages of ONE invoice — camera adds one at a time, file picker several. */}
       <input
@@ -377,7 +410,12 @@ export default function IntakeButton({
       {/* Choice sheet */}
       {open && (
         <div
-          onClick={() => { if (!combining) { setOpen(false); closeMultiPage() } }}
+          // [MP-KEEP-PAGES] A tap on the backdrop closes the sheet, but it must NOT throw away
+          // pages the owner already photographed: closeMultiPage() empties mpPages, so one stray
+          // tap next to the sheet silently destroyed up to 20 photos of a paper invoice, with no
+          // warning and no undo. With pages in the tray the backdrop is inert — the explicit
+          // "Terug" button inside the sheet is the way out, and it is right there.
+          onClick={() => { if (!combining && mpPages.length === 0) { setOpen(false); closeMultiPage() } }}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
         >
           <div onClick={(e) => e.stopPropagation()} style={{ background: M3.surface, borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT }}>
@@ -525,7 +563,7 @@ export default function IntakeButton({
                 anyway — re-submits with force=true; the exact-same-file gate still holds. */}
             {dupModal.canForce && dupModal.file && (
               <button
-                onClick={() => { const f = dupModal.file!; setDupModal(null); handleFile(f, true) }}
+                onClick={() => { const f = dupModal.file!; const src = dupModal.source ?? 'camera'; setDupModal(null); handleFile(f, true, src) }}
                 style={{ width: '100%', background: 'transparent', color: '#7C5800', borderRadius: R.full, padding: '13px', border: '1px solid #E0C48A', cursor: 'pointer', fontFamily: FONT, fontSize: 14.5, fontWeight: 600, marginBottom: 10 }}
               >
                 Toch toevoegen — dit is een andere factuur
@@ -638,6 +676,10 @@ export interface IntakeResult {
   // itself is unchanged; this only lets the client name the situation and offer "Terugzetten".
   archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }
   suggest_paid?: boolean
+  // [MULTI-INVOICE] Present when ONE uploaded file appeared to hold several different invoices.
+  // Only one of them was read; `numbers` names what is still missing. Never a block — the
+  // invoice imports, held out of auto-booking, and `message` already says what to do.
+  multipleInvoices?: { numbers: string[] }
   // [INTAKE-DEST-MODAL] present for destination 'document' → deep-link + highlight
   document_id?: string
   folder_id?: string | null
