@@ -25,6 +25,7 @@ import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report";
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,35 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // [REPROCESS] Het plafond dat deze route als enige zware handeling niet had. Zie de toelichting bij
+  // RATE_LIMITS.DOCUMENTS_REPROCESS: één klik haalt tot 600 bestanden uit Storage en leest 250 PDF's.
+  // Er komt geen Claude aan te pas, dus geen van de AI-hekken raakte hem ooit.
+  const rl = await checkRateLimit({
+    userId: user.id,
+    endpoint: "/api/documents/reprocess",
+    ...RATE_LIMITS.DOCUMENTS_REPROCESS,
+  });
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   // The owner's stored documents, oldest first (so a partial cap keeps the earliest history).
+  //
+  // [REPROCESS-ORDER] "Oudste eerst" stond hier al als bedoeling, maar de sortering was
+  // `order("id")` — en documents.id is een uuid (gen_random_uuid()). Dat is geen tijdlijn maar een
+  // willekeurige volgorde die alleen stabiel is. Dat is hier niet cosmetisch: bookTurnoverRows doet
+  // een upsert op (user_id, turnover_date), dus voor een dag die in twee bestanden voorkomt WINT HET
+  // BESTAND DAT ALS LAATSTE LANGSKOMT. Met een uuid-volgorde was dat willekeurig: uploadde de eigenaar
+  // een gecorrigeerd kassabestand ná het originele, dan kon het ORIGINEEL alsnog als laatste
+  // langskomen en zijn correctie overschrijven — stil, want de knop meldt gewoon "geboekt".
+  //
+  // Op created_at is de belofte onder de knop ("corrigeert, telt nooit dubbel") pas waar: het
+  // laatst geüploade bestand is ook het laatst verwerkte. id blijft erbij als tiebreaker, zodat de
+  // volgorde totaal is en fetchAllRows veilig kan pagineren (twee rijen kunnen dezelfde created_at
+  // hebben; dan zou een pagina een rij kunnen overslaan of dubbel teruggeven).
+  //
+  // Wat hiermee NIET is opgelost: een dag die de eigenaar met de hand corrigeerde in Dagomzet wordt
+  // nog steeds overschreven door het bestand. Dat is een ontwerpvraag (wint het papier of de mens?),
+  // geen sorteerfout, en staat los van deze regel.
+  //
   // [NO-RESURRECT] Exclude trashed documents — a kassa/grootboek file the owner moved to the
   // prullenbak must NOT be re-booked into daily_turnover/ledger_daily, which would silently
   // resurrect a turnover day the owner deliberately deleted.
@@ -54,6 +83,7 @@ export async function POST(req: NextRequest) {
       .select("id, file_name, file_url")
       .eq("user_id", user.id)
       .eq("trashed", false)
+      .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, to),
   )) as Array<{ id: string; file_name: string | null; file_url: string }>;

@@ -25,8 +25,25 @@
 // Only when even the tightest tier overflows do we fail — and then with a reason that names the
 // actual problem (too many pages) instead of a bare "Bestand te groot".
 //
-// Pure-ish + deterministic: same inputs → same PDF. No network, no AI. Throws only on a truly
-// undecodable file so the caller can fall back to uploading the images individually.
+// No network, no AI. Throws only on a truly undecodable file so the caller can fall back to
+// uploading the images individually.
+//
+// [COMBINE-NOT-DETERMINISTIC] Hier stond "Pure-ish + deterministic: same inputs → same PDF". Dat is
+// niet waar, en precies andersom: PDFDocument.create() schrijft een CreationDate en een ModDate van
+// NU in de metadata, dus dezelfde foto's twee keer combineren levert ANDERE bytes op. De
+// escalatieladder hierboven maakt dat alleen maar zichtbaarder: welke tier wint hangt af van de
+// gemeten omvang, dus twee pogingen kunnen ook nog eens op een ander plan uitkomen.
+//
+// Waarom dat het opschrijven waard is: de byte-hash-poort in /api/intake vergelijkt precies die
+// bytes. Op elk ander uploadpad onderschept die poort een tweede aanbieding van hetzelfde bestand —
+// op DIT pad onderschept hij per definitie niets. Wat overblijft is de semantische poort (SAFECORE
+// Rule 2), en die valt terug op tier 'none' zodra een papieren factuur géén leesbaar nummer heeft
+// én de leveranciersnaam onbetrouwbaar is. Twee keer dezelfde papieren factuur fotograferen en
+// samenvoegen kan dus twee facturen opleveren.
+//
+// Bewust NIET "opgelost" met een vaste datum in de metadata: dat maakt de hash stabiel door een
+// onwaarheid te schrijven in een document dat zeven jaar bewaard moet blijven. Wil je hier echt een
+// bytes-poort, dan hoort die op de BRONFOTO'S te rusten, niet op de PDF die eruit rolt.
 
 import { PDFDocument, type PDFImage } from "pdf-lib";
 // [INTAKE-IMG-NORMALIZE] jpg/png sniff + canvas → JPEG re-encode live in one shared client
