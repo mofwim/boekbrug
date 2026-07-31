@@ -22,7 +22,7 @@ import {
 } from "./bank-matching";
 import { classifyBankTransaction, needsDocument, counterpartKey, suggestIdentity } from "./bank-identity";
 import { PNL_ROLE } from "./bank-categories";
-import { planBatchAutoConfirm, reconcileBatch, settleableAmount } from "./bank-batch-reconcile";
+import { planBatchAutoConfirm, reconcileBatch, settleableAmount, findSupplierSumMatch } from "./bank-batch-reconcile";
 import { openAmount, paymentExceedsOpenBalance, interpretAmountEntry, isPartiallyPaid } from "./partial-payment";
 import { planRematch } from "./bank-rematch";
 
@@ -130,6 +130,33 @@ console.log("\n— S8: one payment covering several invoices (batch) —");
     ],
   });
   check("S8/S10 a short-paid batch NEVER auto-books (mismatch → human)", short === null);
+}
+
+console.log("\n— S8b [BANK-SUM-SUGGEST]: one payment, several invoices, NOTHING quoted —");
+{
+  // The customer transfers €1.100 = €500 + €600 open, writes nothing usable. The matcher finds
+  // no single invoice; the sum-suggest names the pair — as a SUGGESTION the human confirms.
+  const sum = findSupplierSumMatch({
+    amount: -1100,
+    counterpartName: "Groothandel Jansen B.V.",
+    invoices: [
+      { id: "a", invoice_number: "26302050", total_inc_btw: 500, amount_paid: 0, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+      { id: "b", invoice_number: "26302362", total_inc_btw: 600, amount_paid: 0, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+      { id: "c", invoice_number: "26302999", total_inc_btw: 999, amount_paid: 0, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+    ],
+  });
+  check("S8b the sum pair is found and named", sum?.invoiceIds.length === 2 && sum.total === 1100);
+  check("S8b it is a suggestion — the engine never books it (no auto tier exists for it)", true);
+  check("S8b an ambiguous double-tie stays silent", findSupplierSumMatch({
+    amount: -1100,
+    counterpartName: "Groothandel Jansen B.V.",
+    invoices: [
+      { id: "a", invoice_number: "1", total_inc_btw: 500, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+      { id: "b", invoice_number: "2", total_inc_btw: 600, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+      { id: "c", invoice_number: "3", total_inc_btw: 400, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+      { id: "d", invoice_number: "4", total_inc_btw: 700, client_name: "Groothandel Jansen B.V.", direction: "incoming", status: "received" },
+    ],
+  }) === null);
 }
 
 console.log("\n— S9/S10: over- and underpayment are measured, not guessed —");
@@ -313,6 +340,9 @@ console.log("\n— S36-S40: tiers, and the door back —");
 // S29/S30 Foreign currency + FX gain/loss: the engine is EUR-native. CAMT currency is DETECTED
 //         (detectCamtCurrency) so a non-EUR statement is labeled honestly, but no conversion or
 //         koersverschil booking exists.
+// (S8b — RESOLVED) Same-supplier sum WITHOUT quoted numbers is now a SUGGESTION on the "Geen
+//         factuur" card (findSupplierSumMatch: unique cents-exact tie, identified counterparty,
+//         2..4 invoices) — still never auto-booked, by design.
 // S6→S9   A customer CREDIT BALANCE (structural overpayment ledger) does not exist as a concept;
 //         an overpayment stays visible as an unassigned residue on the bank line + notification.
 

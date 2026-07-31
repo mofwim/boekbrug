@@ -246,7 +246,16 @@ export function amountMatches(
   // (sign convention), and its refund is a real bank line of the opposite money direction — a
   // €50 refund (tx ±50) must match a −€50 creditnota. Abs-ing the invoice side is a no-op for a
   // normal (positive) invoice, so this never changes ordinary matching.
-  return Math.abs(Math.abs(txAmount) - Math.abs(invoiceTotal)) <= epsilon;
+  //
+  // [BANK-CENTS-EXACT] Compared in INTEGER CENTS, not raw floats. `|242 − 241.99| <= 0.01` is a
+  // lottery in binary floating point: the subtraction lands a hair above 0.01 for some cent-pairs
+  // (0.010000000000019…) and a hair below for others — the SAME one-cent difference matched or
+  // didn't depending on which euros were involved. Rounding both sides to cents first makes the
+  // documented tolerance mean exactly what it says, deterministically. The tolerance itself is
+  // unchanged policy: OCR/xlsx totals are legitimately a rounding tick off, and within-a-cent
+  // counts as equal everywhere else in the app (CENT_EPSILON, apply_bank_payment's v_eps).
+  const diffCents = Math.abs(Math.round(Math.abs(txAmount) * 100) - Math.round(Math.abs(invoiceTotal) * 100));
+  return diffCents <= Math.round(epsilon * 100);
 }
 
 /** Days between two ISO dates (absolute, NaN-safe → Infinity). */

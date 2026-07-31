@@ -23,6 +23,7 @@ import {
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
+import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
 
@@ -283,6 +284,20 @@ export async function GET() {
   const suggestions = result.matches.map((m) => {
     const txId = m.transaction.transactionId;
     const isLinked = txId != null && partialLink.has(txId);
+    // [BANK-SUM-SUGGEST] A payment that is EXACTLY the sum of 2..4 open invoices from EXACTLY
+    // this counterparty, with nothing quoted, used to render as "Geen factuur" — the one case
+    // where the owner had to reconstruct the arithmetic by hand. Computed only for lines the
+    // matcher found NOTHING for (a candidate list is a better answer), and it is a SUGGESTION:
+    // the UI offers it, every booking still goes through the guarded per-invoice confirm.
+    const sumMatch =
+      m.outcome === "none" && !isLinked
+        ? findSupplierSumMatch({
+            amount: m.transaction.amount,
+            counterpartName: m.transaction.counterpartName,
+            counterpartIban: m.transaction.counterpartIban,
+            invoices: invoices as SupplierSumCandidate[],
+          })
+        : null;
     return {
       transactionId: txId,
       date: m.transaction.date,
@@ -320,6 +335,8 @@ export async function GET() {
       appliedAmount: isLinked ? (appliedByTx.get(txId!) ?? null) : null,
       // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
       explainedByPaid: txId != null && paidExplained.has(txId),
+      // [BANK-SUM-SUGGEST] Unique same-supplier sum tie (or null). Suggestion only — see above.
+      sumMatch,
     };
   });
 

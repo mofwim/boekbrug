@@ -854,5 +854,16 @@ console.log("\n— [BANK-SLOT-RECOVERED] covered numbers answered in the PAID in
   check("nothing paid → nothing covered", coveredNumbersRecovered("2026-045", new Set()).length === 0);
 }
 
+console.log("\n— [BANK-CENTS-EXACT] the one-cent tolerance is deterministic, not a float lottery —");
+{
+  // These two pairs are the SAME one-cent difference; raw float subtraction lands one a hair
+  // above 0.01 and the other a hair below. Both must match now.
+  check("242.00 vs 241.99 matches (used to lose the float lottery)", amountMatches(-242, 241.99, 0.01));
+  check("100.00 vs 99.99 matches (always did)", amountMatches(-100, 99.99, 0.01));
+  check("two cents off is still NOT a match", !amountMatches(-242, 241.98, 0.01));
+  check("exact stays exact", amountMatches(-242, 242, 0.01));
+  check("a wider epsilon still means what it says (0.02 → 2 cents)", amountMatches(-242, 241.98, 0.02));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
