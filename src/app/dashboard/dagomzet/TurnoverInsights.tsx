@@ -40,6 +40,9 @@ export default function TurnoverInsights() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // [COHERENCE-DAGOMZET] "We could not load it" — kept apart from "there is nothing booked",
+  // because on this page those two look identical and mean opposite things.
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -51,8 +54,20 @@ export default function TurnoverInsights() {
         const qs = period ? `?year=${period.year}&quarter=${period.quarter}` : ''
         const res = await fetch(`/api/turnover/analytics${qs}`)
         const json = await res.json()
-        if (!cancelled && res.ok) setData({ label: json.label, year: json.year, quarter: json.quarter, analytics: json.analytics, days: json.days ?? [] })
-      } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
+        if (cancelled) return
+        if (res.ok) {
+          setData({ label: json.label, year: json.year, quarter: json.quarter, analytics: json.analytics, days: json.days ?? [] })
+          setLoadError(false)
+        } else {
+          // [COHERENCE-DAGOMZET] A failed load used to leave `data` null, and this component
+          // returns null on no-data — so the panel silently removed ITSELF from the page. On the
+          // Dagomzet screen the absence of the panel reads as "you have booked no turnover",
+          // which is the one thing it must never say when it simply could not look. It also took
+          // the per-day list with it, i.e. the only way to remove a wrong-date day that is
+          // already feeding the BTW return.
+          setLoadError(true)
+        }
+      } catch { if (!cancelled) setLoadError(true) } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
   }, [period, reloadTick])
@@ -78,9 +93,21 @@ export default function TurnoverInsights() {
   }
 
   // Move between quarters. Anchors on the currently-shown period (server-picked on first load).
+  // Bounded at the quarter we are actually in: turnover cannot be booked in the future (the
+  // import refuses such a date), so walking ▸ past today only produces quarters that must be
+  // empty — each one answering "geen kassa-omzet geboekt", which reads like a finding instead
+  // of a place that does not exist yet.
+  // Amsterdam, not UTC — the boundary this app pins everywhere else. On UTC the first two hours
+  // of a new quarter would still read as the old one and disable ▸ on the quarter the owner is
+  // actually in. (‹ stays open in every case, so a legacy day booked in a far future quarter is
+  // still reachable — and deletable — from the panel that opens on it.)
+  const base = period ?? (data ? { year: data.year, quarter: data.quarter } : null)
+  const nowIso = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const nowQ = { year: Number(nowIso.slice(0, 4)), quarter: Math.floor((Number(nowIso.slice(5, 7)) - 1) / 3) + 1 }
+  const atLatest = !base || base.year > nowQ.year || (base.year === nowQ.year && base.quarter >= nowQ.quarter)
   const shift = (delta: number) => {
-    const base = period ?? (data ? { year: data.year, quarter: data.quarter } : null)
     if (!base) return
+    if (delta > 0 && atLatest) return
     let q = base.quarter + delta, y = base.year
     while (q < 1) { q += 4; y -= 1 }
     while (q > 4) { q -= 4; y += 1 }
@@ -90,6 +117,24 @@ export default function TurnoverInsights() {
   if (loading && !data) return null
   const a = data?.analytics
   const days: DayRow[] = data?.days ?? []
+  // A failed load is announced, never silently rendered as an empty (or absent) panel.
+  if (loadError) {
+    return (
+      <div style={{ marginTop: 24, background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 18px' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: M3.error }}>We konden je geboekte omzet niet laden</div>
+        <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
+          Dit is <strong>niet</strong> hetzelfde als “nog geen omzet geboekt”. Probeer het opnieuw.
+        </div>
+        <button
+          type="button"
+          onClick={() => setReloadTick((t) => t + 1)}
+          style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Opnieuw proberen
+        </button>
+      </div>
+    )
+  }
   // Nothing booked yet AND the owner hasn't navigated → no empty panel at all.
   if (period === null && (!a || a.days === 0)) return null
 
@@ -100,8 +145,8 @@ export default function TurnoverInsights() {
       <button onClick={() => shift(-1)} aria-label="Vorig kwartaal"
         style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface }}>‹</button>
       <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, minWidth: 64, textAlign: 'center' }}>{data?.label ?? '—'}</div>
-      <button onClick={() => shift(1)} aria-label="Volgend kwartaal"
-        style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface }}>›</button>
+      <button onClick={() => shift(1)} disabled={atLatest} aria-label="Volgend kwartaal"
+        style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: atLatest ? 'default' : 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface, opacity: atLatest ? 0.4 : 1 }}>›</button>
     </div>
   )
 

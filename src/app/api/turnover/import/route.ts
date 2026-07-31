@@ -14,13 +14,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
-import { normalizeTurnoverSheet } from "@/lib/turnover-import";
+import {
+  normalizeTurnoverSheet,
+  isRealCalendarDate,
+  turnoverDateOutOfWindow,
+  amsterdamToday,
+} from "@/lib/turnover-import";
 import { detectSheetKind } from "@/lib/detect-file";
 import type { DailyTurnover } from "@/lib/turnover";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// A few years of daily rows in one commit is already far past any real Z-report export.
+const MAX_ROWS = 2000;
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -35,13 +42,38 @@ export async function POST(req: NextRequest) {
     try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
     const rows = Array.isArray(body.rows) ? (body.rows as DailyTurnover[]) : null;
     if (!rows || rows.length === 0) return NextResponse.json({ error: "geen rijen om op te slaan" }, { status: 400 });
+    // A Z-report covers a period, not a lifetime. Refuse a payload no real file produces rather
+    // than push an unbounded upsert at the BTW-authoritative table (bookLedgerRows caps too).
+    if (rows.length > MAX_ROWS) {
+      return NextResponse.json({ error: `te veel rijen in één keer (max ${MAX_ROWS})` }, { status: 400 });
+    }
 
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     const nullableNum = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const today = amsterdamToday();
     const records = [];
     for (const r of rows) {
-      if (!r || typeof r.turnover_date !== "string" || !ISO_DATE.test(r.turnover_date)) {
+      // [DATE-REAL] The shape test alone is not enough: "2026-02-31" matches this regex, and the
+      // turnover_date column is a Postgres `date`, which rejects it and takes the WHOLE upsert
+      // with it — the entire file failing on "kon dagomzet niet opslaan", naming nothing. That is
+      // the same opaque failure [DAGOMZET-DUP-DAY] below was written to end for duplicate days.
+      if (!r || typeof r.turnover_date !== "string" || !ISO_DATE.test(r.turnover_date) || !isRealCalendarDate(r.turnover_date)) {
         return NextResponse.json({ error: `ongeldige datum in een rij: ${String(r?.turnover_date)}` }, { status: 400 });
+      }
+      // [DATE-WINDOW] …and it has to be a day that can exist. A single slipped digit in the year
+      // used to be permanent and nearly invisible: quarter-bounded readers filter the day away,
+      // while /api/cash and /api/daily-truth sum daily_turnover.cash_amount over all time with no
+      // date bound — so it inflated the drawer balance for good. See turnover-import.ts.
+      if (turnoverDateOutOfWindow(r.turnover_date, today)) {
+        return NextResponse.json(
+          {
+            error: "datum_buiten_bereik",
+            detail:
+              `De datum ${r.turnover_date} kan niet kloppen — een omzetdag ligt niet in de toekomst. ` +
+              `Er is niets opgeslagen. Controleer het jaartal in je Z-rapport en importeer opnieuw.`,
+          },
+          { status: 400 },
+        );
       }
       records.push({
         user_id: user.id,
@@ -151,17 +183,31 @@ export async function DELETE(req: NextRequest) {
   if (!date || !ISO_DATE.test(date)) return NextResponse.json({ error: "ongeldige of ontbrekende datum" }, { status: 400 });
 
   // Capture the row first so the audit records exactly what was removed (and a no-op is a clean 404).
-  const { data: existing } = await supabase
+  // The error is READ, not dropped: it used to be ignored, so a failed lookup left `existing` null
+  // and the owner — looking straight at the row in the manage list — was told "geen dagomzet op
+  // deze datum". "We could not check" and "it is not there" are not the same answer.
+  const { data: existing, error: readErr } = await supabase
     .from("daily_turnover").select("turnover_date, total_incl, source")
     .eq("user_id", user.id).eq("turnover_date", date).maybeSingle();
+  if (readErr) {
+    return NextResponse.json(
+      { error: "We konden deze dag nu niet opzoeken. Er is niets verwijderd — probeer het zo meteen opnieuw." },
+      { status: 500 },
+    );
+  }
   if (!existing) return NextResponse.json({ error: "geen dagomzet op deze datum" }, { status: 404 });
 
   const { error } = await supabase
     .from("daily_turnover").delete().eq("user_id", user.id).eq("turnover_date", date);
   if (error) return NextResponse.json({ error: "kon dagomzet niet verwijderen" }, { status: 500 });
 
+  // [DAGOMZET-AUDIT] Its OWN action. Removing a day is a money REVERSAL out of the
+  // BTW-authoritative table, and it was logged as 'turnover.auto_imported' — the same name the
+  // import writes — so the trail called a deletion an import, and the only thing separating them
+  // was a `via` string buried in the JSON. Anyone asking the audit log "which turnover days were
+  // removed, and by whom" got nothing back.
   await logAuditAction({
-    userId: user.id, action: "turnover.auto_imported", entityType: "turnover", entityId: user.id,
+    userId: user.id, action: "turnover.day_removed", entityType: "turnover", entityId: user.id,
     oldValue: { turnover_date: existing.turnover_date, total_incl: existing.total_incl, source: existing.source },
     newValue: { via: "dagomzet_delete", removed_day: date },
     ipAddress: getClientIP(req),

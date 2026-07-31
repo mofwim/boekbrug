@@ -1,7 +1,12 @@
 // [TURNOVER-IMPORT] Pure node test — run: npx tsx src/lib/turnover-import.test.ts
 // Grid + values are the REAL feb.xls (a live store Z-report), so the normalizer is
 // proven against production data, not a mock.
-import { normalizeTurnoverSheet, type Cell } from "./turnover-import";
+import {
+  normalizeTurnoverSheet,
+  isRealCalendarDate,
+  turnoverDateOutOfWindow,
+  type Cell,
+} from "./turnover-import";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -185,6 +190,55 @@ console.log("\n— [TURNOVER-BLANK-GROSS] a day with takings but a blank 'Omzet 
   check("empty day raises NO warning", !warnings.some(w => w.code === "gross_missing_with_payments" && w.row === 1));
   check("day with takings + blank gross raises the warning (not a silent drop)",
     warnings.some(w => w.code === "gross_missing_with_payments"));
+}
+
+console.log("\n— [DATE-REAL] a day that does not exist may never reach the database —");
+{
+  // The month and the day used to be range-checked INDEPENDENTLY, so 31 February produced the
+  // string "2026-02-31": shaped like a date, accepted by the commit route's regex, and rejected
+  // by the Postgres `date` column — which fails the WHOLE upsert on "kon dagomzet niet opslaan",
+  // naming nothing. One bad cell took a month of turnover with it.
+  check("31 February is not a date", !isRealCalendarDate("2026-02-31"));
+  check("31 April is not a date", !isRealCalendarDate("2026-04-31"));
+  check("29 Feb in a common year is not a date", !isRealCalendarDate("2026-02-29"));
+  check("29 Feb in a LEAP year is", isRealCalendarDate("2024-02-29"));
+  check("ordinary days pass", isRealCalendarDate("2026-02-28") && isRealCalendarDate("2026-12-31"));
+  check("month 00 / 13 refused", !isRealCalendarDate("2026-00-10") && !isRealCalendarDate("2026-13-10"));
+  check("day 00 refused", !isRealCalendarDate("2026-03-00"));
+
+  const H: Cell[] = ["Datum", "Omzet incl.", "Netto Omzet", " Base TC 21 %", "Contant", "PIN"];
+  const BAD: Cell[] = ["31-02-2026", 121, 100, 121, 21, 100];
+  const GOOD: Cell[] = ["28-02-2026", 121, 100, 121, 21, 100];
+  const { rows, warnings } = normalizeTurnoverSheet([H, BAD, GOOD]);
+  check("the impossible day is not imported", !rows.some((r) => r.turnover_date.startsWith("2026-02-31")));
+  check("…and the good day still is", rows.some((r) => r.turnover_date === "2026-02-28"));
+  // The row carried real omzet, so dropping it silently would be a lost sales day — the same
+  // thing [TURNOVER-BLANK-GROSS] refuses to do for a missing gross.
+  check("it is NAMED, not silently skipped", warnings.some((w) => w.code === "date_unreadable"));
+  check("the warning quotes the unreadable cell", warnings.some((w) => w.message.includes("31-02-2026")));
+}
+
+console.log("\n— [DATE-WINDOW] a slipped digit in the year is refused, not booked forever —");
+{
+  const TODAY = "2026-07-31";
+  check("today is inside the window", !turnoverDateOutOfWindow("2026-07-31", TODAY));
+  // Tomorrow is allowed on purpose: a device clock or timezone edge can be a day ahead.
+  check("tomorrow is allowed (clock/timezone edge)", !turnoverDateOutOfWindow("2026-08-01", TODAY));
+  check("the day after tomorrow is not", turnoverDateOutOfWindow("2026-08-02", TODAY));
+  check("a slipped year digit (2062) is out", turnoverDateOutOfWindow("2062-07-31", TODAY));
+  check("an Excel-serial mis-parse near 2089 is out", turnoverDateOutOfWindow("2089-01-13", TODAY));
+  check("before 2000 is out", turnoverDateOutOfWindow("1954-10-03", TODAY));
+  check("old but real history stays in", !turnoverDateOutOfWindow("2000-01-01", TODAY));
+  // A month-end boundary must not be off by one.
+  check("31 Dec → 1 Jan crosses the year correctly",
+    !turnoverDateOutOfWindow("2027-01-01", "2026-12-31") && turnoverDateOutOfWindow("2027-01-02", "2026-12-31"));
+
+  const H: Cell[] = ["Datum", "Omzet incl.", "Netto Omzet", " Base TC 21 %", "Contant", "PIN"];
+  const FUTURE: Cell[] = ["31-07-2062", 121, 100, 121, 21, 100];
+  // `today` injected so this test means the same thing in any year it is run.
+  const { warnings } = normalizeTurnoverSheet([H, FUTURE], { today: TODAY });
+  // Shown BEFORE the owner approves, so the commit route's refusal is never a surprise.
+  check("the preview warns about the impossible year", warnings.some((w) => w.code === "date_out_of_window"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

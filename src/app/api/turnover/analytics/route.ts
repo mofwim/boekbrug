@@ -29,7 +29,12 @@ export async function GET(req: NextRequest) {
   let year: number;
   let quarter: 1 | 2 | 3 | 4;
   if (explicitYear || explicitQuarter) {
-    year = Number(explicitYear) || now.getUTCFullYear();
+    // The year is RANGE-checked, not merely coerced. `Number(x) || fallback` let ?year=99999 and
+    // ?year=-5 straight through, and the quarter bounds below are then built into a malformed
+    // date string ("-5-01-01") that Postgres rejects — which, before the error was read, came
+    // back as an empty quarter. Same 2000..2100 window the shared quarterFromParams uses.
+    const y = Number(explicitYear);
+    year = Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : now.getUTCFullYear();
     quarter = ([1, 2, 3, 4].includes(Number(explicitQuarter))
       ? Number(explicitQuarter)
       : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
@@ -55,12 +60,27 @@ export async function GET(req: NextRequest) {
   const endD = new Date(Date.UTC(year, startMonth + 3, 0));
   const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
 
-  const { data: turnoverRows } = await supabase
+  // The error is READ, not dropped. It used to be ignored, and an ignored error here becomes an
+  // empty array → days: 0 → the panel removes itself from the page entirely (TurnoverInsights
+  // returns null on an empty quarter). So a failed read told the owner "you have no turnover" on
+  // the very screen whose job is to show it — and took the per-day list with it, which is the
+  // only way to remove a wrong-date day that is feeding the BTW return. Same rule the Kas page
+  // states outright: never a reassuring figure in place of a failed load.
+  const { data: turnoverRows, error: turnoverErr } = await supabase
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", user.id)
     .gte("turnover_date", start)
     .lte("turnover_date", end);
+  if (turnoverErr) {
+    return NextResponse.json(
+      {
+        error: "turnover_lookup_failed",
+        detail: "We konden je geboekte omzet nu niet laden. Probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  }
 
   const turnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,

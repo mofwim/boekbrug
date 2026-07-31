@@ -26,6 +26,37 @@ export interface NormalizeResult {
   warnings: ImportWarning[];
 }
 
+/**
+ * [DATE-WINDOW] The window a turnover day can possibly fall in. A day of takings cannot lie in
+ * the future, and nothing in this app predates 2000.
+ *
+ * It exists because ONE slipped digit (2026 → 2062) used to be permanent and nearly invisible:
+ * every quarter-bounded reader — readiness, kasboek, aangifte, the analytics panel, the result
+ * engine — filters the day away, while /api/cash and /api/daily-truth sum daily_turnover.cash_amount
+ * over ALL time with no date bound, so the phantom day silently inflated the drawer balance for
+ * good. And the analytics panel defaults to the quarter of the MOST RECENT booked day, so the
+ * Dagomzet page itself would open on Q1 2062 showing that one row while the owner's real quarter
+ * sat behind the navigation — the "geboekt ✓ maar niks te zien" trap that default was written to
+ * prevent, in a worse form.
+ *
+ * `todayAmsterdam` is injected so this stays pure and testable. Tomorrow is allowed: a device
+ * clock or a timezone edge can legitimately be a day ahead of the server.
+ */
+export const TURNOVER_DATE_FLOOR = "2000-01-01";
+
+export function turnoverDateOutOfWindow(iso: string, todayAmsterdam: string): boolean {
+  const tomorrow = new Date(`${todayAmsterdam}T00:00:00Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return iso < TURNOVER_DATE_FLOOR || iso > tomorrow.toISOString().slice(0, 10);
+}
+
+/** Today in Amsterdam, as the app pins every other date boundary. */
+export function amsterdamToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+}
+
 export type Cell = string | number | null | undefined;
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -76,6 +107,22 @@ function normHeader(v: Cell): string {
   return String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * [DATE-REAL] Does this ISO string name a day that EXISTS? The two parsers below validate the
+ * month (1-12) and the day (1-31) INDEPENDENTLY, so "31-02-2026" came out as "2026-02-31" — a
+ * string that looks like a date and is not one. It then passed the commit route's shape test
+ * (ISO_DATE) and reached a Postgres `date` column, which rejects it and fails the ENTIRE upsert:
+ * one bad cell, and a whole month of turnover comes back as "kon dagomzet niet opslaan" with
+ * nothing naming the row. Round-tripping through UTC is the cheap, exact check.
+ */
+export function isRealCalendarDate(iso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 /** Parse a date cell → ISO 'YYYY-MM-DD', or null. Accepts ISO, DD-MM-YYYY, DD/MM/YYYY, Date. */
 function parseDate(v: Cell): string | null {
   if (v == null) return null;
@@ -89,11 +136,17 @@ function parseDate(v: Cell): string | null {
   }
   const s = String(v).trim();
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // [DATE-REAL] Both forms now have to name a day that exists — 31 February is refused here
+  // rather than three layers down at the database, where it takes the whole import with it.
+  if (m) {
+    const iso = `${m[1]}-${m[2]}-${m[3]}`;
+    return isRealCalendarDate(iso) ? iso : null;
+  }
   m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // DD-MM-YYYY / DD/MM/YYYY
   if (m) {
     const d = m[1].padStart(2, "0"), mo = m[2].padStart(2, "0");
-    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31) return `${m[3]}-${mo}-${d}`;
+    const iso = `${m[3]}-${mo}-${d}`;
+    if (isRealCalendarDate(iso)) return iso;
   }
   return null;
 }
@@ -155,7 +208,14 @@ const sumCols = (row: Cell[], idx: number[]) => idx.reduce((s, i) => s + num(row
  * (net+BTW ≈ gross, and cash+pin+other ≈ gross); a mismatch is a WARNING, never a
  * silent "clean" import.
  */
-export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
+export function normalizeTurnoverSheet(
+  matrix: Cell[][],
+  // [DATE-WINDOW] `today` is INJECTED, not read from the clock inside. This module's header
+  // promises a pure normalizer, and reading `new Date()` here would have quietly broken that:
+  // the same sheet would yield different warnings depending on when it was parsed, and this
+  // file's tests — which run against real dated Z-report data — would rot with the calendar.
+  opts?: { today?: string },
+): NormalizeResult {
   const warnings: ImportWarning[] = [];
   const rows: DailyTurnover[] = [];
 
@@ -175,7 +235,23 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
   for (let r = header + 1; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const date = parseDate(row[cols.date]);
-    if (!date) continue; // skip blanks / total rows without a real date
+    if (!date) {
+      // Skipping a blank or a "Totaal" row is right and always was. Skipping a row whose date
+      // cell HAS content we could not read is a dropped sales day, and it used to happen in
+      // total silence — the very thing [TURNOVER-BLANK-GROSS] below refuses to do for a missing
+      // gross. The tightened parser above makes this reachable for an impossible date too
+      // (31-02), so the day must be named rather than quietly lost.
+      const raw = String(row[cols.date] ?? "").trim();
+      const grossHere = num(row[cols.gross]);
+      if (raw && grossHere !== 0) {
+        warnings.push({
+          row: dataRow + 1,
+          code: "date_unreadable",
+          message: `Rij met omzet ${grossHere.toFixed(2)}: de datum "${raw}" is niet te lezen als een bestaande dag — deze rij is NIET geïmporteerd. Controleer de datum en importeer opnieuw.`,
+        });
+      }
+      continue;
+    }
     dataRow += 1;
 
     const gross = num(row[cols.gross]);
@@ -281,6 +357,20 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     if ((cols.cash >= 0 || cols.pin >= 0) && Math.abs(paySum - gross) > tol) {
       warnings.push({ row: dataRow, code: "payment_total_mismatch",
         message: `${date}: som van betaalwijzen (${paySum.toFixed(2)}) ≠ Omzet incl. (${gross.toFixed(2)}).` });
+    }
+  }
+
+  // [DATE-WINDOW] Name any day that cannot exist BEFORE the owner approves. The commit route
+  // refuses them outright; showing them here means the refusal is never a surprise, and the
+  // owner sees which cell to fix rather than a rejected file.
+  const today = opts?.today ?? amsterdamToday();
+  for (const dt of rows) {
+    if (turnoverDateOutOfWindow(dt.turnover_date, today)) {
+      warnings.push({
+        row: 0,
+        code: "date_out_of_window",
+        message: `${dt.turnover_date}: deze datum kan niet kloppen (een omzetdag ligt niet in de toekomst). Controleer het jaartal in je Z-rapport — deze dag wordt niet opgeslagen.`,
+      });
     }
   }
 

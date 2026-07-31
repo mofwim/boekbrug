@@ -71,6 +71,11 @@ export type AuditAction =
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
   | 'turnover.auto_imported'           // ← [SHEET-INTAKE] app booked a clean kassa Z-report into daily_turnover from the upload page
+  // [DAGOMZET-AUDIT] Removing a booked day is a REVERSAL out of the BTW-authoritative table, not
+  // an import. It shared 'turnover.auto_imported' with the write that creates the day, so the
+  // trail could not answer "which turnover days were removed" — the two were distinguishable only
+  // by a `via` field inside the JSON payload. A reversal of money deserves its own name.
+  | 'turnover.day_removed'             // ← [COHERENCE-TURNOVER-DELETE] owner removed one booked turnover day (wrong date / wrong period)
   | 'ledger.auto_imported'             // ← [SHEET-INTAKE] app stored a PIN/kas grootboek export into ledger_daily (reconciliation witness)
   | 'btw.filed'                        // ← [TRUTH-FILED] owner froze a quarter's BTW-aangifte snapshot as ingediend
   | 'btw.filed_despite_warnings'       // ← [FILING-GATE] owner froze the snapshot while readiness blockers were still open (acknowledged)
