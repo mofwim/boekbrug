@@ -135,6 +135,10 @@ interface Suggestion {
   // [BANK-AMOUNT-ONLY] 'amount_only' when this line was auto-booked on amount+counterpart only
   // (no printed number/IBAN) → the Gekoppeld card shows a "controleer" flag. null otherwise.
   matchReason?: string | null
+  // [BANK-SUM-SUGGEST] Server-computed: this payment is EXACTLY the sum of these 2..4 open
+  // invoices of THIS counterparty (unique tie, cents-exact) — a suggestion for the "Geen
+  // factuur" card. Booking still runs invoice-by-invoice through the normal confirm.
+  sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number } | null
 }
 interface MatchResponse {
   ok: boolean
@@ -624,6 +628,41 @@ export default function BankClient() {
       }
     } catch {
       showToast('Er ging iets mis.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // [BANK-SUM-SUGGEST] Book a suggested same-supplier sum: each invoice through the SAME
+  // guarded /api/bank/confirm, sequentially (the money arithmetic allocates: every booking
+  // spends only what the line still has, and the last one closes it). No new write path —
+  // the suggestion is only a pre-computed answer to "which invoices?", never its own booking.
+  async function confirmSumMatch(txId: string, invoiceIds: string[]) {
+    setProcessingId(txId)
+    let ok = 0
+    let failed = 0
+    try {
+      for (const invoiceId of invoiceIds) {
+        try {
+          const res = await fetch('/api/bank/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionId: txId, invoiceId }),
+          })
+          const json = await res.json().catch(() => ({}))
+          const benign = res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')
+          if (res.ok || benign) ok++
+          else failed++
+        } catch {
+          failed++
+        }
+      }
+      showToast(
+        failed === 0
+          ? `${ok} facturen samen gekoppeld aan deze betaling ✓`
+          : `${ok} gekoppeld · ${failed} mislukt — controleer de lijst`,
+      )
+      await runMatch()
     } finally {
       setProcessingId(null)
     }
@@ -1692,6 +1731,7 @@ export default function BankClient() {
                 }
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num, invId) => confirmMatch(s.transactionId, num, invId)}
+                onConfirmSum={s.sumMatch ? () => confirmSumMatch(s.transactionId, s.sumMatch!.invoiceIds) : undefined}
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
                 onIgnore={(reason) => ignoreTx(s.transactionId, reason)}
                 onRestore={() => restoreTx(s.transactionId)}
@@ -1846,7 +1886,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink, onMove,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink, onMove,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -1858,6 +1898,8 @@ function TxCard({
   onBatchToggle: () => void
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null, invoiceId?: string) => void
+  // [BANK-SUM-SUGGEST] Book the suggested same-supplier sum (each invoice via the normal confirm).
+  onConfirmSum?: () => void
   onAttach: (files: File[]) => void
   onIgnore: (reason: string | null) => void
   onRestore: () => void
@@ -2231,6 +2273,38 @@ function TxCard({
               </span>
             )}
           </div>
+
+          {/* [BANK-SUM-SUGGEST] The payment is exactly the sum of a few open invoices of this
+              counterparty, and nothing is quoted. Say the arithmetic out loud and offer the
+              one-tap; each invoice still books through the normal guarded confirm. Shown only
+              when the matcher itself found nothing (outcome 'none' — this card's tab). */}
+          {s.sumMatch && onConfirmSum && !isIgnoredTab && !isDoneTab && (
+            <div style={{
+              padding: '10px 12px', borderRadius: R.md, marginBottom: 10,
+              background: M3.primaryContainer, fontSize: 12.5, lineHeight: 1.5, color: M3.onPrimaryContainer,
+            }}>
+              <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
+                Dit bedrag is precies de som van {s.sumMatch.invoiceIds.length} openstaande facturen
+              </div>
+              <div style={{ margin: '4px 0 8px' }}>
+                {s.sumMatch.invoiceNumbers.filter(Boolean).join(' + ')} = {eur.format(s.sumMatch.total)} — zelfde {s.amount < 0 ? 'leverancier' : 'klant'}, geen nummer in de omschrijving. Controleer en koppel ze samen.
+              </div>
+              <button
+                onClick={onConfirmSum}
+                disabled={processing}
+                style={{
+                  padding: '9px 14px', borderRadius: R.full, border: 'none',
+                  background: processing ? '#dadce0' : M3.primary, color: '#fff',
+                  fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: processing ? 'default' : 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{processing ? 'hourglass_empty' : 'link'}</span>
+                {processing ? 'Bezig…' : `Koppel deze ${s.sumMatch.invoiceIds.length} facturen`}
+              </button>
+            </div>
+          )}
 
           {/* [BANK-BATCH-RECONCILE] Honest sum-check of the whole batch, shown before the
               owner starts confirming. Green ONLY when every referenced invoice is in the

@@ -246,7 +246,9 @@ export async function runBankAutoConfirm(args: {
         // hide. (paymentExceedsOpenBalance semantics, inlined for the magnitude compare.)
         const total = Math.abs(i.total_inc_btw);
         const open = Math.max(0, total - Math.max(0, Number(i.amount_paid ?? 0)));
-        const near = (v: number) => Math.abs(Math.abs(txAmt) - v) <= 0.01;
+        // [BANK-CENTS-EXACT] Integer cents, same rule as amountMatches — a raw float compare
+        // made the one-cent tolerance a lottery per euro-pair.
+        const near = (v: number) => Math.abs(Math.round(Math.abs(txAmt) * 100) - Math.round(v * 100)) <= 1;
         if (!near(total) && !near(open)) return false;
         // An iban-certain is only contested by an invoice on the SAME supplier account.
         if (ibanCertain) return ibanMatches(m.transaction.counterpartIban, i.vendor_iban);
