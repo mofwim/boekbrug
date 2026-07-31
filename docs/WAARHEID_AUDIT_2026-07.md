@@ -402,3 +402,81 @@ npx tsx --test       350 tests, 0 failed
 New coverage: 11 assertions for the `quarter` lens (including that a named quarter is byte-identical
 to the relative lens pointing at the same period, and that malformed input never invents a window),
 plus 4 for the Amsterdam quarter boundary in `quarter.test.ts`.
+
+---
+
+# Round 3 — the information design
+
+*Same numbers, same engine. What changed is what the screen says and in what order.*
+
+## The number that was confidently wrong
+
+A real account rendered this:
+
+```
+BTW terug te ontvangen        € 2.779,58
+Verschuldigd € 0,00     Voorbelasting € 2.779,58
+...                                                  ← five blocks further down, grey body text
+⚠️ € 44.255,02 omzet staat nog zonder BTW-tarief
+```
+
+Every figure is correct and the caveat was present. The **impression** is the opposite of the
+truth: none of € 44.255 of revenue carries a rate yet, so the owner does not get € 2.779 back — they
+owe BTW on all of it. Someone plans their cash flow around that headline.
+
+`computeResult` is right not to guess a rate. The screen was wrong to render the consequence as a
+settled amount and put the explanation where nobody reads it.
+
+**Fixed** — `src/lib/btw-certainty.ts` (new, 21 assertions) decides how much weight the figure may
+be given, from the same numbers:
+
+- Dutch VAT rates are a closed set `{0, 9, 21}`, and unrated revenue is booked **gross**. So if it
+  turns out to be taxed at all, the least BTW hiding in it is `amount × 9/109`. That is a **bound,
+  not a guess** — the codebase's rule against inventing rates stays intact.
+- If the current saldo is a refund and that lower bound already exceeds it, the refund is not a
+  refund yet → `sign-could-flip`. Here: € 3.654,08 of hidden BTW against a € 2.779,58 "refund".
+
+The card then greys the amount, marks it *voorlopig*, retitles to **"BTW — nog niet te zeggen"**,
+and carries the one sentence that changes its meaning **inside the card, under the number**.
+
+## The wall of warnings became a list of exits
+
+Four to six loose `⚠️` paragraphs in small grey-orange text sat below the cards. Each honest;
+together, a wall an owner skims. They are now one **"Nog te doen voor een compleet beeld"** block,
+each row naming what is missing and linking to the screen that fixes it (Dagomzet / Kas / Inkomend /
+Facturen / Bank). A shop owner does not need a list of what is wrong — they need to know what to
+open next.
+
+What genuinely cannot be acted on (which date basis applies, a scheme switch mid-period, an
+estimated pay date, a ledger check that could not run) stays as a quiet footnote, last.
+
+## Plain words first, the accountant's word underneath
+
+| was | is | second line |
+| --- | --- | --- |
+| Resultaat (winst) | **Wat je overhoudt** | omzet − kosten · je winst |
+| Verschuldigd | **Over je omzet** | verschuldigd |
+| Voorbelasting | **Over je inkopen** | voorbelasting |
+| Kaart-controle (kassa · terminal · bank) | **Pinbetalingen gecontroleerd** | kassa · terminal · bank moeten hetzelfde zeggen |
+
+The official term is kept as the quiet second line, so the screen is readable without a glossary
+*and* the owner still recognises the word when the accountant uses it.
+
+## No card leads with zeros
+
+The card-control block opened with "Gemeten commissie € 0,00" and "Terminal-afrekeningen 0" — a
+confident answer to a question that could not be asked yet, for a shop that has uploaded nothing.
+The figures now appear only once something has actually been measured; before that the card shows
+only the line saying what to upload.
+
+## Verification
+
+```
+npx tsc --noEmit     clean
+npx eslint <changed> clean
+npx next build       compiled successfully
+npx tsx --test       351 tests, 0 failed
+```
+
+Not verified: the running app. This environment has no Supabase secrets, so the redesign was checked
+by types, tests and build plus a static before/after mockup — not by loading the real screen.
