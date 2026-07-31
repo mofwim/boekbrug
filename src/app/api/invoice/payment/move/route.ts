@@ -195,11 +195,7 @@ export async function POST(req: NextRequest) {
   // apply_manual_payment is called under. The function is SECURITY DEFINER because
   // bank_tx_invoices has no UPDATE policy at all: moving a link is precisely the operation RLS
   // does not grant, and it must only ever happen through these guards.
-  // move_invoice_payment arrives with invoice_move_payment.sql, applied by hand — it is not in the
-  // generated types until they are regenerated. Same cast the /api/btw/file route uses for
-  // btw_filings; the arguments below are still checked by the function itself.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any).rpc("move_invoice_payment", {
+  const { data, error } = await supabase.rpc("move_invoice_payment", {
     p_user_id: user.id,
     p_link_id: linkId,
     p_target_invoice_id: targetInvoiceId,
@@ -214,19 +210,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const row = Array.isArray(data)
-    ? (data[0] as
-        | {
-            applied: number;
-            source_invoice_id: string;
-            source_amount_paid: number;
-            source_status: string;
-            target_amount_paid: number;
-            target_status: string;
-            target_is_paid: boolean;
-          }
-        | undefined)
-    : undefined;
+  // Typed by the generated definition now that the migration is applied — the shape below comes
+  // from the function signature itself, so a change to it becomes a compile error here.
+  const row = Array.isArray(data) ? data[0] : undefined;
   if (!row) {
     return NextResponse.json(
       { error: "move_failed", detail: moveFailureText(null) },

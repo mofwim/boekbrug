@@ -34,6 +34,9 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { refuseArchive, restoreStatus, type RemovalInvoice } from "@/lib/invoice-removal";
 import { quarterKeyOf } from "@/lib/quarter";
 import { logAuditAction } from "@/lib/audit";
+import type { Database } from "@/types/database.types";
+
+type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
 export const dynamic = "force-dynamic";
 
@@ -223,11 +226,8 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
   }
 
   const status = restoreStatus(invoice);
-  // `superseded_by_number` is not in the generated types until invoice_superseded_by.sql has run.
-  // The cast covers the PATCH only; every WHERE clause below stays fully typed.
-  const restore = (patch: Record<string, unknown>) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (pipeline as any)
+  const restore = (patch: InvoiceUpdate) =>
+    pipeline
       .from("invoices")
       .update(patch)
       .eq("id", id)
