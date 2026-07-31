@@ -105,18 +105,46 @@ From `@/lib/design/tokens`:
 - `STICKY_BELOW_HEADER` — `calc(56px + env(safe-area-inset-top))`; the `top:`
   value for a **secondary** sticky bar that must sit below the header (search /
   filter / sort toolbars on list screens). Never write the `calc()` by hand.
+- `PAGE_GUTTER` (`16`) — the space every page column leaves to the screen edge.
+- `COLUMN` — the page-width ladder, and the only two widths a dashboard page may
+  be: `COLUMN.hub` (480, the two homes + werkplek) and `COLUMN.work` (680,
+  everything else). A page and its `loading.tsx` skeleton read the same step, so
+  they cannot disagree and make the content jump on load. Never invent a third
+  number; if a screen genuinely needs one, it needs a named step, and the
+  measurements in the token's own comment are the bar it has to clear.
+- `columnInner(column)` — the width a bar's inner row needs to line up with a
+  `maxWidth: column` page column. Never write `column - 32` by hand.
 - `M3` — the Material palette (colours). `FONT` — Roboto. `FONT_NUM` — Roboto
   Mono for aligned numbers.
 
-Secondary toolbar example:
+### Secondary bars line up with the page column
+
+A secondary bar (the search / filter / sort toolbar on a list screen, a fixed
+action bar at the bottom) spans the viewport: its fill, its blur and its
+hairline should run edge to edge. Its **content** must not — it belongs to the
+column underneath it.
 
 ```tsx
-import { STICKY_BELOW_HEADER } from "@/lib/design/tokens";
+import { STICKY_BELOW_HEADER, columnInner, COLUMN } from "@/lib/design/tokens";
 
-<div style={{ position: "sticky", top: STICKY_BELOW_HEADER, zIndex: 40, /* … */ }}>
-  {/* search / sort / filter controls */}
+<div style={{ position: "sticky", top: STICKY_BELOW_HEADER, zIndex: 40, padding: "12px 16px" }}>
+  <div style={{ maxWidth: columnInner(COLUMN.work), margin: "0 auto" }}>
+    {/* search / sort / filter controls */}
+  </div>
 </div>
+
+<main style={{ maxWidth: COLUMN.work, margin: "0 auto", padding: "12px 16px 100px" }}>…</main>
 ```
+
+Skip the inner column and the bar keeps growing after the list has stopped: on
+a desktop, Mijn facturen drew a search field and a filter dropdown ~1870px wide
+above a 648px list, with the sort and refresh buttons parked against the right
+edge of the screen — 380px from the rows they act on. Facturen, Klanten and
+Inkoopfacturen all did this; `invoice/[id]` and `invoice/new` centred their bars
+but at the column's *outer* width, so their content sat one gutter wide on each
+side. Below `column + 2×PAGE_GUTTER` the cap never binds, so a phone is
+unaffected either way — which is exactly why this only ever shows up on the
+screens nobody tests on.
 
 ## Rules (what NOT to do)
 
@@ -129,6 +157,9 @@ import { STICKY_BELOW_HEADER } from "@/lib/design/tokens";
 - **No `maxWidth` on the bar's flexible cell.** It is what pushes the trailing
   controls to the right edge; a cap there strands them mid-bar on wide screens.
   Cap the control inside the cell instead. See "Where things sit in the bar".
+- **No full-bleed bar CONTENT.** A secondary bar's shell spans the viewport; its
+  controls sit in `columnInner(COLUMN)`. See "Secondary bars line up with the
+  page column".
 - **No off-palette fonts or colours.** Use `FONT` (not `Inter`, not a
   `system-ui` stack) and `M3` (e.g. `M3.error` `#B3261E`, never `#EA4335`).
   This is not only about consistency: `#EA4335` measures 3.9:1 on white,

@@ -7,6 +7,8 @@ import { Suspense, useState, useEffect } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+// [FUNNEL-OVERDRACHT] Zeggen dat de factuur uit de gratis generator bewaard is — zie hieronder.
+import { readHandoff, hasInvoiceContent } from '@/lib/factuur-handoff'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
 import { ROLE_PARAM } from '@/lib/register-intent'
 import {
@@ -49,6 +51,18 @@ function RegisterContent() {
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; password?: string }>({})
   const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
+  // [FUNNEL-OVERDRACHT] Staat er een factuur klaar uit de gratis generator? Alleen om het te
+  // kunnen zeggen op het bevestigingsscherm — dit leest, verwijdert niet: het formulier in het
+  // dashboard biedt de factuur straks pas echt aan.
+  const [factuurKlaar, setFactuurKlaar] = useState(false)
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (hasInvoiceContent(readHandoff(localStorage))) setFactuurKlaar(true)
+    } catch {
+      /* geblokkeerde opslag — dan zeggen we gewoon niets */
+    }
+  }, [])
   const router = useRouter()
 
   // [KLUIS] Waarvoor deze bezoeker komt. /bewaarplicht stuurt hier naartoe met ?doel=archief:
@@ -352,7 +366,8 @@ function RegisterContent() {
     // trigger. Best-effort: a failure here never blocks the redirect.
     //
     // [VANGNET-SPLITSING] En daarom staat account_purpose NIET in deze rij. Die kolom komt uit
-    // account_purpose_archief.sql, en ontbreekt die migratie, dan weigert PostgREST de HELE rij
+    // account_purpose_archief.sql — in productie toegepast, maar een verse dev- of
+    // stagingdatabase begint zonder. Ontbreekt die migratie, dan weigert PostgREST de HELE rij
     // (PGRST204) — dus dan werd ook de rol, de bedrijfsnaam, het KVK- en het BTW-nummer niet
     // geschreven. Precies in het geval waarvoor dit vangnet bestaat ("mocht die migratie nog
     // niet zijn toegepast") viel het dus als eerste om, stil, met alleen een console-regel.
@@ -382,8 +397,7 @@ function RegisterContent() {
     if (purpose === 'archief') {
       const { error: purposeError } = await getBrowserClient()
         .from('profiles')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .update({ account_purpose: 'archief' } as any)
+        .update({ account_purpose: 'archief' })
         .eq('id', data.user.id)
       if (purposeError) {
         console.error('[KLUIS] account_purpose niet gezet (migratie toegepast?):', purposeError)
@@ -411,6 +425,29 @@ function RegisterContent() {
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>
+
+          {/* [FUNNEL-OVERDRACHT] Dit scherm is de stilste plek in de hele trechter: de
+              bevestigingsmail opent vaak een nieuw tabblad, dus de bezoeker laat dit scherm
+              achter zonder te weten wat er met zijn werk gebeurde. Wie hier komt vanaf
+              /factuur-maken heeft net een factuur ingevuld, en de vraag die dan door zijn hoofd
+              gaat is niet "waar is de mail" maar "ben ik dat kwijt". Eén zin beantwoordt dat —
+              en alleen als er ook echt iets klaarstaat, want een geruststelling over iets dat er
+              niet is, is de volgende loze belofte. */}
+          {factuurKlaar && (
+            <div
+              role="status"
+              style={{
+                background: "#E6F4EA", border: "1px solid #137333", color: "#137333",
+                borderRadius: "12px", padding: "12px 14px", margin: "0 0 24px",
+                fontSize: "14px", lineHeight: 1.5, textAlign: "left",
+              }}
+            >
+              <strong>Je factuur is bewaard.</strong> Zodra je je account activeert staat hij
+              klaar — je bedrijfsgegevens, je klant en je regels. Je hoeft niets opnieuw in te
+              tikken.
+            </div>
+          )}
+
           {/* Mét de bestemming erbij. Hier stond een kale /login, en dat is precies de plek waar
               een uitnodiging verdween: wie via /invite/accept?token=… registreerde, kwam op dit
               scherm en verloor de link naar de uitnodiging waarvoor hij kwam. Hij moest hem

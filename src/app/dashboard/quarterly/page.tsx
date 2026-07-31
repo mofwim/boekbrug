@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
+import { COLUMN } from "@/lib/design/tokens";
 
 export const metadata = {
   title: "Kwartaaloverzicht — BoekBrug",
@@ -29,7 +30,7 @@ export default async function QuarterlyPage() {
   // bar (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
   // removed. The one-line description stays as intro copy.
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="mx-auto px-4 py-8" style={{ maxWidth: COLUMN.work }}>
       <p className="text-muted-foreground text-sm mb-6">
         BTW-aangifte, totalen en export per kwartaal
       </p>

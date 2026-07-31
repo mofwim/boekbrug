@@ -61,6 +61,9 @@ export interface ImportHealth {
     // [IBAN-WISSEL] A supplier we already know arrived with a DIFFERENT bank account. The
     // signature of invoice fraud — and the one axis every other gate here reads as clean.
     ibanChanged: boolean
+    // [MULTI-INVOICE] The uploaded file looks like it holds SEVERAL different invoices. Only one
+    // of them was read; the others exist nowhere. Never auto-book such a row, and tell the owner.
+    multipleInvoices: boolean
   }
 }
 
@@ -137,6 +140,12 @@ export interface FieldConfidence {
     iban_changed?: boolean
     iban_changed_from?: string
     iban_changed_to?: string
+    // [MULTI-INVOICE] Written at import time when one uploaded PDF carried several different
+    // labelled invoice numbers, each with its own settlement. The reader returns ONE invoice, so
+    // the rest were silently lost — the reason below names the numbers so the owner can go and
+    // add them separately.
+    multiple_invoices?: boolean
+    multiple_invoices_reason?: string
   }
 }
 
@@ -172,6 +181,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     reminder: false,
     possibleDuplicate: false,
     ibanChanged: false,
+    multipleInvoices: false,
   }
 
   const fc = inv.field_confidence
@@ -217,6 +227,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
         ? ibanChangeReason({ from, to })
         : 'het rekeningnummer van deze leverancier is veranderd — controleer dit vóór je betaalt, ' +
           'en bel de leverancier op een nummer dat je zelf opzoekt (niet het nummer op deze factuur)'
+    )
+  }
+  // [MULTI-INVOICE] Eén bestand, meerdere facturen. Dit staat bewust hoog: alle andere assen
+  // kijken naar de factuur die WEL is ingelezen, en die kan volmaakt in orde zijn. Het probleem
+  // is wat er NIET is ingelezen — de facturen uit hetzelfde bestand die nergens bestaan. Zwijgt
+  // deze, dan zwijgt alles, en de eigenaar merkt het pas als zijn boekhouder het niet meer kan
+  // repareren.
+  if (storedSafecore?.multiple_invoices === true) {
+    flags.multipleInvoices = true
+    reasons.push(
+      storedSafecore.multiple_invoices_reason ||
+        'dit bestand lijkt meerdere facturen te bevatten — er is er maar één ingelezen; voeg de andere los toe'
     )
   }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
@@ -335,7 +357,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate || flags.ibanChanged
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate || flags.ibanChanged || flags.multipleInvoices
       ? 'needs-review'
       : 'clean'
 

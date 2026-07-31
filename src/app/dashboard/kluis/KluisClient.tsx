@@ -8,7 +8,7 @@
 
 import { useState } from 'react'
 import type { YearSummary } from '@/lib/compliance-vault'
-import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import BewaarkluisCard from './BewaarkluisCard'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
@@ -28,7 +28,7 @@ export default function KluisClient({
   const isArchief = purpose === 'archief'
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         {/* [HEADER-SYSTEM] Title "Kluis" + back live in the shared sub-page bar;
             the in-body h1 was removed. Descriptive subtitle stays. */}
         <header style={{ margin: '16px 0 8px' }}>

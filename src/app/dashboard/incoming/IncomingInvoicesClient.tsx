@@ -60,7 +60,7 @@ interface ImportHealth {
 import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
-import { M3 } from '@/lib/design/tokens'
+import { M3, COLUMN } from '@/lib/design/tokens'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -3047,7 +3047,12 @@ export default function IncomingInvoicesClient({
   return (
     <div
       style={{
-        maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
+        // [COLUMN-LADDER] Was a bespoke 430 — the narrowest column in the app,
+        // and the furthest from its own loading skeleton, which had always
+        // claimed 720: the page snapped 290px narrower the moment it rendered.
+        // The four other 430s in this file are BUTTONS and a modal, not columns;
+        // they stay. See COLUMN in @/lib/design/tokens.
+        maxWidth: COLUMN.work, margin: "0 auto", padding: "0 0 100px",
         // [HEADER-SYSTEM] Was var(--font-sans) (could resolve to a non-Roboto
         // face); now the shared Roboto FONT token, matching the shared bar above.
         fontFamily: FONT,

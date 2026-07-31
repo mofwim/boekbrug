@@ -27,7 +27,7 @@ import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
-import { FONT } from "@/lib/design/tokens";
+import { FONT, COLUMN } from "@/lib/design/tokens";
 import { rowMatchesQuery } from "@/lib/search";
 // [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
@@ -221,7 +221,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   return (
     <div
       style={{
-        maxWidth: 640,
+        maxWidth: COLUMN.work,
         margin: "0 auto",
         padding: "24px 16px 64px",
         // [HEADER-SYSTEM] Was a bespoke system-ui font stack (the only one in the

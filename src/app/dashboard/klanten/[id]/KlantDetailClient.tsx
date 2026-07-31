@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { createClient } from '@/lib/supabase'
-import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -82,7 +82,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         {/* [HEADER-SYSTEM] Name (title) + "+ Nieuwe factuur" (action) now live in the
             shared sub-page bar; only the e-mail line remains in-body. */}
         <header style={{ margin: '16px 0 18px' }}>

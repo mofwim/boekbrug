@@ -27,8 +27,7 @@ export default async function OnboardingPage() {
   // gebruiker zag dan alsnog de wizard en niets verried waarom.
   let isArchief = false;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: doel } = await (supabase as any)
+    const { data: doel } = await supabase
       .from("profiles")
       .select("account_purpose")
       .eq("id", user.id)

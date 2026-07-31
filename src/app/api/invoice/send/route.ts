@@ -40,6 +40,9 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
+// [BTW-ROUND] Per-tarief afronding — nu uit de gedeelde module, zodat het opslaan van een concept
+// (/api/invoice/[id] PUT) en het uitgeven hier per definitie hetzelfde bedrag opleveren.
+import { computeInvoiceTotals } from '@/lib/invoice-totals'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
@@ -51,6 +54,18 @@ import * as Sentry from '@sentry/nextjs'
 // upload is best-effort and never blocks legal delivery, but pdf_url
 // storage only works once the name is right.
 const PDF_BUCKET = 'documents'
+
+// [SEND-DURATION] This route had no ceiling, and it is the heaviest — and legally the most
+// consequential — request in the app: mint the number, commit it, render the PDF (with a retry),
+// upload it, send the e-mail, then run a user-wide bank auto-confirm pass.
+//
+// Past the "POINT OF NO RETURN" below the number is consumed and cannot be given back (Art. 35 —
+// no gaps). A function killed after that commit leaves the invoice legally issued while the
+// customer received nothing AND no notification is written — the pdf_failed branch that writes
+// one never runs. Meanwhile the client's catch rolls the row back to 'draft', so the screen says
+// concept about an invoice that legally exists. The ceiling has to be far enough out that the
+// window between the commit and the delivery never closes on a timeout.
+export const maxDuration = 120
 
 // [FACTUUR-A] Statuses from which an already-issued invoice may be re-delivered
 const RESENDABLE_STATUSES = ['sent', 'paid', 'overdue'] as const
@@ -75,12 +90,20 @@ export async function POST(request: NextRequest) {
     })
     if (!limit.allowed) return rateLimitResponse(limit)
 
-    // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens op verstuurde facturen. Het
-    // hek hierboven gaat over snelheid (100/uur), dit over hoeveel er gratis in een maand
-    // past. Faalt open. Een weigering pauzeert ALLEEN het versturen — opstellen, opslaan en
-    // als PDF downloaden blijven werken, precies zoals de onExceed-zin in fair-use.ts zegt.
-    gate = await gateFairUse({ client: supabase, userId: user.id, metric: "invoicesSent" })
-    if (!gate.allowed) return gate.response!
+    // [FAIR-USE] Het tweede hek (de gepubliceerde maandgrens op verstuurde facturen) stond
+    // hiér, meteen na het snelheidshek — en dat was te vroeg. gateFairUse VERBRUIKT direct, en
+    // daarna volgen zestien uitgangen die niets versturen: een ontbrekend klantadres, een
+    // ontbrekend BTW-nummer van de ondernemer zelf, een verlopen concept, het verloren
+    // race-409. Alleen de catch gaf terug, dus elk van die weigeringen kostte de gebruiker een
+    // factuur van zijn maandtegoed voor een factuur die nooit de deur uit ging. Wie zijn
+    // KvK-nummer nog niet had ingevuld en vijf keer op Versturen drukte, was vijf facturen
+    // kwijt aan nul verzendingen — terwijl /eerlijk-gebruik §3 het omgekeerde belooft.
+    //
+    // Het hek staat nu waar het over gaat: vlak vóór het uitgeven van het nummer (stap 8), na
+    // alle validatie. Daarmee telt precies één ding mee — een factuur die echt wordt uitgegeven.
+    // Een HERVERZENDING passeert het niet eens: die geeft geen nummer uit en levert alleen de
+    // al-getelde factuur opnieuw af, dus het herstelpad na onze eigen pdf_failed/email_failed
+    // ("verstuur opnieuw") kost de gebruiker niets meer.
 
     // ── 3. Parse body ──────────────────────────────────────────
     const body = await request.json()
@@ -160,31 +183,19 @@ export async function POST(request: NextRequest) {
     // The browser-supplied totals are never trusted on the record that gets a legal
     // number and is e-mailed. The create path stored raw floats; only the edit PUT
     // rounded — so the stored total depended on whether the draft was touched. We
-    // recompute here (same round2 + per-line math as the edit route) for issuance
-    // and conversion. A resend delivers the already-issued PDF, so it is untouched.
-    const round2 = (n: number): number =>
-      (n < 0 ? -1 : 1) * (Math.round(Math.abs(n) * 100 + 1e-9) / 100)
+    // recompute here for issuance and conversion, through the SAME shared module the edit
+    // route uses (lib/invoice-totals). A resend delivers the already-issued PDF, untouched.
     const { data: lines } = await supabase
       .from('invoice_lines')
       .select('*')
       .eq('invoice_id', invoiceId)
     let computedTotals: { total_ex_btw: number; btw_amount: number; total_inc_btw: number } | null = null
     if (!resend && Array.isArray(lines) && lines.length > 0) {
-      const lineEx = (l: { line_total?: number | null; quantity?: number | null; unit_price?: number | null }) =>
-        typeof l.line_total === 'number' ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)
-      // [BTW-ROUND] Round BTW PER TARIEF, then sum — the Belastingdienst/Peppol method the
-      // legal PDF (btwBreakdown → round2 per rate) AND the UBL export use. Summing per-line
-      // BTW and rounding once (the old way) drifted a cent on multi-rate invoices, so the
-      // e-mailed total + accountant/BTW figures disagreed with the PDF/UBL the SAME invoice
-      // ships. Group ex per rate, round each rate's BTW, sum → stored == PDF == UBL to the cent.
-      const exByRate = new Map<number, number>()
-      for (const l of lines) {
-        const rate = Number(l.btw_rate) || 0
-        exByRate.set(rate, (exByRate.get(rate) ?? 0) + lineEx(l))
-      }
-      const ex = round2([...exByRate.values()].reduce((s, e) => s + e, 0))
-      const btw = round2([...exByRate.entries()].reduce((s, [rate, e]) => s + round2((e * rate) / 100), 0))
-      computedTotals = { total_ex_btw: ex, btw_amount: btw, total_inc_btw: round2(ex + btw) }
+      // [BTW-ROUND] Round BTW PER TARIEF, then sum — the Belastingdienst/Peppol method the legal
+      // PDF (btwBreakdown → round2 per rate) AND the UBL export use. The logic now lives in
+      // lib/invoice-totals.ts, shared with the edit route, so the concept the owner saved and the
+      // invoice we issue can never differ by the cent they used to differ by.
+      computedTotals = computeInvoiceTotals(lines)
     }
     // The authoritative total for the e-mail + accountant notification below.
     const finalTotalInc = computedTotals?.total_inc_btw ?? invoice.total_inc_btw
@@ -249,6 +260,15 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 8. Generate number — skipped entirely for resend ───────
+    // [FAIR-USE] Het maandhek, hier: alles is gevalideerd, en de eerstvolgende stap geeft een
+    // nummer uit dat niet meer teruggegeven kan worden. Faalt open. Een weigering pauzeert
+    // ALLEEN het versturen — opstellen, opslaan en als PDF downloaden blijven werken, precies
+    // zoals de onExceed-zin in fair-use.ts zegt.
+    if (!resend) {
+      gate = await gateFairUse({ client: supabase, userId: user.id, metric: "invoicesSent" })
+      if (!gate.allowed) return gate.response!
+    }
+
     // Always for conversion, only if missing for regular drafts
     let finalNumber: string = invoice.invoice_number ?? ''
     if (!resend && (isConversion || !finalNumber)) {
@@ -257,6 +277,8 @@ export async function POST(request: NextRequest) {
 
       const generated = await generateInvoiceNumber(supabase, user.id, numberType)
       if (!generated) {
+        // No number, so nothing was issued — give the month's credit back.
+        await gate?.release()
         return NextResponse.json(
           { error: 'Kon factuurnummer niet genereren' },
           { status: 500 }
@@ -299,6 +321,8 @@ export async function POST(request: NextRequest) {
       const { data: updatedRows, error: updateError } = await updateQ.select('id')
 
       if (updateError) {
+        // The commit failed, so no number was consumed and nothing was issued.
+        await gate?.release()
         console.error('[FACTUUR-A] Invoice update failed', { invoiceId, updateError })
         Sentry.captureException(updateError, {
           tags: { feature: 'invoice-send', severity: 'high' },
@@ -310,6 +334,8 @@ export async function POST(request: NextRequest) {
         // Lost the compare-and-swap: already sent/converted by a concurrent request.
         // The number we minted is now unused — log it so the rare gap is VISIBLE,
         // never silent — and refuse to double-deliver.
+        // We lost the race and delivered nothing; the winner counted its own send.
+        await gate?.release()
         console.warn('[TRUST-NUMBER] Send race lost — minted number unused (gap)', { invoiceId, finalNumber })
         Sentry.captureMessage('invoice-send race: minted number unused (sequence gap)', {
           level: 'warning',

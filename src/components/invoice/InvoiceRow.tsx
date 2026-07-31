@@ -10,6 +10,9 @@ import React from 'react'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 // [PARTIAL-PAY] shared openstaand vocabulary — same rule on every surface
 import { isPartiallyPaid, openAmount } from '@/lib/partial-payment'
+// [OVER-DATUM] De ene afleiding van "over datum", in hele Amsterdamse dagen. Zie isOverdue below.
+import { overdueDays } from '@/lib/overdue'
+import { amsterdamToday } from '@/lib/format-nl'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
@@ -79,10 +82,25 @@ export interface InvoiceRowProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// [OVER-DATUM] Over datum of niet — via lib/overdue.ts, de ene bron die de rest van de app al
+// gebruikt. Hier stond een tweede antwoord, en het was het verkeerde:
+//
+//   new Date(invoice.due_date) < new Date()
+//
+// Dat vergelijkt een DAG met een MOMENT. `new Date('2026-07-31')` is middernacht UTC, oftewel
+// 02:00 in Amsterdam — dus vanaf twee uur 's nachts OP de vervaldag zelf stond er "Verlopen" op
+// een factuur die de klant die hele dag nog op tijd kon betalen. Precies wat overdue.ts in zijn
+// kop verbiedt: "an invoice is due ON a date, not at a moment… Due TODAY is not late."
+//
+// En het sprak het scherm ernaast tegen: het tabblad Verlopen filtert met `due_date < vandaag`
+// (dus zonder de vervaldag zelf), zodat de lijst zei "niet verlopen" en de chip op diezelfde rij
+// "Verlopen". Eén afleiding, in Amsterdamse dagen, en die tegenspraak kan niet meer bestaan.
+//
+// 'archived' hoort in dezelfde uitzondering als 'paid'/'draft': een verwijderde factuur wordt
+// niet aangemaand, dus die als te laat bestempelen is een aansporing tot niets.
 export function isOverdue(invoice: { status: string; due_date: string | null }): boolean {
-  if (invoice.status === 'paid' || invoice.status === 'draft') return false
-  if (!invoice.due_date) return false
-  return new Date(invoice.due_date) < new Date()
+  if (invoice.status === 'paid' || invoice.status === 'draft' || invoice.status === 'archived') return false
+  return overdueDays(invoice.due_date, amsterdamToday()) !== null
 }
 
 export function getDisplayStatus(invoice: { status: string; due_date: string | null }): string {

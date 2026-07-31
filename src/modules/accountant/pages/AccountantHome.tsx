@@ -30,7 +30,7 @@ import type { NotificationRow } from '@/types/rows'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { EL1, M3, R } from '@/lib/design/tokens'
+import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -218,7 +218,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           cross-client to-dos, office tools). Not a literal clone: the two roles
           share the system, the content is tailored per role. See docs (multi-role
           portals lead with what matters to that role). */}
-      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <main style={{ maxWidth: COLUMN.hub, margin: '0 auto', padding: '32px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Greeting (eyebrow + first name — same shape as the ZZP home) ── */}
         <div>

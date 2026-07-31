@@ -6,6 +6,11 @@
 // Supports: autocomplete clients, AI translation, offerte→factuur conversion
 
 import React, { useState, useEffect, useRef, Suspense } from 'react'
+// [FUNNEL-OVERDRACHT] De factuur die op /factuur-maken is gemaakt vóór er een account was.
+import {
+  readHandoff, clearHandoff, hasInvoiceContent, isMeaningfulLine, describeHandoff,
+  type FactuurHandoff,
+} from '@/lib/factuur-handoff'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -19,7 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
-import { M3 } from '@/lib/design/tokens'
+import { M3, columnInner, COLUMN } from '@/lib/design/tokens'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -487,6 +492,21 @@ function NewInvoicePageContent() {
         ? [{ description: aiDescription || '', quantity: 1, unit_price: offerteUnitPrice, btw_rate: aiBtwRate }]
         : [{ description: aiDescription, quantity: 1, unit_price: aiAmount, btw_rate: aiBtwRate }]
   )
+
+  // [FUNNEL-OVERDRACHT] De factuur uit de gratis generator, als die er is. Alleen bij een
+  // gewone nieuwe factuur: komt de gebruiker hier via een offerte, een vervanging of een scan,
+  // dan is hij met iets anders bezig en zou dit aanbod alleen in de weg zitten.
+  const [handoff, setHandoff] = useState<FactuurHandoff | null>(null)
+  useEffect(() => {
+    if (replacesNumberParam || offerteParam || aiClientName || aiDescription) return
+    try {
+      const h = readHandoff(localStorage)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (hasInvoiceContent(h)) setHandoff(h)
+    } catch {
+      /* geblokkeerde opslag — dan is er gewoon niets aan te bieden */
+    }
+  }, [replacesNumberParam, offerteParam, aiClientName, aiDescription])
 
   // [COHERENCE-CREDITNOTA] Credit-flow state removed — see the note above handleConvertOfferte.
   // Creditnotas are created from the original invoice's detail dialog, not here.
@@ -1036,7 +1056,68 @@ function NewInvoicePageContent() {
           "Omzetten naar factuur" action now come from the shared sub-page header
           (registered via useSubPageHeader above). */}
 
-      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
+      <div data-form style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
+
+        {/* [FUNNEL-OVERDRACHT] De factuur die iemand op /factuur-maken maakte vóórdat hij een
+            account had. Die pagina beloofde "bewaar je facturen" en leverde tot nu toe een leeg
+            formulier op — alles opnieuw tikken, precies bij het besluit om te blijven.
+
+            Dit is een VRAAG, geen automatische invulling. Het bedrijfsblok mag stil worden
+            voorgevuld in de onboarding (eigen gegevens, herkenning), maar een compleet ingevulde
+            factuur die vanzelf verschijnt is iets anders: dan weet je niet meer wat van jou is
+            en wat het systeem verzon. Eén klik ervoor, één klik ertegen, en in beide gevallen is
+            de overdracht daarna weg zodat hij nooit een tweede keer opduikt. */}
+        {handoff && (
+          <div style={{ backgroundColor: '#E6F4EA', border: '1px solid #137333', borderRadius: 16, padding: 16 }}>
+            <p style={{ fontSize: 15, fontWeight: 600, color: '#137333', margin: '0 0 4px' }}>
+              We vonden de factuur die je eerder maakte
+            </p>
+            <p style={{ fontSize: 14, color: '#137333', margin: '0 0 12px', lineHeight: 1.5 }}>
+              {describeHandoff(handoff)}. Wil je hem hier overnemen? Je factuurnummer krijg je van
+              ons — dat loopt door in je eigen reeks.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  const c = handoff.client
+                  if (c.client_name.trim()) {
+                    setClientName(c.client_name)
+                    setClientSearch(c.client_name)
+                    // Bewust GEEN selectedClientId: deze klant bestaat nog niet in het
+                    // klantenbestand. De bestaande opslaglogica maakt hem aan; een verzonnen
+                    // koppeling zou naar een record wijzen dat er niet is.
+                    setSelectedClientId(null)
+                  }
+                  if (c.client_email.trim()) setClientEmail(c.client_email)
+                  if (c.client_address.trim()) setClientAddress(c.client_address)
+                  if (c.client_postal_code.trim()) setClientPostal(c.client_postal_code)
+                  if (c.client_city.trim()) setClientCity(c.client_city)
+                  if (c.client_btw_number.trim()) setClientBtw(c.client_btw_number)
+                  const regels = handoff.lines.filter(isMeaningfulLine)
+                  if (regels.length) {
+                    setLines(regels.map((l) => ({
+                      description: l.description,
+                      quantity: l.quantity || 1,
+                      unit_price: l.unit_price,
+                      btw_rate: l.btw_rate,
+                    })))
+                  }
+                  clearHandoff(localStorage)
+                  setHandoff(null)
+                }}
+                style={{ padding: '10px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#137333', color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Overnemen
+              </button>
+              <button
+                onClick={() => { clearHandoff(localStorage); setHandoff(null) }}
+                style={{ padding: '10px 16px', borderRadius: 9999, border: '1px solid #137333', backgroundColor: 'transparent', color: '#137333', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Nee, opnieuw beginnen
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* [DS] Segmented Button — Material You, één geheel */}
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
@@ -1400,7 +1481,10 @@ function NewInvoicePageContent() {
 
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
             <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
-              <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* [BAR-ALIGN] The bar centred its content at the column's OUTER
+                  width while the form spends 16px of that on its gutters, so the
+                  send button sat one gutter wider than every field above it. */}
+              <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button onClick={() => {
                   // [FACTUUR-A] Factuur send is irreversible (number consumed
                   // + e-mail with PDF delivered) → confirm first. Offerte and

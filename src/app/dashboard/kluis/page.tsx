@@ -27,8 +27,7 @@ export default async function Page({
   // antwoord 'boekhouden' en verandert er niets.
   let purpose = 'boekhouden'
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
+    const { data } = await supabase
       .from('profiles')
       .select('account_purpose')
       .eq('id', user.id)
@@ -49,7 +48,8 @@ export default async function Page({
   // deze kolom en dat moet zo blijven.
   //
   // [VANGNET-SPLITSING] Twee aparte schrijfacties, en dat is niet netjesheid maar noodzaak:
-  // `account_purpose` komt uit account_purpose_archief.sql. Ontbreekt die kolom, dan weigert
+  // `account_purpose` komt uit account_purpose_archief.sql — in productie toegepast, maar een
+  // verse dev- of stagingdatabase begint zonder. Ontbreekt die kolom, dan weigert
   // PostgREST de HELE rij (PGRST204) — en in één update zou dan ook `onboarding_done` niet
   // geschreven worden. Dan blijft de bezoeker de wizard in gestuurd worden door de middleware,
   // precies in het geval waarvoor dit zelfherstel bestaat. Eerst dus de kolom die er altijd is.
@@ -62,8 +62,7 @@ export default async function Page({
       console.error('[KLUIS] onboarding_done niet gezet bij zelfherstel:', doneError.message)
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: purposeError } = await (supabase as any)
+    const { error: purposeError } = await supabase
       .from('profiles')
       .update({ account_purpose: 'archief' })
       .eq('id', user.id)

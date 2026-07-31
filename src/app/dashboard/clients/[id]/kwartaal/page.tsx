@@ -16,7 +16,7 @@ import { rowMatchesQuery } from '@/lib/search'
 import type { InvoiceRow, ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
-import { EL1, M3, R } from '@/lib/design/tokens'
+import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -383,7 +383,7 @@ export default function KwartaalPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* [BRIDGE-A][POLISH ب-2/ب-3] Dead buttons removed (PDF Bank/CAMT/KW — legacy
             pre-pivot idea, never wired). Documenten now opens the Brug — the hub. */}

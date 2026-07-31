@@ -6,10 +6,11 @@
 // real content lands. See docs/MOTION_SYSTEM.md and docs/UX_REVIEW_2026.md.
 
 import { SkeletonPage, SkeletonCard } from '@/components/ui/PageSkeleton'
+import { COLUMN } from '@/lib/design/tokens'
 
 export default function Loading() {
   return (
-    <SkeletonPage maxWidth={480}>
+    <SkeletonPage maxWidth={COLUMN.hub}>
       <SkeletonCard h={78} />
       <SkeletonCard h={78} />
       <SkeletonCard h={78} />

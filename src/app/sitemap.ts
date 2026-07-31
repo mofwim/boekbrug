@@ -8,6 +8,7 @@ import { SITE_URL } from '@/lib/site'
 import { TOOLS } from '@/lib/tools'
 import { LOCALES, getPublishedPosts, articlePath } from '@/lib/blog'
 import { donationConfig } from '@/lib/donation'
+import { VAKKEN } from '@/lib/vak-sjablonen'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date()
@@ -49,6 +50,17 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: t.priority,
   }))
 
+  // [VAK-PAGINAS] Eén pagina per beroep onder /factuur-maken. Ze staan hier omdat ze precies de
+  // zoekvraag bedienen waar bijna niemand op mikt ("factuur maken loodgieter"), in tegenstelling
+  // tot de hoofdterm waar de hele markt op zit. Prioriteit 0.7: onder de hoofdtool, boven de
+  // Engelse varianten, want dit is de zoekvraag met de minste concurrentie én de meeste intentie.
+  const vakPages: MetadataRoute.Sitemap = VAKKEN.map((v) => ({
+    url: `${SITE_URL}/factuur-maken/${v.slug}`,
+    lastModified,
+    changeFrequency: 'monthly',
+    priority: 0.7,
+  }))
+
   // [EN-TOOLS] English versions of the calculators (listed here as they ship),
   // targeting expat / English search demand. Priority 0.6 — below the primary
   // Dutch tools but indexable.
@@ -78,5 +90,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     })),
   )
 
-  return [...staticPages, ...toolPages, ...enToolPages, ...blogPages]
+  return [...staticPages, ...toolPages, ...vakPages, ...enToolPages, ...blogPages]
 }
