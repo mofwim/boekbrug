@@ -805,9 +805,48 @@ export function isReferenceNumberToken(part: string): boolean {
 }
 
 /**
+ * [BANK-COVERAGE-BY-MONEY] Is every euro of this bank line sitting on an invoice?
+ *
+ * This is the AUTHORITATIVE answer to "is this payment finished?", and it is deliberately
+ * arithmetic. `appliedTotal` is Σ bank_tx_invoices.amount_applied for the line — the figure
+ * every booking path (apply_bank_payment, book_bank_batch, confirm) now writes.
+ *
+ * It lives here, beside isFullyCovered, because the two routes that ask the question must
+ * never answer it differently — and they did. confirm/route.ts was moved to money by
+ * [BANK-ONE-PAYMENT-MANY-INVOICES] while match/route.ts kept counting number-shaped tokens in
+ * the reference, so a line whose every euro was booked still reported allCovered=false as soon
+ * as one reference token was not a paid invoice number (a customer or order number, a POS batch
+ * counter, or the free text the extractor falls back to when it finds no invoice number). Such a
+ * line never leaves "Te bevestigen": confirming it again can only return 409, the client treats
+ * that as done and re-fetches, and the card comes straight back — an unbreakable loop.
+ *
+ * Returns null when the line is NOT MEASURABLE (no join rows, or a link written before
+ * amount_applied existed): the sum is then a lower bound, not the truth, and answering
+ * "covered" from it would hide money. Callers fall back to isFullyCovered, which is
+ * conservative by design — an unresolved number keeps the line visible, never hides on doubt.
+ *
+ * @param txAmount     the bank line's signed amount (magnitude is what counts).
+ * @param appliedTotal Σ amount_applied over the line's links, or null when not measurable.
+ */
+export function bankLineFullyApplied(
+  txAmount: number | null | undefined,
+  appliedTotal: number | null | undefined,
+): boolean | null {
+  if (appliedTotal == null || !Number.isFinite(appliedTotal)) return null;
+  const amount = Math.abs(Number(txAmount ?? 0));
+  if (!Number.isFinite(amount)) return null;
+  // Same cent tolerance the confirm route books with, so the two can never disagree.
+  return Math.round((amount - Math.max(0, appliedTotal)) * 100) / 100 <= 0.01;
+}
+
+/**
  * Is every invoice number listed in this transaction's reference now backed by a
  * PAID invoice? Presence check only — no amount arithmetic (decision: amount is
  * for display confidence, never a subset-sum reconciliation).
+ *
+ * [BANK-COVERAGE-BY-MONEY] This is the FALLBACK, not the primary rule: it can only speak
+ * about invoice NUMBERS, and a bank reference routinely carries tokens that are not invoice
+ * numbers at all. Use bankLineFullyApplied first and come here only when it returns null.
  *
  *   - 0 or 1 reference number → single-invoice case: a confirmation completes it.
  *     Returns true (the existing single-invoice flow is unchanged). A tx with one

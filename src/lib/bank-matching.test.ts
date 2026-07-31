@@ -8,6 +8,7 @@ import {
   dateProximityScore,
   isEligible,
   isFullyCovered,
+  bankLineFullyApplied,
   coveredReferenceNumbers,
   dedupeCandidates,
   isPartialPaymentHint,
@@ -665,6 +666,45 @@ console.log("\n— [TRUST-MATCH-YEAR] a bare-year invoice number never reference
     [inv({ invoice_number: "2026-014", total_inc_btw: 850 })],
   );
   check("a number containing a year ('2026-014') still reference-matches", autoConfirmTier(containsYear.matches[0]) === "certain");
+}
+
+console.log("\n— [BANK-COVERAGE-BY-MONEY] a fully-applied line is finished, whatever the reference says —");
+{
+  // The reported loop: a bank line whose every euro is booked, but whose reference carries a
+  // token that is not a paid invoice number (a customer number, a POS batch counter, or the free
+  // text the extractor falls back to). The token rule can never call it covered, so the line
+  // stayed in "Te bevestigen" and every confirm attempt returned 409 → the client refreshed →
+  // the card came straight back. Only the money can answer "is this payment spent?".
+  const noise = "884512, 1123";                       // two number-shaped tokens, neither an invoice
+  const paidNumbers = new Set(["cm500212813"]);       // the invoice this line actually paid
+  check("the token rule alone can NEVER call it covered (the bug)",
+    isFullyCovered(noise, paidNumbers) === false);
+  check("the money rule sees a fully-applied line as finished",
+    bankLineFullyApplied(1123.14, 1123.14) === true);
+  check("a credit (positive) and a debit (negative) of the same size answer alike",
+    bankLineFullyApplied(-1123.14, 1123.14) === bankLineFullyApplied(1123.14, 1123.14));
+
+  // Money genuinely left over must STILL keep the line open — the fix must not hide unassigned money.
+  check("money left unassigned → not covered", bankLineFullyApplied(1000, 600) === false);
+  check("a cent of float dust still counts as covered", bankLineFullyApplied(1000, 999.995) === true);
+  check("one euro short is NOT covered", bankLineFullyApplied(1000, 999) === false);
+  check("over-applied (clamped elsewhere) reads as covered", bankLineFullyApplied(1000, 1000.5) === true);
+
+  // Not measurable → null, so the caller falls back to the conservative token rule rather than
+  // guessing "covered" from a sum that is only a lower bound.
+  check("no measurable applied total → null (caller falls back)", bankLineFullyApplied(1000, null) === null);
+  check("an undefined applied total → null", bankLineFullyApplied(1000, undefined) === null);
+  check("a non-finite applied total → null", bankLineFullyApplied(1000, Number.NaN) === null);
+  check("a non-finite line amount → null", bankLineFullyApplied(Number.POSITIVE_INFINITY, 10) === null);
+
+  // The two routes must now give the SAME answer for the same line — that identity IS the fix.
+  const line = { amount: -2265.41, applied: 2265.41, reference: "26302050, klantnr 884512" };
+  const matchRouteSays = bankLineFullyApplied(line.amount, line.applied);
+  const confirmRouteSays = bankLineFullyApplied(Math.abs(line.amount), line.applied);
+  check("match and confirm now agree on a fully-applied line",
+    matchRouteSays === true && confirmRouteSays === true);
+  check("…where the old reference rule would have disagreed",
+    isFullyCovered(line.reference, new Set(["26302050"])) === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
