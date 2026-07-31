@@ -65,7 +65,11 @@ const CHIP: Record<string, { bg: string; color: string }> = {
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
+// [TZ] timeZone PINNED. Without it `new Date('2026-07-31')` (UTC midnight) is formatted in the
+// BROWSER's zone, so west of UTC every invoice date rendered one day early — "30 jul" for an
+// invoice dated the 31st. format-nl.ts opens with exactly this warning ("We never let that happen
+// on a legal document"); this list was the one place still doing it. Amsterdam is the owner's day.
+const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', timeZone: 'Europe/Amsterdam' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
@@ -220,9 +224,14 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   }
 
   // Only an issued, unpaid verkoopfactuur can join a bundle (same rule as the lib).
+  // [CREDITNOTA-NO-CHASE] …and never one that was withdrawn with a creditnota. The API refuses
+  // those (betaalverzoek-bundel checks it server-side, because the pay page drops them from the
+  // payable set), so selecting one led to a dead "Betaalverzoek maken mislukt" for something this
+  // screen already knew: creditedIds is loaded right here. Grey it out instead of failing later.
   const isBundelbaar = (inv: BundelRow) =>
     (inv.invoice_type == null || inv.invoice_type === 'factuur') &&
-    ['sent', 'overdue', 'processing'].includes(inv.status)
+    ['sent', 'overdue', 'processing'].includes(inv.status) &&
+    !creditedIds.has(inv.id)
 
   function toggleSelect(inv: BundelRow) {
     setSelected(prev => {
