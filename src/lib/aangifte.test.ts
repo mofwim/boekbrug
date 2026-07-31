@@ -202,5 +202,38 @@ console.log("\n— [ICP] rubriek 3b: stated correctly, and it can never change w
     /3b;Leveringen naar landen binnen de EU;1200,00/.test(buildAangifteCsv(met)));
 }
 
+console.log("\n— [COUNT-BASIS] de tellingen beschrijven de set waar de cijfers uit komen —");
+{
+  const input: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 1000, btw: 210 }],
+    btwVoorbelasting: 100,
+    cashOmzetZonderBtw: 0,
+  };
+  const note = (a: ReturnType<typeof buildAangifte>, re: RegExp) => a.notes.find((n) => re.test(n)) ?? "";
+
+  // Factuurstelsel: onveranderd. Dit is de bestaande zin, woord voor woord.
+  const acc = buildAangifte(input, compl({ incomingInvoiceCount: 40, outgoingInvoiceCount: 3 }), "Q1 2026");
+  check("factuur: 5b noemt 'ingevoerde inkoopfacturen'",
+    /Voorbelasting \(5b\) telt alleen 40 ingevoerde inkoopfactu/.test(note(acc, /Voorbelasting/)));
+  check("factuur: 5a noemt de verkoopfacturen zonder betaal-woord",
+    /en 3 verkoopfactu\(u\)r\(en\)\./.test(note(acc, /Verkoop-BTW/)));
+
+  // Kasstelsel: dezelfde getallen betekenen iets anders, en de zin zegt dat nu ook.
+  const cash = buildAangifte(input, compl({ incomingInvoiceCount: 10, outgoingInvoiceCount: 3, scheme: "kas" }), "Q1 2026");
+  check("kas: 5b zegt BETAALD, niet 'ingevoerd'",
+    /die je in dit kwartaal hebt BETAALD \(kasstelsel\)/.test(note(cash, /Voorbelasting/)));
+  check("kas: 5b legt uit wat er dan NIET meetelt",
+    /Een onbetaalde inkoopfactuur telt pas mee zodra je hem betaalt\./.test(note(cash, /Voorbelasting/)));
+  check("kas: 5a noemt de betaalde verkoopfacturen",
+    /3 in dit kwartaal betaalde verkoopfactu/.test(note(cash, /Verkoop-BTW/)));
+  check("kas verandert geen enkel BEDRAG — alleen de zin",
+    cash.verschuldigd === acc.verschuldigd && cash.voorbelasting === acc.voorbelasting && cash.saldo === acc.saldo);
+
+  // Zonder verkoopfacturen blijft de zin in beide stelsels bij de dagomzet.
+  const geen = buildAangifte(input, compl({ outgoingInvoiceCount: 0, scheme: "kas" }), "Q1 2026");
+  check("geen verkoopfacturen: geen losse bijzin, in geen van beide stelsels",
+    /uit 90 dag\(en\) dagomzet\./.test(note(geen, /Verkoop-BTW/)));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

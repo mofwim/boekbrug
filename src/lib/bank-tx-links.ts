@@ -8,22 +8,22 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRowsForIds } from "./supabase-paginate";
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Client = SupabaseClient<any>;
-
 /**
  * [DEPLOY-SAFE] Is this failure "the join table is not there yet" rather than "the read broke"?
  *
- * The distinction matters because the two functions below now THROW on a read error, and a
- * deployment whose bank_tx_invoices migration has not run yet must not turn every unlink into a
- * 500. A missing table is not an unknown: it means there are NO links, which is a real and
- * complete answer — the same one the pre-migration fallbacks elsewhere in this app rely on.
- * Everything else (a timeout, a 414, a permissions error) stays a refusal, because there the
- * links may well exist and we simply could not see them.
+ * The distinction matters because the two functions below THROW on a read error, and a deployment
+ * whose bank_tx_invoices migration has not run yet must not turn every unlink into a 500. A
+ * missing table is not an unknown: it means there are NO links, which is a real and complete
+ * answer. Everything else (a timeout, a 414, a permissions error) stays a refusal, because there
+ * the links may well exist and we simply could not see them.
+ *
+ * The rule itself moved to pg-missing.ts once a second caller needed it (the VAT-basis read):
+ * two copies of "which errors may be treated as an empty answer" is exactly the kind of thing
+ * that drifts apart quietly.
  */
-function isMissingTable(message: string): boolean {
-  return /does not exist|schema cache|PGRST205|42P01/i.test(message);
-}
+import { isMissingRelation as isMissingTable } from "./pg-missing";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Client = SupabaseClient<any>;
 
 /**
  * Record that `transactionId` paid each of `invoiceIds`. Idempotent (unique pair). Best-effort.

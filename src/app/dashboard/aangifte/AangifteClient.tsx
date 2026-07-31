@@ -5,9 +5,13 @@
 // figure is derived from the owner's own imported data (see /api/aangifte); the notes
 // state exactly what each depends on. It is loudly a CONCEPT — never a filing.
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
+// [TZ] Amsterdam's day/year, never the device's — see format-nl.ts. formatDateNL renders the
+// filing timestamp as DD-MM-YYYY, pinned to the same zone.
+import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
@@ -38,6 +42,11 @@ interface IcpLine { vatNumber: string; country: string; clientName: string | nul
 interface IcpProblem { kind: string; invoiceNumber: string | null; clientName: string | null; vatNumber: string; detail: string }
 interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
 
+// [FILED-QUARTER] The frozen figures of an aangifte this owner already marked as ingediend, when
+// this quarter is one of them. Everything else on this page is recomputed LIVE, so without this
+// the screen shows a fresh concept for a closed quarter and says nothing about it.
+interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number }
+
 export default function AangifteClient() {
   const sp = useSearchParams()
   // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
@@ -48,8 +57,17 @@ export default function AangifteClient() {
   const [data, setData] = useState<Aangifte | null>(null)
   const [art29, setArt29] = useState<Art29 | null>(null)
   const [icp, setIcp] = useState<Icp | null>(null)
+  const [filed, setFiled] = useState<Filed | null>(null)
+  const [filedUnknown, setFiledUnknown] = useState(false)
+  // [LOAD-REASON] Why the concept is not on screen. "Kon de concept-aangifte niet laden" was the
+  // answer to every failure, including an expired session — which the owner cannot fix by
+  // refreshing, and which is the most common one of the set.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const curYear = new Date().getFullYear()
+  // [TZ] The Amsterdam year, not the device's. This caps the year picker, and a traveller's phone
+  // (or one with a wrong clock) must not be able to open — or hide — a quarter the rest of the app
+  // judges by the Dutch calendar.
+  const curYear = Number(amsterdamToday().slice(0, 4))
 
   useEffect(() => {
     let cancelled = false
@@ -58,25 +76,46 @@ export default function AangifteClient() {
       // dezelfde tick als voorheen. Het verschil is dat de compiler nu kan zien dat er geen
       // synchrone setState in de effect-body zelf zit.
       setLoading(true); setData(null); setArt29(null); setIcp(null)
+      setFiled(null); setFiledUnknown(false); setLoadError(null)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
-        const json = await res.json()
-        if (!cancelled && res.ok) {
-          setData(json.aangifte)
-          setArt29({
-            vatClawbackBtw: Number(json.vatClawbackBtw) || 0,
-            vatClawbackCount: Number(json.vatClawbackCount) || 0,
-            badDebtReclaimableBtw: Number(json.badDebtReclaimableBtw) || 0,
-            badDebtCount: Number(json.badDebtCount) || 0,
-          })
-          setIcp(json.icp ?? null)
+        const json = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (!res.ok) {
+          // The route writes a Dutch `detail` for the refusals it decides itself (a regime it
+          // could not read); a 5xx without one keeps our own sentence rather than a raw
+          // Postgres/English message.
+          setLoadError(
+            res.status === 401
+              ? 'Je sessie is verlopen — log opnieuw in.'
+              : (typeof json?.detail === 'string' && json.detail.trim())
+                ? json.detail.trim()
+                : 'Kon de concept-aangifte niet laden. Probeer het zo meteen opnieuw.',
+          )
+          return
         }
-      } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
+        setData(json.aangifte)
+        setArt29({
+          vatClawbackBtw: Number(json.vatClawbackBtw) || 0,
+          vatClawbackCount: Number(json.vatClawbackCount) || 0,
+          badDebtReclaimableBtw: Number(json.badDebtReclaimableBtw) || 0,
+          badDebtCount: Number(json.badDebtCount) || 0,
+        })
+        setIcp(json.icp ?? null)
+        setFiled((json.filed as Filed | null) ?? null)
+        setFiledUnknown(json.filedUnknown === true)
+      } catch {
+        if (!cancelled) setLoadError('Geen verbinding — probeer het zo meteen opnieuw.')
+      } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
   }, [year, quarter])
 
   const teBetalen = data ? data.saldo >= 0 : true
+  // [FILED-QUARTER] The difference between what was handed in and what this quarter's data says
+  // NOW. Both sides are whole euros already (the route rounds, and 5g is a subtraction of two
+  // rounded figures), so this is exact — no epsilon, no "verschil van € 0" from a float.
+  const filedDelta = filed && data ? data.saldo - filed.saldo : 0
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -105,6 +144,46 @@ export default function AangifteClient() {
           ⚠ Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte.
           Je boekhouder controleert en dient in.
         </div>
+
+        {/* ── [FILED-QUARTER] Dit kwartaal is al ingediend ────────────────────────────────────
+            Alles op deze pagina wordt LIVE herrekend. Voor een kwartaal dat al de deur uit is,
+            is dat precies de informatie die ontbrak: de cijfers hieronder zijn niet meer per
+            definitie de cijfers die de Belastingdienst heeft. Wijkt het af, dan staat het
+            verschil er met naam en toenaam — en gaat de owner naar Waarheid, want daar hoort de
+            beslissing (verrekenen of suppletie), niet hier. */}
+        {/* `data &&` is not decoration: filedDelta is 0 without it, and 0 is the sentence "komt
+            precies overeen" — a claim we cannot make while the concept itself is not loaded. */}
+        {filed && data && (
+          <div style={{ background: filedDelta !== 0 ? M3.errorContainer : M3.surfaceVariant, color: filedDelta !== 0 ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            <strong style={{ fontWeight: 700 }}>
+              Dit kwartaal is al ingediend ({formatDateNL(filed.filedAt)})
+            </strong>
+            {filedDelta === 0 ? (
+              <div style={{ marginTop: 4 }}>
+                De berekening hieronder komt (nog) precies overeen met wat je hebt ingediend:
+                5g {eur.format(Math.abs(filed.saldo))} {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'}.
+              </div>
+            ) : (
+              <div style={{ marginTop: 4 }}>
+                Je hebt <strong>{eur.format(Math.abs(filed.saldo))}</strong> {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'} ingediend.
+                Met je huidige gegevens komt daar <strong>{eur.format(Math.abs(filedDelta))}</strong>{' '}
+                {filedDelta > 0 ? 'bij' : 'af'} — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.
+                Wat je daarmee doet (verrekenen of een suppletie) beslis je op de Waarheid-pagina.
+                <div style={{ marginTop: 6 }}>
+                  <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
+                    Bekijk het verschil op Waarheid
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {filedUnknown && (
+          <div style={{ background: M3.surfaceVariant, color: M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13, margin: '0 0 12px', lineHeight: 1.55 }}>
+            We konden niet controleren of dit kwartaal al is ingediend. Ga er niet van uit dat het
+            nog openstaat — ververs de pagina voordat je iets wijzigt.
+          </div>
+        )}
 
         {/* [BAD-DEBT] Art. 29 Wet OB — the two things the calendar adds to this quarter that the
             rubrieken above cannot show, because they are not in the invoices of this quarter at
@@ -141,8 +220,14 @@ export default function AangifteClient() {
 
         {loading && <div style={{ color: M3.neutral, fontSize: 14 }}>Berekenen…</div>}
 
+        {/* [LOAD-REASON] Say WHICH failure it was. A concept that cannot be built is not a
+            detail: the reasons the route refuses on purpose (it could not read the owner's
+            BTW-regeling) have a different answer than a dropped connection, and an expired
+            session has one the owner can actually act on. */}
         {!loading && !data && (
-          <div style={{ color: M3.neutral, fontSize: 14 }}>Kon de concept-aangifte niet laden.</div>
+          <div style={{ color: M3.neutral, fontSize: 14, lineHeight: 1.55 }}>
+            {loadError ?? 'Kon de concept-aangifte niet laden.'}
+          </div>
         )}
 
         {data && (

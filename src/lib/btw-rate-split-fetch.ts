@@ -7,7 +7,7 @@
 // can never disagree about where a mixed-rate sale belongs.
 
 import { rateSharesFromLines, type RateShare } from "./btw-rate-split";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRowsForIds } from "./supabase-paginate";
 import type { PipelineClient } from "./supabase-pipeline";
 
 export interface RateSplitInvoice {
@@ -36,11 +36,19 @@ export async function fetchRateShares(
   if (ids.length === 0) return out;
 
   try {
-    const lineRows = await fetchAllRows((from, to) =>
+    // [IN-CHUNK] Chunked, because `ids` is EVERY sales invoice in the quarter. `.in()` has a second,
+    // silent ceiling besides the row cap: the id list travels in the URL, so a few hundred uuids
+    // outgrow the proxy's request line and the call dies with a 414 — which supabase-js reports as
+    // an ordinary error, not an exception (supabase-paginate.ts:22-31). It landed in the catch
+    // below, and the catch is by design quiet, so on a busy quarter the rate split would vanish
+    // ENTIRELY: every mixed-rate invoice back to one blended, header-derived rate, and the whole
+    // amount into a single rubriek — the exact failure this module was written to prevent. The row
+    // cap was already handled; this is the other half.
+    const lineRows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
       pipeline
         .from("invoice_lines")
         .select("invoice_id, btw_rate, line_total")
-        .in("invoice_id", ids)
+        .in("invoice_id", chunk)
         .order("id", { ascending: true })
         .range(from, to),
     );
@@ -56,8 +64,16 @@ export async function fetchRateShares(
       const shares = rateSharesFromLines(byInvoice.get(inv.id), inv.total_ex_btw ?? 0, inv.btw_amount ?? 0);
       if (shares) out.set(inv.id, shares);
     }
-  } catch {
-    /* best-effort: no buckets → the header-derived rate, exactly as before */
+  } catch (e) {
+    // Best-effort stays: no buckets → the header-derived rate, exactly as before this module
+    // existed, and the TOTAL (5a, 5b, 5g) is identical either way — the split only ever moves
+    // omzet BETWEEN rubrieken. What is not acceptable is that it used to fail INVISIBLY: with the
+    // 414 path closed above, an error here is a real outage, and a rubriek split that quietly
+    // degraded on a filed declaration should be findable afterwards.
+    console.error("[RUBRIEK-SPLIT] invoice_lines read failed — falling back to the header rate", {
+      invoiceCount: ids.length,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
   return out;
 }

@@ -13,6 +13,8 @@ import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [DEPLOY-SAFE] "that table isn't there yet" vs "the read failed" — see pg-missing.ts
+import { isMissingRelation } from "@/lib/pg-missing";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
@@ -24,11 +26,6 @@ import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type Icp
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
-function shiftDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 // EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be intra-EU
 // (rubriek 4b), which this concept does NOT auto-compute.
 const EU_VAT = /^(AT|BE|BG|CY|CZ|DE|DK|EE|ES|FI|FR|GR|EL|HR|HU|IE|IT|LT|LU|LV|MT|PL|PT|RO|SE|SI|SK)/i;
@@ -184,11 +181,29 @@ export async function GET(req: NextRequest) {
     }).length;
   }
 
+  // [COUNT-BASIS] Count the set the figures were actually built from. Under factuurstelsel that is
+  // the invoices DATED in this quarter; under kasstelsel it is the invoices SETTLED in it — a
+  // different set on purpose (kas-payment-events-fetch applies no invoice_date filter, "a
+  // prior-year invoice paid this quarter must be reachable"). Counting the dated set under kas
+  // printed a number with no relation to 5a/5b in the block this page calls its trust layer: a
+  // shop that paid ten old supplier invoices in March could read "5b telt alleen 2 inkoopfacturen".
+  // The route already draws this exact distinction three blocks down, where datelessVerifiedCount
+  // is skipped under kas "because the invoice_date is irrelevant" — these two counts were simply
+  // left behind.
+  const settledInvoiceCount = (dir: "incoming" | "outgoing"): number =>
+    new Set((sr.opts.settlements ?? []).filter((e) => e.direction === dir).map((e) => e.invoiceId)).size;
+  const onCash = sr.scheme === "kas";
+
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays,
-    incomingInvoiceCount: invRaw.filter((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "")).length,
-    outgoingInvoiceCount: invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
+    scheme: sr.scheme,
+    incomingInvoiceCount: onCash
+      ? settledInvoiceCount("incoming")
+      : invRaw.filter((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "")).length,
+    outgoingInvoiceCount: onCash
+      ? settledInvoiceCount("outgoing")
+      : invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
     hasEuPurchase: invRaw.some((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
     datelessVerifiedCount,
   };
@@ -197,8 +212,25 @@ export async function GET(req: NextRequest) {
   // margeregeling) become honest notes on the concept, so the owner and the accountant see the
   // same handoff the ZIP and readiness show. KOR is owner-declared; verlegd/marge are
   // phrase-gated on the owner's own invoice-line texts (tenant-safe fetch by invoice_id).
-  const { data: regimeProf } = await pipeline
+  // [KOR-READ-HONEST] This read's error was dropped, and korActive then defaulted to false — which
+  // for an owner who IS on the KOR quietly rewrites three things at once:
+  //   · the note "KOR is actief — bereken geen BTW" disappears (regime-flags.ts), and that note is
+  //     the only thing on this page telling them the full BTW table below does not apply to them;
+  //   · the art. 29 lid 7 warning appears, demanding repayment of voorbelasting a KOR entrepreneur
+  //     never deducted (bad-debt-collect.ts short-circuits on exactly this flag);
+  //   · an ICP-opgaaf and a rubriek 3b get built for supplies that carry none (icp.ts).
+  // A tax basis is not a detail to guess at, so this joins the turnover read below the same rule
+  // ([AANGIFTE-TURNOVER-ERROR]): the request fails and the screen says it could not load, rather
+  // than rendering a confident declaration for a regime the owner is not in.
+  const { data: regimeProf, error: regimeProfErr } = await pipeline
     .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  if (regimeProfErr) {
+    console.error("[KOR-READ-HONEST] kor_active read failed — refusing to build a concept", { ownerId, year, quarter, error: regimeProfErr.message });
+    return NextResponse.json(
+      { error: "regime_read_failed", detail: "We konden je BTW-regeling nu niet lezen. Zonder die kan dit concept er totaal anders uitzien, dus we tonen het liever niet. Probeer het zo meteen opnieuw." },
+      { status: 503 },
+    );
+  }
   const korActive = !!(regimeProf as { kor_active?: boolean | null } | null)?.kor_active;
   const regimeInvoices: RegimeInvoiceRef[] = invRaw.map((i) => ({
     id: String(i.id),
@@ -207,9 +239,13 @@ export async function GET(req: NextRequest) {
   }));
   const omzetForKorCheck =
     result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+  // The blanket `.catch(() => [])` that stood here swallowed the one thing it could not fix: the
+  // collector already handles its own line-read failure internally (best-effort by contract, and
+  // now logged), so anything reaching this point is a genuine fault in a KOR/verlegd/marge flag —
+  // and a concept aangifte that silently loses those is a handover the accountant cannot trust.
   const regimeFlags = await collectRegimeFlags({
     client: pipeline, korActive, omzetForKorCheck, invoices: regimeInvoices,
-  }).catch(() => []);
+  });
   const regimeNotes = regimeFlags.map(regimeFlagNote);
 
   // [KASSTELSEL] Honest notes for the cash-basis concept. The BTW is on the paid date, and any
@@ -233,6 +269,14 @@ export async function GET(req: NextRequest) {
   const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
   const bdNote = badDebtNote(badDebt);
   if (bdNote) regimeNotes.push(bdNote);
+  // [ART29-UNKNOWN] A failed read is not "niets terug te vragen" — say which of the two it is.
+  if (badDebt.readFailed) {
+    regimeNotes.push(
+      "We konden nu niet controleren of je BTW kunt terugvragen op facturen die je klanten nooit " +
+      "betaald hebben (art. 29 Wet OB). Dat betekent niet dat er niets is — probeer deze pagina zo " +
+      "meteen opnieuw voordat je indient.",
+    );
+  }
   // Report the count/euro TOGETHER, gated on the same materiality as the note, so the API can never
   // say "1 factuur / €0 terugvraagbaar" (an immaterial sub-euro reclaim rounds to 0 and isn't flagged).
   const bdMaterial = badDebt.totalReclaimableBtw >= BAD_DEBT_MIN_EUR;
@@ -245,6 +289,18 @@ export async function GET(req: NextRequest) {
   const cbNote = vatClawbackNote(clawback);
   if (cbNote) regimeNotes.unshift(cbNote);
   const cbMaterial = clawback.totalRepayableBtw >= BAD_DEBT_MIN_EUR;
+  // [ART29-UNKNOWN] This is the side that becomes a naheffing when it goes unnoticed, and the red
+  // banner on this page is usually the only place the owner ever meets it. A failed read used to
+  // render exactly like a clean quarter: no banner, no note, nothing. It goes FIRST, for the same
+  // reason the clawback note itself does.
+  if (clawback.readFailed) {
+    regimeNotes.unshift(
+      "LET OP: we konden niet controleren of er voorbelasting terugbetaald moet worden op " +
+      "inkoopfacturen die al meer dan een jaar openstaan (art. 29 lid 7 Wet OB). Dat is niet " +
+      "hetzelfde als 'er is niets' — ververs deze pagina voordat je indient, want deze post wordt " +
+      "een naheffing als hij wordt overgeslagen.",
+    );
+  }
 
   // [ICP] Sales to businesses in other EU member states belong in rubriek 3b, not in 1e — and
   // they carry a SECOND declaration (the ICP-opgaaf) that no rubriek can hint at. Built from the
@@ -284,8 +340,55 @@ export async function GET(req: NextRequest) {
     { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
     `Q${quarter} ${year}`, regimeNotes,
   );
+
+  // [FILED-QUARTER] Was this quarter already handed in? The page did not ask, and everything it
+  // shows is recomputed LIVE — so an owner who opens Q1 after filing it reads a fresh set of
+  // figures with nothing saying they are no longer the ones the Belastingdienst has. The app
+  // itself treats a filing as a frozen snapshot (btw_filings) whose later drift is a suppletie,
+  // and it already computes that difference — on /dashboard/waarheid, not here. Worse, the notice
+  // this app sends when a removed invoice changes a filed quarter says "bekijk het verschil op de
+  // BTW-pagina" and links HERE. So the concept now carries what it needs to say so, and to send
+  // the owner to the screen that owns the correction.
+  //
+  // A failed read is reported as UNKNOWN, never as "not filed": telling someone their quarter is
+  // still open when it is not is the one wrong answer this block could give.
+  // btw_filings is not in the generated types (btw_filings.sql) → same relaxed client /api/truth uses.
+  let filed: { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number } | null = null;
+  let filedUnknown = false;
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: fRow, error: fErr } = await (pipeline as any)
+      .from("btw_filings")
+      .select("filed_at, btw_verschuldigd, btw_voorbelasting, btw_saldo")
+      .eq("user_id", ownerId)
+      .eq("year", year)
+      .eq("quarter", quarter)
+      .maybeSingle();
+    if (fErr) {
+      // [DEPLOY-SAFE] btw_filings arrives with its own hand-applied migration. Where it has not
+      // landed, nobody can have filed anything — that is a complete answer, not an unknown, and
+      // treating it as one would put a "we konden het niet controleren" banner on every load
+      // forever. Any OTHER error stays unknown (see pg-missing.ts for why the two differ).
+      if (isMissingRelation(fErr.message)) {
+        filed = null;
+      } else {
+        filedUnknown = true;
+        console.error("[FILED-QUARTER] btw_filings read failed — reporting unknown, not 'not filed'", { ownerId, year, quarter, error: fErr.message });
+      }
+    } else if (fRow) {
+      const r = fRow as { filed_at: string; btw_verschuldigd: number | null; btw_voorbelasting: number | null; btw_saldo: number | null };
+      filed = {
+        filedAt: r.filed_at,
+        verschuldigd: Math.round(Number(r.btw_verschuldigd) || 0),
+        voorbelasting: Math.round(Number(r.btw_voorbelasting) || 0),
+        saldo: Math.round(Number(r.btw_saldo) || 0),
+      };
+    }
+  }
+
   return NextResponse.json({
     ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
+    filed, filedUnknown,
     badDebtReclaimableBtw: bdMaterial ? Math.round(badDebt.totalReclaimableBtw) : 0,
     badDebtCount: bdMaterial ? badDebt.eligible.length : 0,
     vatClawbackBtw: cbMaterial ? Math.round(clawback.totalRepayableBtw) : 0,

@@ -23,6 +23,8 @@ import {
   type InvoiceDirection,
 } from "./kas-payment-events";
 import { getVatScheme, resolveSchemeForQuarter, type VatScheme } from "./vat-scheme";
+// [DEPLOY-SAFE] "migration not applied yet" vs "the read failed" — see pg-missing.ts
+import { isMissingColumn } from "./pg-missing";
 import type { ComputeOpts } from "./financial-result";
 // [RUBRIEK-SPLIT] Same helper the accrual surfaces use — one definition of an invoice rate mix.
 import { fetchRateShares } from "./btw-rate-split-fetch";
@@ -162,6 +164,44 @@ export async function fetchSettlementEvents(
   return buildQuarterSettlements(headers, raw, start, end);
 }
 
+/**
+ * [SCHEME-READ-HONEST] The owner's stored election, read ONCE and read HONESTLY.
+ *
+ * All three resolvers below used to run `const { data: prof } = await …` and drop the error. The
+ * comment that justified it — "deploy-safe: if the vat_scheme migration lags, the select degrades
+ * to factuur, never a wrong number" — is true of exactly one failure and was applied to all of
+ * them. A missing COLUMN really does mean "this owner has made no election yet", and factuur is
+ * then the right answer. A read that FAILED means we do not know the election, and answering
+ * factuur for a kasstelsel owner is not a smaller answer, it is a different declaration:
+ *
+ *   · BTW is computed on the invoice date instead of the payment date, so unpaid sales are
+ *     declared too early and older invoices paid this quarter drop out entirely;
+ *   · the note that says "Kasstelsel actief — de BTW is berekend op de BETAALdatum" disappears
+ *     with it, so the concept looks like an ordinary accrual one;
+ *   · undatedPaidCount becomes 0, taking the "dit concept is mogelijk te laag" warning with it.
+ *
+ * Nothing on any screen contradicts it. So: degrade on a missing column, throw on anything else.
+ * Every caller (aangifte, readiness, closing package, the truth lens) already lets a failed read
+ * throw — their invoice and bank reads go through fetchAllRows, which does exactly this — so the
+ * request fails with a message instead of quietly declaring on the wrong basis.
+ */
+async function readSchemeElection(
+  pipeline: PipelineClient,
+  ownerId: string,
+): Promise<{ scheme: VatScheme; since: string | null }> {
+  const { data: prof, error } = await pipeline
+    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
+  if (error) {
+    if (!isMissingColumn(error.message, (error as { code?: string | null }).code)) {
+      throw new Error(`[KASSTELSEL] vat_scheme read failed: ${error.message}`);
+    }
+    // The migration has not landed here yet: nobody can have elected kas, so factuur is complete.
+    return { scheme: "factuur", since: null };
+  }
+  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  return { scheme: getVatScheme(p?.vat_scheme), since: p?.vat_scheme_since ?? null };
+}
+
 /** The VAT basis in force for a quarter, read from the owner's profile (own query → deploy-safe:
  *  if the vat_scheme migration lags, it degrades to factuur). Used where only the scheme is needed
  *  (the settlements are fetched separately, e.g. inside computeResultForRange). */
@@ -170,10 +210,8 @@ export async function resolveOwnerScheme(
   ownerId: string,
   quarterStart: string,
 ): Promise<VatScheme> {
-  const { data: prof } = await pipeline
-    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
-  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
-  return resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
+  const { scheme, since } = await readSchemeElection(pipeline, ownerId);
+  return resolveSchemeForQuarter(scheme, since, quarterStart);
 }
 
 /** The VAT basis across a whole [start, end] window, plus whether the window straddles the switch. */
@@ -209,11 +247,8 @@ export async function resolveOwnerSchemeSpan(
   start: string,
   end: string,
 ): Promise<SchemeSpan> {
-  const { data: prof } = await pipeline
-    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
-  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
-  const profileScheme = getVatScheme(p?.vat_scheme);
-  const since = p?.vat_scheme_since ?? null;
+  // [SCHEME-READ-HONEST] One reader for all three resolvers — see readSchemeElection.
+  const { scheme: profileScheme, since } = await readSchemeElection(pipeline, ownerId);
   const scheme = resolveSchemeForQuarter(profileScheme, since, start);
   const schemeAtEnd = resolveSchemeForQuarter(profileScheme, since, end);
   return {
@@ -247,10 +282,11 @@ export async function resolveSchemeSettlements(
   start: string,
   end: string,
 ): Promise<SchemeResolution> {
-  const { data: prof } = await pipeline
-    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
-  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
-  const scheme = resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
+  // [SCHEME-READ-HONEST] One reader for all three resolvers — see readSchemeElection. This is the
+  // call site where a swallowed error did the most damage: it decides the BASIS of the concept
+  // BTW-aangifte, of the readiness verdict and of the closing package.
+  const { scheme: profileScheme, since } = await readSchemeElection(pipeline, ownerId);
+  const scheme = resolveSchemeForQuarter(profileScheme, since, quarterStart);
   if (scheme !== "kas") return { scheme: "factuur", opts: {}, undatedPaidCount: 0, estimatedPortionCount: 0 };
   const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
   // [RUBRIEK-SPLIT] The rate mix belongs to the invoices the SETTLEMENTS point at, not to the

@@ -5,7 +5,7 @@
 // detectRegimeFlags. Kept out of regime-flags.ts so that module stays pure + node-testable.
 
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRowsForIds } from "./supabase-paginate";
 import { detectRegimeFlags, type RegimeFlag, type RegimeLineSignal } from "./regime-flags";
 
 export interface RegimeInvoiceRef {
@@ -32,14 +32,30 @@ export async function collectRegimeFlags(args: {
 
   const lines: RegimeLineSignal[] = [];
   if (ids.length > 0) {
-    const rows = await fetchAllRows<{ invoice_id: string | null; description: string | null }>((from, to) =>
-      args.client
-        .from("invoice_lines")
-        .select("invoice_id, description")
-        .in("invoice_id", ids)
-        .order("invoice_id", { ascending: true })
-        .range(from, to),
-    ).catch(() => [] as Array<{ invoice_id: string | null; description: string | null }>);
+    // [IN-CHUNK] `ids` is every invoice in the quarter, so the id list travels in the URL and a
+    // few hundred uuids outgrow the request line (414) — a silent ceiling next to the row cap,
+    // documented in supabase-paginate.ts:22-31. It landed in the catch below, which is quiet by
+    // design, so on a busy quarter the phrase-based regime flags (BTW verlegd, margeregeling)
+    // disappeared without a trace on exactly the accounts most likely to have them.
+    // [PAGE-KEY] Ordered by id, not invoice_id: several lines per invoice is the normal case, and
+    // Postgres gives no order among ties — across .range() windows a line could repeat or vanish.
+    const rows = await fetchAllRowsForIds<{ invoice_id: string | null; description: string | null }, string>(
+      ids,
+      (chunk, from, to) =>
+        args.client
+          .from("invoice_lines")
+          .select("invoice_id, description")
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, to),
+    ).catch((e: unknown) => {
+      // Best-effort by contract (the KOR flags do not depend on lines) — but no longer silent.
+      console.error("[REGIME-FLAGS] invoice_lines read failed — phrase flags omitted", {
+        invoiceCount: ids.length,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return [] as Array<{ invoice_id: string | null; description: string | null }>;
+    });
     for (const r of rows) {
       if (!r.invoice_id || !r.description) continue;
       const ref = refById.get(r.invoice_id);
