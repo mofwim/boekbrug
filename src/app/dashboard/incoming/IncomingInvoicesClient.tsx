@@ -224,6 +224,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   const [backfillDate, setBackfillDate] = useState<string>(
     () => `${new Date().getFullYear()}-01-01`
   );
+  // [INCOMING-CHROME] Everything that manages the MAILBOX rather than the queue —
+  // re-scan an older period, see what import skipped, disconnect — lives behind
+  // this one toggle. See the comment on the row itself for why.
+  const [manageOpen, setManageOpen] = useState(false);
   // [OBSERVABILITY] "Overgeslagen bij import" — transparency into what the pipeline did NOT
   // turn into an invoice, so nothing is silently lost. Loaded on demand when opened.
   const [skippedOpen, setSkippedOpen] = useState(false);
@@ -400,33 +404,87 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     // "verbonden" state in that case, or the automatic import rots silently behind a false ✓.
     const needsReauth = status.needs_reauth;
 
+    // [INCOMING-CHROME] The mailbox is the page's PLUMBING, not its work. It used
+    // to occupy a 200px block at the top — a 28px emoji, the provider, the
+    // address, a full-width blue Synchroniseer, a red-bordered Ontkoppel beside
+    // it, and two bare text links — so the queue the owner actually came for
+    // started below the fold and the first invoice was the seventh thing on
+    // screen. Worse, the one irreversible control on the page (disconnect the
+    // mailbox, touched once in the app's lifetime) was drawn at the same size and
+    // weight as the one used daily, immediately next to it.
+    //
+    // Now: one row. Source on the left, the daily action and everything else
+    // behind Beheer on the right. Nothing was removed — re-scan, skipped items
+    // and disconnect all still live here, one tap deeper, which is the right
+    // depth for a control you touch once a year.
     return (
-      <div
-        style={{
-          background: "#f8f9fa",
-          borderRadius: 16,
-          padding: "16px 20px",
-          marginBottom: 20,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-          <span style={{ fontSize: 28 }}>📧</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontWeight: 600, fontSize: 15, color: "#202124" }}>
-                {needsReauth ? `${providerName} — verbinding verlopen` : `${providerName} verbonden`}
-              </span>
-              <span
-                style={{
-                  width: 8, height: 8, borderRadius: "50%",
-                  background: needsReauth ? "#ea4335" : "#34a853", display: "inline-block",
-                }}
-              />
-            </div>
-            <div style={{ fontSize: 13, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {status.email}
-            </div>
+      <div style={{ marginBottom: 14 }}>
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 8px 8px 12px",
+            background: "#fff", border: "1px solid #e8eaed", borderRadius: 12,
+          }}
+        >
+          <svg
+            width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="#5f6368" strokeWidth="1.7" aria-hidden="true" style={{ flexShrink: 0 }}
+          >
+            <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
+            <path d="M3.2 7l8.8 6 8.8-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 7 }}>
+            {/* A dot is a FILL, so the bright brand tones are the right ones here
+                (see the *Fill note in @/lib/design/tokens). */}
+            <span
+              style={{
+                width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                background: needsReauth ? M3.errorFill : M3.successFill,
+              }}
+            />
+            <span
+              style={{
+                fontSize: 14, fontWeight: 600, flexShrink: 0,
+                color: needsReauth ? M3.error : "#202124",
+              }}
+            >
+              {needsReauth ? `${providerName} — verbinding verlopen` : providerName}
+            </span>
+            <span
+              style={{
+                fontSize: 13, color: "#5f6368", minWidth: 0,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              · {status.email}
+            </span>
           </div>
+          <button
+            onClick={() => handleSync()}
+            disabled={syncing}
+            style={{
+              background: syncing ? "#f1f3f4" : "#e8f0fe",
+              border: "none", color: syncing ? "#5f6368" : "#1a73e8",
+              fontWeight: 600, fontSize: 14, borderRadius: 980,
+              padding: "8px 16px", whiteSpace: "nowrap", flexShrink: 0,
+              cursor: syncing ? "default" : "pointer",
+            }}
+          >
+            {syncing ? "Bezig…" : "Synchroniseer"}
+          </button>
+          <button
+            onClick={() => setManageOpen((o) => !o)}
+            aria-expanded={manageOpen}
+            style={{
+              background: manageOpen ? "#e8eaed" : "#f8f9fa",
+              border: "none", color: "#3c4043",
+              fontWeight: 600, fontSize: 14, borderRadius: 980,
+              padding: "8px 14px", whiteSpace: "nowrap", flexShrink: 0,
+              cursor: "pointer",
+            }}
+          >
+            Beheer
+          </button>
         </div>
 
         {needsReauth && (
@@ -446,37 +504,29 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => handleSync()}
-            disabled={syncing}
+        {/* The sync's own progress line stays OUTSIDE the Beheer panel: a running
+            import must keep reporting itself whether or not that panel is open. */}
+        {syncResult && (
+          <div
             style={{
-              flex: 1,
-              background: syncing ? "#e0e0e0" : "#1a73e8",
-              color: syncing ? "#5f6368" : "#fff",
-              border: "none", borderRadius: 10, padding: "10px 0",
-              fontWeight: 600, fontSize: 14,
-              cursor: syncing ? "not-allowed" : "pointer",
+              marginTop: 8, fontSize: 13,
+              color: syncResult.startsWith("Fout") ? M3.error : M3.success,
             }}
           >
-            {syncing ? "Bezig…" : "Synchroniseer nu"}
-          </button>
-          <button
-            onClick={handleDisconnect}
-            style={{
-              background: "transparent", border: "1.5px solid #ea4335",
-              color: M3.error, borderRadius: 10, padding: "10px 16px",
-              fontWeight: 600, fontSize: 14, cursor: "pointer",
-            }}
-          >
-            Ontkoppel
-          </button>
-        </div>
+            {syncResult}
+          </div>
+        )}
+
+        {manageOpen && (
+        <div style={{
+          marginTop: 8, padding: "12px 14px",
+          background: "#fff", border: "1px solid #e8eaed", borderRadius: 12,
+        }}>
 
         {/* [BACKFILL] Re-scan an earlier period. The daily sync only looks forward, so an
             invoice that was missed at the time (and is now fixable) needs a one-off re-pull.
             Nothing is duplicated — the re-scan imports only what's still missing. */}
-        <div style={{ marginTop: 10 }}>
+        <div>
           {!backfillOpen ? (
             <button
               onClick={() => setBackfillOpen(true)}
@@ -491,7 +541,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               Mis je een factuur? Oudere e-mails opnieuw ophalen…
             </button>
           ) : (
-            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
+            <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
               <div style={{ fontSize: 12.5, color: "#3c4043", lineHeight: 1.5, marginBottom: 8 }}>
                 Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al
                 geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
@@ -536,20 +586,9 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           )}
         </div>
 
-        {syncResult && (
-          <div
-            style={{
-              marginTop: 10, fontSize: 13, textAlign: "center",
-              color: syncResult.startsWith("Fout") ? "#ea4335" : "#34a853",
-            }}
-          >
-            {syncResult}
-          </div>
-        )}
-
         {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
             transparency so a misjudged or unreadable document is never invisibly lost. */}
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 12 }}>
           {!skippedOpen ? (
             <button
               onClick={openSkipped}
@@ -561,7 +600,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               Bekijk wat is overgeslagen bij het importeren
             </button>
           ) : (
-            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
+            <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>Overgeslagen bij import</span>
                 <button
@@ -606,6 +645,26 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             </div>
           )}
         </div>
+
+        {/* [INCOMING-CHROME] The destructive one, last and quiet — a text button
+            below a rule rather than a red-bordered block beside the daily action.
+            It still asks before it acts (handleDisconnect opens the app dialog),
+            and it is now labelled with what it does rather than with jargon.
+            M3.error, not the bright #ea4335 the old border used: that tone is
+            fill-only in the tokens and fails the contrast floor for a word. */}
+        <div style={{ borderTop: "1px solid #f1f3f4", marginTop: 14, paddingTop: 12 }}>
+          <button
+            onClick={handleDisconnect}
+            style={{
+              background: "transparent", border: "none", color: M3.error,
+              fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0,
+            }}
+          >
+            E-mailverbinding verwijderen
+          </button>
+        </div>
+        </div>
+        )}
       </div>
     );
   }
@@ -1591,112 +1650,115 @@ function InvoiceCard({
           >
             {invoice.client_name || "Onbekende afzender"}
           </div>
-          <div style={{ fontSize: 13, color: "#5f6368" }}>
-            {formatDate(invoice.invoice_date)}
+          {/* [INCOMING-CHROME] The date and every badge on ONE line, in the app's
+              own overflow strip (.inv-strip in globals.css: no wrap, scrolls
+              sideways instead of stacking). Each badge used to claim a line of
+              its own under the date, so a card was ~90px tall and a 37-invoice
+              queue showed three at a time on a laptop. Same information, one
+              row shorter — and on a narrow phone the strip slides rather than
+              breaking the row apart, which is exactly what it exists for. */}
+          <div className="inv-strip" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+            <span style={{ fontSize: 13, color: "#5f6368", whiteSpace: "nowrap" }}>
+              {formatDate(invoice.invoice_date)}
+            </span>
+            {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
+                DIFFERENT financial animal (negative amounts by design), so the
+                owner must see it at a glance. Independent of the health badge:
+                a clean creditnota shows Creditnota + "ready", a broken one shows
+                Creditnota + "Aandacht nodig". */}
+            {invoice.invoice_type === "creditnota" && (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                  background: "#fdecea", border: "1px solid #f5b5ae",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
+                  Creditnota
+                </span>
+              </div>
+            )}
+            {/* [NEGEER-REDEN] Op de Genegeerd-lijst: waarom staat hij hier? Neutraal grijs — dit is
+                een notitie, geen waarschuwing. Ontbreekt hij (oude rij, of de vraag overgeslagen),
+                dan staat er niets: liever geen label dan een verzonnen label. */}
+            {mode === "ignored" && archiveReasonLabel(invoice.archive_reason) && (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                  background: "#f1f3f4", border: "1px solid #e0e3e6",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#5f6368", fontWeight: 600 }}>
+                  {archiveReasonLabel(invoice.archive_reason)}
+                </span>
+              </div>
+            )}
+            {/* [SUPERSEDE] En WELKE factuur hem verving. "Dubbel" hierboven zegt de categorie; drie
+                maanden later, bij de kwartaalafsluiting of als de leverancier belt, is de vraag niet
+                "waarom staat dit hier" maar "waar is hij dan wél gebleven". Zonder dit antwoord moet
+                de eigenaar dat uit zijn hoofd reconstrueren — precies het geheugenverlies dat het
+                Genegeerd-tabblad ooit had. Ontbreekt het nummer (oude rij, of de migratie nog niet
+                gedraaid), dan staat er niets: liever geen label dan een verzonnen label. */}
+            {mode === "ignored" && (invoice.superseded_by_number ?? "").trim() && (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                  background: "#f1f3f4", border: "1px solid #e0e3e6",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#5f6368", fontWeight: 600 }}>
+                  Vervangen door {invoice.superseded_by_number}
+                </span>
+              </div>
+            )}
+            {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
+                invoices get a calm-but-clear attention pill; clean invoices get a
+                quiet "ready to confirm" hint (calm, never the alarming "review").
+                The ignored tab shows nothing here — it must not nag. */}
+            {mode === "pending" && (
+              /* [IBAN-WISSEL] Een gewisseld rekeningnummer krijgt de ROOD-badge, niet de amberen
+                 "Aandacht nodig". Reden: bij factuurfraude klopt al het andere — bedrag, nummer,
+                 btw, datum — dus de gewone amberen pil zou dit laten lezen als "de AI twijfelde
+                 ergens over", terwijl dit het enige signaal is dat over GELD gaat. Eigen kleur,
+                 eigen woorden, en de reden eronder noemt beide nummers. */
+              invoice.health.flags.ibanChanged ? (
+                <div
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                    background: "#fce8e6", border: "1px solid #f5b5ae",
+                  }}
+                >
+                  <span style={{ fontSize: 11 }}>🏦</span>
+                  <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 700 }}>
+                    Ander rekeningnummer
+                  </span>
+                </div>
+              ) : invoice.health.level === "needs-review" ? (
+                <div
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                    background: "#fff4e5", border: "1px solid #ffd9a8",
+                  }}
+                >
+                  <span style={{ fontSize: 11 }}>⚠️</span>
+                  <span style={{ fontSize: 12, color: "#9a5b00", fontWeight: 600 }}>
+                    Aandacht nodig
+                  </span>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                  }}
+                >
+                  <span style={{ fontSize: 11, color: M3.success }}>✓</span>
+                  <span style={{ fontSize: 12, color: "#5f6368" }}>
+                    Klaar om te bevestigen
+                  </span>
+                </div>
+              )
+            )}
           </div>
-          {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
-              DIFFERENT financial animal (negative amounts by design), so the
-              owner must see it at a glance. Independent of the health badge:
-              a clean creditnota shows Creditnota + "ready", a broken one shows
-              Creditnota + "Aandacht nodig". */}
-          {invoice.invoice_type === "creditnota" && (
-            <div
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
-                background: "#fdecea", border: "1px solid #f5b5ae",
-              }}
-            >
-              <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
-                Creditnota
-              </span>
-            </div>
-          )}
-          {/* [NEGEER-REDEN] Op de Genegeerd-lijst: waarom staat hij hier? Neutraal grijs — dit is
-              een notitie, geen waarschuwing. Ontbreekt hij (oude rij, of de vraag overgeslagen),
-              dan staat er niets: liever geen label dan een verzonnen label. */}
-          {mode === "ignored" && archiveReasonLabel(invoice.archive_reason) && (
-            <div
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
-                background: "#f1f3f4", border: "1px solid #e0e3e6",
-              }}
-            >
-              <span style={{ fontSize: 12, color: "#5f6368", fontWeight: 600 }}>
-                {archiveReasonLabel(invoice.archive_reason)}
-              </span>
-            </div>
-          )}
-          {/* [SUPERSEDE] En WELKE factuur hem verving. "Dubbel" hierboven zegt de categorie; drie
-              maanden later, bij de kwartaalafsluiting of als de leverancier belt, is de vraag niet
-              "waarom staat dit hier" maar "waar is hij dan wél gebleven". Zonder dit antwoord moet
-              de eigenaar dat uit zijn hoofd reconstrueren — precies het geheugenverlies dat het
-              Genegeerd-tabblad ooit had. Ontbreekt het nummer (oude rij, of de migratie nog niet
-              gedraaid), dan staat er niets: liever geen label dan een verzonnen label. */}
-          {mode === "ignored" && (invoice.superseded_by_number ?? "").trim() && (
-            <div
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
-                background: "#f1f3f4", border: "1px solid #e0e3e6",
-              }}
-            >
-              <span style={{ fontSize: 12, color: "#5f6368", fontWeight: 600 }}>
-                Vervangen door {invoice.superseded_by_number}
-              </span>
-            </div>
-          )}
-          {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
-              invoices get a calm-but-clear attention pill; clean invoices get a
-              quiet "ready to confirm" hint (calm, never the alarming "review").
-              The ignored tab shows nothing here — it must not nag. */}
-          {mode === "pending" && (
-            /* [IBAN-WISSEL] Een gewisseld rekeningnummer krijgt de ROOD-badge, niet de amberen
-               "Aandacht nodig". Reden: bij factuurfraude klopt al het andere — bedrag, nummer,
-               btw, datum — dus de gewone amberen pil zou dit laten lezen als "de AI twijfelde
-               ergens over", terwijl dit het enige signaal is dat over GELD gaat. Eigen kleur,
-               eigen woorden, en de reden eronder noemt beide nummers. */
-            invoice.health.flags.ibanChanged ? (
-              <div
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
-                  background: "#fce8e6", border: "1px solid #f5b5ae",
-                }}
-              >
-                <span style={{ fontSize: 11 }}>🏦</span>
-                <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 700 }}>
-                  Ander rekeningnummer
-                </span>
-              </div>
-            ) : invoice.health.level === "needs-review" ? (
-              <div
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
-                  background: "#fff4e5", border: "1px solid #ffd9a8",
-                }}
-              >
-                <span style={{ fontSize: 11 }}>⚠️</span>
-                <span style={{ fontSize: 12, color: "#9a5b00", fontWeight: 600 }}>
-                  Aandacht nodig
-                </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  marginTop: 6,
-                }}
-              >
-                <span style={{ fontSize: 11, color: M3.success }}>✓</span>
-                <span style={{ fontSize: 12, color: "#5f6368" }}>
-                  Klaar om te bevestigen
-                </span>
-              </div>
-            )
-          )}
         </div>
 
         {/* [ROW-LAYOUT] .inv-row-side-h (globals.css) keeps amount + badge + chevron in one
@@ -3170,7 +3232,11 @@ export default function IncomingInvoicesClient({
           bar (DashboardChrome/STATIC_TITLES). This block is now just the status
           subtitle. (Removed a stale comment describing a Logo/Terug header that no
           longer exists here.) */}
-      <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
+      {/* [INCOMING-CHROME] 16px, not 20 — the status line used to start four
+          pixels further in than the tabs, the search field and every card below
+          it, which is exactly the kind of ragged left edge nobody can name but
+          everybody sees. */}
+      <div style={{ padding: "20px 16px 0", marginBottom: 14 }}>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}
         {pending.length === 0 ? (
@@ -3198,46 +3264,6 @@ export default function IncomingInvoicesClient({
             bevestigen
           </p>
         )}
-        {/* [REIMPORT-ALL] One tap re-reads every "Aandacht nodig" invoice — each keeps its
-            own current state (improve-or-keep, never verified). Only on the pending tab and
-            only when something is actually flagged. */}
-        {tab === "pending" && needsAttentionCount > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <button
-              type="button"
-              onClick={handleReimportAllNeedsAttention}
-              disabled={reimportAllRunning}
-              aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "8px 14px", borderRadius: 10,
-                background: "#fef7e0", color: "#B06000",
-                border: "1px solid #FDE293",
-                fontSize: 14, fontWeight: 600,
-                cursor: reimportAllRunning ? "default" : "pointer",
-                opacity: reimportAllRunning ? 0.7 : 1,
-              }}
-            >
-              {reimportAllRunning
-                ? `Bezig met opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
-                : `↻ Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
-            </button>
-          </div>
-        )}
-
-        {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
-            incoming invoices (received/paid). iOS-styled to match THIS surface. */}
-        <Link
-          href="/dashboard/incoming/manage"
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            marginTop: 12, padding: "8px 14px", borderRadius: 10,
-            background: "#e8f0fe", color: "#1a73e8",
-            fontSize: 14, fontWeight: 600, textDecoration: "none",
-          }}
-        >
-          Bevestigde inkoopfacturen ›
-        </Link>
       </div>
 
       <div style={{ padding: "0 16px" }}>
@@ -3276,13 +3302,36 @@ export default function IncomingInvoicesClient({
           ))}
         </div>
 
-        {/* [INTAKE-VERIFY-BULK] Bulk-select toolbar — pending tab only */}
-        {tab === "pending" && pending.length > 0 && (
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "0 4px", marginBottom: 12, gap: 8,
-          }}>
-            {!selectMode ? (
+        {/* [SEARCH] In-page live filter (this page only) */}
+        {(list.length > 0 || rawQ) && (
+          <div style={{ position: "relative", marginBottom: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
+              aria-label="Inkomende facturen zoeken"
+              style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
+            />
+            {search && (
+              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
+            )}
+          </div>
+        )}
+
+        {/* [INCOMING-CHROME] ONE row for everything that acts on the list, in one
+            shape. These three controls used to be scattered down the page in three
+            different geometries — an amber rounded-10 box under the status line, a
+            blue rounded-10 link under that, and a pill down here — which is most of
+            why the top of this page read as a pile rather than a toolbar. Same pill,
+            same height, same row; the destination link sits right, away from the
+            two that change data. It wraps rather than squeezing on a phone. */}
+        <div style={{
+          display: "flex", alignItems: "center", flexWrap: "wrap",
+          gap: 8, marginBottom: 14,
+        }}>
+            {tab === "pending" && pending.length > 0 && (!selectMode ? (
               <button
                 onClick={() => setSelectMode(true)}
                 style={{
@@ -3316,9 +3365,46 @@ export default function IncomingInvoicesClient({
                   Annuleer
                 </button>
               </>
+            ))}
+
+            {/* [REIMPORT-ALL] One tap re-reads every "Aandacht nodig" invoice — each keeps its
+                own current state (improve-or-keep, never verified). Only on the pending tab and
+                only when something is actually flagged. Amber because it belongs to the amber
+                badge on those rows, but the same pill as its neighbours. */}
+            {tab === "pending" && needsAttentionCount > 0 && (
+              <button
+                type="button"
+                onClick={handleReimportAllNeedsAttention}
+                disabled={reimportAllRunning}
+                aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
+                style={{
+                  background: "#fef7e0", border: "none", color: "#B06000",
+                  fontWeight: 600, fontSize: 14,
+                  padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
+                  cursor: reimportAllRunning ? "default" : "pointer",
+                  opacity: reimportAllRunning ? 0.7 : 1,
+                }}
+              >
+                {reimportAllRunning
+                  ? `Opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
+                  : `↻ Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
+              </button>
             )}
-          </div>
-        )}
+
+            {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
+                incoming invoices (received/paid). A destination, not an action —
+                so it is quiet text at the far end of the row, not a filled pill
+                competing with the two controls that change something. */}
+            <Link
+              href="/dashboard/incoming/manage"
+              style={{
+                marginLeft: "auto", color: "#1a73e8", fontSize: 14, fontWeight: 600,
+                textDecoration: "none", whiteSpace: "nowrap", padding: "8px 0",
+              }}
+            >
+              Bevestigde inkoopfacturen ›
+            </Link>
+        </div>
 
         {/* [RITME] De factuur die NIET kwam. Alleen op het tabblad "Te bevestigen", want daar
             komt de eigenaar om zijn inkomende post af te handelen — en dit is het enige dat hij
@@ -3392,24 +3478,6 @@ export default function IncomingInvoicesClient({
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* [SEARCH] In-page live filter (this page only) */}
-        {(list.length > 0 || rawQ) && (
-          <div style={{ position: "relative", marginBottom: 14 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
-              aria-label="Inkomende facturen zoeken"
-              style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
-            />
-            {search && (
-              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
-                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
-            )}
           </div>
         )}
 
