@@ -54,6 +54,11 @@ interface ImportHealth {
     // zwaardere badge: dit is geen leesfout maar een geldwaarschuwing, en de handeling
     // erachter (bellen op een zelf opgezocht nummer) is een andere dan "controleer de cijfers".
     ibanChanged: boolean;
+    // [MULTI-INVOICE] Eén bestand dat meerdere facturen lijkt te bevatten — of waarvan we dat
+    // niet KONDEN nagaan (een gescande stapel zonder tekstlaag). Import-health zet beide op deze
+    // ene vlag, want de eigenaar beantwoordt in beide gevallen dezelfde vraag. Stond in
+    // ImportHealth en ontbrak in deze spiegel, terwijl de kop hierboven zegt dat hij moet kloppen.
+    multipleInvoices: boolean;
   };
 }
 
@@ -1398,6 +1403,54 @@ function InvoiceCard({
     return { label: of ? `factuur ${of}` : "de andere factuur" };
   })();
 
+  // [MULTI-INVOICE] "Nee, dit is één factuur" — the owner's answer to a suspicion.
+  //
+  // The flag says either "this file looks like it holds several invoices" or "we could not check
+  // whether it does" (a scan with no text layer). Both are guesses about what is NOT in the books,
+  // both hold the invoice out of auto-booking, and neither can be settled by anyone but the person
+  // holding the paper. Without a way to say no, the badge stays on a perfectly ordinary invoice
+  // forever — and this badge also carries a real arithmetic error and a changed IBAN, so a false
+  // one here costs more than itself: it teaches the owner to stop reading the amber line.
+  //
+  // Only offered on the pending queue. On Genegeerd there is nothing to answer, and a confirmed
+  // invoice has already been judged by a human — which is what the flag was asking for.
+  const canDismissMultiInvoice = mode === "pending" && invoice.health.flags.multipleInvoices;
+  const [dismissingMulti, setDismissingMulti] = useState(false);
+  const handleDismissMultiInvoice = async () => {
+    if (dismissingMulti) return;
+    const ok = await dialog.confirm({
+      title: "Bevat dit bestand één factuur?",
+      message:
+        "We konden niet uitsluiten dat er meer facturen in dit bestand zitten. Zeg je dat het er één is, " +
+        "dan halen we die waarschuwing weg en beoordelen we deze factuur verder op zichzelf.\n\n" +
+        "Andere waarschuwingen op deze factuur blijven staan. Zit er tóch een tweede factuur in, voeg die " +
+        "dan los toe — hij staat nu nergens in je boekhouding.",
+      confirmLabel: "Ja, dit is één factuur",
+    });
+    if (!ok) return;
+    setDismissingMulti(true);
+    try {
+      const res = await fetch(`/api/invoice/${invoice.id}/multi-invoice`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        await dialog.alert({
+          title: "Niet gelukt",
+          message: data?.detail || "De waarschuwing kon niet worden weggehaald — ververs de pagina en probeer het opnieuw.",
+        });
+        return;
+      }
+      toast("Genoteerd — deze factuur wordt verder op zichzelf beoordeeld");
+      router.refresh(); // the flag is answered; the queue re-renders without it
+    } catch {
+      await dialog.alert({
+        title: "Geen verbinding",
+        message: "De waarschuwing is niet weggehaald. Controleer je verbinding en probeer het opnieuw.",
+      });
+    } finally {
+      setDismissingMulti(false);
+    }
+  };
+
   const [superseding, setSuperseding] = useState(false);
   const handleSupersede = async () => {
     if (superseding || !supersedeTarget) return;
@@ -1832,6 +1885,27 @@ function InvoiceCard({
                     </button>
                   )}
                 </div>
+                  {/* [MULTI-INVOICE] The answer to "does this file hold more than one invoice?".
+                      It sits in the same row as the duplicate answers because it is the same kind
+                      of thing: a suspicion only the person holding the paper can settle. Without
+                      it the amber box had a reason the owner could read and nothing to do about
+                      it — and this box also carries the arithmetic error and the changed IBAN, so
+                      a warning that can never be answered teaches people to stop reading it. */}
+                  {canDismissMultiInvoice && (
+                    <button
+                      onClick={handleDismissMultiInvoice}
+                      disabled={dismissingMulti}
+                      style={{
+                        marginTop: 10, marginLeft: 8, padding: "7px 12px", borderRadius: 9,
+                        background: dismissingMulti ? "#f1f3f4" : "#fff", cursor: dismissingMulti ? "default" : "pointer",
+                        border: "1px solid #dadce0", color: "#3c4043", fontWeight: 600, fontSize: 12.5,
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                      }}
+                    >
+                      <span style={{ fontSize: 13 }}>✓</span>
+                      {dismissingMulti ? "Bezig…" : "Nee, dit is één factuur"}
+                    </button>
+                  )}
               </div>
             )}
 

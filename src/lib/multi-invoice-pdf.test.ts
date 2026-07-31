@@ -2,7 +2,7 @@
 // Locks BOTH directions of the detector, and the second one matters most: this is a soft flag on
 // the busiest path in the app, so a false positive would nag on ordinary invoices until the
 // warning stops being read. Every "normal invoice" case below must stay silent.
-import { detectMultipleInvoices, cannotVerifySingleInvoice } from "./multi-invoice-pdf";
+import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle, clearSingleInvoiceDoubt } from "./multi-invoice-pdf";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -128,6 +128,53 @@ console.log("\n— FLAGS a scanned stack: several invoices in one file —");
   // Onzin uit een kapotte PDF mag geen vlag opleveren.
   check("NaN pagina's → stil, geen vlag op een rekenfout",
     cannotVerifySingleInvoice({ pages: NaN, hasTextLayer: false }) === null);
+}
+
+console.log("\n— het signaal opslaan en weer weghalen —");
+{
+  const signal = { numbers: ["2026-0441", "2026-0452"], reason: "twee facturen" };
+
+  // Schrijven laat al bestaande waarschuwingen met rust.
+  const base = { vendor: 0.9, _safecore: { arithmetic_ok: false, reason: "excl + BTW ≠ totaal" } };
+  const flagged = mergeMultipleInvoices(base, signal) as { vendor: number; _safecore: Record<string, unknown> };
+  check("merge zet de drie sleutels", flagged._safecore.multiple_invoices === true
+    && flagged._safecore.multiple_invoices_reason === "twee facturen"
+    && Array.isArray(flagged._safecore.multiple_invoices_numbers));
+  check("merge laat de rekenkundige uitspraak staan", flagged._safecore.arithmetic_ok === false);
+  check("merge raakt de AI-scores niet aan", flagged.vendor === 0.9);
+  check("merge muteert de invoer niet", (base._safecore as Record<string, unknown>).multiple_invoices === undefined);
+  check("niets te vlaggen → invoer ongewijzigd terug", mergeMultipleInvoices(base, null) === base);
+
+  // Wissen is de omgekeerde weg, en NIETS meer.
+  const cleared = clearSingleInvoiceDoubt(flagged) as { vendor: number; _safecore: Record<string, unknown> };
+  check("wissen haalt alle drie de sleutels weg",
+    cleared._safecore.multiple_invoices === undefined
+    && cleared._safecore.multiple_invoices_reason === undefined
+    && cleared._safecore.multiple_invoices_numbers === undefined);
+  check("wissen laat de rekenfout staan — die is niet beantwoord", cleared._safecore.arithmetic_ok === false);
+  check("schrijven-dan-wissen is een rondgang", JSON.stringify(cleared) === JSON.stringify(base));
+
+  // De TWEEDE grond — "we konden het niet nagaan" — hoort bij dezelfde vraag.
+  const unver = mergeUnverifiedSingle({}, { reason: "gescande stapel" }, 7) as { _safecore: Record<string, unknown> };
+  check("mergeUnverifiedSingle zet zijn eigen drie sleutels", unver._safecore.one_invoice_unverified === true
+    && unver._safecore.one_invoice_unverified_pages === 7);
+  const unverCleared = clearSingleInvoiceDoubt(unver) as { _safecore: Record<string, unknown> };
+  check("ÉÉN antwoord wist ook die tweede grond", unverCleared._safecore.one_invoice_unverified === undefined
+    && unverCleared._safecore.one_invoice_unverified_reason === undefined
+    && unverCleared._safecore.one_invoice_unverified_pages === undefined);
+
+  // Allebei tegelijk gezet (kan niet via de route, maar de wisser mag er niet op stuklopen).
+  const both = mergeUnverifiedSingle(mergeMultipleInvoices({}, signal), { reason: "x" }, 3);
+  const bothCleared = clearSingleInvoiceDoubt(both) as { _safecore: Record<string, unknown> };
+  check("beide gronden tegelijk → allebei weg",
+    Object.keys(bothCleared._safecore).length === 0);
+
+  // Geen nep-succes: de aanroeper moet "gewist" van "er stond niets" kunnen onderscheiden.
+  check("niets gevlagd → null", clearSingleInvoiceDoubt({ vendor: 0.9 }) === null);
+  check("leeg _safecore → null", clearSingleInvoiceDoubt({ _safecore: { arithmetic_ok: true } }) === null);
+  check("null / niet-object / array → null", clearSingleInvoiceDoubt(null) === null
+    && clearSingleInvoiceDoubt("nope") === null && clearSingleInvoiceDoubt([1, 2]) === null);
+  check("wissen is idempotent", clearSingleInvoiceDoubt(cleared) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
