@@ -4,6 +4,31 @@
 // past quarter); a filed aangifte does not. When they diverge, the owner must be told — and told
 // WHICH correction path applies. No I/O, fully testable.
 
+/**
+ * [FILING-NO-OVERWRITE] What a "mark as filed" request may do to the record that is already there.
+ *
+ * The write used to be a bare upsert, so a second request silently replaced the frozen snapshot —
+ * and with it the only evidence of what was declared, which is what every divergence on the truth
+ * screen is measured against. Re-filing after a suppletie is legitimate, so the answer is not "no";
+ * it is "only when that was the actual intention". Three outcomes, decided in one place because the
+ * two screens that file (Waarheid, Kwartaaloverzicht) must not each invent their own rule:
+ *
+ *   "insert"  — nothing to replace. The insert (not an upsert) is also what makes it race-proof:
+ *               a second tab loses on the unique (user_id, year, quarter) constraint.
+ *   "ask"     — a filing exists and the request did not say `replace`. The owner is shown WHAT
+ *               would be replaced and answers for themselves.
+ *   "replace" — a filing exists and the request explicitly asked to replace it.
+ *
+ * `hasExisting` must never be a guess: a failed read is not "no filing" (that is the state in which
+ * writing destroys a record), so the caller refuses before it gets here.
+ */
+export type FilingWrite = "insert" | "ask" | "replace";
+
+export function decideFilingWrite(args: { hasExisting: boolean; replace?: boolean }): FilingWrite {
+  if (!args.hasExisting) return "insert";
+  return args.replace === true ? "replace" : "ask";
+}
+
 /** The figures that were filed, or that the live truth now shows. */
 export interface FilingFigures {
   omzet: number;

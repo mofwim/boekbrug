@@ -23,6 +23,8 @@ import { computeFilingDivergence } from "@/lib/btw-filing";
 // [TZ] "Today" is the owner's Amsterdam day, never the server's UTC day — see below.
 import { amsterdamToday } from "@/lib/format-nl";
 import { resolveWindow, parseLens, type Lens } from "@/lib/truth-lens";
+// [DEPLOY-SAFE] "btw_filings isn't there yet" vs "the read failed" — see pg-missing.ts
+import { isMissingRelation } from "@/lib/pg-missing";
 
 // [TRUTH-LENS] The lens → window rules live in a pure, tested module (truth-lens.ts). They used to
 // sit here, where a Next route cannot export them and nothing could test them — while carrying the
@@ -74,16 +76,30 @@ export async function GET(req: NextRequest) {
     figures: { omzet: number; kosten: number; btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number };
     divergence: ReturnType<typeof computeFilingDivergence>;
   } = null;
+  // [FILING-NO-OVERWRITE] …and when we CANNOT look, say so. This read dropped its error, so a
+  // hiccup answered `filed: null` — and on this screen that is not a missing badge, it is a chain:
+  // the lock disappears, isLiveWindow flips back on, the divergence banner (the whole point of the
+  // page) goes quiet, and the "Markeer als ingediend" button returns — which the client only shows
+  // when `filed` is null. One tap then re-filed a quarter that was already filed, replacing the
+  // frozen snapshot with today's figures. The route now refuses to guess, and the client hides the
+  // button while the answer is unknown.
+  let filedUnknown = false;
   if (win.quarter && win.year) {
     // btw_filings is not yet in the generated types (added by btw_filings.sql) → relaxed client.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: fRow } = await (pipeline as any)
+    const { data: fRow, error: fErr } = await (pipeline as any)
       .from("btw_filings")
       .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo")
       .eq("user_id", owner.ownerId)
       .eq("year", win.year)
       .eq("quarter", win.quarter)
       .maybeSingle();
+    // A table that has not been migrated here yet holds no filings — that is an answer, not an
+    // unknown (see pg-missing.ts). Anything else is an unknown.
+    if (fErr && !isMissingRelation(fErr.message)) {
+      filedUnknown = true;
+      console.error("[FILING-NO-OVERWRITE] btw_filings read failed — reporting unknown, not 'not filed'", { ownerId: owner.ownerId, year: win.year, quarter: win.quarter, error: fErr.message });
+    }
     const row = fRow as unknown as {
       filed_at: string; omzet: number; kosten: number;
       btw_verschuldigd: number; btw_voorbelasting: number; btw_saldo: number;
@@ -123,6 +139,9 @@ export async function GET(req: NextRequest) {
     isLiveWindow: win.isLiveWindow && !filed,
     // [TRUTH-FILED] present only for a single-quarter lens that has been filed.
     filed,
+    // [FILING-NO-OVERWRITE] TRUE when we could not determine the filing state. `filed: null` then
+    // means "unknown", never "not filed" — the client must not offer to file on top of it.
+    filedUnknown,
     // [FILING-WINDOW] TRUE once the last day of this quarter has passed. A BTW-aangifte exists only
     // for a period that is OVER, so the client uses this to stop offering "markeer als ingediend"
     // for a quarter that is still running — freezing a mid-quarter snapshot would make every sale

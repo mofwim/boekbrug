@@ -12,12 +12,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
-import { computeFilingDivergence } from "@/lib/btw-filing";
+import { computeFilingDivergence, decideFilingWrite } from "@/lib/btw-filing";
 // [KAS-NEGATIEF] The same drawer witness /dashboard/klaar blocks on — see the gate below.
 import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [DEPLOY-SAFE] "btw_filings isn't there yet" vs "the read failed" — see pg-missing.ts
+import { isMissingRelation } from "@/lib/pg-missing";
 // [TZ] "Has this quarter ended?" is an Amsterdam-day question — see the filing-window gate below.
-import { amsterdamToday } from "@/lib/format-nl";
+import { amsterdamToday, formatDateNL } from "@/lib/format-nl";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -37,6 +39,67 @@ function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: 
   return { year: y, quarter: q };
 }
 
+/** The five figures btw_filings freezes, plus when it was frozen. */
+interface FilingRow {
+  filed_at: string;
+  omzet: number | null; kosten: number | null;
+  btw_verschuldigd: number | null; btw_voorbelasting: number | null; btw_saldo: number | null;
+}
+
+const FILING_COLS = "filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo";
+
+function figuresOf(row: FilingRow) {
+  return {
+    omzet: Number(row.omzet) || 0,
+    kosten: Number(row.kosten) || 0,
+    btwVerschuldigd: Number(row.btw_verschuldigd) || 0,
+    btwVoorbelasting: Number(row.btw_voorbelasting) || 0,
+    btwSaldo: Number(row.btw_saldo) || 0,
+  };
+}
+
+/**
+ * [FILING-NO-OVERWRITE] Read the existing filing for one quarter — ONE place, because three
+ * handlers here need the same answer and the answer has three states, not two:
+ *
+ *   { row }            — there is a filing
+ *   { row: null }      — there is none (or btw_filings has not been migrated here yet)
+ *   { failed: true }   — we could not tell
+ *
+ * The third one is the whole point. Every caller of this table used to drop the read error, and
+ * "we could not tell" then rendered as "not filed" — which is the answer that OFFERS to file, and
+ * filing overwrote the snapshot. A read failure must never be able to start that.
+ */
+async function readFiling(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  userId: string,
+  year: number,
+  quarter: number,
+): Promise<{ row: FilingRow | null; failed: boolean }> {
+  const { data, error } = await db
+    .from("btw_filings")
+    .select(FILING_COLS)
+    .eq("user_id", userId)
+    .eq("year", year)
+    .eq("quarter", quarter)
+    .maybeSingle();
+  if (error) {
+    // A table that has not been created yet genuinely holds no filings — deploy-safe, not unknown.
+    if (isMissingRelation(error.message)) return { row: null, failed: false };
+    console.error("[FILING-NO-OVERWRITE] btw_filings read failed", { userId, year, quarter, error: error.message });
+    return { row: null, failed: true };
+  }
+  return { row: (data as FilingRow | null) ?? null, failed: false };
+}
+
+/** One sentence for "we could not read your filing", used wherever that read is fail-closed. */
+const READ_FAILED = {
+  error: "filing_read_failed",
+  reason:
+    "We konden niet controleren of dit kwartaal al is ingediend. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+} as const;
+
 // GET ?year&quarter → the filing snapshot for this quarter (if any) + the live divergence.
 // Used by the Kwartaaloverzicht to show the "🔒 Ingediend" / suppletie state for any quarter.
 export async function GET(req: NextRequest) {
@@ -51,22 +114,14 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { data: fRow } = await db
-    .from("btw_filings")
-    .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo")
-    .eq("user_id", user.id)
-    .eq("year", year)
-    .eq("quarter", quarter)
-    .maybeSingle();
+  // [FILING-NO-OVERWRITE] The error was dropped here too, so a hiccup answered `filed: null` — and
+  // the screens that ask this question use the answer to decide whether to show a lock badge and a
+  // "markeer als ingediend" button. Say we could not look instead.
+  const { row: fRow, failed } = await readFiling(db, user.id, year, quarter);
+  if (failed) return NextResponse.json(READ_FAILED, { status: 503 });
   if (!fRow) return NextResponse.json({ ok: true, filed: null });
 
-  const figures = {
-    omzet: Number(fRow.omzet) || 0,
-    kosten: Number(fRow.kosten) || 0,
-    btwVerschuldigd: Number(fRow.btw_verschuldigd) || 0,
-    btwVoorbelasting: Number(fRow.btw_voorbelasting) || 0,
-    btwSaldo: Number(fRow.btw_saldo) || 0,
-  };
+  const figures = figuresOf(fRow);
   // Compare the frozen snapshot to the CURRENT live figures for this quarter.
   const { start, end } = quarterBounds(year, quarter);
   const pipeline = createPipelineClient();
@@ -109,6 +164,56 @@ export async function POST(req: NextRequest) {
       {
         error: "quarter_not_ended",
         reason: `Kwartaal ${quarter} ${year} loopt nog tot en met ${end}. Je kunt een kwartaal pas als ingediend markeren nadat het is afgelopen.`,
+      },
+      { status: 409 },
+    );
+  }
+
+  // [FILING-NO-OVERWRITE] Is there already a filing for this quarter? Asked BEFORE anything else
+  // is decided, because replacing one is a different act from making one.
+  //
+  // The write below was a bare upsert, so a second POST silently replaced the frozen snapshot with
+  // today's figures and today's filed_at. That erases the one thing this table exists for: the
+  // difference between what was DECLARED and what the books say now — the entire basis for a
+  // suppletie. And it was reachable by accident, not only by a determined double tap: every reader
+  // of btw_filings dropped its error, so one failed read showed the quarter as never filed, put the
+  // "Markeer als ingediend" button back on screen, and one tap then overwrote the record. The audit
+  // recorded only the NEW figures, so nothing could be reconstructed afterwards.
+  //
+  // Re-filing after a suppletie is legitimate and stays possible — it just has to be MEANT:
+  // `replace: true`, sent after the client has shown what is being replaced.
+  // btw_filings is not yet in the generated types (added by btw_filings.sql) → relaxed client,
+  // declared once here and reused by the write at the end of this handler.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const existing = await readFiling(db, user.id, year, quarter);
+  // Fail-closed: not knowing whether a filing exists is exactly the state in which writing one is
+  // destructive. Nothing has been written at this point, so refusing costs nothing.
+  if (existing.failed) return NextResponse.json(READ_FAILED, { status: 503 });
+  const write = decideFilingWrite({ hasExisting: existing.row !== null, replace: body?.replace === true });
+  const replacing = write === "replace";
+  if (write === "ask") {
+    const figures = figuresOf(existing.row!);
+    return NextResponse.json(
+      {
+        error: "already_filed",
+        filed: {
+          filedAt: existing.row!.filed_at,
+          figures,
+          // What replacing would cost the owner: the divergence they can currently still see.
+          divergence: computeFilingDivergence(figures, {
+            omzet: result.omzet, kosten: result.kosten,
+            btwVerschuldigd: result.btwVerschuldigd,
+            btwVoorbelasting: result.btwVoorbelasting,
+            btwSaldo: result.btwSaldo,
+          }),
+        },
+        // The owner reads this sentence in a dialog, so it names both facts they need to weigh:
+        // WHEN they filed and WHAT they filed. Dutch date shape + Amsterdam zone (format-nl.ts).
+        reason:
+          `Dit kwartaal staat al als ingediend (${formatDateNL(existing.row!.filed_at)}), met een BTW-saldo van ` +
+          `€ ${figures.btwSaldo.toFixed(2)}. Opnieuw indienen VERVANGT die vastgelegde cijfers ` +
+          "door de cijfers van nu — daarna is niet meer te zien wat je destijds hebt aangegeven.",
       },
       { status: 409 },
     );
@@ -195,14 +300,28 @@ export async function POST(req: NextRequest) {
     btw_saldo: result.btwSaldo,
   };
 
-  // Upsert on (user_id, year, quarter): re-filing after a suppletie replaces the snapshot.
-  // btw_filings is not yet in the generated types (added by btw_filings.sql) → relaxed client.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = supabase as any;
-  const { error } = await db
-    .from("btw_filings")
-    .upsert(snapshot, { onConflict: "user_id,year,quarter" });
-  if (error) return NextResponse.json({ error: "kon indiening niet opslaan" }, { status: 500 });
+  // [FILING-NO-OVERWRITE] INSERT when there is nothing to replace, UPSERT only when the owner said
+  // `replace: true` after being shown what they were replacing. The insert is what makes this
+  // race-proof rather than merely guarded: two tabs that both read "not filed" cannot both write —
+  // the unique (user_id, year, quarter) constraint refuses the second, and 23505 is answered with
+  // the same "already_filed" question the check above asks, on fresher facts.
+  const { error } = replacing
+    ? await db.from("btw_filings").upsert(snapshot, { onConflict: "user_id,year,quarter" })
+    : await db.from("btw_filings").insert(snapshot);
+  if (error) {
+    if ((error as { code?: string }).code === "23505") {
+      return NextResponse.json(
+        {
+          error: "already_filed",
+          reason:
+            "Dit kwartaal is zojuist al als ingediend gemarkeerd (misschien in een ander tabblad). " +
+            "Ververs de pagina — er is niets overschreven.",
+        },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: "kon indiening niet opslaan" }, { status: 500 });
+  }
 
   // [FILING-AUDIT] Record that this quarter was filed, and — crucially — WHETHER it was filed while
   // readiness blockers were still open (acknowledge:true). Previously the override left no trace, so
@@ -212,8 +331,15 @@ export async function POST(req: NextRequest) {
     action: body?.acknowledge === true ? "btw.filed_despite_warnings" : "btw.filed",
     entityType: "btw_filing",
     entityId: `${year}-Q${quarter}`,
+    // [FILING-NO-OVERWRITE] The snapshot that was REPLACED, when there was one. Without it the
+    // audit trail recorded that a quarter was filed and never what filing it displaced, so the
+    // figures the owner actually declared were gone from the system entirely. This is the copy
+    // that survives — it is what a later dispute with the Belastingdienst is reconstructed from.
+    oldValue: replacing
+      ? { replaced_filing: { filedAt: existing.row!.filed_at, ...figuresOf(existing.row!) } }
+      : undefined,
     newValue: {
-      year, quarter, acknowledged: body?.acknowledge === true,
+      year, quarter, acknowledged: body?.acknowledge === true, replaced: replacing,
       btwSaldo: result.btwSaldo, cashOmzetZonderBtw: result.cashOmzetZonderBtw,
       datelessVerifiedCount, undatedPaidCount, unconfirmedIncomingCount,
     },
@@ -234,13 +360,45 @@ export async function DELETE(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { error } = await db
+
+  // [FILING-UNLOCK-AUDIT] Read the snapshot BEFORE removing it. Unlocking a quarter is exactly as
+  // consequential as filing it — the lock comes off, the divergence signal disappears, and the
+  // figures the owner declared stop being recorded anywhere — and yet this was the one handler in
+  // the file that wrote nothing to the audit log while its sibling even distinguishes
+  // btw.filed_despite_warnings. A deletion that cannot be recorded is one we do not perform: the
+  // read is fail-closed, because "we could not read it" is the state in which the copy would be
+  // lost for good.
+  const existing = await readFiling(db, user.id, period.year, period.quarter);
+  if (existing.failed) return NextResponse.json(READ_FAILED, { status: 503 });
+  if (!existing.row) {
+    // Nothing to unlock. Reported as such rather than as a success, so a client cannot show
+    // "ongedaan gemaakt" for a filing that was never there (or that another tab just removed).
+    return NextResponse.json({ error: "not_filed", reason: "Dit kwartaal staat niet als ingediend." }, { status: 409 });
+  }
+
+  const { data: removed, error } = await db
     .from("btw_filings")
     .delete()
     .eq("user_id", user.id)
     .eq("year", period.year)
-    .eq("quarter", period.quarter);
+    .eq("quarter", period.quarter)
+    .select("id");
   if (error) return NextResponse.json({ error: "kon indiening niet verwijderen" }, { status: 500 });
+  // [UI-HONESTY] .select() so "geen rij geraakt" is distinguishable from "verwijderd" — the row
+  // can have gone in the window between the read and this write.
+  if (!removed || removed.length === 0) {
+    return NextResponse.json({ error: "not_filed", reason: "Dit kwartaal staat niet (meer) als ingediend." }, { status: 409 });
+  }
+
+  await logAuditAction({
+    userId: user.id,
+    action: "btw.filing_unlocked",
+    entityType: "btw_filing",
+    entityId: `${period.year}-Q${period.quarter}`,
+    oldValue: { filedAt: existing.row.filed_at, ...figuresOf(existing.row) },
+    newValue: { year: period.year, quarter: period.quarter, filed: false },
+    ipAddress: getClientIP(req),
+  }).catch(() => {});
 
   return NextResponse.json({ ok: true });
 }

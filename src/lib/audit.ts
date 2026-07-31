@@ -79,6 +79,7 @@ export type AuditAction =
   | 'ledger.auto_imported'             // ← [SHEET-INTAKE] app stored a PIN/kas grootboek export into ledger_daily (reconciliation witness)
   | 'btw.filed'                        // ← [TRUTH-FILED] owner froze a quarter's BTW-aangifte snapshot as ingediend
   | 'btw.filed_despite_warnings'       // ← [FILING-GATE] owner froze the snapshot while readiness blockers were still open (acknowledged)
+  | 'btw.filing_unlocked'              // ← [FILING-UNLOCK-AUDIT] owner removed a filing (quarter unlocked); oldValue carries the snapshot that was deleted
   // Level 2 — Accountant relationships
   | 'accountant.client_invited'
   | 'accountant.client_linked'
