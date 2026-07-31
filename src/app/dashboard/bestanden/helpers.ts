@@ -4,7 +4,12 @@
 import { FolderRow, FolderNode } from "./types";
 import { T } from "./tokens";
 
-const NL_DATE = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric" });
+// [TZ] timeZone PINNED. Unlike the date-only columns elsewhere, this formats real TIMESTAMPS
+// (documents.created_at, trashed_at). A file uploaded at 23:30 Amsterdam is stored as 22:30Z, and
+// an unpinned format renders it in the viewer's own zone — so the same upload reads as a different
+// DAY depending on the device. In a bookkeeping archive the day a document arrived is the whole
+// point of showing it. Amsterdam is the owner's day, here as everywhere else.
+const NL_DATE = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/Amsterdam" });
 
 export const formatDate = (iso: string) => NL_DATE.format(new Date(iso));
 
