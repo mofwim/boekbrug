@@ -24,6 +24,8 @@
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
+// [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
+import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
@@ -154,6 +156,11 @@ const PAY_TOGGLE_REASON: Record<string, string> = {
   status_conflict: 'de status is inmiddels veranderd — ververs de pagina',
   unauthorized: 'je sessie is verlopen — log opnieuw in',
   invalid_amount: 'het ingevoerde bedrag is niet geldig',
+  // [PAY-DATE-SANE] The route sends its own sentence with this one (and payToggleReason prefers a
+  // <500 detail), so this line is the belt to that braces — never a bare code on a phone.
+  invalid_payment_date: 'de betaaldatum kan niet kloppen — controleer het jaartal',
+  undo_read_failed: 'we konden de gekoppelde betalingen niet lezen — er is niets gewijzigd',
+  undo_failed: 'terugdraaien is niet gelukt — er is niets gewijzigd',
 }
 function payToggleReason(status: number, json: { detail?: string; error?: string } | null): string {
   if (status < 500 && typeof json?.detail === 'string' && json.detail.trim()) return json.detail.trim()
@@ -245,6 +252,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
+  readFailed = [],
 }: {
   profile: { id: string }
   initialInvoices: IncomingRow[]
@@ -252,6 +260,12 @@ export default function IncomingManageClient({
   // Only used to disclose that this list is capped — never as the counter itself, because it
   // cannot move when the owner pays a factuur. Null when the count query failed.
   totalCount?: number | null
+  // [NO-SILENT-EMPTY] Which of the two source reads failed on the server ('openstaande facturen'
+  // / 'betaalde facturen'). Empty on a healthy load. Never a reason to hide the list — a stale
+  // list beats a blank screen — but always a reason to stop the page CLAIMING the list is
+  // complete, because "je hoeft niemand te betalen" is the one thing this screen must not say
+  // when it does not know.
+  readFailed?: string[]
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -504,10 +518,12 @@ export default function IncomingManageClient({
   // duplicate, this array changes and so do the counts. A server total could not move with those
   // actions and would sit there contradicting the list.
   //
-  // The trade-off is honest and disclosed: `invoices` is the fetched window (all open rows — the
-  // 1000-cap is unreachable by design — plus the 200 most recent paid ones), so on a long history
-  // these are the counts of THIS LIST. totalCount says what the owner really has, and the note
-  // below the counter names the difference instead of passing 200 off as "everything".
+  // The trade-off is honest and disclosed: `invoices` is the fetched window (EVERY open row — the
+  // server pages them now, rather than trusting that a 1000-cap "is unreachable by design", which
+  // was both a guess and exactly PostgREST's silent truncation point — plus the 200 most recent
+  // paid ones), so on a long history these are the counts of THIS LIST. totalCount says what the
+  // owner really has, and the note below the counter names the difference instead of passing 200
+  // off as "everything".
   // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
   // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
   // clock itself). Not toISOString(): near midnight UTC that is a different day, and "te laat"
@@ -522,6 +538,10 @@ export default function IncomingManageClient({
   // build its own formatter per row (see the note on that function).
   const thisYear = todayIso.slice(0, 4)
 
+  // [NO-SILENT-EMPTY] One flag, read in three places: the banner at the top, the "je hebt er N in
+  // totaal" disclosure (which asserts completeness and must go quiet), and the empty state (which
+  // must say "we konden niet kijken", not "je hebt niets").
+  const loadIncomplete = readFailed.length > 0
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
   const listedCount   = invoices.length
@@ -1215,6 +1235,32 @@ export default function IncomingManageClient({
 
       {/* ── List ── */}
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* ── [NO-SILENT-EMPTY] "We konden niet alles lezen" ───────────────────────────────────
+            First thing on the page, because it qualifies everything under it: every count, every
+            tab, and the absence of any row. The server's reads used to fail into an empty array,
+            and this screen then said "Geen inkoopfacturen" — on the list the owner pays their
+            suppliers from, that sentence means "je bent niemand iets schuldig". The list still
+            renders whatever DID load (a stale list beats a blank screen); it just no longer
+            claims to be the whole of it. */}
+        {loadIncomplete && (
+          <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#B3261E', margin: 0, lineHeight: 1.4 }}>
+                We konden je {readFailed.join(' en ')} niet ophalen
+              </p>
+              <p style={{ fontSize: 12.5, color: '#8C1D18', margin: '3px 0 0', lineHeight: 1.45 }}>
+                Deze lijst is daardoor niet compleet — ga er niet van uit dat wat je hier ziet alles is.
+              </p>
+              <button
+                onClick={() => router.refresh()}
+                style={{ marginTop: 8, padding: '7px 14px', borderRadius: R.full, border: 'none', background: M3.error, color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+              >
+                Opnieuw proberen
+              </button>
+            </div>
+          </div>
+        )}
         {/* [AUTO-ADVANCE] Review nudge — the opt-in double-check for what the app booked itself. */}
         {autoCount > 0 && filter !== 'auto' && (
           <button
@@ -1264,8 +1310,11 @@ export default function IncomingManageClient({
                   : `${displayed.length} van ${nFacturen(listedCount)}`}
             </p>
             {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
-                than let the counter imply the owner owns fewer facturen than he does. */}
-            {hiddenCount > 0 && (
+                than let the counter imply the owner owns fewer facturen than he does.
+                [NO-SILENT-EMPTY] Not while a source read failed: this sentence asserts that the
+                {receivedCount} openstaande facturen shown ARE all of them, which is exactly what
+                we do not know then. The banner at the top of the page has already said so. */}
+            {hiddenCount > 0 && !loadIncomplete && (
               <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
                 Je hebt er {totalCount} in totaal. Deze lijst toont de {receivedCount} openstaande en de {paidCount} meest recente betaalde.
               </p>
@@ -1276,6 +1325,11 @@ export default function IncomingManageClient({
         {displayed.length === 0 ? (
           rawS ? (
             <p style={{ textAlign: 'center', color: '#8e8e93', fontSize: 14, padding: '40px 16px' }}>Geen facturen gevonden voor &ldquo;{rawS}&rdquo;.</p>
+          ) : loadIncomplete ? (
+            // [NO-SILENT-EMPTY] "Geen inkoopfacturen" is a claim about the owner's books. With a
+            // failed read we have no basis for it, and on this screen the claim is the dangerous
+            // direction: it tells someone with unpaid suppliers that they owe nobody anything.
+            <LoadFailedState onRetry={() => router.refresh()} />
           ) : <EmptyState />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2124,9 +2178,17 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
         {paymentChoice ? (
           <>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
+            {/* [PAY-DATE-SANE] min AND max. `max` alone was doing less than it looked like: it
+                marks the field :invalid and nothing here reads validity — the pay buttons read the
+                state directly — and a typed-in year passes through untouched. There was no floor
+                at all, so "1926" was as acceptable as today. These two bound the PICKER (the
+                common case: a thumb on a phone); the refusal that actually protects the books is
+                the server's, in /api/invoice/pay-toggle, because a client answer is not a
+                permission. */}
             <input
               type="date"
               value={paymentDate}
+              min={PAYMENT_DATE_FLOOR}
               max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
@@ -2382,6 +2444,29 @@ function EmptyState() {
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen inkoopfacturen</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Bevestigde inkoopfacturen verschijnen hier</p>
+    </div>
+  )
+}
+
+// ─── [NO-SILENT-EMPTY] The other empty screen — the honest one ────────────────
+// "Leeg" and "we konden niet kijken" look identical and mean opposite things. EmptyState above is
+// a fact about the owner's books; this is a fact about our read. Kept deliberately close to it in
+// shape so nothing feels broken, and deliberately different in wording so nothing feels settled.
+function LoadFailedState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 48, color: M3.error, display: 'block', marginBottom: 12 }}>error</span>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>We konden je inkoopfacturen niet ophalen</p>
+      <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT, lineHeight: 1.5, maxWidth: 380, margin: '0 auto' }}>
+        Dit betekent niet dat je niets openstaan hebt — we konden het alleen niet lezen.
+        Probeer het zo meteen opnieuw.
+      </p>
+      <button
+        onClick={onRetry}
+        style={{ marginTop: 16, padding: '10px 20px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+      >
+        Opnieuw proberen
+      </button>
     </div>
   )
 }
