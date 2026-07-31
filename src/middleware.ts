@@ -93,8 +93,24 @@ export async function middleware(request: NextRequest) {
   }
 
   // Not logged in → send to login (except public paths)
+  //
+  // [BESTEMMING] Mét waar hij heen wilde. Deze regel stuurde naar een kaal /login, dus na het
+  // inloggen kwam iedereen op /dashboard uit — ook wie halverwege zijn werk zat. Een sessie
+  // verloopt (of een tabblad staat een nacht open), je klikt op een factuur, en je bent je plek
+  // kwijt: terugklikken helpt niet, want daar staat de inlogpagina.
+  //
+  // Het gereedschap lag er al: /login leest ?redirect= en /invite gebruikt het. Alleen de
+  // grendel die de meeste mensen tegenkomt deed er niets mee.
+  //
+  // pathname + search, zodat een kwartaalfilter of een zoekterm ook meegaat. De waarde komt uit
+  // ons eigen verzoek, dus hij begint altijd met één "/" — en /login controleert hem hoe dan ook
+  // nog een keer met safeRedirect.
   if (!user && !isPublic(request.nextUrl.pathname)) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const login = new URL("/login", request.url);
+    const vandaan = request.nextUrl.pathname + request.nextUrl.search;
+    // "/" is de openbare homepage en geen bestemming om naar terug te keren.
+    if (vandaan !== "/") login.searchParams.set("redirect", vandaan);
+    return NextResponse.redirect(login);
   }
 
   // Logged in, on dashboard → check onboarding
