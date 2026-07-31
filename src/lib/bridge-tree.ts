@@ -422,6 +422,12 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
   for (const inv of invoices) {
     if (inv.document_id) invoiceLinkedDocIds.add(inv.document_id)
   }
+  // [TREE-INDEX] One index instead of two linear scans PER INVOICE. The loop below called
+  // documents.find(...) twice for every invoice, so an accountant with a few thousand invoices
+  // over a few thousand documents paid tens of millions of comparisons — on a force-dynamic
+  // page the bridge re-runs on every tab focus. Same result, O(1) per lookup.
+  const documentById = new Map<string, BridgeDocument>()
+  for (const d of documents) documentById.set(d.id, d)
 
   const nodes: TreeNode[] = []
 
@@ -437,16 +443,13 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
     // Resolve attached PDF url: prefer invoice.pdf_url, else linked document.
     let pdfUrl = inv.pdf_url
     if (!pdfUrl && inv.document_id) {
-      const doc = documents.find(d => d.id === inv.document_id)
-      pdfUrl = doc?.file_url ?? null
+      pdfUrl = documentById.get(inv.document_id)?.file_url ?? null
     }
 
     // [BRIDGE-OPEN-LOCATION] Location in "Mijn bestanden" comes from the linked
     // physical document (if any). An invoice with no document_id has no file to
     // open, so hasLocation stays false.
-    const linkedDoc = inv.document_id
-      ? documents.find(d => d.id === inv.document_id)
-      : undefined
+    const linkedDoc = inv.document_id ? documentById.get(inv.document_id) : undefined
     const invHasLocation = !!linkedDoc
     const invFolderId = linkedDoc?.folder_id ?? null
     const invDocId = linkedDoc?.id ?? null

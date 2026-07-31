@@ -114,10 +114,28 @@ function hasHidden(nodes: TreeNode[]): boolean {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function BrugClient({ nodes, role, clientSummaries, docStatus }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[]; docStatus: DocStatusMap }) {
+export default function BrugClient({ nodes, role, clientSummaries, docStatus, readFailed }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[]; docStatus: DocStatusMap; readFailed?: string[] }) {
   const [cwd, setCwd] = useState<string[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
+
+  // [READINESS-P3] The accountant's own just-clicked statuses, held HERE and not inside each
+  // row. FileRow seeded them from the prop with useState, whose initialiser runs only on mount —
+  // and rows unmount the moment the accountant opens another folder. So marking a document
+  // 'Verwerkt', stepping into a folder and stepping back showed the OLD badge again: the click
+  // looked lost, and the natural response is to click it a second time. Lifting the override to
+  // the component that survives navigation fixes that.
+  //
+  // It is CLEARED whenever a fresh docStatus arrives from the server (router.refresh, which
+  // [BRIDGE-REFRESH] fires on every tab focus): the server is authoritative, and a stale
+  // override would then hide a status set on another device — the very case that refresh exists
+  // for. Render-phase derivation, the same pattern prevClientRoot below already uses.
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({})
+  const [seenDocStatus, setSeenDocStatus] = useState(docStatus)
+  if (seenDocStatus !== docStatus) {
+    setSeenDocStatus(docStatus)
+    setStatusOverrides({})
+  }
 
   // [BRIDGE-HUB] Layer 2 — accountant control center: pick a client (dropdown),
   // then switch tabs (Kwartaal / Documenten). The classic folder tree is reused
@@ -136,6 +154,38 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   // one whose BTW is due — via the SHARED quarter.ts helper (UTC), so the accountant hub
   // opens on the SAME quarter the owner's klaar/resultaat/aangifte default to (previously
   // this was a duplicated local-time computation that could drift a day at a boundary).
+  // [PAKKET-STAY] Fetch the ZIP instead of navigating to it, so a refusal is a message here
+  // rather than a page of JSON with the hub's whole selection gone.
+  const [pkgBusy, setPkgBusy] = useState(false)
+  const [pkgError, setPkgError] = useState<string | null>(null)
+  async function downloadPackage(clientId: string, year: number, quarter: number) {
+    setPkgBusy(true); setPkgError(null)
+    try {
+      const res = await fetch(`/api/closing-package?clientId=${encodeURIComponent(clientId)}&year=${year}&quarter=${quarter}`)
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as { error?: string }))
+        setPkgError(j?.error ?? 'Het pakket kon niet worden gemaakt. Probeer het opnieuw.')
+        return
+      }
+      const blob = await res.blob()
+      // Prefer the filename the server chose; fall back to the same shape it uses.
+      const cd = res.headers.get('content-disposition') ?? ''
+      const named = /filename="?([^";]+)"?/i.exec(cd)?.[1]
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = named || `BoekBrug-Q${quarter}-${year}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setPkgError('Geen verbinding — het pakket is niet gedownload.')
+    } finally {
+      setPkgBusy(false)
+    }
+  }
+
   const lastCompleted = lastCompletedQuarter()
   const [selectedYear, setSelectedYear] = useState<number>(lastCompleted.year)
   const [selectedQuarter, setSelectedQuarter] = useState<number>(lastCompleted.quarter)
@@ -147,13 +197,22 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   // back, router.refresh() re-runs the server component and the fresh nodes
   // flow in as a prop. No manual reload needed. (Layer 1 — full Realtime for
   // the bridge comes later with the interactive hub.)
+  //
+  // Debounced, and deliberately: both `visibilitychange` and `focus` fire on a single return to
+  // the tab, so this ran the whole server pass twice — three full table page-walks, the tree
+  // build and every signed URL, for one glance at the screen. One refresh per return is the
+  // intent; two was an accident of listening to two events for the same thing.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
     const onFocus = () => {
-      if (document.visibilityState === 'visible') router.refresh()
+      if (document.visibilityState !== 'visible') return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { timer = null; router.refresh() }, 150)
     }
     window.addEventListener('visibilitychange', onFocus)
     window.addEventListener('focus', onFocus)
     return () => {
+      if (timer) clearTimeout(timer)
       window.removeEventListener('visibilitychange', onFocus)
       window.removeEventListener('focus', onFocus)
     }
@@ -227,6 +286,27 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   return (
     <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
 
+      {/* [NO-SILENT-EMPTY] A source of the bridge could not be read. Without this the page just
+          looks empty — and an empty bridge is the app asserting that the client has nothing,
+          which a professional then acts on. Say which part is missing and offer the retry. */}
+      {readFailed && readFailed.length > 0 && (
+        <div role="alert" style={{ marginBottom: 16, background: '#F9DEDC', border: `1px solid ${M3.error}`, borderRadius: R.lg, padding: '14px 16px' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#B3261E' }}>
+            We konden {readFailed.join(' en ')} niet laden
+          </div>
+          <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
+            Wat je hieronder ziet is daarom <strong>niet</strong> compleet — een lege map betekent
+            hier niet dat er niets is. Probeer het opnieuw.
+          </div>
+          <button
+            onClick={() => router.refresh()}
+            style={{ marginTop: 10, padding: '8px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      )}
+
       {/* [BRIDGE-HUB] Layer 2 — accountant control center: client dropdown +
           persistent Pakket action + tabs. ZZP keeps the classic tree below. */}
       {isAccountant && clientSummaries && clientSummaries.length > 0 && (
@@ -246,16 +326,26 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
               </select>
               <span className="material-symbols-outlined" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
             </div>
+            {/* [PAKKET-STAY] Fetched, not navigated to. This was a plain <a href>, and the route
+                answers every refusal with JSON — so a 403/500 replaced the hub with a page of raw
+                braces AND threw away the client, quarter and tab the accountant had selected (all
+                client state). Now a failure is a sentence beside the button and nothing is lost. */}
             {selectedClient && (
-              <a
-                href={`/api/closing-package?clientId=${selectedClient.id}&year=${selectedYear}&quarter=${selectedQuarter}`}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none', flexShrink: 0 }}
+              <button
+                onClick={() => downloadPackage(selectedClient.id, selectedYear, selectedQuarter)}
+                disabled={pkgBusy}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, flexShrink: 0, opacity: pkgBusy ? 0.6 : 1 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>inventory_2</span>
-                Download kwartaal
-              </a>
+                {pkgBusy ? 'Bezig…' : 'Download kwartaal'}
+              </button>
             )}
           </div>
+          {pkgError && (
+            <div role="alert" style={{ marginTop: -6, marginBottom: 12, fontSize: 13, color: M3.error, lineHeight: 1.45 }}>
+              {pkgError}
+            </div>
+          )}
 
           {selectedClient ? (
             <>
@@ -403,7 +493,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
               {treeSearch.length} {treeSearch.length === 1 ? 'resultaat' : 'resultaten'} in alle mappen
             </p>
             {treeSearch.map(file => (
-              <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
+              <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} override={statusOverrides[file.id]} onStatusSet={(s) => setStatusOverrides(prev => ({ ...prev, [file.id]: s }))} />
             ))}
           </div>
         )
@@ -439,7 +529,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
           {level.files.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {level.files.map(file => (
-                <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
+                <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} override={statusOverrides[file.id]} onStatusSet={(s) => setStatusOverrides(prev => ({ ...prev, [file.id]: s }))} />
               ))}
             </div>
           )}
@@ -452,19 +542,24 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 }
 
 // ─── File / invoice row ────────────────────────────────────────────────────────
-function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: boolean; docStatus: DocStatusMap }) {
+function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: TreeNode; isClient: boolean; docStatus: DocStatusMap; override?: string; onStatusSet: (status: string) => void }) {
   const dialog = useDialog()
   const icon = node.source === 'invoice' ? 'receipt_long' : 'description'
 
-  // [READINESS-P3] Document processing status (accountant assertion). Only meaningful
-  // for document nodes; invoices carry their own badges from bridge-tree. Local state
-  // so an accountant's click reflects immediately without a full reload. Honest
-  // default: a document with no row is `null` → no status badge is ever shown.
+  // [READINESS-P3] Document processing status (accountant assertion). Only meaningful for
+  // document nodes; invoices carry their own badges from bridge-tree. DERIVED, never frozen:
+  // the server value plus the accountant's own just-clicked override, which lives in the parent
+  // so it survives this row unmounting when they open another folder. Honest default: a
+  // document with no row and no click is `null` → no status badge is ever shown.
   const isDoc = node.source === 'document'
-  const [status, setStatus] = useState<string | null>(
-    isDoc ? (docStatus[node.id]?.status ?? null) : null
-  )
+  const status = isDoc ? (override ?? docStatus[node.id]?.status ?? null) : null
   const [busy, setBusy] = useState(false)
+  // [BRUG-STATUS-HONEST] A refused or failed write used to change nothing at all — no message,
+  // no retry, the button just stopped being busy. The accountant walks away believing the
+  // document is marked. Worse on 'vraag': they type up to 500 characters for their client, the
+  // POST fails, and the text is gone with nothing said — which is precisely the "typing into
+  // the void" the dialog above was written to end.
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   async function applyStatus(next: 'verwerkt' | 'in_behandeling' | 'vraag') {
     let vraagText: string | undefined
@@ -492,15 +587,29 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
       vraagText = answer.trim() || undefined
     }
     setBusy(true)
+    setSaveError(null)
     try {
       const res = await fetch('/api/accountant/subject-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subjectId: node.id, status: next, vraagText }),
       })
-      if (res.ok) setStatus(next)
+      if (res.ok) {
+        onStatusSet(next)
+      } else {
+        // The previous (truthful) status stays; the route's own sentence explains why.
+        const j = await res.json().catch(() => ({} as { error?: string }))
+        setSaveError(
+          (j?.error ?? 'Opslaan mislukt.') +
+          (next === 'vraag' && vraagText ? ' Je vraag is niet verstuurd — probeer het opnieuw.' : ''),
+        )
+      }
     } catch {
-      // leave the previous (truthful) status in place on failure
+      setSaveError(
+        next === 'vraag' && vraagText
+          ? 'Geen verbinding — je vraag is niet verstuurd.'
+          : 'Geen verbinding — de status is niet opgeslagen.',
+      )
     } finally {
       setBusy(false)
     }
@@ -628,6 +737,11 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
             )
           })}
         </div>
+        {saveError && (
+          <div role="alert" style={{ fontSize: 12, color: M3.error, paddingLeft: 4, lineHeight: 1.45 }}>
+            {saveError}
+          </div>
+        )}
       </div>
     )
   }
