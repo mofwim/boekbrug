@@ -18,6 +18,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { logAuditAction } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +64,20 @@ export async function POST(req: Request) {
   // stored as "045, 046"), and it can leave a bundle with a single token or none at all. Undoing
   // such a payment through the single path would reverse only the LAST invoice and leave the
   // others paid with their bank line gone — an invisible, unreachable half-reversal.
-  const linkedIds = await invoiceIdsForTransactions(pipeline, user.id, [transactionId]);
+  // [LINKS-READ-HONEST] This read DECIDES the branch, so it may not fail quietly. It used to
+  // answer "[]" on a read error, and with a mutilated reference (the extractor stores
+  // "2026-045, 2026-046" as "045, 046" — one usable token or none) that sends a real batch down
+  // the SINGLE path: one invoice restored, the siblings left paid with their bank line detached
+  // and their join rows cleared. Refuse instead; nothing has been written yet, so a retry is free.
+  let linkedIds: string[];
+  try {
+    linkedIds = await invoiceIdsForTransactions(pipeline, user.id, [transactionId]);
+  } catch (e) {
+    return NextResponse.json(
+      { error: "links_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
   if (refNums.length > 1 || linkedIds.length > 1) {
     return unlinkBatch({ pipeline, payClient: supabase, userId: user.id, transactionId, tx, refNums });
   }
@@ -238,19 +252,54 @@ async function unlinkBatch(args: {
   //      we fall back to a number match — GUARDED to the batch's direction so a same-number invoice
   //      of the opposite direction is never wrongly un-paid (the MED-3 collision). A freshly-booked
   //      batch is fully id-covered, so (2) adds nothing for it → no number-collision surface at all.
-  const linkIds = await invoiceIdsForTransactions(pipeline, userId, [transactionId]);
+  // [LINKS-READ-HONEST] A failed read here would silently shrink the reversal set to the
+  // representative alone, so it throws and we refuse before touching anything.
+  let linkIds: string[];
+  try {
+    linkIds = await invoiceIdsForTransactions(pipeline, userId, [transactionId]);
+  } catch (e) {
+    return NextResponse.json(
+      { error: "links_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
   const idSet = new Set(linkIds);
   idSet.add(linkedInvoiceId); // the linked representative is always part of the batch
 
   // The user's paid-by-bank invoices (owner-pinned). We resolve the batch from these in code.
-  const { data: paidRows, error: invErr } = await pipeline
-    .from("invoices")
-    .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date")
-    .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
-    .eq("status", "paid")
-    .eq("payment_method", "bank");
-  if (invErr) return NextResponse.json({ error: "invoice_lookup_failed", detail: invErr.message }, { status: 500 });
-  const paid = paidRows ?? [];
+  //
+  // [PAGINATE] Paged past PostgREST's silent ~1000-row cap, with a stable order. This was a plain
+  // .select(), and the batch is resolved by FILTERING this list in JS below — so an invoice that
+  // fell outside the first (arbitrarily ordered) page was simply absent from `byId`, never
+  // restored, and never reported. Meanwhile the bank line is detached and clearPaymentLinks wipes
+  // its join rows regardless, leaving that invoice paid by a payment that no longer exists, with
+  // no bank line to undo it from — while this route answers `ok: true, restored: N`. The set is
+  // account-wide and all-time (status paid + payment_method bank), so a few busy years reach the
+  // cap; supabase-paginate.ts documents this exact trap and every other read in this flow obeys it.
+  let paid: {
+    id: string; invoice_number: string | null; direction: string | null; status: string | null;
+    accountant_status: string | null; marked_paid_at: string | null; payment_date: string | null;
+    amount_paid: number | null;
+  }[];
+  try {
+    paid = await fetchAllRows((from, to) =>
+      pipeline
+        .from("invoices")
+        // [PARTIAL-PAY] amount_paid travels with the row so the rollback below can put it back —
+        // the sibling reversal (delete-statement) already did this and this one did not.
+        .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
+        .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+        .eq("status", "paid")
+        .eq("payment_method", "bank")
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    return NextResponse.json(
+      { error: "invoice_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
 
   // (1) exact id-linked part
   const byId = new Map<string, (typeof paid)[number]>();
@@ -275,7 +324,18 @@ async function unlinkBatch(args: {
     const candidates = paid.filter(
       (inv) => inv.direction === batchDir && uncovered.has(normalizeRef(inv.invoice_number ?? "")),
     );
-    const claimed = await invoicesClaimedByOtherTx(pipeline, userId, candidates.map((c) => c.id), [transactionId]);
+    // [LINKS-READ-HONEST] This is the guard that keeps a same-number stray out of the batch, so
+    // it may not fail open: without it every candidate would be swept in and an invoice belonging
+    // to a different payment would be un-paid. Nothing is written yet — refuse and let it retry.
+    let claimed: Set<string>;
+    try {
+      claimed = await invoicesClaimedByOtherTx(pipeline, userId, candidates.map((c) => c.id), [transactionId]);
+    } catch (e) {
+      return NextResponse.json(
+        { error: "links_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
+    }
     for (const inv of candidates) if (!claimed.has(inv.id)) byId.set(inv.id, inv);
   }
   const batch = [...byId.values()];
@@ -302,7 +362,12 @@ async function unlinkBatch(args: {
   // what we already restored and re-link the bank line, so we never leave a half-reversed batch.
   // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date, not just paid/bank, so a
   // rollback never loses the settlement date (which attributes the payment to the right quarter).
-  const restored: { id: string; marked_paid_at: string | null; payment_date: string | null }[] = [];
+  // [PARTIAL-PAY] amount_paid is captured too, so a rollback restores the invoice to exactly what
+  // it was. Without it a failed batch reversal put the invoice back to 'paid' with amount_paid 0
+  // — paid and fully outstanding at the same time. Harmless on screen (openstaand is 0 by status)
+  // and it self-heals at the next recompute, but the sibling route (delete-statement) already
+  // restored it and two reversals of the same shape should not disagree about what "back" means.
+  const restored: { id: string; marked_paid_at: string | null; payment_date: string | null; amount_paid: number | null }[] = [];
   for (const inv of batch) {
     const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
     const { error: payErr } = await payClient
@@ -318,7 +383,9 @@ async function unlinkBatch(args: {
       for (const r of restored) {
         await payClient
           .from("invoices")
-          .update({ status: "paid", payment_method: "bank", marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
+          // `?? undefined` leaves the column untouched when the original was NULL (an undefined
+          // value is dropped from the JSON body), which is the same thing delete-statement does.
+          .update({ status: "paid", payment_method: "bank", amount_paid: r.amount_paid ?? undefined, marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
           .eq("id", r.id)
           .neq("status", "paid");
       }
@@ -326,7 +393,7 @@ async function unlinkBatch(args: {
       if (payErr.message?.toLowerCase().includes("verwerkt")) return NextResponse.json({ error: "verwerkt" }, { status: 409 });
       return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
     }
-    restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date });
+    restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date, amount_paid: inv.amount_paid });
   }
 
   // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.

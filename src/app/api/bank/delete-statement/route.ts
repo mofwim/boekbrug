@@ -33,6 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
@@ -94,33 +95,86 @@ export async function POST(req: NextRequest) {
   //     union the direct tx.invoice_id (a legacy single link the backfill covers) so nothing this
   //     statement paid is missed.
   const pipeline = createPipelineClient();
-  const { data: stmtTx } = await pipeline
-    .from("bank_transactions")
-    .select("id, invoice_id, reference, amount, category")
-    .eq("user_id", user.id)
-    .eq("statement_document_id", documentId);
-  const txs = stmtTx ?? [];
+  // [PAGINATE] Paged past the silent ~1000-row cap, and the error is no longer swallowed.
+  //
+  // This read decides WHICH bookings get reversed, but the DELETE further down filters on
+  // statement_document_id and therefore removes EVERY transaction of this statement — read or
+  // not. A statement with more than ~1000 lines (bank-ingest.ts:121-126 documents that a busy
+  // shop reaches that within one statement's date range) therefore lost the invoices of rows
+  // 1001+ from the reversal set while their bank lines were deleted underneath them: left
+  // 'paid' by a payment that no longer exists, with no bank line and no join row to undo it
+  // from, and — per the [PARTIAL-PAY] note further down — reading €0 openstaand, so out of the
+  // debtor list, the aging, art. 29 and dunning all at once. Silent, and unreachable.
+  //
+  // The old call also ignored its error entirely (`const { data: stmtTx }`), so a failed read
+  // became "this statement has no transactions" and the file was deleted with nothing reversed.
+  let txs: { id: string; invoice_id: string | null; reference: string | null; amount: number | null; category: string | null }[];
+  try {
+    txs = await fetchAllRows((from, to) =>
+      pipeline
+        .from("bank_transactions")
+        .select("id, invoice_id, reference, amount, category")
+        .eq("user_id", user.id)
+        .eq("statement_document_id", documentId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    // Same rule as the invoice read below: never delete a statement while we cannot see what
+    // it paid. Nothing has been touched, so the owner can simply try again.
+    return NextResponse.json(
+      { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
   if (txs.length > 0) {
     const txIds = txs.map((t) => t.id as string);
-    const linkIds = await invoiceIdsForTransactions(pipeline, user.id, txIds);
+    // [LINKS-READ-HONEST] Throws now instead of answering "no links" — an empty answer here
+    // would collapse the reversal set to the direct tx.invoice_id values and strand every
+    // batch sibling. Abort before anything is written.
+    let linkIds: string[];
+    try {
+      linkIds = await invoiceIdsForTransactions(pipeline, user.id, txIds);
+    } catch (e) {
+      return NextResponse.json(
+        { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
+    }
     const idSet = new Set<string>(linkIds);
     for (const t of txs) if (t.invoice_id) idSet.add(t.invoice_id as string);
 
     // Fetch the user's paid-by-bank invoices once; resolve the reversal set from these in code so we
     // can combine the exact id-links with the direction-guarded number gap-fill (below).
-    const { data: paidInvs, error: invErr } = await pipeline
-      .from("invoices")
-      // [PARTIAL-PAY] amount_paid moet mee: de rollback hieronder zet hem terug zoals hij was.
-      .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      .eq("status", "paid")
-      .eq("payment_method", "bank");
-    if (invErr) {
+    // [PAGINATE] Paged past the ~1000-row cap, stable order. The reversal set is resolved by
+    // FILTERING this list in JS (both below), so a truncated page silently drops invoices from
+    // the reversal while their transactions are deleted anyway — the same unreachable half-state
+    // the tx read above describes. Account-wide and all-time, so a few busy years reach the cap.
+    let paid: {
+      id: string; invoice_number: string | null; direction: string | null; status: string | null;
+      accountant_status: string | null; marked_paid_at: string | null; payment_date: string | null;
+      amount_paid: number | null;
+    }[];
+    try {
+      paid = await fetchAllRows((from, to) =>
+        pipeline
+          .from("invoices")
+          // [PARTIAL-PAY] amount_paid moet mee: de rollback hieronder zet hem terug zoals hij was.
+          .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .eq("status", "paid")
+          .eq("payment_method", "bank")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    } catch (e) {
       // Never delete a statement while we cannot read what it paid — that would strand paid
       // invoices with no bank line. Abort cleanly; nothing was touched.
-      return NextResponse.json({ error: "reversal_lookup_failed", detail: invErr.message }, { status: 500 });
+      return NextResponse.json(
+        { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
     }
-    const paid = paidInvs ?? [];
 
     // (1) Exact, collision-free part: invoices this statement's txs are id-linked to.
     const toRestoreMap = new Map<string, (typeof paid)[number]>();
@@ -154,7 +208,18 @@ export async function POST(req: NextRequest) {
       }
     }
     if (gapCandidates.size > 0) {
-      const claimed = await invoicesClaimedByOtherTx(pipeline, user.id, [...gapCandidates.keys()], txIds);
+      // [LINKS-READ-HONEST] The stray-exclusion guard throws now rather than failing open (an
+      // empty answer would WIDEN the reversal and un-pay another payment's invoice). Nothing is
+      // written yet at this point, so refusing costs the owner only a retry.
+      let claimed: Set<string>;
+      try {
+        claimed = await invoicesClaimedByOtherTx(pipeline, user.id, [...gapCandidates.keys()], txIds);
+      } catch (e) {
+        return NextResponse.json(
+          { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+          { status: 500 },
+        );
+      }
       for (const [id, inv] of gapCandidates) if (!claimed.has(id)) toRestoreMap.set(id, inv);
     }
     const toRestore = [...toRestoreMap.values()];

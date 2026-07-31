@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { rederiveFromDescription } from "@/lib/bank-parser";
 
 // A name is "weak" if it tells the owner nothing — these are the rows worth
@@ -39,13 +40,28 @@ export async function POST() {
   // 1. Pull this user's transactions that still have a weak name but DO have a
   //    description to derive from. (status is irrelevant — we fix matched/ignored
   //    rows too; we only ever change the display fields, never money or links.)
-  const { data: rows, error } = await pipeline
-    .from("bank_transactions")
-    .select("id, counterpart_name, reference, description")
-    .eq("user_id", user.id);
-
-  if (error) {
-    return NextResponse.json({ error: "lookup_failed", detail: error.message }, { status: 500 });
+  //
+  // [PAGINATE] Paged past the silent ~1000-row cap, with a stable order. This was a bare
+  // `.select().eq(user_id)`, so the button scanned an ARBITRARY thousand rows and every weak
+  // name beyond them was unreachable — pressing it again re-scanned the same thousand. Worse,
+  // it then reported `scanned` from that truncated set, so the UI answered "Alle namen waren al
+  // up-to-date" while hundreds of rows still read "Onbekende tegenpartij". This is the one
+  // action whose whole purpose is the OLD rows, which is exactly what the cap was dropping.
+  let rows: { id: string; counterpart_name: string | null; reference: string | null; description: string | null }[];
+  try {
+    rows = await fetchAllRows((from, to) =>
+      pipeline
+        .from("bank_transactions")
+        .select("id, counterpart_name, reference, description")
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    return NextResponse.json(
+      { error: "lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
   }
 
   const candidates = (rows ?? []).filter(

@@ -14,7 +14,7 @@
 //     (lines the parser could not read) travel back so the caller can surface them.
 
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, chunkIds } from "./supabase-paginate";
 import { parseBankFile } from "./bank-parser";
 import { looksLikeSpreadsheetBinary, detectSheetKind } from "./detect-file";
 import { sheetBytesToMatrix } from "./xlsx-adapter";
@@ -148,7 +148,20 @@ export async function importBankStatement(args: {
         const stripped = rows.map(({ counterpart_iban: _omit, ...r }) => r);
         ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
       }
-      if (!error) { inserted = rows.length; insertedIds = (insData ?? []).map((r) => r.id as string); }
+      if (!error) {
+        inserted = rows.length;
+        insertedIds = (insData ?? []).map((r) => r.id as string);
+        // [BANK-TX-STATEMENT-LINK] The returned representation is subject to the same row cap as
+        // any other read, so a statement of >1000 new lines can hand back fewer ids than it
+        // inserted. Those rows would then never be stamped with their statement, and deleting it
+        // would silently leave their bookings behind. We cannot recover the missing ids here —
+        // but a gap this consequential must not pass unrecorded.
+        if (insertedIds.length !== rows.length) {
+          console.error("[BANK-TX-STATEMENT-LINK] insert returned fewer ids than rows — those transactions will not carry their statement", {
+            userId, inserted: rows.length, returned: insertedIds.length,
+          });
+        }
+      }
     }
   }
 
@@ -304,14 +317,27 @@ export async function importBankStatement(args: {
   // the statement can later reverse exactly its own bookings (and re-import can't double). Only
   // the freshly-inserted rows — never rows a prior import already owns. Best-effort.
   if (statementDocId && insertedIds.length > 0) {
-    try {
-      await pipeline
+    // [IN-CHUNK] Chunked, and the result is now CHECKED. It was one `.in()` over every id this
+    // import created, with no `error` destructuring at all — and supabase-js reports a failure as
+    // `{ error }` rather than throwing, so the try/catch around it could never fire. On a large
+    // statement the id list alone outgrows the request URL, and the write then failed in total
+    // silence, leaving statement_document_id NULL on every row.
+    //
+    // That is not a cosmetic link: it is the ONLY thing delete-statement selects on. Without it
+    // deleting the statement reverses nothing while answering ok:true, and re-importing the
+    // corrected file adds its lines on top of the stranded originals — the doubled omzet +
+    // commission that [BANK-STATEMENT-DELETE-CASCADE] was written to end. Loud on failure.
+    for (const chunk of chunkIds(insertedIds)) {
+      const { error: linkErr } = await pipeline
         .from("bank_transactions")
         .update({ statement_document_id: statementDocId })
-        .in("id", insertedIds)
+        .in("id", chunk)
         .eq("user_id", userId);
-    } catch {
-      /* non-fatal — the link is a convenience for reversal, not a money figure */
+      if (linkErr) {
+        console.error("[BANK-TX-STATEMENT-LINK] stamping the statement onto its transactions failed — deleting this statement will not reverse its bookings", {
+          userId, statementDocId, rows: chunk.length, error: linkErr.message,
+        });
+      }
     }
   }
 

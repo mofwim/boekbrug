@@ -104,14 +104,6 @@ export async function runBankAutoConfirm(args: {
   // [PARTIAL-PAY] The BATCH pass may legitimately settle a partly-paid invoice (see its comment),
   // so it needs an index over every candidate, not just the fully-open 1:1 pool.
   const allById = new Map(allInvoices.map((i) => [i.id, i]));
-  const result = matchTransactions(transactions, invoices);
-  // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
-  // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
-  // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
-  // "controleer". Both use the identical money discipline below and both are one-tap reversible.
-  const autoMatches = result.matches
-    .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
-    .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
   // [BANK-PARTLY-CONSUMED] A PENDING bank line that already carries an invoice_id has already
   // paid something: the multi-invoice confirm flow keeps a batch visible for its remaining
@@ -122,6 +114,24 @@ export async function runBankAutoConfirm(args: {
   const partlyConsumedTxIds = new Set(
     (txRows as BankTransactionDbRow[]).filter((r) => r.invoice_id).map((r) => r.id).filter(Boolean),
   );
+
+  // [BANK-PARTLY-CONSUMED] Exclude the partly-consumed lines from the MATCHER's input, not only
+  // from the booking loop below. matchTransactions holds a one-to-one guard: the strongest match
+  // CLAIMS its invoice and removes it from every other transaction's candidates. Feeding it a
+  // line that we are about to skip anyway meant such a line could claim an invoice and then be
+  // dropped — so the clean payment that could safely have been booked against that invoice lost
+  // it, fell back to 'choice'/'none', and stayed there. Nothing changes between runs, so that was
+  // a permanent block, not a transient one. Skipping them here costs nothing: the batch pass
+  // reads txRows directly and skips these lines by the same rule.
+  const bookable = transactions.filter((t) => !t.transactionId || !partlyConsumedTxIds.has(t.transactionId));
+  const result = matchTransactions(bookable, invoices);
+  // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
+  // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
+  // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
+  // "controleer". Both use the identical money discipline below and both are one-tap reversible.
+  const autoMatches = result.matches
+    .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
+    .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
   const confirmed: AutoConfirmed[] = [];
   for (const { m, tier } of autoMatches) {

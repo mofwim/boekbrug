@@ -57,11 +57,19 @@ export async function POST(req: NextRequest) {
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/bank/attach-invoice", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
 
-  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
-  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
-  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
-  if (!gate.allowed) return gate.response!;
+  // [FAIR-USE-TE-VROEG] Het maandhek stond hiér, en dat was te vroeg. gateFairUse VERBRUIKT
+  // meteen (fair-use-gate.ts → consumeFairUse); teruggeven gebeurt alleen via gate.release().
+  // Tussen deze plek en de enige betaalde handeling van de route (verifyInvoiceFromPdf, ver
+  // hieronder) liggen ACHT weigeringen: geen bestand, geen transactie, verkeerd bestandstype,
+  // te groot, transactie niet gevonden / al verwerkt, verkeerde richting, en het byte-hash
+  // duplicaat. Elk daarvan kostte de eigenaar een document van zijn maandtegoed voor een
+  // handeling die ons NIETS kostte — en het duplicaat-antwoord is juist het antwoord dat je
+  // hier het vaakst krijgt, want dit scherm is waar je een bestand aan een bankregel hangt.
+  //
+  // /eerlijk-gebruik §3 belooft letterlijk "mislukte pogingen komen nooit op jouw rekening".
+  // Het hek is daarom verplaatst naar vlak vóór de AI-call, precies zoals /api/intake het doet
+  // (intake/route.ts:378 — daar zit geen enkele uitgang tussen hek en call). Alles wat NA de
+  // call misgaat telt wél: die leesbeurt is echt gemaakt en heeft echt geld gekost.
 
   // 2. Read form: the file + the target transaction id.
   let formData: FormData;
@@ -170,6 +178,18 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
   const receiverName = me?.company_name || me?.full_name || null;
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek daarboven (checkRateLimit)
+  // gaat over snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een
+  // weigering pauzeert alleen dit ene automatische uitlezen — de bankregel blijft gewoon staan
+  // in "Geen factuur", dus er gaat niets verloren.
+  //
+  // Het staat hier en niet bovenaan: dit is de laatste regel vóór de enige handeling die ons
+  // per stuk geld kost. Alles wat de route eerder kan weigeren (leeg formulier, verkeerd
+  // bestandstype, te groot bestand, een al-verwerkte transactie, een byte-hash duplicaat) is
+  // dan al geweigerd zonder iemands maandtegoed aan te raken. Zie [FAIR-USE-TE-VROEG] boven.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // 6. AI extraction. We do NOT hard-reject a non-invoice here: a rent/lease
   //    receipt or a bank confirmation is a legitimate expense document even if

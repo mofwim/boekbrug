@@ -41,6 +41,32 @@ function isReadableBankFile(name: string): boolean {
   return READABLE_BANK_EXTS.some((ext) => lower.endsWith(ext))
 }
 
+// [BANK-IBAN] Would the SERVER book this match without a tap? One predicate, because this page
+// asked the question in two places and the two answers had already drifted: the on-load gate was
+// corrected to accept an IBAN match and the counter that drives the "N zekere betalingen" card
+// was not, so a statement matched purely on supplier IBAN + exact sum was booked silently while
+// the screen still said there was nothing to handle.
+//
+// Mirrors bank-matching.autoConfirmTier: outcome 'auto' with a best candidate, the amount matches
+// to the cent, ONE referenced invoice number, not an instalment — and then either 'certain'
+// (invoice number printed OR the supplier IBAN matches) or 'amount_only' (counterpart name, no
+// reference/IBAN). The server stays authoritative on what it actually books; this only decides
+// whether it is worth asking, and what to tell the owner is waiting.
+function isServerAutoBookable(s: Suggestion): boolean {
+  if (s.outcome !== 'auto' || !s.best) return false
+  const sig = s.best.signals
+  if (!sig.includes('amount')) return false // the amount is the money-truth — required by both tiers
+  const certain = sig.includes('reference') || sig.includes('iban')
+  const amountOnly = sig.includes('counterpart')
+  if (!certain && !amountOnly) return false
+  // [BANK-REF-ONE-SOURCE] The server's own count — a raw comma split counted free-text fragments
+  // and any part under four characters as invoice numbers, so this gate fired on rows the server
+  // considers single-invoice. A multi-invoice batch is the engine's separate path.
+  if (parseReferenceNumbers(s.reference).length > 1) return false
+  if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
+  return true
+}
+
 // [BANK-STATEMENTS] Format an upload timestamp for the statements table.
 function fmtUploadDate(iso: string): string {
   const d = new Date(iso)
@@ -353,29 +379,11 @@ export default function BankClient() {
     if (autoRanRef.current) return
     if (autoRunning) return
     if (!data) return
-    // [BANK-IBAN] Mirror the server's isSafeAutoConfirm EXACTLY: the safe set is
-    // (reference + amount) OR (iban + amount). The old gate only checked reference+amount,
-    // so an invoice matched purely by supplier IBAN + exact sum (e.g. the HVO invoices, which
-    // carry no printed invoice number in the payment) never tripped the on-load auto-run —
-    // it sat unlinked until the daily cron. The server stays authoritative; this only decides
-    // "are there any safe matches worth calling autoConfirm for right now".
-    const hasSafe = (data.suggestions ?? []).some((s) => {
-      if (s.outcome !== 'auto' || !s.best) return false
-      const sig = s.best.signals
-      // Mirror the server's autoConfirmTier: 'certain' (reference/iban + amount) OR 'amount_only'
-      // (amount + counterpart name, no reference/iban). Both are single-invoice, non-instalment and
-      // auto-booked on load; the server stays authoritative on WHAT it books and the tier flag.
-      const certain = (sig.includes('reference') || sig.includes('iban')) && sig.includes('amount')
-      const amountOnly = sig.includes('amount') && sig.includes('counterpart') && !sig.includes('reference') && !sig.includes('iban')
-      if (!certain && !amountOnly) return false
-      // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
-      // [BANK-REF-ONE-SOURCE] The server's own count — a raw comma split counted free-text
-      // fragments and any part under four characters as invoice numbers, so this gate fired on
-      // rows the server considers single-invoice.
-      if (parseReferenceNumbers(s.reference).length > 1) return false
-      if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
-      return true
-    })
+    // [BANK-IBAN] "Are there any safe matches worth calling autoConfirm for right now?" — the
+    // shared predicate, so this gate and the counter that reports it can never answer differently
+    // (they did: an invoice matched purely on supplier IBAN + exact sum, e.g. the HVO invoices
+    // with no printed number, tripped this gate but was counted as zero on screen).
+    const hasSafe = (data.suggestions ?? []).some(isServerAutoBookable)
     // [BANK-BATCH-ONLOAD] Also fire the pass when an unresolved MULTI-invoice batch exists (a
     // wholesaler debiting a week of deliveries into one payment, e.g. "sumer food … 2 facturen").
     // The single-match gate above deliberately skips these (>1 reference), so a statement whose
@@ -683,11 +691,22 @@ export default function BankClient() {
       setSelectedForBatch(new Set())
       setBatchRunning(false)
       // Refresh once: just-paid invoices drop out of candidates, lists re-derive.
-      await runMatch()
+      // The refresh must never eat the RESULT. runMatch parses the response body before it
+      // checks res.ok, so a gateway answering with an HTML error page throws — and thrown from
+      // a `finally` that means the summary below never runs: the owner just confirmed a stack of
+      // payments, every one of them booked, and the screen says nothing at all. The refresh is a
+      // convenience; the count is the answer. Report it either way.
+      let refreshed = true
+      try {
+        await runMatch()
+      } catch {
+        refreshed = false
+      }
       showToast(
-        failed === 0
+        (failed === 0
           ? `${ok} factuur/facturen bevestigd ✓`
-          : `${ok} bevestigd · ${failed} mislukt`
+          : `${ok} bevestigd · ${failed} mislukt`) +
+        (refreshed ? '' : ' · vernieuw de pagina voor de bijgewerkte lijst'),
       )
     }
   }
@@ -999,18 +1018,17 @@ export default function BankClient() {
   const batchEligibleList = toConfirm.filter((s) => isBatchEligible(s))
   const batchSelectedCount = batchEligibleList.filter((s) => selectedForBatch.has(s.transactionId)).length
 
-  // [BANK-AUTO-CONFIRM] How many of the shown (quarter-filtered) matches are near-certain
-  // enough for the app to book without a tap — mirrors the server's isSafeAutoConfirm:
-  // reference number + exact amount, single invoice, not an instalment. The server is
-  // authoritative; this only drives the "handle X automatically" offer.
-  const safeAutoCount = toConfirm.filter((s) =>
-    s.outcome === 'auto' &&
-    !!s.best &&
-    s.best.signals.includes('reference') &&
-    s.best.signals.includes('amount') &&
-    parseReferenceNumbers(s.reference).length <= 1 && // [BANK-REF-ONE-SOURCE]
-    !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
-  ).length
+  // [BANK-AUTO-CONFIRM] How many of the shown (quarter-filtered) matches the app would book
+  // without a tap. Drives the "handle X automatically" offer; the server stays authoritative on
+  // what it actually books.
+  // [BANK-IBAN] This copy asked for `reference`, while the server's
+  // 'certain' tier is (reference OR iban) + amount and it books an 'amount_only' tier on top.
+  // The sibling gate a few hundred lines up was corrected for IBAN and this one was left behind,
+  // so a statement whose auto-bookable payments carry no printed invoice number — matched purely
+  // on supplier IBAN + exact sum — showed "0 zekere betalingen" and no card at all, while the
+  // on-load pass had just booked them. Same predicate as that gate now, from one place, so the
+  // two answers cannot drift apart again.
+  const safeAutoCount = toConfirm.filter((s) => isServerAutoBookable(s)).length
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
