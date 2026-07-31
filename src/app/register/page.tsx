@@ -17,6 +17,16 @@ import {
   ARCHIEF_ROLE,
 } from '@/lib/account-purpose'
 
+// Bewust ruim: iets vóór de @, iets erachter, en daarin een punt met minstens twee tekens erna.
+// De controle die hier stond was `includes('@') && includes('.')`, en die liet "jan.de@vries"
+// door — een adres zonder domeinnaam. Dat kwam pas bij Supabase aan het licht, en dat is een
+// ronde langs de server voor iets wat hier al te zien is.
+//
+// Strenger dan dit hoort het niet te worden. Het echte oordeel over een adres is of er post
+// aankomt, en dat weet alleen de bevestigingsmail. Een regex die "te slim" is, weigert vooral
+// geldige adressen van mensen met een ongebruikelijk domein.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+
 function RegisterContent() {
   const searchParams = useSearchParams()
 
@@ -97,6 +107,24 @@ function RegisterContent() {
   function wisFout(veld: 'name' | 'email' | 'password') {
     setFieldErrors(vorige => (vorige[veld] ? { ...vorige, [veld]: undefined } : vorige))
   }
+
+  // Wie al ingelogd is, hoort hier niet te zijn.
+  //
+  // /register is een publieke pagina, en elke publieke pagina (de prijzen, de blog, de
+  // rekenhulpen) heeft "Gratis account" in de kopbalk staan. Een ingelogde bezoeker die daarop
+  // klikt kwam gewoon op dit formulier. Vulde hij het in, dan maakte signUp() een TWEEDE account
+  // aan en nam die de sessie over: hij zit dan in een leeg account, en het zijne — met zijn
+  // facturen erin — is uit dat tabblad verdwenen. Niets ging kapot, maar niets legde het ook uit.
+  //
+  // De controle staat in een effect en niet in de render, zodat er tijdens `next build` geen
+  // Supabase-client wordt gebouwd. Zie de RULE in src/lib/supabase.ts.
+  useEffect(() => {
+    let afgebroken = false
+    getBrowserClient().auth.getSession().then(({ data }) => {
+      if (!afgebroken && data.session) router.replace('/dashboard')
+    })
+    return () => { afgebroken = true }
+  }, [router])
 
   // [Google-OAuth] Reset loading when user returns via browser back button
   useEffect(() => {
@@ -191,7 +219,7 @@ function RegisterContent() {
     const errs: { name?: string; email?: string; password?: string } = {}
     if (!fullName.trim()) errs.name = 'Vul je naam in'
     if (!email.trim()) errs.email = 'Vul je e-mailadres in'
-    else if (!(email.includes('@') && email.includes('.'))) errs.email = 'Dit e-mailadres klopt niet'
+    else if (!EMAIL_REGEX.test(email.trim())) errs.email = 'Dit e-mailadres klopt niet'
     if (password.length < 6) errs.password = 'Kies een wachtwoord van minstens 6 tekens'
 
     if (Object.keys(errs).length > 0) {
