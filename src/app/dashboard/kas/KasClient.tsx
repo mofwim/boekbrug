@@ -54,6 +54,16 @@ function prevQuarter(y: number, q: number): { year: number; quarter: number } {
 function nextQuarter(y: number, q: number): { year: number; quarter: number } {
   return q >= 4 ? { year: y + 1, quarter: 1 } : { year: y, quarter: q + 1 }
 }
+// The quarter we are living in, in Amsterdam time — the ceiling for ▶. Without one the button
+// walked forever into quarters that cannot have data, each one answering "Geen kasbewegingen in
+// dit kwartaal", which reads like a finding rather than a place that does not exist yet.
+function currentQuarter(): { year: number; quarter: number } {
+  const iso = todayIso()
+  return { year: Number(iso.slice(0, 4)), quarter: Math.floor((Number(iso.slice(5, 7)) - 1) / 3) + 1 }
+}
+function isAtOrAfter(a: { year: number; quarter: number }, b: { year: number; quarter: number }): boolean {
+  return a.year > b.year || (a.year === b.year && a.quarter >= b.quarter)
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return ''
@@ -112,6 +122,18 @@ export default function KasClient() {
   // where the owner can actually fix it. Same witness as the readiness gate, so the two can
   // never disagree.
   const [lowestPoint, setLowestPoint] = useState<{ date: string; balance: number } | null>(null)
+  // [KAS-NEGATIEF] Which quarter the banner above is ABOUT — the one the readiness gate blocks on
+  // (the endpoint's own default: the last completed quarter). Browsing the panel to another
+  // quarter must not rewrite it. It did: loadKasboek set lowestPoint from whatever quarter was
+  // loaded, so one tap on ◀ into a healthy older quarter made the red banner vanish while the
+  // aangifte stayed blocked — and a tap into an old quarter that once dipped showed the banner
+  // claiming, in the present tense, that it is blocking the filing today. Held in a ref because
+  // loadKasboek reads it from inside an async callback.
+  const alertPeriodRef = useRef<{ year: number; quarter: number } | null>(null)
+  // [NO-EMPTY-LEDGER] The negative-cash check could not be RUN (the kasboek sources were
+  // unreadable). Not the same as "your drawer is fine", and this screen must not let the two
+  // look alike — the absence of the banner is the only thing the owner has to go on.
+  const [lowestPointUnknown, setLowestPointUnknown] = useState(false)
 
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
@@ -122,9 +144,26 @@ export default function KasClient() {
       if (res.ok && json.kasboek) {
         setKb(json.kasboek as Kasboek)
         setKbPeriod({ year: json.kasboek.year, quarter: json.kasboek.quarter })
-        setLowestPoint((json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        // The first load (no explicit period) IS the readiness quarter — remember it.
+        if (!period) alertPeriodRef.current = { year: json.kasboek.year, quarter: json.kasboek.quarter }
+        // [SHADOW] Named alertQ, not alert: a local `alert` shadows window.alert for the whole
+        // module, the same trap BankClient and CategoriseClient already carry a note about.
+        const alertQ = alertPeriodRef.current
+        // Only the banner's own quarter may update it; every other quarter is just browsing.
+        if (!alertQ || (json.kasboek.year === alertQ.year && json.kasboek.quarter === alertQ.quarter)) {
+          setLowestPoint((json.lowestPoint ?? null) as { date: string; balance: number } | null)
+          setLowestPointUnknown(false)
+        }
+      } else {
+        // A 503 here means the sources could not be read (see [NO-EMPTY-LEDGER] in the route).
+        // The panel shows its own retry; the banner state must not silently read as "all clear".
+        setKb(null)
+        if (!period) setLowestPointUnknown(true)
       }
-    } catch { /* silent — the panel shows a retry */ } finally { setKbLoading(false) }
+    } catch {
+      setKb(null)
+      if (!period) setLowestPointUnknown(true)
+    } finally { setKbLoading(false) }
   }
 
   function openKasboek() {
@@ -175,8 +214,19 @@ export default function KasClient() {
       try {
         const kbRes = await fetch('/api/kasboek')
         const kbJson = await kbRes.json()
-        if (!cancelled && kbRes.ok) setLowestPoint((kbJson.lowestPoint ?? null) as { date: string; balance: number } | null)
-      } catch { /* silent */ }
+        if (cancelled) return
+        if (kbRes.ok && kbJson.kasboek) {
+          // [KAS-NEGATIEF] This unparameterised call IS the readiness quarter, so it owns the
+          // banner — and pins which quarter may update it later (see alertPeriodRef).
+          alertPeriodRef.current = { year: kbJson.kasboek.year, quarter: kbJson.kasboek.quarter }
+          setLowestPoint((kbJson.lowestPoint ?? null) as { date: string; balance: number } | null)
+          setLowestPointUnknown(false)
+        } else {
+          // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which
+          // on this screen is indistinguishable from "your drawer never went negative".
+          setLowestPointUnknown(true)
+        }
+      } catch { if (!cancelled) setLowestPointUnknown(true) }
     })()
     return () => { cancelled = true }
   }, [])
@@ -340,7 +390,9 @@ export default function KasClient() {
           <div style={{ fontFamily: FONT_NUM, fontSize: 34, fontWeight: 700, color: loadError ? M3.neutral : balance < 0 ? M3.error : M3.onSurface, marginTop: 4 }}>
             {loadError ? '—' : eur.format(balance)}
           </div>
-          {balance < 0 && (
+          {/* Gated on a successful load: the figure above already reads '—' on error, and a red
+              "negatief saldo" line under a dash is a verdict on a number we did not get. */}
+          {!loadError && balance < 0 && (
             <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.</div>
           )}
           {/* [KAS-OPENING] Beginsaldo — the cash already in the drawer when you started. Included in
@@ -380,6 +432,18 @@ export default function KasClient() {
             exactly this witness); it just never said it on the screen where the owner can fix it.
             The three causes are named, because "your cash is negative" without a next step is an
             accusation, not help. */}
+        {/* [NO-EMPTY-LEDGER] The check itself could not run. On this screen an ABSENT warning is
+            the only signal that the drawer is fine, so silence here would be a claim we cannot
+            back — the same reason the saldo shows '—' instead of €0,00 when its load fails. */}
+        {lowestPointUnknown && !lowestPoint && (
+          <div style={{ margin: '0 0 20px', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 14, padding: '12px 16px' }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>We konden je kasboek nu niet controleren</div>
+            <div style={{ fontSize: 12.5, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
+              De controle op een negatief kassaldo is daarom <strong>niet</strong> uitgevoerd — dit betekent niet dat er niets aan de hand is. Open het kasboek hieronder om het opnieuw te proberen.
+            </div>
+          </div>
+        )}
+
         {lowestPoint && (
           <div style={{ margin: '0 0 20px', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -578,8 +642,14 @@ export default function KasClient() {
                 <div style={{ fontSize: 15.5, fontWeight: 700, color: M3.onSurface, minWidth: 96, textAlign: 'center' }}>
                   {kbPeriod ? `Q${kbPeriod.quarter} ${kbPeriod.year}` : '—'}
                 </div>
-                <button onClick={() => kbPeriod && loadKasboek(nextQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading} aria-label="Volgend kwartaal"
-                  style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 999, width: 34, height: 34, cursor: kbPeriod ? 'pointer' : 'default', fontSize: 16, color: M3.onSurface }}>▶</button>
+                {/* Stops at the quarter we are actually in — see currentQuarter(). */}
+                {(() => {
+                  const atEnd = !kbPeriod || isAtOrAfter(kbPeriod, currentQuarter())
+                  return (
+                    <button onClick={() => kbPeriod && !atEnd && loadKasboek(nextQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading || atEnd} aria-label="Volgend kwartaal"
+                      style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 999, width: 34, height: 34, cursor: kbPeriod && !atEnd ? 'pointer' : 'default', fontSize: 16, color: M3.onSurface, opacity: atEnd ? 0.4 : 1 }}>▶</button>
+                  )
+                })()}
               </div>
 
               {kbLoading ? (

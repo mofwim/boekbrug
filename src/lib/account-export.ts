@@ -16,6 +16,7 @@
 
 import JSZip from "jszip";
 import type { PipelineClient } from "./supabase-pipeline";
+import { fetchAllRows } from "./supabase-paginate";
 import { toExportRowFull, invoicesToCsv, type InvRow } from "./export";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -184,23 +185,33 @@ export async function buildAccountExportZip(args: {
     .single();
 
   // Invoices where the user is sender OR receiver.
-  const { data: invoiceData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
-  if (invErr) {
-    throw new Error(`[BOEK-032] invoices query failed: ${invErr.message}`);
-  }
-  const invoices = (invoiceData ?? []) as unknown as InvRow[];
+  // [EXPORT-PAGINATE] Paged. Every read in this file already refuses to swallow an ERROR
+  // ("must not silently drop a whole ledger from a GDPR export" — see below), but none of them
+  // handled TRUNCATION, and PostgREST caps a response at ~1000 rows without saying so. In an
+  // export whose entire purpose is completeness that is the same harm arriving by the quieter
+  // door: the ZIP is delivered, it looks whole, and the ledger simply stops at a thousand.
+  const invoices = (await fetchAllRows((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e) => {
+    throw new Error(`[BOEK-032] invoices query failed: ${e instanceof Error ? e.message : String(e)}`);
+  })) as unknown as InvRow[];
 
   // Document metadata.
-  const { data: docData, error: docErr } = await supabase
-    .from("documents")
-    .select("file_name, file_url")
-    .eq("user_id", userId);
-  if (docErr) {
-    throw new Error(`[BOEK-032] documents query failed: ${docErr.message}`);
-  }
+  const docData = await fetchAllRows<{ file_name: string; file_url: string }>((from, to) =>
+    supabase
+      .from("documents")
+      .select("file_name, file_url")
+      .eq("user_id", userId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e) => {
+    throw new Error(`[BOEK-032] documents query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
   const docs = docData ?? [];
 
   // Download files IN PARALLEL (perf — Tech Lead note). A single failed file is
@@ -247,24 +258,34 @@ export async function buildAccountExportZip(args: {
   // [EXPORT-COMPLETE] The remaining owner-scoped data, so the ZIP is genuinely complete.
   // Each scoped to this userId (service_role bypasses RLS). A query error must not silently
   // drop a whole ledger from a GDPR export → throw (the caller surfaces it), never []-swallow.
-  const [bankRes, cashRes, turnoverRes, msgRes] = await Promise.all([
-    supabase.from("bank_transactions").select("*").eq("user_id", userId),
-    supabase.from("cash_entries").select("*").eq("user_id", userId),
-    supabase.from("daily_turnover").select("*").eq("user_id", userId),
-    supabase.from("messages").select("*").or(`sender_id.eq.${userId},receiver_id.eq.${userId}`),
+  // [EXPORT-PAGINATE] …and truncation is the other way to lose one. These four were plain
+  // .select("*") reads, so an owner past a thousand bank lines, cash entries, till days or
+  // messages received an export that stopped there and said nothing — the ledger the sentence
+  // above promises never to drop, dropped by the ~1000-row cap instead of by an error.
+  // fetchAllRows throws on a read error, which keeps that promise intact too.
+  const readAll = async <T,>(label: string, build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> => {
+    try {
+      return await fetchAllRows<T>(build);
+    } catch (e) {
+      throw new Error(`[BOEK-032] ${label} query failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const [bankRows, cashRows, turnoverRows, msgRows] = await Promise.all([
+    readAll("bank_transactions", (from, to) =>
+      supabase.from("bank_transactions").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("cash_entries", (from, to) =>
+      supabase.from("cash_entries").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("daily_turnover", (from, to) =>
+      supabase.from("daily_turnover").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("messages", (from, to) =>
+      supabase.from("messages").select("*").or(`sender_id.eq.${userId},receiver_id.eq.${userId}`).order("id", { ascending: true }).range(from, to)),
   ]);
-  for (const [label, res] of [
-    ["bank_transactions", bankRes], ["cash_entries", cashRes],
-    ["daily_turnover", turnoverRes], ["messages", msgRes],
-  ] as const) {
-    if (res.error) throw new Error(`[BOEK-032] ${label} query failed: ${res.error.message}`);
-  }
 
   return assembleAccountExportZip({
     userId, profile, invoices, files, skipped,
-    bankTransactions: bankRes.data ?? [],
-    cashEntries: cashRes.data ?? [],
-    dailyTurnover: turnoverRes.data ?? [],
-    messages: msgRes.data ?? [],
+    bankTransactions: bankRows,
+    cashEntries: cashRows,
+    dailyTurnover: turnoverRows,
+    messages: msgRows,
   });
 }

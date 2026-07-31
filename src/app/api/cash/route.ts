@@ -18,7 +18,17 @@ export async function GET() {
 
   // [CASH-SETTLE] Before reading, make the kasboek reflect every invoice paid in cash — no
   // matter which pay path booked it. Self-healing + best-effort (never blocks the read).
-  await reconcileCashSettlements(supabase, user.id);
+  //
+  // The summary is checked rather than discarded. `ok: false` means the pass BAILED — it read
+  // nothing it could trust, so it created, healed and reversed nothing — and the drawer below is
+  // then whatever the last successful pass left. One bad run is harmless (the next read heals
+  // it), but a run that keeps bailing is a kasboek that silently stops following its invoices,
+  // and nothing anywhere said so. It stays non-blocking: the entries and the saldo are still
+  // real rows, and refusing to show them would be worse than showing them slightly stale.
+  const settleSync = await reconcileCashSettlements(supabase, user.id);
+  if (!settleSync.ok) {
+    console.error("[CASH-SETTLE] reconcile bailed before the kasboek read — settlements may be stale", { userId: user.id });
+  }
 
   // [SEARCH-FULL-LEDGER] Return the WHOLE cash book, not the newest 500. The in-page zoekbalk filters
   // this array client-side (op omschrijving / categorie / bedrag), so a 500-row slice made every entry
@@ -98,9 +108,31 @@ export async function POST(req: NextRequest) {
   }
 
   // entry_date: accept a valid YYYY-MM-DD, else let the DB default to today.
-  const entryDate = typeof body.entry_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.entry_date)
+  //
+  // [CASH-DATE-SANE] The shape test alone let "2062-03-01" (a slipped digit in a date field)
+  // through, and a cash entry carries a running balance: one impossible date drags the drawer's
+  // eindsaldo along with it into a quarter that does not exist yet, and shows up in the kasboek
+  // an inspector reads. The window is deliberately generous — anything a person could plausibly
+  // mean is accepted, only the physically impossible is refused. Tomorrow is allowed because a
+  // device clock or a timezone edge can legitimately be a day ahead.
+  const rawDate = typeof body.entry_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.entry_date)
     ? body.entry_date
     : undefined;
+  if (rawDate) {
+    // Amsterdam's tomorrow, not UTC's. The client fills this field from an Amsterdam-pinned
+    // today (KasClient.todayIso), so a UTC ceiling would be a different day for part of the
+    // evening — and the one it would refuse is the owner's actual today.
+    const tomorrow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date(Date.now() + 86_400_000));
+    if (rawDate < "2000-01-01" || rawDate > tomorrow) {
+      return NextResponse.json(
+        { error: "Controleer de datum — een kasboeking kan niet in de toekomst liggen." },
+        { status: 400 },
+      );
+    }
+  }
+  const entryDate = rawDate;
 
   // [CASH-COST-VAT] Verify the linked bon is a document THIS user owns before trusting it — an
   // unowned/forged document_id must never unlock a voorbelasting deduction (a real, wrong number
@@ -184,12 +216,23 @@ export async function DELETE(req: NextRequest) {
   // Refusing is the honest answer, because the entry genuinely follows the invoice: the way to
   // remove it is to undo that invoice's cash payment, and then the reconciler removes this row
   // itself. RLS already scopes the read to the owner.
-  const { data: existing } = await supabase
+  //
+  // The error is READ, not ignored. It used to be dropped (`const { data: existing }`), so a
+  // failed lookup left `existing` null, the guard below never matched, and the delete went
+  // through — landing on exactly the behaviour this guard exists to prevent: the row disappears,
+  // the next GET's reconcile puts it straight back, and nothing explains it.
+  const { data: existing, error: readErr } = await supabase
     .from("cash_entries")
     .select("category")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readErr) {
+    return NextResponse.json(
+      { error: "lookup_failed", detail: "We konden deze boeking nu niet opzoeken. Probeer het zo meteen opnieuw." },
+      { status: 500 },
+    );
+  }
   if ((existing as { category?: string | null } | null)?.category === "betaling") {
     return NextResponse.json(
       {

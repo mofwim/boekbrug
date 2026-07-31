@@ -448,10 +448,16 @@ export async function GET(req: NextRequest) {
     .from("daily_turnover").select("turnover_date, cash_amount")
     .eq("user_id", ownerId).lte("turnover_date", end)
     .order("turnover_date", { ascending: true }).range(from, to));
+  // [PAGE-KEY] Ordered by id, not entry_date. entry_date is NOT unique (several cash entries on
+  // one day is ordinary for a shop) and Postgres defines no order among ties, so across separate
+  // .range() windows a row could come back twice or not at all. Here that lands in
+  // lowestDrawerPoint — the witness this route BLOCKS the aangifte on — where a duplicated or
+  // missing movement shifts every eindsaldo after it and can invent, or hide, a negative day.
+  // Every other paged cash_entries read in the app already keys on id; these two did not.
   const kasEntryRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries").select("entry_date, direction, amount, category, description")
     .eq("user_id", ownerId).lte("entry_date", end)
-    .order("entry_date", { ascending: true }).range(from, to));
+    .order("id", { ascending: true }).range(from, to));
   const { data: kasProfile } = await pipeline
     .from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
   const kasTurnover = (kasTurnoverRows ?? []) as KasTurnoverDay[];
