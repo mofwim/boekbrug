@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { FONT, COLUMN } from "@/lib/design/tokens";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
@@ -27,7 +28,10 @@ const M = {
 };
 const eur = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 
-type Lens = "this-quarter" | "last-quarter" | "ytd" | "all";
+// [NAMED-QUARTER] "quarter" is the explicit ?year&quarter lens — the picker below. It is what lets
+// this screen reach ANY historical quarter, which used to be the only thing /dashboard/resultaat
+// could do that this screen could not (that page is now a redirect here).
+type Lens = "this-quarter" | "last-quarter" | "quarter" | "ytd" | "all";
 
 interface TruthResult {
   omzet: number; kosten: number; resultaat: number;
@@ -79,6 +83,14 @@ interface TruthResponse {
     // FALSE → the PIN-grootboek cross-check could not run, so "no mismatches" is weaker than it
     // looks. Never present an unrun check as a clean one.
     pinLedgerAvailable: boolean;
+    // [KAART-CONTROLE] The triangle's own figures, absorbed from /dashboard/resultaat.
+    // totalCommission is what the reconciliation MEASURED (EFT gross − bank net);
+    // commissionBooked is what actually landed in kosten — under kasstelsel that is deliberately
+    // 0, and the two must therefore be shown as two different things, never as one.
+    totalCommission: number;
+    commissionBooked: number;
+    acquirerFeeInvoices: number;
+    eftSettlements: number;
   };
   // [HONESTY-PARITY] Why a figure may be incomplete — at parity with /api/result + /api/readiness.
   scheme: "factuur" | "kas";
@@ -97,10 +109,44 @@ const LENSES: { key: Lens; label: string }[] = [
   { key: "all", label: "Alles" },
 ];
 
+/** The period the screen is looking at: a relative lens, or an explicit quarter from the picker. */
+interface Period { lens: Lens; year?: number; quarter?: number }
+
+/** The query string for a period — the ONE place a Period becomes a request. */
+function periodQuery(p: Period): string {
+  return p.lens === "quarter"
+    ? `lens=quarter&year=${p.year}&quarter=${p.quarter}`
+    : `lens=${p.lens}`;
+}
+
+/**
+ * [NAMED-QUARTER] The period this screen OPENS on, from ?year&quarter.
+ *
+ * /dashboard/resultaat now redirects here and carries its year/quarter along, so a bookmark of
+ * "Q1 2024" keeps working and lands on that quarter instead of silently on the current one — the
+ * same deep-link honesty the quarterly screen was missing. Anything absent or out of range simply
+ * opens on the default lens; a truth screen never guesses at a period it could not parse.
+ */
+function periodFromParams(get: (k: string) => string | null): Period {
+  const y = Number(get("year"));
+  const q = Number(get("quarter"));
+  const valid = Number.isInteger(y) && y >= 2000 && y <= 2100 && Number.isInteger(q) && q >= 1 && q <= 4;
+  return valid ? { lens: "quarter", year: y, quarter: q } : { lens: "this-quarter" };
+}
+
 export default function WaarheidClient() {
   const dialog = useDialog();
   const toast = useToast();
-  const [lens, setLens] = useState<Lens>("this-quarter");
+  // [NAMED-QUARTER] One `period` instead of a bare lens, so the explicit quarter picker and the
+  // relative chips are the same piece of state and cannot drift out of sync with each other.
+  // Seeded from ?year&quarter (the redirect from the old /dashboard/resultaat carries them).
+  const sp = useSearchParams();
+  const initialPeriod = periodFromParams((k) => sp.get(k));
+  const [period, setPeriod] = useState<Period>(initialPeriod);
+  // Open the picker when we arrived ON a named quarter, so the control that produced the period is
+  // visible rather than the owner wondering where "Q1 2024" came from.
+  const [pickerOpen, setPickerOpen] = useState(initialPeriod.lens === "quarter");
+  const [pickYear, setPickYear] = useState(initialPeriod.year ?? new Date().getFullYear());
   const [data, setData] = useState<TruthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -118,7 +164,7 @@ export default function WaarheidClient() {
   // nobody will read. Both live in refs — they must survive re-renders and must never cause one.
   const reqGen = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
-  const load = useCallback(async (l: Lens) => {
+  const load = useCallback(async (p: Period) => {
     const gen = ++reqGen.current;
     const isStale = () => gen !== reqGen.current;
     inFlight.current?.abort();
@@ -126,7 +172,7 @@ export default function WaarheidClient() {
     inFlight.current = ctrl;
     setLoading(true); setError(false);
     try {
-      const res = await fetch(`/api/truth?lens=${l}`, { signal: ctrl.signal });
+      const res = await fetch(`/api/truth?${periodQuery(p)}`, { signal: ctrl.signal });
       // [SESSION] An expired session answers 401. Showing "kon je waarheid niet laden" with a retry
       // that can only 401 again strands the owner; send them to the login they actually need.
       if (res.status === 401) { window.location.href = "/login"; return; }
@@ -147,7 +193,7 @@ export default function WaarheidClient() {
   // The async wrapper keeps `load`'s opening setState out of the effect BODY (react-hooks/
   // set-state-in-effect) while running on the same tick as before — the same shape the quarterly
   // screen uses. Ordering is handled by the generation counter above, not by this wrapper.
-  useEffect(() => { void (async () => { await load(lens); })(); }, [lens, load]);
+  useEffect(() => { void (async () => { await load(period); })(); }, [period, load]);
 
   // [TRUTH-FILED] Mark this quarter as filed (freeze the snapshot) / un-file it (unlock).
   const setFiled = useCallback(async (mark: boolean) => {
@@ -195,11 +241,11 @@ export default function WaarheidClient() {
         const res = await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
         if (!res.ok) { toast("Indiening ongedaan maken is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
       }
-      await load(lens);
+      await load(period);
     } finally {
       setFiling(false);
     }
-  }, [data, lens, load, dialog, toast]);
+  }, [data, period, load, dialog, toast]);
 
   const r = data?.result;
   const isQuarterLens = !!(data?.quarter && data?.year);
@@ -215,22 +261,81 @@ export default function WaarheidClient() {
       </p>
 
       {/* Time lens */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 18, overflowX: "auto", paddingBottom: 2 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: pickerOpen ? 10 : 18, overflowX: "auto", paddingBottom: 2 }}>
         {LENSES.map((l) => (
           <button
             key={l.key}
-            onClick={() => setLens(l.key)}
+            onClick={() => { setPeriod({ lens: l.key }); setPickerOpen(false); }}
             style={{
               flexShrink: 0, padding: "8px 14px", borderRadius: 980, border: "none", cursor: "pointer",
               fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
-              background: lens === l.key ? M.primary : "#f1f3f4",
-              color: lens === l.key ? "#fff" : "#3c4043",
+              background: period.lens === l.key ? M.primary : "#f1f3f4",
+              color: period.lens === l.key ? "#fff" : "#3c4043",
             }}
           >
             {l.label}
           </button>
         ))}
+        {/* [NAMED-QUARTER] The explicit quarter — absorbed from /dashboard/resultaat, which was the
+            only screen that could reach one. Shown as a chip so a picked quarter reads as the
+            selected period exactly like the relative lenses do. */}
+        <button
+          onClick={() => setPickerOpen((o) => !o)}
+          style={{
+            flexShrink: 0, padding: "8px 14px", borderRadius: 980, border: "none", cursor: "pointer",
+            fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
+            background: period.lens === "quarter" ? M.primary : "#f1f3f4",
+            color: period.lens === "quarter" ? "#fff" : "#3c4043",
+          }}
+        >
+          {period.lens === "quarter" ? `Q${period.quarter} ${period.year}` : "Ander kwartaal"} ▾
+        </button>
       </div>
+
+      {/* [NAMED-QUARTER] Q1–Q4 + a year stepper, the same control /dashboard/resultaat carried.
+          The year cannot run past the current one: a quarter that has not started has no figures to
+          show, and offering it would produce a confident € 0,00 for a period nobody has traded in. */}
+      {pickerOpen && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 14 }}>
+          {[1, 2, 3, 4].map((q) => {
+            const active = period.lens === "quarter" && period.quarter === q && period.year === pickYear;
+            return (
+              <button
+                key={q}
+                onClick={() => setPeriod({ lens: "quarter", year: pickYear, quarter: q })}
+                style={{
+                  flex: 1, padding: "8px 0", borderRadius: 8, cursor: "pointer", fontFamily: FONT,
+                  fontSize: 13.5, fontWeight: 600,
+                  border: `1px solid ${active ? M.primary : M.line}`,
+                  background: active ? M.primary : M.surface,
+                  color: active ? "#fff" : M.onSurface,
+                }}
+              >
+                Q{q}
+              </button>
+            );
+          })}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: 6 }}>
+            <button
+              onClick={() => setPickYear((y) => Math.max(2015, y - 1))}
+              title="Vorig jaar"
+              style={{ width: 26, height: 26, border: "none", background: "none", cursor: "pointer", color: M.primary, fontSize: 18, lineHeight: 1 }}
+            >‹</button>
+            <span style={{ fontSize: 13.5, fontWeight: 700, minWidth: 38, textAlign: "center" }}>{pickYear}</span>
+            <button
+              onClick={() => setPickYear((y) => Math.min(y + 1, new Date().getFullYear()))}
+              disabled={pickYear >= new Date().getFullYear()}
+              title="Volgend jaar"
+              style={{
+                width: 26, height: 26, border: "none", background: "none", fontSize: 18, lineHeight: 1,
+                cursor: pickYear >= new Date().getFullYear() ? "default" : "pointer",
+                color: pickYear >= new Date().getFullYear() ? M.line : M.primary,
+                opacity: pickYear >= new Date().getFullYear() ? 0.5 : 1,
+              }}
+            >›</button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div style={{ textAlign: "center", padding: "56px 0", color: M.muted, fontSize: 14 }}>Bezig met berekenen…</div>
@@ -238,7 +343,7 @@ export default function WaarheidClient() {
         <div style={{ textAlign: "center", padding: "40px 24px", color: M.muted }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
           <div style={{ fontWeight: 600, color: M.onSurface, marginBottom: 6 }}>Kon je waarheid niet laden</div>
-          <button onClick={() => load(lens)} style={{ marginTop: 8, background: M.primary, color: "#fff", border: "none", borderRadius: 980, padding: "9px 20px", fontWeight: 600, cursor: "pointer" }}>Opnieuw proberen</button>
+          <button onClick={() => load(period)} style={{ marginTop: 8, background: M.primary, color: "#fff", border: "none", borderRadius: 980, padding: "9px 20px", fontWeight: 600, cursor: "pointer" }}>Opnieuw proberen</button>
         </div>
       ) : data && r ? (
         <>
@@ -337,6 +442,64 @@ export default function WaarheidClient() {
             )}
           </div>
 
+          {/* [KAART-CONTROLE] The card-takings triangle (kassa · terminal · bank), absorbed from
+              /dashboard/resultaat when that screen became a redirect here.
+
+              Its visibility condition is deliberately WIDER than the one it replaces. The old card
+              appeared only when `eftSettlements > 0 || commissionBooked > 0 || grossMismatchDays > 0`
+              — while the sentence telling the owner to UPLOAD the terminal receipt lived inside it.
+              A shop that had never uploaded one produced none of those three (no EFT rows, no
+              commission without an eftGross, no mismatch without two sides to compare), so the card
+              stayed hidden: the only shop that needed the instruction was the only one that could
+              not see it, and its acquirer commission was missing from kosten in silence. Any card
+              activity at all now opens it, including the days that are merely incomplete. */}
+          {(data.reconciliation.eftSettlements > 0
+            || data.reconciliation.totalCommission > 0
+            || data.reconciliation.grossMismatchDays > 0
+            || data.reconciliation.incompleteDays > 0
+            || data.reconciliation.commissionIssueDays > 0) && (
+            <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+              <div style={{ fontSize: 13, color: M.muted, fontWeight: 600, marginBottom: 10 }}>
+                Kaart-controle (kassa · terminal · bank)
+              </div>
+              <div style={{ display: "flex", gap: 16 }}>
+                {/* [KAS-COMMISSION] MEASURED vs BOOKED are two different numbers and are labelled as
+                    such. Under kasstelsel the triangle delta is deliberately not auto-booked (the fee
+                    is deductible when the acquirer's own invoice is PAID), so `commissionBooked` is 0
+                    while `totalCommission` can be hundreds of euros. The screen this replaces showed
+                    only the booked figure next to the flat claim "de commissie is verwerkt in het
+                    resultaat hierboven" — so a kasstelsel shop read "€ 0,00" on a control surface
+                    that had in fact measured a real cost. */}
+                <Stat label="Gemeten commissie" value={eur.format(data.reconciliation.totalCommission)} />
+                <Stat label="Terminal-afrekeningen" value={String(data.reconciliation.eftSettlements)} />
+              </div>
+              <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: "10px 0 0" }}>
+                {data.scheme === "kas"
+                  ? "Onder kasstelsel wordt deze commissie niet automatisch als kosten geboekt: ze is aftrekbaar op het moment dat je de factuur van de acquirer betaalt. Boek die factuur, dan telt de commissie in de juiste periode mee."
+                  : data.reconciliation.commissionBooked > 0
+                    ? `Hiervan is ${eur.format(data.reconciliation.commissionBooked)} als kosten verwerkt in het resultaat hierboven — BTW-vrij (vrijstelling betalingsverkeer).${data.reconciliation.acquirerFeeInvoices > 0 ? ` De overige ${eur.format(data.reconciliation.acquirerFeeInvoices)} stond al op een factuur van de acquirer en is dus niet nog eens geboekt.` : ""}`
+                    : data.reconciliation.acquirerFeeInvoices > 0
+                      ? `Deze commissie stond al op een factuur van de acquirer (${eur.format(data.reconciliation.acquirerFeeInvoices)}) en is daar al als kosten geboekt — hier dus alleen ter controle.`
+                      : "Zodra de bank-uitbetaling én de terminal-afrekening er allebei zijn, boeken we het verschil als betaalkosten."}
+              </p>
+              {data.reconciliation.grossMismatchDays > 0 && (
+                <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 10, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
+                  {data.reconciliation.grossMismatchDays} dag(en) waar de kassa-PIN ≠ de terminal-afrekening. Beide zijn bruto, dus dit is een echt verschil (ontbrekende bon of terminalstoring) — geen commissie. Controleer die dagen.
+                </div>
+              )}
+              {data.reconciliation.commissionIssueDays > 0 && (
+                <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 10, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
+                  {data.reconciliation.commissionIssueDays} dag(en) waar de bank-uitbetaling niet bij de kaartomzet van die dag past. Daar is geen commissie geboekt — de uitbetaling hoort waarschijnlijk (deels) bij een andere dag.
+                </div>
+              )}
+              {data.reconciliation.incompleteDays > 0 && (
+                <p style={{ fontSize: 12.5, color: M.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
+                  {data.reconciliation.incompleteDays} dag(en) nog niet compleet — upload de terminal-afrekening of het bankafschrift voor een volledige controle.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Honesty notes — never a silent gap. Every reason these figures could be too low gets a
               line here, and the set is kept at parity with what the filing gate blocks on: an owner
               must never meet a 409 about a problem this screen chose not to mention. */}
@@ -402,14 +565,10 @@ export default function WaarheidClient() {
                 (handmatig op betaald gezet) — controleer of de periode klopt.
               </p>
             )}
-            {/* [EXCEPTION-COUNT] commissionIssueDays is new here: a day whose bank payout does not
-                fit its card takings books NO acquirer commission, so the costs are knowingly
-                incomplete. It appeared in the accountant's CSV and nowhere else. */}
-            {(data.reconciliation.grossMismatchDays + data.reconciliation.incompleteDays + data.reconciliation.commissionIssueDays) > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ {data.reconciliation.grossMismatchDays + data.reconciliation.incompleteDays + data.reconciliation.commissionIssueDays} kassadag(en) nog niet volledig gereconcilieerd — controleer vóór de aangifte.
-              </p>
-            )}
+            {/* [EXCEPTION-COUNT] The one-line "N kassadagen nog niet gereconcilieerd" that used to
+                sit here is gone: the Kaart-controle card above now names each exception separately
+                and says what to do about it. Repeating the total underneath would be the same fact
+                twice, in less useful words. */}
             {/* [LEDGER-READ] Never present a check that did not run as a check that passed. */}
             {data.reconciliation.pinLedgerAvailable === false && (
               <p style={{ margin: "0 0 6px", color: M.warnFg }}>

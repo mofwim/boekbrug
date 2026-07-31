@@ -33,7 +33,8 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/aangifte", "Aangifte"],
   ["/dashboard/dagomzet", "Dagomzet"],
   ["/dashboard/upload", "Uploaden"],
-  ["/dashboard/resultaat", "Resultaat"],
+  // [RESULT→WAARHEID] /dashboard/resultaat is a server redirect to /dashboard/waarheid, so this
+  // chrome never renders for it — the title entry would be dead config. See that page's header.
   ["/dashboard/artikelen", "Artikelen"],
   ["/dashboard/kluis", "Kluis"],
   // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.

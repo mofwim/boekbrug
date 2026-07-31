@@ -34,8 +34,13 @@ export async function GET(req: NextRequest) {
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const pipeline = createPipelineClient();
 
-  const { result, datelessVerifiedCount, reconciliation, scheme, undatedPaidCount, estimatedPortionCount } =
-    await computeResultForRange({
+  const {
+    result, datelessVerifiedCount, reconciliation, scheme, undatedPaidCount, estimatedPortionCount,
+    // [GATE-PARITY] Purchase invoices still in the verify queue. The engine computes it and the
+    // filing gate blocks on it; /api/truth forwards it. This route did not, so a consumer of
+    // /api/result could not tell that the figures were knowingly too low for that reason.
+    unconfirmedIncomingCount,
+  } = await computeResultForRange({
       pipeline,
       ownerId: owner.ownerId,
       start,
@@ -55,5 +60,6 @@ export async function GET(req: NextRequest) {
     scheme,
     undatedPaidCount,
     estimatedPortionCount,
+    unconfirmedIncomingCount,
   });
 }
