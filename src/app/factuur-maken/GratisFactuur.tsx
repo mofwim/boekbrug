@@ -28,6 +28,8 @@ import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
+import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
+import { vakOpties, vakBySlug, vakRegelsVoorFormulier } from '@/lib/vak-sjablonen'
 
 // react-pdf touches browser APIs — load the link client-side only (same
 // pattern as dashboard/invoice/[id]).
@@ -258,7 +260,7 @@ const s = {
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
-export default function GratisFactuur() {
+export default function GratisFactuur({ initialVak = '' }: { initialVak?: string } = {}) {
   const [hydrated, setHydrated] = useState(false)
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
   // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
@@ -274,10 +276,22 @@ export default function GratisFactuur() {
   const [deliveryDate, setDeliveryDate] = useState(todayISO)
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
-  const [lines, setLines] = useState<Line[]>([emptyLine()])
+  const [lines, setLines] = useState<Line[]>(() => {
+    // Op een vakpagina staan de regels er meteen in: dat is de hele belofte van die pagina, en
+    // een lege tabel onder de kop "Factuur maken voor loodgieters" zou hem breken.
+    const sjabloon = initialVak ? vakRegelsVoorFormulier(initialVak) : []
+    return sjabloon.length
+      ? sjabloon.map((r) => ({ description: r.description, quantity: r.quantity, unit_price: r.unit_price, btw_rate: r.btw_rate }))
+      : [emptyLine()]
+  })
   // [FUNNEL] Set when regels were carried over from /factuur-scannen, so the UI
   // can say so and ask the user to check them. See the effect below.
   const [fromScan, setFromScan] = useState(false)
+  // [VAK-SJABLONEN] Het gekozen beroep. Stuurt alleen de knop en de let_op-melding — de regels
+  // zelf zijn na het invoegen gewoon van de gebruiker, dus wisselen van vak wist niets.
+  // Vanaf een vakpagina (/factuur-maken/loodgieter) staat het vak al vast. De beginwaarde is een
+  // pure functie van de prop, dus server en client renderen hetzelfde — geen hydratiegedoe.
+  const [vak, setVak] = useState(initialVak)
   // Mirrors the PDF link's loading flag so handleDownload can ignore early clicks.
   const pdfLoadingRef = useRef(false)
 
@@ -427,6 +441,63 @@ export default function GratisFactuur() {
   const btwWarn =
     sender.btw_number.trim() !== '' && !NL_BTW_RE.test(sender.btw_number.replace(/\s/g, '')) &&
     /^NL/i.test(sender.btw_number.trim())
+
+  // [FUNNEL-OVERDRACHT] Bewaar de hele factuur, niet alleen het afzenderblok.
+  //
+  // Hieronder staat een knop die zegt "Maak een gratis account. **Bewaar je facturen**". Die
+  // zin was tot nu toe niet waar: alleen de afzender stond in localStorage, en geen enkel
+  // scherm ná registratie las hem. Wie zich liet overtuigen kwam binnen op een leeg formulier
+  // en mocht alles opnieuw tikken — zijn bedrijfsgegevens, zijn klant, al zijn regels — op
+  // precies het moment dat hij besloot te blijven.
+  //
+  // Nu wordt de hele factuur weggeschreven terwijl hij typt, en lezen de onboarding (het
+  // bedrijfsblok) en het factuurformulier (klant + regels) hem uit. Zie factuur-handoff.ts voor
+  // waarom dit localStorage is en geen sessionStorage, en waarom het NUMMER met opzet niet
+  // meegaat.
+  //
+  // Het schrijven gebeurt zonder debounce, net als bij de afzender hierboven: de payload is een
+  // paar honderd bytes en de gebruiker mag nooit werk verliezen omdat hij net op het verkeerde
+  // moment wegklikte.
+  useEffect(() => {
+    if (!hydrated) return
+    writeHandoff(localStorage, buildHandoff({
+      sender,
+      client,
+      // De ONGETEKENDE bedragen gaan mee. Een creditnota is in het volledige product een eigen
+      // document met een eigen route; hem hier als negatieve factuur overdragen zou een
+      // creditnota maken zonder de factuur die hij corrigeert.
+      lines: lines.map((l) => ({
+        description: l.description,
+        quantity: parseNum(l.quantity),
+        unit_price: parseNum(l.unit_price),
+        btw_rate: l.btw_rate,
+      })),
+      invoiceDate,
+      deliveryDate,
+    }))
+  }, [hydrated, sender, client, lines, invoiceDate, deliveryDate])
+
+  // [VAK-SJABLONEN] Regels van een beroep erbij zetten. Bestaande, ingevulde regels blijven
+  // staan — alleen lege worden opgeruimd. Een sjabloon dat het werk van de gebruiker overschrijft
+  // zou de functie in één klik van hulp in schade veranderen.
+  function pasVakToe(slug: string) {
+    setVak(slug)
+    const sjabloon = vakRegelsVoorFormulier(slug)
+    if (!sjabloon.length) return
+    setLines((prev) => {
+      const behouden = prev.filter(
+        (l) => l.description.trim() !== '' || parseNum(l.quantity) !== 0 || parseNum(l.unit_price) !== 0,
+      )
+      return [...behouden, ...sjabloon.map((r) => ({
+        description: r.description,
+        quantity: r.quantity,
+        unit_price: r.unit_price,
+        btw_rate: r.btw_rate,
+      }))]
+    })
+  }
+
+  const gekozenVak = vakBySlug(vak)
 
   const canDownload =
     (sender.company_name.trim() || sender.full_name.trim()) &&
@@ -640,6 +711,49 @@ export default function GratisFactuur() {
         <div style={s.card}>
           <p style={s.cardTitle}>Regels</p>
 
+          {/* [VAK-SJABLONEN] Kies je vak → regels erbij, met het juiste BTW-tarief.
+              De winst zit niet in het typwerk maar in dat tarief: schilderwerk aan een woning
+              ouder dan twee jaar mag 9%, personenvervoer 9% en goederenvervoer 21%, schoonmaak
+              bínnen een woning 9% en in een kantoor 21%. Dat zijn de fouten die pas bij de
+              aangifte opvallen, als de factuur allang verstuurd is. Prijzen staan er met opzet
+              NIET in — zie vak-sjablonen.ts. */}
+          <div style={{ marginBottom: 12 }}>
+            <label htmlFor="vak" style={{ ...s.label, display: 'block' }}>
+              Wat voor werk doe je? (optioneel)
+            </label>
+            <select
+              id="vak"
+              value={vak}
+              onChange={(e) => pasVakToe(e.target.value)}
+              style={{ ...s.input, cursor: 'pointer' }}
+            >
+              <option value="">Kies je vak — dan zetten we de regels klaar</option>
+              {vakOpties().map((o) => (
+                <option key={o.slug} value={o.slug}>{o.label}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: 12, color: '#5f6368', margin: '6px 0 0' }}>
+              Je krijgt de gebruikelijke regels met het juiste BTW-tarief. Bedragen vul je zelf
+              in — die zijn van jou, niet van ons.
+            </p>
+          </div>
+
+          {/* De let_op-melding is het waardevolste deel van deze functie: hij verschijnt juist
+              bij de vakken waar het tarief van de situatie afhangt. Geel, niet rood: het is een
+              keuze die de ondernemer moet maken, geen fout die hij heeft gemaakt. */}
+          {gekozenVak?.let_op && (
+            <div
+              role="status"
+              style={{
+                background: '#FEE8C4', border: '1px solid #7C5800', color: '#7C5800',
+                borderRadius: 10, padding: '10px 12px', margin: '0 0 12px',
+                fontSize: 13, lineHeight: 1.5,
+              }}
+            >
+              <strong>Let op bij {gekozenVak.label.toLowerCase()}:</strong> {gekozenVak.let_op}
+            </div>
+          )}
+
           {/* [FUNNEL] Say plainly that these came from a machine read, and ask
               for a check. The AI is a suggestion, never a fact — the same rule
               the rest of the app follows, and §4.3 of the terms commits to it. */}
@@ -766,22 +880,61 @@ export default function GratisFactuur() {
           </p>
         )}
 
-        {/* ── Peak-intent register CTA (only real features) ── */}
+        {/* ── Peak-intent register CTA (only real features) ──
+            [FUNNEL-OVERDRACHT] Deze knop beloofde "bewaar je facturen" en leverde een leeg
+            formulier: de gegevens stonden in localStorage maar werden na registratie nergens
+            gelezen. Nu gaat de factuur wél mee, dus de tekst mag zeggen wat er gebeurt — en
+            zegt het concreet ("je hoeft niets opnieuw in te tikken"), want dat is precies de
+            twijfel die iemand op dit punt tegenhoudt. */}
         <div style={{ ...s.card, marginTop: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 17, fontWeight: 700, color: '#202124', marginBottom: 6 }}>
             Wil je deze factuur bewaren en versturen?
           </div>
           <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
-            Maak een gratis account. Bewaar je facturen en houd je BTW bij.
+            Maak een gratis account — <strong>deze factuur gaat mee</strong>. Je bedrijfsgegevens,
+            je klant en je regels staan er straks al in; je hoeft niets opnieuw in te tikken.
           </div>
           <Link href="/register" style={s.btnPrimary}>
             Gratis account maken
           </Link>
+          <div style={{ fontSize: 12, color: '#5f6368', marginTop: 12 }}>
+            Je factuur blijft zeven dagen in je eigen browser bewaard. Er gaat niets naar ons
+            toe zolang je geen account maakt.
+          </div>
         </div>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#bdc1c6', marginTop: 40 }}>
           Gemaakt met BoekBrug — de brug tussen jou en je boekhouder.
         </p>
+
+        {/* [VAK-PAGINAS] Naar de andere beroepen. Twee redenen, en de tweede is de belangrijkste:
+            een bezoeker die "factuur maken" zocht maar loodgieter is, komt hier terecht en vindt
+            zijn eigen pagina — mét het BTW-tarief dat bij zijn vak hoort. En de crawler vindt via
+            deze links alle vakpagina's vanaf de sterkste pagina van de site, in plaats van ze
+            alleen uit de sitemap te moeten halen. Dit staat in de client-component maar de pagina
+            wordt statisch geprerenderd, dus de links staan gewoon in de HTML. */}
+        <div style={{ ...s.card, marginTop: 24 }}>
+          <p style={s.cardTitle}>Factuur maken voor jouw vak</p>
+          <p style={{ fontSize: 13, color: '#5f6368', margin: '0 0 12px', lineHeight: 1.5 }}>
+            Elke pagina heeft de gebruikelijke regels én het BTW-tarief dat bij dat werk hoort.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {vakOpties()
+              .filter((o) => o.slug !== vak)
+              .map((o) => (
+                <Link
+                  key={o.slug}
+                  href={`/factuur-maken/${o.slug}`}
+                  style={{
+                    fontSize: 13, color: '#1a73e8', textDecoration: 'none',
+                    border: '1px solid #dadce0', borderRadius: 9999, padding: '6px 12px',
+                  }}
+                >
+                  {o.label}
+                </Link>
+              ))}
+          </div>
+        </div>
 
         <ToolsCrossLinks currentSlug="/factuur-maken" />
         <KennisbankLinks tool="/factuur-maken" />

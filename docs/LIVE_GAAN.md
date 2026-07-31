@@ -251,6 +251,29 @@ kort na de 5e van januari/april/juli/oktober.
 
 ---
 
+## 6a. De trechter, en waar de bezoekers vandaan moeten komen
+
+Een gat dat op 31 juli dicht is: `/factuur-maken` beloofde onderaan "bewaar je facturen" en
+leverde na registratie een leeg formulier op — de ingevulde gegevens stonden in localStorage
+maar werden nergens ná registratie gelezen. Wie zich liet overtuigen mocht alles opnieuw tikken
+op precies het moment dat hij besloot te blijven. De hele factuur gaat nu mee
+(`src/lib/factuur-handoff.ts`): het bedrijfsblok vult de onboarding stil voor, en het
+factuurformulier *vraagt* of je de rest overneemt. Het factuurnummer komt met opzet niet mee —
+dat hoort uit de doorlopende reeks van art. 35 te komen, niet uit een vrij invoerveld.
+
+Dat volgorde-punt is belangrijker dan het klinkt: **een trechter die lekt maakt van extra
+bezoekers geen extra gebruikers, alleen meer teleurgestelde onbekenden.** Kanalen zonder een
+dichte trechter is water dragen. De hele weg staat uitgetekend in `docs/TRECHTER.md`.
+
+En sinds diezelfde dag staan er elf **vakpagina's** onder `/factuur-maken/<vak>` — loodgieter,
+automonteur, elektricien, schilder, transport, en zo verder. Ze mikken op zoekvragen waar
+vrijwel geen concurrentie zit (`factuur maken loodgieter`) in plaats van op de hoofdterm waar de
+hele markt op zit. Wat ze verkopen is niet het typwerk maar het **BTW-tarief**: 9% of 21% hangt
+bij deze beroepen af van de leeftijd van de woning, van personen versus goederen, van binnen
+versus buiten — en dat is precies de fout die pas bij de aangifte opvalt.
+
+---
+
 ## 7. En dan het enige dat telt
 
 Tien mensen, persoonlijk begeleid, geen advertenties. De poort:
