@@ -207,6 +207,13 @@ export default function WaarheidClient() {
   useEffect(() => { void (async () => { await load(period); })(); }, [period, load]);
 
   // [TRUTH-FILED] Mark this quarter as filed (freeze the snapshot) / un-file it (unlock).
+  //
+  // [ONE-FILING-DOOR] This is now the ONLY place in the app that writes btw_filings. The
+  // Kwartaaloverzicht used to file and unlock as well, with its own copy of this flow — and a copy
+  // is where a fix goes missing: two of the corrections made here (reading the DELETE response, and
+  // not offering an override for "kwartaal loopt nog") stayed unmade over there for a release. That
+  // screen now SHOWS the state and links here for the action. Keep it that way: if a third surface
+  // ever needs to file, it links here too.
   const setFiled = useCallback(async (mark: boolean) => {
     if (!data?.quarter || !data?.year) return;
     setFiling(true);
