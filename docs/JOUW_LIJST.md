@@ -226,6 +226,64 @@ inkomstensignaal.** De vervanging:
 Betalen komt later, uit Plus en uit de Bewaarkluis. Haal je die poort niet, interview dan
 alle tien — hun antwoord is meer waard dan welk strategiedocument ook, dit inbegrepen.
 
+### 4.1 De trechter lekte op het duurste punt — dat is gedicht (31 juli)
+
+`/factuur-maken` is de sterkste instappagina die er is: geen account, echte uitkomst, en de
+bezoeker heeft er vijf minuten werk in zitten voordat hij iets van ons vraagt. Onderaan stond
+een knop met de tekst **"Maak een gratis account. Bewaar je facturen"** — en daarachter een
+kale link naar `/register`. De ingevulde gegevens stonden wél in localStorage, maar een
+zoekopdracht over `register`, `onboarding` en `dashboard` gaf **nul** verwijzingen naar die
+sleutels.
+
+Wat de bezoeker dus meemaakte: factuur invullen, lezen dat hij hem kan bewaren, registreren,
+en dan een leeg scherm — bedrijfsnaam, adres, KVK, BTW, IBAN, de klant en alle regels opnieuw.
+Precies op het moment dat hij besloot te blijven. Dat is geen ontbrekende functie maar een
+belofte die het product zelf doet en niet nakomt, en meer bezoekers door zo'n trechter leveren
+geen extra gebruikers op — alleen meer teleurgestelde onbekenden. In een kleine, hechte
+gemeenschap wordt dat doorverteld.
+
+Nu gaat de hele factuur mee, via één contractmodule (`src/lib/factuur-handoff.ts`) met drie
+lezers. De volledige beschrijving — inclusief wat er bewust NIET is gebouwd — staat in
+**`docs/TRECHTER.md`**; lees dat voordat je een van die schermen aanpast, want het ontwerp ligt
+over vijf bestanden verspreid en laat zich makkelijk per ongeluk "opruimen".
+
+| Waar | Wat er gebeurt | Waarom zo |
+|---|---|---|
+| `/factuur-maken` | schrijft de hele factuur weg terwijl je typt | niets verliezen bij wegklikken |
+| onboarding | vult het bedrijfsblok **stil** voor | eigen gegevens van minuten geleden — herkenning, geen verrassing |
+| `/dashboard/invoice/new` | **vraagt** of je de factuur overneemt | een compleet ingevulde factuur die vanzelf verschijnt is iets anders dan je eigen adres |
+
+Drie besluiten die vastliggen in tests, omdat ze zonder uitleg fout gerepareerd zouden worden:
+
+- **localStorage, geen sessionStorage.** Tussen de gratis pagina en het account zit een
+  bevestigingsmail, en die opent vaak een nieuw tabblad. sessionStorage zou juist falen bij de
+  gebruiker die het netjes doet. Houdbaarheid: zeven dagen, daarna vervalt hij stil.
+- **Het factuurNUMMER komt niet mee.** In de gratis tool is dat een gewoon invoerveld; in het
+  product komt het uit de doorlopende reeks van art. 35 Wet OB. Een zelfgekozen nummer laten
+  binnenwandelen maakt precies het gat waar de rest van deze codebase voor waakt.
+- **Een ontbrekend BTW-tarief wordt 21%, nooit 0%.** 0% leest als vrijgesteld, en dat is de
+  duurste van de twee fouten.
+
+### 4.2 Vakpaginas: waar de concurrentie niet staat (31 juli)
+
+`boekhoudprogramma zzp` is onwinbaar — daar zitten partijen die er jaren geld in stoppen.
+`factuur maken loodgieter` doet vrijwel niemand iets mee. Er staat nu een pagina per beroep
+onder `/factuur-maken/<vak>` (11 stuks, statisch geprerenderd, in de sitemap).
+
+De tijdwinst van kant-en-klare regels is het kleinste deel. Wat deze pagina's echt verkopen is
+het **BTW-tarief**, en dat is een juistheidsfunctie in het jasje van een snelheidsfunctie:
+
+- schilderwerk aan een woning **ouder dan twee jaar**: 9% over het arbeidsloon, materiaal blijft 21%
+- **personen**vervoer 9%, **goederen**vervoer 21% — beide heten "transport"
+- schoonmaak **binnen een woning** 9%, in een kantoorpand 21%
+- fietsREPARATIE 9%, een fiets VERKOPEN 21%
+- werk voor een aannemer: vaak *BTW verlegd*, en dat is iets ánders dan 0%
+
+Twee ontwerpregels die dit uit de onderhoudsval houden, allebei met een test eromheen:
+**nooit prijzen** (een voorgevuld uurtarief is fout voor iedereen behalve toevallig één
+iemand), en **twijfel wordt zichtbaar** — waar het tarief van de situatie afhangt staat de
+veilige 21% ingevuld mét de uitleg wanneer 9% mag, nooit andersom.
+
 ---
 
 ## 5. Wat je in week één in de gaten houdt
