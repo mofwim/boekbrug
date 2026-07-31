@@ -14,6 +14,26 @@ check("mid-Q1 (Feb) → Q4 previous year", JSON.stringify(lastCompletedQuarter(a
 check("start of Q1 (1 Jan) → Q4 previous year", JSON.stringify(lastCompletedQuarter(at("2026-01-01"))) === JSON.stringify({ year: 2025, quarter: 4 }));
 check("Q4 (Nov) → Q3 same year", JSON.stringify(lastCompletedQuarter(at("2026-11-20"))) === JSON.stringify({ year: 2026, quarter: 3 }));
 
+// [TZ] The boundary this used to get wrong. 00:30 Amsterdam on 1 January is 31 December 23:30 UTC,
+// so reading getUTCMonth() put the owner in December and returned Q3 — a whole quarter wrong, on
+// the night the year turns. These pin the Amsterdam day in both winter (UTC+1) and summer (UTC+2).
+check(
+  "1 Jan 00:30 Amsterdam (= 31 Dec 23:30 UTC) → Q4 of the year that just ended",
+  JSON.stringify(lastCompletedQuarter(new Date("2025-12-31T23:30:00Z"))) === JSON.stringify({ year: 2025, quarter: 4 }),
+);
+check(
+  "31 Dec 23:30 Amsterdam (= 22:30 UTC) is still Q4 → Q3",
+  JSON.stringify(lastCompletedQuarter(new Date("2025-12-31T22:30:00Z"))) === JSON.stringify({ year: 2025, quarter: 3 }),
+);
+check(
+  "1 Jul 00:30 Amsterdam CEST (= 30 Jun 22:30 UTC) → Q2, the quarter that just closed",
+  JSON.stringify(lastCompletedQuarter(new Date("2026-06-30T22:30:00Z"))) === JSON.stringify({ year: 2026, quarter: 2 }),
+);
+check(
+  "30 Jun 23:30 Amsterdam CEST (= 21:30 UTC) is still Q2 → Q1",
+  JSON.stringify(lastCompletedQuarter(new Date("2026-06-30T21:30:00Z"))) === JSON.stringify({ year: 2026, quarter: 1 }),
+);
+
 console.log("\n— quarterFromParams: valid params win —");
 {
   const params = new Map([["year", "2026"], ["quarter", "1"]]);

@@ -85,6 +85,29 @@ console.log("\n— 'Alles' really means everything —");
   check("always live", all.isLiveWindow === true);
 }
 
+console.log("\n— [NAMED-QUARTER] any historical quarter is reachable —");
+{
+  const q1 = win("quarter", "2026-07-31", { year: "2024", quarter: "1" });
+  check("Q1 2024 resolves to its own window", q1.start === "2024-01-01" && q1.end === "2024-03-31");
+  check("…and carries year/quarter, so filing works on it", q1.year === 2024 && q1.quarter === 1);
+  check("a long-closed quarter is not live", q1.isLiveWindow === false);
+
+  // A named quarter must be byte-identical to the relative lens pointing at the same period —
+  // otherwise the same quarter could show two different windows depending on how you got there.
+  const rel = win("this-quarter", "2026-07-31");
+  const named = win("quarter", "2026-07-31", { year: "2026", quarter: "3" });
+  check("named Q3 2026 == the this-quarter lens", named.start === rel.start && named.end === rel.end);
+  check("…including the live flag", named.isLiveWindow === rel.isLiveWindow);
+
+  // Never invent a window from input we could not parse.
+  check("quarter 0 falls back to the current quarter", win("quarter", "2026-07-31", { year: "2026", quarter: "0" }).quarter === 3);
+  check("quarter 5 falls back", win("quarter", "2026-07-31", { year: "2026", quarter: "5" }).quarter === 3);
+  check("year 1999 falls back", win("quarter", "2026-07-31", { year: "1999", quarter: "2" }).year === 2026);
+  check("missing params fall back", win("quarter", "2026-07-31").quarter === 3);
+  check("garbage falls back", win("quarter", "2026-07-31", { year: "abc", quarter: "x" }).quarter === 3);
+  check("'quarter' is an accepted lens name", parseLens("quarter") === "quarter");
+}
+
 console.log("\n— year lens —");
 {
   const past = win("year", "2026-07-31", { year: "2024" });

@@ -21,15 +21,20 @@
 //   2. Mijn administratie — the record screens as a 3-col tile grid
 //                           (Facturen · Inkomend · Inkoopfacturen · Bank · Kas ·
 //                            Dagomzet · Artikelen)
-//   3. Cijfers & aangifte — "Je waarheid" (primary) + two compact MiniCards
+//   3. Cijfers & aangifte — "Je waarheid" (primary) + one compact MiniCard
 //   4. Meer              — Mijn werkplek
 //
-// DELIBERATE DECISION — "Financieel overzicht" (/dashboard/resultaat) is kept as a
-// de-emphasised MiniCard, NOT removed. It overlaps "Je waarheid", so the mockup
-// showed only two number screens — but /dashboard/resultaat is reachable ONLY from
-// this dashboard, so dropping the link would ORPHAN the page. Truly merging
-// waarheid+resultaat is a separate product+page decision; do that at the page level
-// (redirect resultaat → waarheid) before removing this link, never by orphaning.
+// DECISION RESOLVED (July 2026) — this note used to say that "Financieel overzicht"
+// (/dashboard/resultaat) was kept as a de-emphasised MiniCard because it overlapped
+// "Je waarheid" but was reachable ONLY from here, so dropping the link would ORPHAN
+// the page; and that truly merging the two was a separate product+page decision to
+// be done at the page level (redirect resultaat → waarheid), never by orphaning.
+// That decision has now been taken, in exactly that order: the page redirects, so
+// nothing is orphaned and old bookmarks keep working. The two screens rendered the
+// same six numbers from the same engine — the duplication was not a second view, it
+// was a second place to forget a completeness warning, which is precisely what had
+// happened. Its two unique capabilities moved to waarheid first (the Q1–Q4 + year
+// picker, and the card-control block); only then was this link removed.
 //
 // EXTENDING: add a record screen → add one <AdminTile> to the administratie grid
 // (reuse the screen's existing icon + iconBg for visual continuity). Add a number
@@ -279,16 +284,17 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
                 label="Je waarheid" sub="Omzet, winst en BTW — live, elke periode"
                 onClick={() => router.push('/dashboard/waarheid')}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                {/* [RESULT] Combined cross-channel result (invoices + bank + kas). */}
-                <MiniCard icon="bar_chart" tint={M3.warning}
-                  label="Financieel overzicht" sub="Resultaat & BTW"
-                  onClick={() => router.push('/dashboard/resultaat')} />
-                {/* [AANGIFTE] Concept rubrieken (1a/1b/5a/5b) — a draft, never a filing. */}
-                <MiniCard icon="receipt_long" tint="#455A64"
-                  label="Concept BTW-aangifte" sub="1a/1b/5a/5b"
-                  onClick={() => router.push('/dashboard/aangifte')} />
-              </div>
+              {/* [RESULT→WAARHEID] "Financieel overzicht" (/dashboard/resultaat) is gone as a
+                  destination — it rendered the same six numbers as "Je waarheid" from the same
+                  engine, and its two unique capabilities (the quarter picker, the card-control
+                  block) now live on waarheid. The page is a redirect, not an orphan, so old
+                  bookmarks still land somewhere correct. That leaves ONE concept card here, so the
+                  two-column grid is gone with it — a 1fr 1fr grid holding a single child left a
+                  dead half-row. */}
+              {/* [AANGIFTE] Concept rubrieken (1a/1b/5a/5b) — a draft, never a filing. */}
+              <MiniCard icon="receipt_long" tint="#455A64"
+                label="Concept BTW-aangifte" sub="1a/1b/5a/5b"
+                onClick={() => router.push('/dashboard/aangifte')} />
             </div>
           </section>
 
