@@ -24,7 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
-import { M3 } from '@/lib/design/tokens'
+import { M3, columnInner, COLUMN } from '@/lib/design/tokens'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -1056,7 +1056,7 @@ function NewInvoicePageContent() {
           "Omzetten naar factuur" action now come from the shared sub-page header
           (registered via useSubPageHeader above). */}
 
-      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
+      <div data-form style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
 
         {/* [FUNNEL-OVERDRACHT] De factuur die iemand op /factuur-maken maakte vóórdat hij een
             account had. Die pagina beloofde "bewaar je facturen" en leverde tot nu toe een leeg
@@ -1481,7 +1481,10 @@ function NewInvoicePageContent() {
 
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
             <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
-              <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* [BAR-ALIGN] The bar centred its content at the column's OUTER
+                  width while the form spends 16px of that on its gutters, so the
+                  send button sat one gutter wider than every field above it. */}
+              <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button onClick={() => {
                   // [FACTUUR-A] Factuur send is irreversible (number consumed
                   // + e-mail with PDF delivered) → confirm first. Offerte and

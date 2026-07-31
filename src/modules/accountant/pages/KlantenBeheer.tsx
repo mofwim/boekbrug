@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 import type { ClientSummary, ClientReadiness } from '../accountant.types'
-import { EL1, M3, R } from '@/lib/design/tokens'
+import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest, fact-only client summary. No "Klaar"/"ready" verdict — the
@@ -132,7 +132,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
-      <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
         {/* ── Invite block ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>

@@ -55,7 +55,7 @@ import type { ProfileRow, NotificationRow } from '@/types/rows'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3, R } from '@/lib/design/tokens'
+import { M3, R, COLUMN } from '@/lib/design/tokens'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -149,7 +149,7 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
         onLogout={async () => { await supabase.auth.signOut(); router.push('/login') }}
       />
 
-      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 16px 100px' }}>
+      <main style={{ maxWidth: COLUMN.hub, margin: '0 auto', padding: '32px 16px 100px' }}>
 
         {/* Greeting */}
         <p style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, fontWeight: 500, letterSpacing: 0.2 }}>GOEDENDAG</p>

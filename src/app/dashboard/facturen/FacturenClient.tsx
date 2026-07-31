@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -853,101 +853,111 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
-                facturen of één klant and mint one payment link for the sum. */}
-            <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
-              style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
-              {selectMode ? 'Klaar' : 'Selecteer'}
-            </button>
-            {/* Sort */}
-            <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
-              style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
-              {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
-            </button>
-            {/* Refresh */}
-            <button onClick={refresh} aria-label="Vernieuwen" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* [SEARCH] Quick text-filter (invoice number / client name)
-            [SMART-FILTER] …and the amount: the server query below also matches
-            total_inc_btw, so the placeholder names "bedrag" too. */}
-        <div style={{ position: 'relative', marginBottom: 10 }}>
-          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Zoek op factuurnummer, klant of bedrag…"
-            aria-label="Facturen zoeken"
-            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              aria-label="Zoekopdracht wissen"
-              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
-            </button>
-          )}
-        </div>
-
-        {/* [BOEK-029] Filter dropdown — works on all screen sizes */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowFilterMenu(p => !p)}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              width: '100%', padding: '10px 14px',
-              background: M3.primaryContainer, borderRadius: R.md,
-              border: 'none', cursor: 'pointer', fontFamily: FONT,
-            }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer }}>
-              {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
-            </span>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }}>
-              {showFilterMenu ? 'expand_less' : 'expand_more'}
-            </span>
-          </button>
-
-          {showFilterMenu && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
-              background: '#fff', borderRadius: R.md, marginTop: 4,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-              overflow: 'hidden',
-            }}>
-              {FILTERS.map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                  style={{
-                    display: 'block', width: '100%', padding: '12px 16px',
-                    textAlign: 'left', border: 'none', cursor: 'pointer',
-                    fontFamily: FONT, fontSize: 14,
-                    fontWeight: filter === f.id ? 600 : 400,
-                    background: filter === f.id ? M3.primaryContainer : '#fff',
-                    color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface,
-                    borderBottom: '0.5px solid #F1F3F4',
-                  }}
-                >
-                  {f.label}
-                </button>
-              ))}
+        {/* [BAR-ALIGN] The bar's SHELL still spans the viewport — the blur and the
+            hairline under it should. Its contents must not: unconstrained, the
+            search field and the filter dropdown grew to the full width of the
+            screen (~1870px on a desktop) above a 680px list, and the sort/refresh
+            buttons parked themselves against the right edge, hundreds of pixels
+            from the rows they act on. Nothing in the toolbar lined up with
+            anything in the list. This column matches <main> below exactly, and the
+            selection bar at the bottom of the file was already doing it. */}
+        <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
+                  facturen of één klant and mint one payment link for the sum. */}
+              <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+                style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
+                {selectMode ? 'Klaar' : 'Selecteer'}
+              </button>
+              {/* Sort */}
+              <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
+                style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
+                {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
+              </button>
+              {/* Refresh */}
+              <button onClick={refresh} aria-label="Vernieuwen" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
+              </button>
             </div>
-          )}
+          </div>
+
+          {/* [SEARCH] Quick text-filter (invoice number / client name)
+              [SMART-FILTER] …and the amount: the server query below also matches
+              total_inc_btw, so the placeholder names "bedrag" too. */}
+          <div style={{ position: 'relative', marginBottom: 10 }}>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Zoek op factuurnummer, klant of bedrag…"
+              aria-label="Facturen zoeken"
+              style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="Zoekopdracht wissen"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+              </button>
+            )}
+          </div>
+
+          {/* [BOEK-029] Filter dropdown — works on all screen sizes */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowFilterMenu(p => !p)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 14px',
+                background: M3.primaryContainer, borderRadius: R.md,
+                border: 'none', cursor: 'pointer', fontFamily: FONT,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer }}>
+                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
+              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }}>
+                {showFilterMenu ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+
+            {showFilterMenu && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                background: '#fff', borderRadius: R.md, marginTop: 4,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                overflow: 'hidden',
+              }}>
+                {FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
+                    style={{
+                      display: 'block', width: '100%', padding: '12px 16px',
+                      textAlign: 'left', border: 'none', cursor: 'pointer',
+                      fontFamily: FONT, fontSize: 14,
+                      fontWeight: filter === f.id ? 600 : 400,
+                      background: filter === f.id ? M3.primaryContainer : '#fff',
+                      color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface,
+                      borderBottom: '0.5px solid #F1F3F4',
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* ── Invoice list ── */}
-      <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
         {/* [HERHAAL] Everything that repeats, in one place at the top.
             The per-row button can only be found by finding the invoice, and the invoice that
             started a monthly series is a year older every twelve concepts. This panel is the
@@ -1432,7 +1442,9 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       {selectMode && (
         <div style={{
           position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
-          maxWidth: 648, margin: '0 auto', zIndex: 60,
+          // [BAR-ALIGN] Same 648 as before, now derived from the column instead of
+          // spelled out — this bar was the one that already lined up with the list.
+          maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
         }}>

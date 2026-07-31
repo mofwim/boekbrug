@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
-import { PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
+import { PAGE_HEADER_HEIGHT, COLUMN } from '@/lib/design/tokens'
 import type { ProfileRow, MessageRow } from '@/types/rows'
 
 // Alleen de kolommen die deze pagina ophaalt — een volledige ProfileRow beloven terwijl er
@@ -151,7 +151,7 @@ export default function ConversationPage() {
     >
 
       {/* Berichten */}
-      <div className="flex-1 max-w-3xl w-full mx-auto px-6 py-4 space-y-3 overflow-y-auto">
+      <div className="flex-1 w-full mx-auto px-6 py-4 space-y-3 overflow-y-auto" style={{ maxWidth: COLUMN.work }}>
 
         {loading ? (
           <>
@@ -205,14 +205,14 @@ export default function ConversationPage() {
 
       {/* Foutmelding */}
       {error && (
-        <div className="max-w-3xl mx-auto w-full px-6">
+        <div className="mx-auto w-full px-6" style={{ maxWidth: COLUMN.work }}>
           <p className="text-xs text-red-500 text-center py-1">{error}</p>
         </div>
       )}
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-6 py-4 sticky bottom-0">
-        <div className="max-w-3xl mx-auto flex items-end gap-3">
+        <div className="mx-auto flex items-end gap-3" style={{ maxWidth: COLUMN.work }}>
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}

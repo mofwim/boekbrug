@@ -11,7 +11,7 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
-import { EL1, M3, R } from '@/lib/design/tokens'
+import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -106,7 +106,7 @@ export default function ClientDetailPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Sectie 1: Klantgegevens ── */}
         {/* [BOEK-028] Design System — Workspace card — May 2026 */}

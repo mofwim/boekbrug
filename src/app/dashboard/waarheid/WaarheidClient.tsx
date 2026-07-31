@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { FONT } from "@/lib/design/tokens";
+import { FONT, COLUMN } from "@/lib/design/tokens";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 
@@ -131,7 +131,7 @@ export default function WaarheidClient() {
   const div = data?.filed?.divergence;
 
   return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
+    <div style={{ maxWidth: COLUMN.work, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
       {/* [HEADER-SYSTEM] The page title ("Waarheid") and back live in the shared
           sub-page bar (DashboardChrome/STATIC_TITLES). The old in-body h1 that
           repeated it was removed; this descriptive intro line stays. */}

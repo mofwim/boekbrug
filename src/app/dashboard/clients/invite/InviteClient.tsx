@@ -7,6 +7,7 @@
 
 import { useState } from 'react'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import { COLUMN } from '@/lib/design/tokens';
 
 export default function InviteClient() {
   const [clientEmail, setClientEmail] = useState('')
@@ -40,7 +41,7 @@ export default function InviteClient() {
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
 
-      <div className="max-w-2xl mx-auto px-6 py-6">
+      <div className="mx-auto px-6 py-6" style={{ maxWidth: COLUMN.work }}>
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
             Klant uitnodigen
