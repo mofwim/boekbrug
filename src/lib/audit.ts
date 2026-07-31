@@ -56,6 +56,11 @@ export type AuditAction =
   // logged, this one silently. An auditor asking "who set this line aside, and when" had nothing.
   | 'bank.ignored'                    // ← [BANK-IGNORE] owner set an unmatched line aside ('not_found')
   | 'bank.restored'                   // ← [BANK-IGNORE] owner took it back into the active list
+  // [BANK-REMATCH] Distinct from 'bank.restored' on purpose: that one records a line the owner
+  // picked back up by hand, this one records lines the "probeer alles opnieuw" pass reactivated
+  // because an invoice had since arrived. Same state change, different author — and only the
+  // second one needs the run's whole id list to explain why several lines moved at once.
+  | 'bank.rematch_restored'           // ← [BANK-REMATCH] a forced re-match put set-aside lines back
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
   | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back

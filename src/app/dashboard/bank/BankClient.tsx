@@ -180,6 +180,11 @@ export default function BankClient() {
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
   const [refreshingNames, setRefreshingNames] = useState(false)
+  // [BANK-REMATCH] The forced "try everything again" pass, and its last result — kept on screen
+  // instead of only in a toast, because the interesting answer ("gevonden, maar niet aangeraakt")
+  // is exactly the one the owner needs to still be readable after the toast has gone.
+  const [rematching, setRematching] = useState(false)
+  const [rematchInfo, setRematchInfo] = useState<{ restored: number; booked: number; ambiguous: number; examined: number } | null>(null)
   // [BANK-STATEMENT-DELETE] The statement pending deletion (shown in a confirm
   // dialog) and the id currently being deleted (to disable its row button).
   const [statementToDelete, setStatementToDelete] = useState<{ id: string; name: string } | null>(null)
@@ -748,6 +753,51 @@ export default function BankClient() {
     }
   }
 
+  // [BANK-REMATCH] "Probeer alles opnieuw" — the one thing the page cannot do by itself.
+  //
+  // A 'pending' line is already re-scored against every open invoice on every load, so nothing
+  // rots there. A line the owner set aside is a different story: /api/bank/match reads
+  // status='pending' only, so "Genegeerd" is a one-way door. And the reason a payment gets
+  // ignored is almost always that the invoice was missing — when it finally arrives, that line
+  // is the only one in the app that cannot notice.
+  //
+  // The server restores a line ONLY when the matcher now gives it a single clear winner and no
+  // active line is working on that invoice; anything weaker is reported, never acted on. So the
+  // toast has to be honest about three different outcomes, including "found something, left it
+  // alone" — a silent "0 hersteld" would read as "nothing to find" and send the owner away.
+  async function forceRematch() {
+    setRematching(true)
+    try {
+      const res = await fetch('/api/bank/rematch', { method: 'POST' })
+      const json = await res.json()
+      if (res.status === 429) {
+        showToast('Even wachten — je hebt dit net al gedaan.')
+        return
+      }
+      if (!res.ok || !json?.ok) {
+        showToast('Opnieuw proberen is niet gelukt.')
+        return
+      }
+      setRematchInfo({ restored: json.restored ?? 0, booked: json.booked ?? 0, ambiguous: json.ambiguous ?? 0, examined: json.examined ?? 0 })
+      const parts: string[] = []
+      if (json.restored > 0) parts.push(`${json.restored} ${json.restored === 1 ? 'regel' : 'regels'} terug in de lijst`)
+      if (json.booked > 0) parts.push(`${json.booked} automatisch gekoppeld`)
+      showToast(
+        parts.length > 0
+          ? `${parts.join(' · ')} ✓`
+          : json.ambiguous > 0
+            ? `Niets zeker genoeg om zelf te doen — ${json.ambiguous} genegeerde ${json.ambiguous === 1 ? 'regel heeft' : 'regels hebben'} wel een mogelijke factuur. Kijk bij "Genegeerd".`
+            : `Alles opnieuw bekeken (${json.examined}) — er was niets nieuws te koppelen.`,
+      )
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setRematching(false)
+    }
+  }
+
   // [BANK-STATEMENT-DELETE] Delete a bank statement file the owner uploaded by
   // mistake (wrong file, or a period that overlaps an existing statement). This
   // removes the documents row + the Storage file (server-side); bank_transactions
@@ -1256,21 +1306,62 @@ export default function BankClient() {
             <span style={{ fontSize: 13, fontWeight: 700, color: '#3c4043', letterSpacing: 0.3 }}>
               Geüploade afschriften
             </span>
-            <button
-              onClick={refreshNames}
-              disabled={refreshingNames}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${M3.surfaceVariant}`,
-                background: '#fff', borderRadius: R.full, padding: '5px 11px', cursor: refreshingNames ? 'default' : 'pointer',
-                fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: refreshingNames ? 0.6 : 1,
-              }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
-                {refreshingNames ? 'hourglass_empty' : 'refresh'}
-              </span>
-              {refreshingNames ? 'Bezig…' : 'Namen bijwerken'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {/* [BANK-REMATCH] Sits beside "Namen bijwerken" because it is the same kind of
+                  action: something the owner runs ONCE, over everything, when they suspect the
+                  app is holding an old answer. The pending list re-matches itself on every load,
+                  so the real work here is the set-aside lines — those are never looked at again
+                  otherwise, and an invoice that arrives weeks later can never reach them. */}
+              <button
+                onClick={forceRematch}
+                disabled={rematching}
+                title="Kijkt opnieuw naar alle regels — ook de genegeerde — en koppelt wat inmiddels zeker is"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${M3.surfaceVariant}`,
+                  background: '#fff', borderRadius: R.full, padding: '5px 11px', cursor: rematching ? 'default' : 'pointer',
+                  fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: rematching ? 0.6 : 1,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                  {rematching ? 'hourglass_empty' : 'restart_alt'}
+                </span>
+                {rematching ? 'Bezig…' : 'Opnieuw matchen'}
+              </button>
+              <button
+                onClick={refreshNames}
+                disabled={refreshingNames}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${M3.surfaceVariant}`,
+                  background: '#fff', borderRadius: R.full, padding: '5px 11px', cursor: refreshingNames ? 'default' : 'pointer',
+                  fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: refreshingNames ? 0.6 : 1,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                  {refreshingNames ? 'hourglass_empty' : 'refresh'}
+                </span>
+                {refreshingNames ? 'Bezig…' : 'Namen bijwerken'}
+              </button>
+            </div>
           </div>
+          {/* [BANK-REMATCH] The result stays readable after the toast is gone. The case that
+              needs it most is "gevonden, maar niet aangeraakt": the pass deliberately does not
+              revive a line on an ambiguous match — that is the nagging the owner used "Genegeerd"
+              to escape — so it has to say where to look instead of quietly doing nothing. */}
+          {rematchInfo && (
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid #F0F0F0', background: '#F8F9FA', fontSize: 12.5, color: '#3c4043', lineHeight: 1.5 }}>
+              {rematchInfo.restored === 0 && rematchInfo.booked === 0 && rematchInfo.ambiguous === 0 ? (
+                <>Alle {rematchInfo.examined} regels opnieuw bekeken — er was niets nieuws te koppelen.</>
+              ) : (
+                <>
+                  {rematchInfo.restored > 0 && <><strong>{rematchInfo.restored}</strong> genegeerde {rematchInfo.restored === 1 ? 'regel staat' : 'regels staan'} weer in de lijst. </>}
+                  {rematchInfo.booked > 0 && <><strong>{rematchInfo.booked}</strong> {rematchInfo.booked === 1 ? 'betaling is' : 'betalingen zijn'} automatisch gekoppeld. </>}
+                  {rematchInfo.ambiguous > 0 && (
+                    <>Bij <strong>{rematchInfo.ambiguous}</strong> genegeerde {rematchInfo.ambiguous === 1 ? 'regel past' : 'regels passen'} nu wel een factuur, maar niet één duidelijke — die {rematchInfo.ambiguous === 1 ? 'laat ik' : 'laat ik'} met rust. Kijk bij <strong>Genegeerd</strong> als je ze zelf wilt koppelen.</>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           {statements.map((st) => (
             <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f8f9fa' }}>
               <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
