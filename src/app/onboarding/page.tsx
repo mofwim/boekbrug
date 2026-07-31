@@ -9,9 +9,12 @@ export default async function OnboardingPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // [HERVATTEN] Mét de bedrijfsgegevens die er al staan. Ze werden hier niet gelezen en dus ook
+  // niet meegegeven, terwijl de wizard zijn formulier leeg begon — zie de toelichting bij
+  // initialCompany in OnboardingWizard.
   let { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, onboarding_done, onboarding_step, role, email")
+    .select("full_name, onboarding_done, onboarding_step, role, email, company_name, kvk_number, btw_number, iban, address")
     .eq("id", user.id)
     .single();
 
@@ -50,7 +53,7 @@ export default async function OnboardingPage() {
 
     const { data: fresh } = await supabase
       .from("profiles")
-      .select("full_name, onboarding_done, onboarding_step, role, email")
+      .select("full_name, onboarding_done, onboarding_step, role, email, company_name, kvk_number, btw_number, iban, address")
       .eq("id", user.id)
       .single();
 
@@ -76,10 +79,16 @@ export default async function OnboardingPage() {
   return (
     <OnboardingWizard
       userName={userName}
-      userEmail={user.email ?? ""}
       initialStep={initialStep}
       initialRole={initialRole}
       roleWasSet={roleWasSet}
+      initialCompany={{
+        company_name: profile?.company_name ?? "",
+        kvk_number: profile?.kvk_number ?? "",
+        btw_number: profile?.btw_number ?? "",
+        iban: profile?.iban ?? "",
+        address: profile?.address ?? "",
+      }}
     />
   );
 }
