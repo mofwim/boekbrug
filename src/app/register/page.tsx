@@ -289,7 +289,14 @@ function RegisterContent() {
     // that migration hasn't been applied yet — closing the silent-wrong-data window. The
     // no-session (confirmation-ON) path above can't do this (anon RLS) and relies on the
     // trigger. Best-effort: a failure here never blocks the redirect.
-    await getBrowserClient()
+    //
+    // [VANGNET-SPLITSING] En daarom staat account_purpose NIET in deze rij. Die kolom komt uit
+    // account_purpose_archief.sql, en ontbreekt die migratie, dan weigert PostgREST de HELE rij
+    // (PGRST204) — dus dan werd ook de rol, de bedrijfsnaam, het KVK- en het BTW-nummer niet
+    // geschreven. Precies in het geval waarvoor dit vangnet bestaat ("mocht die migratie nog
+    // niet zijn toegepast") viel het dus als eerste om, stil, met alleen een console-regel.
+    // Wie zich als boekhouder registreerde werd dan een ZZP'er.
+    const { error: profileError } = await getBrowserClient()
       .from('profiles')
       .upsert({
         id: data.user.id,
@@ -300,14 +307,27 @@ function RegisterContent() {
         btw_number: btw,
         email: schoonEmail,
         onboarding_step: 4,
-        // [KLUIS] Zie de toelichting hierboven: dit is het pad zonder e-mailbevestiging,
-        // waar wij zelf schrijven in plaats van de trigger.
-        account_purpose: purpose,
+        // [KLUIS] Deze kolom bestaat altijd, dus die hoort hier thuis: een archiefaccount heeft
+        // geen wizard te doorlopen, en dat moet ook waar zijn als de migratie hieronder ontbreekt.
         onboarding_done: purpose === 'archief',
       }, { onConflict: 'id' })
-      .then(({ error }) => {
-        if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
-      })
+    if (profileError) {
+      console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', profileError)
+    }
+
+    // [KLUIS] Het doel apart, om de reden hierboven. Mislukt dit (kolom bestaat nog niet), dan
+    // mist deze bezoeker een andere begroeting op zijn kluis — niet zijn registratie, en niet
+    // zijn kluis: die twee hangen aan de rij hierboven, die wél doorging.
+    if (purpose === 'archief') {
+      const { error: purposeError } = await getBrowserClient()
+        .from('profiles')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .update({ account_purpose: 'archief' } as any)
+        .eq('id', data.user.id)
+      if (purposeError) {
+        console.error('[KLUIS] account_purpose niet gezet (migratie toegepast?):', purposeError)
+      }
+    }
 
     // [KLUIS] Een archiefaccount landt in zijn kluis, niet in een wizard over facturen.
     // [SEC-REDIRECT] En nooit ongecontroleerd op een bestemming uit de querystring: hier stond
