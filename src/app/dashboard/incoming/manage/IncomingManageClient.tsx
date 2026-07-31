@@ -61,18 +61,35 @@ const CHIP: Record<string, { bg: string; color: string; label: string }> = {
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
-const NL_DATE_Y = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
+// [TZ] timeZone PINNED on both. These format DATE-ONLY strings, and `new Date('2026-01-01')` is
+// midnight UTC: rendered in the BROWSER's zone, every invoice date west of UTC came out a day
+// early — and with NL_DATE_Y that is a day in the wrong YEAR. format-nl.ts:17-23 forbids exactly
+// this. The Dutch short shape ("12 mrt") is deliberately kept: the DD-MM-YYYY rule in that module
+// is scoped to forms, invoice detail, PDF and e-mail (format-nl.ts:6), not to compact lists — the
+// rule these two were breaking is the timezone one, so that is the one being fixed.
+const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', timeZone: 'Europe/Amsterdam' })
+const NL_DATE_Y = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Amsterdam' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
 // recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
 // unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
-const fmtDateSmart = (s: string | null) => {
+const fmtDateSmart = (s: string | null, thisYear: string) => {
   if (!s) return '—'
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return '—'
-  return d.getFullYear() === new Date().getFullYear() ? NL_DATE.format(d) : NL_DATE_Y.format(d)
+  // [TZ] "Is this year?" compared d.getFullYear() (the DEVICE's year for a UTC-midnight date)
+  // against the device's own year — so west of UTC the decision to PRINT the year flipped on the
+  // same boundary that made the printed date wrong. Both sides now read the Amsterdam calendar:
+  // the row's year off the ISO string it came from, today's from `thisYear`.
+  //
+  // `thisYear` is PASSED IN rather than read here. amsterdamToday() builds a fresh
+  // Intl.DateTimeFormat on every call (format-nl.ts:107-115, nothing memoised), and this runs up
+  // to four times per row on an unvirtualised list that re-renders on every search keystroke —
+  // calling it inside would have turned a correctness fix into hundreds of formatter constructions
+  // per keypress. The caller already computes the Amsterdam day once per render (todayIso).
+  const rowYear = /^\d{4}-/.test(s) ? s.slice(0, 4) : String(d.getFullYear())
+  return rowYear === thisYear ? NL_DATE.format(d) : NL_DATE_Y.format(d)
 }
 // [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
 // [BTW-NO-GUESS] Returns null when there is no grondslag to compute from. It used to fall back
@@ -115,6 +132,33 @@ interface IncomingRow {
   // [AUTO-ADVANCE] jsonb — carries _auto_verified when the app booked this invoice
   // without a manual tap, so the owner can review "wat is automatisch verwerkt".
   field_confidence: Record<string, unknown> | null
+}
+
+// [PAY-REASON] What the owner reads when /api/invoice/pay-toggle refuses.
+//
+// That route answers with a machine CODE in `error` and only sometimes a written `detail`. The
+// existing call site preferred `detail || error`, which was right for the handful of refusals that
+// carry a sentence and wrong for every other one — "invoice_already_paid", "verwerkt",
+// "invoice_not_found" would land on a shop owner's phone as-is. Its own [DEPLOY-SAFE] note says
+// exactly that ("the bare error CODE would reach the owner as gibberish"); it just never covered
+// the codes that have no detail. A bundle makes it worse, because it collects several at once.
+//
+// So: a curated sentence when the server wrote one AND the status says it is ours to trust
+// (a 5xx `detail` is a raw Postgres string — never for a phone), then a Dutch line per known code,
+// then a neutral fallback. Never a code, never a database message.
+const PAY_TOGGLE_REASON: Record<string, string> = {
+  verwerkt: 'je boekhouder heeft deze factuur al verwerkt',
+  invoice_already_paid: 'deze factuur staat al als betaald',
+  invoice_not_found: 'deze factuur is niet gevonden',
+  not_paid: 'er staat geen betaling op deze factuur',
+  status_conflict: 'de status is inmiddels veranderd — ververs de pagina',
+  unauthorized: 'je sessie is verlopen — log opnieuw in',
+  invalid_amount: 'het ingevoerde bedrag is niet geldig',
+}
+function payToggleReason(status: number, json: { detail?: string; error?: string } | null): string {
+  if (status < 500 && typeof json?.detail === 'string' && json.detail.trim()) return json.detail.trim()
+  const code = typeof json?.error === 'string' ? json.error : ''
+  return PAY_TOGGLE_REASON[code] ?? 'bijwerken is niet gelukt — ververs de pagina'
 }
 
 // [AUTO-ADVANCE] True when the app auto-verified this invoice (clean + confident) instead of
@@ -272,14 +316,21 @@ export default function IncomingManageClient({
   const [bundlePayRows, setBundlePayRows] = useState<IncomingRow[] | null>(null)
   const [bundleBusy, setBundleBusy] = useState(false)
 
-  const selectedRows = invoices.filter(i => selectedIds[i.id])
+  // [BUNDEL-SELECTIE] Only rows that are still OPEN belong in the set. A selected row can stop
+  // being open while it sits selected — the bank-match run patches rows to 'paid' (runReconciliation),
+  // so does a one-tap ReconBadge confirm — and it could not be deselected afterwards either (the
+  // row's tap handler only toggles while status === 'received'). Dropping it here keeps the count
+  // and the amount describing the SAME set; filtering only the euros would have fixed the sum and
+  // left "3 geselecteerd" standing over two payable invoices.
+  const selectedRows = invoices.filter(i => selectedIds[i.id] && i.status === 'received')
   // Live validation — pure and cheap, so the action bar can explain itself
   // (same-IBAN rule, missing IBAN, sum) on every tap.
   const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows) : null
-  const openSum = selectedRows.reduce((s, r) => {
-    const tot = Math.abs(r.total_inc_btw ?? 0)
-    return s + Math.max(0, tot - Math.max(0, r.amount_paid ?? 0))
-  }, 0)
+  // [PARTIAL-PAY] openAmount(), not a second hand-rolled copy of it. The local version omitted the
+  // status check that openAmount exists for — partial-payment.ts:44-45 says in as many words that
+  // screens must use it, because a row marked paid before amount_paid existed reports a phantom
+  // balance without it. The import was already at the top of this file.
+  const openSum = selectedRows.reduce((s, r) => s + openAmount(r), 0)
 
   function toggleSelect(id: string) {
     setSelectedIds(prev => {
@@ -298,9 +349,22 @@ export default function IncomingManageClient({
   async function executeBundlePay(rows: IncomingRow[], method: 'bank' | 'kas', paymentDate: string) {
     setBundlePayRows(null)
     setBundleBusy(true)
+    // [BUNDEL-SELECTIE] Leave select mode entirely BEFORE the loop, not after it. `rows` is already
+    // a snapshot, so the batch itself is unaffected. Two things made the timing matter: selectedRows
+    // now drops each row the moment it is patched to 'paid', so the bar's total would visibly drain
+    // toward € 0,00 while the owner watches money being paid — and merely clearing the ids would
+    // have left the bar standing there reading "0 geselecteerd · € 0,00 · kies minimaal 2" over a
+    // batch that is mid-flight. Neither is money evaporating; both look exactly like it. The bar
+    // goes away and `bundleBusy` carries the progress.
+    exitSelectMode()
     let okCount = 0
-    const failedNumbers: string[] = []
+    const failed: { number: string; reason: string }[] = []
+    // [BOEK-004] The accountant's lock is not a generic failure: it has an answer ("ask them to
+    // undo it") and this file already has the dialog for it. A bundle used to swallow it as a bare
+    // invoice number, so the one refusal with a way out was the one the owner could not act on.
+    let verwerktRow: { id: string; number: string } | null = null
     for (const row of rows) {
+      const label = row.invoice_number ?? '—'
       try {
         const res = await fetch('/api/invoice/pay-toggle', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -315,10 +379,15 @@ export default function IncomingManageClient({
             payment_prepared_at: null,
           })
         } else {
-          failedNumbers.push(row.invoice_number ?? '—')
+          // [SERVER-REASON] Same source of truth the single-invoice executePay uses: pay-toggle's
+          // own sentence when it has one, its code otherwise — never a bare invoice number.
+          const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+          const reason = payToggleReason(res.status, json)
+          if (!verwerktRow && json?.error === 'verwerkt') verwerktRow = { id: row.id, number: label }
+          failed.push({ number: label, reason })
         }
       } catch {
-        failedNumbers.push(row.invoice_number ?? '—')
+        failed.push({ number: label, reason: 'geen verbinding' })
       }
     }
     if (okCount > 0) {
@@ -333,16 +402,25 @@ export default function IncomingManageClient({
           }),
         })
       } catch { /* non-blocking — payments already succeeded */ }
-      // [CASH-SETTLE] keep the kasboek in sync once for the whole batch.
-      fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
+      // [CASH-SETTLE] The extra pass that used to sit here is gone: every pay-toggle call in the
+      // loop above already reconciles the kasboek, and it now RETRIES a bailed pass itself
+      // ([CASH-RETRY] in pay-toggle) instead of relying on this call to happen to repeat it.
+      // "Once for the whole batch" was never true anyway — the batch had already done it N times.
     }
-    showToast(
-      failedNumbers.length === 0
-        ? `${okCount} inkoopfacturen betaald ✓`
-        : `${okCount} betaald ✓ — niet gelukt: ${failedNumbers.join(', ')}`
-    )
+    // One line per distinct reason, so "niet gelukt" finally says WHY. Grouped rather than listed
+    // per invoice: a batch that trips the same lock five times should read as one problem.
+    if (failed.length === 0) {
+      showToast(`${okCount} inkoopfacturen betaald ✓`)
+    } else {
+      const byReason = new Map<string, string[]>()
+      for (const f of failed) byReason.set(f.reason, [...(byReason.get(f.reason) ?? []), f.number])
+      const parts = [...byReason.entries()].map(([reason, nums]) => `${nums.join(', ')}: ${reason}`)
+      showToast(`${okCount} betaald ✓ — niet gelukt · ${parts.join(' · ')}`)
+    }
     setBundleBusy(false)
-    exitSelectMode()
+    // The lock has a way out and this screen owns the dialog for it — open it once, for the first
+    // invoice that hit it, after the batch has finished reporting.
+    if (verwerktRow) { setRequestSent(false); setVerwerktCtx(verwerktRow) }
   }
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
@@ -440,6 +518,9 @@ export default function IncomingManageClient({
   // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
   // calendar while recording payments against another. One clock for the whole page.
   const todayIso = amsterdamToday()
+  // The Amsterdam YEAR, derived from the day we already computed — so fmtDateSmart never has to
+  // build its own formatter per row (see the note on that function).
+  const thisYear = todayIso.slice(0, 4)
 
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
@@ -585,7 +666,17 @@ export default function IncomingManageClient({
         setInvoices(prev => prev.filter(i => i.id !== dupId))
         showToast('Dubbele factuur verwijderd')
       } else {
-        showToast('Verwijderen mislukt — probeer opnieuw')
+        // [SERVER-REASON] That route refuses with money_settled or bank_linked and a `detail` that
+        // names the way out ("draai eerst de betaling terug", "ontkoppel die eerst op de
+        // Bank-pagina"). Both are PERMANENT, so "probeer opnieuw" told the owner to repeat the one
+        // thing that cannot work. executeRemoval and executeMovePayment in this same file already
+        // show the server's sentence; this one did not.
+        //
+        // `detail` ONLY — deliberately not the `detail || error` fallback executePay uses. On this
+        // route `error` is a CODE, and at its 500 it is a raw Postgres message; neither belongs on
+        // an owner's phone. No detail → our own Dutch sentence.
+        const json = await res.json().catch(() => ({} as { detail?: string }))
+        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
       }
     } catch {
       showToast('Verwijderen mislukt — probeer opnieuw')
@@ -830,14 +921,17 @@ export default function IncomingManageClient({
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
     // error CODE would reach the owner as gibberish.
-    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
+    // [PAY-REASON] One rule, shared with the bundle above — see payToggleReason.
+    const error = res.ok ? null : { message: payToggleReason(res.status, json as { detail?: string; error?: string }) }
 
     if (error) {
       // rollback optimistic
       const prev = ctx.newStatus === 'paid' ? 'received' : 'paid'
       if (!isPartialIntent) patchLocal(ctx.id, { status: prev })
-      // [BOEK-004] verwerkt conflict (trigger) → actionable dialog; else toast
-      if (error.message && error.message.includes('verwerkt')) {
+      // [BOEK-004] verwerkt conflict (trigger) → actionable dialog; else toast.
+      // Keyed on the CODE, not on the sentence: the sentence is now translated, so matching on
+      // the word "verwerkt" in it would be matching our own wording back to ourselves.
+      if ((json as { error?: string })?.error === 'verwerkt') {
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
       } else {
@@ -893,11 +987,18 @@ export default function IncomingManageClient({
       // exactly where they were, with the server's reason on screen.
       if (ctx.thenRemove) reopenRemovalAfterUndo(ctx.id)
     }
-    // [CASH-SETTLE] Keep the kasboek in sync with this cash pay/undo — create/heal the linked
-    // 'betaling' entry, or remove it on an undo. This UI updates the invoice directly (not via
-    // the confirm endpoint), so it must trigger the reconcile itself. Fire-and-forget; the
-    // invoice write already succeeded, and the kasboek load reconciles again as a backstop.
-    if (!error) fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
+    // [CASH-SETTLE] The call that used to be here — `fetch('/api/cash/settle')` — is gone, and so
+    // is the reason it gave for existing: "This UI updates the invoice directly (not via the
+    // confirm endpoint), so it must trigger the reconcile itself." That stopped being true when
+    // this function moved to /api/invoice/pay-toggle ([PAY-TOGGLE] above), which reconciles the
+    // kasboek on both the pay and the undo branch. So the drawer was being recomputed twice for
+    // every payment, and N+1 times for a bundle, on the strength of a comment describing an
+    // architecture that no longer existed.
+    //
+    // The one thing the second call really did provide was an accidental retry: reconcile reports
+    // a bailed pass as `ok:false` and pay-toggle used to drop that on the floor. It no longer
+    // does ([CASH-RETRY]), so the retry is deliberate, server-side, and reaches every caller —
+    // not just the one screen that happened to ask twice.
     setProcessingId(null)
     return !error
   }
@@ -1237,7 +1338,12 @@ export default function IncomingManageClient({
                       : setExpandedId(expanded ? null : inv.id)}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
-                    style={{ background: selectedIds[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
+                    // [BUNDEL-SELECTIE] `isSelected`, not raw selectedIds: selectedRows now drops a
+                    // row that stopped being 'received' while selected (the bank-match run patches
+                    // rows to 'paid' mid-selection). Keying the highlight off the raw id would let
+                    // a row keep the selected background while the bar no longer counts it — and it
+                    // cannot be tapped off either, since the toggle only fires on 'received'.
+                    style={{ background: (selectedIds[inv.id] && inv.status === 'received') ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
                     {selectMode && inv.status === 'received' && (
@@ -1289,7 +1395,27 @@ export default function IncomingManageClient({
                             // [BANK-RECON-CONFIRM] Book a safe (reference-backed) match in one tap;
                             // an amount-only match ('navigate') opens the bank page to review.
                             const r = await confirmMatch(id)
-                            if (r === 'ok') { patchLocal(id, { status: 'paid' }); showToast('Betaling bevestigd ✓') }
+                            // Patch the SAME fields runReconciliation patches for the same outcome
+                            // (a booked bank match). Setting only the status left the row reading
+                            // "Betaald" with no payment date — so the cross-quarter marker (xq)
+                            // could not be computed and the "voorbereid" nudge stayed up, until a
+                            // reload. The date is the bank line's, which we do not have here, so
+                            // the invoice's own date is the honest stand-in the server also falls
+                            // back to; a reload replaces it with the exact one.
+                            if (r === 'ok') {
+                              patchLocal(id, {
+                                status: 'paid',
+                                payment_method: 'bank',
+                                // The row being confirmed is UNPAID, so its own payment_date is
+                                // null — reading that would have written null straight back and
+                                // made this whole patch inert. The invoice date is the stand-in
+                                // the confirm route itself falls back to; a reload replaces it
+                                // with the bank line's real date.
+                                payment_date: invoices.find(i => i.id === id)?.invoice_date ?? null,
+                                payment_prepared_at: null,
+                              })
+                              showToast('Betaling bevestigd ✓')
+                            }
                             else if (r === 'navigate') router.push('/dashboard/bank')
                             else showToast('Bevestigen mislukt — probeer het op de Bank-pagina')
                           }} />
@@ -1341,13 +1467,13 @@ export default function IncomingManageClient({
                           plek is dezelfde plek die "te laat" toont zodra de datum voorbij is, zodat
                           het oog voor beide maar één plek hoeft te leren. */}
                       <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, color: '#5F6368' }}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{fmtDateSmart(inv.invoice_date)}</span>
+                        <span style={{ whiteSpace: 'nowrap' }}>{fmtDateSmart(inv.invoice_date, thisYear)}</span>
                         {/* [OVER-DATUM] The due date is only ever a FACT here — a printed
                             vervaldatum, or invoice date + a printed term (see lib/safecore.ts).
                             When the invoice stated neither we say so, rather than leaving a blank
                             that reads as "no rush" or inventing the customary 30 days. */}
                         {inv.due_date ? (
-                          <span style={{ whiteSpace: 'nowrap' }}>· uiterlijk {fmtDateSmart(inv.due_date)}</span>
+                          <span style={{ whiteSpace: 'nowrap' }}>· uiterlijk {fmtDateSmart(inv.due_date, thisYear)}</span>
                         ) : (
                           <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
                         )}
@@ -1355,7 +1481,7 @@ export default function IncomingManageClient({
                             cannot be late. */}
                         {daysLate !== null && (
                           <span
-                            title={`Vervaldatum ${fmtDateSmart(inv.due_date)} — ${daysLate} ${daysLate === 1 ? 'dag' : 'dagen'} te laat`}
+                            title={`Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)} — ${daysLate} ${daysLate === 1 ? 'dag' : 'dagen'} te laat`}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
                           >
                             {daysLate} {daysLate === 1 ? 'dag' : 'dagen'} te laat
@@ -1366,7 +1492,7 @@ export default function IncomingManageClient({
                             instead of every open bill shouting at once. */}
                         {daysLeft !== null && (
                           <span
-                            title={`Vervaldatum ${fmtDateSmart(inv.due_date)}${daysLeft === 0 ? ' — vandaag te betalen' : ` — nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}`}
+                            title={`Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)}${daysLeft === 0 ? ' — vandaag te betalen' : ` — nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}`}
                             style={{
                               whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px',
                               background: daysLeft <= 7 ? M3.warningContainer : M3.surfaceVariant,
@@ -1477,8 +1603,8 @@ export default function IncomingManageClient({
                             the collapsed row keeps only the short factuurdatum. Vervaldatum is shown
                             only when the invoice stated one; a missing due date is left out rather
                             than printed as "—", which would read like a field we failed to fill. */}
-                        <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date)} />
-                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date)} />}
+                        <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date, thisYear)} />
+                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date, thisYear)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
@@ -1698,7 +1824,7 @@ export default function IncomingManageClient({
                           {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
                         </div>
                         <div style={{ fontSize: 12.5, color: '#5F6368', marginTop: 2 }}>
-                          {t.invoice_date ? `${fmtDateSmart(t.invoice_date)} · ` : ''}
+                          {t.invoice_date ? `${fmtDateSmart(t.invoice_date, thisYear)} · ` : ''}
                           {fmtEur(t.total_inc_btw ?? null)} · nog {fmtEur(open)} open
                         </div>
                       </button>
