@@ -47,16 +47,32 @@ export default async function Page({
   // de richting boekhouden → archief, en alleen als de gebruiker zelf met ?doel=archief
   // binnenkomt. Het kan dus nooit iemand rechten geven of afnemen — die hangen niet aan
   // deze kolom en dat moet zo blijven.
+  //
+  // [VANGNET-SPLITSING] Twee aparte schrijfacties, en dat is niet netjesheid maar noodzaak:
+  // `account_purpose` komt uit account_purpose_archief.sql. Ontbreekt die kolom, dan weigert
+  // PostgREST de HELE rij (PGRST204) — en in één update zou dan ook `onboarding_done` niet
+  // geschreven worden. Dan blijft de bezoeker de wizard in gestuurd worden door de middleware,
+  // precies in het geval waarvoor dit zelfherstel bestaat. Eerst dus de kolom die er altijd is.
   if (purpose !== 'archief' && parsePurpose(params[PURPOSE_PARAM as 'doel']) === 'archief') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any)
-        .from('profiles')
-        .update({ account_purpose: 'archief', onboarding_done: true })
-        .eq('id', user.id)
+    const { error: doneError } = await supabase
+      .from('profiles')
+      .update({ onboarding_done: true })
+      .eq('id', user.id)
+    if (doneError) {
+      console.error('[KLUIS] onboarding_done niet gezet bij zelfherstel:', doneError.message)
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: purposeError } = await (supabase as any)
+      .from('profiles')
+      .update({ account_purpose: 'archief' })
+      .eq('id', user.id)
+    if (purposeError) {
+      // Verwacht zolang de migratie niet is toegepast: hij ziet dan de gewone begroeting.
+      // Geen reden om iets te blokkeren — hij is en blijft in zijn kluis.
+      console.error('[KLUIS] account_purpose niet gezet (migratie toegepast?):', purposeError.message)
+    } else {
       purpose = 'archief'
-    } catch {
-      /* lukt het niet, dan ziet hij de gewone begroeting — geen reden om iets te blokkeren */
     }
   }
 

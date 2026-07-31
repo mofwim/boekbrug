@@ -182,6 +182,7 @@ export function OnboardingWizard({
     // [BOEK-015] fix: explicit finishing state — separate from `saving` which
     // the step-change effect resets. This one persists through navigation.
     setFinishing(true);
+    setSaveError("");
     try {
       const res = await fetch("/api/onboarding", {
         method: "PATCH",
@@ -190,6 +191,20 @@ export function OnboardingWizard({
       });
       if (!res.ok) {
         console.error("[BOEK-015] finish failed:", await res.text().catch(() => res.statusText));
+        // [LAATSTE-KNOP] Zeg het. Hier stond alleen een console.error, en dat is de allerlaatste
+        // handeling van de hele aanmelding: de knop "Ga naar mijn dashboard →". Mislukte de
+        // aanroep, dan stopte het draaiwieltje, kwam de knop terug alsof er niets gebeurd was, en
+        // stond er nergens iets. De gebruiker klikt dan nog een keer, en nog een keer. Dezelfde
+        // reden als de [TRUST-ONBOARDING]-melding bij handleNext: een stap die niet is opgeslagen
+        // moet dat zeggen, niet doen alsof.
+        //
+        // 401 apart, want dat is het geval dat opnieuw klikken NOOIT oplost: wie lang in de
+        // wizard bleef staan heeft geen sessie meer, en moet weten dat hij opnieuw moet inloggen.
+        setSaveError(
+          res.status === 401
+            ? "Je sessie is verlopen — log opnieuw in om je aanmelding af te ronden."
+            : "Afronden mislukt — controleer je verbinding en probeer het opnieuw."
+        );
         setFinishing(false);
         return; // stay on page — user can retry
       }
@@ -197,6 +212,7 @@ export function OnboardingWizard({
       window.location.href = "/dashboard";
     } catch (err) {
       console.error("[BOEK-015] finish error:", err);
+      setSaveError("Afronden mislukt — controleer je verbinding en probeer het opnieuw.");
       setFinishing(false);
     }
   }
