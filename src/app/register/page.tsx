@@ -88,6 +88,16 @@ function RegisterContent() {
     return callback.toString()
   }
 
+  // Een foutmelding bij een veld verdwijnt zodra dat veld verandert.
+  //
+  // Ze bleven staan tot de volgende verzendpoging: je kreeg "Vul je naam in", je vulde je naam
+  // in, en de rode regel bleef eronder staan alsof er nog iets mis was. Bij een formulier dat je
+  // één keer in je leven invult is dat precies het moment waarop iemand denkt dat hij iets fout
+  // doet en afhaakt.
+  function wisFout(veld: 'name' | 'email' | 'password') {
+    setFieldErrors(vorige => (vorige[veld] ? { ...vorige, [veld]: undefined } : vorige))
+  }
+
   // [Google-OAuth] Reset loading when user returns via browser back button
   useEffect(() => {
     const reset = () => setGoogleLoading(false)
@@ -168,6 +178,15 @@ function RegisterContent() {
   }
 
   async function handleRegister() {
+    // [DUBBEL-VERSTUREN] Loopt er al een poging, dan houdt het hier op. De verzendknop is
+    // tijdens het wachten uitgeschakeld, maar Enter ging daar dwars doorheen: de toets riep
+    // handleRegister() rechtstreeks aan, zonder naar `loading` te kijken. Twee keer Enter
+    // achter elkaar — niet ongewoon als er even niets lijkt te gebeuren — leverde dus twee
+    // signUp-aanroepen op, waarvan de tweede terugkwam met "dit adres bestaat al". De
+    // gebruiker las dan dat hij al een account had, terwijl zijn registratie een fractie
+    // eerder was gelukt.
+    if (loading || googleLoading) return
+
     // Client-side check before we call Supabase, with simple field messages.
     const errs: { name?: string; email?: string; password?: string } = {}
     if (!fullName.trim()) errs.name = 'Vul je naam in'
@@ -418,6 +437,7 @@ function RegisterContent() {
 
             {/* [Google-OAuth] Google register button — shown prominently in step 2 */}
             <button
+              type="button"
               onClick={handleGoogleRegister}
               disabled={googleLoading || loading}
               className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
@@ -437,82 +457,87 @@ function RegisterContent() {
               <div className="flex-1 h-px bg-gray-100" />
             </div>
 
-            {/* Email + password fields */}
-            <div>
-              <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
-              <input id="reg-name" type="text" value={fullName} onChange={e => setFullName(e.target.value)}
-                autoComplete="name"
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Jan de Vries"
-                style={{ fontSize: '16px' }} />
-              {fieldErrors.name && <p className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
-            </div>
-            <div>
-              <label htmlFor="reg-company" className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam (optioneel)</label>
-              <input id="reg-company" type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
-                autoComplete="organization"
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Jouw Bedrijf BV"
-                style={{ fontSize: '16px' }} />
-              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
-            </div>
-            <div>
-              <label htmlFor="reg-kvk" className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer (optioneel)</label>
-              <input id="reg-kvk" type="text" value={kvk} onChange={e => setKvk(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="12345678"
-                style={{ fontSize: '16px' }} />
-              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
-            </div>
-            <div>
-              <label htmlFor="reg-btw" className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer (optioneel)</label>
-              <input id="reg-btw" type="text" value={btw} onChange={e => setBtw(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="NL123456789B01"
-                style={{ fontSize: '16px' }} />
-              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
-            </div>
-            <div>
-              <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-              <input id="reg-email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-                autoComplete="email"
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="jouw@email.nl"
-                style={{ fontSize: '16px' }} />
-              {fieldErrors.email && <p className="text-xs text-red-600 mt-1">{fieldErrors.email}</p>}
-            </div>
-            <div>
-              <label htmlFor="reg-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-              <input
-                id="reg-password"
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleRegister()}
-                autoComplete="new-password"
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-                style={{ fontSize: '16px' }} />
-              {fieldErrors.password && <p className="text-xs text-red-600 mt-1">{fieldErrors.password}</p>}
-            </div>
-
-            <ErrorMessage message={error} />
-
-            {/* Duplicate e-mail — clickable link to log in instead. */}
-            {emailTaken && (
-              <div className="flex items-start gap-2.5 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-                <span className="text-red-400 text-sm mt-0.5 flex-shrink-0">✕</span>
-                <p className="text-sm text-red-600">
-                  Dit e-mailadres is al geregistreerd.{' '}
-                  <a href={loginHref} className="font-semibold underline">Inloggen</a>
-                </p>
+            {/* Email + password fields — in een <form>, zodat Enter vanuit elk veld verstuurt en
+                een mobiel toetsenbord een "Ga"-toets toont in plaats van een regeleinde. */}
+            <form onSubmit={e => { e.preventDefault(); handleRegister() }} className="space-y-4">
+              <div>
+                <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
+                <input id="reg-name" type="text" value={fullName} onChange={e => { setFullName(e.target.value); wisFout('name') }}
+                  autoComplete="name"
+                  aria-describedby={fieldErrors.name ? 'reg-name-fout' : undefined}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Jan de Vries"
+                  style={{ fontSize: '16px' }} />
+                {fieldErrors.name && <p id="reg-name-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
               </div>
-            )}
+              <div>
+                <label htmlFor="reg-company" className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam (optioneel)</label>
+                <input id="reg-company" type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
+                  autoComplete="organization"
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Jouw Bedrijf BV"
+                  style={{ fontSize: '16px' }} />
+                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+              </div>
+              <div>
+                <label htmlFor="reg-kvk" className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer (optioneel)</label>
+                <input id="reg-kvk" type="text" value={kvk} onChange={e => setKvk(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="12345678"
+                  style={{ fontSize: '16px' }} />
+                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+              </div>
+              <div>
+                <label htmlFor="reg-btw" className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer (optioneel)</label>
+                <input id="reg-btw" type="text" value={btw} onChange={e => setBtw(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="NL123456789B01"
+                  style={{ fontSize: '16px' }} />
+                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+              </div>
+              <div>
+                <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+                <input id="reg-email" type="email" value={email} onChange={e => { setEmail(e.target.value); wisFout('email') }}
+                  autoComplete="email"
+                  aria-describedby={fieldErrors.email ? 'reg-email-fout' : undefined}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="jouw@email.nl"
+                  style={{ fontSize: '16px' }} />
+                {fieldErrors.email && <p id="reg-email-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.email}</p>}
+              </div>
+              <div>
+                <label htmlFor="reg-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+                <input
+                  id="reg-password"
+                  type="password"
+                  value={password}
+                  onChange={e => { setPassword(e.target.value); wisFout('password') }}
+                  autoComplete="new-password"
+                  enterKeyHint="go"
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="••••••••"
+                  style={{ fontSize: '16px' }} />
+                {fieldErrors.password && <p id="reg-password-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.password}</p>}
+              </div>
 
-            <button onClick={handleRegister} disabled={loading || googleLoading || !email || !password}
-              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
-              {loading ? 'Bezig...' : copy.cta}
-            </button>
+              <ErrorMessage message={error} />
+
+              {/* Duplicate e-mail — clickable link to log in instead. */}
+              {emailTaken && (
+                <div className="flex items-start gap-2.5 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                  <span className="text-red-400 text-sm mt-0.5 flex-shrink-0">✕</span>
+                  <p className="text-sm text-red-600">
+                    Dit e-mailadres is al geregistreerd.{' '}
+                    <a href={loginHref} className="font-semibold underline">Inloggen</a>
+                  </p>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading || googleLoading || !email || !password}
+                className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
+                {loading ? 'Bezig...' : copy.cta}
+              </button>
+            </form>
 
             {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
             <p className="text-xs text-gray-400 text-center leading-relaxed">
@@ -544,7 +569,7 @@ function RegisterContent() {
                 ← Terug
               </a>
             ) : (
-              <button onClick={() => setStep(1)}
+              <button type="button" onClick={() => setStep(1)}
                 className="w-full text-gray-500 text-sm hover:text-gray-700">
                 ← Terug
               </button>
