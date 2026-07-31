@@ -69,11 +69,17 @@ export async function POST(
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/reimport", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
 
-  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
-  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
-  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
-  if (!gate.allowed) return gate.response!;
+  // [FAIR-USE-TE-VROEG] Het maandhek stond hiér, en dat was te vroeg. gateFairUse VERBRUIKT
+  // meteen (fair-use-gate.ts → consumeFairUse); teruggeven kan alleen via gate.release(), en dat
+  // gebeurde uitsluitend als de AI-call zelf stukliep. Tussen deze plek en die call liggen ZES
+  // weigeringen — factuur niet gevonden, verkeerde richting, al geverifieerd, geen bestand
+  // gekoppeld, een pad buiten de eigenaar, en een mislukte download — die de eigenaar elk een
+  // document van zijn maandtegoed kostten zonder dat er ooit iets gelezen werd. De vaakste is
+  // "al geverifieerd": precies wat je krijgt als je opnieuw-inlezen tikt op een factuur die
+  // intussen is goedgekeurd, dus de knop rekende af voor werk dat hij weigerde te doen.
+  //
+  // /eerlijk-gebruik §3 belooft letterlijk "mislukte pogingen komen nooit op jouw rekening". Het
+  // hek staat nu vlak vóór de AI-call, zoals /api/intake en /api/eft/import het al doen.
 
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
@@ -168,6 +174,16 @@ export async function POST(
   const sniffed = sniffMime(buf);
   if (sniffed) mimeType = sniffed;
   const base64 = buf.toString("base64");
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek bovenaan (checkRateLimit)
+  // gaat over snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een
+  // weigering pauzeert alleen dit ene opnieuw-inlezen — de factuur blijft gewoon in de
+  // controlewachtrij staan met wat er al van bekend is.
+  //
+  // Het staat hier en niet bovenaan: dit is de laatste regel vóór de enige handeling die ons per
+  // stuk geld kost. Zie [FAIR-USE-TE-VROEG] boven.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // Re-read with the CURRENT extractor (same path the import uses → identical behaviour).
   let c: Awaited<ReturnType<typeof classifyAttachment>>;

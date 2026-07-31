@@ -43,11 +43,18 @@ export async function POST(req: NextRequest) {
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/upload", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
 
-  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
-  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
-  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
-  if (!gate.allowed) return gate.response!;
+  // [FAIR-USE-TE-VROEG] Het maandhek stond hiér, en dat was te vroeg. gateFairUse VERBRUIKT
+  // meteen (fair-use-gate.ts → consumeFairUse); teruggeven kan alleen via gate.release(), en dat
+  // gebeurde uitsluitend als de AI-call zelf stukliep. Tussen deze plek en die call liggen VIJF
+  // weigeringen — leeg formulier, geen bestand, verkeerd bestandstype, groter dan 10MB, en het
+  // byte-hash duplicaat — die de eigenaar elk een document van zijn maandtegoed kostten voor een
+  // handeling die ons niets kostte. Bij het duplicaat is dat extra scheef: de opmerking daar
+  // zegt zelf "Also saves an AI call on duplicates", dus dat er niets werd uitgelezen was al
+  // bekend; alleen de rekening ging toch door.
+  //
+  // /eerlijk-gebruik §3 belooft letterlijk "mislukte pogingen komen nooit op jouw rekening". Het
+  // hek staat nu vlak vóór de AI-call, zoals /api/intake en /api/eft/import het al doen. Alles
+  // wat NA die call misgaat telt wél — die leesbeurt is echt gemaakt.
 
   let formData: FormData;
   try {
@@ -157,6 +164,16 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
   const receiverName = me?.company_name || me?.full_name || null;
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek bovenaan (checkRateLimit)
+  // gaat over snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een
+  // weigering pauzeert alleen dit ene automatische uitlezen.
+  //
+  // Het staat hier en niet bovenaan: dit is de laatste regel vóór de enige handeling die ons per
+  // stuk geld kost. Alles wat de route eerder kan weigeren is dan al geweigerd zonder iemands
+  // maandtegoed aan te raken. Zie [FAIR-USE-TE-VROEG] boven.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // [BOEK-011] Claude verifies the actual file
   // [RECEIVER-IDENTITY] pass our own KVK/BTW/IBAN so the extractor never returns us as the vendor.
