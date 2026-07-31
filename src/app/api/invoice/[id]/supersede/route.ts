@@ -31,6 +31,9 @@ import {
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // The one file that knows which keys carry the duplicate signal — writer and clearer side by side.
 import { clearPossibleDuplicate } from "@/lib/possible-duplicate-collect";
+import type { Database, Json } from "@/types/database.types";
+
+type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
 export const dynamic = "force-dynamic";
 
@@ -84,7 +87,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { error } = await pipeline
     .from("invoices")
-    .update({ field_confidence: next as never })
+    .update({ field_confidence: next as Json })
     .eq("id", id)
     .eq("receiver_id", user.id);
   if (error) {
@@ -187,12 +190,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // The WHERE clause re-asserts every gate: this runs on the service-role client (no auth.uid(),
   // so no verwerkt trigger) and the reads above can be seconds stale.
-  // `superseded_by_number` is not in the generated types until invoice_superseded_by.sql has run
-  // and the types are regenerated — the same reason /api/btw/file casts for btw_filings. The cast
-  // is on the PATCH only; every WHERE clause below stays fully typed.
-  const archiveOld = (patch: Record<string, unknown>) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (pipeline as any)
+  const archiveOld = (patch: InvoiceUpdate) =>
+    pipeline
       .from("invoices")
       .update(patch)
       .eq("id", oldId)
@@ -251,9 +250,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (next) {
       await pipeline
         .from("invoices")
-        // field_confidence is a jsonb; the generated Json type cannot express an object built
-        // from unknown-valued keys, so the cast is on the VALUE only — the row is still pinned.
-        .update({ field_confidence: next as never })
+        // field_confidence is jsonb. clearPossibleDuplicate builds a plain object of
+        // unknown-valued keys, which TypeScript cannot prove is Json-shaped — the cast is on the
+        // VALUE only, and the row stays pinned by the WHERE clauses.
+        .update({ field_confidence: next as Json })
         .eq("id", id)
         .eq("receiver_id", user.id);
     }
