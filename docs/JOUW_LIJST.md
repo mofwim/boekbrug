@@ -243,7 +243,9 @@ geen extra gebruikers op — alleen meer teleurgestelde onbekenden. In een klein
 gemeenschap wordt dat doorverteld.
 
 Nu gaat de hele factuur mee, via één contractmodule (`src/lib/factuur-handoff.ts`) met drie
-lezers:
+lezers. De volledige beschrijving — inclusief wat er bewust NIET is gebouwd — staat in
+**`docs/TRECHTER.md`**; lees dat voordat je een van die schermen aanpast, want het ontwerp ligt
+over vijf bestanden verspreid en laat zich makkelijk per ongeluk "opruimen".
 
 | Waar | Wat er gebeurt | Waarom zo |
 |---|---|---|

@@ -263,7 +263,7 @@ dat hoort uit de doorlopende reeks van art. 35 te komen, niet uit een vrij invoe
 
 Dat volgorde-punt is belangrijker dan het klinkt: **een trechter die lekt maakt van extra
 bezoekers geen extra gebruikers, alleen meer teleurgestelde onbekenden.** Kanalen zonder een
-dichte trechter is water dragen.
+dichte trechter is water dragen. De hele weg staat uitgetekend in `docs/TRECHTER.md`.
 
 En sinds diezelfde dag staan er elf **vakpagina's** onder `/factuur-maken/<vak>` — loodgieter,
 automonteur, elektricien, schilder, transport, en zo verder. Ze mikken op zoekvragen waar
