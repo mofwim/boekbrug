@@ -625,13 +625,17 @@ export function DashboardHeader({
     }}>
 
       {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}
+      {/* [HEADER-SYSTEM] Colour and font come from the tokens, exactly like the
+          sub-page bar's wordmark — the literals here were the same two values
+          spelled by hand ('#1A73E8' = M3.primary), which is how the two bars
+          drift apart in the first place. */}
       <Link
         href={logoHref}
         style={{
-          fontWeight: 700, fontSize: 17, color: '#1A73E8',
+          fontWeight: 700, fontSize: 17, color: M3.primary,
           flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
           textDecoration: 'none', cursor: 'pointer',
-          fontFamily: "'Roboto', sans-serif",
+          fontFamily: FONT,
           transition: 'opacity 0.15s',
         }}
         onMouseEnter={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '0.75')}
@@ -640,8 +644,22 @@ export function DashboardHeader({
         BoekBrug
       </Link>
 
-      {/* Search */}
-      <div style={{ flex: 1, minWidth: 0, maxWidth: 480, margin: '0 4px' }}>
+      {/* Search — and the bar's only FLEXIBLE cell, which is what keeps the
+          trailing controls on the right edge.
+          [HEADER-ALIGN] This used to be capped at 480 while SearchBar draws
+          itself at maxWidth 320, so the cap produced nothing but 160px of dead
+          space after the field — and because every remaining child is
+          flexShrink: 0 with no auto margin anywhere, the whole row stopped
+          growing at ~790px. On any screen wider than that the wordmark sat at
+          the left edge, the nav link, messages, notifications and avatar sat
+          stranded in the middle, and the rest of the bar was empty — while the
+          page column below it is centred, and the sub-page bar (SubPageHeader,
+          whose title cell is the flexible one) puts its actions hard right. Two
+          bars, two different places for the same controls.
+          Dropping the cap lets this cell absorb the slack instead: the field
+          keeps its own 320 width, and the trailing cluster ends up at the right
+          edge at every width — the same shape as the sub-page bar. */}
+      <div style={{ flex: 1, minWidth: 0, margin: '0 4px' }}>
         <SearchBar />
       </div>
 
