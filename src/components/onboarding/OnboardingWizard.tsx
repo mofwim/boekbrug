@@ -19,7 +19,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
@@ -132,14 +132,46 @@ export function OnboardingWizard({
   // before it is declared". Werkte in de praktijk, want het effect draait na mount, maar de
   // volgorde hoort te kloppen met het gebruik.)
   const [prefilledFromFactuur, setPrefilledFromFactuur] = useState(false);
-  const [prefillDone, setPrefillDone] = useState(false);
+  // [PREFILL-LATCH] Een ref, geen state. Dit is een grendel — "het voorvullen is al gebeurd" — en
+  // geen gegeven waar de render iets mee doet: buiten het effect hieronder wordt hij nergens
+  // gelezen. Als useState kostte hij toch een extra renderronde bij élke keer dat de wizard opent,
+  // en zette hij setState in de body van een effect. Dat is precies waar
+  // react-hooks/set-state-in-effect voor waarschuwt, en het was de laatste eslint-ERROR in het
+  // project.
+  //
+  // Het onderscheid dat dit bestand zelf twaalf regels verderop al maakt: prevStep/setSaving wordt
+  // TIJDENS de render bijgesteld, met het comment "scheelt een tweede renderronde". Dezelfde
+  // gedachte, andere gereedschapskist — hier kan het niet tijdens de render, want readHandoff leest
+  // localStorage en dat bestaat pas na mount. Een ref is dan het juiste antwoord: geen render, geen
+  // dependency, en de grendel overleeft de dubbele effect-aanroep van StrictMode (waarna de tweede
+  // ronde er meteen weer uit valt — precies de bedoeling, één keer voorvullen).
+  //
+  // `prefilledFromFactuur` hierboven blijft wél state: die stuurt de zin op het scherm.
+  const prefillDone = useRef(false);
   useEffect(() => {
-    if (prefillDone) return;
-    setPrefillDone(true);
+    if (prefillDone.current) return;
+    prefillDone.current = true;
     try {
       const h = readHandoff(localStorage);
       if (!h || !hasSenderContent(h)) return;
       const uit = toOnboardingCompany(h);
+      // [PREFILL-LATCH] Hier staat bewust een uitzondering op react-hooks/set-state-in-effect, en
+      // wél met reden — niet om de regel het zwijgen op te leggen.
+      //
+      // De regel waarschuwt voor cascaderende renders door state te zetten in een effect. Dat is
+      // terecht, en één van de twee gevallen in dit effect IS zo opgelost: de grendel hierboven is
+      // nu een ref in plaats van state. Wat overblijft kán niet anders.
+      //
+      // readHandoff leest localStorage — een store die alleen in de browser bestaat. De pagina die
+      // deze wizard rendert is een SERVER component (src/app/onboarding/page.tsx: async, met
+      // createServerSupabaseClient), dus de waarde kan niet als initialCompany meekomen. En hem
+      // tijdens de render lezen kan evenmin: dan verschilt de eerste client-render van de HTML die
+      // de server stuurde, en dat is een hydratie-mismatch — een echt defect in ruil voor een
+      // gerustgestelde linter.
+      //
+      // Eén extra render, één keer, bij het openen van de wizard. Dat is de prijs van het lezen van
+      // een browser-only store zonder hydratie te breken, en het is precies waar een effect voor is.
+      /* eslint-disable react-hooks/set-state-in-effect -- browser-only store (localStorage), na mount, eenmalig; zie toelichting hierboven */
       setCompany((p) => ({
         company_name: p.company_name || uit.company_name,
         kvk_number: p.kvk_number || uit.kvk_number,
@@ -148,10 +180,14 @@ export function OnboardingWizard({
         address: p.address || uit.address,
       }));
       setPrefilledFromFactuur(true);
+      /* eslint-enable react-hooks/set-state-in-effect */
     } catch {
       /* geblokkeerde opslag — de gebruiker vult het gewoon zelf in */
     }
-  }, [prefillDone]);
+    // Lege dependency-lijst: de grendel zit nu in een ref, dus er is niets meer om op te reageren.
+    // Hij stond op [prefillDone] omdat het effect zijn eigen state zette — een lus die zichzelf één
+    // keer opnieuw plande en dan tot stilstand kwam.
+  }, []);
   const [kvkError, setKvkError] = useState("");
   const [btwError, setBtwError] = useState("");
   const [ibanError, setIbanError] = useState("");
