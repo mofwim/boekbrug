@@ -153,6 +153,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // ── Two consequences the owner cannot see from the row, reported instead of hidden ─────────
   const notices: string[] = [];
+  // [FILED-QUARTER] Set when this invoice sat in an already-filed quarter: the notification then
+  // deep-links to THAT quarter on Waarheid, not to a generic page the owner has to navigate from.
+  let filedQuarterLink: string | null = null;
 
   // 1. The invoice sat in a BTW quarter that has already been filed. Nothing is blocked (the
   //    figures move, that is the point), but a filed aangifte does not — and the BTW page's
@@ -170,9 +173,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       .eq("quarter", Number(qStr))
       .maybeSingle();
     if (filed) {
+      // [FILED-QUARTER] Name the screen that actually holds the answer. "De BTW-pagina" is not a
+      // page in this app (the nav has "Aangifte" and "Waarheid"), and the difference between a
+      // filing and the live figures is computed on WAARHEID — Aangifte shows the current concept.
+      // Sending the owner to the wrong one is worse than sending them nowhere: they look, see a
+      // full set of figures, find no difference, and conclude there is none.
       notices.push(
-        `Deze factuur viel in ${qKey.replace("-", " ")}, een kwartaal dat je al hebt ingediend. Je aangifte klopt nu niet meer met je cijfers — bekijk het verschil op de BTW-pagina.`,
+        `Deze factuur viel in ${qKey.replace("-", " ")}, een kwartaal dat je al hebt ingediend. Je aangifte klopt nu niet meer met je cijfers — bekijk het verschil op de Waarheid-pagina.`,
       );
+      filedQuarterLink = `/dashboard/waarheid?year=${Number(yearStr)}&quarter=${Number(qStr)}`;
     }
   }
 
@@ -219,12 +228,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         title: "Factuur verwijderd — let op",
         body: notices.join(" "),
         type: "invoice",
-        // [NOTIF-LINK-REAL] Was "/dashboard/btw", a route that does not exist — the notice is
-        // about a removed invoice's effect on the BTW, and that screen is /dashboard/aangifte.
+        // [NOTIF-LINK-REAL] Was "/dashboard/btw", a route that does not exist. It then became
+        // "/dashboard/aangifte" — a real page, but the wrong one for the sentence above it:
+        // Aangifte recomputes a CONCEPT and holds no filing to compare against, so an owner sent
+        // there to "bekijk het verschil" could not find one. The comparison against the frozen
+        // btw_filings snapshot lives on Waarheid, so a filed-quarter notice deep-links to that
+        // quarter there; the other notices (betaallink/bundel) keep the concept page, which is
+        // where their effect on the figures shows.
         // A link stored in a notifications ROW outlives any code change, so a wrong one here is
         // a dead tap for as long as the row exists; scripts/nav-audit.mjs only reads href= and
         // router.push, so it could not see this one.
-        link: "/dashboard/aangifte",
+        link: filedQuarterLink ?? "/dashboard/aangifte",
       });
     } catch {
       /* non-blocking */

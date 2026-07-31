@@ -38,6 +38,13 @@ export interface AangifteCompleteness {
   // Verified invoices with NO invoice_date. A date-range fetch silently drops them, so they
   // are NOT in the figures above — surfaced as a note so the concept isn't quietly too low.
   datelessVerifiedCount?: number;
+  // [COUNT-BASIS] Which set the two counts above describe. Under kasstelsel the rubrieken are
+  // built from SETTLEMENTS (money that moved in this quarter), not from the invoices DATED in it
+  // — two genuinely different sets, on purpose: an invoice from last year paid in March belongs
+  // in this quarter, and one issued in March but unpaid does not. The counts then had to be
+  // taken from the settled set, and the sentences had to stop saying "ingevoerd" about them.
+  // Absent → 'factuur' (the accrual wording, unchanged).
+  scheme?: "factuur" | "kas";
 }
 
 export interface AangifteRow {
@@ -128,9 +135,16 @@ export function buildAangifte(
   // ── Honest notes — no false reassurance. Every figure states what it depends on. ──
   const notes: string[] = [];
   notes.push("Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte. Je boekhouder controleert en dient in.");
+  // [COUNT-BASIS] Under kas the counts describe invoices that were PAID in this quarter, so they
+  // are named that way. The old wording ("ingevoerde inkoopfacturen") counted the invoices dated
+  // in the quarter while 5a/5b were built from the settlements — a number that could be off by
+  // any amount in either direction, printed in the block this page calls its trust layer.
+  const onCash = completeness.scheme === "kas";
   notes.push(
     `Verkoop-BTW (5a) is berekend uit ${completeness.turnoverDays} dag(en) dagomzet` +
-    `${completeness.outgoingInvoiceCount ? ` en ${completeness.outgoingInvoiceCount} verkoopfactu(u)r(en)` : ""}.`,
+    `${completeness.outgoingInvoiceCount
+      ? ` en ${completeness.outgoingInvoiceCount} ${onCash ? "in dit kwartaal betaalde verkoopfactu(u)r(en)" : "verkoopfactu(u)r(en)"}`
+      : ""}.`,
   );
   if (completeness.turnoverDays > 0 && completeness.turnoverDays < completeness.quarterDays) {
     notes.push(
@@ -142,8 +156,11 @@ export function buildAangifte(
     notes.push("Er is nog geen omzet ingevoerd — 5a is leeg tot je dagomzet of verkoopfacturen toevoegt.");
   }
   notes.push(
-    `Voorbelasting (5b) telt alleen ${completeness.incomingInvoiceCount} ingevoerde inkoopfactu(u)r(en). ` +
-    "Ontbreekt er een inkoopfactuur, dan is de voorbelasting te laag en het te betalen bedrag te hoog.",
+    onCash
+      ? `Voorbelasting (5b) telt alleen de ${completeness.incomingInvoiceCount} inkoopfactu(u)r(en) die je in dit kwartaal hebt BETAALD (kasstelsel). ` +
+        "Een onbetaalde inkoopfactuur telt pas mee zodra je hem betaalt."
+      : `Voorbelasting (5b) telt alleen ${completeness.incomingInvoiceCount} ingevoerde inkoopfactu(u)r(en). ` +
+        "Ontbreekt er een inkoopfactuur, dan is de voorbelasting te laag en het te betalen bedrag te hoog.",
   );
   if (input.cashOmzetZonderBtw > 0) {
     notes.push(
