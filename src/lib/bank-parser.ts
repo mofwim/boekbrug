@@ -534,14 +534,20 @@ function parseMT940Description(rawLine86: string): {
 // names/descriptions read correctly. Without this, "ING DD&amp;C" shows literally
 // as "ING DD&amp;C" instead of "ING DD&C" (and the POS filter could miss it).
 function decodeXmlEntities(s: string): string {
+  // [BANK-PARSE-XMLENT-ORDER] `&amp;` is decoded LAST, never first. An escaped entity travels
+  // through XML as "&amp;lt;" — the "&" of "&lt;" is itself escaped. Decoding "&amp;" first turns
+  // it into "&lt;", which the next replace then turns into "<": a literal, harmless piece of a
+  // vendor name silently becomes markup. Decoding every other form first and "&amp;" at the end
+  // means each entity is decoded exactly once, which is what XML defines. A plain "ING DD&amp;C"
+  // is unaffected either way — it is the escaped-escape that was wrong.
   return s
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&amp;/g, "&");
 }
 
 /**
@@ -695,12 +701,41 @@ function parseCAMT053Entry(
     return null;
   }
 
-  // Transaction details block
-  const txDtls = block.match(/<TxDtls>([\s\S]*?)<\/TxDtls>/)?.[1] ?? "";
+  // [BANK-PARSE-CAMT-ALLDTLS] EVERY <TxDtls> of the entry, not just the first.
+  //
+  // Two separate losses lived in the old single-match version, and both are the CAMT twin of the
+  // MT940 bug [BANK-PARSE-MULTILINE] already fixes on the other side of this file:
+  //
+  //   1. <Ustrd> repeats. ISO 20022 caps one element at 140 characters, so banks SPLIT a long
+  //      remittance across several of them. Reading only the first truncated the text at 140
+  //      chars — and an invoice number past that point simply did not exist as far as the app was
+  //      concerned: no reference extracted, no batch resolved, the payment landed in "Geen
+  //      factuur" for a statement that named its invoice perfectly well.
+  //   2. <TxDtls> repeats too, on a collection/batch entry (a direct-debit run, a POS
+  //      settlement). Only the first sub-transaction's remittance was read; every other one was
+  //      dropped with no warning.
+  //
+  // The entry's <Amt> is the booked total and stays the money-truth — this only recovers the
+  // TEXT, so no figure moves. Joining every part is also the conservative direction downstream:
+  // more reference tokens make parseReferenceNumbers report a multi-invoice line, which BLOCKS
+  // unattended auto-booking (autoConfirmTier bails above one number) and makes planBatchAutoConfirm
+  // stricter (an unresolved token aborts the whole batch). It can only surface an invoice number
+  // that was already printed in the statement; it can never invent one.
+  const txDtlsBlocks = [...block.matchAll(/<TxDtls>([\s\S]*?)<\/TxDtls>/g)].map((m) => m[1]);
+  // The party / EndToEndId still come from the FIRST sub-transaction, exactly as before: on a
+  // batch they are per-sub-transaction and there is no single right answer, so nothing is guessed.
+  const txDtls = txDtlsBlocks[0] ?? "";
 
-  // Unstructured remittance info
-  const ustrdMatch = txDtls.match(/<Ustrd>([^<]+)<\/Ustrd>/);
-  const description = ustrdMatch ? decodeXmlEntities(ustrdMatch[1].trim()) : "";
+  // Unstructured remittance info — every <Ustrd> of every <TxDtls>, in document order,
+  // de-duplicated so a bank that repeats the same line does not double it.
+  const ustrdParts: string[] = [];
+  for (const dtls of txDtlsBlocks) {
+    for (const m of dtls.matchAll(/<Ustrd>([^<]+)<\/Ustrd>/g)) {
+      const part = decodeXmlEntities(m[1].trim());
+      if (part && !ustrdParts.includes(part)) ustrdParts.push(part);
+    }
+  }
+  const description = ustrdParts.join(" ");
 
   // Counterpart — check both Dbtr (debtor = payer) and Cdtr (creditor = receiver)
   const counterpartBlock =

@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
 import { ALLOWED_CATEGORIES, EXCLUDED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 // How many rows one GET page returns (the review list). The true remaining total is
 // reported separately via an exact head-count, so a capped page never reads as "done".
@@ -258,15 +259,25 @@ async function bulkApply(
   for (const m of mem ?? []) memMap.set(m.counterpart_key, m.category);
 
   // Pull the uncategorized lines (capped) and decide per line.
-  const { data: rows } = await supabase
-    .from("bank_transactions")
-    .select("id, amount, counterpart_name, description")
-    .eq("user_id", userId)
-    .eq("status", "pending")
-    .is("invoice_id", null)
-    .is("category", null)
-    .order("date", { ascending: false })
-    .limit(BULK_MAX);
+  // [BULK-PAGINATE] `.limit(BULK_MAX)` did NOT deliver BULK_MAX rows. PostgREST caps a response at
+  // ~1000 (Supabase default) and truncates SILENTLY, so a limit above that was a request, not a
+  // promise: the sweep read the first 1000 lines and reported "klaar" while the rest stayed
+  // uncoded — money absent from the W&V/BTW with the one screen that surfaces it saying there was
+  // nothing left to do. Page past the cap the way every other bulk read in the app does, then
+  // apply BULK_MAX ourselves so the runaway-account guard still means what it says. `remaining`
+  // below is an exact head-count either way, so a capped sweep stays honest about the tail.
+  const rows = (await fetchAllRows<{ id: string; amount: number | null; counterpart_name: string | null; description: string | null }>(
+    (from, to) =>
+      supabase
+        .from("bank_transactions")
+        .select("id, amount, counterpart_name, description")
+        .eq("user_id", userId)
+        .eq("status", "pending")
+        .is("invoice_id", null)
+        .is("category", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+  )).slice(0, BULK_MAX);
 
   const txs = rows ?? [];
   let applied = 0;

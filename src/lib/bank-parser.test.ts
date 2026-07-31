@@ -164,5 +164,71 @@ console.log("\n— [BANK-BALANCE] MT940 reversal signs (RC nets debit, RD nets c
   check("RD statement reconciles (1000 + 50 = 1050)", 1000 + rd.transactions[0].amount === rd.statementBalance?.closing);
 }
 
+console.log("\n— [BANK-PARSE-CAMT-ALLDTLS] every <Ustrd> of every <TxDtls> is read —");
+{
+  const camt = (entries: string) =>
+    `<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>` +
+    `<Acct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></Acct>${entries}</Stmt></BkToCstmrStmt></Document>`;
+
+  // 1) ISO caps one <Ustrd> at 140 chars, so a long remittance arrives SPLIT. Reading only the
+  //    first element truncated it — and an invoice number past the split simply vanished.
+  const split = parseCAMT053(camt(
+    `<Ntry><Amt Ccy="EUR">242.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><ValDt><Dt>2026-06-11</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RmtInf>` +
+    `<Ustrd>Betaling van uw openstaande posten conform afspraak, met dank voor de vlotte</Ustrd>` +
+    `<Ustrd>afhandeling van de levering — factuur 26302050</Ustrd>` +
+    `</RmtInf></TxDtls></NtryDtls></Ntry>`,
+  ));
+  check("a split remittance is rejoined, not truncated",
+    split.transactions[0]?.description.includes("factuur 26302050") === true);
+  check("…so the invoice number past the split IS extracted",
+    (split.transactions[0]?.reference ?? "").includes("26302050"));
+
+  // 2) A collection/batch entry repeats <TxDtls>. Only the first sub-transaction was read, so
+  //    every other invoice number in the run was dropped with no warning.
+  const batch = parseCAMT053(camt(
+    `<Ntry><Amt Ccy="EUR">2265.41</Amt><CdtDbtInd>DBIT</CdtDbtInd><ValDt><Dt>2026-06-20</Dt></ValDt>` +
+    `<NtryDtls>` +
+    `<TxDtls><RmtInf><Ustrd>factuur 26302050</Ustrd></RmtInf></TxDtls>` +
+    `<TxDtls><RmtInf><Ustrd>factuur 26302362</Ustrd></RmtInf></TxDtls>` +
+    `</NtryDtls></Ntry>`,
+  ));
+  const batchRef = batch.transactions[0]?.reference ?? "";
+  check("a batch entry keeps the FIRST sub-transaction's number", batchRef.includes("26302050"));
+  check("…and no longer drops the SECOND one", batchRef.includes("26302362"));
+  check("the entry's booked total is untouched (money-truth)", batch.transactions[0]?.amount === -2265.41);
+
+  // 3) A repeated identical line must not be doubled.
+  const dup = parseCAMT053(camt(
+    `<Ntry><Amt Ccy="EUR">10.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><ValDt><Dt>2026-06-01</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RmtInf><Ustrd>Huur</Ustrd><Ustrd>Huur</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>`,
+  ));
+  check("a repeated identical <Ustrd> is not duplicated", dup.transactions[0]?.description === "Huur");
+
+  // 4) The ordinary single-remittance entry is byte-identical to before.
+  const plain = parseCAMT053(camt(
+    `<Ntry><Amt Ccy="EUR">50.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-06-02</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RmtInf><Ustrd>factuur 26309999</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>`,
+  ));
+  check("a single-remittance entry is unchanged", plain.transactions[0]?.description === "factuur 26309999");
+  check("…with its amount and sign unchanged", plain.transactions[0]?.amount === 50);
+}
+
+console.log("\n— [BANK-PARSE-XMLENT-ORDER] each entity is decoded exactly once —");
+{
+  const camtName = (nm: string) =>
+    `<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>` +
+    `<Ntry><Amt Ccy="EUR">10.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-06-02</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RltdPties><Dbtr><Nm>${nm}</Nm></Dbtr></RltdPties>` +
+    `<RmtInf><Ustrd>test</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt></Document>`;
+  // The ordinary case is unaffected — it always worked.
+  check("a plain escaped ampersand still decodes", parseCAMT053(camtName("ING DD&amp;C")).transactions[0]?.counterpartName === "ING DD&C");
+  // The escaped-escape is the one that was wrong: "&amp;lt;" is the TEXT "&lt;", not a "<".
+  check("an escaped entity is not double-decoded into markup",
+    parseCAMT053(camtName("A&amp;lt;B")).transactions[0]?.counterpartName === "A&lt;B");
+  check("a numeric entity beside an ampersand decodes once",
+    parseCAMT053(camtName("R&amp;D&#38;Co")).transactions[0]?.counterpartName === "R&D&Co");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
