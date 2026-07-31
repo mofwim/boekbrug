@@ -85,6 +85,24 @@ type InvoiceFieldConfidence =
 
 const MAX_BYTES = 10 * 1024 * 1024 // 10 MB
 
+// [INTAKE-TIMEOUT] Deze route doet de duurste synchrone handeling van de app: één Claude-lezing van
+// een foto of PDF (verifyInvoiceFromPdf, verderop). Zonder deze regel gold de platform-default van
+// enkele seconden en werd de functie MIDDEN in die lezing gedood. Het antwoord is dan geen JSON, dus
+// `res.json().catch(() => ({}))` in de client houdt een leeg object over en de eigenaar leest
+// "Lezen mislukt — probeer dit bestand opnieuw" bij een bestand waar niets mis mee is. Opnieuw
+// proberen geeft dezelfde uitkomst, want het bestand is niet het probleem.
+//
+// Elke andere zware route hier belijdt zijn eigen plafond (email/reimport 120, closing-package 300,
+// tools/scan-invoice 30); deze — de enige waar een mens staat te wachten — deed dat niet. 120 volgt
+// email/reimport, dat exact hetzelfde werk doet: dezelfde lezer, hetzelfde soort bestand.
+//
+// Er hangt een tweede ding aan: de lezing gaat VOORAF aan elke schrijfactie (storage → documents →
+// invoices), dus een gedode functie liet meestal niets achter. Maar tussen de documents-insert en de
+// invoices-insert ligt een smal venster waarin een gedode functie wél een documents-rij achterlaat
+// zonder factuur — en geen enkele rollback loopt nog, want die staan allemaal in een `if (error)`.
+// Ruimte geven aan de lezing maakt dat venster niet kleiner, maar wel veel minder vaak bereikt.
+export const maxDuration = 120
+
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
   const {
@@ -193,14 +211,16 @@ export async function POST(req: NextRequest) {
   if (!okForAi) {
     const hash = computeContentHash(buffer)
     const { data: dupDoc } = await supabase
-      .from("documents").select("id, folder_id")
+      .from("documents").select("id, folder_id, trashed")
       .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
     // The byte-hash gate is NEVER forceable (route contract): identical bytes are
     // the same file, and an unreadable file carries no invoice to "add again", so
     // `force` has nothing to override here. Short-circuiting regardless of force
     // returns the honest duplicate message instead of letting the re-insert trip
     // the (user_id, content_hash) unique index and surface a generic 500.
-    if (dupDoc) {
+    // [DUP-TRASHED] …tenzij het duplicaat in de prullenbak ligt: dan is dit geen duplicaat maar een
+    // doodlopende weg (zie trashedDuplicateCleared). Sleutel vrij → doorlopen als vers bestand.
+    if (dupDoc && !(await trashedDuplicateCleared(supabase, user.id, dupDoc))) {
       const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
       return NextResponse.json({
         duplicate: true, destination: "document",
@@ -243,13 +263,17 @@ export async function POST(req: NextRequest) {
   const contentHash = computeContentHash(buffer)
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id, invoice_id")
+    .select("id, file_name, folder_id, invoice_id, trashed")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle()
 
-  if (existingDoc) {
+  // [DUP-TRASHED] Een botsing met een WEGGEGOOID bestand is geen duplicaat maar een doodlopende weg
+  // — de eigenaar gooide het zelf weg en kan het zonder dit nooit meer toevoegen. Sleutel vrijgeven
+  // en doorlopen; hoort er nog een levende factuur bij, dan vangt de semantische poort dat verderop
+  // af (mét canForce). Zie trashedDuplicateCleared voor het waarom van de UPDATE.
+  if (existingDoc && !(await trashedDuplicateCleared(supabase, user.id, existingDoc))) {
     const folderPath = await buildFolderBreadcrumb(supabase, user.id, existingDoc.folder_id ?? null)
     await logAuditAction({
       userId: user.id,
@@ -983,6 +1007,57 @@ export async function POST(req: NextRequest) {
   })
 }
 
+// ── [DUP-TRASHED] De byte-hash-poort en de prullenbak ────────────────────────────────────────
+//
+// Botst een upload op een bestand dat de eigenaar ZELF heeft weggegooid, dan is "dit bestand staat
+// al in: Facturen / 2026" niet waar. Het staat niet in die map — het staat in de prullenbak, en daar
+// kijkt hij niet als hij iets opnieuw probeert toe te voegen. De mapnaam in die melding werd zelfs
+// nog gewoon uit de weggegooide rij opgebouwd, dus we wezen hem naar een plek waar het bestand voor
+// hem onzichtbaar is.
+//
+// Erger dan verwarrend: dit is een doodlopende weg. De byte-hash-poort is met OPZET niet te forceren
+// (identieke bytes zijn hetzelfde bestand), dus zonder deze uitzondering kan de eigenaar dat bestand
+// nooit meer toevoegen. Weggooien is bij ons omkeerbaar — trashed=true, de rij en het bestand
+// blijven staan — dus "weg" mag nooit "voorgoed geblokkeerd" betekenen.
+//
+// Waarom een UPDATE en niet een filter op de SELECT: de UNIQUE index (user_id, content_hash) geldt
+// WHERE content_hash IS NOT NULL en kent het verschil tussen weggegooid en niet. Een weggegooide rij
+// bezet die sleutel dus nog steeds. Een `.eq("trashed", false)` in de SELECT zou de 409 alleen
+// verplaatsen naar een 23505 op de insert erna. We halen daarom de hash van díe ene rij af: de rij,
+// het bestand en de prullenbak blijven ongemoeid, alleen de claim op de dedup-sleutel vervalt.
+//
+// En de tweede poort blijft staan: hoort er nog een LEVENDE factuur bij het weggegooide bestand, dan
+// vangt de semantische duplicaatcontrole (SAFECORE Rule 2, verderop) de dubbele boeking af — met
+// canForce, zodat de eigenaar het gesprek kan winnen. Dat is precies de rolverdeling die we willen:
+// de bytes-poort blokkeert nooit onherroepelijk, de betekenis-poort mag dat wél (en is te overrulen).
+async function releaseTrashedHash(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  documentId: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("documents")
+    .update({ content_hash: null })
+    .eq("id", documentId)
+    .eq("user_id", userId)
+  // Lukt het vrijgeven niet, dan blokkeren we zoals vroeger. Dat is de oude (verwarrende) melding,
+  // maar nog altijd beter dan doorlopen naar een insert die even later op de UNIQUE index stukloopt
+  // en de eigenaar een 500 geeft. Nooit een nieuwe fout maken bij het repareren van een oude.
+  return !error
+}
+
+/** True wanneer de gevonden hash-botsing van een WEGGEGOOID bestand is én de sleutel is vrijgegeven,
+ *  zodat deze upload als vers bestand mag doorlopen. False = een levend duplicaat: blokkeren.
+ *  `trashed` kan NULL zijn op oude rijen, dus expliciet op `=== true` vergelijken — niet op falsy. */
+async function trashedDuplicateCleared(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  dup: { id: string; trashed?: boolean | null },
+): Promise<boolean> {
+  if (dup.trashed !== true) return false
+  return releaseTrashedHash(supabase, userId, dup.id)
+}
+
 // ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────
 // Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
@@ -998,8 +1073,13 @@ async function storeRawIncoming(
   const hash = computeContentHash(buffer)
   try {
     const { data: existing } = await supabase
-      .from("documents").select("id").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-    if (existing?.id) return existing.id
+      .from("documents").select("id, trashed").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
+    // [DUP-TRASHED] Een weggegooide rij teruggeven zou de boeking koppelen aan bewijs dat de eigenaar
+    // niet meer ziet staan. Sleutel vrijgeven en vers opslaan; lukt dat niet, dan loopt de insert
+    // hieronder op de UNIQUE index stuk en valt dit terug op "geen document" — dit is en blijft
+    // best-effort opslag, de boeking zelf is de money-truth.
+    if (existing?.id && existing.trashed !== true) return existing.id
+    if (existing?.id) await releaseTrashedHash(supabase, userId, existing.id)
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
     const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
     const { error: upErr } = await supabase.storage
@@ -1049,9 +1129,11 @@ async function handleUblInvoice(
   // camera path's byte-hash gate (route contract lines 92-96). "toch toevoegen" only overrides the
   // SEMANTIC gate below — the old `&& !force` here let a re-upload of the identical XML double-book.
   const { data: dupDoc } = await supabase
-    .from("documents").select("id, folder_id, invoice_id")
+    .from("documents").select("id, folder_id, invoice_id, trashed")
     .eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-  if (dupDoc) {
+  // [DUP-TRASHED] Zelfde uitzondering als de camera-route: een weggegooide e-factuur mag de sleutel
+  // niet levenslang bezet houden, anders kan de eigenaar zijn eigen XML nooit opnieuw importeren.
+  if (dupDoc && !(await trashedDuplicateCleared(supabase, userId, dupDoc))) {
     return NextResponse.json({
       duplicate: true, destination: dupDoc.invoice_id ? "invoice" : "document",
       error: "Deze e-factuur is al geïmporteerd.",

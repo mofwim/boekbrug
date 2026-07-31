@@ -251,14 +251,23 @@ export default function UploadClient() {
     void kick()
   }, [kick, patch])
 
+  // [QUEUE-PURITY] De wachtrij wordt hier gevuld BUITEN de state-updater. Dit stond vroeger binnen
+  // setItems(prev => …), en dat is precies de plek waar het niet mag: React mag zo'n updater meer dan
+  // eens aanroepen voor dezelfde klik — StrictMode doet het in ontwikkeling standaard, en bij het
+  // opnieuw baseren van een onderbroken update kan het in productie ook. Elke extra aanroep duwde
+  // dezelfde bestanden nóg een keer in pending.current, dus het bestand ging twee keer omhoog en de
+  // tweede keer kwam terug als "dit bestand staat al in je bestanden" — op precies het bestand dat de
+  // eigenaar aan het herstellen was. Een updater hoort puur te zijn; het duwen is een neveneffect.
   const retryAllFailed = useCallback(() => {
-    setItems((prev) => {
-      const failed = prev.filter((i) => i.status === 'error')
-      for (const f of failed) pending.current.push({ ...f, status: 'queued', message: undefined, rateLimited: false })
-      return prev.map((i) => (i.status === 'error' ? { ...i, status: 'queued' as Status, message: 'Opnieuw in wachtrij…', rateLimited: false } : i))
-    })
+    const failed = items.filter((i) => i.status === 'error')
+    if (failed.length === 0) return
+    for (const f of failed) pending.current.push({ ...f, status: 'queued', message: undefined, rateLimited: false })
+    // Dezelfde lijst voor de rijen die "in wachtrij" gaan heten als voor de rijen die er echt in
+    // liggen — anders kan de melding op het scherm en de inhoud van de wachtrij uit elkaar lopen.
+    const queued = new Set(failed.map((f) => f.id))
+    setItems((prev) => prev.map((i) => (queued.has(i.id) ? { ...i, status: 'queued' as Status, message: 'Opnieuw in wachtrij…', rateLimited: false } : i)))
     void kick()
-  }, [kick])
+  }, [items, kick])
 
   // "Toch toevoegen" — re-submit an uncertain semantic duplicate with force=true as a NEW attempt.
   const forceAdd = useCallback((item: Item) => {
