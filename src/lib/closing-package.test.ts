@@ -201,6 +201,7 @@ test("[TRIANGLE] card reconciliation is written to the ZIP and a gross mismatch 
     totalCommission: 15,
     grossMismatchDays: 1,
     incompleteDays: 0,
+    commissionIssueDays: 0,
     eftGrossByDay: new Map([["2026-03-01", 1000], ["2026-03-02", 750]]),
   };
   const { zipBytes, summary } = await assembleClosingPackageZip({ ...emptyAssemble, cardReconciliation });

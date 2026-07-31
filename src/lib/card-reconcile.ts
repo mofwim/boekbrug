@@ -133,6 +133,13 @@ export interface CardPeriodResult {
   totalCommission: number;      // Σ booked commissions (real cost for the period)
   grossMismatchDays: number;    // days where Leg A failed (real discrepancies)
   incompleteDays: number;       // days where the payout/commission isn't matched yet
+  // [EXCEPTION-COUNT] Days whose Leg B is suspect: the payout exceeds the gross card sales
+  // (commission_negative → the payout belongs (partly) to another day) or the commission is
+  // implausibly large. These book NO commission (see reconcileCardPeriod), so the period's cost is
+  // knowingly incomplete — and they were previously counted in NEITHER exception total, which made
+  // them invisible to every surface except the accountant CSV. A day carries exactly one status, so
+  // the three counters stay mutually exclusive and may be summed without double-counting.
+  commissionIssueDays: number;
 }
 
 // [TRIANGLE] Known card-acquirer / PSP vendor names. An incoming invoice from one of
@@ -171,6 +178,7 @@ export function reconcileCardPeriod(
   let totalCommission = 0;
   let grossMismatchDays = 0;
   let incompleteDays = 0;
+  let commissionIssueDays = 0;
   for (const d of days) {
     if (isInWindow && !isInWindow(d.date)) continue; // buffer anchor — reconciled, but not this period's figure
 
@@ -184,6 +192,9 @@ export function reconcileCardPeriod(
     if (!moneyBreak && d.commission != null && d.commission > 0) totalCommission = r2(totalCommission + d.commission);
     if (d.status === "gross_mismatch") grossMismatchDays += 1;
     if (d.status === "incomplete") incompleteDays += 1;
+    // [EXCEPTION-COUNT] A commission_issue day books no commission either — count it, or a
+    // mis-keyed payout silently costs the owner a deductible fee with nothing on screen to say so.
+    if (d.status === "commission_issue") commissionIssueDays += 1;
   }
-  return { days, totalCommission, grossMismatchDays, incompleteDays };
+  return { days, totalCommission, grossMismatchDays, incompleteDays, commissionIssueDays };
 }

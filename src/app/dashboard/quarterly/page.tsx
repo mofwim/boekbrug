@@ -1,6 +1,7 @@
 // app/dashboard/quarterly/page.tsx
 // Quarterly overview page (BOEK-013)
 
+import { Suspense } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
@@ -32,7 +33,13 @@ export default async function QuarterlyPage() {
       <p className="text-muted-foreground text-sm mb-6">
         BTW-aangifte, totalen en export per kwartaal
       </p>
-      <QuarterlyOverview isAccountant={isAccountant} role={role} />
+      {/* [QUARTER-DEEPLINK] QuarterlyOverview reads ?year&quarter so a link from another screen
+          (e.g. waarheid's "Naar de BTW-aangifte van deze periode") opens the period it names.
+          useSearchParams opts a client component into request-time rendering, so it must sit under
+          a Suspense boundary — without one the whole route is forced dynamic and the build warns. */}
+      <Suspense fallback={null}>
+        <QuarterlyOverview isAccountant={isAccountant} role={role} />
+      </Suspense>
     </div>
   );
 }

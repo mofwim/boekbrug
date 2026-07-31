@@ -55,5 +55,56 @@ console.log("— exactly at the threshold is NOT a suppletie (rule is 'more than
   check("€1.000,01 → suppletie", over.needsSuppletie === true);
 }
 
+// [DIVERGENCE-SPLIT] `changed` is the OR of five deltas, so it is true in cases where the BTW did
+// not move at all. The waarheid banner used to read `changed` and then narrate the BTW regardless,
+// which produced "de BTW is met € 0,00 gestegen (je moet meer betalen)". btwChanged /
+// resultaatChanged exist so a caller can tell the three cases apart; these lock that behaviour in.
+console.log("— a late 0%-BTW cost invoice: the result moves, the BTW does not —");
+{
+  // Verzekering/OV: €300 cost, no reclaimable BTW. kosten +300, every BTW figure unchanged.
+  const d = computeFilingDivergence(base, { ...base, kosten: base.kosten + 300 });
+  check("flagged as changed", d.changed === true);
+  check("btwChanged is FALSE — nothing to correct at the Belastingdienst", d.btwChanged === false);
+  check("btwSaldoDelta is exactly 0", d.btwSaldoDelta === 0);
+  check("resultaatChanged is TRUE", d.resultaatChanged === true);
+  check("resultaatDelta = −300 (more cost, less profit)", d.resultaatDelta === -300);
+  check("no suppletie for a move that never touched the BTW", d.needsSuppletie === false);
+}
+
+console.log("— verschuldigd and voorbelasting move equally: saldo and result both unchanged —");
+{
+  // A €1.000 ex purchase re-booked as a €1.000 ex sale correction: both BTW legs +210, saldo flat.
+  const current = {
+    ...base,
+    btwVerschuldigd: base.btwVerschuldigd + 210,
+    btwVoorbelasting: base.btwVoorbelasting + 210,
+  };
+  const d = computeFilingDivergence(base, current);
+  check("components moved → changed", d.changed === true);
+  check("btwChanged is FALSE (saldo is flat)", d.btwChanged === false);
+  check("resultaatChanged is FALSE (omzet/kosten untouched)", d.resultaatChanged === false);
+}
+
+console.log("— a real BTW move still reports both stories —");
+{
+  // A €2.000 ex sale booked late: omzet +2000, verschuldigd +420, saldo +420.
+  const current = {
+    ...base, omzet: base.omzet + 2000,
+    btwVerschuldigd: base.btwVerschuldigd + 420, btwSaldo: base.btwSaldo + 420,
+  };
+  const d = computeFilingDivergence(base, current);
+  check("btwChanged is TRUE", d.btwChanged === true);
+  check("btwSaldoDelta = +420 (you owe more)", d.btwSaldoDelta === 420);
+  check("resultaatChanged is TRUE", d.resultaatChanged === true);
+  check("resultaatDelta = +2000", d.resultaatDelta === 2000);
+}
+
+console.log("— sub-cent noise never trips either flag —");
+{
+  const d = computeFilingDivergence(base, { ...base, omzet: base.omzet + 0.004, btwSaldo: base.btwSaldo + 0.004 });
+  check("btwChanged false on noise", d.btwChanged === false);
+  check("resultaatChanged false on noise", d.resultaatChanged === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

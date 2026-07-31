@@ -1,11 +1,17 @@
 "use client";
 
 // [TRUTH-LENS] The living financial truth + a unified time lens. ONE number set, re-sliced by the
-// lens (Dit kwartaal / Vorig / Dit jaar / Alles / Aangepast). Every figure comes from /api/truth,
-// the SAME reconcile pipeline the quarterly aangifte uses — the dashboard and the aangifte can
-// never disagree. A window that includes today is "living" (loopt nog), not a final filed period.
+// lens (Dit kwartaal / Vorig kwartaal / Dit jaar / Alles). Every figure comes from /api/truth,
+// which runs computeResultForRange — the SAME reconcile engine /api/result feeds the quarter view
+// from, over a different window. The lens windows nest (quarter ⊆ jaar ⊆ alles), so the periods can
+// never contradict each other. A window that runs past today is "living" (loopt nog), not final.
+//
+// Note on "the same figure as the aangifte": the engine is shared, but the Belastingdienst rubrieken
+// are rounded to whole euros and 5a is the sum of the ROUNDED rubrieken (aangifte.ts), so the
+// concept-aangifte total can sit a euro or two off the exact cents shown here. That is the
+// aangifte's rounding, not a second truth — see the footnote rendered under the BTW card.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FONT } from "@/lib/design/tokens";
 import { useDialog } from "@/components/ui/Dialog";
@@ -30,16 +36,29 @@ interface TruthResult {
   // but its BTW is NOT in btwSaldo. On the screen literally titled "je financiële waarheid" this
   // must be surfaced, exactly like Resultaat/Brug do — else "BTW te betalen" reads silently too low.
   cashOmzetZonderBtw?: number;
+  // Of that total, the part from BANK revenue or an un-split till day — its rate comes from the
+  // Z-report (Dagomzet), not from Kas. Lets the fix guidance point at ONE screen instead of both.
+  omzetZonderBtwNonCash?: number;
 }
 interface Divergence {
   changed: boolean;
   omzetDelta: number; kostenDelta: number;
   btwVerschuldigdDelta: number; btwVoorbelastingDelta: number; btwSaldoDelta: number;
   needsSuppletie: boolean;
+  // [DIVERGENCE-SPLIT] `changed` covers all five deltas; these two say WHICH story to tell, so the
+  // banner can never announce a BTW move of € 0,00. See btw-filing.ts.
+  btwChanged: boolean; resultaatChanged: boolean; resultaatDelta: number;
 }
 interface FiledInfo {
   filedAt: string;
-  figures: TruthResult;
+  // The frozen snapshot, exactly the columns btw_filings stores. This was typed as TruthResult,
+  // which promises a `resultaat` the table has no column for and the API never sends — a type that
+  // would have let a future reader render `figures.resultaat` as "undefined". The profit story
+  // lives on the divergence (resultaatDelta), which is derived from omzet/kosten.
+  figures: {
+    omzet: number; kosten: number;
+    btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number;
+  };
   divergence: Divergence;
 }
 interface TruthResponse {
@@ -47,9 +66,28 @@ interface TruthResponse {
   lens: Lens; label: string; quarter: number | null; year: number | null;
   isLiveWindow: boolean;
   filed: FiledInfo | null;
+  // [FILING-WINDOW] null unless the lens is a single quarter; false while that quarter still runs.
+  quarterEnded: boolean | null;
   result: TruthResult;
   datelessVerifiedCount: number;
-  reconciliation: { grossMismatchDays: number; incompleteDays: number };
+  reconciliation: {
+    grossMismatchDays: number;
+    incompleteDays: number;
+    // Days whose card payout/commission is suspect — they book no commission, so the period's
+    // costs are knowingly incomplete. Mutually exclusive with the two above; safe to sum.
+    commissionIssueDays: number;
+    // FALSE → the PIN-grootboek cross-check could not run, so "no mismatches" is weaker than it
+    // looks. Never present an unrun check as a clean one.
+    pinLedgerAvailable: boolean;
+  };
+  // [HONESTY-PARITY] Why a figure may be incomplete — at parity with /api/result + /api/readiness.
+  scheme: "factuur" | "kas";
+  undatedPaidCount: number;
+  estimatedPortionCount: number;
+  unconfirmedIncomingCount: number;
+  // [SCHEME-SPAN] The window straddles the owner's factuur→kas switch.
+  spansSchemeChange: boolean;
+  schemeSince: string | null;
 }
 
 const LENSES: { key: Lens; label: string }[] = [
@@ -68,20 +106,47 @@ export default function WaarheidClient() {
   const [error, setError] = useState(false);
   const [filing, setFiling] = useState(false);
 
+  // [LENS-RACE] Every lens re-runs the whole reconcile pipeline server-side, and the lenses are not
+  // equally expensive — "Alles" walks years of invoices, bank lines, kassadagen and card payouts
+  // while "Dit kwartaal" walks three months. Tapping Alles and then Dit kwartaal therefore lets the
+  // SLOW response land LAST and overwrite the fast one, leaving the chip on "Dit kwartaal" while the
+  // heading, the amounts and the file button all belong to "Alles". Wrong period, right-looking
+  // screen, no error — the worst failure mode this page has.
+  //
+  // Every request now carries a generation number: only the newest may write state, and starting a
+  // new one ABORTS the previous fetch so the browser and the server stop working on an answer
+  // nobody will read. Both live in refs — they must survive re-renders and must never cause one.
+  const reqGen = useRef(0);
+  const inFlight = useRef<AbortController | null>(null);
   const load = useCallback(async (l: Lens) => {
+    const gen = ++reqGen.current;
+    const isStale = () => gen !== reqGen.current;
+    inFlight.current?.abort();
+    const ctrl = new AbortController();
+    inFlight.current = ctrl;
     setLoading(true); setError(false);
     try {
-      const res = await fetch(`/api/truth?lens=${l}`);
+      const res = await fetch(`/api/truth?lens=${l}`, { signal: ctrl.signal });
+      // [SESSION] An expired session answers 401. Showing "kon je waarheid niet laden" with a retry
+      // that can only 401 again strands the owner; send them to the login they actually need.
+      if (res.status === 401) { window.location.href = "/login"; return; }
       const json = await res.json();
+      if (isStale()) return;
       if (!res.ok || !json.ok) { setError(true); setData(null); }
       else setData(json as TruthResponse);
     } catch {
+      // An abort lands here too — a superseded request must never paint the error state.
+      if (isStale()) return;
       setError(true); setData(null);
     } finally {
-      setLoading(false);
+      // …nor clear the spinner the newer request is still showing.
+      if (!isStale()) setLoading(false);
     }
   }, []);
 
+  // The async wrapper keeps `load`'s opening setState out of the effect BODY (react-hooks/
+  // set-state-in-effect) while running on the same tick as before — the same shape the quarterly
+  // screen uses. Ordering is handled by the generation counter above, not by this wrapper.
   useEffect(() => { void (async () => { await load(lens); })(); }, [lens, load]);
 
   // [TRUTH-FILED] Mark this quarter as filed (freeze the snapshot) / un-file it (unlock).
@@ -98,6 +163,12 @@ export default function WaarheidClient() {
         });
         if (res.status === 409) {
           const j = await res.json().catch(() => ({}));
+          // [FILING-WINDOW] A quarter that has not ended yet is NOT the owner's judgement call —
+          // there is no aangifte to have filed. Say so and stop; do not offer to override.
+          if (j?.error === "quarter_not_ended") {
+            toast(j?.reason ?? "Dit kwartaal loopt nog — je kunt het pas na afloop als ingediend markeren.", { tone: "error" });
+            return;
+          }
           // [FILING-GATE] This is the most consequential confirmation in the
           // app — the owner is declaring a quarter finished while the server
           // says it is not. It deserves the app's own dialog, with the server's
@@ -118,7 +189,11 @@ export default function WaarheidClient() {
           toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
         }
       } else {
-        await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
+        // [UNFILE-FEEDBACK] The response used to be discarded, so a failed unlock looked exactly
+        // like a successful one: the reload simply re-rendered the still-filed quarter and the
+        // owner was left to conclude the button does nothing. Mirror the file path — say it failed.
+        const res = await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
+        if (!res.ok) { toast("Indiening ongedaan maken is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
       }
       await load(lens);
     } finally {
@@ -193,12 +268,37 @@ export default function WaarheidClient() {
               <div style={{ fontSize: 13.5, fontWeight: 700, color: div.needsSuppletie ? "#a50e0e" : M.warnFg, marginBottom: 4 }}>
                 {div.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd"}
               </div>
+              {/* [DIVERGENCE-SPLIT] Two independent stories, each told only when it is true.
+                  The banner used to fire on `changed` (ANY of five deltas) and then narrate the BTW
+                  regardless — so a late 0%-BTW cost invoice, or a correction that moved verschuldigd
+                  and voorbelasting equally, produced "de BTW is met € 0,00 gestegen (je moet meer
+                  betalen)". Nonsense on the one screen that has to be believed. */}
               <div style={{ fontSize: 12.5, color: div.needsSuppletie ? "#7a1c1c" : M.warnFg, lineHeight: 1.5 }}>
-                Sinds je indiening is de BTW met <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}
-                {" "}(je {div.btwSaldoDelta >= 0 ? "moet meer betalen" : "krijgt meer terug"}).{" "}
-                {div.needsSuppletie
-                  ? "Dat is meer dan €1.000 — dien een suppletie in bij de Belastingdienst."
-                  : "Onder €1.000 mag je dit verwerken in je volgende aangifte."}
+                {div.btwChanged && (
+                  <>
+                    Sinds je indiening is de BTW met <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta > 0 ? "gestegen" : "gedaald"}
+                    {" "}(je {div.btwSaldoDelta > 0 ? "moet meer betalen" : "krijgt meer terug"}).{" "}
+                    {div.needsSuppletie
+                      ? "Dat is meer dan €1.000 — dien een suppletie in bij de Belastingdienst."
+                      : "Onder €1.000 mag je dit verwerken in je volgende aangifte."}
+                  </>
+                )}
+                {/* The profit moved without the BTW moving: nothing to correct at the Belastingdienst
+                    now, but the figure that ends up in the inkomstenbelasting is no longer the one
+                    that was filed. Previously computed, returned — and never shown. */}
+                {div.resultaatChanged && (
+                  <>
+                    {div.btwChanged && <br />}
+                    Je resultaat over dit kwartaal is met <strong>{eur.format(Math.abs(div.resultaatDelta))}</strong>{" "}
+                    {div.resultaatDelta > 0 ? "gestegen" : "gedaald"}
+                    {div.btwChanged ? "." : " terwijl de BTW gelijk bleef — er is dus niets te corrigeren bij de Belastingdienst, maar je winst voor de inkomstenbelasting is veranderd."}
+                  </>
+                )}
+                {/* Something moved that is neither: omzet and kosten shifted by the same amount, or
+                    only a BTW component did. Never claim a euro figure we are not showing. */}
+                {!div.btwChanged && !div.resultaatChanged && (
+                  <>De cijfers van dit kwartaal zijn veranderd sinds je indiening, maar het BTW-saldo en je resultaat zijn gelijk gebleven. Controleer de onderliggende posten.</>
+                )}
               </div>
             </div>
           )}
@@ -237,15 +337,49 @@ export default function WaarheidClient() {
             )}
           </div>
 
-          {/* Honesty notes — never a silent gap */}
+          {/* Honesty notes — never a silent gap. Every reason these figures could be too low gets a
+              line here, and the set is kept at parity with what the filing gate blocks on: an owner
+              must never meet a 409 about a problem this screen chose not to mention. */}
           <div style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.6, padding: "0 4px" }}>
+            {/* [SCHEME] This line was hardcoded to "op basis van factuurdatum" for everyone — the
+                literal opposite of the truth for an owner on the kasstelsel, whose BTW is computed
+                on the PAID date (financial-result.ts). A wrong sentence about which date drives the
+                figures is the one thing this screen cannot afford. */}
             <p style={{ margin: "0 0 6px" }}>
-              Op basis van factuurdatum (niet betaaldatum) — dit is je fiscale resultaat, niet je banksaldo.
+              {data.scheme === "kas"
+                ? "Kasstelsel — op basis van betaaldatum (niet factuurdatum): een onbetaalde factuur telt pas mee zodra hij betaald is."
+                : "Op basis van factuurdatum (niet betaaldatum) — dit is je fiscale resultaat, niet je banksaldo."}
             </p>
+            {/* [SCHEME-SPAN] A window that crosses the factuur→kas switch has no single correct
+                basis; say which one was used rather than let two lenses disagree in silence. */}
+            {data.spansSchemeChange && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ Deze periode loopt door je overstap naar het kasstelsel heen{data.schemeSince ? ` (per ${data.schemeSince})` : ""}.
+                De cijfers hierboven zijn volledig op {data.scheme === "kas" ? "kasstelsel" : "factuurstelsel"} berekend.
+                Bekijk per kwartaal voor de cijfers zoals je ze aangeeft.
+              </p>
+            )}
             {(r.cashOmzetZonderBtw ?? 0) > 0 && (
               <p style={{ margin: "0 0 6px", color: M.warnFg }}>
                 ⚠️ {eur.format(r.cashOmzetZonderBtw ?? 0)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
-                niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet.
+                niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven.{" "}
+                {/* [ZONDER-TARIEF-SOURCE] The engine knows whether this came from bank/till revenue
+                    (needs the Z-report split → Dagomzet) or from plain cash (rated at Kas). It was
+                    already computed as omzetZonderBtwNonCash and the copy still guessed at both. */}
+                {(r.omzetZonderBtwNonCash ?? 0) <= 0
+                  ? "Ken het tarief toe bij Kas."
+                  : (r.omzetZonderBtwNonCash ?? 0) >= (r.cashOmzetZonderBtw ?? 0)
+                    ? "Ken het tarief toe bij Dagomzet."
+                    : "Ken het tarief toe bij Kas en Dagomzet."}
+              </p>
+            )}
+            {/* [GATE-PARITY] The filing gate blocks on this and the screen never mentioned it, so
+                the first time an owner heard about unconfirmed purchase invoices was the 409 dialog
+                after tapping "markeer als ingediend". */}
+            {data.unconfirmedIncomingCount > 0 && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ {data.unconfirmedIncomingCount} inkoopfactu{data.unconfirmedIncomingCount === 1 ? "ur is" : "ren zijn"} nog niet
+                gecontroleerd — {data.unconfirmedIncomingCount === 1 ? "het bedrag en de BTW staan" : "hun bedragen en BTW staan"} nog niet in de cijfers hierboven.
               </p>
             )}
             {data.datelessVerifiedCount > 0 && (
@@ -253,9 +387,33 @@ export default function WaarheidClient() {
                 ⚠️ {data.datelessVerifiedCount} bevestigde factu{data.datelessVerifiedCount === 1 ? "ur telt" : "ren tellen"} nog niet mee — er ontbreekt een datum.
               </p>
             )}
-            {(data.reconciliation.grossMismatchDays > 0 || data.reconciliation.incompleteDays > 0) && (
-              <p style={{ margin: 0, color: M.warnFg }}>
-                ⚠️ {data.reconciliation.grossMismatchDays + data.reconciliation.incompleteDays} kassadag(en) nog niet volledig gereconcilieerd — controleer vóór de aangifte.
+            {/* [KASSTELSEL] The cash-basis equivalent of a dateless invoice: money that demonstrably
+                moved but cannot be placed in a period. /api/aangifte and /api/readiness have always
+                warned about it; this screen never received the number. */}
+            {data.undatedPaidCount > 0 && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ {data.undatedPaidCount} betaalde factu{data.undatedPaidCount === 1 ? "ur mist" : "ren missen"} een betaaldatum —
+                die BTW kan nog niet in de juiste periode worden geplaatst, dus de cijfers hierboven zijn mogelijk te laag.
+              </p>
+            )}
+            {data.estimatedPortionCount > 0 && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ Bij {data.estimatedPortionCount} betaling{data.estimatedPortionCount === 1 ? "" : "en"} is de betaaldatum een schatting
+                (handmatig op betaald gezet) — controleer of de periode klopt.
+              </p>
+            )}
+            {/* [EXCEPTION-COUNT] commissionIssueDays is new here: a day whose bank payout does not
+                fit its card takings books NO acquirer commission, so the costs are knowingly
+                incomplete. It appeared in the accountant's CSV and nowhere else. */}
+            {(data.reconciliation.grossMismatchDays + data.reconciliation.incompleteDays + data.reconciliation.commissionIssueDays) > 0 && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ {data.reconciliation.grossMismatchDays + data.reconciliation.incompleteDays + data.reconciliation.commissionIssueDays} kassadag(en) nog niet volledig gereconcilieerd — controleer vóór de aangifte.
+              </p>
+            )}
+            {/* [LEDGER-READ] Never present a check that did not run as a check that passed. */}
+            {data.reconciliation.pinLedgerAvailable === false && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ De controle tegen je PIN-grootboek kon niet worden uitgevoerd — eventuele verschillen tussen kassa en grootboek zijn hierboven dus niet meegewogen.
               </p>
             )}
           </div>
@@ -279,17 +437,30 @@ export default function WaarheidClient() {
                   </button>
                 </div>
               ) : (
+                /* [FILING-WINDOW] The button used to be offered for the CURRENT quarter too, and
+                   the server happily froze a snapshot halfway through it. From that moment every
+                   further sale reads as a divergence against a period that was never filed, and
+                   past €1.000 the screen starts demanding a suppletie for an aangifte that does not
+                   exist. A quarter can only have been filed once it is over — the server enforces
+                   this (409 quarter_not_ended); here we simply do not offer it. */
                 <button
                   onClick={() => setFiled(true)}
-                  disabled={filing}
-                  style={{ width: "100%", padding: "13px 0", borderRadius: 12, background: M.primary, border: "none", color: "#fff", fontWeight: 700, fontSize: 14, cursor: filing ? "default" : "pointer" }}
+                  disabled={filing || data.quarterEnded === false}
+                  style={{
+                    width: "100%", padding: "13px 0", borderRadius: 12,
+                    background: data.quarterEnded === false ? "#f1f3f4" : M.primary,
+                    border: "none", color: data.quarterEnded === false ? "#9aa0a6" : "#fff",
+                    fontWeight: 700, fontSize: 14,
+                    cursor: filing || data.quarterEnded === false ? "default" : "pointer",
+                  }}
                 >
                   {filing ? "Bezig…" : "Markeer als ingediend bij de Belastingdienst"}
                 </button>
               )}
               <p style={{ fontSize: 11.5, color: M.muted, margin: "8px 2px 0", lineHeight: 1.5 }}>
-                Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan
-                zien we het verschil en zeggen we of een suppletie nodig is.
+                {!data.filed && data.quarterEnded === false
+                  ? "Dit kwartaal loopt nog. Zodra het is afgelopen kun je het hier als ingediend markeren en leggen we de cijfers vast."
+                  : "Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan zien we het verschil en zeggen we of een suppletie nodig is."}
               </p>
             </div>
           )}
