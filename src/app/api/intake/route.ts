@@ -59,7 +59,7 @@ import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
-import { detectMultipleInvoices, cannotVerifySingleInvoice } from "@/lib/multi-invoice-pdf"
+import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -927,12 +927,11 @@ export async function POST(req: NextRequest) {
     ? detectMultipleInvoices(pdfText)
     : null
   if (multiInvoice) {
-    fieldConfidence._safecore = {
-      ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
-      multiple_invoices: true,
-      multiple_invoices_reason: multiInvoice.reason,
-      multiple_invoices_numbers: multiInvoice.numbers,
-    }
+    // Via de merger in multi-invoice-pdf.ts, niet met een spread hier: die module bezit de sleutels
+    // waaruit dit signaal bestaat, én zij haalt ze weer weg als de eigenaar "nee, dit is één
+    // factuur" antwoordt. Twee lijsten die uit elkaar lopen is precies wat dat bestand wil
+    // voorkomen — dezelfde afspraak als possible-duplicate-collect.ts.
+    fieldConfidence._safecore = (mergeMultipleInvoices(fieldConfidence, multiInvoice) as Record<string, unknown>)._safecore
   }
 
   // [ONE-INVOICE-UNVERIFIED] …en de keerzijde: KON die controle hierboven wel draaien?
@@ -949,12 +948,8 @@ export async function POST(req: NextRequest) {
       ? cannotVerifySingleInvoice({ pages: pdfPages, hasTextLayer: !!pdfText })
       : null
   if (oneInvoiceUnverified) {
-    fieldConfidence._safecore = {
-      ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
-      one_invoice_unverified: true,
-      one_invoice_unverified_reason: oneInvoiceUnverified.reason,
-      one_invoice_unverified_pages: pdfPages,
-    }
+    // Zelfde reden als hierboven: de sleutels horen bij de module die ze ook weer wist.
+    fieldConfidence._safecore = (mergeUnverifiedSingle(fieldConfidence, oneInvoiceUnverified, pdfPages) as Record<string, unknown>)._safecore
   }
 
   // [IBAN-WISSEL] Kennen we deze leverancier al onder een ander rekeningnummer? Ook hier VÓÓR de

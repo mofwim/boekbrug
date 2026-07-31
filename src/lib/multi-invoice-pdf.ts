@@ -151,3 +151,102 @@ export function cannotVerifySingleInvoice(input: {
       `niet nagaan of het één factuur is of een stapel. Controleer of alle facturen erin zijn geboekt`,
   };
 }
+
+// ─── De signalen opslaan en weer weghalen ────────────────────────────────────────────────────
+//
+// Schrijven en wissen staan hier NAAST elkaar, met één lijst sleutels per signaal ertussen. Dat is
+// dezelfde afspraak als in possible-duplicate-collect.ts, en om dezelfde reden: dit bestand is de
+// enige plek die weet uit welke velden deze signalen bestaan, en een tweede handgeschreven lijst
+// (in de route, bijvoorbeeld) is een fout die op de volgende sleutel wacht.
+
+/** De sleutels van "we ZAGEN meerdere facturen". */
+const MULTI_INVOICE_KEYS = [
+  "multiple_invoices",
+  "multiple_invoices_reason",
+  "multiple_invoices_numbers",
+] as const;
+
+/** De sleutels van "we KONDEN het niet nagaan" — dezelfde vraag, andere grond. */
+const UNVERIFIED_SINGLE_KEYS = [
+  "one_invoice_unverified",
+  "one_invoice_unverified_reason",
+  "one_invoice_unverified_pages",
+] as const;
+
+/** Onveranderlijk een _safecore-blok bijwerken; geeft altijd een nieuw object terug. */
+function withSafecore(fieldConfidence: unknown, patch: Record<string, unknown>): Record<string, unknown> {
+  const fc =
+    fieldConfidence && typeof fieldConfidence === "object" && !Array.isArray(fieldConfidence)
+      ? { ...(fieldConfidence as Record<string, unknown>) }
+      : {};
+  const prior = fc._safecore;
+  const safecore =
+    prior && typeof prior === "object" && !Array.isArray(prior)
+      ? { ...(prior as Record<string, unknown>) }
+      : {};
+  fc._safecore = { ...safecore, ...patch };
+  return fc;
+}
+
+/**
+ * Zet "dit bestand bevat meerdere facturen" in field_confidence._safecore.
+ *
+ * classifyImportHealth leest deze sleutels → needs-review, dus nooit automatisch boeken, en de
+ * controlerij toont de reden. Geeft de invoer ongewijzigd terug als er niets te vlaggen valt.
+ */
+export function mergeMultipleInvoices(fieldConfidence: unknown, signal: MultiInvoiceSignal | null): unknown {
+  if (!signal) return fieldConfidence ?? null;
+  return withSafecore(fieldConfidence, {
+    multiple_invoices: true,
+    multiple_invoices_reason: signal.reason,
+    multiple_invoices_numbers: signal.numbers,
+  });
+}
+
+/**
+ * Zet "we konden niet nagaan of dit één factuur is" in field_confidence._safecore.
+ *
+ * De keerzijde van hierboven, en het bewijs dat de twee bij elkaar horen: import-health zet ze op
+ * DEZELFDE vlag, omdat de eigenaar in beide gevallen dezelfde vraag beantwoordt.
+ */
+export function mergeUnverifiedSingle(
+  fieldConfidence: unknown,
+  signal: UnverifiedSingleInvoice | null,
+  pages: number,
+): unknown {
+  if (!signal) return fieldConfidence ?? null;
+  return withSafecore(fieldConfidence, {
+    one_invoice_unverified: true,
+    one_invoice_unverified_reason: signal.reason,
+    one_invoice_unverified_pages: pages,
+  });
+}
+
+/**
+ * De omgekeerde weg: haal BEIDE signalen weg, en niets anders.
+ *
+ * Eén functie voor allebei, omdat de eigenaar één vraag beantwoordt — "nee, dit is één factuur" —
+ * en import-health die twee gronden al op dezelfde vlag zet. Zou dit er maar één wissen, dan bleef
+ * de badge staan na een antwoord dat hem hoorde weg te halen, en dat is precies hoe een
+ * waarschuwing ruis wordt.
+ *
+ * Wat blijft staan: de rekenkundige uitspraak, een gewisseld IBAN, een mogelijk duplicaat. Geen
+ * daarvan is beantwoord door een antwoord over dít, en stilletjes een andere waarschuwing
+ * meenemen zou een echte waarschuwing weghalen van een factuur waar niemand meer naar kijkt.
+ *
+ * Geeft `null` terug wanneer er niets te wissen viel, zodat de aanroeper "gewist" kan onderscheiden
+ * van "er stond niets" in plaats van een succes te melden dat er niet was.
+ */
+export function clearSingleInvoiceDoubt(fieldConfidence: unknown): Record<string, unknown> | null {
+  if (!fieldConfidence || typeof fieldConfidence !== "object" || Array.isArray(fieldConfidence)) {
+    return null;
+  }
+  const fc = fieldConfidence as Record<string, unknown>;
+  const prior = fc._safecore;
+  if (!prior || typeof prior !== "object" || Array.isArray(prior)) return null;
+  const safecore = { ...(prior as Record<string, unknown>) };
+  const flagged = safecore.multiple_invoices === true || safecore.one_invoice_unverified === true;
+  if (!flagged) return null; // niets gevlagd → geen nep-succes
+  for (const k of [...MULTI_INVOICE_KEYS, ...UNVERIFIED_SINGLE_KEYS]) delete safecore[k];
+  return { ...fc, _safecore: safecore };
+}
