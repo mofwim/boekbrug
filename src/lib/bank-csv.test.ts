@@ -162,5 +162,39 @@ console.log("\n— normalized export (bankafschrift naar Excel) —");
   check("CSV header line present", csv.includes("Datum;Bedrag (EUR)"));
 }
 
+console.log("\n— [BANK-CSV] bunq: 'Account' is the OWN rekening, 'Counterparty' the other side —");
+{
+  const bunq = [
+    "Date;Interest Date;Amount;Account;Counterparty;Name;Description",
+    "2026-06-20;2026-06-20;150,00;NL77BUNQ0011223344;NL99RABO0055667788;Klant Jansen;factuur 26302050",
+    "2026-06-21;2026-06-21;-42,50;NL77BUNQ0011223344;NL13INGB0000000001;Leverancier X;bestelling 8891",
+  ].join("\n");
+  const r = parseBankCsv(bunq);
+  check("bunq: two rows parse", r.transactions.length === 2);
+  check("bunq: counterpartIban is the COUNTERPARTY's IBAN", r.transactions[0]?.counterpartIban === "NL99RABO0055667788");
+  check("bunq: …never the own account", r.transactions[0]?.counterpartIban !== "NL77BUNQ0011223344");
+  check("bunq: the own account lands in accountIban", r.accountIban === "NL77BUNQ0011223344");
+  check("bunq: the signed amount keeps its sign", r.transactions[1]?.amount === -42.5);
+  check("bunq: the name column still maps", r.transactions[0]?.counterpartName === "Klant Jansen");
+}
+
+console.log("\n— [CSV-PREAMBLE] Knab: banner line + CreditDebet sign column —");
+{
+  const knab = [
+    "KNAB EXPORT;;;",
+    "Rekeningnummer;Transactiedatum;Valutacode;CreditDebet;Bedrag;Tegenrekeningnummer;Tegenrekeninghouder;Omschrijving",
+    "NL12KNAB0123456789;20-06-2026;EUR;D;53,20;NL99RABO0055667788;Albert Heijn 1522;pinbetaling",
+    "NL12KNAB0123456789;21-06-2026;EUR;C;250,00;NL89RABO0131703501;W ketels en zn;factuur 26302050",
+  ].join("\n");
+  check("Knab: the sniffer recognises the file despite the banner", looksLikeBankCsv(knab));
+  const r = parseBankCsv(knab);
+  check("Knab: both rows parse (banner skipped)", r.transactions.length === 2);
+  check("Knab: a D row is NEGATIVE (a debit is money out)", r.transactions[0]?.amount === -53.2);
+  check("Knab: a C row is positive", r.transactions[1]?.amount === 250);
+  check("Knab: Tegenrekeninghouder is the counterpart NAME", r.transactions[0]?.counterpartName === "Albert Heijn 1522");
+  check("Knab: Tegenrekeningnummer is the counterpart IBAN", r.transactions[0]?.counterpartIban === "NL99RABO0055667788");
+  check("Knab: the own rekening does not leak into the counterpart", r.transactions[0]?.counterpartIban !== "NL12KNAB0123456789");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

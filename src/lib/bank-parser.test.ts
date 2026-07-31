@@ -4,6 +4,7 @@
 // The route + UI rely on parseErrors.length being an honest "lines lost" count so the
 // owner is never silently short a transaction.
 import { parseBankFile, parseMT940, parseCAMT053 } from "./bank-parser";
+import { referenceMatches } from "./bank-matching";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -228,6 +229,116 @@ console.log("\n— [BANK-PARSE-XMLENT-ORDER] each entity is decoded exactly once
     parseCAMT053(camtName("A&amp;lt;B")).transactions[0]?.counterpartName === "A&lt;B");
   check("a numeric entity beside an ampersand decodes once",
     parseCAMT053(camtName("R&amp;D&#38;Co")).transactions[0]?.counterpartName === "R&D&Co");
+}
+
+console.log("\n— [CAMT-V8-PTY] camt.053.001.08 wraps the party in <Pty> —");
+{
+  const v8 = `<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt>` +
+    `<Ntry><Amt Ccy="EUR">250.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-07-30</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RltdPties>` +
+    `<Dbtr><Pty><Nm>W ketels en zn eierhandel</Nm></Pty></Dbtr>` +
+    `<DbtrAcct><Id><IBAN>NL89RABO0131703501</IBAN></Id></DbtrAcct>` +
+    `</RltdPties><RmtInf><Ustrd>factuur 26302050</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>` +
+    `</Stmt></BkToCstmrStmt></Document>`;
+  const t = parseCAMT053(v8).transactions[0];
+  check("v8: the REAL party name is parsed (not the remittance text)", t?.counterpartName === "W ketels en zn eierhandel");
+  check("v8: the IBAN still parses", t?.counterpartIban === "NL89RABO0131703501");
+  check("v8: the reference still extracts", (t?.reference ?? "").includes("26302050"));
+}
+
+console.log("\n— [CAMT-STRD-REF] structured betalingskenmerk (Strd/CdtrRefInf/Ref) —");
+{
+  const strd = `<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>` +
+    `<Ntry><Amt Ccy="EUR">121.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-07-02</Dt></ValDt>` +
+    `<NtryDtls><TxDtls><RmtInf><Strd><CdtrRefInf><Ref>26302050</Ref></CdtrRefInf></Strd></RmtInf>` +
+    `<Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs></TxDtls></NtryDtls></Ntry>` +
+    `</Stmt></BkToCstmrStmt></Document>`;
+  const t = parseCAMT053(strd).transactions[0];
+  check("a Strd-only betalingskenmerk reaches the reference", (t?.reference ?? "").includes("26302050"));
+  check("…and the description is no longer empty", (t?.description ?? "").length > 0);
+}
+
+console.log("\n— [MT940-WRAP-SPACE] a wrap at a token boundary keeps its space —");
+{
+  const wrapped = parseMT940([
+    ":25:NL91INGB0001234567",
+    ":60F:C260601EUR1000,00",
+    ":61:2606020602D605,00NTRF",
+    ":86:/CNTP/NL54ABNA0100529224/ABNANL2A/CAN Vleesgroothandel//" ,
+    "/REMI/USTD//26702781 ",            // the 65-char wrap falls right after the space
+    "26703066/",
+    ":62F:C260602EUR395,00",
+  ].join("\n"));
+  const t = wrapped.transactions[0];
+  check("two invoice numbers stay TWO numbers across the wrap",
+    (t?.reference ?? "").includes("26702781") && (t?.reference ?? "").includes("26703066"));
+  check("…not one fused 16-digit token", !(t?.reference ?? "").includes("2670278126703066"));
+  // The mid-word wrap must still join seamlessly (no space existed in the file).
+  const midword = parseMT940([
+    ":25:NL91INGB0001234567",
+    ":61:2606020602C100,00NTRF",
+    ":86:/CNTP/NL13ABNA0000000001/ABNANL2A/Metr",
+    "o Markets GmbH//",
+  ].join("\n"));
+  check("a mid-word wrap still joins ('Metro Markets GmbH')",
+    midword.transactions[0]?.counterpartName === "Metro Markets GmbH");
+}
+
+console.log("\n— [MT940-TERMINATOR] the SWIFT '-' line no longer eats the closing balance —");
+{
+  const term = parseMT940([
+    ":25:NL91INGB0001234567",
+    ":60F:C260601EUR1000,00",
+    ":61:2606020602C50,00NTRF",
+    ":86:/REMI/test/",
+    ":62F:C260602EUR1050,00",
+    "-",
+  ].join("\n"));
+  check("closing balance parses on a properly terminated export", term.statementBalance?.closing === 1050);
+  check("…and the statement reconciles", 1000 + (term.transactions[0]?.amount ?? 0) === term.statementBalance?.closing);
+}
+
+console.log("\n— [MT940-25-CURRENCY] ING's :25: currency suffix is stripped from the IBAN —");
+{
+  const ing = parseMT940([":25:NL91INGB0001234567EUR", ":60F:C260601EUR0,00"].join("\n"));
+  check("accountIban is the bare IBAN", ing.accountIban === "NL91INGB0001234567");
+  const plain = parseMT940([":25:NL91INGB0001234567", ":60F:C260601EUR0,00"].join("\n"));
+  check("a suffix-less :25: is unchanged", plain.accountIban === "NL91INGB0001234567");
+}
+
+console.log("\n— [MT940-ABN-KEYWORDS] ABN's keyword :86: layouts —");
+{
+  const abn = parseMT940([
+    ":25:NL01ABNA0123456789",
+    ":61:2601150115D605,00NTRF",
+    ":86:SEPA OVERBOEKING                 IBAN: NL46DEUT0136523093        BIC: DEUTNL2N                    NAAM: CAN VLEESGROOTHANDEL BV OMSCHRIJVING: FACTUUR 2026-088",
+  ].join("\n"));
+  const t = abn.transactions[0];
+  check("NAAM: becomes the counterpart", t?.counterpartName === "CAN VLEESGROOTHANDEL BV");
+  check("IBAN: becomes the counterpart IBAN", t?.counterpartIban === "NL46DEUT0136523093");
+  // The shared extractor deliberately drops the bare-year prefix ("2026-088" → "088"); the FULL
+  // number stays recoverable from the description — the same [BUNDEL-REF-RECOVER] contract every
+  // other format relies on. What matters is that matching can find the invoice:
+  check("OMSCHRIJVING: reaches the extractor (fragment stored)", (t?.reference ?? "").length >= 3);
+  check("…and the full number is recoverable from the description",
+    referenceMatches({ reference: t?.reference ?? null, description: t?.description ?? "" }, "2026-088"));
+
+  const pin = parseMT940([
+    ":25:NL01ABNA0123456789",
+    ":61:2601150115D53,20NTRF",
+    ":86:BEA   NR:CCV12345  15.01.26/ALBERT HEIJN 1522/AMSTERDAM",
+  ].join("\n"));
+  check("a BEA pin line yields the merchant, not terminal soup",
+    (pin.transactions[0]?.counterpartName ?? "").includes("ALBERT HEIJN"));
+  check("…and no fake invoice reference", pin.transactions[0]?.reference === null);
+}
+
+console.log("\n— [BANK-FORMAT-HONEST] an unrecognised text file warns instead of silently importing nothing —");
+{
+  const tab = parseBankFile("Boekdatum\tOmschrijving\nrijen zonder banktags\n", "download.tab");
+  check("0 transactions + an explicit warning", tab.transactions.length === 0 && tab.parseErrors.length > 0);
+  const emptyMt = parseBankFile(":20:REF\n:25:NL91INGB0001234567\n:60F:C260601EUR0,00\n:62F:C260601EUR0,00\n", "leeg.940");
+  check("a genuinely empty-but-real MT940 stays warning-free", emptyMt.parseErrors.length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
