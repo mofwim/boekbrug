@@ -29,6 +29,9 @@ import { mayOfferSenderRule } from "@/lib/sender-rules";
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-normalize-client";
+// [UPLOAD-ERRORS] One HTTP-status → owner-sentence translator, shared with /dashboard/upload and
+// the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
+import { describeUploadFailure } from "@/lib/upload-failure";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2156,7 +2159,17 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
         };
       }
-      return { name: file.name, status: "error", message: (data as { error?: string }).error || "Upload mislukt" };
+      // [UPLOAD-ERRORS] The same translator /dashboard/upload and the Toevoegen sheet use. This
+      // surface uploads to the SAME /api/intake and was the one place the shared fix did not
+      // reach: `data.error || "Upload mislukt"` is right exactly once, for our own 5xx. A 402
+      // (monthly read allowance spent) read as a breakage although the server sends the reason and
+      // the way out; a 413 or 504 comes from the PLATFORM with an HTML body, so `data.error` does
+      // not exist there at all and a perfectly fine file was reported as failed.
+      return {
+        name: file.name,
+        status: "error",
+        message: describeUploadFailure(res.status, (data as { error?: string }).error).message,
+      };
     } catch {
       return { name: file.name, status: "error", message: "Upload mislukt — probeer opnieuw" };
     }
