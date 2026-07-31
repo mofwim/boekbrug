@@ -23,6 +23,19 @@ export interface FilingDivergence {
   btwSaldoDelta: number;        // the number that decides the correction path
   /** > €1.000 BTW difference → a formal suppletie is required (Belastingdienst rule). */
   needsSuppletie: boolean;
+  // [DIVERGENCE-SPLIT] `changed` is true when ANY of the five components moved — including the
+  // cases where the BTW-saldo did NOT. A screen that reads `changed` and then narrates only the
+  // saldo tells the owner "the BTW changed by € 0,00 (you must pay more)", which is nonsense and
+  // destroys trust on the one surface that exists to be trusted. Two realistic ways to get there:
+  // a 0%-BTW cost invoice arriving late (kosten moves, BTW does not), and a correction where
+  // verschuldigd and voorbelasting move by the same amount. These two flags let a caller say the
+  // true thing: what moved the BTW, what moved only the result (income-tax relevant), or both.
+  /** The BTW-saldo itself moved beyond rounding noise → a BTW correction is due. */
+  btwChanged: boolean;
+  /** omzet − kosten moved beyond rounding noise → the profit (income tax) changed. */
+  resultaatChanged: boolean;
+  /** (current omzet − kosten) − (filed omzet − kosten). Positive = more profit than filed. */
+  resultaatDelta: number;
 }
 
 // A change smaller than half a cent is rounding noise, never a real divergence.
@@ -46,6 +59,10 @@ export function computeFilingDivergence(filed: FilingFigures, current: FilingFig
   const btwVerschuldigdDelta = round2(current.btwVerschuldigd - filed.btwVerschuldigd);
   const btwVoorbelastingDelta = round2(current.btwVoorbelasting - filed.btwVoorbelasting);
   const btwSaldoDelta = round2(current.btwSaldo - filed.btwSaldo);
+  // [DIVERGENCE-SPLIT] The profit delta, computed from the components rather than a stored
+  // `resultaat` — the filed snapshot only persists omzet/kosten (btw_filings.sql), so deriving it
+  // here keeps one definition and cannot go stale against the table.
+  const resultaatDelta = round2((current.omzet - current.kosten) - (filed.omzet - filed.kosten));
 
   const changed =
     Math.abs(omzetDelta) > EPS ||
@@ -62,5 +79,8 @@ export function computeFilingDivergence(filed: FilingFigures, current: FilingFig
     btwVoorbelastingDelta,
     btwSaldoDelta,
     needsSuppletie: Math.abs(btwSaldoDelta) > SUPPLETIE_THRESHOLD,
+    btwChanged: Math.abs(btwSaldoDelta) > EPS,
+    resultaatChanged: Math.abs(resultaatDelta) > EPS,
+    resultaatDelta,
   };
 }

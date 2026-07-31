@@ -176,6 +176,54 @@ export async function resolveOwnerScheme(
   return resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
 }
 
+/** The VAT basis across a whole [start, end] window, plus whether the window straddles the switch. */
+export interface SchemeSpan {
+  /** The basis the window is COMPUTED under — resolved at `start`, per the per-quarter rule. */
+  scheme: VatScheme;
+  /** The basis in force on the last day of the window. */
+  schemeAtEnd: VatScheme;
+  /** TRUE when the two differ: no single basis is correct for this window. */
+  spansSchemeChange: boolean;
+  /** The owner's effective date for kasstelsel (ISO day), when they have one. */
+  schemeSince: string | null;
+}
+
+/**
+ * [SCHEME-SPAN] Resolve the VAT basis for a window that may be LONGER than one quarter.
+ *
+ * The per-quarter rule (vat-scheme.ts) exists so that switching to kasstelsel never retroactively
+ * rewrites an already-filed quarter — it resolves the basis from the period's START. That is exactly
+ * right for a quarter, and quietly wrong for the multi-quarter windows the truth lens introduced: a
+ * "Dit jaar" window starts on 1 January and an "Alles" window starts in 2015, so an owner who moved
+ * to kas in, say, Q2 gets those lenses computed entirely on FACTUUR — while the very same screen
+ * computes "Dit kwartaal" on KAS. The year then does not equal the sum of its quarters, on a surface
+ * whose whole premise is that there is one truth.
+ *
+ * There is no single basis that is correct for such a window, so this does not invent one: it keeps
+ * the start-resolved basis (unchanged, safe, never rewrites a filed period) and reports the straddle
+ * so the caller can SAY so instead of presenting a blended number as fact. One profile read.
+ */
+export async function resolveOwnerSchemeSpan(
+  pipeline: PipelineClient,
+  ownerId: string,
+  start: string,
+  end: string,
+): Promise<SchemeSpan> {
+  const { data: prof } = await pipeline
+    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
+  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  const profileScheme = getVatScheme(p?.vat_scheme);
+  const since = p?.vat_scheme_since ?? null;
+  const scheme = resolveSchemeForQuarter(profileScheme, since, start);
+  const schemeAtEnd = resolveSchemeForQuarter(profileScheme, since, end);
+  return {
+    scheme,
+    schemeAtEnd,
+    spansSchemeChange: scheme !== schemeAtEnd,
+    schemeSince: since ? since.slice(0, 10) : null,
+  };
+}
+
 /** What a money-read route needs to become scheme-aware in one call. */
 export interface SchemeResolution {
   scheme: VatScheme;

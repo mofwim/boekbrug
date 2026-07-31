@@ -83,6 +83,16 @@ waarschuwing weg voor iedereen.
   Zonder deze staan wordt de bevestigings-/OAuth-redirect geweigerd en landt de code
   ongebruikt op de homepage.
 
+  **De callback draagt querystring-parameters.** `/register` hangt er `?next=` aan (de
+  bestemming) en sinds `[OAUTH-ROL]` ook `?rol=` (de keuze uit stap 1, die anders bij
+  Google-registratie verloren gaat). Werkt de rolkeuze via Google niet — een boekhouder komt
+  binnen en de wizard vraagt alsnog wie hij is — kijk dan hier eerst: zet er dan een variant
+  met wildcard naast, bijvoorbeeld
+  ```
+  https://boekbrug.nl/api/auth/callback**
+  ```
+  Dat is geen verruiming naar buiten: het blijft ons eigen pad op ons eigen domein.
+
 ### B.2 — Google provider aanzetten
 `Authentication → Providers → Google` → **Enabled**, plak Client ID + Secret uit A.5.
 Laat het scopes-veld hier leeg/standaard (de code stuurt de juiste scopes mee).

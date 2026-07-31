@@ -36,6 +36,9 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
        'policy', 'invoice_lines_select_accountant'),
 
   -- ── Geld dat binnenkomt, en de bewaarplicht ─────────────────────────────────────────────
+  (5,  'account_purpose_archief.sql',
+       'profiles.account_purpose + de handle_new_user() die hem leest. Vier plekken in de aanmelding lezen deze kolom FAIL-SOFT, dus zonder de migratie zwijgt de app: wie via /bewaarplicht komt om zijn gestopte zaak weg te zetten, loopt gewoon de wizard over facturen versturen in. Staat de kolom er wél maar draaide de trigger-helft niet, dan gebeurt hetzelfde bij registratie mét e-mailbevestiging — controleer dat apart met de query onderaan dit bestand',
+       'column', 'profiles.account_purpose'),
   (10, 'kluis_subscriptions.sql',
        'Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast',
        'table', 'kluis_subscriptions'),
@@ -160,4 +163,35 @@ order by aanwezig, nr;
 --     op een openstaande inkoopfactuur herschrijven);
 --   · 15 dicht het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in het
 --     wettelijke inkoopboek van de boekhouder kunnen zetten.
+-- =====================================================================
+
+-- =====================================================================
+-- DE TWEEDE HELFT VAN 5 — apart, want een kolom is niet het hele verhaal
+--
+-- account_purpose_archief.sql doet TWEE dingen: het zet de kolom neer, én het herschrijft
+-- handle_new_user() zodat die het doel uit de signUp-metadata leest en onboarding_done
+-- meteen op true zet voor een archiefaccount. De lijst hierboven kan alleen het eerste zien.
+--
+-- Dat onderscheid is niet theoretisch. Draaide alleen de kolom, dan:
+--   · registratie ZONDER e-mailbevestiging gaat goed — de browser schrijft het doel zelf;
+--   · registratie MET e-mailbevestiging niet — daar is geen sessie en is de trigger de enige
+--     schrijver, dus het doel valt stil weg en de bezoeker krijgt de wizard die hij niet wou.
+-- Precies de helft die je nooit ziet als je het zelf even test met bevestiging uit.
+--
+-- Draai dit in de SQL-editor; het leest alleen de catalogus.
+
+select
+  (to_regclass('public.profiles') is not null
+   and exists (select 1 from information_schema.columns
+                where table_schema = 'public' and table_name = 'profiles'
+                  and column_name = 'account_purpose'))                as kolom_staat_er,
+  exists (select 1 from pg_proc
+           where proname = 'handle_new_user'
+             and prosrc like '%account_purpose%')                      as trigger_leest_het_doel,
+  exists (select 1 from pg_trigger
+           where tgname = 'on_auth_user_created' and not tgisinternal) as trigger_hangt_aan_auth_users;
+
+-- Verwacht: drie keer true. Is de tweede false terwijl de eerste true is, draai dan het
+-- CREATE OR REPLACE-blok uit supabase/migrations/account_purpose_archief.sql opnieuw — dat is
+-- idempotent en raakt de kolom niet aan.
 -- =====================================================================

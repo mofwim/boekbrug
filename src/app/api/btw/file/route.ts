@@ -14,6 +14,8 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence } from "@/lib/btw-filing";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [TZ] "Has this quarter ended?" is an Amsterdam-day question — see the filing-window gate below.
+import { amsterdamToday } from "@/lib/format-nl";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -92,7 +94,23 @@ export async function POST(req: NextRequest) {
   // The engine already surfaces every completeness signal we need — compute it once, up front, and
   // reuse it both for the readiness gate and for the frozen snapshot below.
   const range = await computeResultForRange({ pipeline, ownerId: user.id, start, end });
-  const { result, datelessVerifiedCount, undatedPaidCount } = range;
+  const { result, datelessVerifiedCount, undatedPaidCount, unconfirmedIncomingCount } = range;
+
+  // [FILING-WINDOW] A quarter that has not ENDED cannot have been filed with the Belastingdienst —
+  // the aangifte for it does not exist yet. Freezing a snapshot mid-quarter is worse than useless:
+  // every sale for the rest of the quarter then reads as a divergence against it, and once the
+  // running total moves by more than €1.000 the screen tells the owner to file a suppletie for a
+  // period nobody has asked them to declare. Unlike the completeness blockers below, this is not a
+  // matter of the owner's own judgement, so `acknowledge` does not open it.
+  if (end >= amsterdamToday()) {
+    return NextResponse.json(
+      {
+        error: "quarter_not_ended",
+        reason: `Kwartaal ${quarter} ${year} loopt nog tot en met ${end}. Je kunt een kwartaal pas als ingediend markeren nadat het is afgelopen.`,
+      },
+      { status: 409 },
+    );
+  }
 
   // [FILING-GATE] Don't freeze a quarter as "ingediend" while its figures are demonstrably
   // incomplete. The old gate checked ONLY unconfirmed ('processing') incoming invoices — but the
@@ -105,20 +123,16 @@ export async function POST(req: NextRequest) {
   // This is a WARNING, not a hard block: filing is the owner's own declaration, so the client
   // re-POSTs with { acknowledge: true } after seeing the reason (which we then audit, below).
   if (body?.acknowledge !== true) {
-    const { count: processingCount, error: pcErr } = await pipeline
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("receiver_id", user.id)
-      .eq("direction", "incoming")
-      .eq("status", "processing")
-      .gte("invoice_date", start)
-      .lte("invoice_date", end);
-
     const blockers: string[] = [];
-    // [FAIL-CLOSED] A failed count must NOT read as "ready" — treat it as an open blocker so the
-    // gate never silently passes an unverified quarter on a transient DB error.
-    if (pcErr) blockers.push("kon niet controleren of alle inkoopfacturen bevestigd zijn — probeer het zo opnieuw");
-    else if ((processingCount ?? 0) > 0) blockers.push(`${processingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers`);
+    // [GATE-PARITY] The unconfirmed-purchase count now comes from the SAME engine call that
+    // produced the figures, over the SAME rows, using the SAME effective-direction rule the money
+    // uses (effDirOf). The old inline query filtered `.eq("direction", "incoming")`, which is a
+    // column test — and a purchase invoice whose direction column is NULL is inferred from
+    // ownership everywhere else ([FIN-4]). Those rows are excluded from the figures but were
+    // invisible to the gate, so a quarter with unconfirmed purchases could pass it unchallenged.
+    // It also removes a query and a fail-open/fail-closed branch: if the engine read fails, the
+    // whole request fails, which is the correct fail-closed behaviour for a filing gate.
+    if (unconfirmedIncomingCount > 0) blockers.push(`${unconfirmedIncomingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers`);
     if (result.cashOmzetZonderBtw > 0) blockers.push(`er staat nog omzet zonder BTW-tarief (contant, bank of niet-gesplitste kassadag) — de verschuldigde BTW is daardoor mogelijk te laag`);
     if (datelessVerifiedCount > 0) blockers.push(`${datelessVerifiedCount} bevestigde factu(u)r(en) hebben geen datum en tellen niet mee in dit kwartaal`);
     if (undatedPaidCount > 0) blockers.push(`${undatedPaidCount} betaalde factu(u)r(en) missen een betaaldatum — onder kasstelsel kan de BTW niet in het juiste kwartaal worden geplaatst`);
@@ -128,7 +142,7 @@ export async function POST(req: NextRequest) {
         {
           error: "quarter_not_ready",
           notReady: true,
-          processingCount: processingCount ?? 0,
+          processingCount: unconfirmedIncomingCount,
           blockers,
           reason: blockers.join(". "),
         },
@@ -169,7 +183,7 @@ export async function POST(req: NextRequest) {
     newValue: {
       year, quarter, acknowledged: body?.acknowledge === true,
       btwSaldo: result.btwSaldo, cashOmzetZonderBtw: result.cashOmzetZonderBtw,
-      datelessVerifiedCount, undatedPaidCount,
+      datelessVerifiedCount, undatedPaidCount, unconfirmedIncomingCount,
     },
     ipAddress: getClientIP(req),
   }).catch(() => {});

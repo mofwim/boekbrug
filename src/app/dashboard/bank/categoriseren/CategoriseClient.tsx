@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
-import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -192,7 +192,7 @@ export default function CategoriseClient() {
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 64px' }}>
         {/* [HEADER-SYSTEM] Title "Wat is dit?" + back live in the shared sub-page
             bar; the in-body h1 that repeated it was removed. Subtitle stays. */}
         <header style={{ margin: '16px 0 16px' }}>

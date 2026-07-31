@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
-import { EL1, FONT, M3, R } from '@/lib/design/tokens'
+import { EL1, FONT, M3, R, COLUMN } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
@@ -213,7 +213,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   // useSubPageHeader).
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT }}>
-      <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Deadline hero (from #1) — follows the selected quarter ── */}
         <div style={{

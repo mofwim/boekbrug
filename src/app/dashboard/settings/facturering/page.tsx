@@ -23,6 +23,7 @@ import { FAIR_USE_LIMITS, NEAR_LIMIT_RATIO, evaluateFairUse, formatLimit } from 
 import { measureUsage } from '@/lib/fair-use-usage'
 import { limitsPlanFor } from '@/lib/subscription'
 import ManageSubscriptionButton from './ManageSubscriptionButton'
+import { COLUMN } from '@/lib/design/tokens'
 
 export const dynamic = 'force-dynamic'
 
@@ -97,7 +98,7 @@ export default async function FactureringPage({
        the descriptive line below it stays. The font stack lost its `system-ui`
        fallback — docs/HEADER_SYSTEM.md forbids it, and it was the reason this one
        page rendered in a different typeface on some devices. */
-    <main style={{ maxWidth: 680, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), sans-serif' }}>
+    <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), sans-serif' }}>
       <p style={{ fontSize: 15, color: '#5f6368', margin: '0 0 24px' }}>
         Welk plan er voor je geldt, en waar je je btw-facturen vindt.
       </p>

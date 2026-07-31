@@ -22,7 +22,7 @@ import { useToast } from '@/components/ui/Toast'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3, R } from '@/lib/design/tokens'
+import { M3, R, COLUMN } from '@/lib/design/tokens'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -1065,7 +1065,7 @@ export default function BankClient() {
   }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
+    <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
       {/* [MOVE-PAYMENT] Which invoice does this payment belong to?
           No free search field: the server returns only invoices that can actually receive the
           money (same direction, payable status, enough still open, not locked by the accountant),

@@ -22,6 +22,13 @@ import { buildPaymentResult } from "@/lib/partial-payment";
 
 export const dynamic = "force-dynamic";
 
+// [PAY-DURATION] Marking paid is not one write: an undo walks every bank transaction linked to
+// this invoice (per-tx reads, a scoped detach, a recompute RPC) and both directions finish with
+// reconcileCashSettlements over the owner's kasboek. A kill midway through the undo is the bad
+// case — the bank links are already detached while the invoice is still 'paid', and the rollback
+// that repairs exactly that cannot run. A ceiling well above the real work keeps that shut.
+export const maxDuration = 60;
+
 // [MANUAL-PARTIAL-PAY] Idempotency keys are uuids — reject anything else rather than
 // letting a junk key through as "no key" (which would silently re-enable double booking).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

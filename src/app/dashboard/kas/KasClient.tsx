@@ -16,7 +16,7 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-no
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3 } from '@/lib/design/tokens'
+import { M3, COLUMN } from '@/lib/design/tokens'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -314,7 +314,7 @@ export default function KasClient() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 64px' }}>
         {/* [COHERENCE-ERRSTATE] A failed load must NOT show a reassuring €0,00 saldo that
             looks like an empty drawer. Show the number ONLY when the data actually loaded;
             on error surface an honest banner with a retry instead of a false money figure. */}

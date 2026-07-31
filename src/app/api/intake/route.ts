@@ -57,6 +57,9 @@ import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sa
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+// [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
+// gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
+import { detectMultipleInvoices } from "@/lib/multi-invoice-pdf"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -85,23 +88,27 @@ type InvoiceFieldConfidence =
 
 const MAX_BYTES = 10 * 1024 * 1024 // 10 MB
 
-// [INTAKE-TIMEOUT] Deze route doet de duurste synchrone handeling van de app: één Claude-lezing van
-// een foto of PDF (verifyInvoiceFromPdf, verderop). Zonder deze regel gold de platform-default van
-// enkele seconden en werd de functie MIDDEN in die lezing gedood. Het antwoord is dan geen JSON, dus
-// `res.json().catch(() => ({}))` in de client houdt een leeg object over en de eigenaar leest
-// "Lezen mislukt — probeer dit bestand opnieuw" bij een bestand waar niets mis mee is. Opnieuw
-// proberen geeft dezelfde uitkomst, want het bestand is niet het probleem.
+// [INTAKE-DURATION] This route had NO maxDuration while every other heavy route in the app sets
+// one (tools/scan-invoice 30, email/reimport 120, reconcile/run 120, closing-package 300) — and
+// this is the heaviest of them all: a raw-PDF Claude read, plus a SECOND Claude call for a
+// supplier statement, plus reconcileCashSettlements + runBankAutoConfirm after an auto-advance.
 //
-// Elke andere zware route hier belijdt zijn eigen plafond (email/reimport 120, closing-package 300,
-// tools/scan-invoice 30); deze — de enige waar een mens staat te wachten — deed dat niet. 120 volgt
-// email/reimport, dat exact hetzelfde werk doet: dezelfde lezer, hetzelfde soort bestand.
+// The damage of running out was not "slow", it was a TRAP. The document row is written before
+// the invoice row; a kill in between leaves an orphan documents row carrying the content_hash,
+// and the byte-hash gate then refuses the re-upload forever ("Dit bestand staat al in je
+// bestanden") while no invoice was ever created. The rollback further down covers a DB error —
+// it cannot run when the function is killed. So the ceiling has to be high enough that the
+// window never opens.
 //
-// Er hangt een tweede ding aan: de lezing gaat VOORAF aan elke schrijfactie (storage → documents →
-// invoices), dus een gedode functie liet meestal niets achter. Maar tussen de documents-insert en de
-// invoices-insert ligt een smal venster waarin een gedode functie wél een documents-rij achterlaat
-// zonder factuur — en geen enkele rollback loopt nog, want die staan allemaal in een `if (error)`.
-// Ruimte geven aan de lezing maakt dat venster niet kleiner, maar wel veel minder vaak bereikt.
+// [INTAKE-TIMEOUT] Nog een gevolg dat hierbij hoort: een gedode functie antwoordt geen JSON, dus de
+// uploadpagina hield een leeg object over en meldde "Lezen mislukt — probeer dit bestand opnieuw"
+// bij een bestand waar niets mis mee was. Zie describeUploadFailure: die vertaalt een 504 nu naar
+// wat er werkelijk gebeurde, in plaats van het bestand de schuld te geven.
 export const maxDuration = 120
+
+/** documents.source / invoices.source CHECK values this route may write. */
+const INTAKE_SOURCES = ["camera", "upload"] as const
+type IntakeSource = (typeof INTAKE_SOURCES)[number]
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
@@ -139,6 +146,16 @@ export async function POST(req: NextRequest) {
   // overrides the byte-hash gate below: the exact same file still can't be added twice.
   const force = formData.get("force") === "true"
 
+  // [INTAKE-SOURCE] Every row this route wrote claimed source 'camera', including a PDF picked
+  // from Files and a whole batch dropped on /dashboard/upload. The client now says which it was;
+  // anything unrecognised (or absent, i.e. an older client) falls back to today's 'camera', so
+  // the CHECK constraint on documents.source/invoices.source can never be violated from here.
+  const sourceRaw = formData.get("source")
+  const source: IntakeSource =
+    typeof sourceRaw === "string" && (INTAKE_SOURCES as readonly string[]).includes(sourceRaw)
+      ? (sourceRaw as IntakeSource)
+      : "camera"
+
   const arrayBuffer = await file.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
@@ -167,7 +184,7 @@ export async function POST(req: NextRequest) {
   //    since decidePreAi ran first), parse ONCE, and hand off to the real pipelines. A file that
   //    is neither turnover nor ledger returns null → falls through to the safe document store. ──
   if (looksLikeSpreadsheetBinary(buffer) || /\.(xls|xlsx|csv)$/i.test(file.name)) {
-    const sheetResp = await handleSpreadsheet(buffer, file, user.id, supabase, req)
+    const sheetResp = await handleSpreadsheet(buffer, file, user.id, supabase, req, source)
     if (sheetResp) return sheetResp
     // null → not a recognised turnover/ledger sheet; continue to the document path below.
   }
@@ -225,8 +242,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         duplicate: true, destination: "document",
         error: "Dit bestand staat al in je bestanden.",
-        existing: { id: dupDoc.id, folder_id: dupDoc.folder_id ?? null },
-        folder_name: bc.length ? bc[bc.length - 1] : null,
+        // [DUP-SHAPE] folder_name belongs INSIDE `existing`. Both upload surfaces read
+        // data.existing.folder_name (never a top-level copy), so the name sat in the response
+        // and no client could reach it — the modal fell back to the bare message and never told
+        // the owner WHERE the file already is. One shape for all three duplicate 409s.
+        existing: {
+          id: dupDoc.id,
+          folder_id: dupDoc.folder_id ?? null,
+          folder_name: bc.length ? bc[bc.length - 1] : null,
+        },
       }, { status: 409 })
     }
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
@@ -243,12 +267,28 @@ export async function POST(req: NextRequest) {
       .from("documents").insert({
         user_id: user.id, file_name: file.name, file_url: storagePath,
         file_size: buffer.length, file_type: contentType,
-        doc_type: "overig", folder_id: folderId, source: "camera",
+        doc_type: "overig", folder_id: folderId, source,
         ai_processed: false, ai_doc_type: DOC_TYPE_UNSUPPORTED, content_hash: hash,
       })
       .select("id").single()
     if (docErr || !doc) {
       await supabase.storage.from("documents").remove([storagePath])
+      // [DEDUP-ATOMIC] Same race the invoice and UBL inserts already handle: a concurrent
+      // double-submit slips past the SELECT above and trips the (user_id, content_hash) UNIQUE
+      // index (23505). This path alone still turned that into a generic 500. It is the same
+      // duplicate the SELECT would have caught a millisecond earlier — answer it the same way.
+      if (docErr && (docErr as { code?: string }).code === "23505") {
+        const { data: raced } = await supabase
+          .from("documents").select("id, folder_id").eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
+        const racedPath = raced ? await buildFolderBreadcrumb(supabase, user.id, raced.folder_id ?? null) : []
+        return NextResponse.json({
+          duplicate: true, destination: "document",
+          error: "Dit bestand staat al in je bestanden.",
+          existing: raced
+            ? { id: raced.id, folder_id: raced.folder_id ?? null, folder_name: racedPath.length ? racedPath[racedPath.length - 1] : null }
+            : undefined,
+        }, { status: 409 })
+      }
       return NextResponse.json({ error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." }, { status: 500 })
     }
     const bc = await buildFolderBreadcrumb(supabase, user.id, folderId)
@@ -308,8 +348,13 @@ export async function POST(req: NextRequest) {
   //    invoice. Detect it by its text layer BEFORE the invoice extractor and book it into
   //    daily_turnover (idempotent with the monthly Excel path). A PDF that is NOT this report
   //    returns null and continues to the normal AI extractor below. ──
+  // [MULTI-INVOICE] The text layer is pulled ONCE here and reused: the daily-sales check needs
+  // it, and so does the "is this really one invoice?" check further down. Extracting it twice
+  // would parse every uploaded PDF twice for no gain.
+  let pdfText: string | null = null
   if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const dailyResp = await handleDailySalesPdf(buffer, file, user.id, supabase, req)
+    pdfText = await extractPdfText(buffer)
+    const dailyResp = await handleDailySalesPdf(pdfText, buffer, file, user.id, supabase, req, source)
     if (dailyResp) return dailyResp
   }
 
@@ -700,7 +745,7 @@ export async function POST(req: NextRequest) {
         file_type: uploadType, // [MIME-HONEST] hetzelfde type als waarmee het in storage staat
         doc_type: "overig",
         folder_id: folderId,
-        source: "camera",
+        source,
         // Only claim we processed it when we actually read it.
         ai_processed: !couldNotRead,
         // [OBSERVABILITY] En schrijf de REDEN weg, niet de gok. Hier stond
@@ -781,7 +826,12 @@ export async function POST(req: NextRequest) {
   // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY used to 500 intake).
   const invoiceDate = normalizeToIso(v.invoice_date)
 
-  const folderId = await resolveImportTarget(user.id, v.invoice_date ?? null, "facturen", "pipeline")
+  // [DATE-ONE-SOURCE] Resolve the folder from the SAME normalized date the row stores. This read
+  // the RAW AI string, and resolveImportTarget does `new Date(...)`: a Dutch "15-03-2026" — which
+  // normalizeToIso accepts and turns into 2026-03-15 — is an Invalid Date there, so the file was
+  // filed under "Geïmporteerde bestanden" while its invoice sat correctly in maart 2026. The
+  // document and the invoice disagreed about the period of the same bill.
+  const folderId = await resolveImportTarget(user.id, invoiceDate, "facturen", "pipeline")
 
   const { data: doc, error: docErr } = await pipeline
     .from("documents")
@@ -794,7 +844,7 @@ export async function POST(req: NextRequest) {
       doc_type: "factuur",
       folder_id: folderId,
       year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
-      source: "camera",
+      source,
       ai_processed: true,
       ai_doc_type: decision.destination === "receipt" ? "receipt" : "invoice",
       content_hash: contentHash,
@@ -859,6 +909,24 @@ export async function POST(req: NextRequest) {
     const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
     fieldConfidence._safecore = merged._safecore
   }
+  // [MULTI-INVOICE] Draagt dit ENE bestand meerdere verschillende facturen? Dan is er precies
+  // één ingelezen en bestaan de andere nergens — geen rij, geen bestand, geen melding. Ook dit
+  // VÓÓR de auto-advance check: de ingelezen factuur kan volmaakt in orde zijn, dus geen enkele
+  // andere poort houdt hem tegen, en juist dan zou "automatisch geboekt" de eigenaar wegsturen
+  // van het bestand waar zijn andere facturen nog in zitten. Nooit blokkeren — een verzamel-
+  // factuur is legitiem — maar wel altijd een mens laten kijken.
+  const multiInvoice = decision.destination === "invoice" || decision.destination === "receipt"
+    ? detectMultipleInvoices(pdfText)
+    : null
+  if (multiInvoice) {
+    fieldConfidence._safecore = {
+      ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
+      multiple_invoices: true,
+      multiple_invoices_reason: multiInvoice.reason,
+      multiple_invoices_numbers: multiInvoice.numbers,
+    }
+  }
+
   // [IBAN-WISSEL] Kennen we deze leverancier al onder een ander rekeningnummer? Ook hier VÓÓR de
   // auto-advance check: een gewisseld IBAN maakt de health needs-review, en daarmee kan deze
   // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
@@ -885,7 +953,7 @@ export async function POST(req: NextRequest) {
   // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
   // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
   const autoAdv =
-    decision.destination === "invoice" && !decision.suggestPaid
+    decision.destination === "invoice" && !decision.suggestPaid && !multiInvoice
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,
           is_statement: v.is_statement,
@@ -909,7 +977,7 @@ export async function POST(req: NextRequest) {
             field_confidence: fieldConfidence,
           },
         })
-      : { advance: false, reason: "not_eligible" };
+      : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
   }
@@ -922,7 +990,7 @@ export async function POST(req: NextRequest) {
       direction: "incoming",
       // [AUTO-ADVANCE] clean+confident → 'received' (booked, unpaid, reversible); else the queue.
       status: autoAdv.advance ? "received" : "processing",
-      source: "camera",
+      source,
       client_name: v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
@@ -1001,7 +1069,9 @@ export async function POST(req: NextRequest) {
       await pipeline.from("notifications").insert({
         user_id: user.id,
         title: "Factuur automatisch verwerkt",
-        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace("  ", " "),
+        // .replace with a STRING replaces the first match only; a missing number left a second
+        // double space untouched. A regex with /g collapses every run of spaces.
+        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace(/ {2,}/g, " "),
         type: "invoice",
         // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
         // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
@@ -1036,8 +1106,15 @@ export async function POST(req: NextRequest) {
     ...(possibleDup
       ? { possibleDuplicate: { invoice_number: possibleDup.match.invoice_number, client_name: possibleDup.match.client_name, reason: possibleDup.reason } }
       : {}),
+    // [MULTI-INVOICE] The numbers we saw but did NOT book, so the owner knows exactly what is
+    // still missing instead of only that "something" is.
+    ...(multiInvoice ? { multipleInvoices: { numbers: multiInvoice.numbers } } : {}),
     message:
-      decision.destination === "receipt"
+      // The most consequential thing we can say about this upload comes first: an invoice that
+      // landed is recoverable, invoices that never landed are not.
+      multiInvoice
+        ? `Let op — ${multiInvoice.numbers.length} facturen in één bestand. We hebben er ÉÉN ingelezen; voeg de andere los toe (${multiInvoice.numbers.slice(0, 3).join(", ")}${multiInvoice.numbers.length > 3 ? ", …" : ""}).`
+        : decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
         : possibleDup
           ? `Factuur herkend — let op: mogelijk dubbel${possibleDup.match.invoice_number ? ` met ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Controleer voor je bevestigt.`
@@ -1104,6 +1181,20 @@ async function trashedDuplicateCleared(
 }
 
 // ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────
+// Pull a PDF's text layer. Fail-safe by design: ANY trouble returns null, and every caller
+// treats null as "no signal" — a text-extraction problem must never block or alter an import.
+async function extractPdfText(buffer: Buffer): Promise<string | null> {
+  try {
+    const unpdf = await import("unpdf")
+    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
+    const { text } = await unpdf.extractText(doc, { mergePages: true })
+    const t = (text ?? "").trim()
+    return t.length > 0 ? t : null
+  } catch {
+    return null
+  }
+}
+
 // Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
 // exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the
@@ -1114,6 +1205,7 @@ async function storeRawIncoming(
   userId: string,
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   aiDocType: string,
+  source: IntakeSource,
 ): Promise<string | null> {
   const hash = computeContentHash(buffer)
   try {
@@ -1135,7 +1227,7 @@ async function storeRawIncoming(
     const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
       user_id: userId, file_name: file.name, file_url: storagePath,
       file_size: buffer.length, file_type: file.type || "application/octet-stream",
-      doc_type: "overig", folder_id: folderId, source: "camera",
+      doc_type: "overig", folder_id: folderId, source,
       ai_processed: true, ai_doc_type: aiDocType, content_hash: hash,
     }).select("id").single()
     if (docErr || !doc) {
@@ -1179,10 +1271,17 @@ async function handleUblInvoice(
   // [DUP-TRASHED] Zelfde uitzondering als de camera-route: een weggegooide e-factuur mag de sleutel
   // niet levenslang bezet houden, anders kan de eigenaar zijn eigen XML nooit opnieuw importeren.
   if (dupDoc && !(await trashedDuplicateCleared(supabase, userId, dupDoc))) {
+    // [DUP-SHAPE] Carry folder_name like the other duplicate 409s, so the client can say WHERE
+    // the e-invoice already is instead of only that it exists.
+    const dupPath = await buildFolderBreadcrumb(supabase, userId, dupDoc.folder_id ?? null)
     return NextResponse.json({
       duplicate: true, destination: dupDoc.invoice_id ? "invoice" : "document",
       error: "Deze e-factuur is al geïmporteerd.",
-      existing: { id: dupDoc.id, folder_id: dupDoc.folder_id ?? null },
+      existing: {
+        id: dupDoc.id,
+        folder_id: dupDoc.folder_id ?? null,
+        folder_name: dupPath.length ? dupPath[dupPath.length - 1] : null,
+      },
     }, { status: 409 })
   }
 
@@ -1350,7 +1449,12 @@ async function handleUblInvoice(
       client_name: v.supplierName || "Onbekende afzender",
       invoice_date: v.invoiceDate,
       due_date: v.dueDate,
-      invoice_number: v.invoiceNumber || `UBL-${Date.now()}`,
+      // [BON-NUMMER] Leeg blijft leeg — dezelfde regel als het camerapad hierboven, dat zijn
+      // `CAMERA-${Date.now()}` om precies deze reden kwijtraakte: snelstart-mapping weigert een
+      // LEEG nummer aan de grens (MISSING_NUMBER), maar "UBL-1784373782895" glipt erdoor en landt
+      // als factuurnummer op een inkoopboeking in het wettelijke inkoopboek van de boekhouder —
+      // een kenmerk dat op geen enkel papier terug te vinden is. De fix was op één tak toegepast.
+      invoice_number: v.invoiceNumber?.trim() || null,
       invoice_type: v.isCreditNote ? "creditnota" : "factuur",
       total_ex_btw: totalExBtw,
       btw_amount: btwAmount,
@@ -1393,28 +1497,22 @@ async function handleUblInvoice(
 // sibling of the monthly kassa Excel; it lands in the SAME daily_turnover table via bookTurnoverRows,
 // so uploading the month's Excel later simply upserts the same days (idempotent — never doubles).
 async function handleDailySalesPdf(
+  text: string | null,
   buffer: Buffer,
   file: File,
   userId: string,
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   req: NextRequest,
+  source: IntakeSource,
 ): Promise<NextResponse | null> {
-  // Extract the text layer (fail-safe: any trouble → null → the invoice extractor still runs).
-  let text: string
-  try {
-    const unpdf = await import("unpdf")
-    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
-    const { text: t } = await unpdf.extractText(doc, { mergePages: true })
-    text = (t ?? "").trim()
-  } catch {
-    return null
-  }
-  if (!looksLikeDailySalesReport(text)) return null
+  // The text layer is extracted by the caller (once, shared with the multi-invoice check).
+  // No text (a scan, or an unreadable PDF) → not this report; the invoice extractor still runs.
+  if (!text || !looksLikeDailySalesReport(text)) return null
 
   const { row, warnings } = parseDailySalesReport(text)
   if (!row) return null // looked like a report but unreadable → let the AI path try instead
 
-  const documentId = await storeRawIncoming(buffer, file, userId, supabase, "dagverkopen_pdf")
+  const documentId = await storeRawIncoming(buffer, file, userId, supabase, "dagverkopen_pdf", source)
 
   if (warnings.length > 0) {
     // A per-rate/TOTAAL mismatch → do NOT auto-book omzet into the VAT picture; store + send to review.
@@ -1463,6 +1561,7 @@ async function handleSpreadsheet(
   userId: string,
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   req: NextRequest,
+  source: IntakeSource,
 ): Promise<NextResponse | null> {
   let matrix
   try {
@@ -1475,7 +1574,7 @@ async function handleSpreadsheet(
 
   // Store the raw file (best-effort) so the accountant has the source and the owner can open it.
   const documentId = await storeRawIncoming(
-    buffer, file, userId, supabase, plan.kind === "turnover" ? "kassa_zrapport" : "grootboek_export",
+    buffer, file, userId, supabase, plan.kind === "turnover" ? "kassa_zrapport" : "grootboek_export", source,
   )
 
   // ── TURNOVER: authoritative omzet + BTW → daily_turnover ──────────────────────────────────

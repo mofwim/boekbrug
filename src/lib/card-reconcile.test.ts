@@ -84,6 +84,30 @@ console.log("\n— period aggregation: total commission + exception counts —")
   check("incomplete day counted", p.incompleteDays >= 1);
 }
 
+// [EXCEPTION-COUNT] A commission_issue day books NO commission, so the period's costs are knowingly
+// incomplete — yet it used to be counted in NEITHER exception total, which made it invisible to
+// every surface except the accountant's CSV. The three counters must also stay mutually exclusive
+// (one status per day), because the truth screen SUMS them into one "kassadagen" figure.
+console.log("\n— period aggregation: commission_issue days are counted, and the counters never overlap —");
+{
+  const p = reconcileCardPeriod([
+    { date: "2026-07-01", tillPin: 1000, eftGross: 1000, bankNet: 985 },  // ok, comm 15
+    { date: "2026-07-02", tillPin: 500, eftGross: 500, bankNet: 520 },    // payout > gross → issue
+    { date: "2026-07-03", tillPin: 800, eftGross: 800, bankNet: 600 },    // 25% "commission" → issue
+    { date: "2026-07-04", tillPin: 600, eftGross: 550, bankNet: 540 },    // gross mismatch
+    { date: "2026-07-05", tillPin: 700, eftGross: 700 },                  // incomplete (no bank)
+  ]);
+  check("2 commission-issue days", p.commissionIssueDays === 2);
+  check("1 gross-mismatch day", p.grossMismatchDays === 1);
+  check("1 incomplete day", p.incompleteDays === 1);
+  check("only the clean day books commission", near(p.totalCommission, 15));
+  // 5 days in, 4 exceptions + 1 ok out: no day is counted twice, so the screen may sum them.
+  check(
+    "counters are disjoint (sum ≤ day count)",
+    p.commissionIssueDays + p.grossMismatchDays + p.incompleteDays === 4,
+  );
+}
+
 console.log("\n— netCommissionToBook: de-dup against acquirer fee invoices (Finding 1) —");
 {
   check("no acquirer invoice → book full commission", near(netCommissionToBook(30, 0), 30));

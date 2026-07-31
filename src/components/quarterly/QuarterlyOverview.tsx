@@ -5,25 +5,50 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { QuarterlySummary, ZzpQuarterlySummary } from "@/lib/quarterly";
 import { formatEur } from "@/lib/quarterly";
 import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
-import { lastCompletedQuarter } from "@/lib/quarter";
+import { quarterFromParams } from "@/lib/quarter";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
-// [QUARTER-DEFAULT] Default to the LAST COMPLETED quarter — the one whose BTW is actually due —
-// exactly like /api/result, /api/aangifte, /api/readiness and the klaar flow (quarter.ts). The
-// old open-quarter default (Q3 mid-July) dropped the owner on an empty/partial quarter they'd have
-// to correct by hand, and disagreed with every other surface. year is defaulted to match.
-const _LC = lastCompletedQuarter();
-const CURRENT_YEAR_DEFAULT = _LC.year;
-const CURRENT_QUARTER = _LC.quarter as 1 | 2 | 3 | 4;
+
+/**
+ * The year options, guaranteed to contain the SELECTED year. The list is a fixed three-year window,
+ * and ?year now seeds the selection — so a link (or a bookmark) naming an older year would set a
+ * state the dropdown has no option for, leaving the select visually blank while the figures below
+ * it were correct. Widening the list to include it keeps the control honest about what it is showing.
+ */
+function yearOptions(selected: number): number[] {
+  return YEARS.includes(selected) ? YEARS : [...YEARS, selected].sort((a, b) => b - a);
+}
+/**
+ * [QUARTER-DEEPLINK] Honour ?year&quarter when another screen linked us to a SPECIFIC period.
+ *
+ * [QUARTER-DEFAULT] With no params: the LAST COMPLETED quarter — the one whose BTW is actually due
+ * — exactly like /api/result, /api/aangifte, /api/readiness and the klaar flow (quarter.ts). An
+ * open-quarter default drops the owner on a partial quarter and disagrees with every other surface.
+ *
+ * This screen only ever read module constants, so the URL was decoration: the waarheid
+ * surface renders "Naar de BTW-aangifte van deze periode" with ?year&quarter on it, and landing
+ * here from the Dit-kwartaal lens silently opened the PREVIOUS quarter instead. Same numbers,
+ * different period, no indication anything had moved — precisely the class of bug quarter.ts was
+ * written to end ("a link from one to another never lands on a different quarter").
+ *
+ * quarterFromParams is the shared validator every quarter route uses (bounds 2000–2100, Q1–Q4) and
+ * falls back to the last COMPLETED quarter, so a bare visit behaves exactly as before.
+ */
+function useQuarterFromUrl(): { year: number; quarter: 1 | 2 | 3 | 4 } {
+  const sp = useSearchParams();
+  const { year, quarter } = quarterFromParams((k) => sp.get(k));
+  return { year, quarter };
+}
 
 interface Client {
   id: string;
@@ -48,8 +73,12 @@ function ZzpView({ role }: { role: Role }) {
   const dialog = useDialog();
   const toast = useToast();
   const parentHref = useParentPath(role);
-  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
-  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
+  // [QUARTER-DEEPLINK] Seed from ?year&quarter (the link that sent us here), else the shared
+  // last-completed-quarter default. Lazy initial state only: the selector below stays fully in the
+  // owner's hands afterwards — a link chooses the starting period, it does not lock it.
+  const urlPeriod = useQuarterFromUrl();
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(urlPeriod.quarter);
+  const [year, setYear] = useState(urlPeriod.year);
   const [mode, setMode] = useState<"paid" | "all">("paid");
   const [data, setData] = useState<ZzpQuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -258,7 +287,7 @@ function ZzpView({ role }: { role: Role }) {
             onChange={(e) => setYear(Number(e.target.value))}
             className="flex-1 text-sm border rounded-xl px-3 py-2 bg-background font-medium focus:outline-none"
           >
-            {YEARS.map((y) => (
+            {yearOptions(year).map((y) => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
@@ -554,8 +583,10 @@ function ZzpView({ role }: { role: Role }) {
 function AccountantView({ role }: { role: Role }) {
   const toast = useToast();
   const parentHref = useParentPath(role);
-  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
-  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
+  // [QUARTER-DEEPLINK] Same rule as the ZZP view — a link may choose the period it opens on.
+  const urlPeriod = useQuarterFromUrl();
+  const [year, setYear] = useState(urlPeriod.year);
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(urlPeriod.quarter);
   const [data, setData] = useState<QuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -756,7 +787,7 @@ function AccountantView({ role }: { role: Role }) {
             onChange={(e) => setYear(Number(e.target.value))}
             className="flex-1 text-sm border rounded-xl px-3 py-2 bg-background font-medium focus:outline-none"
           >
-            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+            {yearOptions(year).map((y) => (<option key={y} value={y}>{y}</option>))}
           </select>
           <button
             onClick={handleExport}

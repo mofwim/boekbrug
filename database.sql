@@ -1136,6 +1136,18 @@ $$;
 -- btw/onboarding_step) so email/password registration works with email confirmation
 -- ENABLED — the browser can no longer write the profile (anon RLS), so this SECURITY
 -- DEFINER trigger is the single writer. See migrations/register_profile_from_metadata.sql.
+--
+-- ⚠️ NIET DE NIEUWSTE VERSIE. migrations/account_purpose_archief.sql vervangt deze functie
+-- door een variant die ook `account_purpose` uit de metadata leest en `onboarding_done`
+-- meteen op true zet voor een archiefaccount. In productie IS die migratie toegepast — gemeten
+-- op 31 juli 2026 met de query onderaan docs/WELKE_MIGRATIES_STAAN_ER.sql, die zowel de kolom
+-- als de trigger-helft bevestigde. Dit bestand loopt op dat punt dus achter.
+--
+-- Bouw je hiermee een VERSE database (dev, staging, herstel na incident), draai dan ook die
+-- migratie. Doe je dat niet, dan werkt alles behalve het archiefpad van /bewaarplicht: wie
+-- via ?doel=archief registreert komt binnen als gewoon boekhoudaccount en loopt de
+-- onboarding-wizard in. De app valt daar zelf op terug (zie src/lib/account-purpose.ts) —
+-- het breekt niets, het is alleen stil.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql

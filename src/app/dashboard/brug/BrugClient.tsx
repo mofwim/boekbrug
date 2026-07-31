@@ -17,7 +17,7 @@ import { useDialog } from '@/components/ui/Dialog'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3, R } from '@/lib/design/tokens'
+import { M3, R, COLUMN } from '@/lib/design/tokens'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -221,7 +221,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
+    <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
 
       {/* [BRIDGE-HUB] Layer 2 — accountant control center: client dropdown +
           persistent Pakket action + tabs. ZZP keeps the classic tree below. */}

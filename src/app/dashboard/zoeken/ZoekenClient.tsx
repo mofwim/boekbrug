@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSearch } from "@/hooks/useSearch";
 import { flattenGroups, EMPTY_GROUP, type SearchResult, type SearchResultGroup, type SearchTarget } from "@/lib/search";
-import { M3, FONT } from "@/lib/design/tokens";
+import { M3, FONT, COLUMN } from "@/lib/design/tokens";
 import { BackLink } from "@/components/ui/BackLink";
 import type { Role } from "@/lib/navigation";
 
@@ -235,7 +235,7 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
   return (
     <div style={{ minHeight: "100vh", background: M3.bg, fontFamily: FONT }}>
       <style>{`@keyframes bb-spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 64px" }}>
+      <div style={{ maxWidth: COLUMN.work, margin: "0 auto", padding: "16px 16px 64px" }}>
         <div style={{ marginBottom: 12 }}>
           <BackLink role={role} />
         </div>

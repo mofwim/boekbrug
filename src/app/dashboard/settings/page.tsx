@@ -18,6 +18,7 @@ import {
 import type { ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+import { COLUMN } from '@/lib/design/tokens';
 
 export default function SettingsPage() {
   const dialog = useDialog()
@@ -383,7 +384,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
 
-      <div className="max-w-2xl mx-auto px-6 py-6 space-y-4">
+      <div className="mx-auto px-6 py-6 space-y-4" style={{ maxWidth: COLUMN.work }}>
 
         {/* تعديل الملف الشخصي */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">

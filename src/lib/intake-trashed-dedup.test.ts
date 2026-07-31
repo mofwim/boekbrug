@@ -65,25 +65,52 @@ test("géén SQL-filter op trashed in de dedup-zoekopdracht", () => {
 });
 
 test("elke hash-botsing die tot een 409 leidt, kent het trashed-veld", () => {
-  // De drie poorten die een duplicaat MELDEN (camera/onleesbaar/UBL) plus storeRawIncoming moeten
-  // allemaal weten of de gevonden rij weggegooid is. Zonder dat veld valt de beslissing op onvolledige
-  // informatie terug en is de doodlopende weg terug — zonder dat er iets breekt of rood wordt.
-  const chunks = bron().split('.from("documents")').slice(1);
-  const dedupQueries = chunks
-    .map((c) => c.slice(0, c.search(/maybeSingle\(\)|\.single\(\)/) + 1))
-    .filter((c) => /\.eq\(\s*["']content_hash["']/.test(c) && /select\(/.test(c));
+  // Elke POORT die op content_hash zoekt en daarop een duplicaat kan melden, moet weten of de
+  // gevonden rij weggegooid is. Zonder dat veld valt de beslissing terug op onvolledige informatie
+  // en is de doodlopende weg terug — zonder dat er iets breekt of rood wordt.
+  //
+  // Eén soort query is de uitzondering: de 23505-HERSTELQUERY. Die draait pas NA een botsing op de
+  // UNIQUE index, en op dat punt is de gevonden rij per definitie levend — weggegooide sleutels zijn
+  // vóór de insert al vrijgegeven. Die hoeft het veld niet.
+  //
+  // Deze test telde die uitzonderingen eerst gewoon ("hoogstens twee"). Dat was de verkeerde vorm: er
+  // kwam er een derde bij (het onleesbare-pad kreeg ook [DEDUP-ATOMIC]) en de test viel, terwijl er
+  // niets mis was. Een drempel die je bij elke legitieme toevoeging ophoogt, bewaakt op den duur niets
+  // meer. Dus niet tellen maar kijken: staat er vlak vóór deze query een 23505-afhandeling, dan is het
+  // een herstelquery. Zo niet, dan is het een poort en hoort 'trashed' erbij.
+  const src = bron();
+  const gates: string[] = [];
+  const recoveries: string[] = [];
+  const marker = '.from("documents")';
+  for (let i = src.indexOf(marker); i !== -1; i = src.indexOf(marker, i + 1)) {
+    // `storage.from("documents")` is de Storage-bucket, geen tabel. Zonder deze uitsluiting telt een
+    // `.remove([storagePath])` mee als zoekopdracht.
+    if (/storage\s*$/.test(src.slice(Math.max(0, i - 12), i))) continue;
+    // Bovengrens op het venster: tot de VOLGENDE .from("documents"). Zonder die grens loopt een
+    // aanroep zonder terminator door tot een `single()` verderop in het bestand, en dan wordt een
+    // wildvreemde query als deze query gelezen.
+    const next = src.indexOf(marker, i + 1);
+    const chunk = src.slice(i, next === -1 ? src.length : next);
+    const end = chunk.search(/maybeSingle\(\)|\.single\(\)/);
+    if (end === -1) continue;
+    const q = chunk.slice(0, end);
+    if (!/\.eq\(\s*["']content_hash["']/.test(q) || !/select\(/.test(q)) continue;
+    // Het venster vóór de query: ruim genoeg voor de `if (docErr && …code === "23505")` eromheen,
+    // te klein om een 23505 van een heel ander blok binnen te halen.
+    (/23505/.test(src.slice(Math.max(0, i - 400), i)) ? recoveries : gates).push(q);
+  }
 
   assert.ok(
-    dedupQueries.length >= 4,
-    `slechts ${dedupQueries.length} hash-zoekopdrachten gevonden — leest deze test de route nog wel?`,
+    gates.length + recoveries.length >= 4,
+    `slechts ${gates.length + recoveries.length} hash-zoekopdrachten gevonden — leest deze test de route nog wel?`,
   );
+  assert.ok(recoveries.length >= 1, "geen enkele 23505-herstelquery herkend — klopt de contextdetectie nog?");
 
-  // De twee 23505-herstelqueries draaien NA een botsing op de index; daar is de rij per definitie
-  // levend (weggegooide sleutels zijn dan al vrijgegeven). Die hoeven het veld niet.
-  const zonderTrashed = dedupQueries.filter((q) => !/trashed/.test(q));
-  assert.ok(
-    zonderTrashed.length <= 2,
-    `${zonderTrashed.length} hash-zoekopdrachten in ${ROUTE} vragen 'trashed' niet op — dan kan een ` +
+  const blind = gates.filter((q) => !/trashed/.test(q));
+  assert.deepEqual(
+    blind.map((q) => q.split("\n")[0].trim()),
+    [],
+    `${blind.length} POORT-zoekopdracht(en) in ${ROUTE} vragen 'trashed' niet op — dan kan een ` +
       "weggegooid bestand weer als levend duplicaat geweigerd worden, en zit de eigenaar klem.",
   );
 });

@@ -26,7 +26,7 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3 } from '@/lib/design/tokens'
+import { M3, COLUMN } from '@/lib/design/tokens'
 // [UPLOAD-ERRORS] Eén vertaler van HTTP-status → wat de eigenaar leest én of er een knop verschijnt.
 // Puur en getest, want een knop die niets kan opleveren is erger dan geen knop.
 import { describeUploadFailure } from '@/lib/upload-failure'
@@ -80,6 +80,9 @@ interface Item {
   // per definitie niet slagen bij opnieuw proberen, dus dan hoort er geen knop te staan.
   fairUse?: boolean
   noRetry?: boolean
+  // [MULTI-INVOICE] How many different invoices this ONE file appeared to contain. Only one was
+  // read, so this row is a WARNING even though the upload succeeded — the others exist nowhere.
+  multiInvoice?: number
 }
 
 /** Wat /api/intake terugstuurt, voor zover deze pagina het leest. Expliciet opgeschreven omdat het
@@ -96,6 +99,8 @@ interface IntakeResponse {
   error?: string
   canForce?: boolean
   archived?: Item['archived']
+  // [MULTI-INVOICE] Eén bestand met meerdere factuurnummers erin; de route noemt de nummers.
+  multipleInvoices?: { numbers?: string[] }
 }
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -211,6 +216,7 @@ export default function UploadClient() {
               autoVerified: data?.auto_verified === true,
               // [UNREAD-HONESTY] Opgeslagen maar niet gelezen — apart van 'klaar' gehouden.
               couldNotRead: data?.could_not_read === true,
+              multiInvoice: data?.multipleInvoices?.numbers?.length,
               vendor: data?.vendor ?? null, total: data?.total_inc_btw ?? null, number: data?.invoice_number ?? null,
             })
           } else if (res.status === 409 && data?.duplicate) {
@@ -257,13 +263,14 @@ export default function UploadClient() {
     if (!fl || fl.length === 0) return
     const imgs = Array.from(fl).filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name))
     if (imgs.length === 0) { setMpError('Kies foto’s van de pagina’s.'); return }
-    setMpError(null)
-    setMpPages((prev) => {
-      const merged = [...prev, ...imgs]
-      if (merged.length > MAX_PAGES) { setMpError(`Maximaal ${MAX_PAGES} pagina’s per factuur.`); return merged.slice(0, MAX_PAGES) }
-      return merged
-    })
-  }, [])
+    // [MP-PURE-UPDATER] Never set state from inside a state updater: a reducer must be pure, and
+    // React may run it twice (StrictMode / concurrent rendering), which fired the cap warning
+    // twice for one pick. Compute the capped list first, then write both pieces of state once.
+    const merged = [...mpPages, ...imgs]
+    const capped = merged.length > MAX_PAGES
+    setMpPages(capped ? merged.slice(0, MAX_PAGES) : merged)
+    setMpError(capped ? `Maximaal ${MAX_PAGES} pagina’s per factuur.` : null)
+  }, [mpPages])
 
   const removeMpPage = useCallback((idx: number) => {
     setMpPages((prev) => prev.filter((_, i) => i !== idx))
@@ -281,7 +288,9 @@ export default function UploadClient() {
     } catch (e) {
       // combineImagesToPdf names the failing page ("Pagina 2 kon niet…") — surface it as-is so the
       // owner knows which photo to redo; keep the other pages in the tray for a quick retry.
-      setMpError(e instanceof Error && /Pagina/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe.')
+      // combineImagesToPdf names either the failing page ("Pagina 2 kon niet…") or why the set
+      // cannot fit one upload ("Deze 20 pagina's passen samen niet…") — both are actionable.
+      setMpError(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe.')
     } finally {
       setCombining(false)
     }
@@ -390,11 +399,14 @@ export default function UploadClient() {
   const toVerify = done.filter(
     (i) => (i.destination === 'invoice' || i.destination === 'receipt') && !i.autoVerified,
   ).length
+  // [MULTI-INVOICE] Files that imported one invoice and silently left others behind. Counted
+  // separately from the plain successes, because "klaar" is exactly what they are NOT.
+  const multiFiles = done.filter((i) => i.multiInvoice).length
   const anyResult = done.length + dups.length + errs.length > 0
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         {/* [HEADER-SYSTEM] Title "Uploaden" + back live in the shared sub-page bar;
             the in-body h1 was removed. The descriptive subtitle stays. */}
         <div style={{ margin: '16px 0 8px' }}>
@@ -563,14 +575,17 @@ export default function UploadClient() {
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {items.map((it) => {
               const d = it.destination ? DEST[it.destination] : null
+              // [MULTI-INVOICE] A file that held several invoices imported fine — and still lost
+              // the others. A green edge would read as "done"; it is the one 'done' row the owner
+              // must act on, so it wears the warning colour.
               const border =
                 it.status === 'error' ? M3.error
                 : it.status === 'duplicate' ? M3.warn
                 // [UNREAD-HONESTY] Opgeslagen, maar niet gelezen → dezelfde aandachtskleur als een
-                // duplicaat, niet het groen van geslaagd. Het bestand is veilig, maar er moet nog
-                // iets gebeuren, en dat is wat de rand hoort te zeggen.
-                : it.status === 'done' && it.couldNotRead ? M3.warn
-                : it.status === 'done' ? M3.success
+                // duplicaat en als een bestand met meerdere facturen, niet het groen van geslaagd.
+                // Het bestand is veilig, maar er moet nog iets gebeuren, en dat is wat de rand
+                // hoort te zeggen.
+                : it.status === 'done' ? (it.couldNotRead || it.multiInvoice ? M3.warn : M3.success)
                 : M3.outlineVariant
               const isImg = it.file.type.startsWith('image/')
               // The at-a-glance summary of WHAT the file is (so you don't open each one).
@@ -598,7 +613,7 @@ export default function UploadClient() {
                       {it.status === 'done' && extracted && (
                         <p style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{extracted}</p>
                       )}
-                      <p style={{ fontSize: 12, color: it.status === 'error' ? (it.rateLimited || it.fairUse ? M3.warn : M3.error) : it.status === 'duplicate' || it.couldNotRead ? M3.warn : M3.neutral, margin: '2px 0 0', lineHeight: 1.4 }}>
+                      <p style={{ fontSize: 12, color: it.status === 'error' ? (it.rateLimited || it.fairUse ? M3.warn : M3.error) : it.status === 'duplicate' || it.couldNotRead || it.multiInvoice ? M3.warn : M3.neutral, margin: '2px 0 0', lineHeight: 1.4 }}>
                         {it.status === 'queued' ? (it.message || 'In wachtrij…')
                           : it.status === 'busy' ? 'Bezig met lezen…'
                           : it.message || (d ? d.label : 'Klaar')}
@@ -620,8 +635,8 @@ export default function UploadClient() {
                     ) : it.status === 'done' && d ? (
                       // [AUTO-ADVANCE-HONESTY] The badge names the OUTCOME, not just the type:
                       // "Factuur" on a row the app already booked reads as "still to do".
-                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: it.autoVerified ? '#0B5A28' : d.color, background: it.autoVerified ? '#E6F4EA' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
-                        {it.autoVerified ? 'Automatisch geboekt' : d.label}
+                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: it.multiInvoice ? '#7C5800' : it.autoVerified ? '#0B5A28' : d.color, background: it.multiInvoice ? '#FEE8C4' : it.autoVerified ? '#E6F4EA' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
+                        {it.multiInvoice ? `${it.multiInvoice} facturen` : it.autoVerified ? 'Automatisch geboekt' : d.label}
                       </span>
                     ) : null}
                   </div>
@@ -690,9 +705,10 @@ export default function UploadClient() {
               {countBy('ledger') > 0 && <>{countBy('ledger')} controle-check · </>}
               {countBy('document') > 0 && <>{countBy('document')} bestand · </>}
               {countBy('statement') > 0 && <>{countBy('statement')} rekeningoverzicht · </>}
-              {/* Eigen post, want dit is het enige getal in deze regel waar de eigenaar nog iets
-                  mee moet en dat vroeger onzichtbaar opging in "X bestand". */}
+              {/* Eigen post, want dit is een getal waar de eigenaar nog iets mee moet en dat
+                  vroeger onzichtbaar opging in "X bestand". */}
               {unread.length > 0 && <span style={{ color: M3.warn }}>{unread.length} niet gelezen · </span>}
+              {multiFiles > 0 && <span style={{ color: M3.warn }}>{multiFiles} bestand(en) met meerdere facturen · </span>}
               {dups.length > 0 && <>{dups.length} dubbel · </>}
               {errs.length > 0 && <span style={{ color: M3.error }}>{errs.length} mislukt</span>}
             </p>

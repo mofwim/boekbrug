@@ -7,6 +7,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
+// [TZ] "Vandaag" is de Amsterdamse dag van de ondernemer, nooit de UTC-dag. Tussen middernacht
+// en 02:00 zijn dat verschillende data, en dan verschoof de Verlopen-lijst een dag.
+import { amsterdamToday } from "@/lib/format-nl";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -146,10 +149,21 @@ export function useInfiniteInvoices(
           // ZZP sees own invoices
           q = q.eq("sender_id", opts.userId);
 
+          // [ARCHIVED-OFF-LIST] An archived invoice is out of the books, and the ONE screen that
+          // consumes this hook drops every archived row before rendering (FacturenClient filters
+          // `status === 'archived'` out) while fetching the archive separately for its own
+          // end-of-list card. So on the "Alle" tab these rows did nothing but eat slots in the
+          // 20-row pages — an owner with many archived invoices paginated through pages that
+          // rendered half empty. Excluded at the source; the undo list is unaffected.
+          q = q.neq("status", "archived");
+
           if (opts.status && opts.status !== "all") {
             if (opts.status === "overdue") {
               // [BOEK-009] overdue = sent + due_date < today — May 2026
-              const today = new Date().toISOString().split("T")[0];
+              // [TZ] …and "today" is the owner's Amsterdam day. This read the UTC day, so
+              // between 00:00 and 02:00 Amsterdam it still used YESTERDAY: for those two hours
+              // an invoice that had just become overdue was missing from the list.
+              const today = amsterdamToday();
               q = q.eq("status", "sent").lt("due_date", today);
             } else {
               q = q.eq("status", opts.status);
@@ -175,32 +189,19 @@ export function useInfiniteInvoices(
         const newHasMore = rows.length === PAGE_SIZE;
         setHasMore(newHasMore);
 
-        // [BOEK-031] Fetch archived invoices — alleen in ZZP mode, alleen op eerste pagina — May 2026
-        let archivedRows: InvoiceRow[] = [];
-        if (!isAccountantMode && replace) {
-          const { data: archivedData } = await supabase
-            .from("invoices")
-            .select(SELECT)
-            .eq("sender_id", opts.userId)
-            .eq("status", "archived")
-            .order("created_at", { ascending: false });
-          archivedRows = (archivedData ?? []) as InvoiceRow[];
-        }
-
+        // [ARCHIVED-OFF-LIST] The separate archived fetch that used to sit here is gone. It ran on
+        // EVERY refresh, with no .limit() (so up to Supabase's 1000-row ceiling), and its only
+        // consumer threw all of it away one line later. FacturenClient owns the archive list it
+        // actually shows — a narrower select, refetched exactly when a removal or restore changes
+        // it. One query for one purpose, instead of two for one.
         if (replace) {
-          // [BOEK-031] archived altijd aan het einde — May 2026
-          setInvoices([...rows, ...archivedRows]);
+          setInvoices(rows);
           const last = rows.at(-1);
           cursorRef.current = last ? { created_at: last.created_at, id: last.id } : null;
         } else {
           setInvoices((prev) => {
             const seen = new Set(prev.map((r) => r.id));
-            // archived zitten al in de lijst van replace — niet opnieuw toevoegen
-            const newRows = rows.filter((r) => !seen.has(r.id) && r.status !== "archived");
-            // archived altijd aan het einde houden
-            const archived = prev.filter((r) => r.status === "archived");
-            const normal   = prev.filter((r) => r.status !== "archived");
-            return [...normal, ...newRows, ...archived];
+            return [...prev, ...rows.filter((r) => !seen.has(r.id))];
           });
           if (rows.length > 0) {
             const last = rows.at(-1)!;
@@ -260,7 +261,9 @@ export function useInfiniteInvoices(
           // a paid import) prepend into the "Verlopen" tab. Overdue is computed,
           // not stored: it must match the fetch filter (sent + due_date < today).
           if (!isAccountantMode && opts.status === "overdue") {
-            const today = new Date().toISOString().split("T")[0];
+            // [TZ] Same day boundary as the query above — the two must agree, or a live insert
+            // lands in a tab whose own fetch would not have returned it.
+            const today = amsterdamToday();
             if (!(row.status === "sent" && row.due_date && row.due_date < today)) return;
           }
           if (

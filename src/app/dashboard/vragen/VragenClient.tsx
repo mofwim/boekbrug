@@ -15,7 +15,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { FONT, M3, R } from '@/lib/design/tokens'
+import { FONT, M3, R, COLUMN } from '@/lib/design/tokens'
 import { bouwAntwoordBericht, type OpenVraag } from '@/lib/vragen'
 
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
@@ -51,7 +51,7 @@ export default function VragenClient({
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
+      <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
 
         {/* [HEADER-SYSTEM] De titel woont in de gedeelde sub-paginabalk; hier alleen de uitleg. */}
         <header style={{ margin: '16px 0 18px' }}>
