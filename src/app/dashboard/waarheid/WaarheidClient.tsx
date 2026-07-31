@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { FONT, COLUMN } from "@/lib/design/tokens";
+import { assessBtwCertainty } from "@/lib/btw-certainty";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 
@@ -250,6 +251,48 @@ export default function WaarheidClient() {
   const r = data?.result;
   const isQuarterLens = !!(data?.quarter && data?.year);
   const div = data?.filed?.divergence;
+  // [BTW-CERTAINTY] How much weight the BTW amount may be given — see btw-certainty.ts.
+  const certainty = assessBtwCertainty({
+    btwSaldo: r?.btwSaldo ?? 0,
+    omzet: r?.omzet ?? 0,
+    cashOmzetZonderBtw: r?.cashOmzetZonderBtw ?? 0,
+  });
+  // [NOG-TE-DOEN] Everything that makes the figures above incomplete, as ONE list with an exit per
+  // item. It used to be four loose ⚠️ paragraphs in small grey-orange body text below the cards:
+  // individually honest, collectively a wall an owner skims past. Grouping them turns "here is what
+  // is wrong" into "here is what to do next", which is the only form of it anyone acts on.
+  const todos: { text: string; href: string; cta: string }[] = [];
+  if (data && r) {
+    if ((r.cashOmzetZonderBtw ?? 0) > 0) {
+      const bank = (r.omzetZonderBtwNonCash ?? 0) > 0;
+      todos.push({
+        text: `${eur.format(r.cashOmzetZonderBtw ?? 0)} omzet heeft nog geen BTW-tarief. Daardoor is de BTW hierboven te laag.`,
+        href: bank ? "/dashboard/dagomzet" : "/dashboard/kas",
+        cta: bank ? "Naar Dagomzet" : "Naar Kas",
+      });
+    }
+    if (data.unconfirmedIncomingCount > 0) {
+      todos.push({
+        text: `${data.unconfirmedIncomingCount} inkoopfactu${data.unconfirmedIncomingCount === 1 ? "ur is" : "ren zijn"} nog niet gecontroleerd. ${data.unconfirmedIncomingCount === 1 ? "Het bedrag telt" : "Die bedragen tellen"} nog niet mee in je kosten en BTW.`,
+        href: "/dashboard/incoming",
+        cta: "Controleren",
+      });
+    }
+    if (data.datelessVerifiedCount > 0) {
+      todos.push({
+        text: `${data.datelessVerifiedCount} factu${data.datelessVerifiedCount === 1 ? "ur heeft" : "ren hebben"} geen datum, dus ${data.datelessVerifiedCount === 1 ? "die telt" : "die tellen"} in geen enkele periode mee.`,
+        href: "/dashboard/facturen",
+        cta: "Datum invullen",
+      });
+    }
+    if (data.undatedPaidCount > 0) {
+      todos.push({
+        text: `${data.undatedPaidCount} betaalde factu${data.undatedPaidCount === 1 ? "ur mist" : "ren missen"} een betaaldatum. Onder kasstelsel kan die BTW nog niet in de juiste periode worden geplaatst.`,
+        href: "/dashboard/bank",
+        cta: "Koppelen",
+      });
+    }
+  }
 
   return (
     <div style={{ maxWidth: COLUMN.work, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
@@ -408,27 +451,77 @@ export default function WaarheidClient() {
             </div>
           )}
 
-          {/* Resultaat — the headline */}
+          {/* Resultaat — the headline. Plain words first: an owner reads "wat hou je over",
+              not "resultaat". The bookkeeping term stays as the small second line so the
+              accountant's vocabulary is still learnable from the screen. */}
           <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600, marginBottom: 6 }}>Resultaat (winst)</div>
+            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>Wat je overhoudt</div>
+            <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>omzet − kosten · je winst</div>
             <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5, color: r.resultaat >= 0 ? "#137333" : "#c5221f" }}>
               {eur.format(r.resultaat)}
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
-              <Stat label="Omzet" value={eur.format(r.omzet)} />
-              <Stat label="Kosten" value={eur.format(r.kosten)} />
+              <Stat label="Omzet" value={eur.format(r.omzet)} sub="wat je verdiende" />
+              <Stat label="Kosten" value={eur.format(r.kosten)} sub="wat je uitgaf" />
             </div>
           </div>
 
-          {/* BTW position */}
-          <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600, marginBottom: 6 }}>
-              {r.btwSaldo >= 0 ? "BTW te betalen" : "BTW terug te ontvangen"}
+          {/* BTW position.
+
+              [BTW-CERTAINTY] The caveat lives ON the number now. computeResult never guesses a BTW
+              rate, so revenue booked without one sits in omzet while its BTW is simply absent from
+              this figure — correct arithmetic that used to be rendered as a large, confident amount
+              with the explanation five blocks below it in grey body text. On a real account that
+              produced "BTW terug te ontvangen € 2.779,58" while every euro of € 44.255 of revenue
+              still had no rate: the owner is told they get €2.779 back when in truth they owe. The
+              rule that decides how much weight the amount may carry is btw-certainty.ts. */}
+          <div style={{
+            background: M.surface, borderRadius: 18, padding: 20, marginBottom: 12,
+            border: `1px solid ${certainty.level === "sign-could-flip" ? "#fbbc04" : M.line}`,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+          }}>
+            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>
+              {certainty.level === "sign-could-flip"
+                ? "BTW — nog niet te zeggen"
+                : r.btwSaldo >= 0 ? "BTW die je moet betalen" : "BTW die je terugkrijgt"}
             </div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: M.onSurface }}>{eur.format(Math.abs(r.btwSaldo))}</div>
+            <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>
+              {certainty.level === "sign-could-flip"
+                ? "eerst tarieven toekennen"
+                : r.btwSaldo >= 0 ? "aan de Belastingdienst, over deze periode" : "van de Belastingdienst, over deze periode"}
+            </div>
+            <div style={{
+              fontSize: 26, fontWeight: 800,
+              // A number that could still swing the other way is not shown in the confident
+              // near-black of a settled figure; it is greyed to the weight it has actually earned.
+              color: certainty.level === "sign-could-flip" ? M.muted : M.onSurface,
+            }}>
+              {eur.format(Math.abs(r.btwSaldo))}
+              {certainty.level === "sign-could-flip" && (
+                <span style={{ fontSize: 13, fontWeight: 600, color: M.muted }}> voorlopig</span>
+              )}
+            </div>
+
+            {/* The one sentence that changes what this amount means — directly under it, in the
+                same card, never further down the page. */}
+            {certainty.level === "sign-could-flip" && (
+              <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 12, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
+                Dit lijkt geld terug, maar <strong>{eur.format(certainty.unrated)}</strong> van je omzet heeft nog geen
+                BTW-tarief. Zodra je die tarieven toekent, wordt dit waarschijnlijk een bedrag dat je
+                juist moet <strong>betalen</strong>. Reken er dus nog niet op.
+              </div>
+            )}
+            {certainty.level === "incomplete" && (
+              <div style={{ fontSize: 12.5, color: M.warnFg, marginTop: 10, lineHeight: 1.5 }}>
+                Nog niet compleet: {eur.format(certainty.unrated)} omzet heeft geen BTW-tarief, dus dit bedrag is te laag.
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
-              <Stat label="Verschuldigd" value={eur.format(r.btwVerschuldigd)} />
-              <Stat label="Voorbelasting" value={eur.format(r.btwVoorbelasting)} />
+              {/* Plain meaning as the label, the aangifte's own word underneath — the owner can
+                  follow the screen AND recognise the term when the accountant uses it. */}
+              <Stat label="Over je omzet" value={eur.format(r.btwVerschuldigd)} sub="verschuldigd" />
+              <Stat label="Over je inkopen" value={eur.format(r.btwVoorbelasting)} sub="voorbelasting" />
             </div>
             {/* Quarter lens → the aangifte for this exact period is one tap away (same numbers). */}
             {data.quarter && data.year && (
@@ -459,21 +552,30 @@ export default function WaarheidClient() {
             || data.reconciliation.incompleteDays > 0
             || data.reconciliation.commissionIssueDays > 0) && (
             <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-              <div style={{ fontSize: 13, color: M.muted, fontWeight: 600, marginBottom: 10 }}>
-                Kaart-controle (kassa · terminal · bank)
+              <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>
+                Pinbetalingen gecontroleerd
               </div>
-              <div style={{ display: "flex", gap: 16 }}>
-                {/* [KAS-COMMISSION] MEASURED vs BOOKED are two different numbers and are labelled as
-                    such. Under kasstelsel the triangle delta is deliberately not auto-booked (the fee
-                    is deductible when the acquirer's own invoice is PAID), so `commissionBooked` is 0
-                    while `totalCommission` can be hundreds of euros. The screen this replaces showed
-                    only the booked figure next to the flat claim "de commissie is verwerkt in het
-                    resultaat hierboven" — so a kasstelsel shop read "€ 0,00" on a control surface
-                    that had in fact measured a real cost. */}
-                <Stat label="Gemeten commissie" value={eur.format(data.reconciliation.totalCommission)} />
-                <Stat label="Terminal-afrekeningen" value={String(data.reconciliation.eftSettlements)} />
+              <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 10 }}>
+                kassa · terminal · bank moeten hetzelfde zeggen
               </div>
-              <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: "10px 0 0" }}>
+              {/* [NO-ZERO-LEAD] Two stats reading "€ 0,00" and "0" were the first thing a shop with
+                  nothing uploaded yet saw — a confident answer to a question nobody had been able to
+                  ask. When there is nothing measured, skip the figures and go straight to the one
+                  line that says what to do; the numbers appear once they mean something. */}
+              {(data.reconciliation.totalCommission > 0 || data.reconciliation.eftSettlements > 0) && (
+                <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
+                  {/* [KAS-COMMISSION] MEASURED vs BOOKED are two different numbers and are labelled as
+                      such. Under kasstelsel the triangle delta is deliberately not auto-booked (the fee
+                      is deductible when the acquirer's own invoice is PAID), so `commissionBooked` is 0
+                      while `totalCommission` can be hundreds of euros. The screen this replaces showed
+                      only the booked figure next to the flat claim "de commissie is verwerkt in het
+                      resultaat hierboven" — so a kasstelsel shop read "€ 0,00" on a control surface
+                      that had in fact measured a real cost. */}
+                  <Stat label="Kosten van de betaalautomaat" value={eur.format(data.reconciliation.totalCommission)} sub="gemeten commissie" />
+                  <Stat label="Afrekeningen ontvangen" value={String(data.reconciliation.eftSettlements)} sub="van de terminal" />
+                </div>
+              )}
+              <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: 0 }}>
                 {data.scheme === "kas"
                   ? "Onder kasstelsel wordt deze commissie niet automatisch als kosten geboekt: ze is aftrekbaar op het moment dat je de factuur van de acquirer betaalt. Boek die factuur, dan telt de commissie in de juiste periode mee."
                   : data.reconciliation.commissionBooked > 0
@@ -500,9 +602,27 @@ export default function WaarheidClient() {
             </div>
           )}
 
-          {/* Honesty notes — never a silent gap. Every reason these figures could be too low gets a
-              line here, and the set is kept at parity with what the filing gate blocks on: an owner
-              must never meet a 409 about a problem this screen chose not to mention. */}
+          {/* [NOG-TE-DOEN] The reasons the figures above are incomplete, as ONE block with an exit
+              per item. This was four to six loose ⚠️ paragraphs in small grey-orange body text:
+              each one honest, all of them together a wall an owner skims. A shop owner does not
+              need a list of what is wrong; they need to know what to open next. Same facts, same
+              parity with the filing gate — different job. */}
+          {todos.length > 0 && (
+            <div style={{ background: M.warnBg, border: "1px solid #fbbc04", borderRadius: 18, padding: "16px 18px", marginBottom: 12 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: M.warnFg }}>
+                Nog te doen voor een compleet beeld
+              </div>
+              <div style={{ fontSize: 12, color: M.warnFg, opacity: 0.85, margin: "2px 0 6px" }}>
+                Tot dan zijn de bedragen hierboven te laag.
+              </div>
+              {todos.map((t) => (
+                <TodoRow key={t.href + t.text} text={t.text} href={t.href} cta={t.cta} />
+              ))}
+            </div>
+          )}
+
+          {/* The quiet footnotes: true of the figures, but nothing to act on. Kept small and last,
+              which is exactly where things you cannot do anything about belong. */}
           <div style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.6, padding: "0 4px" }}>
             {/* [SCHEME] This line was hardcoded to "op basis van factuurdatum" for everyone — the
                 literal opposite of the truth for an owner on the kasstelsel, whose BTW is computed
@@ -510,58 +630,21 @@ export default function WaarheidClient() {
                 figures is the one thing this screen cannot afford. */}
             <p style={{ margin: "0 0 6px" }}>
               {data.scheme === "kas"
-                ? "Kasstelsel — op basis van betaaldatum (niet factuurdatum): een onbetaalde factuur telt pas mee zodra hij betaald is."
-                : "Op basis van factuurdatum (niet betaaldatum) — dit is je fiscale resultaat, niet je banksaldo."}
+                ? "Kasstelsel — op basis van betaaldatum: een onbetaalde factuur telt pas mee zodra hij betaald is."
+                : "Op basis van factuurdatum, niet betaaldatum. Dit is dus je fiscale winst, niet wat er op je rekening staat."}
             </p>
             {/* [SCHEME-SPAN] A window that crosses the factuur→kas switch has no single correct
                 basis; say which one was used rather than let two lenses disagree in silence. */}
             {data.spansSchemeChange && (
               <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ Deze periode loopt door je overstap naar het kasstelsel heen{data.schemeSince ? ` (per ${data.schemeSince})` : ""}.
-                De cijfers hierboven zijn volledig op {data.scheme === "kas" ? "kasstelsel" : "factuurstelsel"} berekend.
-                Bekijk per kwartaal voor de cijfers zoals je ze aangeeft.
-              </p>
-            )}
-            {(r.cashOmzetZonderBtw ?? 0) > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ {eur.format(r.cashOmzetZonderBtw ?? 0)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
-                niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven.{" "}
-                {/* [ZONDER-TARIEF-SOURCE] The engine knows whether this came from bank/till revenue
-                    (needs the Z-report split → Dagomzet) or from plain cash (rated at Kas). It was
-                    already computed as omzetZonderBtwNonCash and the copy still guessed at both. */}
-                {(r.omzetZonderBtwNonCash ?? 0) <= 0
-                  ? "Ken het tarief toe bij Kas."
-                  : (r.omzetZonderBtwNonCash ?? 0) >= (r.cashOmzetZonderBtw ?? 0)
-                    ? "Ken het tarief toe bij Dagomzet."
-                    : "Ken het tarief toe bij Kas en Dagomzet."}
-              </p>
-            )}
-            {/* [GATE-PARITY] The filing gate blocks on this and the screen never mentioned it, so
-                the first time an owner heard about unconfirmed purchase invoices was the 409 dialog
-                after tapping "markeer als ingediend". */}
-            {data.unconfirmedIncomingCount > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ {data.unconfirmedIncomingCount} inkoopfactu{data.unconfirmedIncomingCount === 1 ? "ur is" : "ren zijn"} nog niet
-                gecontroleerd — {data.unconfirmedIncomingCount === 1 ? "het bedrag en de BTW staan" : "hun bedragen en BTW staan"} nog niet in de cijfers hierboven.
-              </p>
-            )}
-            {data.datelessVerifiedCount > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ {data.datelessVerifiedCount} bevestigde factu{data.datelessVerifiedCount === 1 ? "ur telt" : "ren tellen"} nog niet mee — er ontbreekt een datum.
-              </p>
-            )}
-            {/* [KASSTELSEL] The cash-basis equivalent of a dateless invoice: money that demonstrably
-                moved but cannot be placed in a period. /api/aangifte and /api/readiness have always
-                warned about it; this screen never received the number. */}
-            {data.undatedPaidCount > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ {data.undatedPaidCount} betaalde factu{data.undatedPaidCount === 1 ? "ur mist" : "ren missen"} een betaaldatum —
-                die BTW kan nog niet in de juiste periode worden geplaatst, dus de cijfers hierboven zijn mogelijk te laag.
+                Deze periode loopt door je overstap naar het kasstelsel heen{data.schemeSince ? ` (per ${data.schemeSince})` : ""}.
+                Alles hierboven is op {data.scheme === "kas" ? "kasstelsel" : "factuurstelsel"} berekend. Bekijk per kwartaal
+                voor de cijfers zoals je ze aangeeft.
               </p>
             )}
             {data.estimatedPortionCount > 0 && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ Bij {data.estimatedPortionCount} betaling{data.estimatedPortionCount === 1 ? "" : "en"} is de betaaldatum een schatting
+              <p style={{ margin: "0 0 6px" }}>
+                Bij {data.estimatedPortionCount} betaling{data.estimatedPortionCount === 1 ? "" : "en"} is de betaaldatum een schatting
                 (handmatig op betaald gezet) — controleer of de periode klopt.
               </p>
             )}
@@ -571,8 +654,8 @@ export default function WaarheidClient() {
                 twice, in less useful words. */}
             {/* [LEDGER-READ] Never present a check that did not run as a check that passed. */}
             {data.reconciliation.pinLedgerAvailable === false && (
-              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                ⚠️ De controle tegen je PIN-grootboek kon niet worden uitgevoerd — eventuele verschillen tussen kassa en grootboek zijn hierboven dus niet meegewogen.
+              <p style={{ margin: "0 0 6px" }}>
+                De controle tegen je PIN-grootboek kon niet worden uitgevoerd — verschillen tussen kassa en grootboek zijn hierboven dus niet meegewogen.
               </p>
             )}
           </div>
@@ -629,11 +712,27 @@ export default function WaarheidClient() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+// `sub` is the quiet second line: the bookkeeping term under a plain-language label, or the plain
+// meaning under a figure. It exists so the screen can be read without a glossary while still using
+// the words the aangifte and the accountant use.
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#80868b", marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+/** One row in "Nog te doen" — what is missing, and the screen that fixes it. */
+function TodoRow({ text, href, cta }: { text: string; href: string; cta: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 0", borderTop: `1px solid ${M.line}` }}>
+      <div style={{ flex: 1, fontSize: 13, color: M.onSurface, lineHeight: 1.5 }}>{text}</div>
+      <Link href={href} style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: M.primary, textDecoration: "none", whiteSpace: "nowrap" }}>
+        {cta} ›
+      </Link>
     </div>
   );
 }
