@@ -93,8 +93,7 @@ export async function PATCH(request: NextRequest) {
     // bedrijf laten herschrijven; service_role kent geen RLS die dat nog tegenhoudt.
     let q = pipeline.from('clients').update(patch).eq('id', id).eq('user_id', invoiceOwnerId(acting))
     if (acting.role !== 'eigenaar') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      q = (q as any).eq('created_by', invoiceCreatedBy(acting))
+      q = q.eq('created_by', invoiceCreatedBy(acting))
     }
     const { error } = await q
 

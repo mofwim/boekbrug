@@ -36,8 +36,7 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
     // Read with service_role, with an explicit .eq() on the session user. That is safer here
     // than it looks: resolveActingFor() discards the row anyway when member_id does not match,
     // so even a mistake in this query cannot put anyone inside another person's administration.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pipeline = createPipelineClient() as any;
+    const pipeline = createPipelineClient();
     const { data, error } = await pipeline
       .from("company_members")
       .select("owner_id, member_id, role, revoked_at")
@@ -81,8 +80,7 @@ export async function loadTeamNames(ownerId: string): Promise<Record<string, str
   const { available, members } = await loadCompanyMembers(ownerId);
   if (!available || members.length === 0) return {};
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pipeline = createPipelineClient() as any;
+    const pipeline = createPipelineClient();
     const { data } = await pipeline
       .from("profiles")
       .select("id, full_name, company_name")
@@ -112,8 +110,7 @@ export async function loadRevokedMembership(
   userId: string,
 ): Promise<{ ownerId: string; revokedAt: string } | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pipeline = createPipelineClient() as any;
+    const pipeline = createPipelineClient();
     const { data } = await pipeline
       .from("company_members")
       .select("owner_id, revoked_at")
@@ -151,8 +148,7 @@ export async function loadCompanyMembers(
   ownerId: string,
 ): Promise<{ available: boolean; members: CompanyMemberRow[] }> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pipeline = createPipelineClient() as any;
+    const pipeline = createPipelineClient();
     const { data, error } = await pipeline
       .from("company_members")
       .select("id, member_id, role, created_at, revoked_at")
