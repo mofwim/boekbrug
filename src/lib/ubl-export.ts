@@ -21,9 +21,9 @@
 //    recompute via the invoices-level Math.round trick).
 
 import { create } from "xmlbuilder2";
-// [EENHEID] De enige plek waar een eenheid een UN/ECE Rec 20-code wordt. Zie eenheden.ts voor
+// [UNIT] De enige plek waar een eenheid een UN/ECE Rec 20-code wordt. Zie units.ts voor
 // waarom de terugval C62 blijft: geen bestaande factuur mag van betekenis veranderen.
-import { eenheidCode } from "./eenheden";
+import { toUnitCode } from "./units";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
 
@@ -63,7 +63,7 @@ export interface UblInvoiceLine {
   btw_rate: number | null; // real column on invoice_lines (default 21)
   line_total: number | null; // ex BTW (quantity * unit_price)
   /**
-   * [EENHEID] De eenheid zoals de ondernemer hem koos ("uur", "m²", "stuk"). Optioneel: op een
+   * [UNIT] De eenheid zoals de ondernemer hem koos ("uur", "m²", "stuk"). Optioneel: op een
    * regel zonder eenheid valt de export terug op C62, precies zoals hij dat altijd al deed.
    */
   unit?: string | null;
@@ -381,16 +381,16 @@ export function buildInvoiceUbl(
     const ex = round2(Number(l.line_total ?? 0));
     const line = root.ele(NS.cac, "InvoiceLine");
     line.ele(NS.cbc, "ID").txt(String(i + 1));
-    // [EENHEID] Hier stond `unitCode: "C62"` HARDGECODEERD op elke regel. C62 betekent
+    // [UNIT] Hier stond `unitCode: "C62"` HARDGECODEERD op elke regel. C62 betekent
     // "one / stuk" — juist voor een product, en fout voor alles wat je per uur, per m² of per
     // kilometer levert: "2 uur arbeid" ging de deur uit als "2 stuks". Het BEDRAG klopte
     // altijd, maar de e-factuur beschreef iets anders dan er geleverd was, en dat is het
     // document dat telt bij een controle of een geschil.
     //
-    // Peppol BIS Billing 3.0 eist een code uit UN/ECE Rec 20 rev. 11; eenheidCode() is de enige
+    // Peppol BIS Billing 3.0 eist een code uit UN/ECE Rec 20 rev. 11; toUnitCode() is de enige
     // plek waar die keuze wordt gemaakt, en valt terug op C62 zodra hij het niet zeker weet.
     // Daardoor verandert geen enkele bestaande factuur van betekenis.
-    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: eenheidCode(l.unit) }).txt(qty(Number(l.quantity ?? 1)));
+    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Number(l.quantity ?? 1)));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
     const item = line.ele(NS.cac, "Item");
     const desc = l.description?.trim() || "Artikel";

@@ -751,7 +751,7 @@ export default function SettingsPage() {
           </Link>
         )}
 
-        {/* [NAMENS] Wie mag er onder MIJN BTW-nummer factureren? Alleen voor een eigenaar: een
+        {/* [ACTING-FOR] Wie mag er onder MIJN BTW-nummer factureren? Alleen voor een eigenaar: een
             medewerker kan geen medewerkers uitnodigen (dat zou een keten worden waarin niemand
             meer kan zeggen wie er precies factureert), en de route erachter weigert het ook. */}
         {profile.role === 'zzper' && (

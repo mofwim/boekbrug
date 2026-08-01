@@ -9,7 +9,7 @@ import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
 import { getActingFor } from '@/lib/acting-for-server'
-import { isNamens } from '@/lib/acting-for'
+import { isActingForOther } from '@/lib/acting-for'
 
 export default async function DashboardLayout({
   children,
@@ -34,7 +34,7 @@ export default async function DashboardLayout({
   // parent/home via src/lib/navigation.ts).
   const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
 
-  // [NAMENS] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
+  // [ACTING-FOR] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
   //
   // Zijn profiles.role is gewoon 'zzper' — hij is een normale gebruiker die toevallig voor
   // iemand anders werkt. Zonder deze regel ziet hij dus de volledige balk: Bank, Kas, Aangifte,
@@ -44,7 +44,7 @@ export default async function DashboardLayout({
   // Dit is presentatie, geen grens — de grens is RLS. Verdwijnt deze regel, dan ziet hij weer
   // links die nergens heen gaan, geen gegevens van zijn baas.
   const acting = await getActingFor()
-  const isMedewerker = !!acting && isNamens(acting)
+  const isMedewerker = !!acting && isActingForOther(acting)
 
   return (
     <>

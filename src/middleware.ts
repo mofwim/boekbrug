@@ -4,7 +4,7 @@
 // modified by 028 Accou Portal v2
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { magScherm } from "@/lib/acting-for";
+import { canAccessScreen } from "@/lib/acting-for";
 
 // [PUBLIC-SURFACE] The public path list moved to src/lib/public-paths.ts so the smoke test can
 // assert against the SAME array this guard enforces. It was unreachable from anywhere else, which
@@ -113,7 +113,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/onboarding", request.url));
     }
 
-    // [NAMENS] Een verkoopmedewerker hoort op zijn eigen scherm, niet in de bank of de aangifte
+    // [ACTING-FOR] Een verkoopmedewerker hoort op zijn eigen scherm, niet in de bank of de aangifte
     // van zijn baas.
     //
     // WAT DEZE CONTROLE WEL EN NIET IS. De Next-documentatie is er expliciet over: een controle
@@ -132,7 +132,7 @@ export async function middleware(request: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    if (koppeling && !magScherm(
+    if (koppeling && !canAccessScreen(
       { ownerId: koppeling.owner_id as string, actorId: user.id, role: "verkoop" },
       request.nextUrl.pathname,
     )) {

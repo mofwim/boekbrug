@@ -1,6 +1,6 @@
 'use client'
 
-// [NAMENS] Uitnodigen en intrekken. Bewust saai: één veld, één knop, en een lijst waarin je
+// [ACTING-FOR] Uitnodigen en intrekken. Bewust saai: één veld, één knop, en een lijst waarin je
 // per persoon kunt zien sinds wanneer hij mag factureren.
 
 import { useCallback, useEffect, useState } from 'react'

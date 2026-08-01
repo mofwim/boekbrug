@@ -1,12 +1,12 @@
 // src/app/api/company/members/route.ts
-// [NAMENS] De eigenaar nodigt een verkoopmedewerker uit, en trekt hem weer in.
+// [ACTING-FOR] De eigenaar nodigt een verkoopmedewerker uit, en trekt hem weer in.
 //
 // GET    → wie hoort er bij mijn bedrijf, en welke uitnodigingen staan open
 // POST   → nodig een e-mailadres uit
 // PATCH  → trek een koppeling of een openstaande uitnodiging in
 //
 // DE REGEL DIE HIER GELDT
-// Alleen een EIGENAAR beheert leden. Een medewerker kan geen medewerkers uitnodigen — anders
+// Alleen een EIGENAAR beheert members. Een medewerker kan geen medewerkers uitnodigen — anders
 // ontstaat er een keten waarin niemand meer kan zeggen wie er precies onder zijn BTW-nummer
 // factureert. acting-for.ts weigert een geketende koppeling ook al bij het oplossen; dit is de
 // tweede, expliciete grendel op de plek waar de keten zou ontstaan.
@@ -17,7 +17,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { sendMemberInvite } from '@/lib/email'
 import { appOrigin } from '@/lib/app-origin'
 import { getActingFor, loadCompanyMembers } from '@/lib/acting-for-server'
-import { isNamens } from '@/lib/acting-for'
+import { isActingForOther } from '@/lib/acting-for'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +26,7 @@ export const dynamic = 'force-dynamic'
 async function alleenEigenaar() {
   const acting = await getActingFor()
   if (!acting) return { fout: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  if (isNamens(acting)) {
+  if (isActingForOther(acting)) {
     // Een medewerker die medewerkers uitnodigt = een keten. Zie de kop.
     return { fout: NextResponse.json({ error: 'Alleen de eigenaar beheert het team' }, { status: 403 }) }
   }
@@ -38,12 +38,12 @@ export async function GET() {
   if (wacht.fout) return wacht.fout
   const ownerId = wacht.ownerId!
 
-  const { beschikbaar, leden } = await loadCompanyMembers(ownerId)
+  const { available, members } = await loadCompanyMembers(ownerId)
 
   // De namen erbij — een lijst met uuid's is geen lijst.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pipeline = createPipelineClient() as any
-  const ids = leden.map((l) => l.member_id)
+  const ids = members.map((l) => l.member_id)
   const namen = new Map<string, { naam: string; email: string | null }>()
   if (ids.length) {
     const { data } = await pipeline.from('profiles').select('id, full_name, company_name, email').in('id', ids)
@@ -67,10 +67,10 @@ export async function GET() {
     ok: true,
     // false ⇒ de migratie staat nog open. Het scherm zegt dat dan met zoveel woorden in plaats
     // van een leeg team te tonen en een uitnodigingsknop aan te bieden die niet kán werken.
-    beschikbaar,
-    leden: leden.map((l) => ({
+    available,
+    members: members.map((l) => ({
       id: l.id,
-      // [NAMENS] Het PROFIEL-id, niet het rij-id: de factuurpagina heeft dit nodig om
+      // [ACTING-FOR] Het PROFIEL-id, niet het rij-id: de factuurpagina heeft dit nodig om
       // created_by aan een naam te koppelen.
       member_id: l.member_id,
       naam: namen.get(l.member_id)?.naam ?? 'Onbekend',
@@ -94,8 +94,8 @@ export async function POST(request: NextRequest) {
   })
   if (!limit.allowed) return rateLimitResponse(limit)
 
-  const { beschikbaar } = await loadCompanyMembers(ownerId)
-  if (!beschikbaar) {
+  const { available } = await loadCompanyMembers(ownerId)
+  if (!available) {
     // Liever één eerlijke zin dan een 500 met "Uitnodigen mislukt": de oorzaak ligt niet bij
     // wat de eigenaar deed, en hij kan er zelf iets aan doen.
     return NextResponse.json(
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error || !invite) {
-    console.error('[NAMENS] uitnodiging aanmaken mislukt', { error })
+    console.error('[ACTING-FOR] uitnodiging aanmaken mislukt', { error })
     return NextResponse.json({ error: 'Uitnodigen mislukt — probeer opnieuw' }, { status: 500 })
   }
 
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
     // openstaande rij weg — anders staat er een uitnodiging in het scherm die niemand ooit heeft
     // gekregen, en wacht de eigenaar op iets wat nooit komt.
     await pipeline.from('company_member_invites').delete().eq('id', invite.id)
-    console.error('[NAMENS] uitnodiging versturen mislukt', { error: String(e) })
+    console.error('[ACTING-FOR] uitnodiging versturen mislukt', { error: String(e) })
     return NextResponse.json({ error: 'De uitnodiging kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
   }
 

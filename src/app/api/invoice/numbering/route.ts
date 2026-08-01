@@ -43,7 +43,7 @@ import {
   reasonToDutch,
 } from '@/lib/invoice-template'
 import * as Sentry from '@sentry/nextjs'
-import { vereisEigenaar } from '@/lib/alleen-eigenaar'
+import { requireOwner } from '@/lib/owner-only'
 
 // [FACTUUR-UNIFY] Unified product-wide default: YEAR+sequence, padding 4
 // (e.g. 20260001) — matches lib/invoice-numbering and the free generator.
@@ -61,9 +61,9 @@ interface DesiredConfig {
 // POST — configure / reconfigure numbering
 // ─────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('De factuurnummering wijzigen'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('De factuurnummering wijzigen'); if (w.response) return w.response }
 
   try {
     const supabase = await createServerSupabaseClient()
@@ -223,9 +223,9 @@ export async function POST(req: NextRequest) {
 // GET — current numbering state (for the Settings card)
 // ─────────────────────────────────────────────────────────────────────
 export async function GET() {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('De factuurnummering wijzigen'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('De factuurnummering wijzigen'); if (w.response) return w.response }
 
   try {
     const supabase = await createServerSupabaseClient()

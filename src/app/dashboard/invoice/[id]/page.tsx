@@ -64,7 +64,7 @@ export default function InvoiceDetailPage() {
   const [loadingOriginal, setLoadingOriginal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
-  // [NAMENS] De medewerker die deze factuur maakte — leeg als de eigenaar hem zelf maakte.
+  // [ACTING-FOR] De medewerker die deze factuur maakte — leeg als de eigenaar hem zelf maakte.
   const [makerNaam, setMakerNaam] = useState<string | null>(null)
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
@@ -223,7 +223,7 @@ export default function InvoiceDetailPage() {
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
 
-      // [NAMENS] Wie maakte deze factuur? Alleen relevant als dat NIET de kijker zelf was —
+      // [ACTING-FOR] Wie maakte deze factuur? Alleen relevant als dat NIET de kijker zelf was —
       // dan is het de medewerker die hem namens de eigenaar heeft uitgegeven. created_by werd
       // geschreven en nergens gelezen; dit is de leesbare kant ervan.
       //
@@ -432,7 +432,7 @@ export default function InvoiceDetailPage() {
                 {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
                   <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
                 )}
-                {/* [NAMENS] Gemaakt door een MEDEWERKER, niet door de eigenaar zelf.
+                {/* [ACTING-FOR] Gemaakt door een MEDEWERKER, niet door de eigenaar zelf.
                     De eigenaar deelt het recht uit om facturen op zijn naam en BTW-nummer uit
                     te geven; bij een controle is zo'n factuur niet van de zijne te onderscheiden.
                     Dan hoort hier te staan wie hem maakte. Verschijnt alleen als het iemand

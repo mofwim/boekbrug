@@ -1,14 +1,15 @@
 // src/lib/acting-for-server.ts
-// [NAMENS] De serverkant: wie zit er in deze sessie, en namens wie handelt hij?
+// [ACTING-FOR] The server side: who is in this session, and on whose behalf are they acting?
 //
-// De pure regels staan in acting-for.ts en zijn daar getest. Hier staat alleen het opzoeken —
-// één query, en de uitkomst gaat door dezelfde resolveActingFor() die de test bewaakt. Zo is er
-// geen tweede plek waar iemand per ongeluk een eigen oordeel velt over wie waarbij mag.
+// The pure rules live in acting-for.ts and are tested there. This file only does the lookup —
+// one query, and the outcome goes through the same resolveActingFor() the test guards. That way
+// there is no second place where someone accidentally forms their own opinion about who may
+// touch what.
 //
-// De Next-documentatie noemt dit een Data Access Layer, en waarschuwt expliciet dat een controle
-// in de proxy/middleware OPTIMISTISCH is: goed genoeg om een menu te verbergen, nooit genoeg om
-// een grens te trekken. Elke serverroute en elke servercomponent die iets met geld doet, hoort
-// deze functie zelf aan te roepen — niet te vertrouwen op wat er eerder in de keten gebeurde.
+// The Next documentation calls this a Data Access Layer, and warns explicitly that a check in
+// the proxy/middleware is OPTIMISTIC: good enough to hide a menu, never enough to draw a
+// boundary. Every server route and every server component that touches money must call this
+// function itself — never trust what happened earlier in the chain.
 
 import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -16,11 +17,11 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveActingFor, type ActingFor, type MemberLink } from "@/lib/acting-for";
 
 /**
- * Wie handelt hier, namens wie? Geeft `null` als er niemand is ingelogd.
+ * Who is acting here, on whose behalf? Returns `null` when nobody is logged in.
  *
- * `cache()` memoïseert binnen één render/verzoek: een pagina die dit drie keer aanroept doet één
- * query. Het is nadrukkelijk GEEN cache tussen verzoeken — een ingetrokken medewerker moet bij
- * zijn volgende klik buiten staan, niet na een minuut.
+ * `cache()` memoises within one render/request: a page calling this three times does one query.
+ * It is emphatically NOT a cache between requests — a revoked member must be locked out on their
+ * next click, not after a minute.
  */
 export const getActingFor = cache(async (): Promise<ActingFor | null> => {
   const supabase = await createServerSupabaseClient();
@@ -29,12 +30,12 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
 
   let link: MemberLink | null = null;
   try {
-    // [DEPLOY-SAFE] company_members bestaat pas na de migratie, en staat dus nog niet in de
-    // gegenereerde types. Zelfde ontsnapping als elders in deze codebase (cron_runs).
+    // [DEPLOY-SAFE] company_members only exists after the migration, so it is not in the
+    // generated types yet. Same escape as elsewhere in this codebase (cron_runs).
     //
-    // Gelezen met service_role, met een expliciete .eq() op de sessiegebruiker. Dat is hier
-    // veiliger dan het lijkt: resolveActingFor() gooit de rij alsnog weg als member_id niet
-    // klopt, dus zelfs een fout in deze query kan niemand in andermans boekhouding zetten.
+    // Read with service_role, with an explicit .eq() on the session user. That is safer here
+    // than it looks: resolveActingFor() discards the row anyway when member_id does not match,
+    // so even a mistake in this query cannot put anyone inside another person's administration.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pipeline = createPipelineClient() as any;
     const { data, error } = await pipeline
@@ -44,16 +45,16 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
       .is("revoked_at", null)
       .limit(1)
       .maybeSingle();
-    // 42P01 = de migratie is nog niet toegepast. Dan bestaat de rol simpelweg niet en is
-    // iedereen eigenaar van zichzelf — precies de toestand van vóór deze functie.
+    // 42P01 = the migration has not been applied. Then the role simply does not exist and
+    // everyone is owner of themselves — exactly the state from before this function.
     if (error && error.code !== "42P01") {
-      console.error("[NAMENS] koppeling lezen mislukt", { error });
+      console.error("[ACTING-FOR] reading the member link failed", { error });
     }
     link = (data as MemberLink | null) ?? null;
   } catch (e) {
-    // Faalt de lookup, dan is de gebruiker eigenaar van zichzelf. Dat is de veilige kant: hij
-    // ziet zijn eigen (lege) boekhouding in plaats van die van een ander.
-    console.error("[NAMENS] koppeling lezen mislukt", { error: String(e) });
+    // If the lookup fails, the user is owner of themselves. That is the safe side: they see
+    // their own (empty) administration instead of someone else's.
+    console.error("[ACTING-FOR] reading the member link failed", { error: String(e) });
     link = null;
   }
 
@@ -61,53 +62,53 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
 });
 
 /**
- * Wie heeft er, van dit bedrijf, iets aangemaakt — en hoe heet die persoon?
+ * Who, within this company, created something — and what is that person called?
  *
- * WAAROM DIT BESTAAT
- * created_by werd geschreven en door NIEMAND gelezen. Een spoor dat niemand kan lezen is geen
- * spoor: de eigenaar geeft het recht weg om facturen uit te geven op zijn naam en BTW-nummer, en
- * kon vervolgens nergens zien wie welke had gemaakt.
+ * WHY THIS EXISTS
+ * created_by was written and read by NOBODY. A trail nobody can read is not a trail: the owner
+ * hands out the right to issue invoices under their name and VAT number, and could then see
+ * nowhere who made which one.
  *
- * WAAROM HET ZO SMAL IS
- * Er wordt hier NOOIT een willekeurige uuid naar een naam vertaald. Alleen mensen die lid zijn
- * (of waren) van DIT bedrijf komen erin — de koppeling is het bewijs dat de eigenaar hun naam
- * mag zien. Ingetrokken leden horen er ook bij: hun facturen bestaan nog, en een factuur van
- * "Onbekend" is precies de vraag die dit moest beantwoorden.
+ * WHY IT IS THIS NARROW
+ * An arbitrary uuid is NEVER translated to a name here. Only people who are (or were) members of
+ * THIS company are included — the link is the proof that the owner may see their name. Revoked
+ * members belong here too: their invoices still exist, and an invoice by "Unknown" is exactly
+ * the question this was meant to answer.
  *
- * Lege map = geen team, of de migratie staat nog open. Beide betekenen: niets te tonen.
+ * Empty map = no team, or the migration is still open. Both mean: nothing to show.
  */
 export async function loadTeamNames(ownerId: string): Promise<Record<string, string>> {
-  const { beschikbaar, leden } = await loadCompanyMembers(ownerId);
-  if (!beschikbaar || leden.length === 0) return {};
+  const { available, members } = await loadCompanyMembers(ownerId);
+  if (!available || members.length === 0) return {};
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pipeline = createPipelineClient() as any;
     const { data } = await pipeline
       .from("profiles")
       .select("id, full_name, company_name")
-      .in("id", leden.map((l) => l.member_id));
-    const uit: Record<string, string> = {};
+      .in("id", members.map((m) => m.member_id));
+    const out: Record<string, string> = {};
     for (const p of (data ?? []) as Array<{ id: string; full_name: string | null; company_name: string | null }>) {
-      uit[p.id] = p.full_name || p.company_name || "Teamlid";
+      out[p.id] = p.full_name || p.company_name || "Teamlid";
     }
-    // Een lid zonder profielrij (verwijderd account) blijft toch benoembaar: "Teamlid" is
-    // waarachtiger dan niets, want de factuur is wél door een ander gemaakt.
-    for (const l of leden) if (!uit[l.member_id]) uit[l.member_id] = "Teamlid";
-    return uit;
+    // A member without a profile row (deleted account) stays nameable: "Teamlid" is truer than
+    // nothing, because the invoice WAS made by someone else.
+    for (const m of members) if (!out[m.member_id]) out[m.member_id] = "Teamlid";
+    return out;
   } catch {
     return {};
   }
 }
 
 /**
- * Was deze gebruiker ooit lid van een bedrijf, en is dat ingetrokken?
+ * Was this user ever a member of a company, and has that been revoked?
  *
- * Alleen om het te KUNNEN UITLEGGEN. Een medewerker wiens toegang wordt ingetrokken viel
- * hiervoor terug op zijn eigen lege facturenlijst, zonder één woord — hij zou denken dat de app
- * stuk is of dat zijn facturen verwijderd zijn. Ze zijn niet verwijderd: ze staan bij zijn
- * werkgever, waar ze horen.
+ * Only so it can be EXPLAINED. A member whose access is revoked used to fall back to their own
+ * empty invoice list without a single word — they would think the app was broken or that their
+ * invoices had been deleted. They are not deleted: they sit with their employer, where they
+ * belong.
  */
-export async function loadIngetrokkenLidmaatschap(
+export async function loadRevokedMembership(
   userId: string,
 ): Promise<{ ownerId: string; revokedAt: string } | null> {
   try {
@@ -121,9 +122,9 @@ export async function loadIngetrokkenLidmaatschap(
       .order("revoked_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const rij = data as { owner_id?: string; revoked_at?: string } | null;
-    return rij?.owner_id && rij.revoked_at
-      ? { ownerId: rij.owner_id, revokedAt: rij.revoked_at }
+    const row = data as { owner_id?: string; revoked_at?: string } | null;
+    return row?.owner_id && row.revoked_at
+      ? { ownerId: row.owner_id, revokedAt: row.revoked_at }
       : null;
   } catch {
     return null;
@@ -139,16 +140,16 @@ export interface CompanyMemberRow {
 }
 
 /**
- * De leden van dit bedrijf — alleen zinvol voor een eigenaar. Actief én ingetrokken.
+ * The members of this company — only meaningful for an owner. Active AND revoked.
  *
- * `beschikbaar: false` betekent dat company_members nog niet bestaat: de migratie is niet
- * toegepast. Dat is iets ANDERS dan "je hebt geen team", en die twee mogen op geen enkel scherm
- * op elkaar lijken — anders staat er "Niemand" bij iemand die net drie mensen heeft uitgenodigd,
- * of krijgt hij een uitnodigingsformulier dat het per definitie niet doet.
+ * `available: false` means company_members does not exist yet: the migration has not been
+ * applied. That is something ELSE than "you have no team", and those two must not look alike on
+ * any screen — otherwise it says "Nobody" to someone who just invited three people, or they get
+ * an invitation form that cannot possibly work.
  */
 export async function loadCompanyMembers(
   ownerId: string,
-): Promise<{ beschikbaar: boolean; leden: CompanyMemberRow[] }> {
+): Promise<{ available: boolean; members: CompanyMemberRow[] }> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pipeline = createPipelineClient() as any;
@@ -157,14 +158,14 @@ export async function loadCompanyMembers(
       .select("id, member_id, role, created_at, revoked_at")
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: true });
-    // 42P01 = de tabel bestaat nog niet. PGRST205 is dezelfde toestand via de schema-cache.
+    // 42P01 = the table does not exist yet. PGRST205 is the same state via the schema cache.
     if (error) {
       const code = String((error as { code?: string }).code ?? "");
-      if (code === "42P01" || code === "PGRST205") return { beschikbaar: false, leden: [] };
-      return { beschikbaar: true, leden: [] };
+      if (code === "42P01" || code === "PGRST205") return { available: false, members: [] };
+      return { available: true, members: [] };
     }
-    return { beschikbaar: true, leden: data ?? [] };
+    return { available: true, members: data ?? [] };
   } catch {
-    return { beschikbaar: false, leden: [] };
+    return { available: false, members: [] };
   }
 }

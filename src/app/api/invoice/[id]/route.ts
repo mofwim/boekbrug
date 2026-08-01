@@ -20,15 +20,15 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
 import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-totals'
-// [NAMENS] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
+// [ACTING-FOR] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
 // blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
-// magFactuur() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
+// canAccessInvoice() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, magFactuur } from '@/lib/acting-for'
-import { leesMetSpoor } from '@/lib/created-by'
-// [EENHEID] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
-import { isBekendeEenheid } from '@/lib/eenheden'
+import { invoiceOwnerId, canAccessInvoice } from '@/lib/acting-for'
+import { readWithTrail } from '@/lib/created-by'
+// [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
+import { isKnownUnit } from '@/lib/units'
 
 /**
  * Eén regel klaarmaken voor de database.
@@ -43,7 +43,7 @@ type NormLine = {
   unit_price: number
   btw_rate: number
   line_total: number
-  /** [EENHEID] Alleen een eenheid die de app kent, of null. */
+  /** [UNIT] Alleen een eenheid die de app kent, of null. */
   unit: string | null
 }
 
@@ -66,13 +66,13 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
   // fails after the header is already written, restoring the old lines is only half the undo —
   // the header would still carry the new amounts. Both go back, or neither.
   //
-  // [NAMENS] created_by komt mee: dat is de grens waarop magFactuur() een medewerker toetst.
+  // [ACTING-FOR] created_by komt mee: dat is de grens waarop canAccessInvoice() een medewerker toetst.
   // Maar die kolom bestaat pas ná company_members_sales_role.sql, en een SELECT op een kolom die
   // er niet is faalt HELEMAAL — dan zou een eigenaar zijn eigen concept niet meer kunnen
   // bewerken of verwijderen op een installatie waar de migratie nog open staat. Vandaar de
-  // terugval; zonder created_by rekent magFactuur() de rij nooit aan een medewerker toe, en dat
+  // terugval; zonder created_by rekent canAccessInvoice() de rij nooit aan een medewerker toe, en dat
   // is de veilige kant (zonder migratie bestaat er sowieso geen medewerker).
-  return leesMetSpoor<{
+  return readWithTrail<{
     id: string
     status: string | null
     sender_id: string | null
@@ -98,10 +98,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
   const acting = await getActingFor()
   if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-  const ownerId = factuurEigenaar(acting)
+  const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
   const supabase = await createServerSupabaseClient()
@@ -115,9 +115,9 @@ export async function GET(
     .eq('sender_id', ownerId)
     .single()
   if (error || !invoice) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
-  // [NAMENS] Tweede slot naast RLS: dit is waar een geraden id binnenkomt.
+  // [ACTING-FOR] Tweede slot naast RLS: dit is waar een geraden id binnenkomt.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (!magFactuur(acting, invoice as any)) {
+  if (!canAccessInvoice(acting, invoice as any)) {
     return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
   }
 
@@ -135,10 +135,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
   const acting = await getActingFor()
   if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-  const ownerId = factuurEigenaar(acting)
+  const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
   const supabase = await createServerSupabaseClient()
@@ -147,9 +147,9 @@ export async function PUT(
 
   const { data: existing } = await ownedInvoice(supabase, id, ownerId)
   if (!existing) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
-  // [NAMENS] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
+  // [ACTING-FOR] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
   // een collega. RLS zegt dat ook, maar dit is de plek waar een geraden id langskomt.
-  if (!magFactuur(acting, existing)) {
+  if (!canAccessInvoice(acting, existing)) {
     return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
   }
   if (existing.status !== 'draft') {
@@ -189,10 +189,10 @@ export async function PUT(
       unit_price,
       btw_rate: Number(l.btw_rate),
       line_total: round2(quantity * unit_price),
-      // [EENHEID] Alleen een eenheid die de app KENT. Vrije tekst uit een verzoek hoort niet op
+      // [UNIT] Alleen een eenheid die de app KENT. Vrije tekst uit een verzoek hoort niet op
       // een regel die straks een e-factuur wordt; onbekend wordt null, en dat komt in de export
       // neer op C62 — precies het gedrag van vóór dit veld.
-      unit: typeof l.unit === 'string' && isBekendeEenheid(l.unit) ? l.unit.trim() : null,
+      unit: typeof l.unit === 'string' && isKnownUnit(l.unit) ? l.unit.trim() : null,
     }
   })
   const { total_ex_btw, btw_amount, total_inc_btw } = computeInvoiceTotals(lines)
@@ -252,7 +252,7 @@ export async function PUT(
   // internally consistent (old lines, and the caller knows the save failed).
   const { data: previousLines } = await supabase
     .from('invoice_lines')
-    // [EENHEID] '*' zodat de eenheid meekomt in het TERUGZETPAD. Zou hij hier ontbreken, dan
+    // [UNIT] '*' zodat de eenheid meekomt in het TERUGZETPAD. Zou hij hier ontbreken, dan
     // zou een mislukte opslag de regels herstellen ZONDER eenheid — een stille wijziging bij
     // een handeling die juist bedoeld is om niets te veranderen.
     .select('*')
@@ -261,7 +261,7 @@ export async function PUT(
   await supabase.from('invoice_lines').delete().eq('invoice_id', id)
   const { error: insErr } = await supabase
     .from('invoice_lines')
-    // [EENHEID] `unit` gaat alleen mee als de kolom bestaat. Zonder deze terugval faalde het
+    // [UNIT] `unit` gaat alleen mee als de kolom bestaat. Zonder deze terugval faalde het
     // OPSLAAN van een concept volledig op een database waar invoice_line_unit.sql nog open staat.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .insert(lines.map((l) => schoonRegel(id, l)) as any)
@@ -309,10 +309,10 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
   const acting = await getActingFor()
   if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-  const ownerId = factuurEigenaar(acting)
+  const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
   const supabase = await createServerSupabaseClient()
@@ -321,9 +321,9 @@ export async function DELETE(
 
   const { data: existing } = await ownedInvoice(supabase, id, ownerId)
   if (!existing) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
-  // [NAMENS] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
+  // [ACTING-FOR] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
   // een collega. RLS zegt dat ook, maar dit is de plek waar een geraden id langskomt.
-  if (!magFactuur(acting, existing)) {
+  if (!canAccessInvoice(acting, existing)) {
     return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
   }
   if (existing.status !== 'draft') {

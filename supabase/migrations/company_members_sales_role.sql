@@ -1,5 +1,5 @@
 -- supabase/migrations/company_members_sales_role.sql
--- [NAMENS] Eén extra rol: een verkoopmedewerker die facturen maakt en verstuurt VOOR zijn baas.
+-- [ACTING-FOR] Eén extra rol: een verkoopmedewerker die facturen maakt en verstuurt VOOR zijn baas.
 --
 -- WAT DIT WEL IS
 -- Een koppeltabel plus twee kolommen. De medewerker BEZIT niets: hij handelt NAMENS de eigenaar.
@@ -242,7 +242,7 @@ BEGIN
   -- (auth.uid() IS NULL) may NOT mint numbers -- both real call sites use
   -- the authenticated session client.
   --
-  -- [NAMENS] Uitzondering, en maar één: een actieve verkoopmedewerker mag alloceren in de reeks
+  -- [ACTING-FOR] Uitzondering, en maar één: een actieve verkoopmedewerker mag alloceren in de reeks
   -- van ZIJN eigenaar. Dat is geen versoepeling maar de voorwaarde om er ÉÉN reeks van te maken
   -- in plaats van twee -- Art. 35 Wet OB eist doorlopende nummering zonder gaten.
   IF auth.uid() IS NULL

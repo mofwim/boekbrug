@@ -1,5 +1,5 @@
 // src/app/api/company/members/accept/route.ts
-// [NAMENS] De genodigde accepteert. Dit is de ENIGE plek waar een koppeling ontstaat.
+// [ACTING-FOR] De genodigde accepteert. Dit is de ENIGE plek waar een koppeling ontstaat.
 //
 // company_members heeft geen INSERT-policy voor ingelogde gebruikers — met opzet. De les staat
 // in accountant_clients_insert_consent.sql: daar was de INSERT-policy "je moet jezelf noemen als
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
         { onConflict: 'owner_id,member_id' },
       )
     if (linkErr) {
-      console.error('[NAMENS] koppelen mislukt', { linkErr })
+      console.error('[ACTING-FOR] koppelen mislukt', { linkErr })
       return NextResponse.json({ error: 'Koppelen mislukt — probeer opnieuw' }, { status: 500 })
     }
 
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true })
   } catch (e) {
-    console.error('[NAMENS] accept', e)
+    console.error('[ACTING-FOR] accept', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }
