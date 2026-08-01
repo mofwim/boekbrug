@@ -89,8 +89,8 @@ export async function POST(
     // an older client, or the pay path, which has no client-side pass at all — keeps today's
     // inline behaviour exactly. See the gate further down.
     deferAutoConfirm?: boolean;
-    // [SOORT-CORRECTIE] De reviewer verklaart dit alsnog een creditnota. Alleen deze richting —
-    // zie de toelichting bij isCredit hieronder.
+    // [KIND-CORRECTION] The reviewer declares this a credit note after all. This direction only —
+    // see the note at isCredit below.
     is_credit_note?: boolean;
   } = {};
   try {
@@ -112,18 +112,18 @@ export async function POST(
   // ≥ 0 for a normal invoice; for a creditnota it accepts any finite value, so a correctly-read
   // negative excl / positive BTW persists instead of being dropped back to the stored amount. The
   // old blanket `v >= 0` (with the client's Math.max(0)) turned every edited creditnota positive.
-  // [SOORT-CORRECTIE] De reviewer mag de SOORT rechtzetten, want de lezer heeft hem niet altijd
-  // goed. Het echte geval: een aardappelgroothandel stuurt een factuur waarop een geretourneerde
-  // container van −408,00 het totaal netto negatief maakt (Totaal te voldoen −109,58). De lezer
-  // sloeg hem op als gewone factuur met +39,42, en dan kon de eigenaar de waarheid NIET invoeren:
-  // de klem hieronder duwde elk negatief bedrag terug naar 0, en zo bleef er een schuld staan die
-  // in werkelijkheid een tegoed is — inclusief te veel teruggevraagde voorbelasting.
+  // [KIND-CORRECTION] The reviewer may correct the KIND, because the reader does not always get it
+  // right. The real case: a potato wholesaler sends an invoice where a returned container of
+  // −408.00 makes the total net negative (Totaal te voldoen −109.58). The reader stored it as an
+  // ordinary invoice at +39.42, and then the owner could NOT enter the truth: the clamp below
+  // pushed every negative amount back to 0, leaving a debt on the books that is in reality a
+  // credit — including too much input tax reclaimed.
   //
-  // Bewust alleen deze richting: 'factuur' → 'creditnota'. Dat is de kant waar de app te weinig
-  // ziet (een positief afgedrukte creditnota herkent de lezer per definitie niet, zie HUNT-F2),
-  // en het is de kant die geld VAN het openstaande saldo haalt in plaats van eraan toevoegt. De
-  // omgekeerde weg — een creditnota tot factuur verklaren — komt in de praktijk niet voor en zou
-  // een tegoed stilletjes in een schuld veranderen; die blijft dus dicht.
+  // Deliberately one direction only: 'factuur' → 'creditnota'. That is the side where the app sees
+  // too little (a positively printed credit note is by definition not recognised by the reader, see
+  // HUNT-F2), and it is the side that takes money OFF the outstanding balance rather than adding to
+  // it. The reverse — declaring a credit note an invoice — does not occur in practice and would
+  // quietly turn a credit into a debt; that way stays shut.
   const declaredCredit = body.is_credit_note === true;
   const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const validNum = (v: unknown): v is number =>
@@ -152,8 +152,8 @@ export async function POST(
   const updatePatch: InvoiceUpdate = { updated_at: new Date().toISOString() };
 
   // Persist reviewed amounts when the user actually sent valid numbers
-  // [SOORT-CORRECTIE] De rechtzetting van de soort reist mee in dezelfde schrijfactie als de
-  // bedragen. Eén update, dus de soort kan nooit los komen te staan van het teken dat erbij hoort.
+  // [KIND-CORRECTION] The kind correction travels in the same write as the amounts. One update, so
+  // the kind can never come loose from the sign that belongs with it.
   if (declaredCredit && invoice.invoice_type !== "creditnota") updatePatch.invoice_type = "creditnota";
   if (validNum(body.total_ex_btw)) updatePatch.total_ex_btw = body.total_ex_btw;
   if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;

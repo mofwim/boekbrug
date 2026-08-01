@@ -1,63 +1,63 @@
 // src/lib/btw-reconcile.ts
-// [BTW-RIJM] "Excl + BTW ≠ totaal" — welk van de drie getallen is de vreemde eend? Puur.
+// [BTW-RECONCILE] "excl + BTW ≠ totaal" — which of the three figures is the odd one out? Pure.
 //
-// ── WAAROM DIT BESTAAT ──
-// De rekenpoort in safecore.ts merkt betrouwbaar op dát de drie bedragen niet op elkaar aansluiten,
-// en zegt dan: "excl + BTW ≠ totaal". Waar. Alleen: daar kan de ondernemer niets mee. Hij ziet drie
-// getallen, weet dat er één fout is, en mag zelf de pdf induiken om uit te zoeken welke.
+// ── WHY THIS EXISTS ──
+// The arithmetic gate in safecore.ts reliably notices THAT the three amounts do not add up, and
+// then says "excl + BTW ≠ totaal". True. The trouble is the owner can do nothing with it: three
+// numbers, one of them wrong, and a PDF to go dig through to find out which.
 //
-// Drie echte gevallen uit de praktijk, alle drie dezelfde melding en alle drie een ander verhaal:
+// Four real invoices, all four showing that same message, all four a different story:
 //
-//   A. Vleesgroothandel — excl 985,87 · BTW 88,73 · totaal 1.078,46 (verschil 3,86)
-//      Op het papier: een btw-tabel met twee regels, 9% over 985,87 én 0% over 3,86 (E2-kratten,
-//      in 6 en uit 5). De lezer nam de 9%-BASIS als "ex. BTW" en liet de 0%-regel vallen — terwijl
-//      er letterlijk "ex. BTW € 989,73" onder staat.
-//   B. Groothandel — excl 1.722,54 · BTW 144,95 · totaal 1.843,49 (verschil −24,00)
-//      Op het papier: Subtotaal 1.610,34 + BTW 144,95 + Totaal Statiegeld 88,20. Het statiegeld
-//      (0%) hoort in de grondslag; het excl-bedrag klopte niet.
-//   C. Horeca — excl 3.413,92 · BTW 995,90 · totaal 3.819,82 (verschil −590,00)
-//      Op het papier: BTW 9% € 233,20 + BTW 21% € 172,70 = € 405,90. Hier was juist de BTW fout.
+//   A. Meat wholesaler — ex 985.87 · btw 88.73 · total 1078.46 (difference 3.86)
+//      On paper: a btw table with two rows, 9% over 985.87 AND 0% over 3.86 (E2 crates, 6 in and
+//      5 out). The reader took the 9% BASE as "ex. BTW" and dropped the 0% row — while the paper
+//      literally prints "ex. BTW € 989.73".
+//   B. Wholesaler — ex 1722.54 · btw 144.95 · total 1843.49 (difference −24.00)
+//      On paper: Subtotaal 1610.34 + BTW 144.95 + Totaal Statiegeld 88.20. The deposit (0%)
+//      belongs in the base; the ex amount was wrong.
+//   C. Horeca — ex 3413.92 · btw 995.90 · total 3819.82 (difference −590.00)
+//      On paper: BTW 9% € 233.20 + BTW 21% € 172.70 = € 405.90. Here it was the btw that was wrong.
 //
-// Eén patroon: een btw-SPECIFICATIEBLOK met MEER DAN ÉÉN regel — twee tarieven, of een 0%-post als
-// statiegeld/emballage/kratten. De lezer pakt één regel in plaats van de som. Kratten en statiegeld
-// zijn daarin geen rariteit maar de regel: in de horeca- en levensmiddelengroothandel staat er
-// vrijwel altijd zo'n 0%-post onder de goederen.
+// One pattern: a btw SPECIFICATION BLOCK with MORE THAN ONE row — two rates, or a 0% item such as
+// deposit/packaging/crates. The reader grabs one row instead of the sum. Crates and deposits are
+// not an oddity there but the norm: in horeca and food wholesale there is almost always such a 0%
+// line under the goods.
 //
-// ── WAT DIT BESTAND WEL EN NIET DOET ──
-// Het REPAREERT niets. Bedragen worden hier niet omgeklapt, niet herrekend en niet weggeschreven —
-// dat is de geldkern, en daar beslist de mens. Wat het doet is de vraag omdraaien: in plaats van
-// "er klopt iets niet, zoek het maar uit" rekent het uit wat elk van de twee mogelijke lezingen
-// zou betekenen, en zegt welke daarvan volgens de Nederlandse tarieven überhaupt KAN.
+// ── WHAT THIS FILE DOES AND DOES NOT DO ──
+// It REPAIRS nothing. No amount is flipped, recomputed or written here — that is the money core,
+// and there the human decides. What it does is turn the question around: instead of "something is
+// off, go figure it out", it computes what each of the two possible readings would mean, and says
+// which of them is even POSSIBLE under Dutch rates.
 //
-// Dat laatste is de kern. Met drie getallen en één vergelijking is elk van de twee te "repareren"
-// door de andere twee — dus rekenen alleen wijst niets aan. Maar het btw-TARIEF dat elke reparatie
-// impliceert, moet tussen 0% en 21% liggen (geen Nederlands tarief ligt daarboven, dus geen mengsel
-// ook). In geval C valt daarmee één lezing meteen af (35% bestaat niet) en blijft er precies één
-// over — dan mag het scherm hem bij naam noemen. In A en B zijn beide lezingen legaal, en dan
-// zeggen we dat eerlijk en laten we de keuze staan. Beslissen waar het niet kan is raden.
+// That last part is the crux. With three numbers and one equation, either can be "repaired" by the
+// other two — so arithmetic alone points at nothing. But the btw RATE each repair implies has to
+// sit between 0% and 21% (no Dutch rate is higher, so no blend can be either). In case C that
+// eliminates one reading outright (35% does not exist) and leaves exactly one — then the screen
+// may name it. In A and B both readings are legal, and then we say so honestly and leave the
+// choice standing. Deciding where you cannot is guessing.
 
-/** Dezelfde marge als de rekenpoort in safecore.ts — afrondingsruis op centen, niets meer. */
+/** Same tolerance as the arithmetic gate in safecore.ts — rounding noise on cents, nothing more. */
 export const SUM_TOLERANCE = 0.02;
 
-/** Het hoogste Nederlandse btw-tarief. Een mengsel van 0/9/21 komt hier nooit boven. */
+/** The highest Dutch btw rate. A blend of 0/9/21 never exceeds it. */
 const MAX_NL_RATE = 21;
 
 export type BtwReconcile = {
-  /** Sluiten de drie op elkaar aan? */
+  /** Do the three add up? */
   ok: boolean;
-  /** totaal − (excl + BTW). Positief = er ontbreekt iets in de uitsplitsing. */
+  /** total − (ex + btw). Positive = something is missing from the breakdown. */
   difference: number;
-  /** Wat excl zou zijn als totaal en BTW kloppen. */
+  /** What ex would be if the total and the btw are right. */
   impliedExcl: number;
-  /** Wat de BTW zou zijn als totaal en excl kloppen. */
+  /** What the btw would be if the total and ex are right. */
   impliedBtw: number;
-  /** Het tarief dat die eerste lezing impliceert, in hele procenten. null als niet te bepalen. */
+  /** The rate that first reading implies, in whole percent. null when undeterminable. */
   exclRepairRate: number | null;
-  /** Idem voor de tweede lezing. */
+  /** Same for the second reading. */
   btwRepairRate: number | null;
-  /** Kan de eerste lezing volgens de Nederlandse tarieven? */
+  /** Is the first reading possible under Dutch rates? */
   exclRepairPossible: boolean;
-  /** Kan de tweede lezing? */
+  /** Is the second reading possible? */
   btwRepairPossible: boolean;
 };
 
@@ -65,7 +65,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Het tarief in hele procenten, zoals safecore het ook afrondt. null bij een grondslag van 0. */
+/** The rate in whole percent, rounded the way safecore rounds it. null on a zero base. */
 function rateOf(btw: number, base: number): number | null {
   if (!(base > 0)) return null;
   return Math.round((btw / base) * 100);
@@ -76,12 +76,11 @@ function possible(rate: number | null): boolean {
 }
 
 /**
- * Rijmt de drie bedragen, en zegt wat elk van de twee mogelijke lezingen zou betekenen.
+ * Reconciles the three amounts and reports what each of the two possible readings would mean.
  *
- * Het TOTAAL geldt daarbij als het vaste punt. Dat is geen willekeur: het totaal is wat er
- * daadwerkelijk betaald wordt, het staat het grootst afgedrukt, en het is het enige getal dat de
- * bankafschriften straks moeten matchen. In alle drie de praktijkgevallen hierboven klopte het
- * totaal en zat de fout in de uitsplitsing.
+ * The TOTAL is the fixed point here. That is not arbitrary: the total is what actually gets paid,
+ * it is printed largest, and it is the only figure the bank statements will have to match. In all
+ * three practical cases above the total was right and the breakdown was where the error sat.
  */
 export function reconcileBtw(
   excl: number | null | undefined,
@@ -111,84 +110,86 @@ export function reconcileBtw(
 }
 
 /**
- * De andere helft van het probleem: de SOM klopt, maar het TARIEF kan niet.
+ * The other half of the problem: the SUM adds up, but the RATE cannot be.
  *
- * Vierde praktijkgeval, aardappelgroothandel: opgeslagen excl € 26,00 · BTW € 13,42 · totaal
- * € 39,42. Die drie sluiten netjes op elkaar aan, dus de rekenpoort zwijgt — alleen het tarief
- * schreeuwt (52%). Op het papier staat een netto-negatieve factuur: goederen 149,00 tegen 9%,
- * plus een geretourneerde container van −408,00 tegen 0%, samen "Totaal excl. BTW € -123,00" en
- * "Totaal te voldoen € -109,58". Alle drie de opgeslagen bedragen zijn dus fout, en juist daarom
- * kan de identiteit hier niets aanwijzen: hij klopt.
+ * Fourth practical case, potato wholesaler: stored ex € 26.00 · btw € 13.42 · total € 39.42. Those
+ * three reconcile neatly, so the arithmetic gate stays quiet — only the rate screams (52%). On
+ * paper it is a net-negative invoice: goods 149.00 at 9%, plus a returned container of −408.00 at
+ * 0%, giving "Totaal excl. BTW € -123.00" and "Totaal te voldoen € -109.58". All three stored
+ * amounts are therefore wrong, and that is exactly why the identity can point at nothing: it holds.
  *
- * Wat wél iets aanwijst is de BTW zelf. Die wordt zelden verkeerd gelezen (hij staat in een eigen
- * kolom, met een eigen kopje), en bij een BEKEND tarief hoort er precies één grondslag bij. Voor
- * € 13,42 is dat € 149,11 bij 9% — en op het papier staat 149,00. Eén regel die de eigenaar
- * meteen naar de goede kolom stuurt.
+ * What DOES point somewhere is the btw itself. It is rarely misread (own column, own heading), and
+ * at a known rate exactly one base belongs to it. For € 13.42 that is € 149.11 at 9% — and the
+ * paper says 149.00. One line that sends the owner straight to the right column.
  *
- * Geeft de grondslag per Nederlands tarief, of null wanneer er niets te zeggen valt.
+ * Returns the base per Dutch rate, or an empty list when there is nothing to say.
  */
 export function impliedBasesForBtw(btw: number | null | undefined): { rate: number; base: number }[] {
   const b = Number(btw ?? 0);
   if (!Number.isFinite(b) || b === 0) return [];
-  // 0% valt af: daar hoort per definitie geen btw-bedrag bij, dus levert het geen grondslag op.
+  // 0% drops out: by definition no btw amount belongs to it, so it yields no base.
   return [9, 21].map((rate) => ({ rate, base: round2(b / (rate / 100)) }));
 }
 
-/**
- * De aanvulling op "ongeldig BTW-tarief (x%)": bij welk bedrag excl. deze BTW wél zou kloppen.
- *
- * Bewust ZONDER het woord "moet". Het is een aanwijzing waar te kijken, geen oordeel over welk van
- * de bedragen fout is — dat kan hier niet worden vastgesteld.
- */
-export function rateHint(btw: number | null | undefined, storedExcl: number | null | undefined): string | null {
-  const bases = impliedBasesForBtw(btw);
-  if (bases.length === 0) return null;
-  const ex = Number(storedExcl ?? 0);
-  const opties = bases.map((b) => `${eur(b.base)} bij ${b.rate}%`).join(" of ");
-  return (
-    `Een BTW van ${eur(Number(btw))} hoort bij een bedrag excl. van ${opties} — ` +
-    `opgeslagen staat ${eur(ex)}. Staat er een 0%-post op de factuur (statiegeld, emballage, ` +
-    `retour container)? Die hoort in het bedrag excl. mee te tellen, mét zijn teken.`
-  );
-}
-
-/** € 1.234,56 — dezelfde notatie als het scherm, zodat de zin niet uit twee werelden komt. */
+/** € 1.234,56 — the same notation as the screen, so the sentence does not come from two worlds. */
 function eur(n: number): string {
   return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
 }
 
 /**
- * De aanvulling op "excl + BTW ≠ totaal": het verschil, en wat er dan zou moeten staan.
+ * The addition to "ongeldig BTW-tarief (x%)": at which ex amount this btw WOULD be right.
  *
- * Geeft null wanneer de bedragen wél kloppen of wanneer er niets zinnigs te zeggen valt — dan
- * blijft de oude melding staan, en dat is beter dan een zin die suggereert dat wij het weten.
+ * Deliberately without the word "must". It is a pointer to where to look, not a verdict on which
+ * amount is wrong — that cannot be established here.
+ *
+ * Dutch string: UI text shown to the owner, per the language rule in AGENTS.md.
+ */
+export function rateHint(btw: number | null | undefined, storedExcl: number | null | undefined): string | null {
+  const bases = impliedBasesForBtw(btw);
+  if (bases.length === 0) return null;
+  const ex = Number(storedExcl ?? 0);
+  const options = bases.map((b) => `${eur(b.base)} bij ${b.rate}%`).join(" of ");
+  return (
+    `Een BTW van ${eur(Number(btw))} hoort bij een bedrag excl. van ${options} — ` +
+    `opgeslagen staat ${eur(ex)}. Staat er een 0%-post op de factuur (statiegeld, emballage, ` +
+    `retour container)? Die hoort in het bedrag excl. mee te tellen, mét zijn teken.`
+  );
+}
+
+/**
+ * The addition to "excl + BTW ≠ totaal": the difference, and what should have been there.
+ *
+ * Returns null when the amounts DO add up or when there is nothing sensible to say — then the old
+ * message stands, which beats a sentence implying we know.
+ *
+ * Dutch strings: UI text shown to the owner, per the language rule in AGENTS.md.
  */
 export function reconcileHint(r: BtwReconcile): string | null {
   if (r.ok) return null;
 
-  const verschil = `Verschil ${eur(Math.abs(r.difference))}`;
+  const diff = `Verschil ${eur(Math.abs(r.difference))}`;
 
-  // Precies één lezing kan — dan mag hij bij naam genoemd worden. Dit is geval C: een BTW van
-  // € 995,90 zou 35% impliceren, en dat tarief bestaat niet, dus blijft er één over.
+  // Exactly one reading is possible — then it may be named. This is case C: a btw of € 995.90
+  // would imply 35%, a rate that does not exist, so one reading remains.
   if (r.btwRepairPossible && !r.exclRepairPossible) {
-    return `${verschil}. Klopt het totaal, dan hoort de BTW ${eur(r.impliedBtw)} te zijn.`;
+    return `${diff}. Klopt het totaal, dan hoort de BTW ${eur(r.impliedBtw)} te zijn.`;
   }
   if (r.exclRepairPossible && !r.btwRepairPossible) {
-    return `${verschil}. Klopt het totaal, dan hoort het bedrag excl. BTW ${eur(r.impliedExcl)} te zijn.`;
+    return `${diff}. Klopt het totaal, dan hoort het bedrag excl. BTW ${eur(r.impliedExcl)} te zijn.`;
   }
 
-  // Beide kunnen — dan noemen we ze allebei en kiezen we niet. Dit is geval A en B: rekenkundig is
-  // er niets tegen beide, en een keuze zou raden zijn. De zin wijst wel de kant op waar het bij
-  // dit soort facturen bijna altijd zit: een 0%-post (statiegeld, emballage, kratten) of een tweede
-  // tarief dat niet in de uitsplitsing is meegenomen.
+  // Both are possible — then we name both and choose neither. This is cases A and B: arithmetically
+  // nothing rules either out, and picking one would be guessing. The sentence does point at where
+  // it usually sits on invoices like these: a 0% item (deposit, packaging, crates) or a second rate
+  // left out of the breakdown.
   if (r.exclRepairPossible && r.btwRepairPossible) {
     return (
-      `${verschil}. Klopt het totaal, dan hoort excl. BTW ${eur(r.impliedExcl)} te zijn, ` +
+      `${diff}. Klopt het totaal, dan hoort excl. BTW ${eur(r.impliedExcl)} te zijn, ` +
       `óf de BTW ${eur(r.impliedBtw)}. Staat er een 0%-post op de factuur (statiegeld, emballage, ` +
       `kratten) of een tweede btw-tarief? Die hoort in de uitsplitsing mee te tellen.`
     );
   }
 
-  // Geen van beide kan: dan is er meer mis dan één getal, en zwijgen we over reparaties.
-  return `${verschil}. Geen van beide bedragen levert een geldig btw-tarief op — controleer de hele uitsplitsing.`;
+  // Neither is possible: then more than one number is wrong, and we stay silent about repairs.
+  return `${diff}. Geen van beide bedragen levert een geldig btw-tarief op — controleer de hele uitsplitsing.`;
 }

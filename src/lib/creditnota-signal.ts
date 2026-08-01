@@ -1,43 +1,42 @@
 // src/lib/creditnota-signal.ts
-// [CREDITNOTA-SIGNAAL] Herkent een inkoop-CREDITNOTA die als gewone factuur is opgeslagen. Puur.
+// [CREDITNOTA-SIGNAL] Spots a purchase credit note that was stored as an ordinary invoice. Pure.
 //
-// ── WAT ER MISGAAT ──
-// Een creditnota van je leverancier is GELD DAT JOU TOEKOMT: hij hoort in de boeken met een
-// minteken, zodat hij van het openstaande saldo af gaat en de voorbelasting corrigeert. Zo staat
-// het in elke Nederlandse bron ("Het bedrag en de BTW gaan er met een minteken in, zodat uw omzet
-// en af te dragen BTW automatisch worden gecorrigeerd").
+// ── WHAT GOES WRONG ──
+// A supplier's creditnota is MONEY OWED TO YOU: it belongs in the books with a minus sign, so it
+// comes off the outstanding balance and corrects the deductible input tax. Every Dutch source says
+// the same ("Het bedrag en de BTW gaan er met een minteken in, zodat uw omzet en af te dragen BTW
+// automatisch worden gecorrigeerd").
 //
-// De lezer herkent er al veel, maar één geval glipt er structureel doorheen: een leverancier die
-// zijn creditnota met een POSITIEF eindbedrag afdrukt. Dat is heel gewoon — het papier zegt
-// "Creditnota" en zet er € 51,80 onder, niet € -51,80. En ai.ts weigert bewust op dat papier af te
-// gaan (HUNT-F2: "A POSITIVE printed total is never a creditnota"), want anders zou elke korting
-// op een gewone factuur een creditnota worden. Terecht — maar het gevolg is dat zo'n document als
-// gewone inkoopfactuur in de boeken belandt, en dan:
+// The reader already catches many of them, but one case slips through structurally: a supplier who
+// prints the credit note with a POSITIVE final amount. That is common — the paper says "Creditnota"
+// and puts € 51.80 under it, not € -51.80. And ai.ts deliberately refuses to go by that paper
+// (HUNT-F2: "A POSITIVE printed total is never a creditnota"), because otherwise every discount on
+// a normal invoice would become a credit note. Correct — but the consequence is that such a
+// document lands in the books as an ordinary purchase invoice, and then:
 //
-//   · telt hij mee in "nog te betalen" terwijl je hem NIET hoeft te betalen;
-//   · krijgt hij een aanmaning ("135 dagen te laat") voor geld dat je niet schuldig bent;
-//   · en — het zwaarst — wordt zijn voorbelasting OPGETELD in plaats van AFGETROKKEN, waardoor de
-//     aangifte te veel btw terugvraagt.
+//   · it counts toward "still to pay" while you owe nothing;
+//   · it collects a dunning badge ("135 days late") for money you do not owe;
+//   · and — the heaviest — its input tax is ADDED instead of SUBTRACTED, so the return claims back
+//     more btw than it should.
 //
-// ── WAAROM DIT SIGNALEERT EN NIET BESLIST ──
-// De verleiding is om het teken automatisch om te klappen zodra een nummer met "CR" begint. Dat
-// mag niet. Bij een andere leverancier kan "CR" iets heel anders betekenen, en een verkeerde
-// omklap maakt van een ECHTE schuld een tegoed: je betaalt te weinig, en dat merk je pas bij de
-// aanmaning. Dit is de geldkern; daar geldt de huisregel — het scherm TOONT, de mens BESLIST.
+// ── WHY THIS SIGNALS AND DOES NOT DECIDE ──
+// The tempting move is to flip the sign automatically as soon as a number starts with "CR". That
+// is not allowed. At another supplier "CR" can mean something entirely different, and a wrong flip
+// turns a REAL debt into a credit: you underpay, and you find out at the dunning letter. This is
+// the money core; the house rule applies — the screen SHOWS, the human DECIDES.
 //
-// Daarom staan er twee eisen naast elkaar, en pas samen zeggen ze iets:
+// So two requirements sit side by side, and only together do they say anything:
 //
-//   1. het nummer draagt een bekende creditmarkering als voorvoegsel (CR, CN, …), én
-//   2. DEZELFDE leverancier gebruikt aantoonbaar óók een ánder voorvoegsel voor zijn gewone
-//      facturen.
+//   1. the number carries a known credit marker as its prefix (CR, CN, …), and
+//   2. the SAME supplier demonstrably uses a DIFFERENT prefix for its ordinary invoices.
 //
-// Eis 2 is wat het bewijs draagt: het is niet onze aanname over wat "CR" betekent, het is de
-// leverancier die met zijn eigen nummering twee soorten documenten uit elkaar houdt. In het geval
-// dat dit bestand aanleiding gaf stond dat letterlijk in de lijst — CR0300343 en CR0300510 naast
-// RE0801378, alle drie van dezelfde slijter. Eén voorvoegsel zonder tegenhanger zegt niets, en dan
-// zwijgen we ook.
+// Requirement 2 carries the evidence: it is not our assumption about what "CR" means, it is the
+// supplier keeping two kinds of document apart with its own numbering. In the case that prompted
+// this file that was literally visible in the list — CR0300343 and CR0300510 next to RE0801378,
+// all three from the same wholesaler. A prefix without a counterpart says nothing, and then we
+// stay quiet too.
 
-/** Het alfabetische voorvoegsel van een documentnummer: "CR0300343" → "CR", "2033161" → "". */
+/** The alphabetic prefix of a document number: "CR0300343" → "CR", "2033161" → "". */
 export function numberPrefix(raw: string | null | undefined): string {
   const s = (raw ?? "").trim().toUpperCase();
   const m = /^([A-Z]+)/.exec(s);
@@ -45,33 +44,33 @@ export function numberPrefix(raw: string | null | undefined): string {
 }
 
 /**
- * Voorvoegsels die in de Nederlandse praktijk een creditnota aanduiden.
+ * Prefixes that mark a credit note in Dutch practice.
  *
- * Bewust KORT gehouden. Elk voorvoegsel dat hier bij komt, vergroot de kans dat we een gewone
- * factuur aanzien voor een tegoed — en die fout kost de eigenaar een aanmaning. Een enkele "C"
- * staat er daarom niet bij (te vaak "Customer", "Contract"), en "KR" ook niet (kan "krediet"
- * betekenen maar net zo goed een artikelreeks).
+ * Deliberately SHORT. Every prefix added here increases the chance of mistaking an ordinary
+ * invoice for a credit — and that mistake costs the owner a dunning letter. A bare "C" is
+ * therefore absent (too often "Customer", "Contract"), and so is "KR" (may mean "krediet", but
+ * just as easily an article range).
  */
 const CREDIT_PREFIXES = new Set(["CR", "CN", "CRN", "CRED", "CREDIT", "CRE"]);
 
 export type CreditnotaSignal = {
-  /** Waar genoeg om de eigenaar ernaar te laten kijken — nooit genoeg om zelf te boeken. */
+  /** Certain enough to have the owner look; never certain enough to book it ourselves. */
   suspected: boolean;
-  /** Het voorvoegsel dat opviel, voor de uitleg op het scherm. Leeg als er niets opviel. */
+  /** The prefix that stood out, for the explanation on screen. Empty when nothing did. */
   prefix: string;
-  /** Een voorvoegsel van dezelfde leverancier dat er ANDERS uitziet — het bewijs onder eis 2. */
+  /** A differing prefix from the same supplier — the evidence behind requirement 2. */
   contrastPrefix: string | null;
 };
 
 const NO_SIGNAL: CreditnotaSignal = { suspected: false, prefix: "", contrastPrefix: null };
 
 /**
- * Lijkt dit opgeslagen document een creditnota die als gewone factuur is geboekt?
+ * Does this stored document look like a credit note booked as an ordinary invoice?
  *
- * @param invoiceNumber het nummer zoals de leverancier het drukt
- * @param totalIncBtw   het OPGESLAGEN totaal (positief = geboekt als schuld)
- * @param invoiceType   de opgeslagen soort ('factuur' | 'creditnota' | …)
- * @param vendorNumbers alle documentnummers van DEZELFDE leverancier, dit nummer mag erbij zitten
+ * @param invoiceNumber the number as the supplier prints it
+ * @param totalIncBtw   the STORED total (positive = booked as a debt)
+ * @param invoiceType   the stored kind ('factuur' | 'creditnota' | …)
+ * @param vendorNumbers every document number from the SAME supplier; this one may be among them
  */
 export function looksLikeCreditnota(input: {
   invoiceNumber: string | null | undefined;
@@ -79,23 +78,23 @@ export function looksLikeCreditnota(input: {
   invoiceType: string | null | undefined;
   vendorNumbers: readonly (string | null | undefined)[];
 }): CreditnotaSignal {
-  // Al goed geboekt — dan valt er niets te melden. Dit is de gewenste eindtoestand, niet een geval
-  // dat we alsnog willen aanstippen.
+  // Already booked correctly — nothing to report. This is the desired end state, not a case we
+  // want to keep pointing at.
   if (input.invoiceType === "creditnota") return NO_SIGNAL;
 
-  // Al negatief opgeslagen: dan gedraagt de rij zich al als een tegoed (hij gaat van het saldo af).
-  // De SOORT klopt dan misschien nog niet, maar het GELD wel — en dit signaal gaat over geld dat
-  // de verkeerde kant op staat. `0` telt ook als "niets te melden": daar valt niets aan af te trekken.
+  // Already stored negative: the row already behaves as a credit (it comes off the balance). The
+  // KIND may still be wrong, but the MONEY is not — and this signal is about money pointing the
+  // wrong way. `0` also counts as nothing to report: there is nothing to subtract.
   const total = Number(input.totalIncBtw ?? 0);
   if (!Number.isFinite(total) || total <= 0) return NO_SIGNAL;
 
-  // Eis 1 — een bekende creditmarkering.
+  // Requirement 1 — a known credit marker.
   const prefix = numberPrefix(input.invoiceNumber);
   if (!prefix || !CREDIT_PREFIXES.has(prefix)) return NO_SIGNAL;
 
-  // Eis 2 — dezelfde leverancier houdt met zijn nummering twee soorten uit elkaar. Zonder deze
-  // tegenhanger is het onze aanname over twee letters, en dat is te weinig om iemand op af te
-  // sturen. Een tweede CR-nummer telt niet mee: dat bevestigt alleen zichzelf.
+  // Requirement 2 — the same supplier keeps two kinds apart in its numbering. Without that
+  // counterpart this is our assumption about two letters, which is too little to send someone
+  // after. A second CR number does not count: it only confirms itself.
   const contrastPrefix =
     input.vendorNumbers
       .map((n) => numberPrefix(n))
@@ -106,12 +105,12 @@ export function looksLikeCreditnota(input: {
 }
 
 /**
- * De app noemt dit zelf een creditnota, maar het bedrag staat als SCHULD in de boeken.
+ * The app says this IS a credit note, yet the amount sits in the books as a DEBT.
  *
- * Dit is geen vermoeden maar een TEGENSPRAAK, en daarom een apart geval: er valt niets te raden —
- * de lezer heeft de soort al vastgesteld en het bedrag wijst de andere kant op. Zo'n rij telt mee
- * in "nog te betalen" terwijl hij er hoort af te gaan, en zijn voorbelasting wordt opgeteld in
- * plaats van afgetrokken. Zwaarder dan het vermoeden hierboven, en met een eigen melding.
+ * Not a suspicion but a CONTRADICTION, and therefore its own case: there is nothing to guess — the
+ * reader already established the kind and the amount points the other way. Such a row counts
+ * toward "still to pay" while it should come off, and its input tax is added instead of
+ * subtracted. Heavier than the suspicion above, and it gets its own message.
  */
 export function creditnotaSignConflict(input: {
   invoiceType: string | null | undefined;
@@ -123,8 +122,10 @@ export function creditnotaSignConflict(input: {
 }
 
 /**
- * De zin op het scherm. Zegt WAT er opviel en WAAROM het uitmaakt, en laat het besluit bij de
- * eigenaar — er staat geen bedrag in dat wij al hebben omgeklapt.
+ * The sentence on screen. Says WHAT stood out and WHY it matters, and leaves the decision to the
+ * owner — it contains no amount that we have already flipped.
+ *
+ * Dutch string: this is UI text shown to the owner, per the language rule in AGENTS.md.
  */
 export function creditnotaSignalText(signal: CreditnotaSignal): string | null {
   if (!signal.suspected) return null;

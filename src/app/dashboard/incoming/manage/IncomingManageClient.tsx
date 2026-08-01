@@ -39,7 +39,7 @@ import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
 import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
-// [CREDITNOTA-SIGNAAL] Herkent een creditnota die als gewone factuur is geboekt — signaleert, beslist nooit.
+// [CREDITNOTA-SIGNAL] Spots a credit note booked as an ordinary invoice — signals, never decides.
 import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
@@ -115,9 +115,9 @@ interface IncomingRow {
   status: string                         // 'received' | 'paid'
   accountant_status: string | null       // 'verwerkt' etc. — read-only badge
   direction: string
-  // [CREDITNOTA-SIGNAAL] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'. Een creditnota is
-  // GELD DAT JOU TOEKOMT: hij hoort met een minteken in de lijst, gaat van het openstaande saldo
-  // af en kan per definitie niet "te laat" zijn.
+  // [CREDITNOTA-SIGNAL] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'. A credit note is MONEY
+  // OWED TO YOU: it belongs in the list with a minus sign, comes off the outstanding balance, and
+  // cannot be "late" by definition.
   invoice_type?: string | null
   total_inc_btw: number | null
   // [PARTIAL-PAY] running total already settled by instalments (0 when fully open). A value between
@@ -595,10 +595,10 @@ export default function IncomingManageClient({
   // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
   const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
   const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
-  // [CREDITNOTA-SIGNAAL] Alle documentnummers per leverancier, uit de VOLLEDIGE lijst en niet uit
-  // `displayed`: het bewijs dat een leverancier twee soorten nummers gebruikt mag niet afhangen van
-  // welk filter er toevallig aan staat. Zoek je op "CR", dan zie je anders alleen creditnota's en
-  // verdwijnt de tegenhanger — precies het bewijs waar het signaal op rust.
+  // [CREDITNOTA-SIGNAL] Every document number per supplier, from the FULL list and not from
+  // `displayed`: the evidence that a supplier uses two kinds of number must not depend on whichever
+  // filter happens to be on. Search for "CR" and you would otherwise see only credit notes, and the
+  // counterpart — the very evidence the signal rests on — disappears.
   const vendorNumbersByName = useMemo(() => {
     const m = new Map<string, string[]>()
     for (const inv of invoices) {
@@ -1543,15 +1543,15 @@ export default function IncomingManageClient({
               // [OVER-DATUM] Whole days past the stated vervaldatum — null when the bill is paid
               // (a settled invoice cannot be late), when it isn't due yet, or when the invoice
               // never stated a due date at all. `todayIso` is computed once per render below.
-              // [CREDITNOTA-SIGNAAL] Een creditnota kan niet te laat zijn: je hoeft hem niet te
-              // betalen, hij gaat van je saldo af. Een aanmaning erop is dus altijd onzin — en
-              // precies wat er stond ("135 dagen te laat" op een tegoed van € 51,80). Zowel de
-              // goed geboekte soort als een al negatief bedrag telt hier: beide gedragen zich als
-              // tegoed, ongeacht welk van de twee de leverancier op papier heeft gezet.
+              // [CREDITNOTA-SIGNAL] A credit note cannot be late: you do not have to pay it, it
+              // comes off your balance. A dunning badge on it is therefore always nonsense — and
+              // exactly what was there ("135 days late" on a € 51.80 credit). Both the correctly
+              // booked kind and an already-negative amount count here: both behave as a credit,
+              // whichever of the two the supplier put on paper.
               const isCreditnota = inv.invoice_type === 'creditnota' || (inv.total_inc_btw ?? 0) < 0
               const daysLate = isPaid || isCreditnota ? null : overdueDays(inv.due_date, todayIso)
-              // Wat de nummering van DEZE leverancier verraadt. Zie creditnota-signal.ts: pas als
-              // dezelfde leverancier aantoonbaar twee soorten voorvoegsels gebruikt, zegt "CR" iets.
+              // What THIS supplier's numbering gives away. See creditnota-signal.ts: only when the
+              // same supplier demonstrably uses two kinds of prefix does "CR" mean anything.
               const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
               const creditSignal = looksLikeCreditnota({
                 invoiceNumber: inv.invoice_number,
@@ -1739,9 +1739,9 @@ export default function IncomingManageClient({
                         ) : (
                           <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
                         )}
-                        {/* [CREDITNOTA-SIGNAAL] Goed geboekt: zeg het gewoon. Zonder dit merkteken
-                            is het enige verschil met een factuur een minteken in het bedrag, en
-                            dat is te weinig voor een document dat de andere kant op werkt. */}
+                        {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
+                            the only difference from an invoice is a minus sign in the amount, and
+                            that is too little for a document that works the other way. */}
                         {isCreditnota && (
                           <span
                             title="Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt"
@@ -1750,13 +1750,13 @@ export default function IncomingManageClient({
                             Creditnota
                           </span>
                         )}
-                        {/* [CREDITNOTA-SIGNAAL] Vermoeden, geen oordeel. Wij klappen het teken NIET
-                            om: bij een andere leverancier kan "CR" iets heel anders betekenen, en
-                            een verkeerde omklap maakt van een echte schuld een tegoed — dan betaal
-                            je te weinig en merk je het pas bij de aanmaning. Het scherm toont wat
-                            het zag; de eigenaar beslist. */}
-                        {/* [CREDITNOTA-SIGNAAL] De tegenspraak: de app noemt het zelf een
-                            creditnota en boekte het als schuld. Geen vermoeden — een fout. */}
+                        {/* [CREDITNOTA-SIGNAL] A suspicion, not a verdict. We do NOT flip the sign:
+                            at another supplier "CR" can mean something entirely different, and a
+                            wrong flip turns a real debt into a credit — then you underpay and find
+                            out at the dunning letter. The screen shows what it saw; the owner
+                            decides. */}
+                        {/* [CREDITNOTA-SIGNAL] The contradiction: the app itself calls it a credit
+                            note and booked it as a debt. Not a suspicion — an error. */}
                         {signConflict && (
                           <span
                             title="Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in 'nog te betalen' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken."
@@ -1804,11 +1804,11 @@ export default function IncomingManageClient({
                     {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
                         so the media query can flip it to a full-width strip on a phone. */}
                     <div className="inv-row-side">
-                      {/* [CREDITNOTA-SIGNAAL] Een creditnota staat er met zijn eigen teken. Dat is
-                          geen opmaak maar de boekhoudkundige waarheid: het bedrag gaat van je
-                          saldo AF. fmtEur (Intl, nl-NL) drukt een negatieve waarde vanzelf met een
-                          minteken af — het groen zegt erbij welke kant het op gaat, zodat een
-                          minteken op een telefoon niet over het hoofd te zien is. */}
+                      {/* [CREDITNOTA-SIGNAL] A credit note carries its own sign. That is not
+                          styling but the bookkeeping truth: the amount comes OFF your balance.
+                          fmtEur (Intl, nl-NL) prints a negative value with a minus by itself — the
+                          green says which way it goes, so a minus sign on a phone cannot be
+                          overlooked. */}
                       <p style={{ fontSize: 15, fontWeight: 700, color: isCreditnota ? '#0B8043' : M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>

@@ -1,22 +1,22 @@
-// [BEDRAG-DRIELUIK] Pure node test — run: npx tsx --test src/lib/amount-triplet.test.ts
+// [AMOUNT-TRIPLET] Pure node test — run: npx tsx --test src/lib/amount-triplet.test.ts
 //
-// De eigenschap die telt: NA ELKE BEWERKING KLOPT excl + BTW = totaal. Dat was de reden dat het
-// totaal ooit niet invulbaar was; nu het dat wél is, moet die garantie hier bewezen worden en niet
-// in het scherm gehoopt.
+// The property that matters: AFTER EVERY EDIT, ex + btw = incl. That invariant is why the total
+// used to be non-editable; now that it IS editable, the guarantee has to be proven here rather
+// than hoped for in the screen.
 //
-// En daarnaast: de vier facturen die vastliepen moeten met de bedragen die LETTERLIJK op het
-// papier staan in te vullen zijn, zonder dat de ondernemer iets uitrekent.
+// And beyond that: the four invoices that stalled must be fillable using the numbers PRINTED on
+// the paper, without the owner computing anything.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { setExcl, setBtw, setIncl, tripletHolds, type AmountTriplet } from "./amount-triplet";
 
-const leeg: AmountTriplet = { ex: 0, btw: 0, incl: 0 };
+const empty: AmountTriplet = { ex: 0, btw: 0, incl: 0 };
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-test("de identiteit overleeft elke bewerking", () => {
-  let t = leeg;
-  for (const stap of [
+test("the identity survives every edit", () => {
+  let t = empty;
+  for (const step of [
     () => (t = setExcl(t, 100)),
     () => (t = setBtw(t, 21)),
     () => (t = setIncl(t, 1078.46)),
@@ -24,41 +24,41 @@ test("de identiteit overleeft elke bewerking", () => {
     () => (t = setExcl(t, -123)),
     () => (t = setIncl(t, -109.58)),
   ]) {
-    stap();
+    step();
     assert.ok(tripletHolds(t), JSON.stringify(t));
   }
 });
 
-test("[A · kratten] totaal en BTW van het papier → het excl-bedrag volgt", () => {
-  // Op de factuur staat: totaal 1.078,46 en totaal BTW 88,73. Het bedrag waar de lezer over
-  // struikelde (ex. BTW 989,73) hoeft de ondernemer niet meer zelf uit te rekenen.
-  let t: AmountTriplet = { ex: 985.87, btw: 88.73, incl: 1074.6 }; // wat er fout stond
+test("[A · crates] total and btw off the paper → the ex amount follows", () => {
+  // The invoice prints total 1078.46 and total btw 88.73. The figure the reader tripped over
+  // (ex. BTW 989.73) no longer has to be worked out by hand.
+  let t: AmountTriplet = { ex: 985.87, btw: 88.73, incl: 1074.6 }; // what was stored, wrongly
   t = setIncl(t, 1078.46);
   assert.equal(round2(t.ex), 989.73);
-  assert.equal(t.btw, 88.73, "de BTW blijft staan — die is niet aangeraakt");
+  assert.equal(t.btw, 88.73, "btw stays — it was not touched");
   assert.ok(tripletHolds(t));
 });
 
-test("[C · twee tarieven] hier is juist de BTW het veld dat je aanraakt", () => {
-  // Papier: ex. BTW 3.413,92 klopte al; de BTW moest 233,20 + 172,70 = 405,90 worden.
+test("[C · two rates] here btw is the field you touch instead", () => {
+  // Paper: ex. BTW 3413.92 was already right; btw had to become 233.20 + 172.70 = 405.90.
   let t: AmountTriplet = { ex: 3413.92, btw: 995.9, incl: 4409.82 };
   t = setBtw(t, 405.9);
-  assert.equal(round2(t.incl), 3819.82, "het totaal komt uit op wat er op het papier staat");
+  assert.equal(round2(t.incl), 3819.82, "the total lands on what the paper says");
   assert.equal(t.ex, 3413.92);
 });
 
-test("[D · retour container] een netto-negatieve factuur is gewoon in te vullen", () => {
-  // Papier: Totaal te voldoen −109,58, BTW laag tarief 13,42, Totaal excl. BTW −123,00.
-  let t: AmountTriplet = { ex: 26, btw: 13.42, incl: 39.42 }; // wat er fout stond
+test("[D · returned crates] a net-negative invoice is simply fillable", () => {
+  // Paper: Totaal te voldoen −109.58, btw low rate 13.42, Totaal excl. BTW −123.00.
+  let t: AmountTriplet = { ex: 26, btw: 13.42, incl: 39.42 }; // what was stored, wrongly
   t = setBtw(t, 13.42);
   t = setIncl(t, -109.58);
-  assert.equal(round2(t.ex), -123, "exact het bedrag onder 'Totaal excl. BTW'");
+  assert.equal(round2(t.ex), -123, "exactly the figure under 'Totaal excl. BTW'");
   assert.ok(tripletHolds(t));
 });
 
-test("de BTW blijft staan tenzij je hem zelf aanraakt", () => {
-  // Dat is de hele afspraak: van de drie is de BTW het getal dat je het minst wilt zien
-  // verspringen — hij gaat rechtstreeks de aangifte in als voorbelasting.
+test("btw stays put unless you type it yourself", () => {
+  // That is the whole deal: of the three, btw is the number you least want to see jump — it goes
+  // straight into the return as deductible input tax.
   let t: AmountTriplet = { ex: 100, btw: 21, incl: 121 };
   t = setExcl(t, 200);
   assert.equal(t.btw, 21);
@@ -67,16 +67,16 @@ test("de BTW blijft staan tenzij je hem zelf aanraakt", () => {
   assert.equal(t.ex, 479);
 });
 
-test("een half getypt veld duwt geen NaN de rekensom in", () => {
+test("a half-typed field pushes no NaN into the arithmetic", () => {
   let t: AmountTriplet = { ex: 100, btw: 21, incl: 121 };
   t = setIncl(t, Number.NaN);
   assert.equal(t.incl, 0);
-  assert.equal(t.ex, -21, "0 − 21: de identiteit blijft kloppen, ook bij onzin");
+  assert.equal(t.ex, -21, "0 − 21: the identity still holds, even on nonsense");
   assert.ok(tripletHolds(t));
-  assert.ok(tripletHolds(setExcl(leeg, null)));
-  assert.ok(tripletHolds(setBtw(leeg, undefined)));
+  assert.ok(tripletHolds(setExcl(empty, null)));
+  assert.ok(tripletHolds(setBtw(empty, undefined)));
 });
 
-test("nul blijft nul — een lege factuur wordt niet stiekem iets", () => {
-  assert.deepEqual(setIncl(leeg, 0), { ex: 0, btw: 0, incl: 0 });
+test("zero stays zero — an empty invoice does not quietly become something", () => {
+  assert.deepEqual(setIncl(empty, 0), { ex: 0, btw: 0, incl: 0 });
 });
