@@ -16,6 +16,11 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // [PAGINATION] pages past PostgREST's silent ~1000-row cap — see supabase-paginate.ts
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import IncomingManageClient from './IncomingManageClient'
+// [SCAN-WHOLE-BOOK] The count must cover the whole book, not the window this page renders.
+import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan'
+// [READING-MEMORY] The same supplier memory the verify queue shows — one shared read.
+import { readingHintFor, vendorKey } from '@/lib/reading-memory'
+import { loadReadingMemory } from '@/lib/reading-memory-source'
 import type { ComponentProps } from 'react'
 
 // Row shape the client expects — derived from its props (the type itself is not exported).
@@ -23,8 +28,12 @@ type IncomingRow = ComponentProps<typeof IncomingManageClient>['initialInvoices'
 
 // Exactly the columns the management UI needs — payment fields + accountant_status
 // for the read-only 'Verwerkt' badge (3b-2). No amounts edited here, but shown.
+// [CREDITNOTA-SIGNAL] invoice_type was missing here, so this screen could not even SEE the
+// difference between an invoice and a credit note — no badge, no minus sign, and a credit counting
+// as a debt in "still to pay". The column has existed from the start (database.sql:327) and is
+// filled properly by intake/upload/reimport; only this screen never asked for it.
 const COLS =
-  'id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
+  'id, invoice_number, client_name, status, accountant_status, direction, invoice_type, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
 
 export default async function Page({
   searchParams,
@@ -128,6 +137,76 @@ export default async function Page({
     .in('status', ['received', 'paid'])
   if (countErr) console.error('[INVOICE-COUNTER] count read failed — disclosure omitted', { userId: user.id, error: countErr.message })
 
+  // [SCAN-WHOLE-BOOK] The scan runs over EVERY confirmed inkoopfactuur, not over the list.
+  //
+  // The client also scans, and has to: that is what puts a badge on a row. But the two answer
+  // different questions, and only one of them is "how many are wrong". `rows` above is every OPEN
+  // invoice plus the 200 most recent PAID ones — a deliberate window that is right for a screen you
+  // pay from, and wrong for a count. A purchase invoice booked with a broken breakdown and since
+  // paid went into the aangifte just as wrong as an unpaid one, and beyond the 200th it would have
+  // been invisible to a banner that nonetheless announced a total.
+  //
+  // That is the failure this whole line keeps coming back to: a bounded read presented as a
+  // complete answer. So the count comes from a read that is bounded by nothing but the owner's
+  // actual history — eight small columns, paged past PostgREST's silent ~1000 ceiling.
+  //
+  // [NO-SILENT-EMPTY] null on failure, never an empty scan. "0 facturen kloppen niet" is the single
+  // most dangerous sentence this screen could produce out of a failed query.
+  let bookScan: InvoiceScan | null = null
+  try {
+    const scanRows = await fetchAllRows<ScanRow>((from, to) => supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw')
+      .eq('receiver_id', user.id)
+      .eq('direction', 'incoming')
+      .in('status', ['received', 'paid'])
+      // [PAGE-KEY] by id, for the same reason the open-rows query above uses it: created_at ties
+      // have no defined order, so across .range() windows a row could be served twice or skipped.
+      .order('id', { ascending: true })
+      .range(from, to)
+    )
+    bookScan = scanInvoices(scanRows)
+  } catch (e) {
+    console.error('[SCAN-WHOLE-BOOK] scan read failed — the banner says it could not look', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    bookScan = null
+  }
+
+  // [READING-MEMORY] The same supplier memory the verify queue shows. It belongs here too: this is
+  // the OTHER door through which the owner corrects a misread invoice, and the correction modal is
+  // the same checking moment — "you have fixed the btw at this supplier three times" is worth
+  // knowing while you are typing the fourth. Recorded from here already; now also shown here.
+  const readingMemory = await loadReadingMemory(supabase, user.id)
+  const readingHints: Record<string, string> = {}
+  for (const r of rows) {
+    const hint = readingHintFor(r.client_name, readingMemory)
+    if (hint) readingHints[vendorKey(r.client_name)] = hint
+  }
+
+  // [INVOICE-SCAN] Which quarters has the owner already FILED? That single fact changes what a
+  // wrong invoice means: in an open quarter a correction is just a correction, in a filed one it is
+  // a correction to the return itself. The scan on the client counts and groups; this read supplies
+  // the one piece it cannot know.
+  //
+  // [NO-SILENT-EMPTY] A failed read must not come back as "nothing is filed" — that would tell the
+  // owner they can freely correct a quarter that is already closed. null means "we could not look",
+  // and the banner says so instead of guessing.
+  let filedQuarters: string[] | null = []
+  try {
+    // btw_filings is not in the generated types yet — the same cast /api/btw/file uses.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('btw_filings')
+      .select('year, quarter')
+      .eq('user_id', user.id)
+    if (error) throw new Error(error.message)
+    filedQuarters = (data ?? []).map((f: { year: number; quarter: number }) => `${f.year}-Q${f.quarter}`)
+  } catch (e) {
+    // A missing table (the migration is applied by hand) is not the same as a failed read, but for
+    // this banner both mean the same thing: we cannot say which quarters are closed, so we do not.
+    console.error('[INVOICE-SCAN] filed-quarter read failed — banner omits the filed warning', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    filedQuarters = null
+  }
+
   // [INBOX-CROWD-OUT] Deep-link guarantee: Vandaag routes here with ?focus={id}
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
@@ -155,6 +234,9 @@ export default async function Page({
       initialInvoices={rows}
       totalCount={totalCount ?? null}
       readFailed={readFailed}
+      filedQuarters={filedQuarters}
+      bookScan={bookScan}
+      readingHints={readingHints}
     />
   )
 }

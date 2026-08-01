@@ -25,7 +25,7 @@ import { rowMatchesQuery } from "@/lib/search";
 import { ARCHIVE_REASONS, ARCHIVE_REASON_LABELS, archiveReasonLabel, type ArchiveReason } from "@/lib/archive-reason";
 // [AFZENDERREGEL] Alleen bij "geen factuur" mag een blijvende regel voorgesteld worden.
 import { mayOfferSenderRule } from "@/lib/sender-rules";
-// [NEGEER-BULK] Eerlijk tellen na een stapel: blijvend geweigerd ≠ tijdelijk niet gelukt.
+// [BULK-IGNORE] Honest counting after a batch: permanently refused ≠ temporarily failed.
 import {
   classifyIgnoreFailure, bulkIgnoreSummary, bulkIgnoreOffersUndo, bulkRestoreSummary,
   type BulkIgnoreTally,
@@ -37,6 +37,8 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-no
 // [UPLOAD-ERRORS] One HTTP-status → owner-sentence translator, shared with /dashboard/upload and
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
+// [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
+import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -146,6 +148,11 @@ interface Props {
   connectionStatus: ConnectionStatus;
   // [BOEK-011] Used by the Logo Universal Click pattern (Navigation Strategy v1.0)
   userRole: "zzper" | "accountant";
+  // [READING-MEMORY] Per supplier (trimmed + lowercased name), one sentence about what the owner
+  // has repeatedly had to correct on that supplier's invoices. Only for suppliers actually in this
+  // queue, and only past the threshold — most queues carry none at all. Optional: an older server
+  // render, or a failed audit read, simply sends nothing and the cards look as they always did.
+  readingHints?: Record<string, string>;
 }
 
 type Tab = "pending" | "ignored" | "confirmed";
@@ -772,8 +779,22 @@ function ConfirmPaidModal({
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
-  // Total is always derived — never edited directly. This IS TRAIL 2: excl + BTW = incl.
-  const totalIncBtw = exBtw + btwAmount;
+  // [AMOUNT-TRIPLET] The total WAS derived and not editable. That guaranteed the identity (ex + btw
+  // = total could no longer go wrong) but ran counter to the paper: the total is the most reliable
+  // number there is — bold at the bottom, and the amount your bank statement will have to match —
+  // while the ex amount is the hard one (Subtotaal? basis? Ex. BTW?). On all four invoices that
+  // stalled on this, that was exactly the misread figure, and the owner had to do 1078.46 − 88.73
+  // in their head to get there.
+  //
+  // Now all three are editable and the identity holds after every keystroke — guarded by
+  // amount-triplet.ts (pure, 7 tests), not by hope. Touch the total and the EX amount follows; btw
+  // stays put unless you type it yourself, because that is the figure that enters the return as
+  // deductible input tax and so should jump around least.
+  const [totalIncBtw, setTotalIncBtw] = useState((invoice.total_ex_btw || 0) + (invoice.btw_amount || 0));
+  const applyTriplet = (t: { ex: number; btw: number; incl: number }) => {
+    setExBtw(t.ex); setBtwAmount(t.btw); setTotalIncBtw(t.incl);
+  };
+  const triplet = { ex: exBtw, btw: btwAmount, incl: totalIncBtw };
 
   // [BRIDGE-CREDITNOTA-SIGN] The old `Math.max(0, …)` forced every edited amount ≥ 0, which turned
   // a creditnota positive the moment the user touched a field. A creditnota's amounts follow the
@@ -781,7 +802,12 @@ function ConfirmPaidModal({
   // signs are NOT constrained (the real Altena case is ex −123, BTW +13,42, totaal −109,58). So for
   // a creditnota we accept the real signed value the reviewer reads off the paper (no clamp); for a
   // normal invoice we keep the ≥ 0 clamp.
-  const isCredit = invoice.invoice_type === "creditnota";
+  // [KIND-CORRECTION] Here the reviewer can say this is a credit note after all. Without that, the
+  // truth could not get in: on the potato invoice (returned container, net −109.58) the clamp pushed
+  // every negative amount back to 0, leaving a debt on the books that is really a credit. Ticking it
+  // lifts the clamp; the server stores the kind along with it.
+  const [declaredCredit, setDeclaredCredit] = useState(false);
+  const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
 
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
@@ -819,6 +845,8 @@ function ConfirmPaidModal({
     total_ex_btw: exBtw,
     btw_amount: btwAmount,
     total_inc_btw: totalIncBtw,
+    // [KIND-CORRECTION] Only sent when the reviewer ticked it themselves.
+    ...(declaredCredit ? { is_credit_note: true } : {}),
     // [BRIDGE-EXTRACT] reviewed metadata — persisted by the confirm route
     client_name: vendor.trim(),
     invoice_number: invoiceNumber.trim(),
@@ -927,7 +955,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={exBtw}
-                    onChange={(e) => setExBtw(clampAmount(parseFloat(e.target.value) || 0))}
+                    onChange={(e) => applyTriplet(setExcl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -948,7 +976,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={btwAmount}
-                    onChange={(e) => setBtwAmount(clampAmount(parseFloat(e.target.value) || 0))}
+                    onChange={(e) => applyTriplet(setBtw(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
@@ -974,13 +1002,59 @@ function ConfirmPaidModal({
               {/* Divider */}
               <div style={{ height: 1, background: "#dadce0", margin: "12px 0" }} />
 
-              {/* Total — always computed */}
+              {/* [AMOUNT-TRIPLET] The total — now editable, because THIS is the figure printed most
+                  clearly on the invoice. Copy it over and the ex amount follows by itself, with
+                  nothing left to subtract. */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#202124" }}>Totaal</span>
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#202124" }}>
-                  {formatAmount(totalIncBtw)}
-                </span>
+                {editing ? (
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={totalIncBtw}
+                    onChange={(e) => applyTriplet(setIncl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
+                    aria-label="Totaalbedrag inclusief BTW — zoals het onderaan de factuur staat"
+                    style={{
+                      width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
+                      borderRadius: 10, border: "1.5px solid #1a73e8",
+                      textAlign: "right", outline: "none", color: "#202124",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 18, fontWeight: 700, color: "#202124" }}>
+                    {formatAmount(totalIncBtw)}
+                  </span>
+                )}
               </div>
+              {editing && (
+                <div style={{ fontSize: 12, color: "#5f6368", lineHeight: 1.4, marginTop: 8 }}>
+                  Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
+                  exclusief rekent zichzelf uit. Staat er statiegeld, emballage of een retour op de
+                  factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.
+                </div>
+              )}
+
+              {/* [KIND-CORRECTION] Without this checkbox the truth could not get in on a net
+                  negative invoice: the clamp pushed every minus amount back to 0. Only shown on a
+                  row still stored as an ordinary invoice — an already correct credit note does not
+                  need it. */}
+              {editing && invoice.invoice_type !== "creditnota" && (
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={declaredCredit}
+                    onChange={(e) => setDeclaredCredit(e.target.checked)}
+                    style={{ marginTop: 2, width: 16, height: 16, accentColor: "#0B8043" }}
+                  />
+                  <span style={{ fontSize: 12, color: "#3c4043", lineHeight: 1.4 }}>
+                    <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
+                    “Creditnota” op staat of als het totaal onderaan negatief is. Dan mag je een
+                    minbedrag invullen, gaat hij van je openstaande saldo af en wordt zijn btw
+                    afgetrokken in plaats van opgeteld.
+                  </span>
+                </label>
+              )}
             </div>
 
             {/* [BRIDGE-EXTRACT] Vendor / number / date — editable under the same toggle */}
@@ -1408,7 +1482,11 @@ function ConfirmDialog({
 
 // ── Invoice card — collapsible accordion ──────────────────────────────────────
 
-function InvoiceCard({
+// Exported for the render gate only (tests/render/). The list renders every card COLLAPSED, and
+// everything worth asserting — the reasons block, the supplier memory — lives in the expanded body,
+// which a static render never produces because opening a card is a click. Exporting the card is the
+// difference between "the queue renders" and "the warning the queue exists for renders".
+export function InvoiceCard({
   invoice,
   mode,
   expanded,
@@ -1424,6 +1502,8 @@ function InvoiceCard({
   // [INTAKE-FOCUS] deep-link target: element id for scrollIntoView + brief ring
   domId,
   highlighted = false,
+  // [READING-MEMORY] What the owner has repeatedly corrected at THIS supplier, if anything.
+  readingHint,
 }: {
   invoice: IncomingInvoice;
   mode: Tab;
@@ -1441,6 +1521,8 @@ function InvoiceCard({
   // [INTAKE-FOCUS]
   domId?: string;
   highlighted?: boolean;
+  // [READING-MEMORY] One sentence, or nothing. Never a number — see reading-memory.ts.
+  readingHint?: string | null;
 }) {
   const dialog = useDialog();
   const toast = useToast();
@@ -1861,6 +1943,37 @@ function InvoiceCard({
       {expanded && (
         <div style={{ padding: "0 16px 16px" }}>
           <div style={{ height: 1, background: "#f8f9fa", marginBottom: 14 }} />
+
+          {/* [READING-MEMORY] What this owner keeps having to fix at THIS supplier.
+
+              Deliberately NOT gated on the health verdict, unlike the block below it. The whole
+              reason this exists is the case where the reader is confident and wrong: Elegance
+              Brands read cleanly in June and in July, and both times the owner had to repair the
+              btw by hand. A hint that only appears when the app already suspects something would
+              have stayed silent on exactly the invoices it is for.
+
+              It names a FIELD, never an amount. A remembered number belongs to a different invoice;
+              pre-filling it would be inventing money, which is the one thing this whole line
+              refuses to do. So the app learns where to point the reviewer, not what the answer is.
+
+              Pending only: on a confirmed or ignored card there is nothing left to check. */}
+          {mode === "pending" && readingHint && (
+            <div
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 8,
+                padding: "12px 14px", marginBottom: 14,
+                background: "#eef4ff", borderRadius: 12, border: "1px solid #cddcff",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1.3 }}>🧠</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#274690", marginBottom: 4 }}>
+                  Wat je hier vaker corrigeert
+                </div>
+                <div style={{ fontSize: 12.5, color: "#274690", lineHeight: 1.5 }}>{readingHint}</div>
+              </div>
+            </div>
+          )}
 
           {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
               plain-language reason(s) the system is unsure, sourced from the
@@ -2718,6 +2831,9 @@ export default function IncomingInvoicesClient({
   ignoredInvoices,
   confirmedInvoices,
   connectionStatus,
+  // [READING-MEMORY] Empty by default: most owners have no supplier past the threshold, and a
+  // missing prop must render the queue exactly as it rendered before this existed.
+  readingHints = {},
 }: Props) {
   const dialog = useDialog();
   const toast = useToast();
@@ -2783,7 +2899,7 @@ export default function IncomingInvoicesClient({
   const [missing, setMissing] = useState<{ supplier: string; reason: string; lastSeen: string }[]>([]);
   const [missingDismissed, setMissingDismissed] = useState(false);
 
-  // [NEGEER-UNDO] Een toast met een handeling erin ("Ongedaan maken"). De tijd staat bewust
+  // [IGNORE-UNDO] Een toast met een handeling erin ("Ongedaan maken"). De tijd staat bewust
   // langer (7s) wanneer er iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om
   // te beslissen dat je het toch niet wilde.
   // [MOTION] De weergave komt nu van de app-brede snackbar (components/ui/Toast); deze wikkel
@@ -2878,7 +2994,7 @@ export default function IncomingInvoicesClient({
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
 
-  // ── [NEGEER-BULK] Dezelfde selectie, de andere uitgang ──
+  // ── [BULK-IGNORE] Dezelfde selectie, de andere uitgang ──
   // De wachtrij loopt vol met twee soorten post tegelijk: facturen die bevestigd moeten worden, en
   // rommel (reclame, dubbelingen, post van de buurman). Voor de eerste soort was er één tik voor
   // een hele stapel; voor de tweede moest je twintig keer dezelfde drie tikken doen. Dat verschil
@@ -3041,7 +3157,7 @@ export default function IncomingInvoicesClient({
   );
 
   // ── Restore ignored → pending ──
-  // [NEGEER-UNDO] Staat bewust VÓÓR handleIgnore: de "Ongedaan maken"-knop in de negeer-toast
+  // [IGNORE-UNDO] Staat bewust VÓÓR handleIgnore: de "Ongedaan maken"-knop in de negeer-toast
   // roept dit pad aan, en zo hoeft dat niet via een ref (die de React-compiler terecht weigert:
   // een ref muteren rond de render is een side-effect). Eén herstelpad, één waarheid.
   const handleRestore = useCallback(async (invoice: IncomingInvoice) => {
@@ -3071,7 +3187,7 @@ export default function IncomingInvoicesClient({
     }
   }, []);
 
-  // ── [NEGEER-BULK] De terugweg voor een hele stapel ──
+  // ── [BULK-IGNORE] De terugweg voor een hele stapel ──
   // Eén PATCH per factuur — exact hetzelfde herstelpad als de losse knop, dus er is geen tweede
   // waarheid over wat "terugzetten" betekent. Bewust GEEN hergebruik van handleRestore zelf: die
   // toont per factuur een snackbar, en twintig snackbars achter elkaar is geen bevestiging maar
@@ -3120,7 +3236,7 @@ export default function IncomingInvoicesClient({
         body: JSON.stringify({ reason }),
       });
       if (res.ok) {
-        // [NEGEER-UNDO] Negeren is één tik en het haalt een factuur uit beeld — dus hoort de weg
+        // [IGNORE-UNDO] Negeren is één tik en het haalt een factuur uit beeld — dus hoort de weg
         // terug in dezelfde tik te zitten, niet in een tabblad dat je eerst moet vinden. Hergebruikt
         // exact het herstelpad van de Genegeerd-lijst (PATCH), dus er is geen tweede waarheid.
         // [AFZENDERREGEL] Alleen bij "geen factuur" bieden we de blijvende regel aan: dat is de
@@ -3152,7 +3268,7 @@ export default function IncomingInvoicesClient({
     }
   }, [handleRestore]);
 
-  // ── [NEGEER-BULK] Negeer de hele selectie ──
+  // ── [BULK-IGNORE] Negeer de hele selectie ──
   //
   // Drie keuzes die hier bewust ANDERS zijn dan bij het bevestigen van een stapel — en die alle
   // drie uit hetzelfde verschil volgen: bevestigen schrijft geld in de boeken, negeren haalt een
@@ -3342,15 +3458,15 @@ export default function IncomingInvoicesClient({
     let archivedNotInvoice = 0;
     let skipped = 0;
     let failed = 0;
-    // [MODEL-CONFIG] Antwoordt de server dat het leesmodel niet beschikbaar is, dan gaat GEEN van de
-    // volgende facturen het halen: het is één instelling die voor alle lezingen tegelijk fout staat.
-    // Dan is doorlopen geen doorzettingsvermogen maar twintig keer dezelfde betaalde muur inlopen —
-    // twintig ronden wachten, twintig tikken van de snelheidslimiet, en één storing die twintig keer
-    // als "niet gelukt" in de samenvatting belandt alsof het per factuur iets anders was.
+    // [MODEL-CONFIG] If the server answers that the reading model is unavailable, NONE of the
+    // following invoices will make it: it is one setting that is wrong for every read at once.
+    // Carrying on is then not perseverance but walking into the same paid wall twenty times —
+    // twenty round trips, twenty ticks off the rate limit, and one outage landing in the summary
+    // twenty times as "failed" as if it were something different per invoice.
     let stoppedReason: string | null = null;
-    // Hoeveel er daadwerkelijk langs de server zijn geweest. Exact geteld en niet achteraf
-    // uitgerekend, zodat "niet geprobeerd" een feit is en geen aftreksom die bij de volgende
-    // wijziging stilletjes een factuur verkeerd indeelt.
+    // How many actually reached the server. Counted exactly rather than derived afterwards, so
+    // "not attempted" is a fact and not a subtraction that quietly misfiles an invoice on the next
+    // change.
     let attempted = 0;
     for (const inv of targets) {
       attempted++;
@@ -3383,8 +3499,8 @@ export default function IncomingInvoicesClient({
       // Kept as a dialog rather than a snackbar: this is a multi-line result
       // the owner has to act on, and it must not scroll away unread.
       await dialog.alert({
-        // [MODEL-CONFIG] Een afgebroken ronde heet niet "klaar". De titel is het eerste wat gelezen
-        // wordt, en die mag niet suggereren dat de stapel behandeld is terwijl er niets is gebeurd.
+        // [MODEL-CONFIG] An aborted run is not called "done". The title is read first, and it must
+        // not suggest the batch was handled when nothing happened.
         title: stoppedReason ? "Opnieuw inlezen gestopt" : "Opnieuw inlezen klaar",
         message:
           (stoppedReason ? `${stoppedReason}\n\n` : "") +
@@ -3397,8 +3513,8 @@ export default function IncomingInvoicesClient({
             : "") +
           (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
           (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "") +
-          // Niet als "mislukt" geteld: deze zijn nooit langs de server geweest. Ze staan
-          // ongewijzigd in de wachtrij en er is niets aan ze geprobeerd.
+          // Not counted as "failed": these never reached the server. They sit unchanged in the
+          // queue and nothing was attempted on them.
           (untried ? `• ${untried} niet geprobeerd — ze staan onveranderd in de wachtrij` : ""),
       });
     }
@@ -3721,6 +3837,9 @@ export default function IncomingInvoicesClient({
                 onSelect={() => toggleSelect(inv.id)}
                 domId={`incoming-card-${inv.id}`}
                 highlighted={focusId === inv.id}
+                // [READING-MEMORY] Keyed exactly as the server keyed it (trimmed + lowercased), so
+                // a supplier written with a trailing space is not treated as a second company.
+                readingHint={readingHints[(inv.client_name ?? "").trim().toLowerCase()]}
               />
             ))}
           </div>
@@ -3786,7 +3905,7 @@ export default function IncomingInvoicesClient({
             display: "flex", justifyContent: "center",
           }}
         >
-          {/* [NEGEER-BULK] Twee uitgangen voor dezelfde selectie, in één rij.
+          {/* [BULK-IGNORE] Twee uitgangen voor dezelfde selectie, in één rij.
               De verhouding is niet cosmetisch. Bevestigen schrijft geld in de boeken en blijft
               daarom de volle, groene, dominante knop; negeren is de smalle nevenknop ernaast. Zo
               kan de duim die naar "bevestig" gaat er niet naast zitten en per ongeluk een stapel
@@ -3828,7 +3947,7 @@ export default function IncomingInvoicesClient({
         </div>
       )}
 
-      {/* [NEGEER-BULK] Zelfde overlay, zelfde reden als bij [REIMPORT-ALL]: de lus loopt per
+      {/* [BULK-IGNORE] Zelfde overlay, zelfde reden als bij [REIMPORT-ALL]: de lus loopt per
           factuur, dus zonder blokkade kan er halverwege een kaart worden geopend of bevestigd die
           een tel later alsnog wordt gearchiveerd. De teller staat erbij omdat een stapel van
           twintig merkbaar duurt en een stil scherm dan als vastgelopen leest. */}
@@ -3915,7 +4034,7 @@ export default function IncomingInvoicesClient({
         />
       )}
 
-      {/* [NEGEER-BULK] Bevestiging vóór de stapel. Dezelfde dialoog en dezelfde redenenlijst als
+      {/* [BULK-IGNORE] Bevestiging vóór de stapel. Dezelfde dialoog en dezelfde redenenlijst als
           bij één factuur — één vorm voor één handeling, of het er nu één of twintig zijn. De reden
           is ook hier vrijwillig: wie twintig reclamemails wegzet weet waarom, wie twijfelt hoeft
           niets in te vullen. */}

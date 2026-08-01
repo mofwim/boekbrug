@@ -23,6 +23,9 @@ import { hasSettledMoney } from "@/lib/invoice-removal";
 // [NEGEER-REDEN] De toegestane redenen staan in één lijst — gedeeld met het scherm en met de
 // CHECK-constraint in invoice_archive_reason.sql, zodat die drie niet uit elkaar kunnen lopen.
 import { normalizeArchiveReason } from "@/lib/archive-reason";
+// [READING-MEMORY] Which fields the human changed about the reader's answer — the one signal that
+// makes "this supplier keeps being misread" a fact instead of a feeling.
+import { correctedFields } from "@/lib/reading-memory";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -89,6 +92,9 @@ export async function POST(
     // an older client, or the pay path, which has no client-side pass at all — keeps today's
     // inline behaviour exactly. See the gate further down.
     deferAutoConfirm?: boolean;
+    // [KIND-CORRECTION] The reviewer declares this a credit note after all. This direction only —
+    // see the note at isCredit below.
+    is_credit_note?: boolean;
   } = {};
   try {
     body = await req.json();
@@ -109,7 +115,20 @@ export async function POST(
   // ≥ 0 for a normal invoice; for a creditnota it accepts any finite value, so a correctly-read
   // negative excl / positive BTW persists instead of being dropped back to the stored amount. The
   // old blanket `v >= 0` (with the client's Math.max(0)) turned every edited creditnota positive.
-  const isCredit = invoice.invoice_type === "creditnota";
+  // [KIND-CORRECTION] The reviewer may correct the KIND, because the reader does not always get it
+  // right. The real case: a potato wholesaler sends an invoice where a returned container of
+  // −408.00 makes the total net negative (Totaal te voldoen −109.58). The reader stored it as an
+  // ordinary invoice at +39.42, and then the owner could NOT enter the truth: the clamp below
+  // pushed every negative amount back to 0, leaving a debt on the books that is in reality a
+  // credit — including too much input tax reclaimed.
+  //
+  // Deliberately one direction only: 'factuur' → 'creditnota'. That is the side where the app sees
+  // too little (a positively printed credit note is by definition not recognised by the reader, see
+  // HUNT-F2), and it is the side that takes money OFF the outstanding balance rather than adding to
+  // it. The reverse — declaring a credit note an invoice — does not occur in practice and would
+  // quietly turn a credit into a debt; that way stays shut.
+  const declaredCredit = body.is_credit_note === true;
+  const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const validNum = (v: unknown): v is number =>
     typeof v === "number" && isFinite(v) && (isCredit ? true : v >= 0);
 
@@ -136,6 +155,9 @@ export async function POST(
   const updatePatch: InvoiceUpdate = { updated_at: new Date().toISOString() };
 
   // Persist reviewed amounts when the user actually sent valid numbers
+  // [KIND-CORRECTION] The kind correction travels in the same write as the amounts. One update, so
+  // the kind can never come loose from the sign that belongs with it.
+  if (declaredCredit && invoice.invoice_type !== "creditnota") updatePatch.invoice_type = "creditnota";
   if (validNum(body.total_ex_btw)) updatePatch.total_ex_btw = body.total_ex_btw;
   if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;
   if (validNum(body.total_inc_btw)) updatePatch.total_inc_btw = body.total_inc_btw;
@@ -152,6 +174,42 @@ export async function POST(
   if (typeof body.invoice_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.invoice_date)) {
     updatePatch.invoice_date = body.invoice_date;
   }
+
+  // [READING-MEMORY] What did the reviewer actually CHANGE about what the reader produced?
+  //
+  // This is the moment the app can learn something, and until now it threw the answer away: the
+  // audit below recorded the status change and the new metadata, never the pair. So the reader got
+  // Elegance Brands wrong in June, the owner fixed it, the prompt was strengthened on 26 July, and
+  // on 30 July the next Elegance Brands invoice arrived with the same field wrong — with nothing
+  // anywhere that could have said "this keeps happening at this supplier".
+  //
+  // Computed against the STORED row, not against what the screen posted: the verify form sends
+  // every field on every confirm, so "was it submitted" would record a correction each time and
+  // teach the memory that the owner corrects everything, always.
+  //
+  // The vendor is the name AFTER the reviewer's edit — if they corrected the supplier name too,
+  // the corrections belong to the company they say it is, not to the one the reader guessed.
+  const correctedNow = correctedFields(
+    {
+      total_ex_btw: invoice.total_ex_btw,
+      btw_amount: invoice.btw_amount,
+      total_inc_btw: invoice.total_inc_btw,
+      invoice_type: invoice.invoice_type,
+      client_name: invoice.client_name,
+      invoice_number: invoice.invoice_number,
+      invoice_date: invoice.invoice_date,
+    },
+    {
+      total_ex_btw: validNum(body.total_ex_btw) ? body.total_ex_btw : undefined,
+      btw_amount: validNum(body.btw_amount) ? body.btw_amount : undefined,
+      total_inc_btw: validNum(body.total_inc_btw) ? body.total_inc_btw : undefined,
+      invoice_type: updatePatch.invoice_type,
+      client_name: updatePatch.client_name,
+      invoice_number: updatePatch.invoice_number,
+      invoice_date: updatePatch.invoice_date,
+    },
+  );
+  const memoryVendor = updatePatch.client_name ?? invoice.client_name;
 
   // [DATE-GATE] An incoming invoice may not be confirmed (verified or paid)
   // without a real invoice date. The date sets the tax period (factuurstelsel),
@@ -248,10 +306,31 @@ export async function POST(
     action: "invoice.status_changed",
     entityType: "invoice",
     entityId: id,
-    oldValue: { status: invoice.status },
+    // [READING-MEMORY] The reader's side of the pair. Recorded only when something was actually
+    // corrected, so an ordinary confirm does not grow the trail — and so a row that HAS these
+    // fields is by construction a row where the human disagreed with the machine.
+    oldValue: {
+      status: invoice.status,
+      ...(correctedNow.length
+        ? {
+            total_ex_btw: invoice.total_ex_btw,
+            btw_amount: invoice.btw_amount,
+            total_inc_btw: invoice.total_inc_btw,
+            invoice_type: invoice.invoice_type,
+            client_name: invoice.client_name,
+            invoice_number: invoice.invoice_number,
+            invoice_date: invoice.invoice_date,
+          }
+        : {}),
+    },
     newValue: {
       status: updatePatch.status,
       action,
+      // The human's side, plus WHICH fields moved — so reading the memory back is a lookup rather
+      // than a diff of two jsonb blobs by every consumer that wants it.
+      ...(correctedNow.length
+        ? { reading_correction: { vendor: memoryVendor, fields: correctedNow } }
+        : {}),
       ...(action === "pay" ? { payment_method: body.payment_method } : {}),
       ...(action === "pay" && updatePatch.payment_date
         ? { payment_date: updatePatch.payment_date }

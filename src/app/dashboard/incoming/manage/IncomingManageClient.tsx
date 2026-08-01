@@ -31,7 +31,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
@@ -39,6 +39,17 @@ import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
 import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry } from '@/lib/partial-payment'
+// [CREDITNOTA-SIGNAL] Spots a credit note booked as an ordinary invoice — signals, never decides.
+// [ARITHMETIC-VISIBLE] The same read-time health verdict the verify queue shows. This screen never
+// showed it, so an invoice that entered the books with a broken breakdown looked perfectly fine on
+// the one screen the owner pays from.
+import { classifyImportHealth } from '@/lib/import-health'
+// [INVOICE-SCAN] How many booked invoices are wrong, and which quarters they touch — read-only.
+import { scanInvoices, scanFindingIds, type InvoiceScan } from '@/lib/invoice-scan'
+import { quarterLabelOf } from '@/lib/quarter'
+// [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
+import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
 // getest, zodat de randen (januari → december, Q1 → Q4 vorig jaar, schrikkeljaar) vaststaan.
@@ -113,6 +124,10 @@ interface IncomingRow {
   status: string                         // 'received' | 'paid'
   accountant_status: string | null       // 'verwerkt' etc. — read-only badge
   direction: string
+  // [CREDITNOTA-SIGNAL] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'. A credit note is MONEY
+  // OWED TO YOU: it belongs in the list with a minus sign, comes off the outstanding balance, and
+  // cannot be "late" by definition.
+  invoice_type?: string | null
   total_inc_btw: number | null
   // [PARTIAL-PAY] running total already settled by instalments (0 when fully open). A value between
   // 0 and |total_inc_btw| means the invoice is a deelbetaling: still openstaand, part paid.
@@ -255,7 +270,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
-  readFailed = [],
+  readFailed = [], filedQuarters, bookScan = null, readingHints = {},
 }: {
   profile: { id: string }
   initialInvoices: IncomingRow[]
@@ -269,6 +284,15 @@ export default function IncomingManageClient({
   // complete, because "je hoeft niemand te betalen" is the one thing this screen must not say
   // when it does not know.
   readFailed?: string[]
+  // [INVOICE-SCAN] Quarters the owner has already filed. null = we could not look — the banner then
+  // omits the filed warning rather than implying every quarter is still open.
+  filedQuarters?: string[] | null
+  // [SCAN-WHOLE-BOOK] The scan over the owner's ENTIRE confirmed history, computed server-side.
+  // null = that read failed, and the banner then counts only what is on this screen and says so.
+  bookScan?: InvoiceScan | null
+  // [READING-MEMORY] Per supplier (trimmed + lowercased name), what the owner keeps correcting.
+  // Same map and same key as the verify queue — one memory, shown at both doors.
+  readingHints?: Record<string, string>
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -523,10 +547,56 @@ export default function IncomingManageClient({
   // van amsterdamToday) — nooit tegen de klok van het apparaat, want dan zou een telefoon in een
   // andere tijdzone rond middernacht een andere maand tonen dan de rest van de app.
   const periodWindow = resolveInvoicePeriod(period, todayIso)
+
+  // ── [INVOICE-SCAN] What is standing wrong in the books, over the WHOLE list ──
+  // Computed over `invoices`, never over the filtered view: the credit-note signal needs every
+  // number a supplier used to see that they keep two kinds apart, and a count over a filtered list
+  // answers a question nobody asked. Recomputed when the list changes, so correcting an invoice
+  // makes it drop out of the banner immediately.
+  //
+  // [ORDER] This block sits ABOVE `displayed` because `displayed` reads it. That is not a style
+  // choice and it must not be tidied down to where the other totals are computed: `displayed` is a
+  // plain expression evaluated during render, so a `const` declared below it is in its temporal
+  // dead zone and the screen throws "Cannot access 'scanIds' before initialization" on EVERY render.
+  // It was written that way first, and none of the five gates caught it — tsc does not see through
+  // the .filter() closure, the build compiles it fine, and the smoke test only covers the public
+  // surface, so a logged-in screen that crashed on load passed everything.
+  const listScan = useMemo(() => scanInvoices(invoices), [invoices])
+  const scanIds = useMemo(() => scanFindingIds(listScan), [listScan])
+  // Show only the flagged rows. A count the owner cannot act on is a statistic; this turns it into
+  // a worklist.
+  const [onlyFlagged, setOnlyFlagged] = useState(false)
+
+  // [SCAN-WHOLE-BOOK] TWO scans, and the difference between them is the honest part.
+  //
+  // `listScan` is over the rows on this screen — every open invoice plus the 200 most recent paid
+  // ones. It drives the per-row badges and the worklist filter, both of which can only ever act on
+  // a row that is here.
+  //
+  // `bookScan` comes from the server and covers the owner's ENTIRE confirmed history, so it is the
+  // only one entitled to say "how many". Preferring it is what stops the banner from announcing a
+  // total it never counted: an invoice booked with a broken breakdown and since paid is beyond the
+  // 200-row window, and it went into the aangifte just as wrong as an unpaid one.
+  //
+  // When the server scan is missing (its read failed) the banner falls back to the list scan and
+  // SAYS that the number covers only this list — a smaller claim, not a silent one.
+  const scan = bookScan ?? listScan
+  const scanIsWholeBook = bookScan != null
+  // Findings the owner cannot reach from here: counted, because "3 of them are not in this list" is
+  // the difference between a worklist and a dead end. Only meaningful once the whole book was read;
+  // otherwise every unloaded row would look like a finding we are hiding.
+  const findingsOutsideList = scanIsWholeBook
+    ? scan.findings.filter(f => !invoices.some(i => i.id === f.id)).length
+    : 0
+
   const displayed = sortRows(
     invoices.filter(inv => {
       const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
       if (!tabOk) return false
+      // [INVOICE-SCAN] The worklist view: only the rows the scan flagged. Placed FIRST among the
+      // filters so it composes with period and search rather than replacing them — "everything
+      // wrong in Q1" is a question the owner actually has.
+      if (onlyFlagged && !scanIds.has(inv.id)) return false
       // [PERIODE] Op de FACTUURDATUM — de datum die op de rij staat afgedrukt en waarop de lijst
       // standaard sorteert. Niet op de betaaldatum: dan zou een factuur van maart die je in april
       // betaalde uit maart verdwijnen, terwijl je hem daar zoekt.
@@ -589,6 +659,76 @@ export default function IncomingManageClient({
   // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
   const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
   const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
+
+  // ── [AMOUNT-CORRECTION] Correcting the amounts of a confirmed invoice ──
+  // Local state only; nothing is written until the owner taps save, and the server re-checks every
+  // precondition anyway (see the route header). The triplet keeps ex + btw = total exact while
+  // typing, so a correction cannot itself produce the contradiction it is meant to remove.
+  const [correctFor, setCorrectFor] = useState<IncomingRow | null>(null)
+  const [correctAmounts, setCorrectAmounts] = useState({ ex: 0, btw: 0, incl: 0 })
+  const [correctCredit, setCorrectCredit] = useState(false)
+  const [correctSaving, setCorrectSaving] = useState(false)
+
+  const openCorrection = (inv: IncomingRow) => {
+    setCorrectFor(inv)
+    setCorrectAmounts({ ex: inv.total_ex_btw ?? 0, btw: inv.btw_amount ?? 0, incl: inv.total_inc_btw ?? 0 })
+    // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
+    setCorrectCredit(false)
+    setCorrectSaving(false)
+  }
+
+  const saveCorrection = async () => {
+    if (!correctFor || correctSaving) return
+    setCorrectSaving(true)
+    try {
+      const res = await fetch(`/api/invoice/${correctFor.id}/amounts`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          total_ex_btw: correctAmounts.ex,
+          btw_amount: correctAmounts.btw,
+          total_inc_btw: correctAmounts.incl,
+          ...(correctCredit ? { is_credit_note: true } : {}),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
+        // named in them ("reverse the payment first", "ask your accountant") — a generic "try
+        // again" would send the owner at a button that cannot work.
+        showToast(typeof data.error === 'string' ? data.error : 'Corrigeren mislukt — er is niets gewijzigd')
+        return
+      }
+      // Only now the list follows. Writing it optimistically would show a corrected amount that
+      // the server may have refused — on the screen the owner pays from.
+      setInvoices(prev => prev.map(i => i.id === correctFor.id
+        ? { ...i, total_ex_btw: data.total_ex_btw, btw_amount: data.btw_amount, total_inc_btw: data.total_inc_btw, invoice_type: data.invoice_type }
+        : i))
+      setCorrectFor(null)
+      showToast('Bedragen gecorrigeerd')
+    } catch {
+      showToast('Corrigeren mislukt — controleer je verbinding')
+    } finally {
+      setCorrectSaving(false)
+    }
+  }
+
+  // [CREDITNOTA-SIGNAL] Every document number per supplier, from the FULL list and not from
+  // `displayed`: the evidence that a supplier uses two kinds of number must not depend on whichever
+  // filter happens to be on. Search for "CR" and you would otherwise see only credit notes, and the
+  // counterpart — the very evidence the signal rests on — disappears.
+  const vendorNumbersByName = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const inv of invoices) {
+      const key = (inv.client_name ?? '').trim().toLowerCase()
+      if (!key || !inv.invoice_number) continue
+      const list = m.get(key)
+      if (list) list.push(inv.invoice_number)
+      else m.set(key, [inv.invoice_number])
+    }
+    return m
+  }, [invoices])
+
   const showsOpen = displayed.some(i => i.status !== 'paid')
   const showsPaid = paidSumDisplayed !== 0 || displayed.some(i => i.status === 'paid')
 
@@ -1355,6 +1495,67 @@ export default function IncomingManageClient({
             </div>
           </div>
         )}
+        {/* [INVOICE-SCAN] How much is standing wrong, and where.
+            Before this, every warning lived on a single card: useful once you were already looking
+            at that card, useless for the question the owner has after seeing two of them — how many
+            more are there? A list of hundreds cannot be checked by eye, and the ones that WERE
+            noticed were noticed by accident.
+            The quarter matters as much as the count: in an open quarter a correction is just a
+            correction; in a filed one it is a correction to the return itself. */}
+        {scan.total > 0 && (
+          <div role="status" style={{ marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5D9A8', background: M3.warningContainer, fontFamily: FONT }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', flexShrink: 0, marginTop: 1 }}>fact_check</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
+                  {scan.total === 1 ? '1 geboekte factuur klopt niet' : `${scan.total} geboekte facturen kloppen niet`}
+                </p>
+                <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
+                  {/* [SCAN-WHOLE-BOOK] Which set was counted, in the sentence itself. Without this
+                      the same number means two different things depending on a read the owner
+                      cannot see the outcome of. */}
+                  {scanIsWholeBook
+                    ? `Gecontroleerd: al je ${scan.scanned} bevestigde inkoopfacturen.`
+                    : `Gecontroleerd: de ${scan.scanned} ${scan.scanned === 1 ? 'factuur' : 'facturen'} op dit scherm — je oudere betaalde facturen konden we nu niet nakijken.`}
+                  {' '}Deze tellen nu mee in je openstaande saldo en in de btw die je terugvraagt.
+                </p>
+                {/* Findings that are not on this screen (already paid, past the 200 most recent).
+                    Named rather than quietly dropped: the worklist button below can only show rows
+                    that are here, so without this line the two numbers would silently disagree. */}
+                {findingsOutsideList > 0 && (
+                  <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
+                    {findingsOutsideList === 1
+                      ? 'Eén ervan staat niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek hem op factuurnummer of leverancier.'
+                      : `${findingsOutsideList} ervan staan niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek ze op factuurnummer of leverancier.`}
+                  </p>
+                )}
+                {/* Per quarter, newest first. The filed marker is the part that changes what the
+                    owner has to DO, so it stands in the same line as the count. */}
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {scan.quarters.map(q => {
+                    const filed = filedQuarters == null ? null : q.quarter != null && filedQuarters.includes(q.quarter)
+                    const n = q.signConflict + q.creditSuspect + q.arithmetic
+                    return (
+                      <p key={q.quarter ?? 'geen'} style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.5 }}>
+                        <strong>{q.quarter ? quarterLabelOf(q.quarter) : 'Zonder factuurdatum'}</strong>
+                        {' · '}{n} {n === 1 ? 'factuur' : 'facturen'}
+                        {' · '}{fmtEur(q.amount)}
+                        {filed === true && <span style={{ fontWeight: 700 }}> · aangifte al ingediend — dit wordt een correctie</span>}
+                        {filed === null && <span> · we konden niet nagaan of dit kwartaal al is ingediend</span>}
+                      </p>
+                    )
+                  })}
+                </div>
+                <button
+                  onClick={() => setOnlyFlagged(v => !v)}
+                  style={{ marginTop: 10, padding: '7px 14px', borderRadius: R.full, border: 'none', background: onlyFlagged ? '#7C5800' : '#fff', color: onlyFlagged ? '#fff' : '#7C5800', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}
+                >
+                  {onlyFlagged ? 'Toon alle facturen' : 'Toon alleen deze'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* [AUTO-ADVANCE] Review nudge — the opt-in double-check for what the app booked itself. */}
         {autoCount > 0 && filter !== 'auto' && (
           <button
@@ -1521,7 +1722,40 @@ export default function IncomingManageClient({
               // [OVER-DATUM] Whole days past the stated vervaldatum — null when the bill is paid
               // (a settled invoice cannot be late), when it isn't due yet, or when the invoice
               // never stated a due date at all. `todayIso` is computed once per render below.
-              const daysLate = isPaid ? null : overdueDays(inv.due_date, todayIso)
+              // [CREDITNOTA-SIGNAL] A credit note cannot be late: you do not have to pay it, it
+              // comes off your balance. A dunning badge on it is therefore always nonsense — and
+              // exactly what was there ("135 days late" on a € 51.80 credit). Both the correctly
+              // booked kind and an already-negative amount count here: both behave as a credit,
+              // whichever of the two the supplier put on paper.
+              const isCreditnota = inv.invoice_type === 'creditnota' || (inv.total_inc_btw ?? 0) < 0
+              const daysLate = isPaid || isCreditnota ? null : overdueDays(inv.due_date, todayIso)
+              // What THIS supplier's numbering gives away. See creditnota-signal.ts: only when the
+              // same supplier demonstrably uses two kinds of prefix does "CR" mean anything.
+              // [ARITHMETIC-VISIBLE] The same verdict the verify queue shows, computed here for the
+              // first time. Until now this screen displayed a broken breakdown as if nothing were
+              // wrong: an invoice whose excl + BTW does not equal its total still counted for its
+              // full amount in "nog te betalen" and pushed its btw into the return — and the only
+              // place that said so was the queue, which the owner had already left behind.
+              const health = classifyImportHealth({
+                total_ex_btw: inv.total_ex_btw,
+                btw_amount: inv.btw_amount,
+                total_inc_btw: inv.total_inc_btw,
+                invoice_date: inv.invoice_date,
+                invoice_number: inv.invoice_number,
+                invoice_type: inv.invoice_type,
+                field_confidence: inv.field_confidence as never,
+              })
+              // Only the arithmetic axis. The other axes (unsure vendor, possible duplicate) belong
+              // to intake and were already answered when the owner confirmed this invoice; repeating
+              // them here would turn a payment list into a second inbox.
+              const mathProblem = health.flags.arithmetic
+              const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
+              const creditSignal = looksLikeCreditnota({
+                invoiceNumber: inv.invoice_number,
+                totalIncBtw: inv.total_inc_btw,
+                invoiceType: inv.invoice_type,
+                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+              })
               // [DATE-LINE] The other half of the same timeline: how long is still LEFT. Same rule
               // — null when paid (a settled bill has no deadline left to count), and null when the
               // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
@@ -1702,6 +1936,52 @@ export default function IncomingManageClient({
                         ) : (
                           <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
                         )}
+                        {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
+                            the only difference from an invoice is a minus sign in the amount, and
+                            that is too little for a document that works the other way. */}
+                        {isCreditnota && (
+                          <span
+                            title="Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt"
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: '#E6F4EA', color: '#0B8043' }}
+                          >
+                            Creditnota
+                          </span>
+                        )}
+                        {/* [CREDITNOTA-SIGNAL] A suspicion, not a verdict. We do NOT flip the sign:
+                            at another supplier "CR" can mean something entirely different, and a
+                            wrong flip turns a real debt into a credit — then you underpay and find
+                            out at the dunning letter. The screen shows what it saw; the owner
+                            decides. */}
+                        {/* [CREDITNOTA-SIGNAL] The contradiction: the app itself calls it a credit
+                            note and booked it as a debt. Not a suspicion — an error. */}
+                        {signConflict && (
+                          <span
+                            title="Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in 'nog te betalen' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken."
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
+                          >
+                            ⚠ Creditnota staat positief
+                          </span>
+                        )}
+                        {creditSignal.suspected && (
+                          <span
+                            title={creditnotaSignalText(creditSignal) ?? ''}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
+                          >
+                            ⚠ Lijkt een creditnota
+                          </span>
+                        )}
+                        {/* [ARITHMETIC-VISIBLE] The breakdown does not add up. The full reason —
+                            which of the three amounts is the odd one out, and what the total
+                            implies it should be — sits in the tooltip and in the correction
+                            screen; the badge only has to make sure the row is not read as fine. */}
+                        {mathProblem && (
+                          <span
+                            title={health.reasons.join(' · ')}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
+                          >
+                            ⚠ Bedragen kloppen niet
+                          </span>
+                        )}
                         {/* Past the date — the loud half. Unpaid bills only; a settled invoice
                             cannot be late. */}
                         {daysLate !== null && (
@@ -1733,7 +2013,12 @@ export default function IncomingManageClient({
                     {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
                         so the media query can flip it to a full-width strip on a phone. */}
                     <div className="inv-row-side">
-                      <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
+                      {/* [CREDITNOTA-SIGNAL] A credit note carries its own sign. That is not
+                          styling but the bookkeeping truth: the amount comes OFF your balance.
+                          fmtEur (Intl, nl-NL) prints a negative value with a minus by itself — the
+                          green says which way it goes, so a minus sign on a phone cannot be
+                          overlooked. */}
+                      <p style={{ fontSize: 15, fontWeight: 700, color: isCreditnota ? '#0B8043' : M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
 
@@ -1838,6 +2123,26 @@ export default function IncomingManageClient({
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
+                            invoice whose amounts were misread could only be archived (which hides a
+                            real purchase) or handed to the accountant. Offered only where a
+                            correction is actually allowed: an unpaid invoice with no money booked
+                            against it — the same two conditions the server re-checks. Shown for
+                            every such row, not only the flagged ones: the reader can be wrong
+                            without any gate noticing, and the owner has the paper. */}
+                        {inv.status === 'received' && !(inv.amount_paid && inv.amount_paid > 0.005) && (
+                          <button
+                            onClick={() => openCorrection(inv)}
+                            style={{
+                              padding: '8px 14px', borderRadius: R.full, border: 'none', cursor: 'pointer',
+                              fontSize: 13, fontWeight: 600,
+                              background: mathProblem || signConflict ? M3.warningContainer : M3.surfaceVariant,
+                              color: mathProblem || signConflict ? '#7C5800' : '#3c4043',
+                            }}
+                          >
+                            Bedragen corrigeren
+                          </button>
+                        )}
                         {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
                             real but sits on the wrong invoice: a supplier's corrected re-issue, a
                             matcher picking the wrong one of two equal amounts, a tap on the row
@@ -2274,6 +2579,98 @@ export default function IncomingManageClient({
           onClose={() => setMatchResult(null)}
           onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
         />
+      )}
+
+      {/* ── [AMOUNT-CORRECTION] Correct the amounts of a confirmed invoice ──
+          Three fields, all editable, and ex + btw = total holds after every keystroke
+          (amount-triplet.ts). The total leads: it is the clearest figure on any invoice and the one
+          the bank statement has to match, so typing it over lets the ex amount — the figure the
+          reader keeps getting wrong on wholesale invoices — follow by itself. */}
+      {correctFor && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000 }}
+          onClick={() => !correctSaving && setCorrectFor(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
+          >
+            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Bedragen corrigeren</p>
+            <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>
+              {correctFor.client_name ?? 'Leverancier onbekend'}
+              {correctFor.invoice_number ? ` · ${correctFor.invoice_number}` : ''}
+              <br />
+              Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
+              exclusief rekent zichzelf uit.
+            </p>
+
+            {/* [READING-MEMORY] What the owner has repeatedly fixed at THIS supplier. The same
+                sentence the verify queue shows, in the other place the same decision is made —
+                "je hebt de btw hier al drie keer gecorrigeerd" is worth knowing while you type the
+                fourth. It names a field, never an amount: a remembered number belongs to a
+                different invoice, and pre-filling it here would be inventing money. */}
+            {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()] && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 13px', marginBottom: 16, background: '#eef4ff', border: '1px solid #cddcff', borderRadius: 12 }}>
+                <span style={{ fontSize: 14, lineHeight: 1.3 }}>🧠</span>
+                <p style={{ fontSize: 12.5, color: '#274690', margin: 0, lineHeight: 1.5 }}>
+                  {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
+                </p>
+              </div>
+            )}
+
+            {[
+              { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },
+              { key: 'btw' as const, label: 'BTW', apply: setBtw, strong: false },
+              { key: 'ex' as const, label: 'Bedrag excl. BTW', apply: setExcl, strong: false },
+            ].map(f => (
+              <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
+                <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  value={correctAmounts[f.key]}
+                  onChange={e => setCorrectAmounts(f.apply(correctAmounts, parseFloat(e.target.value) || 0))}
+                  aria-label={f.label}
+                  style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'right', outline: 'none', color: '#202124' }}
+                />
+              </div>
+            ))}
+
+            {/* [KIND-CORRECTION] The one-way declaration. Without it a net-negative invoice cannot be
+                entered at all, and a credit note keeps counting as a debt. */}
+            {correctFor.invoice_type !== 'creditnota' && (
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '14px 0 4px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={correctCredit} onChange={e => setCorrectCredit(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: '#0B8043' }} />
+                <span style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.45 }}>
+                  <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
+                  “Creditnota” op staat of als het totaal onderaan negatief is. Dan gaat hij van je
+                  openstaande saldo af en wordt zijn btw afgetrokken in plaats van opgeteld.
+                </span>
+              </label>
+            )}
+
+            <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '12px 0 16px' }}>
+              Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag
+              exclusief mee te tellen, mét zijn teken.
+            </p>
+
+            <button
+              onClick={saveCorrection}
+              disabled={correctSaving}
+              style={{ width: '100%', padding: '15px', borderRadius: 14, background: correctSaving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: correctSaving ? 'default' : 'pointer', marginBottom: 8 }}
+            >
+              {correctSaving ? 'Opslaan…' : 'Bedragen opslaan'}
+            </button>
+            <button
+              onClick={() => setCorrectFor(null)}
+              disabled={correctSaving}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
       )}
 
       <style>{`

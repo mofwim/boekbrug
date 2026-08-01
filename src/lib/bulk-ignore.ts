@@ -1,83 +1,85 @@
 // src/lib/bulk-ignore.ts
-// [NEGEER-BULK] Wat de wachtrij MELDT nadat een stapel facturen in één tik is genegeerd.
-// Puur, geen I/O — de lus zelf staat in IncomingInvoicesClient.
+// [BULK-IGNORE] What the queue REPORTS after a batch of invoices is ignored in one tap. Pure, no
+// I/O — the loop itself lives in IncomingInvoicesClient.
 //
-// ── WAAROM DIT EEN EIGEN BESTAND IS ──
-// Negeren per factuur kent één uitkomst per keer: het lukte, of de server zei waarom niet, en die
-// zin wordt letterlijk getoond (confirmFailureMessage). Bij een stapel is dat onmogelijk: twintig
-// facturen kunnen drie verschillende antwoorden opleveren en die passen niet in één snackbar.
+// ── WHY THIS IS ITS OWN FILE ──
+// Ignoring one invoice has one outcome at a time: it worked, or the server said why not, and that
+// sentence is shown literally (confirmFailureMessage). With a batch that is impossible: twenty
+// invoices can produce three different answers, and those do not fit in one snackbar.
 //
-// De verleiding is dan om te versimpelen naar "18 genegeerd, 2 mislukt". Dat is precies de
-// oneerlijkheid die deze app overal bestrijdt, want "mislukt" verbergt het enige onderscheid dat
-// de eigenaar nodig heeft: MOET IK IETS DOEN, OF MOET IK WACHTEN.
+// The temptation is then to simplify to "18 ignored, 2 failed". That is exactly the dishonesty
+// this app fights everywhere, because "failed" hides the one distinction the owner needs: DO I
+// HAVE TO DO SOMETHING, OR DO I HAVE TO WAIT.
 //
-// ── DE TWEEDELING, EN WAAROM 409 DE GRENS IS ──
-// /api/email/confirm/[id] DELETE kent precies twee soorten nee:
+// ── THE SPLIT, AND WHY 409 IS THE LINE ──
+// /api/email/confirm/[id] DELETE has exactly two kinds of no:
 //
-//   · 409 — de STAAT van deze factuur verbiedt het. Drie gevallen, alle drie blijvend:
-//       money_settled  "er is al betaald — draai eerst de betaling terug"
-//       bank_linked    "er hangt een banktransactie aan — ontkoppel die eerst"
-//       (naamloos)     de rij was ondertussen niet meer 'processing'/'received'
-//     Opnieuw proberen kan hier NIET werken; er moet eerst iets anders gebeuren.
+//   · 409 — the STATE of this invoice forbids it. Three cases, all three permanent:
+//       money_settled  "already paid — reverse the payment first"
+//       bank_linked    "a bank transaction is attached — unlink it first"
+//       (unnamed)      the row was no longer 'processing'/'received' by then
+//     Retrying CANNOT work here; something else has to happen first.
 //
-//   · al het andere — 503 (de geldcontrole kon niet worden uitgevoerd → de route weigert
-//     fail-closed en zegt zelf "probeer het zo meteen opnieuw"), 500, 401, of een netwerkfout.
-//     Hier is niets aan de factuur mis; opnieuw proberen is juist wél het antwoord.
+//   · everything else — 503 (the money check could not be performed → the route refuses
+//     fail-closed and says so itself), 500, 401, or a network error. Nothing is wrong with the
+//     invoice here; retrying is precisely the answer.
 //
-// Daarom classificeren we op STATUS en niet op de foutcode: de codes zijn er drie en er kunnen er
-// meer komen, maar de vraag "is dit blijvend?" wordt door de statuscode al beantwoord. Een nieuwe
-// 409-reden erbij valt vanzelf aan de goede kant.
+// So we classify on STATUS rather than on the error code: there are three codes and there may be
+// more, but "is this permanent?" is already answered by the status code. A new 409 reason lands on
+// the right side by itself.
 //
-// ── WAT DE MELDING BEWUST NIET DOET ──
-// Ze noemt geen REDEN per factuur. Dat is geen verlies: een geweigerde factuur blijft gewoon in de
-// wachtrij staan, en één tik op die kaart geeft de volledige zin van de server via het bestaande
-// enkelvoudige pad. De stapel telt; de kaart legt uit. Zo hoeft de snackbar nooit te kiezen welke
-// van de twintig redenen hij laat zien.
+// ── WHAT THE MESSAGE DELIBERATELY DOES NOT DO ──
+// It names no per-invoice REASON. That is no loss: a refused invoice simply stays in the queue,
+// and one tap on that card gives the server's full sentence through the existing single path. The
+// batch counts; the card explains. That way the snackbar never has to choose which of twenty
+// reasons to show.
 
-/** Blijvend geweigerd (er moet eerst iets anders gebeuren) of tijdelijk niet gelukt. */
+/** Permanently refused (something else has to happen first) or temporarily unavailable. */
 export type IgnoreFailureKind = "refused" | "unavailable";
 
 /**
- * Eén HTTP-status → blijvend of tijdelijk.
+ * One HTTP status → permanent or temporary.
  *
- * Een netwerkfout (fetch die throwt) heeft geen status; geef daar 0 door — dat valt hier op
- * "unavailable", en dat is juist: er is dan niets gewijzigd en het kan zo meteen wél lukken.
+ * A network error (a fetch that throws) has no status; pass 0 there — it lands on "unavailable",
+ * which is right: nothing was changed and it may well work in a moment.
  */
 export function classifyIgnoreFailure(status: number): IgnoreFailureKind {
   return status === 409 ? "refused" : "unavailable";
 }
 
 export type BulkIgnoreTally = {
-  /** Aantal facturen dat de server daadwerkelijk heeft gearchiveerd. */
+  /** How many invoices the server actually archived. */
   ok: number;
-  /** Blijvend geweigerd — 409. */
+  /** Permanently refused — 409. */
   refused: number;
-  /** Tijdelijk niet gelukt — al het andere. */
+  /** Temporarily failed — everything else. */
   unavailable: number;
 };
 
-/** "1 factuur" / "3 facturen" — het enkelvoud klopt ook bij 0 ("0 facturen"). */
+/** "1 factuur" / "3 facturen" — the singular is right at 0 too ("0 facturen"). */
 function facturen(n: number): string {
   return n === 1 ? "1 factuur" : `${n} facturen`;
 }
 
 /**
- * De zin onder een afgeronde stapel.
+ * The sentence under a finished batch.
  *
- * Drie regels die alle uitkomsten dekken:
- *   1. Alles gelukt → alleen het aantal. Geen ruis.
- *   2. Er ging iets mis → noem de twee soorten APART, en zeg erbij dat die facturen nog in de
- *      wachtrij staan. Dat laatste is de belangrijkste helft: het scherm haalt ze niet weg, dus de
- *      eigenaar moet weten dat wat hij nog ziet staan geen weergavefout is.
- *   3. "Probeer opnieuw" staat er ALLEEN als er iets is waarvoor dat kan werken.
+ * Three rules covering every outcome:
+ *   1. All done → just the count. No noise.
+ *   2. Something went wrong → name the two kinds SEPARATELY, and say those invoices are still in
+ *      the queue. That last half is the important one: the screen does not remove them, so the
+ *      owner needs to know that what they still see is not a display error.
+ *   3. "Try again" appears ONLY when there is something for which that can work.
+ *
+ * Dutch strings: UI text shown to the owner, per the language rule in AGENTS.md.
  */
 export function bulkIgnoreSummary(t: BulkIgnoreTally): string {
   const { ok, refused, unavailable } = t;
   const failed = refused + unavailable;
 
   if (failed === 0) {
-    // Ook het (theoretische) geval ok === 0 & failed === 0 valt hier: er is dan niets gebeurd en
-    // er valt niets te melden dat verder gaat dan wat er staat.
+    // The (theoretical) ok === 0 & failed === 0 case lands here too: nothing happened, and there
+    // is nothing to report beyond what it says.
     return `✓ ${facturen(ok)} genegeerd`;
   }
 
@@ -86,7 +88,7 @@ export function bulkIgnoreSummary(t: BulkIgnoreTally): string {
   if (refused > 0) parts.push(`${refused} geweigerd`);
   if (unavailable > 0) parts.push(`${unavailable} niet gelukt`);
 
-  // De staart kiest de handeling die daadwerkelijk helpt.
+  // The tail picks the action that actually helps.
   const tail =
     refused > 0 && unavailable > 0
       ? "ze staan nog in de wachtrij — open ze los"
@@ -98,20 +100,22 @@ export function bulkIgnoreSummary(t: BulkIgnoreTally): string {
 }
 
 /**
- * Mag de melding een "Ongedaan maken" aanbieden?
+ * May the message offer an "undo"?
  *
- * Alleen als er echt iets is weggehaald. Een undo-knop naast "Niets genegeerd" zou een handeling
- * aanbieden die niets ongedaan te maken heeft.
+ * Only if something was actually removed. An undo button next to "Niets genegeerd" would offer an
+ * action with nothing to undo.
  */
 export function bulkIgnoreOffersUndo(t: BulkIgnoreTally): boolean {
   return t.ok > 0;
 }
 
 /**
- * Dezelfde vorm voor de terugweg (Ongedaan maken → PATCH per factuur).
+ * The same shape for the way back (undo → PATCH per invoice).
  *
- * Hier is geen tweedeling nodig: PATCH weigert alleen met 409 "staat niet (meer) in Genegeerd", en
- * dat is voor de eigenaar hetzelfde bericht als elke andere fout — kijk even, het klopt niet.
+ * No split is needed here: PATCH only refuses with 409 "no longer in Genegeerd", and for the owner
+ * that reads the same as any other error — take a look, something is off.
+ *
+ * Dutch strings: UI text shown to the owner, per the language rule in AGENTS.md.
  */
 export function bulkRestoreSummary(ok: number, failed: number): string {
   if (failed === 0) return `${facturen(ok)} teruggezet`;

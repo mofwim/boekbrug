@@ -13,6 +13,9 @@ import {
 } from "@/lib/import-health";
 // [QUEUE-COMPLETE] pages past PostgREST's silent ~1000-row cap.
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [READING-MEMORY] Which suppliers this owner keeps having to correct — built from the audit trail.
+import { readingHintFor, vendorKey } from "@/lib/reading-memory";
+import { loadReadingMemory } from "@/lib/reading-memory-source";
 
 export const dynamic = "force-dynamic";
 
@@ -303,6 +306,20 @@ export default async function IncomingPage() {
   const ignoredInvoices = withFolder(ignoredBase);
   const confirmedInvoices = withFolder(confirmedBase);
 
+  // ── [READING-MEMORY] What has this owner kept correcting, and at which supplier? ──
+  // One shared read (reading-memory-source.ts), so this screen and the pay screen cannot end up
+  // telling the owner that a supplier is fine on one and a repeat offender on the other.
+  const readingMemory = await loadReadingMemory(supabase, user.id);
+
+  // Resolved to a plain object here, not handed to the client as a Map: only the suppliers actually
+  // sitting in the queue can produce a hint, so this ships a handful of sentences instead of the
+  // owner's whole correction history.
+  const readingHints: Record<string, string> = {};
+  for (const inv of pendingInvoices) {
+    const hint = readingHintFor(inv.client_name, readingMemory);
+    if (hint) readingHints[vendorKey(inv.client_name)] = hint;
+  }
+
   const connectionStatus = {
     connected: !!connection,
     provider: (connection?.provider ?? null) as 'gmail' | 'outlook' | null,
@@ -321,6 +338,7 @@ export default async function IncomingPage() {
       confirmedInvoices={confirmedInvoices}
       connectionStatus={connectionStatus}
       userRole={userRole}
+      readingHints={readingHints}
     />
   );
 }
