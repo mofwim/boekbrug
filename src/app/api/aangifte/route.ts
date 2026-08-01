@@ -9,7 +9,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
-import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
+import { buildAangifte, privegebruikNote, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -269,6 +269,8 @@ export async function GET(req: NextRequest) {
   const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
   const bdNote = badDebtNote(badDebt);
   if (bdNote) regimeNotes.push(bdNote);
+  // [PRIVEGEBRUIK] Same note on the owner's own screen — see aangifte.ts for why it is a note.
+  regimeNotes.push(privegebruikNote(quarter));
   // [ART29-UNKNOWN] A failed read is not "niets terug te vragen" — say which of the two it is.
   if (badDebt.readFailed) {
     regimeNotes.push(

@@ -135,3 +135,47 @@ export function creditnotaSignalText(signal: CreditnotaSignal): string | null {
     `van je openstaande saldo af en verlaagt de btw die je terugvraagt. Nu telt hij als schuld mee.`
   );
 }
+
+/**
+ * The amounts of a credit note, with the sign a credit note must carry.
+ *
+ * ── WHY THIS EXISTS ──
+ * "Dit is een creditnota" was a tick that set `invoice_type` and nothing else. The label under it
+ * promised the consequences — "gaat hij van je openstaande saldo af en wordt zijn btw afgetrokken
+ * in plaats van opgeteld" — and none of them followed, because in this codebase NOTHING reads the
+ * type when money is counted:
+ *
+ *   · openAmountSigned (partial-payment.ts) takes its sign from `total_inc_btw < 0`, so a credit
+ *     note stored at +51.80 keeps counting as a debt on every screen that shows what you owe;
+ *   · /api/aangifte selects direction, status, total_ex_btw and btw_amount — never invoice_type —
+ *     and sums them raw, so that +4.28 is ADDED to the input tax you reclaim instead of subtracted.
+ *
+ * So ticking the box produced exactly the sign conflict the app warns about one screen later. The
+ * type is a label; the SIGN is the money.
+ *
+ * ── WHY THE WHOLE TRIPLET FLIPS AS ONE ──
+ * Not `-Math.abs()` per field. Negating each field independently silently rewrites a triplet whose
+ * parts do not share a sign (a credit note carrying positive goods-btw over a negative net base),
+ * turning a reading we do not understand into a different one we invented. One multiplication by
+ * −1 preserves `ex + btw = incl` exactly and preserves the relationship between the three, whatever
+ * it was.
+ *
+ * Already-negative amounts are returned untouched: the owner typed a minus, or the reader read one,
+ * and re-flipping would turn their credit note back into a debt.
+ */
+export function asCreditAmounts(input: {
+  totalExBtw: number;
+  btwAmount: number;
+  totalIncBtw: number;
+}): { totalExBtw: number; btwAmount: number; totalIncBtw: number; flipped: boolean } {
+  const { totalExBtw, btwAmount, totalIncBtw } = input;
+  // The total decides, because it is the number the paper prints as "Te voldoen" and the only one
+  // every screen agrees to read the sign from. Zero is left alone — there is no sign to give it.
+  if (!(totalIncBtw > 0)) return { totalExBtw, btwAmount, totalIncBtw, flipped: false };
+  return {
+    totalExBtw: -totalExBtw,
+    btwAmount: -btwAmount,
+    totalIncBtw: -totalIncBtw,
+    flipped: true,
+  };
+}

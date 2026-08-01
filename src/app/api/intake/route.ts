@@ -73,7 +73,7 @@ import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDup
 // weggegooid. Gedeeld met /api/email/upload, /api/bank/attach-invoice en de mailsync — vier kopieën
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
 import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup"
-import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
+import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
@@ -461,6 +461,13 @@ export async function POST(req: NextRequest) {
   // [DEDUP-SOFT] Carries a POSSIBLE (not confident) duplicate across to the insert, where it is
   // merged into field_confidence so the verify queue shows "mogelijk dubbel met X" and the invoice
   // is held out of auto-confirm. Never blocks — assigned only when NOT a hard duplicate.
+  // [DEDUP-READ-HONEST] Did any duplicate probe fail to RUN? supabase-js answers a failed read with
+  // { data: null, error }, so `data ?? []` used to turn "we could not look" into "there is no
+  // duplicate" — the one answer that lets a second copy of a bill into the books, with its cost and
+  // its voorbelasting counted twice. Unlike the bank-attach path (which books straight to 'paid' and
+  // therefore refuses outright), these land in the verify queue, so the invoice is flagged instead:
+  // needs-review, held out of "Selecteer klaar", with the reason on the card.
+  let dedupCheckFailed = false
   let possibleDup: PossibleDuplicate | null = null
   if (decision.destination === "invoice" || decision.destination === "receipt") {
     const dup = await findSemanticDuplicate(
@@ -500,13 +507,14 @@ export async function POST(req: NextRequest) {
         // nullsFirst: false is hier geen franje. invoices.created_at is NULLABLE (anders dan
         // documents.created_at, dat NOT NULL is) en Postgres zet NULL bij DESC standaard VOORAAN.
         // Zonder die vlag zouden juist de rijen zonder created_at het venster aanvoeren.
-        const { data } = await query
+        const { data, error: dedupErr } = await query
           .order("created_at", { ascending: false, nullsFirst: false })
           .order("id", { ascending: false })
           .limit(200)
         // [DEDUP-VENDOR-NORM] Nummer én leverancier worden in code vergeleken, niet in SQL — de
         // leverancier stond hier als `.ilike(client_name, …)` en dat blokkeerde ten onrechte op elke
         // naam met een `*` erin ("SUMUP *CAFE"). Het waarom staat volledig bij pickDedupMatch.
+        if (dedupErr) dedupCheckFailed = true
         return pickDedupMatch(data ?? [], q)
       }
     )
@@ -637,7 +645,7 @@ export async function POST(req: NextRequest) {
           invoiceDate: v.invoice_date,
         },
         async (total) => {
-          const { data } = await supabase
+          const { data, error: dedupErr } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", user.id)
@@ -655,6 +663,7 @@ export async function POST(req: NextRequest) {
             .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
             .limit(200)
+          if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
         // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
@@ -673,7 +682,7 @@ export async function POST(req: NextRequest) {
         // venster van 50 naar 200 — gelijk aan de bedrag-query hierboven, zodat verbreding geen
         // gemiste vlag kan worden.
         async (invoiceNumber) => {
-          const { data } = await supabase
+          const { data, error: dedupErr } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", user.id)
@@ -685,6 +694,7 @@ export async function POST(req: NextRequest) {
             .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false })
             .limit(200)
+          if (dedupErr) dedupCheckFailed = true
           return data ?? []
         }
       )
@@ -914,7 +924,9 @@ export async function POST(req: NextRequest) {
   // below, so classifyImportHealth reads it → needs-review → the invoice can NEVER auto-book as a
   // second cost. The verify queue then shows "mogelijk dubbel met X".
   if (possibleDup) {
-    const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
+    const merged = (dedupCheckFailed
+      ? markDuplicateCheckUnavailable(mergePossibleDuplicate(fieldConfidence, possibleDup))
+      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown>
     fieldConfidence._safecore = merged._safecore
   }
   // [MULTI-INVOICE] Draagt dit ENE bestand meerdere verschillende facturen? Dan is er precies
@@ -1276,6 +1288,13 @@ async function handleUblInvoice(
   //    which the UBL path was missing entirely. Without it, a supplier's PDF + their Peppol XML for
   //    ONE bill (different bytes, so byte-hash misses) both booked → voorbelasting counted twice,
   //    unflagged. Runs BEFORE any storage/insert so a duplicate costs nothing. ──
+  // [DEDUP-READ-HONEST] Did any duplicate probe fail to RUN? supabase-js answers a failed read with
+  // { data: null, error }, so `data ?? []` used to turn "we could not look" into "there is no
+  // duplicate" — the one answer that lets a second copy of a bill into the books, with its cost and
+  // its voorbelasting counted twice. Unlike the bank-attach path (which books straight to 'paid' and
+  // therefore refuses outright), these land in the verify queue, so the invoice is flagged instead:
+  // needs-review, held out of "Selecteer klaar", with the reason on the card.
+  let dedupCheckFailed = false
   let possibleDup: PossibleDuplicate | null = null
   if (totalIncBtw != null) {
     const dup = await findSemanticDuplicate(
@@ -1289,11 +1308,12 @@ async function handleUblInvoice(
           .eq("total_inc_btw", q.total)
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         // [DEDUP-RECENCY] Nieuwste eerst, met NULL achteraan — zie de camera-route voor het waarom.
-        const { data } = await query
+        const { data, error: dedupErr } = await query
           .order("created_at", { ascending: false, nullsFirst: false })
           .order("id", { ascending: false })
           .limit(200)
         // [DEDUP-VENDOR-NORM] Dezelfde gedeelde vergelijking als de camera-route; zie pickDedupMatch.
+        if (dedupErr) dedupCheckFailed = true
         return pickDedupMatch(data ?? [], q)
       },
     )
@@ -1327,7 +1347,7 @@ async function handleUblInvoice(
       possibleDup = await collectPossibleDuplicate(
         { invoiceNumber: v.invoiceNumber, vendor: v.supplierName, totalIncBtw, invoiceDate: v.invoiceDate },
         async (total) => {
-          const { data } = await supabase
+          const { data, error: dedupErr } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
@@ -1335,6 +1355,7 @@ async function handleUblInvoice(
             // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
             .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false }).limit(200)
+          if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
         // [DEDUP-CORRECTED] Same number, ANY amount — the corrected re-issue the query above misses.
@@ -1342,7 +1363,7 @@ async function handleUblInvoice(
         // verbreedt de ilike (PostgREST leest hem als `%`) en mag de gezochte correctie niet uit het
         // venster duwen. Blokkeren doet deze query niet; hij levert kandidaten voor de assessor.
         async (invoiceNumber) => {
-          const { data } = await supabase
+          const { data, error: dedupErr } = await supabase
             .from("invoices")
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", userId).eq("direction", "incoming")
@@ -1350,6 +1371,7 @@ async function handleUblInvoice(
             // [DEDUP-RECENCY] Nieuwste eerst, NULL achteraan — zie de camera-route.
             .order("created_at", { ascending: false, nullsFirst: false })
             .order("id", { ascending: false }).limit(200)
+          if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
       )
@@ -1413,7 +1435,9 @@ async function handleUblInvoice(
   // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
   // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".
   if (possibleDup) {
-    const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
+    const merged = (dedupCheckFailed
+      ? markDuplicateCheckUnavailable(mergePossibleDuplicate(fieldConfidence, possibleDup))
+      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown>
     fieldConfidence._safecore = merged._safecore
   }
 

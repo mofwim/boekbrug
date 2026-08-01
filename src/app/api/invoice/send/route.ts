@@ -560,6 +560,36 @@ export async function POST(request: NextRequest) {
         tags: { feature: 'invoice-send', severity: 'medium' },
         extra: { invoiceId, finalNumber, userId: user.id },
       })
+      // [SEND-EMAIL-DURABLE] A notification, not only the `warning` in the response below.
+      //
+      // The screens DO handle warning==='email_failed' (facturen, invoice/new, the recovery
+      // banner on the detail page), so an owner who is looking at their screen is told. But that
+      // signal lives exactly as long as the response does. Close the tab, lose signal on a phone
+      // after the server already committed, walk away while it sends — and it is gone, with
+      // nothing left behind.
+      //
+      // And this state is worse than the PDF failure right above, which DOES leave a
+      // notification: there the PDF is missing, so the closing package eventually reports it.
+      // Here everything looks perfect. The number is consumed, the status says 'sent', the PDF
+      // is stored, the BTW is declared on it — and the customer received nothing. The owner will
+      // not chase a payment for an invoice their own screen calls sent.
+      //
+      // Same recipients and the same reasoning as the PDF path: the owner owns the invoice, and
+      // whoever pressed send is the only one who knows it happened at all.
+      try {
+        const mailNotifPipeline = createPipelineClient()
+        const mailOntvangers = Array.from(new Set([ownerId, acting.actorId]))
+        await mailNotifPipeline.from('notifications').insert(
+          mailOntvangers.map((uid) => ({
+            user_id: uid,
+            title: 'Factuur niet aangekomen',
+            body: `Factuur ${finalNumber} is genummerd en opgeslagen, maar de e-mail naar de klant is niet verstuurd — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
+            type: 'invoice',
+            read: false,
+            link: uid === ownerId ? '/dashboard/facturen' : '/dashboard/verkoop',
+          })),
+        )
+      } catch { /* non-blocking — the warning in the response stays the primary signal */ }
     }
 
     // ── 15. Notify accountant — best-effort, via service_role ─

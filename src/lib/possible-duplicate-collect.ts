@@ -117,3 +117,44 @@ export function clearPossibleDuplicate(fieldConfidence: unknown): Record<string,
   next._safecore = safecore;
   return next;
 }
+
+/**
+ * Mark an invoice as "we could not run the duplicate check".
+ *
+ * ── WHY THIS EXISTS ──
+ * Every ingestion path probed for duplicates with `const { data } = await …` and used `data ?? []`.
+ * supabase-js does not throw — it answers a failed read with `{ data: null, error }` — so a database
+ * problem produced an EMPTY candidate list, which reads as "there is no duplicate", which is the
+ * one answer that lets a second copy of a bill into the books. The cost is counted twice and the
+ * voorbelasting is reclaimed twice, silently, discoverable only by reading the books line by line.
+ *
+ * The bank-attach path refuses outright: it books straight to 'paid', so there is no later moment
+ * where anyone looks. These paths are different — they land in the verify queue — so refusing a
+ * whole upload batch over one failed read would cost more than it buys. Instead the invoice arrives
+ * carrying the SAME soft flag a real look-alike gets: needs-review, with a reason in plain Dutch,
+ * and held out of "Selecteer klaar" so it cannot be bulk-confirmed as a second cost without a human
+ * actually looking at it.
+ *
+ * No match id and no `_of`, because there is no match — only the absence of an answer. That is the
+ * honest shape: import-health prints "mogelijk dubbel (…) — controleer of dit geen dubbele boeking
+ * is" without naming an invoice we never found.
+ */
+export function markDuplicateCheckUnavailable(fieldConfidence: unknown): unknown {
+  const fc =
+    fieldConfidence && typeof fieldConfidence === "object" && !Array.isArray(fieldConfidence)
+      ? { ...(fieldConfidence as Record<string, unknown>) }
+      : {};
+  const prior = fc._safecore;
+  const safecore =
+    prior && typeof prior === "object" && !Array.isArray(prior)
+      ? { ...(prior as Record<string, unknown>) }
+      : {};
+  // Never overwrite a REAL find. A run that located a look-alike and then failed its second probe
+  // must keep naming the invoice it did find — that reason is strictly more useful than this one.
+  if (safecore.possible_duplicate === true) return fc;
+  safecore.possible_duplicate = true;
+  // Dutch: this string is printed on the card. See the language rule in AGENTS.md.
+  safecore.possible_duplicate_reason = "we konden de dubbelcheck niet uitvoeren";
+  fc._safecore = safecore;
+  return fc;
+}

@@ -15,7 +15,7 @@ import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
 import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
-import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect";
+import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect";
 // [DUP-ARCHIVED] Dezelfde eerlijke melding als /api/intake — deze route blijft bereikbaar
 // (back-compat), dus hij mag niet iets anders beweren over dezelfde situatie.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate";
@@ -219,7 +219,13 @@ export async function POST(req: NextRequest) {
   // dedup, but manual upload did not. Run the same check here, with a "toch toevoegen"
   // (force) escape so a genuine second document is never permanently blocked.
   const force = formData.get("force") === "true";
-  const dup = await findSemanticDuplicate(
+    // [DEDUP-READ-HONEST] Did any duplicate probe fail to RUN? `data ?? []` used to turn "we could not
+  // look" into "there is no duplicate" — the one answer that lets a second copy of a bill into the
+  // books, cost and voorbelasting counted twice. This path lands in the verify queue, so the invoice
+  // is flagged rather than refused: needs-review, held out of "Selecteer klaar", reason on the card.
+  let dedupCheckFailed = false;
+
+const dup = await findSemanticDuplicate(
     {
       invoiceNumber: verification.invoice_number,
       vendor: verification.vendor,
@@ -239,7 +245,8 @@ export async function POST(req: NextRequest) {
       // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).
       // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
       // outside the window (dropping the .eq removed the natural bound).
-      const { data } = await query.order("id", { ascending: false }).limit(200);
+      const { data, error: dedupErr } = await query.order("id", { ascending: false }).limit(200);
+      if (dedupErr) dedupCheckFailed = true;
       const rows = data ?? [];
       const hit =
         q.tier === "number" && q.invoiceNumber
@@ -280,7 +287,7 @@ export async function POST(req: NextRequest) {
             invoiceDate: verification.invoice_date,
           },
           async (total) => {
-            const { data } = await supabase
+            const { data, error: dedupErr } = await supabase
               .from("invoices")
               .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
               .eq("receiver_id", user.id)
@@ -291,6 +298,7 @@ export async function POST(req: NextRequest) {
               .lte("total_inc_btw", total + 0.005)
               .order("id", { ascending: false })
               .limit(200);
+            if (dedupErr) dedupCheckFailed = true;
             return data ?? [];
           },
           // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
@@ -299,7 +307,7 @@ export async function POST(req: NextRequest) {
           // same limit the hard gate's .eq has), and the pure assessor re-checks with full
           // normalization before it flags anything.
           async (invoiceNumber) => {
-            const { data } = await supabase
+            const { data, error: dedupErr } = await supabase
               .from("invoices")
               .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
               .eq("receiver_id", user.id)
@@ -307,6 +315,7 @@ export async function POST(req: NextRequest) {
               .ilike("invoice_number", escapeLikeValue(invoiceNumber))
               .order("id", { ascending: false })
               .limit(50);
+            if (dedupErr) dedupCheckFailed = true;
             return data ?? [];
           }
         )
@@ -448,7 +457,9 @@ export async function POST(req: NextRequest) {
       // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields.
       // [DEDUP-SOFT] Merge the possible-duplicate signal so the verify queue shows "mogelijk
       // dubbel met X" and the invoice is held out of auto-confirm.
-      field_confidence: mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup) as typeof verification.field_confidence,
+      field_confidence: (dedupCheckFailed
+        ? markDuplicateCheckUnavailable(mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup))
+        : mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup)) as typeof verification.field_confidence,
       // [DEDUP-CREDITNOTA / I3] A creditnota keeps NEGATIVE amounts (numSigned) and must be
       // TYPED as one, exactly like the email-sync and intake paths — otherwise the read-time
       // health classifier picks the positive-expecting arithmetic gate and a legitimately

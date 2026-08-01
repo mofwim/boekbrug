@@ -266,7 +266,17 @@ export async function POST(req: NextRequest) {
   //     use (real number → number+total(+date); reliable vendor → vendor+total+date) BEFORE
   //     any storage/insert, keyed on the AI-read fields against invoices in THIS direction.
   //     A `force` escape lets the owner add it anyway (genuinely two bills, same total).
+  //
+  // [DEDUP-READ-HONEST] And the gate FAILS CLOSED. Every probe below now throws on a failed read
+  // instead of answering "nothing found", because on this route the two answers have opposite
+  // consequences: this is the one ingestion path that books straight to 'paid' with no verify queue
+  // to hold anything back, so a duplicate that slips through is a cost and a voorbelasting claimed
+  // twice — silently, and only discoverable by reading the books line by line.
+  //
+  // Refusing costs the owner one retry. `force` is untouched: an owner who has looked and knows it
+  // is a different bill can still add it, which is what makes refusing here affordable.
   if (!force) {
+    try {
     const findMatch = async (q: { tier: string; total: number; invoiceNumber?: string; vendor?: string; dateIso?: string | null }) => {
       let query = pipeline
         .from("invoices")
@@ -280,7 +290,12 @@ export async function POST(req: NextRequest) {
       // duplicate gate, so the wrong match silently blocks a legitimate bill as "already added".
       if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
-      const { data } = await query.order("id", { ascending: false }).limit(200);
+      // [DEDUP-READ-HONEST] A dropped error here defeats the whole gate: supabase-js answers a
+      // failed read with { data: null, error }, so `data ?? []` turned "we could not look" into
+      // "there is no duplicate" — and this route books straight to 'paid', so the cost and the
+      // voorbelasting are then claimed twice. Throw; the gate below refuses rather than guesses.
+      const { data, error } = await query.order("id", { ascending: false }).limit(200);
+      if (error) throw new Error(error.message);
       const rows = data ?? [];
       const hit =
         q.tier === "number" && q.invoiceNumber
@@ -327,7 +342,8 @@ export async function POST(req: NextRequest) {
     const possibleDup = await collectPossibleDuplicate(
       { invoiceNumber: verification.invoice_number, vendor: verification.vendor, totalIncBtw, invoiceDate },
       async (total) => {
-        const { data } = await pipeline
+        // [DEDUP-READ-HONEST] Same rule as the hard gate above — a failed read is not an empty set.
+        const { data, error } = await pipeline
           .from("invoices")
           .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
           .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
@@ -336,12 +352,14 @@ export async function POST(req: NextRequest) {
           .lte("total_inc_btw", total + 0.005)
           .order("id", { ascending: false })
           .limit(200);
+        if (error) throw new Error(error.message);
         return data ?? [];
       },
       // [DEDUP-CORRECTED] Same number, ANY amount — a corrected re-issue is precisely the case the
       // amount-anchored fetch above cannot return, and the hard key cannot see either.
       async (invoiceNumber) => {
-        const { data } = await pipeline
+        // [DEDUP-READ-HONEST] Same rule again.
+        const { data, error } = await pipeline
           .from("invoices")
           .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
           .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
@@ -349,6 +367,7 @@ export async function POST(req: NextRequest) {
           .ilike("invoice_number", escapeLikeValue(invoiceNumber))
           .order("id", { ascending: false })
           .limit(50);
+        if (error) throw new Error(error.message);
         return data ?? [];
       },
     );
@@ -365,6 +384,23 @@ export async function POST(req: NextRequest) {
           detail: `Mogelijk dubbel${possibleDup.match.invoice_number ? ` met factuur ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Weet je zeker dat dit een andere factuur is? Dan kun je hem alsnog toevoegen.`,
         },
         { status: 409 }
+      );
+    }
+    } catch (e) {
+      // Nothing has been written yet — the storage upload and the insert both come after this
+      // block — so refusing here leaves no half-attached invoice behind.
+      console.error("[DEDUP-READ-HONEST] duplicate check failed — refusing to book", {
+        userId: user.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return NextResponse.json(
+        {
+          error: "We konden nu niet nakijken of deze factuur al in de app staat. Er is niets toegevoegd — probeer het zo meteen opnieuw.",
+          code: "dedup_unavailable",
+          // The owner's deliberate way past a check that cannot run, same door as a rejected match.
+          canForce: true,
+        },
+        { status: 503 },
       );
     }
   }

@@ -57,6 +57,7 @@ import {
   buildAangifteCsv,
   type ConceptAangifte,
   type AangifteCompleteness,
+  privegebruikNote,
 } from "./aangifte";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, keyed on the customers' EU VAT numbers.
 import {
@@ -1761,6 +1762,9 @@ export async function buildClosingPackageZip(args: {
   });
   const icNote = icpNote(icp);
   if (icNote) regimeNotes.push(icNote);
+  // [PRIVEGEBRUIK] Rubriek 1d is not computed anywhere in this app — say so, and say it before
+  // Q4 too, because the records that substantiate it can only be kept DURING the year.
+  regimeNotes.push(privegebruikNote(quarter));
   if (icp.problems.length > 0) {
     warnings.push({
       code: "icp_problems",

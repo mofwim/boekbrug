@@ -45,6 +45,8 @@ import { hasSettledMoney } from "@/lib/invoice-removal";
 import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
 // [READING-MEMORY] Which fields the human changed about the reader's answer.
 import { correctedFields } from "@/lib/reading-memory";
+// [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
+import { asCreditAmounts } from "@/lib/creditnota-signal";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -136,10 +138,19 @@ export async function PATCH(
     );
   }
 
+  // [CREDIT-SIGN] A credit note is stored NEGATIVE, or it is not a credit note in any way that
+  // counts. openAmountSigned reads `total_inc_btw < 0`, and /api/aangifte sums btw_amount without
+  // ever selecting invoice_type — so a row typed +51,80 and marked 'creditnota' keeps standing as a
+  // debt and keeps ADDING input tax that belongs subtracted. Same rule, same helper as the queue's
+  // confirm route, so the two doors cannot store the same document two different ways.
+  const signed = (declaredCredit || invoice.invoice_type === "creditnota")
+    ? asCreditAmounts({ totalExBtw: exBtw, btwAmount: btw, totalIncBtw: incBtw })
+    : { totalExBtw: exBtw, btwAmount: btw, totalIncBtw: incBtw, flipped: false };
+
   const patch: InvoiceUpdate = {
-    total_ex_btw: exBtw,
-    btw_amount: btw,
-    total_inc_btw: incBtw,
+    total_ex_btw: signed.totalExBtw,
+    btw_amount: signed.btwAmount,
+    total_inc_btw: signed.totalIncBtw,
     updated_at: new Date().toISOString(),
   };
   // [KIND-CORRECTION] Same one-way rule as the queue's confirm route: 'factuur' → 'creditnota'
@@ -190,7 +201,7 @@ export async function PATCH(
       total_inc_btw: invoice.total_inc_btw,
       invoice_type: invoice.invoice_type,
     },
-    { total_ex_btw: exBtw, btw_amount: btw, total_inc_btw: incBtw, invoice_type: patch.invoice_type },
+    { total_ex_btw: signed.totalExBtw, btw_amount: signed.btwAmount, total_inc_btw: signed.totalIncBtw, invoice_type: patch.invoice_type },
   );
 
   // The trail carries BOTH sides. Correcting a booked amount is exactly the kind of change an
@@ -208,11 +219,14 @@ export async function PATCH(
       invoice_number: invoice.invoice_number,
     },
     newValue: {
-      total_ex_btw: exBtw,
-      btw_amount: btw,
-      total_inc_btw: incBtw,
+      total_ex_btw: signed.totalExBtw,
+      btw_amount: signed.btwAmount,
+      total_inc_btw: signed.totalIncBtw,
       invoice_type: patch.invoice_type ?? invoice.invoice_type,
       via: "manage_amount_correction",
+      // [CREDIT-SIGN] Recorded when the server turned the posted amounts negative, so a year later
+      // the trail explains a minus the owner never typed.
+      ...(signed.flipped ? { credit_sign_applied: true } : {}),
       // [READING-MEMORY] Same block, same shape as the queue's confirm route. There are two doors
       // through which a human disagrees with the reader — correcting before booking, and correcting
       // after — and a memory fed by only one of them would tell the owner a supplier is read fine
@@ -224,11 +238,13 @@ export async function PATCH(
     ipAddress: getClientIP(req),
   });
 
+  // The screen replaces its row with THIS, so it must be what was stored — otherwise a flipped
+  // credit note would show positive until the next reload and the owner would correct it again.
   return NextResponse.json({
     ok: true,
-    total_ex_btw: exBtw,
-    btw_amount: btw,
-    total_inc_btw: incBtw,
+    total_ex_btw: signed.totalExBtw,
+    btw_amount: signed.btwAmount,
+    total_inc_btw: signed.totalIncBtw,
     invoice_type: patch.invoice_type ?? invoice.invoice_type,
   });
 }
