@@ -14,6 +14,8 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 import type { ProfileRow } from '@/types/rows'
 import { COLUMN } from '@/lib/design/tokens';
+// [PRIJS-MODUS] Dezelfde omrekening als het aanmaakscherm — één definitie, twee schermen.
+import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 
 type InvoiceLine = {
   description: string
@@ -109,6 +111,37 @@ export default function InvoiceEditPage() {
     }
     load()
   }, [invoiceId])
+
+  // ── [PRIJS-MODUS] Met of zonder btw typen ──────────────────────────────────
+  // Dezelfde stand als op het aanmaakscherm, uit dezelfde localStorage-sleutel: wie zijn factuur
+  // all-in heeft opgesteld, opent hem hier ook all-in. Zonder dit zou hij bij het bewerken ineens
+  // ex-btw prijzen zien en die "corrigeren" naar zijn all-in bedrag — en dan klopt de factuur niet
+  // meer met wat hij zijn klant beloofde. Wat er wordt opgeslagen blijft ex-btw.
+  const [priceMode, setPriceMode] = useState<PriceMode>('excl')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('boekbrug.priceMode')
+      // Externe opslag één keer inlezen bij het monteren — zie dezelfde uitzondering op het
+      // aanmaakscherm; dit veroorzaakt geen cascade, het gebeurt eenmalig.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === 'incl' || saved === 'excl') setPriceMode(saved)
+    } catch { /* geblokkeerde opslag: dan gewoon de standaard */ }
+  }, [])
+  function choosePriceMode(mode: PriceMode) {
+    setPriceMode(mode)
+    try { localStorage.setItem('boekbrug.priceMode', mode) } catch { /* niet erg */ }
+  }
+  /** Het prijsveld schrijft de prijs EX-btw weg, ook als er een incl-bedrag in staat. */
+  function updateLinePrice(index: number, typed: number) {
+    setLines(lines.map((l, i) => i === index
+      ? { ...l, unit_price: priceFieldToStored(typed, l.btw_rate, priceMode) } : l))
+  }
+  /** [TARIEF] In incl-modus blijft de prijs voor de klant staan; in excl-modus de ingetypte prijs. */
+  function updateLineRate(index: number, newRate: number) {
+    setLines(lines.map((l, i) => i === index
+      ? { ...l, btw_rate: newRate, unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode) }
+      : l))
+  }
 
   // ── Line helpers ──────────────────────────────────────────────────────────
   function addLine() {
@@ -368,10 +401,33 @@ export default function InvoiceEditPage() {
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Factuurregels</p>
 
+          {/* [PRIJS-MODUS] Dezelfde keuze als op het aanmaakscherm, boven de kolomkoppen — want hij
+              bepaalt wat de kolom "Prijs" betekent. De koppen hieronder zeggen het daarna zelf, zodat
+              niemand een all-in bedrag voor een ex-btw prijs aanziet (of andersom). */}
+          <div className="flex items-center gap-3 flex-wrap bg-gray-50 rounded-xl px-3 py-2">
+            <span className="text-xs font-medium text-gray-500">Prijzen invoeren</span>
+            <div role="group" aria-label="Prijzen invoeren inclusief of exclusief btw" className="flex gap-1 bg-gray-200 rounded-full p-0.5">
+              {(['excl', 'incl'] as PriceMode[]).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={priceMode === m}
+                  onClick={() => choosePriceMode(m)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${priceMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                >
+                  {m === 'incl' ? 'incl. btw' : 'excl. btw'}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-gray-400">
+              {priceMode === 'incl' ? 'Je typt wat je klant betaalt.' : 'Je typt de prijs zonder btw.'}
+            </span>
+          </div>
+
           <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-400 px-1">
             <div className="col-span-5">Omschrijving</div>
             <div className="col-span-2">Aantal</div>
-            <div className="col-span-2">Prijs (€)</div>
+            <div className="col-span-2">{priceMode === 'incl' ? 'Prijs incl. (€)' : 'Prijs excl. (€)'}</div>
             <div className="col-span-2">BTW</div>
             <div className="col-span-1"></div>
           </div>
@@ -394,9 +450,11 @@ export default function InvoiceEditPage() {
                 />
               </div>
               <div className="col-span-2">
+                {/* [PRIJS-MODUS] Toont en accepteert de prijs in de gekozen stand; de regel
+                    bewaart altijd ex-btw. */}
                 <input
-                  type="number" value={line.unit_price} min="0" step="0.01"
-                  onChange={e => updateLine(index, 'unit_price', parseFloat(e.target.value) || 0)}
+                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode)} min="0" step="0.01"
+                  onChange={e => updateLinePrice(index, parseFloat(e.target.value) || 0)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                   placeholder="0.00"
                 />
@@ -404,7 +462,7 @@ export default function InvoiceEditPage() {
               <div className="col-span-2">
                 <select
                   value={line.btw_rate}
-                  onChange={e => updateLine(index, 'btw_rate', parseFloat(e.target.value))}
+                  onChange={e => updateLineRate(index, parseFloat(e.target.value))}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                 >
                   <option value={21}>21%</option>

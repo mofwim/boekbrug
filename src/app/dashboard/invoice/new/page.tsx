@@ -25,6 +25,11 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { M3, columnInner, COLUMN } from '@/lib/design/tokens'
+// [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
+// Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
+import {
+  priceFieldValue, priceFieldToStored, repriceForRateChange, toDisplayCents, type PriceMode,
+} from '@/lib/price-mode'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -665,6 +670,52 @@ function NewInvoicePageContent() {
 
   function updateLine(i: number, field: keyof InvoiceLine, value: string | number | boolean) {
     setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+  }
+
+  // [PRIJS-MODUS] Het prijsveld schrijft niet rechtstreeks in de regel: in incl-modus is wat er
+  // staat het bedrag VOOR DE KLANT, en wat we bewaren de prijs ex-btw.
+  function updateLinePrice(i: number, typed: number) {
+    setLines(prev => prev.map((l, idx) =>
+      idx === i ? { ...l, unit_price: priceFieldToStored(typed, l.btw_rate, priceMode) } : l))
+  }
+
+  // [PRIJS-MODUS] Een ander btw-tarief betekent per modus iets anders, en het verkeerde antwoord is
+  // stil: in incl-modus zou de klantprijs veranderen terwijl het veld hetzelfde getal blijft tonen.
+  //   · excl — de ingetypte prijs blijft staan, het totaal beweegt (ongewijzigd gedrag);
+  //   · incl — "€ 50 all-in" blijft € 50 all-in; de marge beweegt, niet de prijs.
+  function updateLineRate(i: number, newRate: number) {
+    setLines(prev => prev.map((l, idx) => idx === i
+      ? { ...l, btw_rate: newRate, unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode) }
+      : l))
+  }
+
+  // ── [PRIJS-MODUS] Typ ik mijn prijzen inclusief of exclusief btw? ──────────────────────────
+  // Een deel van de klanten werkt all-in ("€ 50, klaar"). Die ondernemer moest tot nu toe eerst
+  // zelf € 50 / 1,21 uitrekenen en dát in de regel typen — een deling op een rekenmachine bij
+  // elke factuur, en elke afronding daarvan werd een cent verschil op wat zijn klant betaalt.
+  //
+  // De stand raakt ALLEEN de invoer. lines[].unit_price blijft de prijs ex-btw, want dat is wat
+  // invoice_lines opslaat en wat alles daarna leest (de rubriekensplitsing van de aangifte, de
+  // PDF, het sluitpakket, de export naar de boekhouder). Zie src/lib/price-mode.ts.
+  //
+  // Onthouden in localStorage: wie all-in werkt, werkt de VOLGENDE factuur ook all-in, en die
+  // keuze elke keer opnieuw moeten maken is precies het soort wrijving dat dit zou moeten
+  // wegnemen. Standaard 'excl', zodat het scherm zich voor iedereen gedraagt zoals het deed.
+  const [priceMode, setPriceMode] = useState<PriceMode>('excl')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('boekbrug.priceMode')
+      // Zelfde uitzondering als de handoff hierboven: localStorage is een extern systeem en dit is
+      // precies waar een effect voor is — de opgeslagen keuze één keer binnenhalen. De regel die
+      // hier klaagt (set-state-in-effect) beschermt tegen cascade-renders, en dat is dit niet: het
+      // gebeurt één keer bij het monteren en verandert verder niets.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === 'incl' || saved === 'excl') setPriceMode(saved)
+    } catch { /* private mode / storage geblokkeerd: dan gewoon de standaard */ }
+  }, [])
+  function choosePriceMode(mode: PriceMode) {
+    setPriceMode(mode)
+    try { localStorage.setItem('boekbrug.priceMode', mode) } catch { /* niet erg */ }
   }
 
   // [ARTIKELEN] The line-item catalog (gateway #1) — pick a saved article to fill a line
@@ -1384,6 +1435,43 @@ function NewInvoicePageContent() {
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}</p>
               <p style={{ fontSize: 12, color: '#70757a', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
 
+              {/* ── [PRIJS-MODUS] Typ je prijzen met of zonder btw? ────────────────────────────
+                  Boven de regels, want het bepaalt wat elk prijsveld eronder BETEKENT. Wie all-in
+                  werkt ("€ 50, klaar") hoefde tot nu toe eerst zelf € 50 / 1,21 uit te rekenen om
+                  hier te kunnen typen. De keuze wordt onthouden voor de volgende factuur.
+                  Wat er wordt opgeslagen verandert niet: de regel houdt de prijs ex-btw vast, en
+                  dat is ook wat er op de factuur en in je aangifte komt te staan. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', backgroundColor: '#F8F9FA', borderRadius: 10, padding: '8px 10px' }}>
+                <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 500 }}>Prijzen invoeren</span>
+                <div role="group" aria-label="Prijzen invoeren inclusief of exclusief btw" style={{ display: 'flex', gap: 4, backgroundColor: '#E8EAED', borderRadius: 9999, padding: 3 }}>
+                  {([
+                    { id: 'excl' as PriceMode, label: 'excl. btw' },
+                    { id: 'incl' as PriceMode, label: 'incl. btw' },
+                  ]).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={priceMode === opt.id}
+                      onClick={() => choosePriceMode(opt.id)}
+                      style={{
+                        border: 'none', borderRadius: 9999, padding: '6px 14px', cursor: 'pointer',
+                        fontSize: 12.5, fontWeight: 600,
+                        backgroundColor: priceMode === opt.id ? 'white' : 'transparent',
+                        color: priceMode === opt.id ? '#202124' : '#5F6368',
+                        boxShadow: priceMode === opt.id ? '0 1px 2px rgba(0,0,0,0.12)' : 'none',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <span style={{ fontSize: 11.5, color: '#80868B', flex: 1, minWidth: 180 }}>
+                  {priceMode === 'incl'
+                    ? 'Je typt wat je klant betaalt; wij rekenen de btw eruit.'
+                    : 'Je typt de prijs zonder btw; wij tellen de btw erbij.'}
+                </span>
+              </div>
+
               {lines.map((line, i) => {
                 const sug = pickerLine === i ? matchArticles(catalog, line.description) : []
                 return (
@@ -1414,10 +1502,13 @@ function NewInvoicePageContent() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                     {/* [BOEK-031] LineInput: no leading zero, comma=dot, step=1, Enter→next — May 2026 */}
                     <LineInput label="Aantal" value={line.quantity} min={0.01} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
-                    <LineInput label="Prijs (€)" value={line.unit_price} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLine(i, 'unit_price', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
+                    {/* [PRIJS-MODUS] Het veld toont — en accepteert — de prijs in de gekozen stand.
+                        De regel bewaart altijd ex-btw; priceFieldValue/priceFieldToStored zijn de
+                        enige twee plekken waar dat verschil bestaat. */}
+                    <LineInput label={priceMode === 'incl' ? 'Prijs incl. (€)' : 'Prijs excl. (€)'} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
-                      <select value={line.btw_rate} onChange={e => updateLine(i, 'btw_rate', parseFloat(e.target.value))} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
+                      <select value={line.btw_rate} onChange={e => updateLineRate(i, parseFloat(e.target.value))} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
                         <option value={21}>21%</option>
                         <option value={9}>9%</option>
                         <option value={0}>0%</option>
@@ -1427,8 +1518,23 @@ function NewInvoicePageContent() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#70757a' }}>
                     {line.description.trim()
                       ? <button type="button" onClick={() => saveLineToCatalog(i, line)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>
-                      : <span>Totaal excl.</span>}
-                    <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.quantity * line.unit_price)}</span>
+                      : <span>{priceMode === 'incl' ? 'Totaal incl.' : 'Totaal excl.'}</span>}
+                    {/* [PRIJS-MODUS] Het regeltotaal in dezelfde stand als het veld erboven: een rij
+                        die "10,00" in het prijsveld toont en "8,26" als totaal bij aantal 1, leest
+                        als een rekenfout. In incl-modus staat de ex-prijs er klein onder, want dát
+                        is wat er straks op de factuur en in de aangifte komt te staan. */}
+                    <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>
+                      {NL_NUMBER.format(toDisplayCents(
+                        priceMode === 'incl'
+                          ? line.quantity * line.unit_price * (1 + line.btw_rate / 100)
+                          : line.quantity * line.unit_price,
+                      ))}
+                      {priceMode === 'incl' && (
+                        <span style={{ fontWeight: 400, color: '#80868B', fontSize: 11.5, marginInlineStart: 6 }}>
+                          ({NL_NUMBER.format(toDisplayCents(line.quantity * line.unit_price))} excl.)
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </div>
               )})}
