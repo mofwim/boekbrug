@@ -13,6 +13,8 @@ import {
 } from "@/lib/import-health";
 // [QUEUE-COMPLETE] pages past PostgREST's silent ~1000-row cap.
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [READING-MEMORY] Which suppliers this owner keeps having to correct — built from the audit trail.
+import { buildReadingMemory, readingHintFor, vendorKey, type VendorMemory } from "@/lib/reading-memory";
 
 export const dynamic = "force-dynamic";
 
@@ -303,6 +305,59 @@ export default async function IncomingPage() {
   const ignoredInvoices = withFolder(ignoredBase);
   const confirmedInvoices = withFolder(confirmedBase);
 
+  // ── [READING-MEMORY] What has this owner kept correcting, and at which supplier? ──
+  // Read from the audit trail rather than from a new table: both correction doors (the confirm
+  // route here, and the amount-correction route on the pay screen) already write a
+  // `reading_correction` block, and audit_logs has a "Users see own logs" SELECT policy. So this
+  // needs no migration and cannot drift from the record — the memory IS the trail.
+  //
+  // Bounded to the most recent 400 status changes. The memory is about what keeps happening at a
+  // supplier, and a correction from two years ago is not that; the bound also keeps this off the
+  // critical path of a screen the owner opens all day.
+  //
+  // [NO-SILENT-EMPTY] On a failed read the hint is simply absent. That is the safe direction here
+  // and it is worth naming: this surface only ever ADDS a "look here too" sentence, so losing it
+  // costs a hint, never a claim. The opposite — inventing history — would send the reviewer to the
+  // wrong field with the app's authority behind it.
+  let readingMemory = new Map<string, VendorMemory>();
+  try {
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("new_value, created_at")
+      .eq("user_id", user.id)
+      .in("action", ["invoice.status_changed", "invoice.updated"])
+      .order("created_at", { ascending: false })
+      .limit(400);
+    if (error) throw new Error(error.message);
+    const records = (data ?? [])
+      .map((row) => {
+        const rc = (row.new_value as { reading_correction?: { vendor?: unknown; fields?: unknown } } | null)
+          ?.reading_correction;
+        if (!rc || !Array.isArray(rc.fields)) return null;
+        return {
+          vendor: typeof rc.vendor === "string" ? rc.vendor : null,
+          fields: rc.fields.filter((f): f is string => typeof f === "string"),
+          at: row.created_at,
+        };
+      })
+      .filter((r): r is { vendor: string | null; fields: string[]; at: string | null } => r !== null);
+    readingMemory = buildReadingMemory(records);
+  } catch (e) {
+    console.error("[READING-MEMORY] audit read failed — the queue simply shows no supplier hints", {
+      userId: user.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // Resolved to a plain object here, not handed to the client as a Map: only the suppliers actually
+  // sitting in the queue can produce a hint, so this ships a handful of sentences instead of the
+  // owner's whole correction history.
+  const readingHints: Record<string, string> = {};
+  for (const inv of pendingInvoices) {
+    const hint = readingHintFor(inv.client_name, readingMemory);
+    if (hint) readingHints[vendorKey(inv.client_name)] = hint;
+  }
+
   const connectionStatus = {
     connected: !!connection,
     provider: (connection?.provider ?? null) as 'gmail' | 'outlook' | null,
@@ -321,6 +376,7 @@ export default async function IncomingPage() {
       confirmedInvoices={confirmedInvoices}
       connectionStatus={connectionStatus}
       userRole={userRole}
+      readingHints={readingHints}
     />
   );
 }

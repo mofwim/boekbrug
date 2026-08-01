@@ -148,6 +148,11 @@ interface Props {
   connectionStatus: ConnectionStatus;
   // [BOEK-011] Used by the Logo Universal Click pattern (Navigation Strategy v1.0)
   userRole: "zzper" | "accountant";
+  // [READING-MEMORY] Per supplier (trimmed + lowercased name), one sentence about what the owner
+  // has repeatedly had to correct on that supplier's invoices. Only for suppliers actually in this
+  // queue, and only past the threshold — most queues carry none at all. Optional: an older server
+  // render, or a failed audit read, simply sends nothing and the cards look as they always did.
+  readingHints?: Record<string, string>;
 }
 
 type Tab = "pending" | "ignored" | "confirmed";
@@ -1477,7 +1482,11 @@ function ConfirmDialog({
 
 // ── Invoice card — collapsible accordion ──────────────────────────────────────
 
-function InvoiceCard({
+// Exported for the render gate only (tests/render/). The list renders every card COLLAPSED, and
+// everything worth asserting — the reasons block, the supplier memory — lives in the expanded body,
+// which a static render never produces because opening a card is a click. Exporting the card is the
+// difference between "the queue renders" and "the warning the queue exists for renders".
+export function InvoiceCard({
   invoice,
   mode,
   expanded,
@@ -1493,6 +1502,8 @@ function InvoiceCard({
   // [INTAKE-FOCUS] deep-link target: element id for scrollIntoView + brief ring
   domId,
   highlighted = false,
+  // [READING-MEMORY] What the owner has repeatedly corrected at THIS supplier, if anything.
+  readingHint,
 }: {
   invoice: IncomingInvoice;
   mode: Tab;
@@ -1510,6 +1521,8 @@ function InvoiceCard({
   // [INTAKE-FOCUS]
   domId?: string;
   highlighted?: boolean;
+  // [READING-MEMORY] One sentence, or nothing. Never a number — see reading-memory.ts.
+  readingHint?: string | null;
 }) {
   const dialog = useDialog();
   const toast = useToast();
@@ -1930,6 +1943,37 @@ function InvoiceCard({
       {expanded && (
         <div style={{ padding: "0 16px 16px" }}>
           <div style={{ height: 1, background: "#f8f9fa", marginBottom: 14 }} />
+
+          {/* [READING-MEMORY] What this owner keeps having to fix at THIS supplier.
+
+              Deliberately NOT gated on the health verdict, unlike the block below it. The whole
+              reason this exists is the case where the reader is confident and wrong: Elegance
+              Brands read cleanly in June and in July, and both times the owner had to repair the
+              btw by hand. A hint that only appears when the app already suspects something would
+              have stayed silent on exactly the invoices it is for.
+
+              It names a FIELD, never an amount. A remembered number belongs to a different invoice;
+              pre-filling it would be inventing money, which is the one thing this whole line
+              refuses to do. So the app learns where to point the reviewer, not what the answer is.
+
+              Pending only: on a confirmed or ignored card there is nothing left to check. */}
+          {mode === "pending" && readingHint && (
+            <div
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 8,
+                padding: "12px 14px", marginBottom: 14,
+                background: "#eef4ff", borderRadius: 12, border: "1px solid #cddcff",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1.3 }}>🧠</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#274690", marginBottom: 4 }}>
+                  Wat je hier vaker corrigeert
+                </div>
+                <div style={{ fontSize: 12.5, color: "#274690", lineHeight: 1.5 }}>{readingHint}</div>
+              </div>
+            </div>
+          )}
 
           {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
               plain-language reason(s) the system is unsure, sourced from the
@@ -2787,6 +2831,9 @@ export default function IncomingInvoicesClient({
   ignoredInvoices,
   confirmedInvoices,
   connectionStatus,
+  // [READING-MEMORY] Empty by default: most owners have no supplier past the threshold, and a
+  // missing prop must render the queue exactly as it rendered before this existed.
+  readingHints = {},
 }: Props) {
   const dialog = useDialog();
   const toast = useToast();
@@ -3790,6 +3837,9 @@ export default function IncomingInvoicesClient({
                 onSelect={() => toggleSelect(inv.id)}
                 domId={`incoming-card-${inv.id}`}
                 highlighted={focusId === inv.id}
+                // [READING-MEMORY] Keyed exactly as the server keyed it (trimmed + lowercased), so
+                // a supplier written with a trailing space is not treated as a second company.
+                readingHint={readingHints[(inv.client_name ?? "").trim().toLowerCase()]}
               />
             ))}
           </div>

@@ -175,8 +175,93 @@ test("[RENDER-GATE] the verify queue renders", async () => {
           confirmedInvoices: [],
           connectionStatus: { connected: false, provider: null, email: null, connected_at: null, needs_reauth: false, pending_count: 0 },
           userRole: "zzper",
+          // [READING-MEMORY] Keyed the way the server keys it: trimmed, lowercased.
+          readingHints: { groothandel: "Bij deze leverancier heb je 3 eerdere facturen zelf gecorrigeerd — meestal het btw-bedrag. Controleer dat hier extra." },
         }))),
   );
 
   assert.ok(html.length > 1000, "the queue rendered something substantial");
+  // The list is here, and both suppliers reached it.
+  assert.match(html, /Groothandel/);
+});
+
+test("[READING-MEMORY] the supplier memory reaches the open card", async () => {
+  // Against the CARD, not the list. Every card in the list renders collapsed — the expanded body is
+  // behind a click, and a static render never clicks — so a list-level assertion on this text can
+  // only ever fail. That is not a reason to assert nothing: the prop being dropped somewhere between
+  // the server and the card is exactly the failure this covers, and it is invisible to tsc because
+  // an optional prop that never arrives is perfectly typed.
+  const { InvoiceCard } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  // A CLEAN invoice on purpose. The memory must show where the reader is confident and wrong —
+  // Elegance Brands read cleanly twice and was wrong both times — so if this only rendered next to
+  // an existing warning it would be silent on the invoices it exists for.
+  const base = {
+    id: "q1", client_name: "Elegance Brands", client_email: null, invoice_type: "factuur",
+    total_ex_btw: 800, btw_amount: 72, total_inc_btw: 872, amount_paid: 0,
+    invoice_date: "2026-07-30", invoice_number: "2026070769", source: "email",
+    pdf_url: null, document_id: null, created_at: "2026-07-30T10:00:00Z",
+    folder_id: null, folder_name: null, field_confidence: null,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invoice = { ...base, health: classifyImportHealth(base as any) };
+  assert.equal(invoice.health.level, "clean", "the fixture really is an invoice the app is happy with");
+
+  const render = (hint: string | null) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(InvoiceCard as any, {
+          invoice, mode: "pending", expanded: true,
+          onToggle() {}, onConfirmPaid() {}, onEdit() {}, onIgnore() {}, onRestore() {},
+          readingHint: hint,
+        }))),
+  );
+
+  const withHint = render("Bij deze leverancier heb je 3 eerdere facturen zelf gecorrigeerd — meestal het btw-bedrag. Controleer dat hier extra.");
+  assert.match(withHint, /Wat je hier vaker corrigeert/, "the heading is on the open card");
+  assert.match(withHint, /meestal het btw-bedrag/, "and it names the field the owner keeps fixing");
+
+  // Same card, no memory: the block is gone entirely, not an empty box with a heading.
+  const without = render(null);
+  assert.doesNotMatch(without, /Wat je hier vaker corrigeert/);
+});
+
+test("[READING-MEMORY] a supplier with no history renders the queue exactly as before", async () => {
+  // The prop is optional and, for most owners, empty — nobody has a supplier past the threshold on
+  // day one. The absence has to be SILENT: no empty box, no heading with nothing under it. Rendered
+  // rather than reasoned about, because "it is falsy so it will not show" is the kind of claim that
+  // is true right up until someone wraps it in a container div.
+  const { default: IncomingInvoicesClient } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  const base = {
+    id: "q1", client_name: "Groothandel", client_email: null, invoice_type: "factuur",
+    total_ex_btw: 800, btw_amount: 72, total_inc_btw: 872, amount_paid: 0,
+    invoice_date: "2026-02-21", invoice_number: "RE1", source: "email",
+    pdf_url: null, document_id: null, created_at: "2026-02-21T10:00:00Z",
+    folder_id: null, folder_name: null, field_confidence: null,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = [{ ...base, health: classifyImportHealth(base as any) }];
+
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // No readingHints prop at all — the shape an older server render sends.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingInvoicesClient as any, {
+          initialInvoices: rows, ignoredInvoices: [], confirmedInvoices: [],
+          connectionStatus: { connected: false, provider: null, email: null, connected_at: null, needs_reauth: false, pending_count: 0 },
+          userRole: "zzper",
+        }))),
+  );
+
+  assert.ok(html.length > 1000, "the queue still renders without the prop");
+  assert.doesNotMatch(html, /Wat je hier vaker corrigeert/, "no heading without a hint under it");
 });

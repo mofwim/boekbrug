@@ -43,6 +43,8 @@ import { requireOwner } from "@/lib/owner-only";
 import { hasSettledMoney } from "@/lib/invoice-removal";
 // [AMOUNT-TRIPLET] The same tolerance the arithmetic gate uses, so screen and server agree.
 import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
+// [READING-MEMORY] Which fields the human changed about the reader's answer.
+import { correctedFields } from "@/lib/reading-memory";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -92,7 +94,9 @@ export async function PATCH(
   // does not exist while it sits right there on the screen.
   const { data: invoice, error: readErr } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, total_ex_btw, btw_amount, total_inc_btw, amount_paid")
+    // client_name is read for the audit trail only — [READING-MEMORY] keys a correction to the
+    // supplier it happened at, and without the name the correction cannot be remembered anywhere.
+    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, total_ex_btw, btw_amount, total_inc_btw, amount_paid")
     .eq("id", id)
     .maybeSingle();
 
@@ -176,6 +180,19 @@ export async function PATCH(
     );
   }
 
+  // [READING-MEMORY] Which of the reader's fields the owner actually moved. Computed against the
+  // row as it was read, not against what the form posted — the modal sends all three amounts every
+  // time, and recording those would teach the memory that everything is always wrong.
+  const correctedNow = correctedFields(
+    {
+      total_ex_btw: invoice.total_ex_btw,
+      btw_amount: invoice.btw_amount,
+      total_inc_btw: invoice.total_inc_btw,
+      invoice_type: invoice.invoice_type,
+    },
+    { total_ex_btw: exBtw, btw_amount: btw, total_inc_btw: incBtw, invoice_type: patch.invoice_type },
+  );
+
   // The trail carries BOTH sides. Correcting a booked amount is exactly the kind of change an
   // accountant must be able to reconstruct a year later: what it was, what it became, and when.
   await logAuditAction({
@@ -196,6 +213,13 @@ export async function PATCH(
       total_inc_btw: incBtw,
       invoice_type: patch.invoice_type ?? invoice.invoice_type,
       via: "manage_amount_correction",
+      // [READING-MEMORY] Same block, same shape as the queue's confirm route. There are two doors
+      // through which a human disagrees with the reader — correcting before booking, and correcting
+      // after — and a memory fed by only one of them would tell the owner a supplier is read fine
+      // while they fix its invoices on the other screen every month.
+      ...(correctedNow.length
+        ? { reading_correction: { vendor: invoice.client_name, fields: correctedNow } }
+        : {}),
     },
     ipAddress: getClientIP(req),
   });

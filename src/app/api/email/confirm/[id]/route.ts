@@ -23,6 +23,9 @@ import { hasSettledMoney } from "@/lib/invoice-removal";
 // [NEGEER-REDEN] De toegestane redenen staan in één lijst — gedeeld met het scherm en met de
 // CHECK-constraint in invoice_archive_reason.sql, zodat die drie niet uit elkaar kunnen lopen.
 import { normalizeArchiveReason } from "@/lib/archive-reason";
+// [READING-MEMORY] Which fields the human changed about the reader's answer — the one signal that
+// makes "this supplier keeps being misread" a fact instead of a feeling.
+import { correctedFields } from "@/lib/reading-memory";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -172,6 +175,42 @@ export async function POST(
     updatePatch.invoice_date = body.invoice_date;
   }
 
+  // [READING-MEMORY] What did the reviewer actually CHANGE about what the reader produced?
+  //
+  // This is the moment the app can learn something, and until now it threw the answer away: the
+  // audit below recorded the status change and the new metadata, never the pair. So the reader got
+  // Elegance Brands wrong in June, the owner fixed it, the prompt was strengthened on 26 July, and
+  // on 30 July the next Elegance Brands invoice arrived with the same field wrong — with nothing
+  // anywhere that could have said "this keeps happening at this supplier".
+  //
+  // Computed against the STORED row, not against what the screen posted: the verify form sends
+  // every field on every confirm, so "was it submitted" would record a correction each time and
+  // teach the memory that the owner corrects everything, always.
+  //
+  // The vendor is the name AFTER the reviewer's edit — if they corrected the supplier name too,
+  // the corrections belong to the company they say it is, not to the one the reader guessed.
+  const correctedNow = correctedFields(
+    {
+      total_ex_btw: invoice.total_ex_btw,
+      btw_amount: invoice.btw_amount,
+      total_inc_btw: invoice.total_inc_btw,
+      invoice_type: invoice.invoice_type,
+      client_name: invoice.client_name,
+      invoice_number: invoice.invoice_number,
+      invoice_date: invoice.invoice_date,
+    },
+    {
+      total_ex_btw: validNum(body.total_ex_btw) ? body.total_ex_btw : undefined,
+      btw_amount: validNum(body.btw_amount) ? body.btw_amount : undefined,
+      total_inc_btw: validNum(body.total_inc_btw) ? body.total_inc_btw : undefined,
+      invoice_type: updatePatch.invoice_type,
+      client_name: updatePatch.client_name,
+      invoice_number: updatePatch.invoice_number,
+      invoice_date: updatePatch.invoice_date,
+    },
+  );
+  const memoryVendor = updatePatch.client_name ?? invoice.client_name;
+
   // [DATE-GATE] An incoming invoice may not be confirmed (verified or paid)
   // without a real invoice date. The date sets the tax period (factuurstelsel),
   // so confirming a dateless invoice would silently book it in the wrong
@@ -267,10 +306,31 @@ export async function POST(
     action: "invoice.status_changed",
     entityType: "invoice",
     entityId: id,
-    oldValue: { status: invoice.status },
+    // [READING-MEMORY] The reader's side of the pair. Recorded only when something was actually
+    // corrected, so an ordinary confirm does not grow the trail — and so a row that HAS these
+    // fields is by construction a row where the human disagreed with the machine.
+    oldValue: {
+      status: invoice.status,
+      ...(correctedNow.length
+        ? {
+            total_ex_btw: invoice.total_ex_btw,
+            btw_amount: invoice.btw_amount,
+            total_inc_btw: invoice.total_inc_btw,
+            invoice_type: invoice.invoice_type,
+            client_name: invoice.client_name,
+            invoice_number: invoice.invoice_number,
+            invoice_date: invoice.invoice_date,
+          }
+        : {}),
+    },
     newValue: {
       status: updatePatch.status,
       action,
+      // The human's side, plus WHICH fields moved — so reading the memory back is a lookup rather
+      // than a diff of two jsonb blobs by every consumer that wants it.
+      ...(correctedNow.length
+        ? { reading_correction: { vendor: memoryVendor, fields: correctedNow } }
+        : {}),
       ...(action === "pay" ? { payment_method: body.payment_method } : {}),
       ...(action === "pay" && updatePatch.payment_date
         ? { payment_date: updatePatch.payment_date }
