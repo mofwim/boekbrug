@@ -4,6 +4,7 @@
 // modified by 028 Accou Portal v2
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { magScherm } from "@/lib/acting-for";
 
 // [PUBLIC-SURFACE] The public path list moved to src/lib/public-paths.ts so the smoke test can
 // assert against the SAME array this guard enforces. It was unreachable from anywhere else, which
@@ -110,6 +111,32 @@ export async function middleware(request: NextRequest) {
 
     if (profile && !profile.onboarding_done) {
       return NextResponse.redirect(new URL("/onboarding", request.url));
+    }
+
+    // [NAMENS] Een verkoopmedewerker hoort op zijn eigen scherm, niet in de bank of de aangifte
+    // van zijn baas.
+    //
+    // WAT DEZE CONTROLE WEL EN NIET IS. De Next-documentatie is er expliciet over: een controle
+    // hier is OPTIMISTISCH. Hij voorkomt dat iemand op een leeg scherm belandt; hij is niet de
+    // grens. De grens ligt waar de gegevens worden gelezen — RLS geeft een medewerker op die
+    // pagina's simpelweg niets, en de twee pagina's die service_role gebruiken (brug, vragen)
+    // filteren op de sessiegebruiker. Zou deze redirect morgen verdwijnen, dan ziet een
+    // medewerker lege schermen, geen cijfers van zijn baas.
+    //
+    // Vandaar ook één query en niet meer: dit draait op elke navigatie.
+    const { data: koppeling } = await supabase
+      .from("company_members")
+      .select("owner_id")
+      .eq("member_id", user.id)
+      .is("revoked_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (koppeling && !magScherm(
+      { ownerId: koppeling.owner_id as string, actorId: user.id, role: "verkoop" },
+      request.nextUrl.pathname,
+    )) {
+      return NextResponse.redirect(new URL("/dashboard/verkoop", request.url));
     }
   }
 

@@ -289,11 +289,30 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
           {/* ── 4. MEER — secondary workspace ──────────────────────────────────── */}
           <section>
             <SectionLabel>Meer</SectionLabel>
-            <ActionCard
-              icon="work" iconBg={M3.success} iconColor="#fff"
-              label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
-              onClick={() => router.push('/dashboard/werkplek')}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <ActionCard
+                icon="work" iconBg={M3.success} iconColor="#fff"
+                label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
+                onClick={() => router.push('/dashboard/werkplek')}
+              />
+              {/* [NAMENS] Team — wie mag er onder JOUW BTW-nummer factureren.
+                  Stond alleen in Instellingen, en dat is te ver weg voor de zwaarste bevoegdheid
+                  die een eigenaar kan weggeven: een medewerker geeft facturen uit die bij een
+                  controle niet van die van de eigenaar zijn te onderscheiden. Wat je uitdeelt en
+                  intrekt hoort zichtbaar te zijn vanaf het startscherm, niet twee schermen diep.
+
+                  Hier en niet bij "Mijn administratie": die tegels gaan over PAPIER dat binnenkomt.
+                  Dit gaat over MENSEN, en het is een instelling die je een paar keer per jaar
+                  aanraakt — de plek van "Mijn werkplek", niet van "Bank".
+
+                  `person_add` zit al in de icon_names-subset van layout.tsx; een naam die daar
+                  niet in staat rendert als rauwe ligatuurtekst (zie material-icons.test.ts). */}
+              <ActionCard
+                icon="person_add" iconBg="#7B1FA2" iconColor="#fff"
+                label="Team" sub="Wie mag er facturen maken voor je bedrijf"
+                onClick={() => router.push('/dashboard/settings/team')}
+              />
+            </div>
           </section>
 
         </div>

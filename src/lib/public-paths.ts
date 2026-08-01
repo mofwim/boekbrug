@@ -19,6 +19,11 @@ export const PUBLIC_PATHS = [
   "/wachtwoord-vergeten",
   "/wachtwoord-herstellen",
   "/invite",
+  // [NAMENS] De landingspagina van een teamuitnodiging. Publiek, net als /invite: de genodigde
+  // heeft vaak nog geen account, en moet de uitnodiging kunnen LEZEN voordat hij besluit zich
+  // aan te melden. Accepteren kan pas ingelogd — dat is de route erachter, en die eist boven-
+  // dien dat zijn e-mailadres gelijk is aan het uitgenodigde adres.
+  "/team/accepteren",
   "/pay",
   "/factuur-maken",
   "/bankafschrift-naar-excel",

@@ -132,6 +132,47 @@ export async function sendClientInvite({
   }
 }
 
+// ── [NAMENS] Uitnodiging voor een verkoopmedewerker ──────────────────────────
+// Een andere mail dan sendClientInvite, met opzet: hier wordt iemand geen KLANT van een
+// boekhouder maar krijgt hij het recht om facturen te versturen ONDER HET BTW-NUMMER van een
+// ander. Dat hoort in de uitnodiging te staan — wie op een knop klikt zonder te weten wat hij
+// aanneemt, kan later niet zeggen dat hij het wist.
+export async function sendMemberInvite({
+  toEmail,
+  companyName,
+  acceptUrl,
+}: {
+  toEmail: string
+  companyName: string
+  acceptUrl: string
+}) {
+  const { error: sendError } = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: `${companyName} vraagt je om facturen te maken op BoekBrug`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">Facturen maken voor ${escapeHtml(companyName)}</h2>
+        <p style="color: #555;"><strong>${escapeHtml(companyName)}</strong> geeft je toegang tot BoekBrug om verkoopfacturen te maken en te versturen.</p>
+        <p style="color: #555;">Wat dat betekent, in gewone woorden:</p>
+        <ul style="color: #555; padding-left: 18px;">
+          <li>De facturen die je maakt gaan uit op naam en BTW-nummer van ${escapeHtml(companyName)}.</li>
+          <li>Je ziet <strong>alleen wat je zelf aanmaakt</strong> — niet de bank, niet de omzet, niet de facturen van collega's.</li>
+          <li>${escapeHtml(companyName)} kan je toegang op elk moment intrekken.</li>
+        </ul>
+        <a href="${acceptUrl}"
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+          Toegang accepteren
+        </a>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet, en laat het ${escapeHtml(companyName)} weten.</p>
+      </div>
+    `
+  })
+  if (sendError) {
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
+}
+
 // ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
 // [FACTUUR-A] Rebuilt — June 2026:
 //   * PDF attached (Resend attachments) — the e-mail now carries the actual

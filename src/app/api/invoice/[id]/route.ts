@@ -20,18 +20,45 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
 import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-totals'
+// [NAMENS] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
+// eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
+// blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
+// magFactuur() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
+import { getActingFor } from '@/lib/acting-for-server'
+import { factuurEigenaar, magFactuur } from '@/lib/acting-for'
+import { leesMetSpoor } from '@/lib/created-by'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ownedInvoice(supabase: any, id: string, userId: string) {
-  return supabase
-    .from('invoices')
-    // [EDIT-LINES-SAFE] The stored totals come along as the PRE-IMAGE: if the line swap below
-    // fails after the header is already written, restoring the old lines is only half the undo —
-    // the header would still carry the new amounts. Both go back, or neither.
-    .select('id, status, sender_id, total_ex_btw, btw_amount, total_inc_btw')
-    .eq('id', id)
-    .eq('sender_id', userId)
-    .single()
+  // [EDIT-LINES-SAFE] The stored totals come along as the PRE-IMAGE: if the line swap below
+  // fails after the header is already written, restoring the old lines is only half the undo —
+  // the header would still carry the new amounts. Both go back, or neither.
+  //
+  // [NAMENS] created_by komt mee: dat is de grens waarop magFactuur() een medewerker toetst.
+  // Maar die kolom bestaat pas ná company_members_sales_role.sql, en een SELECT op een kolom die
+  // er niet is faalt HELEMAAL — dan zou een eigenaar zijn eigen concept niet meer kunnen
+  // bewerken of verwijderen op een installatie waar de migratie nog open staat. Vandaar de
+  // terugval; zonder created_by rekent magFactuur() de rij nooit aan een medewerker toe, en dat
+  // is de veilige kant (zonder migratie bestaat er sowieso geen medewerker).
+  return leesMetSpoor<{
+    id: string
+    status: string | null
+    sender_id: string | null
+    created_by?: string | null
+    total_ex_btw: number | null
+    btw_amount: number | null
+    total_inc_btw: number | null
+  }>(
+     
+    (kolommen: string) => supabase
+      .from('invoices')
+      .select(kolommen)
+      .eq('id', id)
+      .eq('sender_id', userId)
+      .single(),
+    'id, status, sender_id, created_by, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, total_ex_btw, btw_amount, total_inc_btw',
+  )
 }
 
 // GET /api/invoice/[id] — the invoice + its lines (owner only).
@@ -39,6 +66,11 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -48,9 +80,14 @@ export async function GET(
     .from('invoices')
     .select('*')
     .eq('id', id)
-    .eq('sender_id', user.id)
+    .eq('sender_id', ownerId)
     .single()
   if (error || !invoice) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  // [NAMENS] Tweede slot naast RLS: dit is waar een geraden id binnenkomt.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!magFactuur(acting, invoice as any)) {
+    return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  }
 
   const { data: lines } = await supabase
     .from('invoice_lines')
@@ -66,13 +103,23 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
 
-  const { data: existing } = await ownedInvoice(supabase, id, user.id)
+  const { data: existing } = await ownedInvoice(supabase, id, ownerId)
   if (!existing) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  // [NAMENS] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
+  // een collega. RLS zegt dat ook, maar dit is de plek waar een geraden id langskomt.
+  if (!magFactuur(acting, existing)) {
+    return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  }
   if (existing.status !== 'draft') {
     return NextResponse.json(
       { error: 'Een verzonden factuur kan niet meer worden gewijzigd.' },
@@ -153,7 +200,7 @@ export async function PUT(
     // the generated row type.
     .update(patch as never)
     .eq('id', id)
-    .eq('sender_id', user.id)
+    .eq('sender_id', ownerId)
     .eq('status', 'draft')
     .select('id')
   if (upErr) return NextResponse.json({ error: 'Opslaan mislukt' }, { status: 500 })
@@ -200,7 +247,7 @@ export async function PUT(
         total_inc_btw: existing.total_inc_btw,
       } as never)
       .eq('id', id)
-      .eq('sender_id', user.id)
+      .eq('sender_id', ownerId)
       .eq('status', 'draft')
     return NextResponse.json({ error: 'Opslaan mislukt (regels)' }, { status: 500 })
   }
@@ -214,13 +261,23 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
 
-  const { data: existing } = await ownedInvoice(supabase, id, user.id)
+  const { data: existing } = await ownedInvoice(supabase, id, ownerId)
   if (!existing) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  // [NAMENS] Een medewerker raakt alleen zijn eigen concept aan — niet dat van zijn baas of van
+  // een collega. RLS zegt dat ook, maar dit is de plek waar een geraden id langskomt.
+  if (!magFactuur(acting, existing)) {
+    return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  }
   if (existing.status !== 'draft') {
     return NextResponse.json(
       { error: 'Alleen een concept kan verwijderd worden.' },
@@ -242,7 +299,7 @@ export async function DELETE(
     .from('invoices')
     .delete()
     .eq('id', id)
-    .eq('sender_id', user.id)
+    .eq('sender_id', ownerId)
     .eq('status', 'draft')
     .select('id')
   if (error) return NextResponse.json({ error: 'Verwijderen mislukt' }, { status: 500 })

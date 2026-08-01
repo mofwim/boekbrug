@@ -5,11 +5,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
+// [NAMENS] Omgebouwd in plaats van dichtgezet: "maak er nog zo een" is het hart van
+// factureerwerk. De kopie wordt een CONCEPT zonder nummer, dus er wordt hier niets uitgegeven —
+// het nummer valt pas bij versturen, en dat loopt langs de reeks van de eigenaar.
+import { getActingFor } from '@/lib/acting-for-server'
+import { factuurEigenaar, factuurGemaaktDoor, magFactuur } from '@/lib/acting-for'
+// [NAMENS] created_by bestaat pas ná de migratie — zonder terugval faalt het dupliceren.
+import { schrijfMetSpoor } from '@/lib/created-by'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
+
   const { id } = await params
   try {
     const supabase = await createServerSupabaseClient()
@@ -21,10 +33,16 @@ export async function POST(
       .from('invoices')
       .select('*')
       .eq('id', id)
-      .eq('sender_id', user.id)
+      .eq('sender_id', ownerId)
       .single()
 
     if (fetchError || !original) {
+      return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+    }
+    // [NAMENS] Een medewerker dupliceert alleen wat hij zelf maakte — niet de factuur van zijn
+    // baas, waarmee hij anders diens bedragen en klantgegevens zou kunnen inzien.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!magFactuur(acting, original as any)) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
@@ -32,10 +50,13 @@ export async function POST(
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 30)
 
-    const { data: newInvoice, error: insertError } = await supabase
+    const { data: newInvoice, error: insertError } = await schrijfMetSpoor<{ id: string }>(
+      (spoor) => supabase
       .from('invoices')
       .insert({
-        sender_id: user.id,
+        sender_id: ownerId,
+        // De kopie is van wie hem maakt, niet van wie het origineel maakte.
+        ...spoor,
         invoice_number: null,
         // [DUP-TYPE] Preserve the document type — otherwise a duplicated
         // creditnota/pro_forma silently became a 'factuur' (DB default) carrying
@@ -60,7 +81,9 @@ export async function POST(
         client_btw_number: original.client_btw_number
       })
       .select()
-      .single()
+      .single(),
+      { created_by: factuurGemaaktDoor(acting) },
+    )
 
     if (insertError || !newInvoice) {
       return NextResponse.json({ error: 'Dupliceren mislukt' }, { status: 500 })

@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { anchorDayOf, firstRunAfter, isCadence, type Cadence } from "@/lib/recurring";
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,10 @@ function isMissingTable(error: { message?: string; code?: string } | null): bool
 // ── GET ───────────────────────────────────────────────────────────────────────────────────────
 
 export async function GET() {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Terugkerende facturen instellen'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -79,6 +84,10 @@ export async function GET() {
 // ── POST — start repeating an invoice ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Terugkerende facturen instellen'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -156,6 +165,10 @@ export async function POST(req: NextRequest) {
 // ── PATCH — pause / resume / change the end date ───────────────────────────────────────────────
 
 export async function PATCH(req: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Terugkerende facturen instellen'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -189,6 +202,10 @@ export async function PATCH(req: NextRequest) {
 // ── DELETE — stop repeating ───────────────────────────────────────────────────────────────────
 
 export async function DELETE(req: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Terugkerende facturen instellen'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

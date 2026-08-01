@@ -33,6 +33,15 @@ import { generateInvoiceNumber } from '@/lib/invoice-numbering'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { sendInvoiceToClient } from '@/lib/email'
 import * as Sentry from '@sentry/nextjs'
+// [NAMENS] Omgebouwd in plaats van dichtgezet. Een verkoper die zich vergiste in een VERSTUURDE
+// factuur heeft maar één wettelijke weg terug: een creditnota. Zonder deze route zou hij bij een
+// typefout in een bedrag moeten wachten op zijn baas, terwijl de klant al een verkeerde factuur
+// heeft. Het nummer komt uit de reeks van de EIGENAAR — dat is de hele reden dat dit zo loopt.
+import { getActingFor } from '@/lib/acting-for-server'
+import { factuurEigenaar, factuurGemaaktDoor, isNamens, magFactuur } from '@/lib/acting-for'
+// [NAMENS] created_by bestaat pas ná de migratie — zonder terugval faalt de creditnota, en dat
+// is de enige wettelijke weg terug bij een fout in een verstuurde factuur.
+import { schrijfMetSpoor } from '@/lib/created-by'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -41,6 +50,11 @@ import * as Sentry from '@sentry/nextjs'
 const PDF_BUCKET = 'documents'
 
 export async function POST(request: NextRequest) {
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
+
   try {
     const supabase = await createServerSupabaseClient()
 
@@ -72,7 +86,9 @@ export async function POST(request: NextRequest) {
     const original = originalData as any
 
     // [BOEK-031] Alleen de eigenaar mag een creditnota aanmaken
-    if (original.sender_id !== user.id) {
+    // [NAMENS] ...of de medewerker die de oorspronkelijke factuur ZELF maakte. magFactuur() dekt
+    // beide gevallen in één regel: het bedrijf moet kloppen, en bij een medewerker ook created_by.
+    if (!magFactuur(acting, original)) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
@@ -108,7 +124,7 @@ export async function POST(request: NextRequest) {
     const { data: existingCreditnota } = await supabase
       .from('invoices')
       .select('id, invoice_number')
-      .eq('sender_id', user.id)
+      .eq('sender_id', ownerId)
       .eq('invoice_type', 'creditnota')
       .eq('original_invoice_id', original_invoice_id)
       .maybeSingle()
@@ -122,7 +138,10 @@ export async function POST(request: NextRequest) {
 
     // [FACTUUR-A] Genereer creditnota nummer — unified generator, CR- prefix.
     // Same Art. 35 rule applies: once committed, no rollback.
-    const creditnotaNumber = await generateInvoiceNumber(supabase, user.id, 'creditnota')
+    // [NAMENS] ownerId, met de SESSIE-client. Eén doorlopende reeks per bedrijf (Art. 35), en
+    // next_invoice_seq() weigert onvoorwaardelijk als auth.uid() NULL is — service_role kan hier
+    // dus niet in de plaats treden. Zie company_members_sales_role.sql.
+    const creditnotaNumber = await generateInvoiceNumber(supabase, ownerId, 'creditnota')
     if (!creditnotaNumber) {
       return NextResponse.json({ error: 'Kon creditnotanummer niet genereren' }, { status: 500 })
     }
@@ -133,11 +152,14 @@ export async function POST(request: NextRequest) {
     // Bedragen zijn NEGATIEF — creditnota annuleert de originele factuur
     // [FACTUUR-A] original_invoice_id now stored properly (column exists);
     // source:'created' restored (was swallowed by an inline comment).
-    const { data: creditnota, error: insertError } = await supabase
+    const { data: creditnota, error: insertError } = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await schrijfMetSpoor<any>(
+      (spoor) => supabase
       .from('invoices')
 
       .insert({
-        sender_id: user.id,
+        sender_id: ownerId,
+        ...spoor,
         invoice_number: creditnotaNumber,
         invoice_date: today,
         due_date: today,
@@ -169,7 +191,9 @@ export async function POST(request: NextRequest) {
         delivery_date: original.delivery_date ?? original.invoice_date ?? null,
       })
       .select()
-      .single()
+      .single(),
+      { created_by: factuurGemaaktDoor(acting) },
+    )
 
     if (insertError || !creditnota) {
       // [IN1] The DB partial-unique index (invoices_one_creditnota_per_original) is the real
@@ -232,10 +256,12 @@ export async function POST(request: NextRequest) {
     // creditnota (number already consumed). [CREDITNOTA-PDF]
     let warning: string | undefined
 
-    const { data: profile } = await supabase
+    // [NAMENS] Het profiel van de VERKOPER staat op de creditnota — dat is de eigenaar. Voor een
+    // medewerker is die rij via RLS onleesbaar, dus dan langs service_role.
+    const { data: profile } = await (isNamens(acting) ? createPipelineClient() : supabase)
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
+      .eq('id', ownerId)
       .single()
 
     const { data: creditLines } = await supabase
@@ -273,7 +299,7 @@ export async function POST(request: NextRequest) {
     // package — mirrors the send route's storage step. Best-effort.
     if (pdfBuffer) {
       try {
-        const pdfPath = `${user.id}/facturen/${creditnotaNumber}.pdf`
+        const pdfPath = `${ownerId}/facturen/${creditnotaNumber}.pdf`
         // [PDF-IMMUTABLE] Zie de toelichting in invoice/send: er is geen UPDATE-policy op
         // storage.objects, dus een overschrijving kan niet slagen. Hier is dat sowieso nooit aan
         // de orde — creditnotaNumber komt vers uit de reeks, dus het pad is per definitie nieuw —
@@ -340,7 +366,15 @@ export async function POST(request: NextRequest) {
     // the same safe auto-confirm so that refund gets linked at issuance. Best-effort, idempotent,
     // one-tap reversible — never breaks the (already-committed) creditnota.
     try {
-      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+      // [NAMENS] Op het bedrijf. Handelt er een medewerker, dan is de sessie-client waardeloos
+      // voor de bankregels van de eigenaar (RLS) — dan langs service_role, de modus die
+      // bank-auto-confirm zelf beschrijft voor cron en import.
+      const pipelineForConfirm = createPipelineClient()
+      await runBankAutoConfirm({
+        payClient: isNamens(acting) ? pipelineForConfirm : supabase,
+        pipeline: pipelineForConfirm,
+        userId: ownerId,
+      })
     } catch (autoErr) {
       console.error('[BANK-CIRCLE-SEND] post-creditnota auto-confirm failed (non-fatal)', { creditnota_id: creditnota.id, autoErr })
     }

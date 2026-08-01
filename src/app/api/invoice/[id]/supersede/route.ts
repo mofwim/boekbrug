@@ -32,6 +32,7 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // The one file that knows which keys carry the duplicate signal — writer and clearer side by side.
 import { clearPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import type { Database, Json } from "@/types/database.types";
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
@@ -62,6 +63,10 @@ function flaggedTwinId(fieldConfidence: unknown): string | null {
 // So dismissal is its own act, with its own audit row. Nothing else changes: no status, no money,
 // no archive. Only the question stops being asked.
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur vervangen'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
   const {
@@ -111,6 +116,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur vervangen'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
   const {

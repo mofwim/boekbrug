@@ -64,6 +64,8 @@ export default function InvoiceDetailPage() {
   const [loadingOriginal, setLoadingOriginal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
+  // [NAMENS] De medewerker die deze factuur maakte — leeg als de eigenaar hem zelf maakte.
+  const [makerNaam, setMakerNaam] = useState<string | null>(null)
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
   // Alleen de kolommen die de lookup ophaalt — geen volledige factuurrij beloven.
@@ -220,6 +222,25 @@ export default function InvoiceDetailPage() {
       if (senderProfile) setProfile(senderProfile)
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
+
+      // [NAMENS] Wie maakte deze factuur? Alleen relevant als dat NIET de kijker zelf was —
+      // dan is het de medewerker die hem namens de eigenaar heeft uitgegeven. created_by werd
+      // geschreven en nergens gelezen; dit is de leesbare kant ervan.
+      //
+      // De naam komt uit /api/company/members, die alleen (oud-)teamleden van de AANROEPER
+      // teruggeeft. Er wordt dus nooit een losse uuid naar een naam vertaald, en de aanroep
+      // gebeurt alleen in het geval dat hij iets kan opleveren.
+      const maker = (invoiceData as { created_by?: string | null }).created_by
+      if (maker && maker !== user.id) {
+        try {
+          const res = await fetch('/api/company/members')
+          if (res.ok) {
+            const json = await res.json()
+            const lid = (json?.leden ?? []).find((l: { member_id?: string }) => l.member_id === maker)
+            if (lid?.naam) setMakerNaam(lid.naam)
+          }
+        } catch { /* een naam is een extraatje — nooit een reden om het scherm te breken */ }
+      }
 
       // [BOEK-031] Is deze factuur al gecrediteerd? The creditnota stores its link to the
       // original in `original_invoice_id` (the real FK the creditnota route writes + guards
@@ -410,6 +431,20 @@ export default function InvoiceDetailPage() {
                 </h1>
                 {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
                   <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
+                )}
+                {/* [NAMENS] Gemaakt door een MEDEWERKER, niet door de eigenaar zelf.
+                    De eigenaar deelt het recht uit om facturen op zijn naam en BTW-nummer uit
+                    te geven; bij een controle is zo'n factuur niet van de zijne te onderscheiden.
+                    Dan hoort hier te staan wie hem maakte. Verschijnt alleen als het iemand
+                    anders was — anders is het ruis op elke eigen factuur. */}
+                {makerNaam && (
+                  <span
+                    title={`Aangemaakt door ${makerNaam}`}
+                    style={{ fontSize: 11, fontWeight: 500, borderRadius: 9999, padding: '3px 10px', background: '#F3E5F5', color: '#6A1B9A', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>person</span>
+                    {makerNaam}
+                  </span>
                 )}
               </div>
             )}

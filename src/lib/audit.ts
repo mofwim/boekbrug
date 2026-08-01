@@ -91,6 +91,19 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [NAMENS] Een herinnering die MET DE HAND is verstuurd (de cron logt in invoice_reminders,
+  // niet hier). Aan de andere kant zit een klant van de ondernemer; wie op die knop drukte hoort
+  // dus terug te vinden te zijn — zeker als dat een medewerker was en niet de eigenaar zelf.
+  | 'invoice.reminder_sent'
+  // [NAMENS] Wie mag er onder MIJN BTW-nummer factureren?
+  //
+  // Dit is de zwaarste bevoegdheid die een eigenaar kan weggeven: een verkoopmedewerker geeft
+  // facturen uit met het nummer, de naam en het BTW-id van zijn baas, en dat is bij een controle
+  // niet te onderscheiden van de baas zelf. Zowel het geven als het intrekken hoort dus
+  // aantoonbaar te zijn — een bevoegdheid zonder spoor is achteraf een woord tegen een woord.
+  | 'member.invited'
+  | 'member.joined'
+  | 'member.revoked'
   // [BEWIJS] Wat de boekhouder van zijn klant HEEFT OPGEHAALD.
   //
   // De vertrouwensgrens was afgedwongen maar niet aantoonbaar: de klant kon nergens zien

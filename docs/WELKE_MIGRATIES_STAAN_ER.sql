@@ -101,7 +101,23 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- kan beantwoorden, ook niet door goed te kijken.
   (23, 'bank_statement_periods.sql',
        'Onthoudt welke PERIODE elk bankafschrift beslaat. Zonder deze tabel wordt een ontbrekende maand nooit opgemerkt: januari en maart kloppen allebei intern, en februari mist stil',
-       'table', 'bank_statement_periods')
+       'table', 'bank_statement_periods'),
+
+  -- ── De verkoopmedewerker ────────────────────────────────────────────────────────────────
+  -- Zonder deze migratie bestaat de ROL niet — uitnodigen mislukt en /dashboard/verkoop is
+  -- onbereikbaar — maar voor de eigenaar verandert er niets: facturen maken, bewerken,
+  -- versturen, dupliceren en crediteren werken gewoon door.
+  --
+  -- Dat laatste was even NIET zo, en het is de scherpste les van deze migratie: de code die
+  -- created_by schrijft stond op main met een `as any` erbij, omdat de gegenereerde types de
+  -- kolom nog niet kennen. Die cast zwijgt de typecontrole, niet de database — PostgREST
+  -- antwoordde met PGRST204 en het hele verzoek faalde, dus kon er op een niet-gemigreerde
+  -- installatie GEEN FACTUUR MEER WORDEN AANGEMAAKT. tsc schoon, tests groen, build compleet;
+  -- geen van drieën kijkt naar een echte database. Nu valt elke schrijfactie terug op "zonder
+  -- spoor" (src/lib/created-by.ts) en bewaakt namens-poorten.test.ts dat dat zo blijft.
+  (24, 'company_members_sales_role.sql',
+       'De ene extra rol: een medewerker die facturen maakt NAMENS de eigenaar. Eén nummerreeks per bedrijf (Art. 35), en created_by als leesgrens — hij ziet alleen wat hij zelf maakte',
+       'table', 'company_members')
 )
 select
   nr                                                        as "#",
