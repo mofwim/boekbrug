@@ -1,5 +1,5 @@
 // src/app/api/cron/bank-sync/route.ts
-// [GOCARDLESS] The daily bank feed — what makes "we import your transactions automatically"
+// [ENABLEBANKING] The daily bank feed — what makes "we import your transactions automatically"
 // actually true. Vercel Cron calls this once a day (see vercel.json); it walks every linked
 // connection and runs the same per-connection sync the manual button uses.
 //
@@ -23,9 +23,9 @@ import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
-import { isGoCardlessConfigured } from "@/lib/gocardless-client";
-import { listBankConnections } from "@/lib/gocardless-connection";
-import { syncBankConnection } from "@/lib/gocardless-sync";
+import { isEnableBankingConfigured } from "@/lib/enablebanking-client";
+import { listBankConnections } from "@/lib/enablebanking-connection";
+import { syncBankConnection } from "@/lib/enablebanking-sync";
 import { createNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  if (!isGoCardlessConfigured()) {
+  if (!isEnableBankingConfigured()) {
     // Not an error: a server without bank credentials simply has no feed to run. Saying so
     // plainly beats a heartbeat that reads as a failure every single day.
     return NextResponse.json({ ok: true, configured: false, connections: 0 });

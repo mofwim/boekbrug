@@ -497,7 +497,7 @@ test("[READING-MEMORY] a supplier with no history renders the queue exactly as b
   assert.doesNotMatch(html, /Wat je hier vaker corrigeert/, "no heading without a hint under it");
 });
 
-test("[GOCARDLESS] the bank-connection panel renders in each of its states", async () => {
+test("[ENABLEBANKING] the bank-connection panel renders in each of its states", async () => {
   // This panel is only ever reached behind a login, so the smoke test never opens it and the
   // static gates never call it. It also branches on FOUR things at once — configured, connected,
   // expiring, rate-limited — and three of those branches are the ones an owner meets on a bad

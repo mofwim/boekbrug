@@ -8,7 +8,7 @@
 // below marked "vendor sample" are copied verbatim from Enable Banking's own sample export, so
 // this is pinned against their data and not against our reading of it.
 //
-// The SECOND is the one gocardless-map.test.ts also exists for: the same transaction, delivered
+// The SECOND is the cross-door property: the same transaction, delivered
 // once as a CAMT.053 file the owner uploaded and once over the bank feed, must produce the SAME
 // contentKey. If it does not, it is stored twice and every figure built on it doubles.
 

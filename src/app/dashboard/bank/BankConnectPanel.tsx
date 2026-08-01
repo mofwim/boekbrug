@@ -1,7 +1,7 @@
 'use client'
 
 // src/app/dashboard/bank/BankConnectPanel.tsx
-// [GOCARDLESS] "Koppel je bank" — the panel above the upload card on /dashboard/bank.
+// [ENABLEBANKING] "Koppel je bank" — the panel above the upload card on /dashboard/bank.
 //
 // Three things the owner has to be able to see here, and each one is a decision, not decoration:
 //
@@ -48,11 +48,11 @@ export interface BankConnectionView {
   accounts: ConnectedAccount[]
 }
 
+/** A bank as Enable Banking lists it. There is no id: the {name, country} PAIR identifies it,
+ *  which is why both halves travel together into the connect call. */
 export interface Institution {
-  id: string
   name: string
-  bic: string | null
-  transactionTotalDays: number | null
+  country: string
   logo: string | null
 }
 
@@ -123,7 +123,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/bank/gocardless/status')
+      const res = await fetch('/api/bank/enablebanking/status')
       if (!res.ok) return
       setState((await res.json()) as BankConnectState)
     } catch {
@@ -142,9 +142,9 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
     setPicking(true)
     if (institutions) return
     try {
-      const res = await fetch('/api/bank/gocardless/institutions?country=NL')
+      const res = await fetch('/api/bank/enablebanking/banks?country=NL')
       const json = await res.json()
-      setInstitutions(Array.isArray(json.institutions) ? json.institutions : [])
+      setInstitutions(Array.isArray(json.banks) ? json.banks : [])
       if (json.error) onMessage?.(String(json.error))
     } catch {
       setInstitutions([])
@@ -152,13 +152,13 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
     }
   }, [institutions, onMessage])
 
-  const connect = useCallback(async (institutionId: string) => {
-    setBusy(institutionId)
+  const connect = useCallback(async (bank: Institution) => {
+    setBusy(bank.name)
     try {
-      const res = await fetch('/api/bank/gocardless/connect', {
+      const res = await fetch('/api/bank/enablebanking/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ institutionId }),
+        body: JSON.stringify({ bankName: bank.name, bankCountry: bank.country }),
       })
       const json = await res.json()
       if (!res.ok || !json.link) {
@@ -177,7 +177,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
   const sync = useCallback(async (connectionId: string) => {
     setBusy(connectionId)
     try {
-      const res = await fetch('/api/bank/gocardless/sync', {
+      const res = await fetch('/api/bank/enablebanking/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connectionId }),
@@ -213,7 +213,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
   const disconnect = useCallback(async (connectionId: string) => {
     setBusy(connectionId)
     try {
-      const res = await fetch('/api/bank/gocardless/disconnect', {
+      const res = await fetch('/api/bank/enablebanking/disconnect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connectionId }),
@@ -231,7 +231,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
     }
   }, [loadStatus, onMessage])
 
-  // A server without GoCardless credentials has no bank link to offer. Hiding the card entirely
+  // A server without Enable Banking credentials has no bank link to offer. Hiding the card entirely
   // beats showing a button that can only fail.
   if (!state?.configured) return null
 
@@ -289,24 +289,22 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
           {institutions && institutions.length > 0 && (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
               {institutions.map((inst) => (
-                <li key={inst.id}>
+                <li key={`${inst.country}:${inst.name}`}>
                   <button
                     type="button"
                     disabled={busy !== null}
-                    onClick={() => void connect(inst.id)}
+                    onClick={() => void connect(inst)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
                       padding: '10px 12px', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}`,
-                      background: busy === inst.id ? M3.primaryContainer : M3.surface,
+                      background: busy === inst.name ? M3.primaryContainer : M3.surface,
                       cursor: busy ? 'default' : 'pointer', fontFamily: FONT, fontSize: 13.5, color: M3.onSurface,
                     }}
                   >
+                    {/* No "N dagen historie" badge here. Enable Banking's bank list does not say
+                        how far back a bank goes, and a number invented for the screen would be a
+                        promise the feed cannot keep. */}
                     <span style={{ flex: 1, minWidth: 0 }}>{inst.name}</span>
-                    {inst.transactionTotalDays !== null && (
-                      <span style={{ fontSize: 11, color: M3.onSurfaceVariant }}>
-                        {inst.transactionTotalDays} dagen historie
-                      </span>
-                    )}
                   </button>
                 </li>
               ))}

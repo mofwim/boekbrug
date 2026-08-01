@@ -3,22 +3,20 @@
 //
 // ── Read this before touching the amount ──────────────────────────────────────────────────────
 //
-// Enable Banking and GoCardless serve the SAME data model and disagree on the one field that
-// cannot be got wrong:
+// The amount here is a MAGNITUDE and the sign lives somewhere else:
 //
-//     GoCardless      transactionAmount.amount = "-15.00"   ← already signed, no indicator
-//     Enable Banking  transaction_amount.amount = "15.0"    ← a MAGNITUDE
-//                     credit_debit_indicator    = "DBIT"    ← the sign lives here
+//     transaction_amount.amount = "15.0"     ← no sign, ever
+//     credit_debit_indicator    = "DBIT"     ← the direction
 //
-// Verified against the vendor's own sample export: 611 transactions, 439 of them DBIT, and not
-// one amount string carries a minus sign. So copying gocardless-map.ts — whose header states in
-// so many words "already SIGNED — no indicator to apply" — would import every expense as income.
-// Not a display bug: kosten become omzet, the btw-aangifte inverts, and every figure the
-// accountant signs is wrong in the direction that looks like a good quarter.
+// Verified against the vendor's own sample export: 611 transactions, 439 of them DBIT, and not one
+// amount string carries a minus sign. Aggregators differ on exactly this — GoCardless, which this
+// integration first targeted, sends an already-signed amount and NO indicator — so a mapper written
+// from memory of another provider imports every expense as income. Not a display bug: kosten become
+// omzet, the btw-aangifte inverts, and every figure the accountant signs is wrong in the direction
+// that looks like a good quarter. On a real ING quarter that is −€1.578,93 read as +€361.165,81.
 //
-// The split is exactly CAMT.053's <Amt> + <CdtDbtInd>, so parseCAMT053Entry is the template, not
-// gocardless-map.ts. Where the two mappers agree (remittance, reference, counterpart, the
-// fallbacks) this file mirrors gocardless-map.ts field-rename for field-rename.
+// The split is exactly CAMT.053's <Amt> + <CdtDbtInd>, so parseCAMT053Entry is the template for
+// this file — branch for branch, in the same order.
 //
 // ── The one property this file exists to protect ──────────────────────────────────────────────
 //

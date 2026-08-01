@@ -168,57 +168,57 @@ export type Database = {
       bank_connections: {
         Row: {
           access_valid_until: string | null
-          agreement_id: string | null
+          aspsp_country: string
+          aspsp_name: string
           connected_at: string | null
           created_at: string
           id: string
           institution_bic: string | null
-          institution_id: string
           institution_name: string | null
           last_error: string | null
           last_synced_at: string | null
           max_historical_days: number | null
           provider: string
           reference: string
-          requisition_id: string
+          session_id: string | null
           status: string
           updated_at: string
           user_id: string
         }
         Insert: {
           access_valid_until?: string | null
-          agreement_id?: string | null
+          aspsp_country: string
+          aspsp_name: string
           connected_at?: string | null
           created_at?: string
           id?: string
           institution_bic?: string | null
-          institution_id: string
           institution_name?: string | null
           last_error?: string | null
           last_synced_at?: string | null
           max_historical_days?: number | null
           provider?: string
           reference: string
-          requisition_id: string
+          session_id?: string | null
           status?: string
           updated_at?: string
           user_id: string
         }
         Update: {
           access_valid_until?: string | null
-          agreement_id?: string | null
+          aspsp_country?: string
+          aspsp_name?: string
           connected_at?: string | null
           created_at?: string
           id?: string
           institution_bic?: string | null
-          institution_id?: string
           institution_name?: string | null
           last_error?: string | null
           last_synced_at?: string | null
           max_historical_days?: number | null
           provider?: string
           reference?: string
-          requisition_id?: string
+          session_id?: string | null
           status?: string
           updated_at?: string
           user_id?: string

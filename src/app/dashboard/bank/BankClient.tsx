@@ -18,7 +18,7 @@ import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel }
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
-// [GOCARDLESS] De bankkoppeling staat BOVEN de uploadkaart, niet in de plaats ervan: een
+// [ENABLEBANKING] De bankkoppeling staat BOVEN de uploadkaart, niet in de plaats ervan: een
 // koppeling kan verlopen of geweigerd worden, en dan moet uploaden er gewoon nog staan.
 import BankConnectPanel from './BankConnectPanel'
 // [DESIGN] Palette and radius come from the shared source now
@@ -1181,7 +1181,7 @@ export default function BankClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
 
-  // [GOCARDLESS] De eigenaar komt terug van zijn bank. De callback-route zet het resultaat in de
+  // [ENABLEBANKING] De eigenaar komt terug van zijn bank. De callback-route zet het resultaat in de
   // query string en stuurt hem hierheen; hier wordt het één zin op het scherm.
   //
   // De EERSTE ophaalronde start hier, niet in de callback: die callback is een redirect waar de
@@ -1208,7 +1208,7 @@ export default function BankClient() {
     )
     void (async () => {
       try {
-        const res = await fetch('/api/bank/gocardless/sync', {
+        const res = await fetch('/api/bank/enablebanking/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
@@ -1313,7 +1313,7 @@ export default function BankClient() {
         Koppel je bank of upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
 
-      {/* [GOCARDLESS] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
+      {/* [ENABLEBANKING] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
       <BankConnectPanel
         onMessage={showToast}
         onImported={() => { void runMatch(); void loadStatements() }}

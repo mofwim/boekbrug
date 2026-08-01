@@ -1,23 +1,23 @@
-// src/lib/gocardless-sync.ts
-// [GOCARDLESS] Pulling a connected account's transactions into the existing bank pipeline.
+// src/lib/enablebanking-sync.ts
+// [ENABLEBANKING] Pulling a connected account's transactions into the existing bank pipeline.
 //
-// This module is deliberately THIN. It does not decide anything about money: it fetches, hands
-// the JSON to gocardless-map.ts, and then walks the SAME dedup → insert → auto-confirm →
-// auto-categorize path that an uploaded MT940 walks in bank-ingest.ts. A second, parallel
-// pipeline for bank-fed transactions is exactly how the two entry points in bank-ingest's own
-// header drifted apart, and money-truth is the last place to repeat that.
+// This module is deliberately THIN. It does not decide anything about money: it fetches, hands the
+// JSON to enablebanking-map.ts, and then walks the SAME dedup → insert → auto-confirm →
+// auto-categorize path that an uploaded MT940 walks in bank-ingest.ts. A second, parallel pipeline
+// for bank-fed transactions is exactly how the two entry points in bank-ingest's own header
+// drifted apart, and money-truth is the last place to repeat that.
 //
-// ── What it does NOT do, on purpose ──────────────────────────────────────────────────────────
+// ── What it does NOT do, on purpose ────────────────────────────────────────────────────────────
 //
 //   · PENDING transactions are never imported. A pending line has no final amount and no final
-//     date; when it books a day later it arrives again, with different values, and would import
-//     a SECOND time — the content fingerprint cannot save us, because the fingerprint itself
-//     changed. Only `booked` is money.
+//     date; when it books a day later it arrives again, with different values, and would import a
+//     SECOND time — the content fingerprint cannot save us, because the fingerprint itself
+//     changed. Only booked money is money. The mapper counts what it passed over so the number is
+//     visible rather than silently absent.
 //   · No passthrough document is stored. There is no original file to store — the bank fed us
-//     JSON. The closing package already says this out loud for such a quarter ("Banktransacties
-//     zijn aanwezig, maar het originele bankafschrift-bestand kon niet automatisch worden
-//     bijgevoegd"), which is the honest outcome; a generated file would LOOK like a bank
-//     statement without being one, and an accountant cannot tell the difference by eye.
+//     JSON. The closing package already says this out loud for such a quarter, which is the honest
+//     outcome; a generated file would LOOK like a bank statement without being one, and an
+//     accountant cannot tell the difference by eye.
 //   · No statement balance check. That check proves an uploaded FILE is internally complete
 //     (opening + Σtx = closing). A feed has no statement boundaries, so there is nothing to
 //     reconcile against and a fabricated pass would be worse than no check at all.
@@ -28,56 +28,60 @@ import { fetchAllRows } from "./supabase-paginate";
 import { dedupTransactions, mapToRows, dateRange, type ExistingTxKey } from "./bank-import";
 import { runBankAutoConfirm } from "./bank-auto-confirm";
 import { applyLearnedBankCategories } from "./bank-auto-categorize";
-import { mapGoCardlessTransactions } from "./gocardless-map";
+import { mapEnableBankingTransactions } from "./enablebanking-map";
+import type { EnableBankingRawTransaction } from "./enablebanking-map";
 import {
-  createGoCardlessClient,
-  dutchGoCardlessError,
-  GoCardlessError,
-  MAX_HISTORICAL_DAYS_CAP,
+  createEnableBankingClient,
+  dutchEnableBankingError,
+  EnableBankingError,
   needsReconnect,
   shouldBackOffAfter,
-  type GoCardlessClient,
-  type GoCardlessErrorCode,
-} from "./gocardless-client";
+  type EnableBankingClient,
+  type EnableBankingErrorCode,
+} from "./enablebanking-client";
 import {
   recordAccountSync,
   recordConnectionSync,
   setConnectionStatus,
   type BankConnection,
   type BankConnectionAccount,
-} from "./gocardless-connection";
+} from "./enablebanking-connection";
 
 /**
  * How long we wait between two reads of the SAME account.
  *
- * GoCardless allows a handful of transaction reads per day per account (10/day since August
- * 2024, with a documented intent to reach 4/day). Twenty hours is under a full day — so a daily
- * cron never skips a day by drifting a few minutes — while still leaving the owner's manual
- * "ververs" button room to work at all.
+ * A bank allows a handful of transaction reads per day per account. Twenty hours is under a full
+ * day — so a daily cron never skips a day by drifting a few minutes — while still leaving the
+ * owner's manual "ververs" button room to work at all.
  */
 export const SYNC_MIN_INTERVAL_HOURS = 20;
 
 /**
  * How far BEFORE the last synced date the next pull starts.
  *
- * A transaction can book days after it happened, and a window that starts exactly where the
- * last one ended would step straight over it. Overlap is free — the content dedup in
- * bank-import.ts drops what we already have — and a missed transaction is not.
+ * A transaction can book days after it happened, and a window that starts exactly where the last
+ * one ended would step straight over it. Overlap is free — the content dedup in bank-import.ts
+ * drops what we already have — and a missed transaction is not.
  */
 export const SYNC_OVERLAP_DAYS = 7;
 
 /** History to request on a FIRST sync when the bank told us nothing better. */
 export const DEFAULT_FIRST_SYNC_DAYS = 365;
 
+/** Nothing is asked for beyond this, whatever a bank claims to offer. */
+export const MAX_HISTORICAL_DAYS_CAP = 730;
+
 export interface AccountSyncResult {
   accountId: string;
   iban: string | null;
-  /** Transactions the feed handed over (booked only). */
+  /** Transactions the feed handed over. */
   fetched: number;
   /** Rows actually written. */
   inserted: number;
   /** Duplicates the fingerprint recognised — almost always the intentional window overlap. */
   skipped: number;
+  /** Entries the bank has not committed yet. Passed over on purpose, counted so it is visible. */
+  pending: number;
   /** Lines we could NOT read. Dutch, owner-facing; never silently dropped. */
   warnings: string[];
   /** Dutch error when this account failed entirely, else null. */
@@ -86,12 +90,12 @@ export interface AccountSyncResult {
    * The machine-readable cause behind `error`.
    *
    * Kept separate on purpose: the connection-level decision below ("is this a dead consent, or a
-   * bank having a bad afternoon?") used to be made by comparing the DUTCH sentence to
-   * dutchGoCardlessError("CONSENT_EXPIRED"). That works exactly until someone improves the
-   * wording, at which point every expired connection silently starts being filed as a generic
-   * error and nobody is ever asked to reconnect. A code cannot rot that way.
+   * bank having a bad afternoon?") must never be made by comparing the DUTCH sentence to a
+   * generated one. That works exactly until someone improves the wording, at which point every
+   * expired connection silently starts being filed as a generic error and nobody is ever asked to
+   * reconnect. A code cannot rot that way.
    */
-  errorCode: GoCardlessErrorCode | null;
+  errorCode: EnableBankingErrorCode | null;
   /** True when the account was skipped because it was read recently (rate-limit guard). */
   skippedTooSoon: boolean;
 }
@@ -121,7 +125,11 @@ export function isoDaysBefore(from: Date, days: number): string {
  * unparseable timestamp counts as due: refusing to sync on a corrupt column would stop the feed
  * forever and silently, which is worse than one extra read.
  */
-export function isAccountDue(lastSyncedAt: string | null, now: Date, minIntervalHours = SYNC_MIN_INTERVAL_HOURS): boolean {
+export function isAccountDue(
+  lastSyncedAt: string | null,
+  now: Date,
+  minIntervalHours = SYNC_MIN_INTERVAL_HOURS,
+): boolean {
   if (!lastSyncedAt) return true;
   const last = Date.parse(lastSyncedAt);
   if (!Number.isFinite(last)) return true;
@@ -142,7 +150,10 @@ export function syncWindow(
   const dateTo = now.toISOString().slice(0, 10);
 
   if (account.lastSyncedThrough) {
-    return { dateFrom: isoDaysBefore(new Date(`${account.lastSyncedThrough}T00:00:00Z`), SYNC_OVERLAP_DAYS), dateTo };
+    return {
+      dateFrom: isoDaysBefore(new Date(`${account.lastSyncedThrough}T00:00:00Z`), SYNC_OVERLAP_DAYS),
+      dateTo,
+    };
   }
 
   const requested = connection.maxHistoricalDays ?? DEFAULT_FIRST_SYNC_DAYS;
@@ -155,13 +166,13 @@ export function syncWindow(
  *
  * Extracted so the dedup discipline is one call, not a copy: fetch every existing row in the
  * window (paginated — PostgREST's silent ~1000-row first page truncated this exact SELECT once
- * before, and a truncated "existing" set means duplicates get inserted while the import
- * honestly reports "N skipped"), multiset-diff against it, insert the remainder.
+ * before, and a truncated "existing" set means duplicates get inserted while the import honestly
+ * reports "N skipped"), multiset-diff against it, insert the remainder.
  */
 async function storeTransactions(args: {
   pipeline: PipelineClient;
   userId: string;
-  transactions: ReturnType<typeof mapGoCardlessTransactions>["transactions"];
+  transactions: ReturnType<typeof mapEnableBankingTransactions>["transactions"];
 }): Promise<{ inserted: number; skipped: number }> {
   const { pipeline, userId, transactions } = args;
   if (transactions.length === 0) return { inserted: 0, skipped: 0 };
@@ -194,7 +205,7 @@ async function storeTransactions(args: {
     ({ error } = await pipeline.from("bank_transactions").insert(stripped));
   }
   if (error) {
-    console.error("[GOCARDLESS] inserting transactions failed", { userId, rows: rows.length, error });
+    console.error("[ENABLEBANKING] inserting transactions failed", { userId, rows: rows.length, error });
     return { inserted: 0, skipped: dd.skipped };
   }
   return { inserted: rows.length, skipped: dd.skipped };
@@ -203,7 +214,7 @@ async function storeTransactions(args: {
 /** Sync ONE account. Never throws: the caller is a loop over accounts and one failure must not
  *  take the others down with it. */
 async function syncOneAccount(args: {
-  client: GoCardlessClient;
+  client: EnableBankingClient;
   pipeline: PipelineClient;
   connection: BankConnection;
   account: BankConnectionAccount;
@@ -217,6 +228,7 @@ async function syncOneAccount(args: {
     fetched: 0,
     inserted: 0,
     skipped: 0,
+    pending: 0,
     warnings: [],
     error: null,
     errorCode: null,
@@ -229,14 +241,14 @@ async function syncOneAccount(args: {
 
   const { dateFrom, dateTo } = syncWindow(account, connection, now);
 
-  let booked;
+  let raw: EnableBankingRawTransaction[];
   try {
-    const txs = await client.getAccountTransactions(account.accountId, { dateFrom, dateTo });
-    booked = txs.booked;
+    // The client follows continuation keys to the end, so this is the WHOLE window, not a page.
+    raw = (await client.getTransactions(account.accountId, { dateFrom, dateTo })) as EnableBankingRawTransaction[];
   } catch (err) {
-    const code = err instanceof GoCardlessError ? err.code : null;
-    const dutch = code ? dutchGoCardlessError(code) : "Ophalen bij de bank mislukt.";
-    console.warn("[GOCARDLESS] fetching transactions failed", {
+    const code = err instanceof EnableBankingError ? err.code : null;
+    const dutch = code ? dutchEnableBankingError(code) : "Ophalen bij de bank mislukt.";
+    console.warn("[ENABLEBANKING] fetching transactions failed", {
       accountId: account.accountId,
       code: code ?? "UNKNOWN",
     });
@@ -244,15 +256,15 @@ async function syncOneAccount(args: {
       accountRowId: account.id,
       syncedThrough: null,
       lastError: dutch,
-      // A bank that is down, or an account it is still preparing, must not spend the owner's
-      // daily read — otherwise his first sync after connecting greys out the button until
-      // tomorrow for something that fixes itself in minutes.
+      // A bank that is down, or our own network, must not spend the owner's daily read —
+      // otherwise his first sync after connecting greys out the button until tomorrow for
+      // something that fixes itself in minutes.
       backOff: shouldBackOffAfter(code),
     });
     return { ...base, error: dutch, errorCode: code };
   }
 
-  const { transactions, warnings } = mapGoCardlessTransactions(booked);
+  const { transactions, warnings, skipped: pending } = mapEnableBankingTransactions(raw);
   const { inserted, skipped } = await storeTransactions({
     pipeline,
     userId: connection.userId,
@@ -261,7 +273,7 @@ async function syncOneAccount(args: {
 
   await recordAccountSync({ accountRowId: account.id, syncedThrough: dateTo, lastError: null });
 
-  return { ...base, fetched: booked.length, inserted, skipped, warnings };
+  return { ...base, fetched: raw.length, inserted, skipped, pending, warnings };
 }
 
 /**
@@ -273,7 +285,7 @@ async function syncOneAccount(args: {
 export async function syncBankConnection(args: {
   connection: BankConnection;
   pipeline?: PipelineClient;
-  client?: GoCardlessClient;
+  client?: EnableBankingClient;
   now?: Date;
   force?: boolean;
 }): Promise<ConnectionSyncResult> {
@@ -284,7 +296,7 @@ export async function syncBankConnection(args: {
 
   const result: ConnectionSyncResult = {
     connectionId: connection.id,
-    institutionName: connection.institutionName,
+    institutionName: connection.institutionName ?? connection.aspspName,
     accounts: [],
     inserted: 0,
     autoBooked: 0,
@@ -296,12 +308,14 @@ export async function syncBankConnection(args: {
     return result;
   }
 
-  let client: GoCardlessClient;
+  let client: EnableBankingClient;
   try {
-    client = args.client ?? createGoCardlessClient();
+    client = args.client ?? createEnableBankingClient();
   } catch (err) {
     result.error =
-      err instanceof GoCardlessError ? dutchGoCardlessError(err.code) : "De bankkoppeling is niet beschikbaar.";
+      err instanceof EnableBankingError
+        ? dutchEnableBankingError(err.code)
+        : "De bankkoppeling is niet beschikbaar.";
     return result;
   }
 
@@ -311,16 +325,16 @@ export async function syncBankConnection(args: {
     result.inserted += one.inserted;
   }
 
-  // An expired consent shows up as a failure on EVERY account at once — the whole requisition
-  // died, not one account. Promote it to the connection so the card asks the owner to
-  // reconnect instead of showing four identical account errors he cannot act on.
+  // An expired consent shows up as a failure on EVERY account at once — the whole session died,
+  // not one account. Promote it to the connection so the card asks the owner to reconnect instead
+  // of showing four identical account errors he cannot act on.
   const errored = result.accounts.filter((a) => a.error);
   if (errored.length > 0 && errored.length === result.accounts.length) {
     result.error = errored[0].error;
-    // 'expired' is the status that makes the panel offer "Opnieuw koppelen" instead of a
-    // "Ververs" button that can only fail — so it must cover every cause that only a fresh
-    // consent can fix (lapsed agreement, suspended after repeated failures, account gone at the
-    // bank), not just the literal expiry. Decided on the CODE, never on the Dutch sentence.
+    // 'expired' is the status that makes the panel offer "Opnieuw koppelen" instead of a "Ververs"
+    // button that can only fail — so it must cover every cause that only a fresh consent can fix
+    // (lapsed consent, an invalidated session, an account gone at the bank), not just the literal
+    // expiry. Decided on the CODE, never on the Dutch sentence.
     const dead = errored[0].errorCode !== null && needsReconnect(errored[0].errorCode);
     await setConnectionStatus({
       connectionId: connection.id,
@@ -334,21 +348,21 @@ export async function syncBankConnection(args: {
     }
   }
 
-  // [BANK-CIRCLE-SERVER] Close the circle the moment new transactions land, exactly as the
-  // upload path does: book the near-certain payments (reference printed + amount to the cent)
-  // without waiting for the owner to open /dashboard/bank. Best-effort — a reconcile hiccup
-  // must never undo a successful import.
+  // [BANK-CIRCLE-SERVER] Close the circle the moment new transactions land, exactly as the upload
+  // path does: book the near-certain payments (reference printed + amount to the cent) without
+  // waiting for the owner to open /dashboard/bank. Best-effort — a reconcile hiccup must never
+  // undo a successful import.
   if (result.inserted > 0) {
     try {
       const confirmed = await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: connection.userId });
       result.autoBooked = confirmed.length;
     } catch (e) {
-      console.error("[GOCARDLESS] auto-confirm after sync failed (non-fatal)", e);
+      console.error("[ENABLEBANKING] auto-confirm after sync failed (non-fatal)", e);
     }
     try {
       await applyLearnedBankCategories({ pipeline, userId: connection.userId });
     } catch (e) {
-      console.error("[GOCARDLESS] auto-categorize after sync failed (non-fatal)", e);
+      console.error("[ENABLEBANKING] auto-categorize after sync failed (non-fatal)", e);
     }
   }
 

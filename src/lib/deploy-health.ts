@@ -84,19 +84,19 @@ export const ENV_CHECKS: readonly EnvCheck[] = [
     severity: "optioneel",
     gevolg: "de SnelStart-koppeling toont zich als 'nog niet beschikbaar' — bewust, geen fout",
   },
-  // [GOCARDLESS] Twee sleutels, één functie: zonder ALLEBEI is er geen bankkoppeling. Ze staan
+  // [ENABLEBANKING] Twee sleutels, één functie: zonder ALLEBEI is er geen bankkoppeling. Ze staan
   // los in deze lijst zodat het rapport de ONTBREKENDE bij naam noemt — "de bankkoppeling doet
   // het niet" met twee kandidaten is precies het rapport waar je niets aan hebt.
   //
   // 'optioneel', niet 'stil': ontbreken ze, dan verbergt de koppelkaart zichzelf en blijft
   // uploaden gewoon werken. Er gaat dus niets stil kapot — er staat alleen iets niet aan.
   {
-    key: "GOCARDLESS_SECRET_ID",
+    key: "ENABLEBANKING_APPLICATION_ID",
     severity: "optioneel",
     gevolg: "de bankkoppeling verbergt zich; een bankafschrift uploaden werkt gewoon door",
   },
   {
-    key: "GOCARDLESS_SECRET_KEY",
+    key: "ENABLEBANKING_PRIVATE_KEY",
     severity: "optioneel",
     gevolg: "de bankkoppeling verbergt zich; een bankafschrift uploaden werkt gewoon door",
   },

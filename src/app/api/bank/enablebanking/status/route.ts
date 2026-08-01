@@ -1,7 +1,7 @@
-// src/app/api/bank/gocardless/status/route.ts
-// [GOCARDLESS] What the bank card on /dashboard/bank reads.
+// src/app/api/bank/enablebanking/status/route.ts
+// [ENABLEBANKING] What the bank card on /dashboard/bank reads.
 //
-// GET /api/bank/gocardless/status
+// GET /api/bank/enablebanking/status
 //   → { configured, connections: [{ …, daysUntilExpiry, canSyncNow }] }
 //
 // The two derived numbers are computed HERE rather than in the browser, so "your consent
@@ -10,20 +10,28 @@
 
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { isGoCardlessConfigured } from "@/lib/gocardless-client";
-import { listBankConnections } from "@/lib/gocardless-connection";
-import { isAccountDue } from "@/lib/gocardless-sync";
+import { isEnableBankingConfigured } from "@/lib/enablebanking-client";
+import { listBankConnections } from "@/lib/enablebanking-connection";
+import { isAccountDue } from "@/lib/enablebanking-sync";
 
 export const dynamic = "force-dynamic";
 
-/** Whole days from today until `date` (YYYY-MM-DD); null when there is no date, negative when
- *  it has already passed. */
-export function daysUntil(date: string | null, now = new Date()): number | null {
-  if (!date) return null;
-  const target = Date.parse(`${date}T00:00:00Z`);
-  if (!Number.isFinite(target)) return null;
+/**
+ * Whole days from today until `moment`; null when there is none, negative when it has passed.
+ *
+ * Enable Banking hands back an absolute ISO timestamp (access.valid_until), not a day count, so
+ * this accepts either that or a bare YYYY-MM-DD. Both are reduced to the DAY before subtracting:
+ * comparing a timestamp against "now" would make a consent that dies at 09:00 read as "0 days"
+ * from 09:01 the day before, and the owner would be warned a day late — the one day where the
+ * warning still buys him something.
+ */
+export function daysUntil(moment: string | null, now = new Date()): number | null {
+  if (!moment) return null;
+  const parsed = Date.parse(moment.length <= 10 ? `${moment}T00:00:00Z` : moment);
+  if (!Number.isFinite(parsed)) return null;
+  const targetDay = Date.parse(`${new Date(parsed).toISOString().slice(0, 10)}T00:00:00Z`);
   const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
-  return Math.round((target - today) / 86_400_000);
+  return Math.round((targetDay - today) / 86_400_000);
 }
 
 export async function GET() {
@@ -33,7 +41,7 @@ export async function GET() {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const configured = isGoCardlessConfigured();
+  const configured = isEnableBankingConfigured();
   if (!configured) {
     // An unconfigured server hides the card entirely rather than showing a dead button.
     return NextResponse.json({ configured: false, connections: [] });
@@ -42,7 +50,7 @@ export async function GET() {
   const now = new Date();
   const connections = (await listBankConnections(user.id)).map((c) => ({
     id: c.id,
-    institutionName: c.institutionName ?? c.institutionId,
+    institutionName: c.institutionName ?? c.aspspName,
     institutionBic: c.institutionBic,
     status: c.status,
     connectedAt: c.connectedAt,

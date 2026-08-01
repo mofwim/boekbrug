@@ -1,7 +1,7 @@
-// src/app/api/bank/gocardless/sync/route.ts
-// [GOCARDLESS] The owner's "ververs" button, and the first pull after connecting.
+// src/app/api/bank/enablebanking/sync/route.ts
+// [ENABLEBANKING] The owner's "ververs" button, and the first pull after connecting.
 //
-// POST /api/bank/gocardless/sync  { connectionId? }
+// POST /api/bank/enablebanking/sync  { connectionId? }
 //   → { inserted, autoBooked, connections: [...], warnings: [...] }
 //
 // Without a connectionId every live connection of this owner is synced — which is what the
@@ -17,9 +17,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { isGoCardlessConfigured, dutchGoCardlessError } from "@/lib/gocardless-client";
-import { getBankConnection, listBankConnections } from "@/lib/gocardless-connection";
-import { syncBankConnection } from "@/lib/gocardless-sync";
+import { isEnableBankingConfigured, dutchEnableBankingError } from "@/lib/enablebanking-client";
+import { getBankConnection, listBankConnections } from "@/lib/enablebanking-connection";
+import { syncBankConnection } from "@/lib/enablebanking-sync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -33,13 +33,13 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
-  if (!isGoCardlessConfigured()) {
-    return NextResponse.json({ error: dutchGoCardlessError("NOT_CONFIGURED") }, { status: 503 });
+  if (!isEnableBankingConfigured()) {
+    return NextResponse.json({ error: dutchEnableBankingError("NOT_CONFIGURED") }, { status: 503 });
   }
 
   const limit = await checkRateLimit({
     userId: user.id,
-    endpoint: "/api/bank/gocardless/sync",
+    endpoint: "/api/bank/enablebanking/sync",
     ...RATE_LIMITS.BANK_SYNC,
   });
   if (!limit.allowed) return rateLimitResponse(limit);

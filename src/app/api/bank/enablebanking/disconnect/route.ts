@@ -1,12 +1,12 @@
-// src/app/api/bank/gocardless/disconnect/route.ts
-// [GOCARDLESS] Stop the feed.
+// src/app/api/bank/enablebanking/disconnect/route.ts
+// [ENABLEBANKING] Stop the feed.
 //
-// POST /api/bank/gocardless/disconnect  { connectionId }
+// POST /api/bank/enablebanking/disconnect  { connectionId }
 //   → { ok: true }
 //
 // Two things happen, and the ORDER is chosen so a half-failure lands on the safe side:
-//   1. the requisition is withdrawn at GoCardless — the actual authorisation to read the
-//      owner's bank account stops existing;
+//   1. the session is ended at Enable Banking — the actual authorisation to read the owner's
+//      bank account stops existing;
 //   2. our rows are marked revoked and the accounts removed.
 //
 // Upstream first. If step 2 failed after step 1 we hold a dead row that syncs nothing (visible,
@@ -21,11 +21,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import {
-  createGoCardlessClient,
-  GoCardlessError,
-  isGoCardlessConfigured,
-} from "@/lib/gocardless-client";
-import { getBankConnection, revokeBankConnection } from "@/lib/gocardless-connection";
+  createEnableBankingClient,
+  EnableBankingError,
+  isEnableBankingConfigured,
+} from "@/lib/enablebanking-client";
+import { getBankConnection, revokeBankConnection } from "@/lib/enablebanking-connection";
 
 export const dynamic = "force-dynamic";
 
@@ -53,17 +53,20 @@ export async function POST(req: NextRequest) {
   const connection = await getBankConnection(user.id, connectionId);
   if (!connection) return NextResponse.json({ error: "Koppeling niet gevonden" }, { status: 404 });
 
-  if (isGoCardlessConfigured()) {
+  // A connection the owner abandoned before returning from his bank has no session, so there is
+  // nothing upstream to withdraw — which is the whole reason the row is created before the
+  // redirect rather than after it.
+  if (connection.sessionId && isEnableBankingConfigured()) {
     try {
-      await createGoCardlessClient().deleteRequisition(connection.requisitionId);
+      await createEnableBankingClient().deleteSession(connection.sessionId);
     } catch (err) {
       // A 404 means it is already gone upstream — that is success, not failure. Anything else is
       // logged and we continue: refusing to disconnect locally because the remote call failed
       // would trap the owner in a connection he has asked twice to be rid of, and the withdrawal
-      // can still be completed from the GoCardless side.
-      const code = err instanceof GoCardlessError ? err.code : "UNKNOWN";
+      // can still be completed from the Enable Banking side.
+      const code = err instanceof EnableBankingError ? err.code : "UNKNOWN";
       if (code !== "NOT_FOUND") {
-        console.error("[GOCARDLESS] withdrawing the requisition failed — disconnecting locally anyway", {
+        console.error("[ENABLEBANKING] ending the session failed — disconnecting locally anyway", {
           userId: user.id,
           connectionId,
           code,

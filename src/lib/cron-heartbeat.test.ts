@@ -14,7 +14,7 @@ test("de zeven crons uit vercel.json staan erin, met hun ritme", () => {
   ]);
   assert.equal(CRON_JOBS["reconcile"], 1);
   assert.equal(CRON_JOBS["email-sync"], 2);
-  // [GOCARDLESS] Dagelijks: de bank staat maar een handvol opvragingen per dag per rekening toe.
+  // [ENABLEBANKING] Dagelijks: de bank staat maar een handvol opvragingen per dag per rekening toe.
   assert.equal(CRON_JOBS["bank-sync"], 24);
 });
 
@@ -62,7 +62,7 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
     {
       "email-sync": run(1),
       reconcile: run(0.5),
-      // [GOCARDLESS] De bankfeed hoort er ook bij. Ontbreekt hij hier, dan telt hij als
+      // [ENABLEBANKING] De bankfeed hoort er ook bij. Ontbreekt hij hier, dan telt hij als
       // nooit-gedraaid — precies de kant waar deze functie bewust op faalt (zie hieronder).
       "bank-sync": run(2),
       reminders: run(2),

@@ -15,7 +15,7 @@
 export const CRON_JOBS = {
   "email-sync": 2,
   reconcile: 1,
-  // [GOCARDLESS] De bankfeed. Draait dagelijks omdat de bank maar een handvol opvragingen per
+  // [ENABLEBANKING] De bankfeed. Draait dagelijks omdat de bank maar een handvol opvragingen per
   // dag per rekening toestaat — vaker draaien levert niets op en zet de feed juist stil. Valt
   // hij om, dan komen er geen banktransacties meer binnen terwijl het scherm er normaal uitziet:
   // precies het stille falen waarvoor deze hartslag bestaat.

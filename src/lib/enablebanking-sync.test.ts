@@ -1,4 +1,4 @@
-// [GOCARDLESS] Pure node test — run: npx tsx --test src/lib/gocardless-sync.test.ts
+// [ENABLEBANKING] Pure node test — run: npx tsx --test src/lib/enablebanking-sync.test.ts
 //
 // The sync itself talks to a database and is covered by the client and mapper tests either side
 // of it. What is pinned HERE is the arithmetic that decides when we may call the bank and which
@@ -16,8 +16,8 @@ import {
   SYNC_MIN_INTERVAL_HOURS,
   SYNC_OVERLAP_DAYS,
   syncWindow,
-} from "./gocardless-sync";
-import { MAX_HISTORICAL_DAYS_CAP } from "./gocardless-client";
+  MAX_HISTORICAL_DAYS_CAP,
+} from "./enablebanking-sync";
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
