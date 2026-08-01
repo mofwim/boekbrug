@@ -1146,9 +1146,16 @@ export async function verifyInvoiceFromPdf(
   // from the vendor's and never return ours as the vendor. Also used as a programmatic backstop
   // below (any vendor field equal to ours is dropped). Optional → callers that don't pass it keep
   // the name-only behaviour.
+  // [READING-MEMORY] A block naming the suppliers whose invoices this owner has repeatedly had to
+  // correct BY HAND after a previous read, and which field. Built by reading-memory.ts from the
+  // audit trail; it names fields only, never amounts. Injected into the USER prompt below rather
+  // than the system prompt, which is cache-marked and identical for every owner — per-owner text
+  // there would miss the cache on every call. Optional: absent → the reader behaves exactly as
+  // before, which is also what happens when the memory could not be loaded.
   opts?: {
     throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean
     receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+    readingHint?: string | null
   }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
@@ -1503,6 +1510,10 @@ Per-field confidence rules:
 - Be honest. A low score is BETTER than a confident wrong answer — the user will be asked
   to confirm low-confidence fields. Do not inflate these scores.${receiverHint}`;
 
+  // [READING-MEMORY] Appended AFTER the task, never before it: the instruction stands on its own,
+  // and the memory is context for it. Empty for almost every owner — most have no supplier past the
+  // threshold — so the usual prompt is byte-identical to what it was.
+  const memoryBlock = typeof opts?.readingHint === 'string' && opts.readingHint.trim() ? `\n${opts.readingHint}\n` : '';
   const prompt = `Verify if this document is a real invoice or receipt.
 Filename: ${filename}
 
@@ -1510,7 +1521,7 @@ Read the full content and answer:
 1. Is this a real financial document that requires or confirms payment?
 2. Extract the vendor, invoice number, date
 3. Extract the full amount breakdown: amount excl. BTW, BTW amount, total incl. BTW, BTW rate
-
+${memoryBlock}
 Return JSON only.`;
 
   // [REREAD-STRONG] Reader model + read strategy. Default: undefined model (→ callClaude* use

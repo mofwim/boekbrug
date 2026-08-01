@@ -33,6 +33,8 @@ import { gateFairUse } from "@/lib/fair-use-gate";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { readingPromptHint } from "@/lib/reading-memory";
+import { loadReadingMemory } from "@/lib/reading-memory-source";
 import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
@@ -199,7 +201,11 @@ export async function POST(req: NextRequest) {
   // maandtegoed kost — dezelfde belofte als op de andere vijf AI-routes.
   let verification: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>;
   try {
-    verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName);
+    verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
+      // [READING-MEMORY] Fields only, never amounts — see readingPromptHint. This path books
+      // straight to 'paid', so a better first read is worth more here than anywhere else.
+      readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
+    });
   } catch (aiErr) {
     await gate.release();
     throw aiErr;

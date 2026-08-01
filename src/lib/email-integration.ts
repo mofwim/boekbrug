@@ -28,6 +28,9 @@ import {
   type PossibleDuplicate,
 } from '@/lib/safecore'
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from '@/lib/possible-duplicate-collect'
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
+import { readingPromptHint } from '@/lib/reading-memory'
+import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
@@ -1460,6 +1463,8 @@ export async function classifyAttachment(
   opts?: {
     model?: string; preferRawPdf?: boolean
     receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+    // [READING-MEMORY] Rendered once by the caller — see the sync run and the re-read route.
+    readingHint?: string | null
   }
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
@@ -1475,6 +1480,7 @@ export async function classifyAttachment(
     receiverKvk: opts?.receiverKvk,
     receiverBtw: opts?.receiverBtw,
     receiverIban: opts?.receiverIban,
+    readingHint: opts?.readingHint,
   })
 
   return {
@@ -2384,6 +2390,20 @@ export async function syncUserEmails(
     remainingForNextSync: remainingAfterBatch,
   })
 
+  // [READING-MEMORY] Loaded here, and only here.
+  //
+  // ONCE per run, not per attachment: PHASE 1 classifies in parallel below, so a per-file load would
+  // fire the same query for every attachment in the batch. And only when there IS something to
+  // classify — most syncs find no new mail, and this cron runs for every connected owner all day,
+  // so a load next to the profile read (where it started) was a query per owner per sync forever,
+  // for a value nothing would use.
+  //
+  // Fields only, never amounts — see readingPromptHint. Null for almost every owner, and null when
+  // the audit read fails, in which case the reader behaves exactly as it did before this existed.
+  const readingHint = freshAttachments.length > 0
+    ? readingPromptHint(await loadReadingMemory(supabase, userId))
+    : null
+
   // PHASE 1 — classify only NEW attachments in parallel (AI_CONCURRENCY in flight)
   const classified: Classified[] = await mapConcurrent(
     freshAttachments,
@@ -2395,7 +2415,7 @@ export async function syncUserEmails(
           attachment.mimeType,
           attachment.filename,
           receiverName,
-          { receiverKvk, receiverBtw, receiverIban }
+          { receiverKvk, receiverBtw, receiverIban, readingHint }
         )
         return { attachment, classification, classifyFailed: false }
       } catch (err) {

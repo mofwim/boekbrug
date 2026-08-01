@@ -59,6 +59,13 @@ mock.module("next/navigation", {
     useRouter: () => ({ push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} }),
     useSearchParams: () => new URLSearchParams(),
     usePathname: () => "/dashboard",
+    // A client PAGE reads its own route parameter. Stubbing it lets /dashboard/invoice/[id] be
+    // rendered like any other component.
+    useParams: () => ({ id: "inv-1" }),
+    // These throw in real Next too — a render that reaches them is a redirect, not a crash, and a
+    // test asserting "it renders" should say so out loud rather than pass on a silent no-op.
+    notFound: () => { throw new Error("[RENDER-GATE] the component called notFound()"); },
+    redirect: (to: string) => { throw new Error(`[RENDER-GATE] the component redirected to ${to}`); },
   },
 });
 
@@ -284,7 +291,24 @@ const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<st
   { name: "bank", path: "../../src/app/dashboard/bank/BankClient", props: {} },
   { name: "kas", path: "../../src/app/dashboard/kas/KasClient", props: {} },
   { name: "aangifte", path: "../../src/app/dashboard/aangifte/AangifteClient", props: {} },
+  // The second wave. Same reasoning, same shallow-but-real coverage — every one of these was
+  // probed before it was wired, and none of them was broken. This buys protection against the next
+  // change; it did not repair anything outstanding.
+  { name: "dagomzet (kassa-omzet)", path: "../../src/app/dashboard/dagomzet/DagomzetImportClient", props: {} },
+  { name: "waarheid", path: "../../src/app/dashboard/waarheid/WaarheidClient", props: {} },
+  { name: "klaar (kwartaal-gereedheid)", path: "../../src/app/dashboard/klaar/KlaarClient", props: {} },
+  // A client PAGE rather than a client component — it reads its id from useParams, which the mock
+  // at the top of this file supplies.
+  { name: "invoice detail", path: "../../src/app/dashboard/invoice/[id]/page", props: {} },
 ];
+
+/**
+ * Not on the list, and stated rather than left to be noticed: /dashboard/resultaat and
+ * /dashboard/quarterly are async SERVER components. They await a Supabase client and a session
+ * before they render anything, so renderToStaticMarkup cannot call them without a database and a
+ * logged-in user — which is the thing this gate exists to avoid needing. quarterly's actual
+ * content is the client component QuarterlyOverview, and that one IS covered below.
+ */
 
 for (const screen of SELF_LOADING_SCREENS) {
   test(`[RENDER-GATE] ${screen.name} renders`, async () => {
@@ -300,6 +324,76 @@ for (const screen of SELF_LOADING_SCREENS) {
     assert.ok(html.length > 200, `${screen.name} rendered something`);
   });
 }
+
+test("[RENDER-GATE] the quarter overview renders, for both roles", async () => {
+  // The screen that says whether a quarter is ready to file. Its page wrapper is a server component,
+  // so the client component is the reachable half — and it branches hard on the role: an accountant
+  // sees a client list, a zzp'er sees their own quarter. Two renders, because a crash in one branch
+  // is invisible from the other.
+  const { QuarterlyOverview } = await import("../../src/components/quarterly/QuarterlyOverview");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  for (const isAccountant of [false, true]) {
+    const html = renderToStaticMarkup(
+      React.createElement(DialogProvider, null,
+        React.createElement(ToastProvider, null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          React.createElement(QuarterlyOverview as any, { isAccountant, role: isAccountant ? "accountant" : "zzper" }))),
+    );
+    assert.ok(html.length > 200, `the ${isAccountant ? "accountant" : "zzp"} branch rendered`);
+  }
+});
+
+test("[RENDER-GATE] the accountant bridge renders a tree with money on it", async () => {
+  // Takes its data as props, so unlike the self-loading screens above this one gets real nodes —
+  // and the lesson from the bug that started this file applies directly: an empty array never calls
+  // the callbacks that do the work, so the branches would go unvisited.
+  const { default: BrugClient } = await import("../../src/app/dashboard/brug/BrugClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const node = (over: Record<string, unknown> = {}) => ({
+    source: "invoice", id: "n1", displayName: "RE0801378", path: ["2026", "Q1", "Voldaan"],
+    date: "2026-03-12", amount: 871.4, badges: [], pdfUrl: null, hidden: false, clientId: null,
+    ownerId: "u1", partyName: "Groothandel", direction: "incoming", hasLocation: true,
+    folderId: null, docId: null, ...over,
+  });
+
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(BrugClient as any, {
+          nodes: [
+            node(),
+            // A credit note: negative, and badged as such.
+            node({ id: "n2", displayName: "CN9", amount: -109, badges: [{ label: "Creditnota", tone: "info" }] }),
+            // An outgoing invoice, a hidden (archived) row, and a document with no amount at all.
+            node({ id: "n3", displayName: "2026-001", direction: "outgoing", amount: 1210 }),
+            node({ id: "n4", displayName: "Oud", hidden: true }),
+            node({ id: "n5", source: "document", displayName: "bankafschrift.pdf", amount: null, partyName: null, direction: null, docId: "d1" }),
+          ],
+          role: "zzper",
+          docStatus: { d1: { status: "verwerkt", vraag_text: null } },
+          readFailed: [],
+        }))),
+  );
+  assert.ok(html.length > 500, "the bridge rendered its tree");
+});
+
+test("[RENDER-GATE] the accountant bridge says when a read failed", async () => {
+  // [NO-SILENT-EMPTY] An empty tree plus a failed read must never render as "there is nothing here".
+  const { default: BrugClient } = await import("../../src/app/dashboard/brug/BrugClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(BrugClient as any, { nodes: [], role: "zzper", docStatus: {}, readFailed: ["facturen"] }))),
+  );
+  assert.ok(html.length > 200, "it still renders when the read failed");
+});
 
 test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", async () => {
   // The money dashboard: what is due, what is overdue, what is partly paid. It takes its rows as
