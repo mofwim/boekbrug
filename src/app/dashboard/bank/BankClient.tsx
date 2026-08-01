@@ -305,7 +305,14 @@ export default function BankClient() {
         body: JSON.stringify({ transactionId: txId }),
       })
       const json = await res.json().catch(() => ({}))
-      if (res.ok) { await runMatch(); showToast('Koppeling ongedaan gemaakt.') }
+      // [PARTIAL-PAY-INVARIANT] The unlink can succeed while the server fails to re-derive what is
+      // still open on one of the invoices. That leaves the balance reading HIGHER than it is, which
+      // is the direction that makes an owner pay the same money twice — so it gets the warning, not
+      // the cheerful confirmation.
+      if (res.ok) {
+        await runMatch()
+        showToast(json.balanceWarning ? String(json.balanceWarning) : 'Koppeling ongedaan gemaakt.')
+      }
       else if (json.error === 'verwerkt') showToast('De boekhouder heeft deze factuur al verwerkt — vraag eerst om dat ongedaan te maken.')
       else if (json.error === 'multi_invoice_unlink_unsupported') showToast('Ontkoppelen van een groepsbetaling kan hier nog niet.')
       else showToast('Ontkoppelen mislukt.')
