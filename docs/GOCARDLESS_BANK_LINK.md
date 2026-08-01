@@ -111,8 +111,16 @@ Two more things that sample settled, both pinned by tests:
 The vendor sample is Danish and settles none of this. A real ING business quarter (576
 transactions) does, and it broke the mapper in three places.
 
-**ING does not send `<Ustrd>`.** It sends the line it prints on a statement, with everything the
-CAMT file keeps in separate elements folded in as labelled segments:
+**Provenance first, because it bounds every claim in this section.** That quarter is real ING
+data — its signed sum lands on the bank's own closing balance to the cent — but it reached us as
+JSON *converted from ING's CSV export*, not captured from a live Enable Banking response. So the
+strings are ING's and the failures below are real failures on real text; "the PSD2 feed delivers
+them this way" is **not** established. Every fix below is therefore written to be inert when the
+text does not look like this. A live `/accounts/{id}/transactions` response is still the artifact
+that would settle it.
+
+**ING's statement text is not a remittance.** It is the line it prints, with everything the CAMT
+file keeps in separate elements folded in as labelled segments:
 
 ```
 Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501
@@ -136,11 +144,21 @@ Two more, same origin:
 - **`.iban` is not always an IBAN.** The three bank-charge lines carry
   `"NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026"` — the owner's own account with a billing
   period stapled on. It now goes through the app's existing mod-97 `isValidIban`.
+- **`reference_number` repeats the Omschrijving, but not always whole.** Two conversions of the
+  *same* quarter give `"Incasso Huur Periode: 01-04-2026 tot 01-05-2026"` and plain `"Incasso Huur"`
+  for the same rent payment, and one fills `transaction_date` where the other leaves it null. So the
+  reference is appended on **containment**, never equality — and the date order stays `value_date`
+  first, which is what the file door uses and what keeps both conversions agreeing.
+
+That last pair is the useful lesson twice over: one export of a bank is not that bank's format, and
+a file that *looks* like a provider's format may never have touched that provider.
 
 **The sign convention is proven on that quarter, not just argued:** opening balance 6548,63 plus
 the sum of all 576 signed amounts lands on the closing balance 4969,70 to the cent, and the
-per-line `balance_after_transaction` agrees on all 576 rows. Had the indicator been read the
-GoCardless way, that sum would have been off by more than €11.000.
+per-line `balance_after_transaction` agrees on all 576 rows. Read the GoCardless way — every
+amount taken at face value — the same quarter comes to +361.165,81 instead of −1.578,93: the
+€181.372,37 the owner paid out counted as money received, an error of €362.744,74 on a business
+whose quarter actually moved backwards by €1.578,93.
 
 The mapper is written against that quarter and the vendor sample. The network layer is not written
 yet: it needs Enable Banking's authentication documentation (how the RSA-signed JWT is built and

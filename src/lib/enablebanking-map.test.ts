@@ -492,9 +492,8 @@ test("the mandate id and the bank's own kenmerk never become an invoice number",
 });
 
 test("the structured reference does not survive as a second copy of the text", () => {
-  // ING repeats reference_number verbatim inside the composed line on 560 of 560 rows. Appended
-  // to the composed form it is a copy the de-duplication cannot see; against the un-composed text
-  // it matches exactly and falls away.
+  // ING repeats reference_number inside its own composed line. Appended to the composed form it is
+  // a copy nothing removes, and extractInvoiceReference then reads the same number twice.
   assert.equal(
     collectRemittance({
       reference_number: "26002148",
@@ -504,6 +503,38 @@ test("the structured reference does not survive as a second copy of the text", (
       ],
     }),
     "26002148",
+  );
+
+  // …and it is not always repeated verbatim. Two exports of the SAME rent payment give the whole
+  // Omschrijving in one and a shortened "Incasso Huur" in the other, so the check is containment,
+  // not equality — an equality check leaves "…tot 01-05-2026 Incasso Huur" behind.
+  assert.equal(
+    collectRemittance({
+      reference_number: "Incasso Huur",
+      remittance_information: [
+        "Naam: WonenBreburg Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
+          "IBAN: NL37BNGH0285007416 Kenmerk: TK10962798 Valutadatum: 01-04-2026",
+      ],
+    }),
+    "Incasso Huur Periode: 01-04-2026 tot 01-05-2026",
+  );
+
+  // The bank-charge line is not a composition at all, and its reference sits in the free text.
+  assert.equal(
+    collectRemittance({
+      reference_number: "10001461242",
+      remittance_information: [
+        "Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
+      ],
+    }),
+    "Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
+  );
+
+  // A betaalverzoek whose kenmerk exists ONLY in the structured field still gets it — the case
+  // [CAMT-STRD-REF] exists for. Containment must not swallow that.
+  assert.equal(
+    collectRemittance({ reference_number: "26302050", remittance_information: ["Betaling factuur"] }),
+    "Betaling factuur 26302050",
   );
 });
 

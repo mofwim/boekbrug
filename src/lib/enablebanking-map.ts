@@ -36,11 +36,23 @@
 //
 // ── What this was written against ─────────────────────────────────────────────────────────────
 //
-// The vendor's sample accounts-data export (the shape their mock ASPSP serves back). Extra fields
-// the live API adds are ignored harmlessly, but two things stay unverified until a real
-// /accounts/{id}/transactions response is in hand, and both are called out at their branch:
-// whether the live model carries an end-to-end id (the sample has none), and whether
-// remittance_information is ever longer than one element.
+// TWO sources, and they do not carry the same authority. Read this before citing either.
+//
+//   1. Enable Banking's own sample accounts-data export — the shape their mock ASPSP serves back.
+//      This is the vendor speaking, and it is what the FIELD NAMES and the credit_debit_indicator
+//      convention rest on. It is Danish, so it exercises none of the Dutch text patterns.
+//   2. A real ING business quarter, 576 transactions — but reshaped into this JSON from ING's CSV
+//      export, NOT captured from a live Enable Banking response. The money in it is real (its
+//      signed sum lands on the bank's own closing balance to the cent) and so are the Dutch
+//      strings, which is why the Dutch branches below are tuned against it. What it does NOT
+//      establish is how the live PSD2 feed shapes those strings — a converter stood in between.
+//
+// So: field-level facts come from (1). Text-level behaviour is tuned against (2) and written to be
+// INERT when the text does not look like that — see statementRemittance. Three things stay
+// unverified until a real /accounts/{id}/transactions response is in hand, each called out at its
+// branch: whether the live model carries an end-to-end id (the vendor sample has none), whether
+// remittance_information is ever longer than one element, and whether a Dutch bank really delivers
+// its composed statement line as the remittance.
 
 import type { BankTransaction } from "./bank-parser";
 import { extractInvoiceReference, deriveReadableName, isValidIsoDate } from "./bank-parser";
@@ -204,23 +216,28 @@ export function collectRemittance(tx: EnableBankingRawTransaction): string {
     for (const p of tx.remittance_information) push(p);
   }
 
-  // Un-compose BEFORE appending the structured reference. ING repeats that reference verbatim
-  // inside its composed line (560 of 560 rows in a real quarter), so appending it to the composed
-  // form adds a second copy the de-duplication cannot see — and extractInvoiceReference then reads
-  // the same invoice number twice. Against the un-composed text it matches exactly and falls away.
+  // Un-compose BEFORE appending the structured reference, and append only what the text does not
+  // already carry. ING repeats that reference inside its own composed line — usually the whole
+  // Omschrijving verbatim, but not always: two exports of the same quarter give
+  // reference_number "Incasso Huur Periode: 01-04-2026 tot 01-05-2026" and plain "Incasso Huur"
+  // for the same payment. An equality check catches the first and misses the second, so the text
+  // gains a second copy of itself and extractInvoiceReference reads the same number twice.
+  // Containment catches both, and still appends a reference the text genuinely lacks — the
+  // [CAMT-STRD-REF] case this exists for, where a betaalverzoek carries its betalingskenmerk
+  // ONLY in the structured field.
   const described = statementRemittance(parts.join(" "));
-
-  const out = described ? [described] : [];
   const ref = tx.reference_number?.replace(/\s*[\r\n]+\s*/g, " ").trim();
-  if (ref && !out.includes(ref)) out.push(ref);
-  return out.join(" ");
+
+  if (!ref) return described;
+  if (!described) return ref;
+  return described.includes(ref) ? described : `${described} ${ref}`;
 }
 
 /**
  * Un-compose a bank's ready-made statement line back to the remittance text alone.
  *
- * ING does not send `<Ustrd>` over PSD2. It sends the line it prints on a statement, with the
- * party, the account, the mandate and the value date folded in as labelled segments:
+ * ING's own statement text is not a remittance — it is the line it prints, with the party, the
+ * account, the mandate and the value date folded in as labelled segments:
  *
  *     Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501
  *     Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026
@@ -228,12 +245,20 @@ export function collectRemittance(tx: EnableBankingRawTransaction): string {
  * Every one of those labels is data the CAMT file carries in its OWN element — `<Cdtr><Nm>`,
  * `<CdtrAcct><IBAN>`, `<Refs>` — and that we already read from this transaction's own fields. Only
  * `Omschrijving:` is the remittance. Leaving the rest in is not cosmetic: extractInvoiceReference
- * then scoops up the Kenmerk, the Machtiging ID and the account digits, so a real quarter produced
- * "TK10962798, 105289" where the file door produces nothing at all, and
+ * then scoops up the Kenmerk, the Machtiging ID and the account digits, so a real ING quarter
+ * produced "TK10962798, 105289" where the file door produces nothing at all, and
  * "610015412, 5049NM, INC046015959, 5768573815, MID100185910" where it produces "610015412, 5049NM".
  * That is the [BANK-REF-ONE-SOURCE] triple failure exactly: a different reference is a different
  * contentKey (a double import), it makes parseReferenceNumbers count several invoices so
  * autoConfirmTier stops auto-booking the line, and isFullyCovered can then never be satisfied.
+ *
+ * WHERE THAT TEXT CAME FROM, precisely, because it decides how much this function may assume: it
+ * is a real ING business quarter, but reshaped into this JSON from ING's CSV export — not a live
+ * Enable Banking response. So the STRINGS are ING's and the failure above is real, while "the PSD2
+ * feed delivers them this way" is NOT established. That is why the function is inert by default:
+ * text that is not recognisably composed is returned untouched, so if the live feed sends a clean
+ * remittance this branch never fires. Confirm it against a real /accounts/{id}/transactions
+ * response before treating it as ING's wire format.
  *
  * A composition with no `Omschrijving:` at all is a transfer the payer left blank — the file door
  * has an empty `<Ustrd>` there, so this returns empty rather than handing the metadata downstream
@@ -358,7 +383,7 @@ export function mapEnableBankingTransaction(
   // [BANK-PARSE-CARD] A card purchase names no party in a file, so the store has to be derived
   // from the terminal string — and derived the SAME way on both sides.
   //
-  // Over PSD2 the acceptor string arrives in a field instead of in the text: ING sends
+  // Here the acceptor string arrives in a FIELD instead of in the text: the ING quarter carries
   // creditor.name = "BCK*OMUR MARKT AMERSFOORT NLD" where the CAMT file has no <Cdtr> at all and
   // the same string sits in the remittance. Taking that field as-is would store
   // "BCK*OMUR MARKT AMERSFOORT NLD" against the file door's "OMUR MARKT" — different name,
