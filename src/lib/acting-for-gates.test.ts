@@ -213,3 +213,24 @@ test("the browser no longer writes invoices directly", () => {
   );
   assert.ok(/\/api\/invoice\/draft/.test(page), "it should use the server route");
 });
+
+test("[SEND-EMAIL-DURABLE] a failed e-mail leaves a durable trace, not only a response field", () => {
+  // The state this guards is the quietest one the invoice path can reach: the number is
+  // consumed (art. 35, no rollback), the status says 'sent', the PDF is stored, the BTW is
+  // declared on it — and the customer received nothing. The screens do surface
+  // warning==='email_failed', but that signal lives exactly as long as the HTTP response: close
+  // the tab, lose signal on a phone after the server committed, and it is gone with no trace.
+  //
+  // Unlike the PDF-failure path above it, nothing else would ever catch this — there the missing
+  // PDF eventually shows up in the closing package. Here everything looks perfect.
+  const src = readFileSync("src/app/api/invoice/send/route.ts", "utf8");
+  const emailCatch = src.slice(src.indexOf("catch (emailErr)"), src.indexOf("── 15."));
+  assert.ok(
+    /from\('notifications'\)\s*\.insert/.test(emailCatch),
+    "the e-mail failure branch must write a notification, not only set the response warning",
+  );
+  assert.ok(
+    /acting\.actorId/.test(emailCatch),
+    "and reach whoever pressed send, not only the owner — they are the one who saw it happen",
+  );
+});
