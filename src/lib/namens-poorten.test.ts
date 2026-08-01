@@ -60,13 +60,79 @@ test("elke factuurroute lost de eigenaar op OF weigert een medewerker", () => {
   );
 });
 
-test("de twee omgebouwde routes gebruiken de eigenaar, niet de ingelogde mens", () => {
-  // draft: schrijft de factuur. send: slaat het nummer. Dit zijn de enige twee waar een
-  // medewerker daadwerkelijk doorheen loopt, en allebei moeten ze de eigenaar hebben opgelost.
-  for (const pad of ["src/app/api/invoice/draft/route.ts", "src/app/api/invoice/send/route.ts"]) {
+/**
+ * De routes waar een verkoopmedewerker daadwerkelijk doorheen loopt — de hele levensloop van
+ * een factuur zoals hij die kan bewandelen: maken, opslaan/bewerken/weggooien, versturen,
+ * herinneren, dupliceren, en corrigeren met een creditnota.
+ *
+ * Elk van deze moet de EIGENAAR hebben opgelost. Vergeet er één dat, dan boekt de medewerker
+ * daar onder zijn eigen id — en dan lopen er twee nummerreeksen onder één BTW-nummer.
+ */
+const OMGEBOUWD = [
+  "src/app/api/invoice/draft/route.ts",
+  "src/app/api/invoice/send/route.ts",
+  "src/app/api/invoice/[id]/route.ts",
+  "src/app/api/invoice/[id]/duplicate/route.ts",
+  "src/app/api/invoice/[id]/reminder/route.ts",
+  "src/app/api/invoice/creditnota/route.ts",
+];
+
+test("elke route die een medewerker mag gebruiken, rekent op naam van de EIGENAAR", () => {
+  for (const pad of OMGEBOUWD) {
     const bron = readFileSync(pad, "utf8");
     assert.ok(/getActingFor/.test(bron), `${pad} lost de eigenaar niet op`);
     assert.ok(/factuurEigenaar/.test(bron), `${pad} gebruikt factuurEigenaar() niet`);
+  }
+});
+
+test("geen van die routes bepaalt eigenaarschap nog met user.id", () => {
+  // De vorm die overal in deze codebase stond: `.eq('sender_id', user.id)` of
+  // `sender_id: user.id`. Dat is precies wat fout gaat zodra de ingelogde mens niet de eigenaar
+  // is. Audit-regels (`userId: user.id`) blijven wél toegestaan — die horen de ACTOR te noemen.
+  for (const pad of OMGEBOUWD) {
+    const bron = readFileSync(pad, "utf8");
+    for (const patroon of [
+      /\.eq\(\s*['"]sender_id['"]\s*,\s*user\.id\s*\)/,
+      /sender_id:\s*user\.id/,
+      /generateInvoiceNumber\([^)]*,\s*user\.id\s*,/,
+      /\$\{user\.id\}\/facturen/,
+    ]) {
+      assert.ok(
+        !patroon.test(bron),
+        `${pad} bepaalt eigenaarschap nog met user.id (${patroon}) — dat hoort ownerId te zijn`,
+      );
+    }
+  }
+});
+
+test("de twee routes die een NUMMER uitgeven doen dat met de sessie-client", () => {
+  // next_invoice_seq() weigert onvoorwaardelijk zodra auth.uid() NULL is. service_role kan hier
+  // dus niet in de plaats treden, en dat is de wacht die voorkomt dat een willekeurige
+  // serverroute nummers kan uitgeven. Zie company_members_sales_role.sql.
+  for (const pad of ["src/app/api/invoice/send/route.ts", "src/app/api/invoice/creditnota/route.ts"]) {
+    const bron = readFileSync(pad, "utf8");
+    assert.ok(
+      /generateInvoiceNumber\(\s*supabase\s*,\s*ownerId\s*,/.test(bron),
+      `${pad}: het nummer moet uit de reeks van ownerId komen, via de sessie-client`,
+    );
+    assert.ok(
+      !/generateInvoiceNumber\(\s*createPipelineClient\(\)/.test(bron),
+      `${pad}: service_role mag geen nummers slaan`,
+    );
+  }
+});
+
+test("wat een medewerker NIET mag, weigert hem met een leesbare zin", () => {
+  // De andere kant van de grens. Deze routes gaan er allemaal van uit dat de ingelogde mens de
+  // eigenaar is; ze zijn bewust dicht in plaats van half omgebouwd.
+  for (const pad of [
+    "src/app/api/invoice/numbering/route.ts",      // verandert de reeks van het hele bedrijf
+    "src/app/api/invoice/pay-toggle/route.ts",     // raakt de geldwaarheid en de bankafstemming
+    "src/app/api/invoice/schedules/route.ts",      // een doorlopende verplichting
+    "src/app/api/invoice/[id]/archive/route.ts",   // een factuur uit de boeken halen
+  ]) {
+    const bron = readFileSync(pad, "utf8");
+    assert.ok(/vereisEigenaar/.test(bron), `${pad} hoort dicht te staan voor een medewerker`);
   }
 });
 

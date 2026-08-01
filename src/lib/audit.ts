@@ -91,6 +91,10 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [NAMENS] Een herinnering die MET DE HAND is verstuurd (de cron logt in invoice_reminders,
+  // niet hier). Aan de andere kant zit een klant van de ondernemer; wie op die knop drukte hoort
+  // dus terug te vinden te zijn — zeker als dat een medewerker was en niet de eigenaar zelf.
+  | 'invoice.reminder_sent'
   // [NAMENS] Wie mag er onder MIJN BTW-nummer factureren?
   //
   // Dit is de zwaarste bevoegdheid die een eigenaar kan weggeven: een verkoopmedewerker geeft

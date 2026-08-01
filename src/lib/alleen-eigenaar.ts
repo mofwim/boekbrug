@@ -3,15 +3,18 @@
 //
 // WAAROM DIT BESTAAT, EN WAAROM HET GEEN LUIHEID IS
 //
-// Een verkoopmedewerker mag precies twee dingen: een factuur maken en hem versturen. Die twee
-// paden zijn omgebouwd om NAMENS de eigenaar te werken — één nummerreeks, sender_id van de baas,
-// created_by als spoor.
+// Een verkoopmedewerker moet zijn werk AF kunnen maken. Die hele levensloop is omgebouwd om
+// NAMENS de eigenaar te werken — één nummerreeks, sender_id van de baas, created_by als spoor:
+// maken (draft), bewerken en weggooien ([id]), versturen (send), herinneren (reminder),
+// dupliceren (duplicate) en corrigeren (creditnota).
 //
-// De rest van de factuur-API's is dat NIET. Ze gaan er allemaal van uit dat de ingelogde mens de
-// eigenaar van de boekhouding is: /api/invoice/creditnota, /duplicate, /archive, /pay-toggle,
-// /numbering, /betaalverzoek, /schedules. Zou een medewerker daar binnenkomen, dan zou een
-// creditnota in ZIJN nummerreeks belanden — precies de fout waar deze hele bouw over gaat, alleen
-// dan via een achterdeur.
+// De rest van de factuur-API's is dat NIET, en hoeft dat ook niet te zijn. Ze gaan er allemaal
+// van uit dat de ingelogde mens de eigenaar van de boekhouding is, en ze gaan over dingen die
+// buiten het factureren vallen: /numbering (verandert de reeks van het hele bedrijf),
+// /pay-toggle (raakt de geldwaarheid en de bankafstemming), /schedules (een doorlopende
+// verplichting), /archive (een factuur uit de boeken halen), /betaalverzoek, /supersede,
+// /multi-invoice, /payment/move. Zou een medewerker daar binnenkomen, dan boekt hij onder ZIJN
+// eigen id — precies de fout waar deze hele bouw over gaat, alleen dan via een achterdeur.
 //
 // Twee manieren om daarmee om te gaan:
 //   1. alle zeven routes ombouwen — meer oppervlak, meer kans op een fout in een pad dat vandaag
@@ -19,9 +22,10 @@
 //   2. ze dichtzetten voor een medewerker, met een zin die zegt waarom.
 //
 // Dit is 2, met opzet. Het is een BEWUSTE grens, geen vergeten geval: een medewerker die op
-// "creditnota" tikt hoort te lezen dat zijn baas dat doet, niet stilzwijgend een tweede
-// nummerreeks te openen. Wordt zo'n functie later voor hem opengezet, dan is dat één route
-// tegelijk — met dezelfde behandeling als send: ownerId erin, created_by als spoor, en een test.
+// "nummering wijzigen" tikt hoort te lezen dat zijn baas dat doet, niet stilzwijgend de reeks van
+// het hele bedrijf te verzetten. Wordt zo'n functie later voor hem opengezet, dan is dat één
+// route tegelijk — met dezelfde behandeling als send: ownerId erin, created_by als spoor, en een
+// regel in de OMGEBOUWD-lijst van namens-poorten.test.ts erbij.
 
 import { NextResponse } from "next/server";
 import { getActingFor } from "@/lib/acting-for-server";
