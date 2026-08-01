@@ -235,3 +235,98 @@ export function reconcileDay(input: ReconcileInput): ReconcileBreak[] {
 
   return breaks;
 }
+
+// ── [TURNOVER-ARITHMETIC] Can this day's numbers be true at all? ──────────────
+//
+// daily_turnover is BTW-AUTHORITATIVE: /api/aangifte reads btw_9 and btw_21 straight out of it and
+// puts them in rubriek 1a/1b as tax you OWE. And /api/turnover/import wrote them from the request
+// body with nothing but a numeric coercion — it checked the DATE three ways (real calendar day, not
+// in the future, no duplicate day) and never once looked at the money.
+//
+// So a day could be stored with base_9 = 100 and btw_9 = 52 and go straight into the return. Both
+// directions cost: overstated, you pay the Belastingdienst money you do not owe; understated, the
+// return is wrong. The parser in turnover-import.ts derives the split correctly, but a server that
+// trusts the client's arithmetic is not a guard — the same sentence stands over the amount-
+// correction route.
+//
+// This does NOT re-derive the amounts. turnoverBtw above says why in as many words: the till
+// already rounded per line, and its documented figure is the one that belongs in the books. What
+// this asks is only whether the figure could be true — 52% on a 9% base could not.
+
+/** One thing about a day that cannot be true. */
+export interface TurnoverArithmeticBreak {
+  kind: "rate_9" | "rate_21" | "total";
+  /** Dutch — this is shown to the owner. See the language rule in AGENTS.md. */
+  note: string;
+  expected: number;
+  actual: number;
+}
+
+/**
+ * Deliberately loose.
+ *
+ * A Z-report is the sum of hundreds of per-line roundings, so the day's btw legitimately drifts
+ * from base × rate by cents. Two percent of the expected btw (never less than fifty cents) is far
+ * more than any accumulation of half-cent roundings and far less than any real mistake: swapping
+ * 9% for 21% is off by 133%, and the misreads that put this on the list are multiples out. A tight
+ * tolerance here would reject honest days, and a gate that rejects honest work gets switched off.
+ */
+const RATE_ABS_TOLERANCE = 0.5;
+const RATE_PCT_TOLERANCE = 0.02;
+/** The identity is exact arithmetic on figures already rounded — cents, not percentages. */
+const TOTAL_ABS_TOLERANCE = 0.05;
+const TOTAL_PCT_TOLERANCE = 0.005;
+
+function rateBreak(
+  kind: "rate_9" | "rate_21",
+  base: number,
+  btw: number,
+  rate: number,
+): TurnoverArithmeticBreak | null {
+  // Signed, not magnitude: a correction day with more refunds than sales has a negative base, and
+  // its btw is negative too. Comparing signed values gets that right for free, and would catch a
+  // negative base carrying a positive btw — which no till produces.
+  const expected = Math.round(base * (rate / 100) * 100) / 100;
+  const tolerance = Math.max(RATE_ABS_TOLERANCE, RATE_PCT_TOLERANCE * Math.abs(expected));
+  if (Math.abs(btw - expected) <= tolerance) return null;
+  return {
+    kind,
+    expected,
+    actual: btw,
+    note:
+      Math.abs(base) < 0.005
+        ? `er staat ${rate}% btw op deze dag terwijl er geen omzet tegen ${rate}% tegenover staat`
+        : `de ${rate}% btw past niet bij de ${rate}%-omzet van deze dag`,
+  };
+}
+
+/**
+ * Everything about one day's figures that cannot be true, or an empty list.
+ *
+ * Pure. It decides nothing about what to DO — the import route refuses the file (its established
+ * all-or-nothing contract, the same one the duplicate-day check uses), and it names the days.
+ */
+export function checkTurnoverArithmetic(t: DailyTurnover): TurnoverArithmeticBreak[] {
+  const breaks: TurnoverArithmeticBreak[] = [];
+  const b9 = rateBreak("rate_9", t.base_9 ?? 0, t.btw_9 ?? 0, 9);
+  if (b9) breaks.push(b9);
+  const b21 = rateBreak("rate_21", t.base_21 ?? 0, t.btw_21 ?? 0, 21);
+  if (b21) breaks.push(b21);
+
+  // The printed gross total, when the Z-report carried one. reconcileDay checks this too, but that
+  // one runs on the SCREEN, against bank and cash figures it needs as inputs — it is not, and
+  // cannot be, a gate on the write.
+  if (t.total_incl != null) {
+    const gross = Math.round((turnoverNetOmzet(t) + turnoverBtw(t).total) * 100) / 100;
+    const tolerance = Math.max(TOTAL_ABS_TOLERANCE, TOTAL_PCT_TOLERANCE * Math.abs(t.total_incl));
+    if (Math.abs(gross - t.total_incl) > tolerance) {
+      breaks.push({
+        kind: "total",
+        expected: t.total_incl,
+        actual: gross,
+        note: "omzet plus btw is niet gelijk aan het totaal van deze dag",
+      });
+    }
+  }
+  return breaks;
+}
