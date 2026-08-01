@@ -71,12 +71,21 @@ import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
 // hard-coded switch to 'claude-sonnet-4-5-20251001' returned HTTP 404 (that exact id is not
 // available on this account), which silently broke EVERY invoice classification — no invoice could
-// be read or imported. The lesson: never hard-code an unverified model id. The default below is the
-// Haiku model this app has always run on successfully; to try a smarter model (e.g. a valid Sonnet),
-// set CLAUDE_MODEL in the environment — and if that id is unavailable, just clear the env var to
-// fall straight back to the working Haiku default, with NO code change or deploy needed.
-const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
-const CLAUDE_MODEL = (process.env.CLAUDE_MODEL || '').trim() || DEFAULT_CLAUDE_MODEL;
+// be read or imported. The lesson: never hard-code an unverified model id. The default is the Haiku
+// model this app has always run on successfully; to try a smarter model (e.g. a valid Sonnet), set
+// CLAUDE_MODEL in the environment — and if that id is unavailable, just clear the env var to fall
+// straight back to the working Haiku default, with NO code change or deploy needed.
+//
+// De waarde en de terugvalregel staan sinds [MODEL-CONFIG] in ai-model.ts, omdat de les hierboven
+// een tweede keer werd overtreden: de herleesroute zette er zijn eigen model-id naast en ging langs
+// dit hele mechanisme heen. Eén plek, met tests — zie de kop van dat bestand.
+import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
+
+/**
+ * Het model waarmee deze app leest. Geëxporteerd zodat een route die een ANDER model wil proberen
+ * (de handmatige herlezing) hier op terug kan vallen in plaats van zijn eigen standaard te kiezen.
+ */
+export const CLAUDE_MODEL = resolveModel(process.env.CLAUDE_MODEL, DEFAULT_CLAUDE_MODEL);
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)

@@ -2408,7 +2408,9 @@ export async function syncUserEmails(
         // not_found, auth/permission) from a per-file transient. A model outage is not this file's
         // fault, so it must never be counted toward the poison-pill give-up (which would bury real
         // invoices as 'could_not_read'). It just holds the watermark until the model is fixed.
-        const msg = err instanceof Error ? err.message : String(err)
+        // [MODEL-CONFIG] De `msg`-variabele die hier stond is weg: het uitpakken van de fouttekst
+        // gebeurt nu in ai-model.ts, bij het oordeel zelf, zodat beide lezers exact dezelfde
+        // ontleding gebruiken.
         // [MODEL-OUTAGE] Two kinds of "not this file's fault" failure must HOLD the watermark and
         // never poison-pill a real invoice:
         //   (a) a CONFIG outage — invalid CLAUDE_MODEL id (404 not_found), auth/permission.
@@ -2425,7 +2427,12 @@ export async function syncUserEmails(
         // outage when the WHOLE batch is failing — a single file that deterministically produces a
         // transient-looking error (e.g. a large PDF that always times out) must still poison-pill so
         // it can't freeze the watermark forever. That batch-wide decision is made AFTER this map.
-        const configOutage = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
+        // [MODEL-CONFIG] Hetzelfde oordeel als voorheen, maar nu uit ai-model.ts — dezelfde
+        // herkenning die de herleesroute gebruikt om terug te vallen op het basismodel. De test
+        // [IJKPUNT] in ai-model.test.ts houdt dit oordeel letterlijk gelijk aan de regexp die
+        // hier stond, zodat de watermerk-hold van deze lezer niet stilletjes kan verschuiven.
+        const { isAiConfigError } = await import('@/lib/ai-model')
+        const configOutage = isAiConfigError(err)
         const transientError = isTransientAiError(err)
         return {
           attachment,

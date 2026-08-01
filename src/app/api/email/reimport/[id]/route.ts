@@ -26,16 +26,35 @@ import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
 // [HERLEES-ARCHIVEER] Blijkt het geen factuur, dan archiveren we hem zelf — maar nooit als er geld
 // op staat. Dezelfde predicaat als de negeer-route, zodat de twee niet uit elkaar kunnen lopen.
 import { hasSettledMoney } from "@/lib/invoice-removal";
+// [MODEL-CONFIG] Eén plek die weet welk model deze app leest en wat "dit model bestaat hier niet"
+// betekent. CLAUDE_MODEL is het bewezen basismodel van de sync; dit is de terugval van as 2.
+import { CLAUDE_MODEL } from "@/lib/ai";
+import { resolveModel, isModelUnavailableError, isAiConfigError, MODEL_UNAVAILABLE_MESSAGE } from "@/lib/ai-model";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
-// [REREAD-STRONG] The automatic sync already reads on Sonnet 4.5 (see CLAUDE_MODEL in ai.ts). The
-// manual "Opnieuw inlezen" keeps an edge for a stuck invoice two ways: a notch-newer model
-// (Sonnet 5) AND a forced read of the REAL page layout (preferRawPdf) instead of flattened text —
-// the fix for complex invoices mis-read on every pass (statiegeld/retour, net-negative creditnota,
-// crowded multi-column tables). Must be a model enabled on the account.
-const REREAD_MODEL = "claude-sonnet-5";
+// [REREAD-STRONG] De handmatige "Opnieuw inlezen" houdt langs TWEE assen een voorsprong op de
+// automatische lezing van een vastgelopen factuur:
+//
+//   1. preferRawPdf — lees de ECHTE paginaopmaak in plaats van platgeslagen tekst. Dit is de as die
+//      complexe facturen redt (statiegeld/retour, netto-negatieve creditnota, volgepropte
+//      meerkolomstabellen), en zij hangt NIET aan het model.
+//   2. Eventueel een sterker model dan waar de sync op draait.
+//
+// [MODEL-CONFIG] As 2 stond hier als een MET DE HAND INGETYPT id ("claude-sonnet-5"), met een
+// comment erboven dat de sync "al op Sonnet 4.5" las. Dat comment was onjuist — ai.ts draait op de
+// Haiku-standaard zolang CLAUDE_MODEL leeg is (en die staat leeg in .env.example) — en het id was
+// niet vrijgegeven op dit account. Elke tik op de knop werd dus een HTTP 404, en de eigenaar kreeg
+// "probeer het later opnieuw" te zien bij een fout waar later nooit ging komen.
+//
+// Precies deze fout stond al beschreven in ai.ts, mét de reparatie ernaast: instelbaar met een
+// bewezen standaard eronder. Die reparatie wordt nu ook hier gebruikt. Standaard leest de
+// herlezing dus met HETZELFDE model als de sync — as 1 blijft volledig overeind, en dat is de as
+// die het werk doet. Wil je een sterker model proberen: zet REREAD_MODEL in de omgeving. Blijkt dat
+// id niet beschikbaar, dan valt deze route zelf terug op het basismodel (zie readWithFallback) —
+// de knop blijft dus werken, ook bij een verkeerd ingestelde variabele.
+const REREAD_MODEL = resolveModel(process.env.REREAD_MODEL, CLAUDE_MODEL);
 
 // [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
 // route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
@@ -50,6 +69,37 @@ function sniffMime(buf: Buffer): string | null {
   if (buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif"; // GIF8
   if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
   return null;
+}
+
+/**
+ * [MODEL-CONFIG] De lezing is niet gelukt — zeg WAAROM, en zeg vooral niet het verkeerde.
+ *
+ * Hier zat de tweede helft van de storing. Elke mislukking, ook een 404 op een niet-vrijgegeven
+ * model, kwam eruit als "probeer het later opnieuw". Dat is dezelfde oneerlijkheid die deze app
+ * overal bestrijdt: een BLIJVENDE fout vermomd als een tijdelijke. De eigenaar drukt dan tien keer
+ * op een knop die per definitie nooit gaat werken, en niemand komt erachter dat er een instelling
+ * fout staat.
+ *
+ * Twee uitkomsten, twee zinnen:
+ *   · een configuratiefout (model niet vrijgegeven, sleutel/rechten) → 503, en de melding zegt
+ *     ronduit dat opnieuw proberen niet helpt;
+ *   · al het andere (druk, netwerk, tijdslimiet) → 502 en de oude, hier juiste zin.
+ *
+ * De factuur blijft in beide gevallen ongewijzigd in de controlewachtrij staan.
+ */
+function refuseRead(
+  error: unknown,
+  invoiceId: string,
+  gate: { release: () => Promise<unknown> },
+): Promise<NextResponse> | NextResponse {
+  const configError = isAiConfigError(error);
+  console.error("[REIMPORT] classify failed", { invoiceId, configError, error });
+  // [FAIR-USE] Niet gelezen, dus niet geteld.
+  return gate.release().then(() =>
+    configError
+      ? NextResponse.json({ error: MODEL_UNAVAILABLE_MESSAGE, code: "model_unavailable" }, { status: 503 })
+      : NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 }),
+  );
 }
 
 export async function POST(
@@ -186,20 +236,46 @@ export async function POST(
   if (!gate.allowed) return gate.response!;
 
   // Re-read with the CURRENT extractor (same path the import uses → identical behaviour).
-  let c: Awaited<ReturnType<typeof classifyAttachment>>;
-  try {
-    c = await classifyAttachment(base64, mimeType, filename, receiverName, {
-      model: REREAD_MODEL,
+  const read = (model: string) =>
+    classifyAttachment(base64, mimeType, filename, receiverName, {
+      model,
+      // [REREAD-STRONG] As 1 — nooit weglaten, ook niet in de terugval. Dit is wat de handmatige
+      // herlezing onderscheidt van de automatische, en het hangt niet aan het model.
       preferRawPdf: true,
       receiverKvk,
       receiverBtw,
       receiverIban,
     });
+
+  let c: Awaited<ReturnType<typeof classifyAttachment>>;
+  try {
+    c = await read(REREAD_MODEL);
   } catch (e) {
-    console.error("[REIMPORT] classify failed", { invoiceId: id, e });
-    // [FAIR-USE] Niet gelezen, dus niet geteld.
-    await gate.release();
-    return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });
+    // [MODEL-CONFIG] Is het INGESTELDE model er niet, dan is dat een instelling die fout staat —
+    // geen reden om de eigenaar met lege handen weg te sturen. As 1 (de opmaaklezing) werkt op elk
+    // model, dus lezen we die ene keer over met het bewezen basismodel en de knop doet gewoon zijn
+    // werk. Twee voorwaarden, allebei nodig:
+    //   · alleen bij een MODELfout — bij een sleutel-/rechtenfout gaat dezelfde sleutel het tweede
+    //     keer net zo hard stukgaan, en dan is de herkansing een gegarandeerd verspilde betaalde
+    //     call (isAiCredentialError zit daarom bewust NIET in deze voorwaarde);
+    //   · alleen als er iets anders te proberen valt — staat REREAD_MODEL niet ingesteld, dan is
+    //     het al het basismodel en zou dit dezelfde call nog eens doen.
+    const canFallBack = REREAD_MODEL !== CLAUDE_MODEL && isModelUnavailableError(e);
+    if (canFallBack) {
+      // Luid, en op ERROR-niveau: dit is een verkeerd ingestelde REREAD_MODEL en dat hoort de
+      // beheerder te zien. De eigenaar merkt er niets van — voor hem is de factuur gewoon gelezen.
+      console.error("[MODEL-CONFIG] REREAD_MODEL is niet beschikbaar op dit account — teruggevallen op het basismodel", {
+        rereadModel: REREAD_MODEL, baseModel: CLAUDE_MODEL, invoiceId: id,
+        message: e instanceof Error ? e.message : String(e),
+      });
+      try {
+        c = await read(CLAUDE_MODEL);
+      } catch (e2) {
+        return refuseRead(e2, id, gate);
+      }
+    } else {
+      return refuseRead(e, id, gate);
+    }
   }
 
   // [HERLEES-ARCHIVEER] De verse lezing zegt: dit is geen boekbaar stuk — een rekeningoverzicht,
