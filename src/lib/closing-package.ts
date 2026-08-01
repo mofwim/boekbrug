@@ -925,15 +925,22 @@ async function sharedDocsForQuarter(
   ownerId: string,
   year: number,
   quarter: Quarter,
-): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number; checked: boolean }> {
   const sharedPeriod = `${year}-Q${quarter}`;
-  const { data } = await supabase
+  // [NO-SILENT-EMPTY] Same rule as datelessVerifiedInvoices above. This read decides BOTH what goes
+  // into the package and what the package warns about, so a dropped error shipped an accountant a
+  // quarter with its shared documents missing and nothing saying they were ever expected.
+  const { data, error } = await supabase
     .from("documents")
     .select("file_url, file_name, doc_type, invoice_id, period")
     .eq("user_id", ownerId)
     .eq("shared", true)
     .eq("trashed", false)
     .is("invoice_id", null);
+  if (error) {
+    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", { ownerId, error: error.message });
+    return { paths: [], outsideCount: 0, checked: false };
+  }
   const rows = (data ?? []) as Array<{
     file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
   }>;
@@ -944,7 +951,7 @@ async function sharedDocsForQuarter(
     if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
     else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
   }
-  return { paths, outsideCount };
+  return { paths, outsideCount, checked: true };
 }
 
 // [PACKAGE-VOORBELASTING] A bank payment CODED as a business cost with no purchase invoice
@@ -1052,7 +1059,16 @@ export function costWithoutInvoiceWarning(count: number, total: number): Closing
 
 /** A warning for shared files that fall outside this quarter's package, or null. Shared by
  *  the ZIP builder and the preview summary so both tell the SAME truth. */
-function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+// Exported for its test — "we could not look" and "there are none" must not read the same.
+export function sharedOutsideWarning(outsideCount: number, checked = true): ClosingPackageWarning | null {
+  if (!checked) {
+    return {
+      code: "shared_doc_other_quarter",
+      message:
+        "We konden de gedeelde bestanden nu niet ophalen. Er zitten daardoor mogelijk documenten " +
+        "niet in dit pakket die er wel bij horen — controleer dit vóór je het naar je boekhouder stuurt.",
+    };
+  }
   if (outsideCount <= 0) return null;
   return {
     code: "shared_outside_quarter",
@@ -1268,7 +1284,7 @@ export async function summarizeClosingPackage(args: {
   if (costNoInvoiceWarning) warnings.push(costNoInvoiceWarning);
 
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   return {
@@ -1484,7 +1500,7 @@ export async function buildClosingPackageZip(args: {
   const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
   const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──

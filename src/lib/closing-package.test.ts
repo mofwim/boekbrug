@@ -15,6 +15,7 @@ import {
   assembleClosingPackageZip,
   effectiveDirection,
   datelessWarning,
+  sharedOutsideWarning,
   type PackageInvoice,
   type PaymentDateInfo,
 } from "./closing-package";
@@ -384,4 +385,18 @@ test("[NO-SILENT-EMPTY] a dateless check that could not run warns instead of rep
   const found = datelessWarning({ count: 2, labels: ["F-1", "F-2"], checked: true });
   assert.match(found!.message, /F-1, F-2/);
   assert.doesNotMatch(found!.message, /konden niet nagaan/);
+});
+
+test("[NO-SILENT-EMPTY] shared documents that could not be read are named, not assumed absent", () => {
+  // This read decides BOTH what goes into the ZIP and what the package warns about. A dropped error
+  // shipped the accountant a quarter with its shared documents missing and nothing saying they were
+  // ever expected.
+  const unchecked = sharedOutsideWarning(0, false);
+  assert.ok(unchecked, "a failed read must still produce a warning");
+  assert.match(unchecked!.message, /konden de gedeelde bestanden nu niet ophalen/);
+
+  // A read that RAN with everything in this quarter stays silent.
+  assert.equal(sharedOutsideWarning(0, true), null);
+  // And a real count still says how many sit outside.
+  assert.match(sharedOutsideWarning(3, true)!.message, /3 gedeeld/);
 });
