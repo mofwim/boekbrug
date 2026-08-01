@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   correctedFields,
   buildReadingMemory,
+  parseCorrectionRecords,
   readingHint,
   readingHintFor,
   vendorKey,
@@ -177,6 +178,45 @@ test("a supplier with no history gets no hint, and an unknown one does not throw
   assert.equal(readingHintFor("Nooit Gezien B.V.", memory), null);
   assert.equal(readingHintFor(null, memory), null);
   assert.equal(readingHint(undefined), null);
+});
+
+// ── parseCorrectionRecords ────────────────────────────────────────────────────
+
+test("audit rows without the block are skipped, not coerced", () => {
+  // audit_logs.new_value is jsonb written by several routes across several versions. Anything that
+  // is not the shape we expect must produce nothing — a memory built from misread rows would point
+  // the reviewer at the wrong field with the app's authority behind it.
+  const rows = [
+    { new_value: null, created_at: "2026-07-01T00:00:00Z" },
+    { new_value: "not an object", created_at: "2026-07-01T00:00:00Z" },
+    { new_value: { status: "received" }, created_at: "2026-07-01T00:00:00Z" },
+    { new_value: { reading_correction: { vendor: "X" } }, created_at: "2026-07-01T00:00:00Z" },
+    { new_value: { reading_correction: { vendor: "X", fields: "btw_amount" } }, created_at: "2026-07-01T00:00:00Z" },
+  ];
+  assert.deepEqual(parseCorrectionRecords(rows), []);
+});
+
+test("a well-formed audit row becomes a record, and a nameless vendor stays null", () => {
+  const rows = [
+    { new_value: { status: "received", reading_correction: { vendor: "Enka", fields: ["btw_amount", 7] } }, created_at: "2026-07-30T09:00:00Z" },
+    { new_value: { reading_correction: { vendor: 42, fields: ["btw_amount"] } }, created_at: null },
+  ];
+  assert.deepEqual(parseCorrectionRecords(rows), [
+    // The non-string field is dropped, the string kept.
+    { vendor: "Enka", fields: ["btw_amount"], at: "2026-07-30T09:00:00Z" },
+    // A non-string vendor is null, not "42" — buildReadingMemory then refuses to remember it.
+    { vendor: null, fields: ["btw_amount"], at: null },
+  ]);
+});
+
+test("the whole chain holds: audit rows in, hint out", () => {
+  // The two real Elegance Brands corrections, in the exact shape the routes write them.
+  const memory = buildReadingMemory(parseCorrectionRecords([
+    { new_value: { reading_correction: { vendor: "Elegance Brands", fields: ["btw_amount"] } }, created_at: "2026-06-28T09:00:00Z" },
+    { new_value: { reading_correction: { vendor: "Elegance Brands", fields: ["btw_amount", "total_inc_btw"] } }, created_at: "2026-07-30T09:00:00Z" },
+    { new_value: { status: "received" }, created_at: "2026-07-30T09:00:00Z" },
+  ]));
+  assert.match(readingHintFor("Elegance Brands", memory)!, /het btw-bedrag/);
 });
 
 test("vendorKey matches the key every other screen in this line uses", () => {

@@ -193,6 +193,35 @@ export function readingHint(memory: VendorMemory | undefined): string | null {
   return `Bij deze leverancier heb je ${memory.corrections} eerdere facturen zelf gecorrigeerd — meestal ${what}. Controleer dat hier extra.`;
 }
 
+/**
+ * Turn raw audit rows into correction records.
+ *
+ * Lives here rather than in each page so the two screens that read this memory cannot disagree
+ * about what the trail says. Every field is checked before it is trusted: audit_logs.new_value is
+ * jsonb written by several routes over several versions, so a row that does not carry the shape we
+ * expect is skipped, never coerced. A memory built from misread rows would point the reviewer at
+ * the wrong field with the app's authority behind it.
+ */
+export function parseCorrectionRecords(
+  rows: ReadonlyArray<{ new_value: unknown; created_at?: string | null }>,
+): CorrectionRecord[] {
+  const out: CorrectionRecord[] = [];
+  for (const row of rows) {
+    const nv = row.new_value;
+    if (typeof nv !== "object" || nv === null) continue;
+    const rc = (nv as { reading_correction?: unknown }).reading_correction;
+    if (typeof rc !== "object" || rc === null) continue;
+    const { vendor, fields } = rc as { vendor?: unknown; fields?: unknown };
+    if (!Array.isArray(fields)) continue;
+    out.push({
+      vendor: typeof vendor === "string" ? vendor : null,
+      fields: fields.filter((f): f is string => typeof f === "string"),
+      at: row.created_at ?? null,
+    });
+  }
+  return out;
+}
+
 /** The hint for one supplier by name, so a screen does not have to know how the map is keyed. */
 export function readingHintFor(vendor: string | null | undefined, memory: Map<string, VendorMemory>): string | null {
   return readingHint(memory.get(vendorKey(vendor)));

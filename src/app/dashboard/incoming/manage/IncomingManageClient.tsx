@@ -270,7 +270,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
-  readFailed = [], filedQuarters, bookScan = null,
+  readFailed = [], filedQuarters, bookScan = null, readingHints = {},
 }: {
   profile: { id: string }
   initialInvoices: IncomingRow[]
@@ -290,6 +290,9 @@ export default function IncomingManageClient({
   // [SCAN-WHOLE-BOOK] The scan over the owner's ENTIRE confirmed history, computed server-side.
   // null = that read failed, and the banner then counts only what is on this screen and says so.
   bookScan?: InvoiceScan | null
+  // [READING-MEMORY] Per supplier (trimmed + lowercased name), what the owner keeps correcting.
+  // Same map and same key as the verify queue — one memory, shown at both doors.
+  readingHints?: Record<string, string>
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -2600,6 +2603,20 @@ export default function IncomingManageClient({
               Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
               exclusief rekent zichzelf uit.
             </p>
+
+            {/* [READING-MEMORY] What the owner has repeatedly fixed at THIS supplier. The same
+                sentence the verify queue shows, in the other place the same decision is made —
+                "je hebt de btw hier al drie keer gecorrigeerd" is worth knowing while you type the
+                fourth. It names a field, never an amount: a remembered number belongs to a
+                different invoice, and pre-filling it here would be inventing money. */}
+            {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()] && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 13px', marginBottom: 16, background: '#eef4ff', border: '1px solid #cddcff', borderRadius: 12 }}>
+                <span style={{ fontSize: 14, lineHeight: 1.3 }}>🧠</span>
+                <p style={{ fontSize: 12.5, color: '#274690', margin: 0, lineHeight: 1.5 }}>
+                  {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
+                </p>
+              </div>
+            )}
 
             {[
               { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },

@@ -18,6 +18,9 @@ import { fetchAllRows } from '@/lib/supabase-paginate'
 import IncomingManageClient from './IncomingManageClient'
 // [SCAN-WHOLE-BOOK] The count must cover the whole book, not the window this page renders.
 import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan'
+// [READING-MEMORY] The same supplier memory the verify queue shows — one shared read.
+import { readingHintFor, vendorKey } from '@/lib/reading-memory'
+import { loadReadingMemory } from '@/lib/reading-memory-source'
 import type { ComponentProps } from 'react'
 
 // Row shape the client expects — derived from its props (the type itself is not exported).
@@ -168,6 +171,17 @@ export default async function Page({
     bookScan = null
   }
 
+  // [READING-MEMORY] The same supplier memory the verify queue shows. It belongs here too: this is
+  // the OTHER door through which the owner corrects a misread invoice, and the correction modal is
+  // the same checking moment — "you have fixed the btw at this supplier three times" is worth
+  // knowing while you are typing the fourth. Recorded from here already; now also shown here.
+  const readingMemory = await loadReadingMemory(supabase, user.id)
+  const readingHints: Record<string, string> = {}
+  for (const r of rows) {
+    const hint = readingHintFor(r.client_name, readingMemory)
+    if (hint) readingHints[vendorKey(r.client_name)] = hint
+  }
+
   // [INVOICE-SCAN] Which quarters has the owner already FILED? That single fact changes what a
   // wrong invoice means: in an open quarter a correction is just a correction, in a filed one it is
   // a correction to the return itself. The scan on the client counts and groups; this read supplies
@@ -222,6 +236,7 @@ export default async function Page({
       readFailed={readFailed}
       filedQuarters={filedQuarters}
       bookScan={bookScan}
+      readingHints={readingHints}
     />
   )
 }
