@@ -74,6 +74,9 @@ import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDup
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
 import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup"
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
+import { readingPromptHint } from "@/lib/reading-memory"
+import { loadReadingMemory } from "@/lib/reading-memory-source"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
@@ -400,6 +403,10 @@ export async function POST(req: NextRequest) {
     // later feeds the IBAN+amount bank auto-match tier.
     v = await verifyInvoiceFromPdf(base64, effectiveType, file.name, receiverName, {
       throwOnTransient: true,
+      // [READING-MEMORY] Which suppliers this owner keeps having to correct, and in which field.
+      // Fields only, never amounts. Null when the memory is empty or could not be loaded — the
+      // reader then behaves exactly as it did before this existed.
+      readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
       receiverKvk: me?.kvk_number || null,
       receiverBtw: me?.btw_number || null,
       receiverIban: me?.iban || null,

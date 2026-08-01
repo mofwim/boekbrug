@@ -18,6 +18,9 @@ import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at this supplier.
+import { readingPromptHint } from "@/lib/reading-memory";
+import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
@@ -235,6 +238,11 @@ export async function POST(
   const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
   if (!gate.allowed) return gate.response!;
 
+  // [READING-MEMORY] The manual re-read is exactly the moment this matters most: the owner asked
+  // for another try because the first one was wrong, and the memory knows which field that tends to
+  // be at this supplier. Loaded once — `read` may be called twice on a model fallback.
+  const readingHint = readingPromptHint(await loadReadingMemory(supabase, user.id));
+
   // Re-read with the CURRENT extractor (same path the import uses → identical behaviour).
   const read = (model: string) =>
     classifyAttachment(base64, mimeType, filename, receiverName, {
@@ -245,6 +253,7 @@ export async function POST(
       receiverKvk,
       receiverBtw,
       receiverIban,
+      readingHint,
     });
 
   let c: Awaited<ReturnType<typeof classifyAttachment>>;
