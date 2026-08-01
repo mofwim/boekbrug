@@ -254,6 +254,15 @@ money leaves no trace to notice. The client follows the key to the end and refus
 - **Private keys are gitignored** by name and by extension (`*.key`, `*.crt`, `*.p12`, `*.pfx`),
   because Enable Banking's own instructions generate `private.key` in the working directory and
   `*.pem` does not match that.
+- **No real statement goes in the repository, and that includes fixtures.** The MT940/CAMT/JSON
+  exports this work was verified against are not committed. Neither are the identifiers inside them:
+  the fixtures in `bank-parity.test.ts` and `enablebanking-map.test.ts` are reshaped from a real
+  quarter with names, IBANs, mandate and incassant ids, terminal ids and addresses replaced. That is
+  a deliberate rule, not tidiness — an IBAN plus a landlord plus a street name locates a person, and
+  a regression test does not need any of it. Amounts, dates and byte layout ARE kept, because those
+  are the structure being pinned. Substitute IBANs are mod-97 valid and the same length so the
+  validation branches and the MT940 line layout behave identically. **When you add a fixture from a
+  real file, anonymise it in the same commit.**
 
 ## 7. Turning it on
 
