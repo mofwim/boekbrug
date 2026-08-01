@@ -38,7 +38,7 @@ export async function GET() {
   if (wacht.fout) return wacht.fout
   const ownerId = wacht.ownerId!
 
-  const leden = await loadCompanyMembers(ownerId)
+  const { beschikbaar, leden } = await loadCompanyMembers(ownerId)
 
   // De namen erbij — een lijst met uuid's is geen lijst.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +65,9 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
+    // false ⇒ de migratie staat nog open. Het scherm zegt dat dan met zoveel woorden in plaats
+    // van een leeg team te tonen en een uitnodigingsknop aan te bieden die niet kán werken.
+    beschikbaar,
     leden: leden.map((l) => ({
       id: l.id,
       naam: namen.get(l.member_id)?.naam ?? 'Onbekend',
@@ -87,6 +90,16 @@ export async function POST(request: NextRequest) {
     ...RATE_LIMITS.ACCOUNTANT_INVITE,
   })
   if (!limit.allowed) return rateLimitResponse(limit)
+
+  const { beschikbaar } = await loadCompanyMembers(ownerId)
+  if (!beschikbaar) {
+    // Liever één eerlijke zin dan een 500 met "Uitnodigen mislukt": de oorzaak ligt niet bij
+    // wat de eigenaar deed, en hij kan er zelf iets aan doen.
+    return NextResponse.json(
+      { error: 'De teamfunctie staat nog niet aan op deze installatie — de databasemigratie moet nog worden toegepast.' },
+      { status: 503 },
+    )
+  }
 
   const body = await request.json().catch(() => null)
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''

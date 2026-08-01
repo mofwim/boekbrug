@@ -31,6 +31,9 @@ export default function TeamClient() {
   const [email, setEmail] = useState('')
   const [bezig, setBezig] = useState(false)
   const [laden, setLaden] = useState(true)
+  // null = nog niet geladen. false = de migratie staat nog open; dan is "geen team" een
+  // ANDERE mededeling dan "niemand uitgenodigd", en die twee mogen niet op elkaar lijken.
+  const [beschikbaar, setBeschikbaar] = useState<boolean | null>(null)
   const [fout, setFout] = useState('')
   const [gelukt, setGelukt] = useState('')
 
@@ -38,7 +41,7 @@ export default function TeamClient() {
   // van een synchrone setState (react-hooks/set-state-in-effect), en kan hetzelfde ophalen
   // worden hergebruikt door de knoppen.
   const haal = useCallback(async (): Promise<
-    { ok: true; leden: Lid[]; open: Uitnodiging[] } | { ok: false; fout: string }
+    { ok: true; leden: Lid[]; open: Uitnodiging[]; beschikbaar: boolean } | { ok: false; fout: string }
   > => {
     try {
       const res = await fetch('/api/company/members')
@@ -48,14 +51,14 @@ export default function TeamClient() {
         // en die twee moeten niet op elkaar lijken.
         return { ok: false, fout: json?.error || 'Kon het team niet laden' }
       }
-      return { ok: true, leden: json.leden ?? [], open: json.uitnodigingen ?? [] }
+      return { ok: true, leden: json.leden ?? [], open: json.uitnodigingen ?? [], beschikbaar: json.beschikbaar !== false }
     } catch {
       return { ok: false, fout: 'Kon het team niet laden' }
     }
   }, [])
 
   const toon = useCallback((r: Awaited<ReturnType<typeof haal>>) => {
-    if (r.ok) { setLeden(r.leden); setOpen(r.open) } else { setFout(r.fout) }
+    if (r.ok) { setLeden(r.leden); setOpen(r.open); setBeschikbaar(r.beschikbaar) } else { setFout(r.fout) }
     setLaden(false)
   }, [])
 
@@ -127,6 +130,20 @@ export default function TeamClient() {
           <p style={{ fontSize: 14, color: M3.success, background: M3.successContainer, padding: '10px 12px', borderRadius: R.sm, lineHeight: 1.5 }}>{gelukt}</p>
         )}
 
+        {beschikbaar === false && (
+          /* Eerlijk over de toestand in plaats van een leeg team plus een knop die niet kan
+             werken. De eigenaar kan hier zelf iets aan doen, dus staat er wat hij moet doen. */
+          <div style={{ ...kaart, borderColor: M3.warning, background: M3.warnContainer }}>
+            <p style={{ fontSize: 14.5, color: M3.onSurface, margin: 0, lineHeight: 1.6 }}>
+              <strong>De teamfunctie staat nog niet aan.</strong> De databasemigratie
+              <code style={{ fontSize: 13 }}> company_members_sales_role.sql </code>
+              moet nog worden toegepast. Zolang dat niet is gebeurd kun je niemand uitnodigen —
+              en verandert er verder niets: je facturen, je bank en je aangifte werken gewoon door.
+            </p>
+          </div>
+        )}
+
+        {beschikbaar !== false && (
         <form onSubmit={nodigUit} style={kaart}>
           <label htmlFor="team-email" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: M3.onSurfaceVariant, marginBottom: 8 }}>
             E-mailadres van de medewerker
@@ -161,8 +178,9 @@ export default function TeamClient() {
             doorgestuurde link werkt niet. De uitnodiging verloopt na 14 dagen.
           </p>
         </form>
+        )}
 
-        {laden ? null : (
+        {laden || beschikbaar === false ? null : (
           <>
             {open.length > 0 && (
               <div style={kaart}>

@@ -60,10 +60,25 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
   return resolveActingFor(user.id, link, Date.now());
 });
 
-/** De leden van dit bedrijf — alleen zinvol voor een eigenaar. Actief én ingetrokken. */
-export async function loadCompanyMembers(ownerId: string): Promise<
-  Array<{ id: string; member_id: string; role: string; created_at: string; revoked_at: string | null }>
-> {
+export interface CompanyMemberRow {
+  id: string;
+  member_id: string;
+  role: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+/**
+ * De leden van dit bedrijf — alleen zinvol voor een eigenaar. Actief én ingetrokken.
+ *
+ * `beschikbaar: false` betekent dat company_members nog niet bestaat: de migratie is niet
+ * toegepast. Dat is iets ANDERS dan "je hebt geen team", en die twee mogen op geen enkel scherm
+ * op elkaar lijken — anders staat er "Niemand" bij iemand die net drie mensen heeft uitgenodigd,
+ * of krijgt hij een uitnodigingsformulier dat het per definitie niet doet.
+ */
+export async function loadCompanyMembers(
+  ownerId: string,
+): Promise<{ beschikbaar: boolean; leden: CompanyMemberRow[] }> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pipeline = createPipelineClient() as any;
@@ -72,9 +87,14 @@ export async function loadCompanyMembers(ownerId: string): Promise<
       .select("id, member_id, role, created_at, revoked_at")
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: true });
-    if (error) return [];
-    return data ?? [];
+    // 42P01 = de tabel bestaat nog niet. PGRST205 is dezelfde toestand via de schema-cache.
+    if (error) {
+      const code = String((error as { code?: string }).code ?? "");
+      if (code === "42P01" || code === "PGRST205") return { beschikbaar: false, leden: [] };
+      return { beschikbaar: true, leden: [] };
+    }
+    return { beschikbaar: true, leden: data ?? [] };
   } catch {
-    return [];
+    return { beschikbaar: false, leden: [] };
   }
 }
