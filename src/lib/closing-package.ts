@@ -64,6 +64,9 @@ import {
   type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
 } from "./icp";
 import { fetchAllRows } from "./supabase-paginate";
+// [PACKAGE-ART29] Both sides of art. 29 Wet OB — see the call site for why they belong here.
+import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
+import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
 import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
@@ -920,6 +923,109 @@ async function sharedDocsForQuarter(
   return { paths, outsideCount };
 }
 
+// [PACKAGE-VOORBELASTING] A bank payment CODED as a business cost with no purchase invoice
+// behind it — rent, telecom, insurance, a supplier paid straight from the account.
+//
+// WHY THIS IS ITS OWN WARNING
+// A bare bank line carries no BTW document, so financial-result books it as a NET cost with
+// zero voorbelasting. The euro is in the profit; the deductible BTW is not. The owner therefore
+// pays MORE BTW than they owe — silently, because from the app's side nothing is missing: the
+// line has a category, it is placed, every total adds up.
+//
+// It is NOT covered by 'bank_unresolved', and deliberately so: that one counts lines with NO
+// category at all. Once auto-categorisation has learned "this counterpart is rent", the line
+// gets a category and drops out of that warning entirely — which is exactly when this one has
+// to take over. The two are disjoint by construction (category IS NULL vs category = 'kosten').
+//
+// readiness.ts already tells the OWNER this ([VOORBELASTING-RISK]), as a risk rather than a
+// hard block. But a risk does not stop a hand-over, so the quarter could reach the accountant
+// with deductible BTW missing and nothing in the package saying so. Same reasoning as
+// [PACKAGE-UNVERIFIED]: the preview warned, the thing the accountant actually receives did not.
+//
+// 'fee' (bankkosten) is excluded on purpose — payment services are BTW-exempt (art. 11 lid 1-i
+// Wet OB), so there is no voorbelasting to lose there and flagging it would be noise.
+// The lines behind that warning. Scoped EXACTLY like readiness.ts's undocumentedCount — pending,
+// no linked invoice, coded 'kosten' — so the owner's screen and the accountant's package can
+// never quote two different numbers for the same thing. Debits only: a credit coded 'kosten'
+// (a refund) has no voorbelasting to reclaim.
+//
+// Fail-soft, like every other completeness probe here: if the read fails, this one check lapses
+// rather than taking the whole hand-over down with it.
+async function costLinesWithoutInvoice(
+  supabase: PipelineClient,
+  ownerId: string,
+  start: string,
+  end: string,
+): Promise<{ count: number; total: number }> {
+  const rows = await fetchAllRows<{ id: string; amount: number | null }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("id, amount")
+      .eq("user_id", ownerId)
+      .eq("status", "pending")
+      .eq("category", "kosten")
+      .is("invoice_id", null)
+      .lt("amount", 0)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => [] as { id: string; amount: number | null }[]);
+  const total = rows.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+  return { count: rows.length, total: Math.round(total * 100) / 100 };
+}
+
+// [PACKAGE-VOORBELASTING-KAS] The same loss, one drawer over.
+//
+// financial-result claims voorbelasting on a cash cost ONLY when a bon is linked AND a rate is
+// set ([CASH-COST-VAT]); without both it books the FULL GROSS as cost with €0 deductible. That
+// is the right call — never invent a deduction — but it means a cash purchase whose paper
+// receipt was never photographed quietly costs the owner the BTW on it.
+//
+// If anything this is the more common half: a cash purchase is exactly the one that comes with a
+// paper slip that ends up in a coat pocket. readiness carries a general sentence about it
+// ("Voorbelasting telt alleen ingevoerde inkoopfacturen/bonnen…"), but a sentence is not a
+// number — nobody goes looking through a quarter of receipts for a note that is always there.
+// A count and a euro figure is what makes someone go and look.
+export function cashCostWithoutReceiptWarning(count: number, total: number): ClosingPackageWarning | null {
+  if (count <= 0) return null;
+  return {
+    code: "cash_cost_without_receipt",
+    message:
+      `${count} contante kostenpost(en) van samen ${formatEuroNL(total)} hebben geen bon. ` +
+      `Het bedrag telt volledig mee in de kosten, maar er is geen voorbelasting (5b) op ` +
+      `terug te vragen zolang de bon ontbreekt.`,
+  };
+}
+
+/** Cash costs booked without a receipt, from entries already in memory. Pure. */
+export function cashCostsWithoutReceipt(
+  entries: readonly { direction: string; amount: number | null; category: string | null; document_id?: string | null }[],
+): { count: number; total: number } {
+  let count = 0;
+  let total = 0;
+  for (const c of entries) {
+    // Money OUT under 'kosten' with no linked document. A cash entry going IN under 'kosten' is a
+    // refund OF a cost, which has no voorbelasting of its own to reclaim.
+    if (c.direction !== "out" || c.category !== "kosten" || c.document_id) continue;
+    count++;
+    total += Math.abs(Number(c.amount) || 0);
+  }
+  return { count, total: Math.round(total * 100) / 100 };
+}
+
+export function costWithoutInvoiceWarning(count: number, total: number): ClosingPackageWarning | null {
+  if (count <= 0) return null;
+  return {
+    code: "bank_cost_without_invoice",
+    message:
+      `${count} banktransactie(s) van samen ${formatEuroNL(total)} zijn geboekt als zakelijke kosten, ` +
+      `maar er hoort geen inkoopfactuur bij. Het bedrag telt wel mee in de kosten, de BTW erop ` +
+      `NIET — zonder factuur is er geen voorbelasting (5b) om terug te vragen. Controleer of de ` +
+      `facturen nog geleverd kunnen worden voordat de aangifte weggaat.`,
+  };
+}
+
 /** A warning for shared files that fall outside this quarter's package, or null. Shared by
  *  the ZIP builder and the preview summary so both tell the SAME truth. */
 function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
@@ -1130,6 +1236,13 @@ export async function summarizeClosingPackage(args: {
         `niet in omzet, niet in kosten en niet in de voorbelasting.`,
     });
   }
+  // [PACKAGE-VOORBELASTING] Costs paid by bank with no purchase invoice — deductible BTW the
+  // owner is about to leave on the table. See the helper for why this is separate from
+  // 'bank_unresolved'.
+  const costNoInvoice = await costLinesWithoutInvoice(supabase, ownerId, start, end);
+  const costNoInvoiceWarning = costWithoutInvoiceWarning(costNoInvoice.count, costNoInvoice.total);
+  if (costNoInvoiceWarning) warnings.push(costNoInvoiceWarning);
+
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
   const sharedOutside = sharedOutsideWarning(shared.outsideCount);
   if (sharedOutside) warnings.push(sharedOutside);
@@ -1227,6 +1340,13 @@ export async function buildClosingPackageZip(args: {
           : `${unverifiedInQuarterZip} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
     });
   }
+
+  // [PACKAGE-VOORBELASTING] Same mirror, for costs paid by bank with no purchase invoice. The
+  // owner's readiness screen flags these as a risk, but a risk does not block a hand-over — so
+  // without this the accountant receives a quarter with unclaimed voorbelasting and no signal.
+  const costNoInvoiceZip = await costLinesWithoutInvoice(supabase, ownerId, start, end);
+  const costNoInvoiceZipWarning = costWithoutInvoiceWarning(costNoInvoiceZip.count, costNoInvoiceZip.total);
+  if (costNoInvoiceZipWarning) warnings.push(costNoInvoiceZipWarning);
 
   // ── Resolve PDF storage paths ──
   // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.
@@ -1476,6 +1596,12 @@ export async function buildClosingPackageZip(args: {
     date: c.entry_date,
     document_id: c.document_id ?? null, // [CASH-COST-VAT] documented cash cost → voorbelasting
   }));
+
+  // [PACKAGE-VOORBELASTING-KAS] The same loss on the cash side. Computed from the entries already
+  // read above — no extra query, and it can only ever agree with the figures in this same ZIP.
+  const cashNoReceipt = cashCostsWithoutReceipt(cashEntries);
+  const cashNoReceiptWarning = cashCostWithoutReceiptWarning(cashNoReceipt.count, cashNoReceipt.total);
+  if (cashNoReceiptWarning) warnings.push(cashNoReceiptWarning);
   // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
   const bankAllRows = await fetchAllRows<{
     amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
@@ -1570,6 +1696,47 @@ export async function buildClosingPackageZip(args: {
       });
       regimeNotes.push(`LET OP: ${kasResolution.undatedPaidCount} betaalde factu(u)r(en) zonder betaaldatum — concept mogelijk te laag.`);
     }
+  }
+
+  // [PACKAGE-ART29] Both sides of artikel 29 Wet OB, into the hand-over.
+  //
+  // These were computed for readiness and shown to the OWNER only. But art. 29 is not a tidiness
+  // issue, it is money in both directions, and neither direction is settled automatically:
+  //
+  //   lid 7 — voorbelasting deducted on purchase invoices never paid becomes payable AGAIN. A
+  //           LIABILITY, quietly growing belastingrente. bad-debt.ts calls it "the one an
+  //           entrepreneur never hears about until the naheffing arrives" — and until now the
+  //           one person who could have caught it, the accountant, was never told.
+  //   lid 1 — BTW declared on sales invoices the customer never paid can be reclaimed. Money to
+  //           GET, which is quietly left behind if nobody raises it.
+  //
+  // Deliberately warnings and not figures: whether a debt is truly uncollectible, and in which
+  // period to settle it, is the accountant's judgement. The package never books either one — same
+  // discipline as the rest of this file, which reports raw numbers and computes no vat_due.
+  //
+  // Same threshold as readiness (BAD_DEBT_MIN_EUR) so the owner's screen and this package can
+  // never name two different amounts. Fail-soft: a failed read drops the check, not the ZIP.
+  const clawback = await collectVatClawback(supabase, ownerId, kasResolution.scheme, end, korActive)
+    .catch(() => null);
+  if (clawback && clawback.eligible.length > 0 && clawback.totalRepayableBtw >= BAD_DEBT_MIN_EUR) {
+    warnings.push({
+      code: "vat_clawback_art29_7",
+      message:
+        `${clawback.eligible.length} inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `voorbelasting daarop (${formatEuroNL(clawback.totalRepayableBtw)}) wordt weer verschuldigd ` +
+        `(art. 29 lid 7 Wet OB) en is hier NIET verrekend. Zijn ze wél betaald, dan vervalt dit.`,
+    });
+  }
+  const badDebt = await collectBadDebt(supabase, ownerId, kasResolution.scheme, end)
+    .catch(() => null);
+  if (badDebt && badDebt.eligible.length > 0 && badDebt.totalReclaimableBtw >= BAD_DEBT_MIN_EUR) {
+    warnings.push({
+      code: "bad_debt_art29_1",
+      message:
+        `${badDebt.eligible.length} verkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `afgedragen BTW daarop (${formatEuroNL(badDebt.totalReclaimableBtw)}) is terug te vragen ` +
+        `(oninbare vordering, art. 29 Wet OB) en is hier NIET verrekend.`,
+    });
   }
 
   // Only emit a concept when there is something to declare — sales, unrated cash omzet,
