@@ -55,7 +55,12 @@
 // its composed statement line as the remittance.
 
 import type { BankTransaction } from "./bank-parser";
-import { extractInvoiceReference, deriveReadableName, isValidIsoDate } from "./bank-parser";
+import {
+  extractInvoiceReference,
+  deriveReadableName,
+  isValidIsoDate,
+  CARD_TERMINAL_MARKERS,
+} from "./bank-parser";
 import { isValidIban, normalizeIban } from "./epc-qr";
 
 /** The Berlin Group amount object: a decimal STRING plus its currency. */
@@ -394,9 +399,9 @@ export function mapEnableBankingTransaction(
   // The rescue is gated on the acceptor markers, not on "this looks like a card row", so an
   // ordinary supplier name is never shortened. On that quarter the gate matched exactly the
   // eleven Betaalautomaat rows and nothing else.
-  const CARD_MARKERS = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i;
-  const terminalText = CARD_MARKERS.test(description);
-  const acceptorName = counterpartName !== null && CARD_MARKERS.test(counterpartName);
+
+  const terminalText = CARD_TERMINAL_MARKERS.test(description);
+  const acceptorName = counterpartName !== null && CARD_TERMINAL_MARKERS.test(counterpartName);
 
   if (!counterpartName && terminalText) {
     const store = deriveReadableName(description);

@@ -284,10 +284,18 @@ function parseMT940Transaction(
   currency: string,
   errors: string[]
 ): BankTransaction | null {
-  // :61: format: YYMMDD[MMDD]CD,AMOUNT[NREF][//BANKREF]\n[SUPPLEMENTARY]
+  // :61: format: YYMMDD[MMDD]CD[F]AMOUNT[Nxxx][OWNERREF][//BANKREF]\n[SUPPLEMENTARY]
   // C = credit, D = debit, RD = reversal debit, RC = reversal credit
+  //
+  // [BANK-PARSE-OWNERREF] The transaction type code is exactly four characters (N + three, e.g.
+  // NTRF, NDDT) and what follows it, up to "//", is the ACCOUNT OWNER'S reference — for ING that
+  // is where a betalingskenmerk lands: "NTRF1583366271601210//26115435747552". The old pattern
+  // read the type code as `N.{0,4}`, so it swallowed "NTRF1" and left "583366271601210" to fail
+  // the "//" that follows, which cost the kenmerk AND the bank reference behind it. On a real
+  // quarter that lost the reference on four Belastingdienst payments where CAMT of the same
+  // quarter kept it — the two doors then fingerprinted the same payment differently.
   const txMatch = line61.match(
-    /^(\d{6})(\d{4})?(C|D|RC|RD)([A-Z]?)(\d+,\d{0,2})(N.{0,4})?(?:\/\/(.+))?/
+    /^(\d{6})(\d{4})?(RC|RD|C|D)([A-Z]?)(\d+,\d{0,2})(N[A-Z0-9]{3})?([^/\n]{0,16})?(?:\/\/(.+))?/
   );
 
   if (!txMatch) {
@@ -295,7 +303,7 @@ function parseMT940Transaction(
     return null;
   }
 
-  const [, dateStr, , creditDebit, , amountStr, , bankRef] = txMatch;
+  const [, dateStr, , creditDebit, , amountStr, , ownerRef, bankRef] = txMatch;
 
   // Parse date YYMMDD → ISO
   const year = 2000 + parseInt(dateStr.slice(0, 2));
@@ -336,7 +344,7 @@ function parseMT940Transaction(
   // Parse :86: description field
   // ING/ABN AMRO use structured sub-fields: /BENM//NAME/...
   const { description, counterpartName, counterpartIban, reference } =
-    parseMT940Description(line86);
+    parseMT940Description(line86, ownerRef ?? null);
 
   return {
     date,
@@ -351,7 +359,41 @@ function parseMT940Transaction(
   };
 }
 
-function parseMT940Description(rawLine86: string): {
+/**
+ * [BANK-PARSE-CARD] What marks a line as a card/terminal transaction rather than a transfer.
+ *
+ * Exported because three doors have to agree on it — MT940, CAMT and the PSD2 feed mapper. It
+ * lived as three separate copies of the same literal until a real ING quarter showed the doors
+ * disagreeing; a regex that decides whether a number is an invoice reference is exactly the kind
+ * of rule [BANK-REF-ONE-SOURCE] says must have one home.
+ */
+export const CARD_TERMINAL_MARKERS =
+  /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i;
+
+/**
+ * [BANK-REF-ONE-SOURCE] The end-to-end reference, or null when the bank only sent a placeholder.
+ *
+ * One rule for both doors. CAMT carries this as <EndToEndId>, MT940 as /EREF/ in :86: or as the
+ * account owner's reference in :61:, and each format has its own way of saying "there isn't one":
+ * SEPA writes NOTPROVIDED, MT940 writes NONREF, and ING writes the literal "EREF" in :61: to mean
+ * "look in :86:". Booking any of those three as a payment reference matches it against invoices as
+ * if it were a betalingskenmerk, and — because only one door used to do it — fingerprints the same
+ * payment two different ways.
+ */
+function endToEndReference(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.replace(/[/]+/g, "").trim();
+  if (!value) return null;
+  return /^(NOTPROVIDED|NONREF|EREF)$/i.test(value) ? null : value;
+}
+
+function parseMT940Description(
+  rawLine86: string,
+  /** [BANK-PARSE-OWNERREF] The account owner's reference from :61:, which is where ING puts a
+   *  betalingskenmerk when :86: has no /EREF/. It is the MT940 twin of CAMT's <EndToEndId> and is
+   *  used in exactly the same position, so both doors reach the same reference. */
+  ownerRef: string | null = null,
+): {
   description: string;
   counterpartName: string | null;
   counterpartIban: string | null;
@@ -472,20 +514,27 @@ function parseMT940Description(rawLine86: string): {
   const isPos = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(line86);
   let reference: string | null = extractInvoiceReference(remi, { isPos, isCard: false });
 
-  if (reference === null && remi && !isPos) {
-    // No invoice number found. Two ordered fallbacks for the live parse:
-    //   (a) a cleaned REMI (strip USTD noise + slashes) as a human reference, then
-    //   (b) the structured EREF/KREF field if even that is empty.
-    const cleaned = remi
-      .replace(/\bUSTD?\b/g, "")
-      .replace(/[/]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    reference = cleaned.length >= 3 ? cleaned : null;
-  }
+  // [BANK-REF-ONE-SOURCE] From here the fallback must be the SAME as parseCAMT053Entry's, because
+  // the two doors carry the same statement and a different reference is a different contentKey —
+  // the same payment imported twice.
+  //
+  // CAMT does exactly one thing when extractInvoiceReference finds nothing: it falls back to
+  // <EndToEndId>, and to nothing else. MT940 used to first install the CLEANED REMI TEXT as the
+  // reference, which is not a reference at all — on a real ING quarter that produced
+  // "deel salaris april 2026" and "Salaris april 2026" on 13 rows where CAMT of the same quarter
+  // correctly produced null, and on 10 direct debits it produced the whole
+  // "Incasso Huur Periode: 01-04-2026 tot 01-05-2026" where CAMT produced the mandate's EREF.
+  // Twenty-three of 576 lines that dedup as two different transactions.
+  //
+  // It also fed parseReferenceNumbers a sentence, which is the [BANK-REF-ONE-SOURCE] failure the
+  // header warns about: a line that can never be auto-booked and never satisfies isFullyCovered.
+  //
+  // NOTE ON THE UPGRADE. This changes what an MT940-only owner's reference column holds, so a
+  // period imported before the fix and re-uploaded after it can import twice on the affected
+  // lines. That is a one-off at the boundary; the divergence it removes fires every time an owner
+  // uses both of his bank's formats, which ING offers side by side on the same download page.
   if (!reference && !isPos) {
-    const fb = fields["EREF"] ?? fields["KREF"] ?? null;
-    reference = fb ? fb.replace(/[/]+/g, "").trim() || null : null;
+    reference = endToEndReference(fields["EREF"] ?? fields["KREF"] ?? ownerRef);
   }
 
   // [BANK-PARSE-FEE] Bank's own charges have no counterpart party (no /CNTP/, no
@@ -510,13 +559,18 @@ function parseMT940Description(rawLine86: string): {
   // TRANSACTIENR), never an invoice. Detect the card-terminal shape, derive the
   // readable store name via the shared helper, and drop the noisy reference so
   // the card shows e.g. "ASM Supermarkt" with no confusing pseudo-invoice chip.
-  if ((!counterpartName || /^USTD$/i.test(counterpartName)) && remi && /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i.test(remi)) {
-    const store = deriveReadableName(remi);
-    if (store) {
-      counterpartName = store;
-      reference = null; // terminal sequence numbers are not invoice references
-    }
+  const mt940TerminalText = !!remi && CARD_TERMINAL_MARKERS.test(remi);
+  if ((!counterpartName || /^USTD$/i.test(counterpartName)) && mt940TerminalText) {
+    const store = deriveReadableName(remi!);
+    if (store) counterpartName = store;
   }
+  // [BANK-PARSE-TERMINAL-REF] Clearing the reference is SEPARATE from rescuing the name, because a
+  // terminal line can arrive with a party already named and then the rescue never runs. A Geldmaat
+  // cash deposit does: the bank names "Gemeenschap Geldmaat" and leaves the terminal id, the
+  // pasvolgnr and the transaction number in the text, so the structured pass offered
+  // "811391, 001, 616716432971" as the invoice reference of a €10.150 deposit. Terminal numbers are
+  // never an invoice reference no matter who is named beside them.
+  if (mt940TerminalText) reference = null;
 
   // [BANK-PARSE-ING] Fallback for the common ING/Rabo/ABN :86: layout that is
   // NOT wrapped in /NAME/ markers but reads as:  IBAN/BIC/Counterpart name
@@ -874,9 +928,7 @@ function parseCAMT053Entry(
     isCard: false,
   });
   if (!reference && !isPosEntry) {
-    const e2eMatch = txDtls.match(/<EndToEndId>([^<]+)<\/EndToEndId>/);
-    const e2e = e2eMatch ? e2eMatch[1].trim() : "";
-    reference = e2e && !/^NOTPROVIDED$/i.test(e2e) ? e2e : null;
+    reference = endToEndReference(txDtls.match(/<EndToEndId>([^<]+)<\/EndToEndId>/)?.[1]);
   }
 
   // Transaction ID
@@ -885,13 +937,15 @@ function parseCAMT053Entry(
 
   // [BANK-PARSE-CARD] Same as MT940: a card purchase has no related party, so
   // derive the store name from the description and drop the terminal-noise ref.
-  if (!counterpartName && /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i.test(description)) {
+  const camtTerminalText = CARD_TERMINAL_MARKERS.test(description);
+  if (!counterpartName && camtTerminalText) {
     const store = deriveReadableName(description);
-    if (store) {
-      counterpartName = store;
-      reference = null;
-    }
+    if (store) counterpartName = store;
   }
+  // [BANK-PARSE-TERMINAL-REF] Same split as MT940, and for the same real line: the Geldmaat deposit
+  // arrives with a named party, so the rescue above never fires and the terminal numbers survived
+  // as the reference of the largest single amount in the quarter.
+  if (camtTerminalText) reference = null;
   // [BANK-PARSE-READABLE] Still nothing? Derive the most recognisable text from
   // the description so the owner never sees a blank counterpart.
   if (!counterpartName) {

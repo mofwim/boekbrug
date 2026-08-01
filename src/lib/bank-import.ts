@@ -71,8 +71,31 @@ function dedupName(s: string | null): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, DEDUP_NAME_LENGTH);
 }
+
+/**
+ * [BANK-DEDUP-TRUNCATED-NAME] How much of a counterpart name the fingerprint looks at.
+ *
+ * A bank does not send the same name to every door. ING writes
+ * "Stichting Bedrijfstakpensioenfonds voor het Levensmiddelenbedrijf" in CAMT and cuts it to
+ * "Stichting Bedrijfstakpensioenfonds voor het Levens" in the MT940 :86: /CNTP/ field \u2014 the same
+ * payment, the same download page, two names. Comparing them whole made five lines of one real
+ * quarter fingerprint as ten, and it does so for every long name: pension funds, foundations,
+ * bedrijfstak schemes \u2014 exactly the counterparties whose names run long.
+ *
+ * 40 characters AFTER normalization, which is comfortably inside ING's cut (46 normalized) and
+ * still 40 distinguishing characters. It cannot silently merge two suppliers: contentKey also
+ * carries the date, the amount to the cent and the reference, so a collision needs two
+ * counterparties sharing 40 alphanumerics who were paid the identical amount on the identical day
+ * under the identical reference.
+ *
+ * This is safe to change without a migration, unlike the stored columns: both sides of the
+ * comparison are hashed at compare time, incoming and stored alike. A bank found truncating
+ * SHORTER than this would need the number lowered, and the parity test would be what tells us.
+ */
+const DEDUP_NAME_LENGTH = 40;
 
 /**
  * Stable content fingerprint for cross-upload dedup.
