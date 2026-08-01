@@ -37,6 +37,8 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-no
 // [UPLOAD-ERRORS] One HTTP-status → owner-sentence translator, shared with /dashboard/upload and
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
+// [BEDRAG-DRIELUIK] excl + BTW = totaal blijft kloppen, welk van de drie je ook typt.
+import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -772,8 +774,22 @@ function ConfirmPaidModal({
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
-  // Total is always derived — never edited directly. This IS TRAIL 2: excl + BTW = incl.
-  const totalIncBtw = exBtw + btwAmount;
+  // [BEDRAG-DRIELUIK] Het totaal WAS afgeleid en niet invulbaar. Dat garandeerde de identiteit
+  // (excl + BTW = totaal kan niet meer misgaan) maar stond haaks op het papier: het totaal is het
+  // betrouwbaarste getal dat er staat — vetgedrukt onderaan, en het bedrag dat je bankafschrift
+  // straks moet matchen — terwijl het excl-bedrag juist het lastigste is (Subtotaal? basis?
+  // Ex. BTW?). Op alle vier de facturen die hierop vastliepen was precies dát het verkeerd gelezen
+  // getal, en moest de ondernemer 1.078,46 − 88,73 uit z'n hoofd doen om er te komen.
+  //
+  // Nu zijn alle drie invulbaar en klopt de identiteit na élke toets — bewaakt door amount-triplet.ts
+  // (puur, 7 tests), niet door hoop. Raak je het totaal aan, dan beweegt het EXCL-bedrag mee; de BTW
+  // blijft staan tenzij je hem zelf typt, want dat is het getal dat als voorbelasting de aangifte in
+  // gaat en dus het minst mag verspringen.
+  const [totalIncBtw, setTotalIncBtw] = useState((invoice.total_ex_btw || 0) + (invoice.btw_amount || 0));
+  const applyTriplet = (t: { ex: number; btw: number; incl: number }) => {
+    setExBtw(t.ex); setBtwAmount(t.btw); setTotalIncBtw(t.incl);
+  };
+  const triplet = { ex: exBtw, btw: btwAmount, incl: totalIncBtw };
 
   // [BRIDGE-CREDITNOTA-SIGN] The old `Math.max(0, …)` forced every edited amount ≥ 0, which turned
   // a creditnota positive the moment the user touched a field. A creditnota's amounts follow the
@@ -781,7 +797,12 @@ function ConfirmPaidModal({
   // signs are NOT constrained (the real Altena case is ex −123, BTW +13,42, totaal −109,58). So for
   // a creditnota we accept the real signed value the reviewer reads off the paper (no clamp); for a
   // normal invoice we keep the ≥ 0 clamp.
-  const isCredit = invoice.invoice_type === "creditnota";
+  // [SOORT-CORRECTIE] De reviewer kan hier zeggen dat dit toch een creditnota is. Zonder die
+  // mogelijkheid kon de waarheid er niet in: bij de aardappelfactuur (retour container, netto
+  // −109,58) duwde de klem elk negatief bedrag terug naar 0, en bleef er een schuld staan die in
+  // werkelijkheid een tegoed is. Aanzetten heft de klem op; de server slaat de soort mee op.
+  const [declaredCredit, setDeclaredCredit] = useState(false);
+  const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
 
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
@@ -819,6 +840,8 @@ function ConfirmPaidModal({
     total_ex_btw: exBtw,
     btw_amount: btwAmount,
     total_inc_btw: totalIncBtw,
+    // [SOORT-CORRECTIE] Alleen meesturen als de reviewer het zelf heeft aangezet.
+    ...(declaredCredit ? { is_credit_note: true } : {}),
     // [BRIDGE-EXTRACT] reviewed metadata — persisted by the confirm route
     client_name: vendor.trim(),
     invoice_number: invoiceNumber.trim(),
@@ -927,7 +950,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={exBtw}
-                    onChange={(e) => setExBtw(clampAmount(parseFloat(e.target.value) || 0))}
+                    onChange={(e) => applyTriplet(setExcl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -948,7 +971,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={btwAmount}
-                    onChange={(e) => setBtwAmount(clampAmount(parseFloat(e.target.value) || 0))}
+                    onChange={(e) => applyTriplet(setBtw(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
@@ -974,13 +997,59 @@ function ConfirmPaidModal({
               {/* Divider */}
               <div style={{ height: 1, background: "#dadce0", margin: "12px 0" }} />
 
-              {/* Total — always computed */}
+              {/* [BEDRAG-DRIELUIK] Het totaal — nu invulbaar, want dít is het getal dat op de
+                  factuur het duidelijkst staat. Typ je het over, dan volgt het bedrag exclusief
+                  vanzelf en hoef je niets meer af te trekken. */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#202124" }}>Totaal</span>
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#202124" }}>
-                  {formatAmount(totalIncBtw)}
-                </span>
+                {editing ? (
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={totalIncBtw}
+                    onChange={(e) => applyTriplet(setIncl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
+                    aria-label="Totaalbedrag inclusief BTW — zoals het onderaan de factuur staat"
+                    style={{
+                      width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
+                      borderRadius: 10, border: "1.5px solid #1a73e8",
+                      textAlign: "right", outline: "none", color: "#202124",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 18, fontWeight: 700, color: "#202124" }}>
+                    {formatAmount(totalIncBtw)}
+                  </span>
+                )}
               </div>
+              {editing && (
+                <div style={{ fontSize: 12, color: "#5f6368", lineHeight: 1.4, marginTop: 8 }}>
+                  Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
+                  exclusief rekent zichzelf uit. Staat er statiegeld, emballage of een retour op de
+                  factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.
+                </div>
+              )}
+
+              {/* [SOORT-CORRECTIE] Zonder dit vinkje kón de waarheid er niet in bij een netto
+                  negatieve factuur: de klem duwde elk minbedrag terug naar 0. Alleen zichtbaar bij
+                  een rij die nog als gewone factuur staat — een al goed geboekte creditnota heeft
+                  hem niet nodig. */}
+              {editing && invoice.invoice_type !== "creditnota" && (
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={declaredCredit}
+                    onChange={(e) => setDeclaredCredit(e.target.checked)}
+                    style={{ marginTop: 2, width: 16, height: 16, accentColor: "#0B8043" }}
+                  />
+                  <span style={{ fontSize: 12, color: "#3c4043", lineHeight: 1.4 }}>
+                    <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
+                    “Creditnota” op staat of als het totaal onderaan negatief is. Dan mag je een
+                    minbedrag invullen, gaat hij van je openstaande saldo af en wordt zijn btw
+                    afgetrokken in plaats van opgeteld.
+                  </span>
+                </label>
+              )}
             </div>
 
             {/* [BRIDGE-EXTRACT] Vendor / number / date — editable under the same toggle */}

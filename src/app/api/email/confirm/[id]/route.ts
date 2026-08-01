@@ -89,6 +89,9 @@ export async function POST(
     // an older client, or the pay path, which has no client-side pass at all — keeps today's
     // inline behaviour exactly. See the gate further down.
     deferAutoConfirm?: boolean;
+    // [SOORT-CORRECTIE] De reviewer verklaart dit alsnog een creditnota. Alleen deze richting —
+    // zie de toelichting bij isCredit hieronder.
+    is_credit_note?: boolean;
   } = {};
   try {
     body = await req.json();
@@ -109,7 +112,20 @@ export async function POST(
   // ≥ 0 for a normal invoice; for a creditnota it accepts any finite value, so a correctly-read
   // negative excl / positive BTW persists instead of being dropped back to the stored amount. The
   // old blanket `v >= 0` (with the client's Math.max(0)) turned every edited creditnota positive.
-  const isCredit = invoice.invoice_type === "creditnota";
+  // [SOORT-CORRECTIE] De reviewer mag de SOORT rechtzetten, want de lezer heeft hem niet altijd
+  // goed. Het echte geval: een aardappelgroothandel stuurt een factuur waarop een geretourneerde
+  // container van −408,00 het totaal netto negatief maakt (Totaal te voldoen −109,58). De lezer
+  // sloeg hem op als gewone factuur met +39,42, en dan kon de eigenaar de waarheid NIET invoeren:
+  // de klem hieronder duwde elk negatief bedrag terug naar 0, en zo bleef er een schuld staan die
+  // in werkelijkheid een tegoed is — inclusief te veel teruggevraagde voorbelasting.
+  //
+  // Bewust alleen deze richting: 'factuur' → 'creditnota'. Dat is de kant waar de app te weinig
+  // ziet (een positief afgedrukte creditnota herkent de lezer per definitie niet, zie HUNT-F2),
+  // en het is de kant die geld VAN het openstaande saldo haalt in plaats van eraan toevoegt. De
+  // omgekeerde weg — een creditnota tot factuur verklaren — komt in de praktijk niet voor en zou
+  // een tegoed stilletjes in een schuld veranderen; die blijft dus dicht.
+  const declaredCredit = body.is_credit_note === true;
+  const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const validNum = (v: unknown): v is number =>
     typeof v === "number" && isFinite(v) && (isCredit ? true : v >= 0);
 
@@ -136,6 +152,9 @@ export async function POST(
   const updatePatch: InvoiceUpdate = { updated_at: new Date().toISOString() };
 
   // Persist reviewed amounts when the user actually sent valid numbers
+  // [SOORT-CORRECTIE] De rechtzetting van de soort reist mee in dezelfde schrijfactie als de
+  // bedragen. Eén update, dus de soort kan nooit los komen te staan van het teken dat erbij hoort.
+  if (declaredCredit && invoice.invoice_type !== "creditnota") updatePatch.invoice_type = "creditnota";
   if (validNum(body.total_ex_btw)) updatePatch.total_ex_btw = body.total_ex_btw;
   if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;
   if (validNum(body.total_inc_btw)) updatePatch.total_inc_btw = body.total_inc_btw;
