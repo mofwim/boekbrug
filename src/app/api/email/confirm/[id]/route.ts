@@ -26,6 +26,8 @@ import { normalizeArchiveReason } from "@/lib/archive-reason";
 // [READING-MEMORY] Which fields the human changed about the reader's answer — the one signal that
 // makes "this supplier keeps being misread" a fact instead of a feeling.
 import { correctedFields } from "@/lib/reading-memory";
+// [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
+import { asCreditAmounts } from "@/lib/creditnota-signal";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -161,6 +163,28 @@ export async function POST(
   if (validNum(body.total_ex_btw)) updatePatch.total_ex_btw = body.total_ex_btw;
   if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;
   if (validNum(body.total_inc_btw)) updatePatch.total_inc_btw = body.total_inc_btw;
+
+  // [CREDIT-SIGN] The tick has to move the MONEY, not just the label.
+  //
+  // "Dit is een creditnota" set invoice_type and stopped there, while the sentence under it promised
+  // "gaat hij van je openstaande saldo af en wordt zijn btw afgetrokken in plaats van opgeteld".
+  // Neither followed, because nothing in this codebase reads the type when money is counted:
+  // openAmountSigned takes its sign from `total_inc_btw < 0`, and /api/aangifte selects
+  // total_ex_btw and btw_amount without invoice_type and sums them raw. So a credit note ticked and
+  // left at +51,80 kept counting as a debt AND kept adding 4,28 to the voorbelasting it should have
+  // removed — and the screen then flagged it as the sign conflict we had just created.
+  //
+  // Applied to the EFFECTIVE amounts (typed where the reviewer typed, stored otherwise), so ticking
+  // the box without retyping anything still fixes a row the reader booked positive. Already-negative
+  // amounts are left alone — see asCreditAmounts.
+  if (isCredit || declaredCredit) {
+    const signed = asCreditAmounts({ totalExBtw: exBtw, btwAmount: btw, totalIncBtw: incBtw });
+    if (signed.flipped) {
+      updatePatch.total_ex_btw = signed.totalExBtw;
+      updatePatch.btw_amount = signed.btwAmount;
+      updatePatch.total_inc_btw = signed.totalIncBtw;
+    }
+  }
 
   // [BRIDGE-EXTRACT] Persist reviewed metadata when the user edited it inline.
   // Only write non-empty strings; ignore blanks so a cleared field can't wipe data.

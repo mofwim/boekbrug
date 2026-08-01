@@ -1049,9 +1049,10 @@ function ConfirmPaidModal({
                   />
                   <span style={{ fontSize: 12, color: "#3c4043", lineHeight: 1.4 }}>
                     <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
-                    “Creditnota” op staat of als het totaal onderaan negatief is. Dan mag je een
-                    minbedrag invullen, gaat hij van je openstaande saldo af en wordt zijn btw
-                    afgetrokken in plaats van opgeteld.
+                    “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
+                    dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
+                    wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
+                    staat er al een, dan blijft die staan.
                   </span>
                 </label>
               )}

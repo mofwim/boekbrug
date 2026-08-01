@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict,
+  numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict, asCreditAmounts,
 } from "./creditnota-signal";
 
 /** The real case: this wholesaler sends CR credit notes alongside RE invoices. */
@@ -122,4 +122,57 @@ test("the whole list from the screenshot yields exactly two signals", () => {
   assert.deepEqual(flagged.map((r) => r.invoiceNumber), ["CR0300343", "CR0300510"]);
   // And what is wrongly sitting in "still to pay" is the sum of those two.
   assert.equal(Math.round(flagged.reduce((s, r) => s + r.totalIncBtw, 0) * 100) / 100, 76.05);
+});
+
+// ── asCreditAmounts ───────────────────────────────────────────────────────────
+// The tick "Dit is een creditnota" used to set invoice_type and nothing else, while its own label
+// promised the money consequences. Nothing in this codebase reads the type when money is counted —
+// openAmountSigned reads `total_inc_btw < 0`, and /api/aangifte sums btw_amount raw — so the sign
+// is the only thing that makes a credit note behave like one.
+
+test("[CREDIT-SIGN] a positively printed credit note is flipped, and the identity survives", () => {
+  // The real Dutch Sweets row: 47.52 + 4.28 = 51.80, booked as a debt.
+  const out = asCreditAmounts({ totalExBtw: 47.52, btwAmount: 4.28, totalIncBtw: 51.8 });
+  assert.equal(out.flipped, true);
+  assert.equal(out.totalIncBtw, -51.8);
+  assert.equal(out.totalExBtw, -47.52);
+  assert.equal(out.btwAmount, -4.28);
+  assert.ok(Math.abs(out.totalExBtw + out.btwAmount - out.totalIncBtw) < 0.005, "ex + btw = incl still");
+});
+
+test("[CREDIT-SIGN] amounts that are already negative are left alone", () => {
+  // The owner typed the minus themselves, or the reader read it. Flipping again would turn their
+  // credit note back into a debt — the exact error this function exists to prevent.
+  const out = asCreditAmounts({ totalExBtw: -100, btwAmount: -9, totalIncBtw: -109 });
+  assert.equal(out.flipped, false);
+  assert.deepEqual([out.totalExBtw, out.btwAmount, out.totalIncBtw], [-100, -9, -109]);
+});
+
+test("[CREDIT-SIGN] a zero total has no sign to give it", () => {
+  const out = asCreditAmounts({ totalExBtw: 0, btwAmount: 0, totalIncBtw: 0 });
+  assert.equal(out.flipped, false);
+  assert.equal(out.totalIncBtw, 0);
+});
+
+test("[CREDIT-SIGN] the triplet flips as ONE, so a mixed-sign reading is not rewritten", () => {
+  // A triplet whose parts do not share a sign: 200 + (−9) = 191. It happens on returned-goods lines
+  // and on a partly credited invoice, and it satisfies the identity exactly as it stands.
+  //
+  // Per-field -Math.abs() would return (−200, −9, −191), and −200 + −9 = −209 ≠ −191: an identity
+  // that held before the tick and is broken by it, which is the arithmetic gate's own alarm going
+  // off because of us. One multiplication by −1 keeps whatever relationship the reading had.
+  const before = { totalExBtw: 200, btwAmount: -9, totalIncBtw: 191 };
+  assert.ok(Math.abs(before.totalExBtw + before.btwAmount - before.totalIncBtw) < 0.005, "the fixture itself holds");
+  const out = asCreditAmounts(before);
+  assert.equal(out.flipped, true);
+  assert.deepEqual([out.totalExBtw, out.btwAmount, out.totalIncBtw], [-200, 9, -191]);
+  assert.ok(Math.abs(out.totalExBtw + out.btwAmount - out.totalIncBtw) < 0.005, "and still holds after");
+});
+
+test("[CREDIT-SIGN] flipping resolves the sign conflict the app warns about", () => {
+  // The two functions must agree: what creditnotaSignConflict flags, asCreditAmounts must fix.
+  const before = { totalExBtw: 47.52, btwAmount: 4.28, totalIncBtw: 51.8 };
+  assert.equal(creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: before.totalIncBtw }), true);
+  const after = asCreditAmounts(before);
+  assert.equal(creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: after.totalIncBtw }), false);
 });
