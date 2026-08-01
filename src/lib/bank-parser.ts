@@ -568,7 +568,7 @@ function parseMT940Description(
   // terminal line can arrive with a party already named and then the rescue never runs. A Geldmaat
   // cash deposit does: the bank names "Gemeenschap Geldmaat" and leaves the terminal id, the
   // pasvolgnr and the transaction number in the text, so the structured pass offered
-  // "811391, 001, 616716432971" as the invoice reference of a €10.150 deposit. Terminal numbers are
+  // "800001, 001, 600000000001" as the invoice reference of a €10.150 deposit. Terminal numbers are
   // never an invoice reference no matter who is named beside them.
   if (mt940TerminalText) reference = null;
 

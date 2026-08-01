@@ -14,9 +14,14 @@
 // fingerprints. Nothing in the suite caught it, because every fixture until now was written by the
 // same hand that wrote the parser, so both sides agreed on the same misreading.
 //
-// Each case below is one shape from that quarter, with names, IBANs and amounts replaced. The real
-// files are not in the repo: they are somebody's salaries, suppliers and account numbers, and a
-// regression test is not worth publishing those. What is preserved is the STRUCTURE that broke.
+// Each case below is one shape from that quarter, anonymised. The real files are not in the repo:
+// they are somebody's salaries, suppliers and account numbers, and a regression test is not worth
+// publishing those.
+//
+// What was replaced: counterparty names, every IBAN (the substitutes are mod-97 valid, so the same
+// validation branches run), mandate/incassant ids, terminal ids and the one street address.
+// What was NOT: the amounts, the dates, and the exact byte layout of the :61:/:86: and <Ntry>
+// blocks — those are the structure that broke, and rounding them off would retire the test.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -75,16 +80,16 @@ const CASES: Case[] = [
     mt940:
       ":61:2604010401D81,51NDDTEREF//26152220696910\n" +
       "/TRCD/01018/\n" +
-      ":86:/EREF/TK10962798//MARF/105289//CSID/NL91ZZZ200671250000//CNTP\n" +
-      "/NL37BNGH0285007416/BNGHNL2G/Woningstichting Zuid///REMI/USTD//Incasso  H\n" +
+      ":86:/EREF/TK10000001//MARF/100001//CSID/NL01ZZZ000000010000//CNTP\n" +
+      "/NL11BNGH0002220001/BNGHNL2G/Woningstichting Zuid///REMI/USTD//Incasso  H\n" +
       "uur Periode: 01-04-2026 tot 01-05-2026/",
     camt: `<Ntry>
       <Amt Ccy="EUR">81.51</Amt><CdtDbtInd>DBIT</CdtDbtInd>
       <ValDt><Dt>2026-04-01</Dt></ValDt>
       <NtryDtls><TxDtls>
-        <Refs><EndToEndId>TK10962798</EndToEndId></Refs>
+        <Refs><EndToEndId>TK10000001</EndToEndId></Refs>
         <RltdPties><Cdtr><Nm>Woningstichting Zuid</Nm></Cdtr>
-          <CdtrAcct><Id><IBAN>NL37BNGH0285007416</IBAN></Id></CdtrAcct></RltdPties>
+          <CdtrAcct><Id><IBAN>NL11BNGH0002220001</IBAN></Id></CdtrAcct></RltdPties>
         <RmtInf><Ustrd>Incasso Huur Periode: 01-04-2026 tot 01-05-2026</Ustrd></RmtInf>
       </TxDtls></NtryDtls></Ntry>`,
     feed: {
@@ -92,7 +97,7 @@ const CASES: Case[] = [
       transaction_amount: { amount: "81.51", currency: "EUR" },
       credit_debit_indicator: "DBIT",
       creditor: { name: "Woningstichting Zuid" },
-      creditor_account: { iban: "NL37BNGH0285007416" },
+      creditor_account: { iban: "NL11BNGH0002220001" },
       remittance_information: ["Incasso Huur Periode: 01-04-2026 tot 01-05-2026"],
     },
     // The feed model has no end-to-end field; see the last test in this file.
@@ -133,7 +138,7 @@ const CASES: Case[] = [
     mt940:
       ":61:2604020402D1000,00NTRFNONREF//26092353023650\n" +
       "/TRCD/00112/\n" +
-      ":86:/CNTP/NL71INGB0681856653/INGBNL2A/M. Bakker///REMI/UST\n" +
+      ":86:/CNTP/NL52INGB0600000053/INGBNL2A/M. Bakker///REMI/UST\n" +
       "D//deel salaris april 2026/",
     camt: `<Ntry>
       <Amt Ccy="EUR">1000.00</Amt><CdtDbtInd>DBIT</CdtDbtInd>
@@ -141,7 +146,7 @@ const CASES: Case[] = [
       <NtryDtls><TxDtls>
         <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
         <RltdPties><Cdtr><Nm>M. Bakker</Nm></Cdtr>
-          <CdtrAcct><Id><IBAN>NL71INGB0681856653</IBAN></Id></CdtrAcct></RltdPties>
+          <CdtrAcct><Id><IBAN>NL52INGB0600000053</IBAN></Id></CdtrAcct></RltdPties>
         <RmtInf><Ustrd>deel salaris april 2026</Ustrd></RmtInf>
       </TxDtls></NtryDtls></Ntry>`,
     feed: {
@@ -149,7 +154,7 @@ const CASES: Case[] = [
       transaction_amount: { amount: "1000.00", currency: "EUR" },
       credit_debit_indicator: "DBIT",
       creditor: { name: "M. Bakker" },
-      creditor_account: { iban: "NL71INGB0681856653" },
+      creditor_account: { iban: "NL52INGB0600000053" },
       remittance_information: ["deel salaris april 2026"],
     },
   },
@@ -162,14 +167,14 @@ const CASES: Case[] = [
     mt940:
       ":61:2604010401D246,96NTRFNONREF//26092353023651\n" +
       "/TRCD/00112/\n" +
-      ":86:/CNTP/NL30INGB0001687765/INGBNL2A/Stichting Bedrijfstakpensioenfonds voor het Bakkers///REMI/UST\n" +
+      ":86:/CNTP/NL19INGB0600000065/INGBNL2A/Stichting Bedrijfstakpensioenfonds voor het Bakkers///REMI/UST\n" +
       "D//E100732098 / MN000009418/",
     camt: `<Ntry>
       <Amt Ccy="EUR">246.96</Amt><CdtDbtInd>DBIT</CdtDbtInd>
       <ValDt><Dt>2026-04-01</Dt></ValDt>
       <NtryDtls><TxDtls>
         <RltdPties><Cdtr><Nm>Stichting Bedrijfstakpensioenfonds voor het Bakkersbedrijf</Nm></Cdtr>
-          <CdtrAcct><Id><IBAN>NL30INGB0001687765</IBAN></Id></CdtrAcct></RltdPties>
+          <CdtrAcct><Id><IBAN>NL19INGB0600000065</IBAN></Id></CdtrAcct></RltdPties>
         <RmtInf><Ustrd>E100732098 / MN000009418</Ustrd></RmtInf>
       </TxDtls></NtryDtls></Ntry>`,
     feed: {
@@ -177,7 +182,7 @@ const CASES: Case[] = [
       transaction_amount: { amount: "246.96", currency: "EUR" },
       credit_debit_indicator: "DBIT",
       creditor: { name: "Stichting Bedrijfstakpensioenfonds voor het Bakkersbedrijf" },
-      creditor_account: { iban: "NL30INGB0001687765" },
+      creditor_account: { iban: "NL19INGB0600000065" },
       remittance_information: ["E100732098 / MN000009418"],
     },
   },
@@ -187,14 +192,14 @@ const CASES: Case[] = [
     mt940:
       ":61:2605250525D224,85NTRFNONREF//26134000001000\n" +
       "/TRCD/00112/\n" +
-      ":86:/CNTP/NL91RABO0315273637/RABONL2U/Jansen Bouw B.V.///REMI/UST\n" +
+      ":86:/CNTP/NL79RABO0300000039/RABONL2U/Jansen Bouw B.V.///REMI/UST\n" +
       "D//26002148/",
     camt: `<Ntry>
       <Amt Ccy="EUR">224.85</Amt><CdtDbtInd>DBIT</CdtDbtInd>
       <ValDt><Dt>2026-05-25</Dt></ValDt>
       <NtryDtls><TxDtls>
         <RltdPties><Cdtr><Nm>Jansen Bouw B.V.</Nm></Cdtr>
-          <CdtrAcct><Id><IBAN>NL91RABO0315273637</IBAN></Id></CdtrAcct></RltdPties>
+          <CdtrAcct><Id><IBAN>NL79RABO0300000039</IBAN></Id></CdtrAcct></RltdPties>
         <RmtInf><Ustrd>26002148</Ustrd></RmtInf>
       </TxDtls></NtryDtls></Ntry>`,
     feed: {
@@ -202,7 +207,7 @@ const CASES: Case[] = [
       transaction_amount: { amount: "224.85", currency: "EUR" },
       credit_debit_indicator: "DBIT",
       creditor: { name: "Jansen Bouw B.V." },
-      creditor_account: { iban: "NL91RABO0315273637" },
+      creditor_account: { iban: "NL79RABO0300000039" },
       reference_number: "26002148",
       remittance_information: ["26002148"],
     },
@@ -248,13 +253,13 @@ test("a terminal line never yields an invoice reference, whichever door it comes
     <ValDt><Dt>2026-06-16</Dt></ValDt>
     <NtryDtls><TxDtls>
       <RltdPties><Dbtr><Nm>Gemeenschap Geldmaat</Nm></Dbtr></RltdPties>
-      <RmtInf><Ustrd>Geldmaat Wagnerplein 59 16-06-2026 16:08 TERMINALID: 811391 PASVOLGNR: 001 TRANSACTIENR: 616716432971</Ustrd></RmtInf>
+      <RmtInf><Ustrd>Geldmaat Dorpsstraat 12 16-06-2026 16:08 TERMINALID: 800001 PASVOLGNR: 001 TRANSACTIENR: 600000000001</Ustrd></RmtInf>
     </TxDtls></NtryDtls></Ntry>`)).transactions[0];
 
   const fromMt = parseMT940(mt940(
-    ":61:2606160616C10150,00NMSCNONREF//26167164329710\n" +
+    ":61:2606160616C10150,00NMSCNONREF//26000000000010\n" +
     "/TRCD/00164/\n" +
-    ":86:/CNTP///Gemeenschap Geldmaat///REMI/USTD//Geldmaat Wagnerplein 59 16-06-2026 16:08 TERMINALID: 811391 PASVOLGNR: 001 TRANSACTIENR: 616716432971/",
+    ":86:/CNTP///Gemeenschap Geldmaat///REMI/USTD//Geldmaat Dorpsstraat 12 16-06-2026 16:08 TERMINALID: 800001 PASVOLGNR: 001 TRANSACTIENR: 600000000001/",
   )).transactions[0];
 
   const fromFeed = mapEnableBankingTransaction({
@@ -263,7 +268,7 @@ test("a terminal line never yields an invoice reference, whichever door it comes
     credit_debit_indicator: "CRDT",
     debtor: { name: "STORTING ING" },
     remittance_information: [
-      "Geldmaat Wagnerplein 59 811391 PASVOLGNR 001 16-06-2026 16:08 RRN: 616716432971",
+      "Geldmaat Dorpsstraat 12 800001 PASVOLGNR 001 16-06-2026 16:08 RRN: 600000000001",
     ],
   })!;
 
@@ -285,7 +290,7 @@ test("the feed has no end-to-end id, and guessing one from entry_reference is no
   // real quarter, deliberately, until a live /accounts/{id}/transactions response says where a
   // Dutch bank actually puts it.
   const feed = mapEnableBankingTransaction({
-    entry_reference: "TK10962798",
+    entry_reference: "TK10000001",
     value_date: "2026-04-01",
     transaction_amount: { amount: "81.51", currency: "EUR" },
     credit_debit_indicator: "DBIT",
@@ -294,5 +299,5 @@ test("the feed has no end-to-end id, and guessing one from entry_reference is no
   })!;
 
   assert.equal(feed.reference, null, "entry_reference must not become a payment reference");
-  assert.equal(feed.transactionId, "TK10962798", "but it is still kept for debugging");
+  assert.equal(feed.transactionId, "TK10000001", "but it is still kept for debugging");
 });

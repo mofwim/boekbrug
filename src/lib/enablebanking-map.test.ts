@@ -11,6 +11,13 @@
 // The SECOND is the cross-door property: the same transaction, delivered
 // once as a CAMT.053 file the owner uploaded and once over the bank feed, must produce the SAME
 // contentKey. If it does not, it is stored twice and every figure built on it doubles.
+//
+// The Dutch rows come from a real ING quarter and are anonymised the same way bank-parity.test.ts
+// is: names, IBANs (mod-97 valid substitutes), mandate and incassant ids, terminal ids and the one
+// street address are replaced; amounts, dates and the exact string layout are not, because those
+// are what the branches below actually read. A few counterparty names — the supplier, the water
+// company, the card acceptor — are the fixture identities this repo already uses elsewhere, so
+// they are kept rather than forked into a second set of fake names.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -213,11 +220,11 @@ test("money in names the debtor, money out names the creditor", () => {
     credit_debit_indicator: "DBIT",
     debtor: { name: "Wij Zelf" },
     creditor: { name: "Alderaan Coffee" },
-    creditor_account: { iban: "NL91RABO0315273637" },
+    creditor_account: { iban: "NL79RABO0300000039" },
     remittance_information: ["Factuur 26302050"],
   });
   assert.equal(outgoing?.counterpartName, "Alderaan Coffee");
-  assert.equal(outgoing?.counterpartIban, "NL91RABO0315273637");
+  assert.equal(outgoing?.counterpartIban, "NL79RABO0300000039");
 });
 
 test("a card refund keeps the CAMT rule even though the bank fills the other party", () => {
@@ -249,8 +256,8 @@ test("a card number is never stored as an IBAN", () => {
   assert.equal(counterpartIbanOf({ iban: null, other: { identification: "12517826136334", scheme_name: "BBAN" } }), null);
   assert.equal(counterpartIbanOf({ iban: null, other: { identification: "3342223455", scheme_name: "OTHI" } }), null);
   // Unless the scheme itself says it is one.
-  assert.equal(counterpartIbanOf({ iban: null, other: { identification: "NL91RABO0315273637", scheme_name: "IBAN" } }), "NL91RABO0315273637");
-  assert.equal(counterpartIbanOf({ iban: "NL91RABO0315273637" }), "NL91RABO0315273637");
+  assert.equal(counterpartIbanOf({ iban: null, other: { identification: "NL79RABO0300000039", scheme_name: "IBAN" } }), "NL79RABO0300000039");
+  assert.equal(counterpartIbanOf({ iban: "NL79RABO0300000039" }), "NL79RABO0300000039");
   assert.equal(counterpartIbanOf(null), null);
 });
 
@@ -328,7 +335,7 @@ test("the SAME transaction from an uploaded CAMT file and from the bank feed ded
       <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
       <RltdPties>
         <Dbtr><Nm>Jansen Bouw B.V.</Nm></Dbtr>
-        <DbtrAcct><Id><IBAN>NL91RABO0315273637</IBAN></Id></DbtrAcct>
+        <DbtrAcct><Id><IBAN>NL79RABO0300000039</IBAN></Id></DbtrAcct>
       </RltdPties>
       <RmtInf><Ustrd>Betaling factuur 26302050</Ustrd></RmtInf>
     </TxDtls></NtryDtls>
@@ -346,7 +353,7 @@ test("the SAME transaction from an uploaded CAMT file and from the bank feed ded
     credit_debit_indicator: "CRDT",
     status: "BOOK",
     debtor: { name: "Jansen Bouw B.V." },
-    debtor_account: { iban: "NL91RABO0315273637" },
+    debtor_account: { iban: "NL79RABO0300000039" },
     remittance_information: ["Betaling factuur 26302050"],
   });
   assert.ok(fromApi, "the API twin must map");
@@ -434,61 +441,61 @@ test("the statement line is un-composed back to the remittance alone", () => {
   // A transfer the payer left blank: the file door has an empty <Ustrd> there, so handing the
   // metadata downstream as if it were his text would invent a description he never wrote.
   assert.equal(
-    statementRemittance("Naam: Basil Ibrahim IBAN: NL20INGB0688754465 Datum/Tijd: 02-06-2026 15:07:59 Valutadatum: 02-06-2026"),
+    statementRemittance("Naam: Basil Ibrahim IBAN: NL74INGB0600000045 Datum/Tijd: 02-06-2026 15:07:59 Valutadatum: 02-06-2026"),
     "",
   );
   // Not a composition — left completely alone. Destroying a payer's own text would take his
   // invoice number with it, which is the worst thing this function could do.
   assert.equal(statementRemittance("Betaling factuur 26302050"), "Betaling factuur 26302050");
   assert.equal(
-    statementRemittance("Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026"),
-    "Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026",
+    statementRemittance("Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT600001 Valutadatum: 05-04-2026"),
+    "Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT600001 Valutadatum: 05-04-2026",
   );
 });
 
 test("the mandate id and the bank's own kenmerk never become an invoice number", () => {
-  // Read whole, this line yielded "TK10962798, 105289" — the Kenmerk and the Machtiging ID. Two
+  // Read whole, this line yielded "TK10000001, 100001" — the Kenmerk and the Machtiging ID. Two
   // numbers where the file door finds none: a different contentKey, and parseReferenceNumbers
   // counting two invoices so autoConfirmTier stops booking the rent automatically.
   const huur = mapEnableBankingTransaction({
-    entry_reference: "TK10962798",
+    entry_reference: "TK10000001",
     transaction_amount: { currency: "EUR", amount: "81.51" },
-    creditor: { name: "WonenBreburg" },
-    creditor_account: { iban: "NL37BNGH0285007416" },
+    creditor: { name: "Woningstichting Zuid" },
+    creditor_account: { iban: "NL11BNGH0002220001" },
     credit_debit_indicator: "DBIT",
     status: "BOOK",
     booking_date: "2026-04-01",
     value_date: "2026-04-01",
     reference_number: "Incasso Huur Periode: 01-04-2026 tot 01-05-2026",
     remittance_information: [
-      "Naam: WonenBreburg Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
-        "IBAN: NL37BNGH0285007416 Kenmerk: TK10962798 Machtiging ID: 105289 " +
-        "Incassant ID: NL91ZZZ200671250000 Doorlopende incasso Valutadatum: 01-04-2026",
+      "Naam: Woningstichting Zuid Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
+        "IBAN: NL11BNGH0002220001 Kenmerk: TK10000001 Machtiging ID: 100001 " +
+        "Incassant ID: NL01ZZZ000000010000 Doorlopende incasso Valutadatum: 01-04-2026",
     ],
   });
   assert.equal(huur?.reference, null);
   assert.equal(huur?.description, "Incasso Huur Periode: 01-04-2026 tot 01-05-2026");
-  assert.equal(huur?.counterpartName, "WonenBreburg");
+  assert.equal(huur?.counterpartName, "Woningstichting Zuid");
 
   // And where the payer's own text does hold identifiers, those survive — only the bank's
-  // plumbing is stripped. Read whole this was "610015412, 5049NM, INC046015959, 5768573815,
-  // MID100185910".
+  // plumbing is stripped. Read whole this was "600000001, 5049NM, INC000000001, 5000000001,
+  // MID100000001".
   const water = mapEnableBankingTransaction({
-    entry_reference: "INC046015959-5768573815",
+    entry_reference: "INC000000001-5000000001",
     transaction_amount: { currency: "EUR", amount: "20.00" },
     creditor: { name: "Brabant Water N.V." },
-    creditor_account: { iban: "NL60RABO0339601213" },
+    creditor_account: { iban: "NL32RABO0300000012" },
     credit_debit_indicator: "DBIT",
     status: "BOOK",
     value_date: "2026-04-01",
-    reference_number: "Klant:610015412 VOORSCHOT apr  BTW 1 65 5049NM 13",
+    reference_number: "Klant:600000001 VOORSCHOT apr  BTW 1 65 5049NM 13",
     remittance_information: [
-      "Naam: Brabant Water N.V. Omschrijving: Klant:610015412 VOORSCHOT apr  BTW 1 65 5049NM 13 " +
-        "IBAN: NL60RABO0339601213 Kenmerk: INC046015959-5768573815 Machtiging ID: MID100185910 " +
-        "Incassant ID: NL32ZZZ160050770000 Doorlopende incasso Valutadatum: 01-04-2026",
+      "Naam: Brabant Water N.V. Omschrijving: Klant:600000001 VOORSCHOT apr  BTW 1 65 5049NM 13 " +
+        "IBAN: NL32RABO0300000012 Kenmerk: INC000000001-5000000001 Machtiging ID: MID100000001 " +
+        "Incassant ID: NL01ZZZ000000020000 Doorlopende incasso Valutadatum: 01-04-2026",
     ],
   });
-  assert.equal(water?.reference, "610015412, 5049NM");
+  assert.equal(water?.reference, "600000001, 5049NM");
 });
 
 test("the structured reference does not survive as a second copy of the text", () => {
@@ -512,8 +519,8 @@ test("the structured reference does not survive as a second copy of the text", (
     collectRemittance({
       reference_number: "Incasso Huur",
       remittance_information: [
-        "Naam: WonenBreburg Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
-          "IBAN: NL37BNGH0285007416 Kenmerk: TK10962798 Valutadatum: 01-04-2026",
+        "Naam: Woningstichting Zuid Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
+          "IBAN: NL11BNGH0002220001 Kenmerk: TK10000001 Valutadatum: 01-04-2026",
       ],
     }),
     "Incasso Huur Periode: 01-04-2026 tot 01-05-2026",
@@ -524,10 +531,10 @@ test("the structured reference does not survive as a second copy of the text", (
     collectRemittance({
       reference_number: "10001461242",
       remittance_information: [
-        "Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
+        "Factuurnr. 10001461242 Betreft IBAN: NL36INGB0007654321 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
       ],
     }),
-    "Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
+    "Factuurnr. 10001461242 Betreft IBAN: NL36INGB0007654321 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026",
   );
 
   // A betaalverzoek whose kenmerk exists ONLY in the structured field still gets it — the case
@@ -549,7 +556,7 @@ test("a card acceptor is named the way the file door names it, not the way ING s
     status: "BOOK",
     booking_date: "2026-04-05",
     value_date: "2026-04-05",
-    remittance_information: ["Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026"],
+    remittance_information: ["Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT600001 Valutadatum: 05-04-2026"],
   });
   assert.equal(pin?.counterpartName, "OMUR MARKT");
   assert.equal(pin?.reference, null);
@@ -576,7 +583,7 @@ test("a terminal line keeps its party but still loses the terminal's numbers", (
     credit_debit_indicator: "CRDT",
     status: "BOOK",
     value_date: "2026-06-16",
-    remittance_information: ["Geldmaat Wagnerplein 59 811391 PASVOLGNR 001 16-06-2026 16:08 RRN: 616716432971 Valutadatum: 16-06-2026"],
+    remittance_information: ["Geldmaat Dorpsstraat 12 800001 PASVOLGNR 001 16-06-2026 16:08 RRN: 600000000001 Valutadatum: 16-06-2026"],
   });
   assert.equal(storting?.amount, 10150);
   assert.equal(storting?.reference, null);
@@ -588,11 +595,11 @@ test("a billing period stapled to an IBAN is not an IBAN", () => {
   const kosten = mapEnableBankingTransaction({
     transaction_amount: { currency: "EUR", amount: "327.86" },
     creditor: { name: "Kosten Zakelijk Betalingsverkeer" },
-    creditor_account: { iban: "NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026" },
+    creditor_account: { iban: "NL36INGB0007654321 Periode: 01-03-2026 / 31-03-2026" },
     credit_debit_indicator: "DBIT",
     status: "BOOK",
     value_date: "2026-04-26",
-    remittance_information: ["Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026"],
+    remittance_information: ["Factuurnr. 10001461242 Betreft IBAN: NL36INGB0007654321 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026"],
   });
   assert.equal(kosten?.counterpartIban, null);
   assert.equal(kosten?.counterpartName, "Kosten Zakelijk Betalingsverkeer");

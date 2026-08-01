@@ -249,8 +249,8 @@ export function collectRemittance(tx: EnableBankingRawTransaction): string {
  * `<CdtrAcct><IBAN>`, `<Refs>` — and that we already read from this transaction's own fields. Only
  * `Omschrijving:` is the remittance. Leaving the rest in is not cosmetic: extractInvoiceReference
  * then scoops up the Kenmerk, the Machtiging ID and the account digits, so a real ING quarter
- * produced "TK10962798, 105289" where the file door produces nothing at all, and
- * "610015412, 5049NM, INC046015959, 5768573815, MID100185910" where it produces "610015412, 5049NM".
+ * produced "TK10000001, 100001" where the file door produces nothing at all, and
+ * "600000001, 5049NM, INC000000001, 5000000001, MID100000001" where it produces "600000001, 5049NM".
  * That is the [BANK-REF-ONE-SOURCE] triple failure exactly: a different reference is a different
  * contentKey (a double import), it makes parseReferenceNumbers count several invoices so
  * autoConfirmTier stops auto-booking the line, and isFullyCovered can then never be satisfied.
@@ -316,7 +316,7 @@ export function pickTransactionDate(tx: EnableBankingRawTransaction): string | n
  * itself says it is an IBAN.
  *
  * And `.iban` is not automatically an IBAN either. On a real ING quarter the three bank-charge
- * lines carry `"NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026"` in that field — the owner's
+ * lines carry `"NL36INGB0007654321 Periode: 01-03-2026 / 31-03-2026"` in that field — the owner's
  * OWN account with a billing period stapled to it. Stored as-is it is junk in the column
  * [BANK-IBAN] matches suppliers on. So the value goes through the same mod-97 check as every other
  * IBAN in the app, and is stored in the same normalized form the file door produces.
@@ -412,7 +412,7 @@ export function mapEnableBankingTransaction(
   // Clearing the reference is separate from rescuing the name, because a terminal line can arrive
   // WITH a usable party. A cash deposit does: ING names the party "STORTING ING" and leaves the
   // Geldmaat location, the pasvolgnr and the RRN in the text, so the extractor offered
-  // "811391, 001, 616716432971" as the invoice number of a €10.150 deposit. None of those three is
+  // "800001, 001, 600000000001" as the invoice number of a €10.150 deposit. None of those three is
   // an invoice number, and booking one against a real invoice is the failure this branch exists to
   // stop — the same reason the file door clears it. On a real ING quarter this touched exactly one
   // line: the other eleven terminal rows already had no reference to lose.
