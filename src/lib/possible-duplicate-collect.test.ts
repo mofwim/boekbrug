@@ -4,7 +4,8 @@
 // all. The pure assessor is tested in possible-duplicate.test.ts; what is at stake here is
 // whether its candidates arrive — and whether they arrive exactly once.
 
-import { collectPossibleDuplicate, mergePossibleDuplicate, clearPossibleDuplicate } from './possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate, clearPossibleDuplicate, markDuplicateCheckUnavailable } from './possible-duplicate-collect'
+import { classifyImportHealth } from './import-health'
 import type { PossibleDupCandidate, SemanticDedupInput } from './safecore'
 
 let passed = 0, failed = 0
@@ -160,6 +161,44 @@ async function run() {
     // Clearing twice is a no-op, so a retried request cannot do extra damage.
     const once = clearPossibleDuplicate({ _safecore: { possible_duplicate: true, arithmetic_ok: true } })
     check('clearing is idempotent', JSON.stringify(clearPossibleDuplicate(once)) === JSON.stringify(once))
+  }
+
+  // ── [DEDUP-READ-HONEST] a duplicate check that could not RUN ──
+  // `data ?? []` turned a failed read into "there is nothing there", and a second copy of a bill
+  // entered the books with its cost and its voorbelasting counted twice.
+  console.log('\n— a failed duplicate check is not a clean one —')
+  {
+    const fc = markDuplicateCheckUnavailable({ vendor: 0.9 }) as Record<string, unknown>
+    const sc = fc._safecore as Record<string, unknown>
+    check('the invoice is held for a human glance', sc.possible_duplicate === true)
+    check('and says why, in words the owner reads', /dubbelcheck/.test(String(sc.possible_duplicate_reason)))
+    // There was no match, so there is no invoice to name and no id to act on.
+    check('it names no invoice it never found', sc.possible_duplicate_of === undefined && sc.possible_duplicate_id === undefined)
+    check('the rest of field_confidence survives', fc.vendor === 0.9)
+
+    // collectPossibleDuplicate runs TWO probes. If the first FOUND a look-alike and the second then
+    // failed, the named reason is strictly more useful than "we could not check".
+    const found = { _safecore: { possible_duplicate: true, possible_duplicate_of: 'F-2001', possible_duplicate_reason: 'zelfde bedrag en datum' } }
+    const after = markDuplicateCheckUnavailable(found) as Record<string, unknown>
+    const asc = after._safecore as Record<string, unknown>
+    check('a real find is never overwritten', asc.possible_duplicate_of === 'F-2001' && asc.possible_duplicate_reason === 'zelfde bedrag en datum')
+
+    let allShapes = true
+    for (const bad of [null, undefined, 'nonsense', 42, []]) {
+      const out = markDuplicateCheckUnavailable(bad) as Record<string, unknown>
+      if ((out._safecore as Record<string, unknown>)?.possible_duplicate !== true) allShapes = false
+    }
+    check('it copes with whatever field_confidence happens to be', allShapes)
+
+    // The point of the flag is the CONSEQUENCE: needs-review, so "Selecteer klaar" skips it.
+    const health = classifyImportHealth({
+      total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
+      invoice_number: 'RE1', invoice_date: '2026-03-01',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      field_confidence: markDuplicateCheckUnavailable(null) as any,
+    })
+    check('it reaches the health verdict the queue reads', health.level === 'needs-review' && health.flags.possibleDuplicate === true)
+    check('and the card explains the risk', /dubbele boeking/.test(health.reasons.join(' · ')))
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`)
