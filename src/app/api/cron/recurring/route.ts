@@ -189,23 +189,18 @@ export async function GET(req: NextRequest) {
         .select("*")
         .eq("invoice_id", s.source_invoice_id);
       if (lines && lines.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: lineErr } = await (pipeline as any).from("invoice_lines").insert(
-          lines.map((l) => {
-            const bron = l as unknown as { unit?: string | null };
-            const regel: Record<string, unknown> = {
-              invoice_id: draft.id as string,
-              description: l.description,
-              quantity: l.quantity,
-              unit_price: l.unit_price,
-              btw_rate: l.btw_rate,
-              line_total: l.line_total,
-            };
-            // [UNIT] Een terugkerende factuur is een KOPIE van dezelfde levering; de eenheid
-            // hoort dus mee. Undefined zolang invoice_line_unit.sql niet is toegepast.
-            if (bron.unit !== undefined) regel.unit = bron.unit ?? null;
-            return regel;
-          }),
+        const { error: lineErr } = await pipeline.from("invoice_lines").insert(
+          // [UNIT] A recurring invoice is a COPY of the same delivery, so the unit travels with
+          // it. Fields are typed over explicitly — a spread would carry the original line's id.
+          lines.map((l) => ({
+            invoice_id: draft.id as string,
+            description: l.description,
+            quantity: l.quantity,
+            unit_price: l.unit_price,
+            btw_rate: l.btw_rate,
+            line_total: l.line_total,
+            ...(l.unit !== undefined ? { unit: l.unit ?? null } : {}),
+          })),
         );
         if (lineErr) {
           await pipeline.from("invoices").delete().eq("id", draft.id as string);

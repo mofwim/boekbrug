@@ -58,8 +58,7 @@ export default async function VerkoopPage() {
     const revoked = await loadRevokedMembership(acting.actorId)
     if (!revoked) redirect('/dashboard/facturen')
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pipelineNaam = createPipelineClient() as any
+    const pipelineNaam = createPipelineClient()
     const { data: exBaas } = await pipelineNaam
       .from('profiles')
       .select('company_name, full_name')
@@ -76,14 +75,10 @@ export default async function VerkoopPage() {
 
   const supabase = await createServerSupabaseClient()
 
-  // [DEPLOY-SAFE] `as any` op de SESSIE-client, niet op service_role: invoices.created_by staat
-  // nog niet in de gegenereerde types (die worden pas na de migratie bijgewerkt). De cast raakt
-  // alleen het typen — de query draait onder de sessie van de medewerker, dus RLS beslist
-  // onverminderd wat hij terugkrijgt.
-  const { data: facturenRuw } = await (supabase as unknown as {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    from: (t: string) => { select: (c: string) => any }
-  })
+  // Read with the member's SESSION, never service_role: RLS decides unchanged what comes back.
+  // The two .eq() calls are the read boundary from acting-for.ts — the owner's series, but only
+  // the rows this member created themselves.
+  const { data: facturenRuw } = await supabase
     .from('invoices')
     .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status')
     .eq('sender_id', acting.ownerId)
@@ -93,8 +88,7 @@ export default async function VerkoopPage() {
 
   const facturen: SalesInvoice[] = facturenRuw ?? []
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipeline = createPipelineClient() as any
+  const pipeline = createPipelineClient()
 
   // De naam van het bedrijf waarvoor hij werkt. Het profiel van de eigenaar is voor zijn sessie
   // onleesbaar (RLS), dus via service_role — en pas nádat de koppeling is bewezen, wat hierboven

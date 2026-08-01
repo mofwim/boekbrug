@@ -176,8 +176,7 @@ export async function POST(request: NextRequest) {
     // in plaats van dat het aanmaken van de factuur helemaal faalt (PGRST204). Wat je dan mist is
     // de juiste eenheidscode in de e-factuur, niet de factuur zelf.
     const { error: lineErr } = await writeWithTrail(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (spoor) => (pipeline as any).from('invoice_lines').insert(
+      (spoor) => pipeline.from('invoice_lines').insert(
         gecontroleerd.lines.map((l, i) => ({
           invoice_id: factuur.id,
           description: String(bron[i]?.description ?? '').trim(),

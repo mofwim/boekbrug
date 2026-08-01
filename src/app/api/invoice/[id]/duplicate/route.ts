@@ -95,29 +95,23 @@ export async function POST(
       .eq('invoice_id', id)
 
     if (originalLines && originalLines.length > 0) {
-      // [UNIT] Expliciet overtypen, NIET `{ ...l }` spreiden.
+      // [UNIT] Copy the fields explicitly, do NOT spread `{ ...l }`.
       //
-      // Ik had hier eerst select('*') met een spread staan, en dat was fout: dan gaat het `id`
-      // van de ORIGINELE regel mee de INSERT in — een primaire sleutel die al bestaat. Wat er
-      // gekopieerd moet worden is de INHOUD van een regel, niet haar identiteit.
-      //
-      // `unit` komt uit migratie invoice_line_unit.sql en is undefined zolang die niet is
-      // toegepast; dan wordt hij niet meegestuurd en blijft de INSERT geldig.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from('invoice_lines').insert(
-        originalLines.map((l) => {
-          const bron = l as unknown as { unit?: string | null }
-          const regel: Record<string, unknown> = {
-            invoice_id: newInvoice.id,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            btw_rate: l.btw_rate,
-            line_total: l.line_total,
-          }
-          if (bron.unit !== undefined) regel.unit = bron.unit ?? null
-          return regel
-        }),
+      // This first had select('*') with a spread, and that was wrong: then the `id` of the
+      // ORIGINAL line travels into the INSERT — a primary key that already exists. What has to
+      // be copied is the CONTENT of a line, not its identity.
+      await supabase.from('invoice_lines').insert(
+        originalLines.map((l) => ({
+          invoice_id: newInvoice.id,
+          description: l.description,
+          quantity: l.quantity,
+          unit_price: l.unit_price,
+          btw_rate: l.btw_rate,
+          line_total: l.line_total,
+          // A database where invoice_line_unit.sql has not been applied returns rows without
+          // this key; then it is not sent either, and the INSERT stays valid.
+          ...(l.unit !== undefined ? { unit: l.unit ?? null } : {}),
+        })),
       )
     }
 
