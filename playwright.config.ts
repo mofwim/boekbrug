@@ -20,6 +20,12 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  // [RENDER-GATE] Pinned. Playwright's default testMatch also claims files ending in `.test.tsx`,
+  // and tests/render/ holds node:test files that render with react-dom/server rather than drive a
+  // browser — picked up here they would fail for a reason that has nothing to do with the code.
+  // The split is the one the repo already used everywhere: `.spec.ts` is Playwright, `.test.ts(x)`
+  // is node:test.
+  testMatch: '**/*.spec.ts',
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,

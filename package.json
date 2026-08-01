@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:unit": "tsx --test src/lib/*.test.ts src/content/legal/*.test.ts",
+    "test:render": "node --experimental-test-module-mocks --import tsx --test tests/render/*.test.tsx",
+    "test:e2e": "playwright test tests/public-surface.spec.ts",
+    "gates": "tsc --noEmit && npm run test:unit && npm run test:render && eslint src/ && rm -rf .next && next build && npm run test:e2e"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",

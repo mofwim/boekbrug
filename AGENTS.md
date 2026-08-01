@@ -48,10 +48,12 @@ result.**
 ```bash
 git fetch origin main
 git merge origin/main          # resolve conflicts here, not on main
-npx tsc --noEmit
-npx tsx --test src/lib/*.test.ts src/content/legal/*.test.ts
-npx next build                 # without secrets — see LIVE_GAAN.md §0
+npm run gates                  # tsc · unit · render · eslint · build · smoke
 ```
+
+`npm run gates` runs them in order and stops at the first failure. The individual steps are
+`test:unit`, `test:render`, `test:e2e` in package.json; the build runs without secrets
+(LIVE_GAAN.md §0).
 
 Why this is not optional: gates on your own branch prove that YOUR change works, not that the
 COMBINATION works — and the combination is what gets deployed. A merge that automerges cleanly
@@ -65,3 +67,22 @@ Two things that go with it:
 - **Then check that the merge did not silently eat anything.** An automerge also succeeds when it
   loses your block. Count your own markers (`grep -c "[YOUR-TAG]"`) in the files you touched, and
   look at the built HTML rather than the source where you can.
+
+# A green gate set does not mean the screen opens
+
+`tsc`, `eslint` and `next build` never CALL a component, and the Playwright smoke test only sweeps
+the public surface — every path the middleware lets through without a session. So a `/dashboard/*`
+screen that throws on every render passes all of them.
+
+That is not hypothetical. `/dashboard/incoming/manage` went through the entire set with a `const`
+read seventy lines before it was declared, inside a `.filter()` callback that runs during render.
+TypeScript does not model *when* a closure runs, so it type-checked; the build compiled it; the
+smoke test never logs in. The screen would have been white with
+`Cannot access 'onlyFlagged' before initialization` in the console.
+
+`npm run test:render` (tests/render/) closes that class: it renders the money screens with
+`react-dom/server` and asserts the output is not empty. Under a second, no browser, no session, no
+database — the components take their data as props. **Hand it rows that exercise the branches**:
+the same bug is invisible against an empty list, because `[].filter(cb)` never calls `cb`.
+
+When you add a screen to this line, add it there.
