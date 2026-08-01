@@ -16,6 +16,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // [PAGINATION] pages past PostgREST's silent ~1000-row cap — see supabase-paginate.ts
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import IncomingManageClient from './IncomingManageClient'
+// [SCAN-WHOLE-BOOK] The count must cover the whole book, not the window this page renders.
+import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan'
 import type { ComponentProps } from 'react'
 
 // Row shape the client expects — derived from its props (the type itself is not exported).
@@ -132,6 +134,40 @@ export default async function Page({
     .in('status', ['received', 'paid'])
   if (countErr) console.error('[INVOICE-COUNTER] count read failed — disclosure omitted', { userId: user.id, error: countErr.message })
 
+  // [SCAN-WHOLE-BOOK] The scan runs over EVERY confirmed inkoopfactuur, not over the list.
+  //
+  // The client also scans, and has to: that is what puts a badge on a row. But the two answer
+  // different questions, and only one of them is "how many are wrong". `rows` above is every OPEN
+  // invoice plus the 200 most recent PAID ones — a deliberate window that is right for a screen you
+  // pay from, and wrong for a count. A purchase invoice booked with a broken breakdown and since
+  // paid went into the aangifte just as wrong as an unpaid one, and beyond the 200th it would have
+  // been invisible to a banner that nonetheless announced a total.
+  //
+  // That is the failure this whole line keeps coming back to: a bounded read presented as a
+  // complete answer. So the count comes from a read that is bounded by nothing but the owner's
+  // actual history — eight small columns, paged past PostgREST's silent ~1000 ceiling.
+  //
+  // [NO-SILENT-EMPTY] null on failure, never an empty scan. "0 facturen kloppen niet" is the single
+  // most dangerous sentence this screen could produce out of a failed query.
+  let bookScan: InvoiceScan | null = null
+  try {
+    const scanRows = await fetchAllRows<ScanRow>((from, to) => supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw')
+      .eq('receiver_id', user.id)
+      .eq('direction', 'incoming')
+      .in('status', ['received', 'paid'])
+      // [PAGE-KEY] by id, for the same reason the open-rows query above uses it: created_at ties
+      // have no defined order, so across .range() windows a row could be served twice or skipped.
+      .order('id', { ascending: true })
+      .range(from, to)
+    )
+    bookScan = scanInvoices(scanRows)
+  } catch (e) {
+    console.error('[SCAN-WHOLE-BOOK] scan read failed — the banner says it could not look', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    bookScan = null
+  }
+
   // [INVOICE-SCAN] Which quarters has the owner already FILED? That single fact changes what a
   // wrong invoice means: in an open quarter a correction is just a correction, in a filed one it is
   // a correction to the return itself. The scan on the client counts and groups; this read supplies
@@ -185,6 +221,7 @@ export default async function Page({
       totalCount={totalCount ?? null}
       readFailed={readFailed}
       filedQuarters={filedQuarters}
+      bookScan={bookScan}
     />
   )
 }

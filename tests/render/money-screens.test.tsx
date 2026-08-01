@@ -113,6 +113,41 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
   // A filed quarter changes what the owner has to DO, so it must be said, not implied.
   assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
+  // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.
+  assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
+});
+
+test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out of reach", async () => {
+  // The failure this guards is a bounded read presented as a complete answer. The pay screen loads
+  // every OPEN invoice but only the 200 most recent PAID ones — and a wrongly booked invoice that
+  // has since been paid went into the aangifte just as wrong. So the count comes from the server,
+  // over the owner's whole history, and anything it found that is not on this screen is said out
+  // loud rather than quietly dropped from a worklist that cannot reach it.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { scanInvoices } = await import("../../src/lib/invoice-scan");
+
+  // One broken invoice IS on the screen; two more exist only in the server scan.
+  const onScreen = manageRow({ id: "math", total_ex_btw: 985.87, btw_amount: 88.73, total_inc_btw: 1078.46 });
+  const bookScan = scanInvoices([
+    { id: "math", invoice_number: "2033161", client_name: "Groothandel", invoice_date: "2026-02-21", invoice_type: "factuur", total_ex_btw: 985.87, btw_amount: 88.73, total_inc_btw: 1078.46 },
+    { id: "old1", invoice_number: "OLD1", client_name: "Oud", invoice_date: "2025-05-02", invoice_type: "factuur", total_ex_btw: 100, btw_amount: 52, total_inc_btw: 152 },
+    { id: "old2", invoice_number: "OLD2", client_name: "Oud", invoice_date: "2025-05-09", invoice_type: "factuur", total_ex_btw: 200, btw_amount: 9, total_inc_btw: 250 },
+  ]);
+  assert.equal(bookScan.total, 3, "the fixture really does hold three findings");
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IncomingManageClient as any, {
+        profile: { id: "u1" }, initialInvoices: [onScreen], totalCount: 1,
+        readFailed: [], filedQuarters: [], bookScan,
+      })),
+  );
+
+  assert.match(html, /3 geboekte facturen kloppen niet/, "the count is the whole book's, not the list's");
+  assert.match(html, /al je 3 bevestigde inkoopfacturen/, "and it says which set it counted");
+  assert.match(html, /2 ervan staan niet in deze lijst/, "the unreachable findings are named");
 });
 
 test("[RENDER-GATE] the pay screen renders when the read failed, and says so", async () => {
@@ -228,6 +263,108 @@ test("[READING-MEMORY] the supplier memory reaches the open card", async () => {
   // Same card, no memory: the block is gone entirely, not an empty box with a heading.
   const without = render(null);
   assert.doesNotMatch(without, /Wat je hier vaker corrigeert/);
+});
+
+/**
+ * The rest of the money line.
+ *
+ * These screens fetch their own data in an effect, so they take few props or none, and a static
+ * render shows their loading state. That is much shallower than the two above — and still worth
+ * having, because the bug this file was built for lived in the COMPONENT BODY, which runs in full
+ * on every render regardless of what the effects would later fetch. Every derived const, every
+ * useMemo, every `rows.filter(...)` over the initial empty state executes here.
+ *
+ * What it does NOT cover, stated rather than implied: the branches that only exist once data has
+ * arrived. Handing these screens real rows would mean reaching into their internal state, which a
+ * render gate cannot do. The two screens above take their data as props and are therefore tested
+ * properly; these are covered against "it does not even start".
+ */
+const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<string, unknown> }> = [
+  { name: "facturen (verkoopfacturen)", path: "../../src/app/dashboard/facturen/FacturenClient", props: { profile: { id: "u1" } } },
+  { name: "bank", path: "../../src/app/dashboard/bank/BankClient", props: {} },
+  { name: "kas", path: "../../src/app/dashboard/kas/KasClient", props: {} },
+  { name: "aangifte", path: "../../src/app/dashboard/aangifte/AangifteClient", props: {} },
+];
+
+for (const screen of SELF_LOADING_SCREENS) {
+  test(`[RENDER-GATE] ${screen.name} renders`, async () => {
+    const mod = await import(screen.path);
+    const { ToastProvider } = await import("../../src/components/ui/Toast");
+    const { DialogProvider } = await import("../../src/components/ui/Dialog");
+    const html = renderToStaticMarkup(
+      React.createElement(DialogProvider, null,
+        React.createElement(ToastProvider, null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          React.createElement(mod.default as any, screen.props))),
+    );
+    assert.ok(html.length > 200, `${screen.name} rendered something`);
+  });
+}
+
+test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", async () => {
+  // The money dashboard: what is due, what is overdue, what is partly paid. It takes its rows as
+  // props, so unlike the four above this one can be handed the cases that actually branch.
+  const { default: VandaagClient } = await import("../../src/app/dashboard/vandaag/VandaagClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  const inv = (over: Record<string, unknown> = {}) => ({
+    id: "v1", client_name: "Groothandel", invoice_number: "RE1", invoice_date: "2026-03-01",
+    due_date: "2026-03-31", total_inc_btw: 872, amount_paid: 0, status: "received",
+    direction: "incoming", ...over,
+  });
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(VandaagClient as any, {
+        payable: [
+          inv(),
+          // Partly paid: the remaining amount is the one that must show, not the invoice total.
+          inv({ id: "v2", amount_paid: 400 }),
+          // Long overdue.
+          inv({ id: "v3", due_date: "2025-11-01" }),
+          // A credit note from a supplier: negative, and must not read as a debt.
+          inv({ id: "v4", total_inc_btw: -109, invoice_number: "CN1" }),
+          // No due date at all — the [DATELESS-TASK] case.
+          inv({ id: "v5", due_date: null }),
+        ],
+        remind: [inv({ id: "o1", direction: "outgoing", status: "overdue", due_date: "2026-01-15" })],
+        loadFailed: false,
+        toVerifyCount: 3,
+        datelessPayableCount: 1,
+      })),
+  );
+  assert.ok(html.length > 500, "Vandaag rendered its lists");
+});
+
+test("[RENDER-GATE] the sales overview renders", async () => {
+  const { default: VerkoopClient } = await import("../../src/app/dashboard/verkoop/VerkoopClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  const f = (over: Record<string, unknown> = {}) => ({
+    id: "s1", invoice_number: "2026-001", client_name: "Klant", client_email: "k@example.com",
+    invoice_date: "2026-03-01", due_date: "2026-03-31", total_inc_btw: 1210, amount_paid: 0,
+    status: "sent", ...over,
+  });
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(VerkoopClient as any, {
+        // One of every state stateOf() can return, so no branch of the status colouring is unvisited.
+        facturen: [
+          f(),
+          f({ id: "s2", status: "draft" }),
+          f({ id: "s3", status: "paid", amount_paid: 1210 }),
+          f({ id: "s4", status: "sent", due_date: "2025-12-01", reminder_count: 3, last_reminder_at: "2026-01-05T10:00:00Z" }),
+          f({ id: "s5", status: "sent", amount_paid: 500 }),
+        ],
+        bedrijf: "Mijn Zaak",
+        // Server time, passed in rather than read here — the component's own header says why.
+        nu: Date.parse("2026-03-15T12:00:00Z"),
+      })),
+  );
+  assert.ok(html.length > 500, "the sales overview rendered its list");
 });
 
 test("[READING-MEMORY] a supplier with no history renders the queue exactly as before", async () => {

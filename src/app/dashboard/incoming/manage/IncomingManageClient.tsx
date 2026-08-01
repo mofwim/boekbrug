@@ -45,7 +45,7 @@ import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry
 // the one screen the owner pays from.
 import { classifyImportHealth } from '@/lib/import-health'
 // [INVOICE-SCAN] How many booked invoices are wrong, and which quarters they touch — read-only.
-import { scanInvoices, scanFindingIds } from '@/lib/invoice-scan'
+import { scanInvoices, scanFindingIds, type InvoiceScan } from '@/lib/invoice-scan'
 import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
@@ -270,7 +270,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
-  readFailed = [], filedQuarters,
+  readFailed = [], filedQuarters, bookScan = null,
 }: {
   profile: { id: string }
   initialInvoices: IncomingRow[]
@@ -287,6 +287,9 @@ export default function IncomingManageClient({
   // [INVOICE-SCAN] Quarters the owner has already filed. null = we could not look — the banner then
   // omits the filed warning rather than implying every quarter is still open.
   filedQuarters?: string[] | null
+  // [SCAN-WHOLE-BOOK] The scan over the owner's ENTIRE confirmed history, computed server-side.
+  // null = that read failed, and the banner then counts only what is on this screen and says so.
+  bookScan?: InvoiceScan | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -555,11 +558,33 @@ export default function IncomingManageClient({
   // It was written that way first, and none of the five gates caught it — tsc does not see through
   // the .filter() closure, the build compiles it fine, and the smoke test only covers the public
   // surface, so a logged-in screen that crashed on load passed everything.
-  const scan = useMemo(() => scanInvoices(invoices), [invoices])
-  const scanIds = useMemo(() => scanFindingIds(scan), [scan])
+  const listScan = useMemo(() => scanInvoices(invoices), [invoices])
+  const scanIds = useMemo(() => scanFindingIds(listScan), [listScan])
   // Show only the flagged rows. A count the owner cannot act on is a statistic; this turns it into
   // a worklist.
   const [onlyFlagged, setOnlyFlagged] = useState(false)
+
+  // [SCAN-WHOLE-BOOK] TWO scans, and the difference between them is the honest part.
+  //
+  // `listScan` is over the rows on this screen — every open invoice plus the 200 most recent paid
+  // ones. It drives the per-row badges and the worklist filter, both of which can only ever act on
+  // a row that is here.
+  //
+  // `bookScan` comes from the server and covers the owner's ENTIRE confirmed history, so it is the
+  // only one entitled to say "how many". Preferring it is what stops the banner from announcing a
+  // total it never counted: an invoice booked with a broken breakdown and since paid is beyond the
+  // 200-row window, and it went into the aangifte just as wrong as an unpaid one.
+  //
+  // When the server scan is missing (its read failed) the banner falls back to the list scan and
+  // SAYS that the number covers only this list — a smaller claim, not a silent one.
+  const scan = bookScan ?? listScan
+  const scanIsWholeBook = bookScan != null
+  // Findings the owner cannot reach from here: counted, because "3 of them are not in this list" is
+  // the difference between a worklist and a dead end. Only meaningful once the whole book was read;
+  // otherwise every unloaded row would look like a finding we are hiding.
+  const findingsOutsideList = scanIsWholeBook
+    ? scan.findings.filter(f => !invoices.some(i => i.id === f.id)).length
+    : 0
 
   const displayed = sortRows(
     invoices.filter(inv => {
@@ -1483,9 +1508,24 @@ export default function IncomingManageClient({
                   {scan.total === 1 ? '1 geboekte factuur klopt niet' : `${scan.total} geboekte facturen kloppen niet`}
                 </p>
                 <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
-                  Gecontroleerd: {scan.scanned} {scan.scanned === 1 ? 'factuur' : 'facturen'}.
+                  {/* [SCAN-WHOLE-BOOK] Which set was counted, in the sentence itself. Without this
+                      the same number means two different things depending on a read the owner
+                      cannot see the outcome of. */}
+                  {scanIsWholeBook
+                    ? `Gecontroleerd: al je ${scan.scanned} bevestigde inkoopfacturen.`
+                    : `Gecontroleerd: de ${scan.scanned} ${scan.scanned === 1 ? 'factuur' : 'facturen'} op dit scherm — je oudere betaalde facturen konden we nu niet nakijken.`}
                   {' '}Deze tellen nu mee in je openstaande saldo en in de btw die je terugvraagt.
                 </p>
+                {/* Findings that are not on this screen (already paid, past the 200 most recent).
+                    Named rather than quietly dropped: the worklist button below can only show rows
+                    that are here, so without this line the two numbers would silently disagree. */}
+                {findingsOutsideList > 0 && (
+                  <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
+                    {findingsOutsideList === 1
+                      ? 'Eén ervan staat niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek hem op factuurnummer of leverancier.'
+                      : `${findingsOutsideList} ervan staan niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek ze op factuurnummer of leverancier.`}
+                  </p>
+                )}
                 {/* Per quarter, newest first. The filed marker is the part that changes what the
                     owner has to DO, so it stands in the same line as the count. */}
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
