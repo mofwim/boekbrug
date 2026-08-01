@@ -167,5 +167,27 @@ console.log('\n— [BON-NUMMER] een kassabon wordt niet beschuldigd van een ontb
   check('factuur zonder nummer → onveranderd needs-review', factuur.level === 'needs-review' && factuur.flags.invoiceNumber)
 }
 
+// [IBAN-CHECK-HONEST] "we could not compare the account number" is not "the account number is fine".
+// The supplier lookup swallowed its error and returned null, and null means NO FLAG — on the one
+// check that stands between the owner and a payment redirected to a fraudster's account.
+{
+  const h = classifyImportHealth(inv({ field_confidence: { _safecore: { iban_check_unavailable: true } } }))
+  check('an unverified account number is held for review', h.level === 'needs-review')
+  check('with the same flag a real change raises', h.flags.ibanChanged === true)
+  const why = h.reasons.join(' · ')
+  check('the reason says the comparison did not happen', /niet vergelijken/.test(why))
+  check('and never claims a change it did not see', !/is veranderd/.test(why))
+  check('and still gives the one instruction that matters', /zelf opzoekt/.test(why))
+
+  // Both flags present (a later import wrote one over a stale other): the NAMED change is the more
+  // useful sentence and must win.
+  const both = classifyImportHealth(inv({ field_confidence: { _safecore: {
+    iban_changed: true, iban_changed_from: 'NL91ABNA0417164300', iban_changed_to: 'NL02RABO0123456789',
+    iban_check_unavailable: true,
+  } } }))
+  const bothWhy = both.reasons.join(' · ')
+  check('a real change wins over "could not check"', /NL91|veranderd/.test(bothWhy) && !/niet vergelijken/.test(bothWhy))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
