@@ -33,6 +33,7 @@ import { generateInvoiceNumber } from '@/lib/invoice-numbering'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { sendInvoiceToClient } from '@/lib/email'
 import * as Sentry from '@sentry/nextjs'
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -41,6 +42,10 @@ import * as Sentry from '@sentry/nextjs'
 const PDF_BUCKET = 'documents'
 
 export async function POST(request: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een creditnota maken'); if (w.antwoord) return w.antwoord }
+
   try {
     const supabase = await createServerSupabaseClient()
 

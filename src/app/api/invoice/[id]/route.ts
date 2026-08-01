@@ -20,6 +20,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
 import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-totals'
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ownedInvoice(supabase: any, id: string, userId: string) {
@@ -39,6 +40,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur wijzigen of verwijderen'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -66,6 +71,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur wijzigen of verwijderen'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -214,6 +223,10 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur wijzigen of verwijderen'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

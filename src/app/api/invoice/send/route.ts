@@ -46,6 +46,8 @@ import { computeInvoiceTotals } from '@/lib/invoice-totals'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { getActingFor } from '@/lib/acting-for-server'
+import { factuurEigenaar, isNamens, magVersturen } from '@/lib/acting-for'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
 
@@ -82,9 +84,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // [NAMENS] Wie zit hier, en namens wie? Voor een eigenaar is ownerId gelijk aan user.id en
+    // verandert er hieronder letterlijk niets. Voor een verkoopmedewerker is ownerId de BAAS —
+    // en dat is de enige manier waarop er één nummerreeks per bedrijf blijft bestaan
+    // (Art. 35 Wet OB: doorlopend, zonder gaten, en een uitgegeven nummer komt niet terug).
+    const acting = await getActingFor()
+    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const ownerId = factuurEigenaar(acting)
+
     // ── 2. Rate limit — 100 sends/hour per user ────────────────
+    // Op de MENS, niet op het bedrijf: dit hek gaat over snelheid, en twee mensen die allebei
+    // netjes werken horen elkaar niet te blokkeren.
     const limit = await checkRateLimit({
-      userId: user.id,
+      userId: acting.actorId,
       endpoint: '/api/invoice/send',
       ...RATE_LIMITS.INVOICE_SEND,
     })
@@ -123,7 +135,7 @@ export async function POST(request: NextRequest) {
       .from('invoices')
       .select('*')
       .eq('id', invoiceId)
-      .eq('sender_id', user.id)
+      .eq('sender_id', ownerId)
       .single()
 
     if (invoiceError || !invoiceData) {
@@ -131,6 +143,17 @@ export async function POST(request: NextRequest) {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const invoice = invoiceData as any
+
+    // [NAMENS] Twee sloten op dezelfde deur, met opzet.
+    // Het eerste is RLS: de policy invoices_member_read laat een medewerker alleen rijen zien
+    // met created_by = auth.uid(), dus de query hierboven geeft hem de factuur van zijn baas
+    // niet eens terug. Het tweede is deze regel, die hetzelfde nog eens in de code toetst.
+    // Dubbel? Ja. Maar dit is het moment waarop een geraden invoiceId binnenkomt, en de
+    // gevolgen van hier doorlopen zijn onomkeerbaar: een nummer uitgeven, een PDF versturen
+    // naar de klant van iemand anders. Voor die prijs is één extra if goedkoop.
+    if (!magVersturen(acting, invoice)) {
+      return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+    }
 
     // ── 5. Status check ────────────────────────────────────────
     // normal send:  only drafts
@@ -238,10 +261,15 @@ export async function POST(request: NextRequest) {
       // "—" on the PDF. Enforce BEFORE minting the number so a failed check never
       // burns a sequence number. IBAN stays optional (payment info, not a validity
       // requirement). Reviewed values live on the seller's profile.
-      const { data: sellerProfile } = await supabase
+      // [NAMENS] Het profiel van de VERKOPER — dat is de eigenaar, ook als een medewerker op de
+      // knop drukt: zijn naam, adres, BTW-id en KvK staan op de factuur. Voor een medewerker is
+      // die profielrij via RLS onleesbaar, dus dan langs service_role. Zou dat niet gebeuren,
+      // dan kwam deze controle terug met "geen profiel" en zou de factuur worden geweigerd met
+      // een melding over ontbrekende bedrijfsgegevens die wél gewoon ingevuld zijn.
+      const { data: sellerProfile } = await (isNamens(acting) ? createPipelineClient() : supabase)
         .from('profiles')
         .select('btw_number, kvk_number, address, company_name, full_name')
-        .eq('id', user.id)
+        .eq('id', ownerId)
         .single()
       const missingSeller: string[] = []
       if (!sellerProfile?.btw_number || !String(sellerProfile.btw_number).trim()) missingSeller.push('BTW-nummer')
@@ -264,8 +292,17 @@ export async function POST(request: NextRequest) {
     // nummer uit dat niet meer teruggegeven kan worden. Faalt open. Een weigering pauzeert
     // ALLEEN het versturen — opstellen, opslaan en als PDF downloaden blijven werken, precies
     // zoals de onExceed-zin in fair-use.ts zegt.
+    //
+    // [NAMENS] Op het BEDRIJF, niet op de mens: anders zou elke extra verkoopmedewerker een
+    // tweede gratis maandtegoed zijn. De planlezing gaat dan langs service_role — het profiel
+    // van de eigenaar is voor de sessie van een medewerker onleesbaar, en een mislukte
+    // plandetectie zou het bedrijf stilzwijgend op het gratis plan zetten.
     if (!resend) {
-      gate = await gateFairUse({ client: supabase, userId: user.id, metric: "invoicesSent" })
+      gate = await gateFairUse({
+        client: isNamens(acting) ? createPipelineClient() : supabase,
+        userId: ownerId,
+        metric: "invoicesSent",
+      })
       if (!gate.allowed) return gate.response!
     }
 
@@ -275,7 +312,12 @@ export async function POST(request: NextRequest) {
       const numberType: InvoiceNumberType =
         finalType === 'creditnota' ? 'creditnota' : 'factuur'
 
-      const generated = await generateInvoiceNumber(supabase, user.id, numberType)
+      // [NAMENS] ownerId, en met de SESSIE-client — allebei noodzakelijk.
+      // ownerId: één doorlopende reeks per bedrijf (Art. 35). Sessie-client: next_invoice_seq()
+      // weigert onvoorwaardelijk zodra auth.uid() NULL is, dus service_role kan hier niet in de
+      // plaats treden. De wacht in die functie is verbreed met precies één uitzondering — een
+      // actieve verkoopkoppeling — en verder niets. Zie company_members_sales_role.sql.
+      const generated = await generateInvoiceNumber(supabase, ownerId, numberType)
       if (!generated) {
         // No number, so nothing was issued — give the month's credit back.
         await gate?.release()
@@ -311,7 +353,8 @@ export async function POST(request: NextRequest) {
           updated_at: new Date().toISOString(),
         })
         .eq('id', invoiceId)
-        .eq('sender_id', user.id)
+        // [NAMENS] De eigenaar, niet de mens die op de knop drukte.
+        .eq('sender_id', ownerId)
       updateQ = convertOnly
         // [TRUST-NUMBER] The type guard alone let a row that became a draft between the read and
         // this write still take a number. The status is re-asserted here for the same reason the
@@ -368,10 +411,13 @@ export async function POST(request: NextRequest) {
     // is nothing auditable. (Avoids inventing a new AuditAction value.)
 
     // ── 11. Fetch sender profile — full row, the PDF needs it all ─
-    const { data: profile } = await supabase
+    // [NAMENS] Het profiel van de VERKOPER staat op de PDF — dat is de eigenaar. Voor een
+    // medewerker is die rij via RLS onleesbaar, dus dan langs service_role; anders zou de
+    // factuur uitgaan met 'Onbekend' als bedrijfsnaam.
+    const { data: profile } = await (isNamens(acting) ? createPipelineClient() : supabase)
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
+      .eq('id', ownerId)
       .single()
 
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
@@ -419,14 +465,23 @@ export async function POST(request: NextRequest) {
       // resend once the cause is fixed). Service-role insert (notifications has no authed INSERT).
       try {
         const notifPipeline = createPipelineClient()
-        await notifPipeline.from('notifications').insert({
-          user_id: user.id,
-          title: 'Factuur niet verzonden',
-          body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
-          type: 'invoice',
-          read: false,
-          link: '/dashboard/facturen',
-        })
+        // [NAMENS] Naar de eigenaar ÉN naar wie hem verstuurde, als dat twee mensen zijn.
+        //
+        // Alleen de eigenaar waarschuwen is hier niet goed genoeg: het nummer is verbruikt, de
+        // klant heeft niets, en de enige die dat weet is degene die net op 'versturen' drukte —
+        // die anders zijn scherm sluit in de overtuiging dat het gelukt is. En alleen de
+        // medewerker waarschuwen evenmin: het is de factuur van de eigenaar, met zijn nummer.
+        const ontvangers = Array.from(new Set([ownerId, acting.actorId]))
+        await notifPipeline.from('notifications').insert(
+          ontvangers.map((uid) => ({
+            user_id: uid,
+            title: 'Factuur niet verzonden',
+            body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
+            type: 'invoice',
+            read: false,
+            link: uid === ownerId ? '/dashboard/facturen' : '/dashboard/verkoop',
+          })),
+        )
       } catch { /* non-blocking — the warning field below is the primary signal */ }
       return NextResponse.json({
         success: true,
@@ -442,7 +497,9 @@ export async function POST(request: NextRequest) {
     // pdf_url stores the RAW path (house rule: signed on read).
     // Never blocks delivery; failure → Sentry breadcrumb only.
     try {
-      const pdfPath = `${user.id}/facturen/${finalNumber}.pdf`
+      // [NAMENS] Onder de map van de EIGENAAR — daar staan al zijn facturen, en de
+      // storage-policies zijn per gebruikersmap geschreven.
+      const pdfPath = `${ownerId}/facturen/${finalNumber}.pdf`
       // [PDF-IMMUTABLE] upsert:false, and that is not a downgrade — it is what this write can
       // actually do, and what it should do.
       //
@@ -515,7 +572,7 @@ export async function POST(request: NextRequest) {
         const { data: accountantLink } = await pipelineClient
           .from('accountant_clients')
           .select('accountant_id')
-          .eq('zzper_id', user.id)
+          .eq('zzper_id', ownerId)
           .maybeSingle()
 
         if (accountantLink?.accountant_id) {
@@ -528,7 +585,7 @@ export async function POST(request: NextRequest) {
               body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
               type: 'invoice',
               read: false,
-              link: `/dashboard/clients/${user.id}`,
+              link: `/dashboard/clients/${ownerId}`,
             })
 
           if (notifError) {
@@ -554,7 +611,16 @@ export async function POST(request: NextRequest) {
     // skip the full user-wide scan on the latency-sensitive resend path.
     if (!resend) {
       try {
-        await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+        // [NAMENS] Op het bedrijf. Handelt er een medewerker, dan is de sessie-client
+        // waardeloos voor de bankregels van de eigenaar (RLS) — dan gaat de betaalschrijving
+        // langs service_role, precies zoals de cron en de import dat doen. bank-auto-confirm
+        // beschrijft die modus zelf: dan is de isEligible-controle de gezaghebbende wacht.
+        const pipelineForConfirm = createPipelineClient()
+        await runBankAutoConfirm({
+          payClient: isNamens(acting) ? pipelineForConfirm : supabase,
+          pipeline: pipelineForConfirm,
+          userId: ownerId,
+        })
       } catch (autoErr) {
         console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
       }

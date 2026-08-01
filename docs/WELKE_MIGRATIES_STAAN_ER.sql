@@ -101,7 +101,16 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- kan beantwoorden, ook niet door goed te kijken.
   (23, 'bank_statement_periods.sql',
        'Onthoudt welke PERIODE elk bankafschrift beslaat. Zonder deze tabel wordt een ontbrekende maand nooit opgemerkt: januari en maart kloppen allebei intern, en februari mist stil',
-       'table', 'bank_statement_periods')
+       'table', 'bank_statement_periods'),
+
+  -- ── De verkoopmedewerker ────────────────────────────────────────────────────────────────
+  -- Anders dan de rest hierboven werkt de code hier NIET zonder: /dashboard/verkoop en de
+  -- uitnodiging zoeken een tabel die er dan niet is. Dat is bewust — een half aanwezige
+  -- toegangsgrens is gevaarlijker dan een afwezige functie. Zolang deze migratie niet is
+  -- toegepast bestaat de rol simpelweg niet, en verandert er voor de eigenaar niets.
+  (24, 'company_members_sales_role.sql',
+       'De ene extra rol: een medewerker die facturen maakt NAMENS de eigenaar. Eén nummerreeks per bedrijf (Art. 35), en created_by als leesgrens — hij ziet alleen wat hij zelf maakte',
+       'table', 'company_members')
 )
 select
   nr                                                        as "#",

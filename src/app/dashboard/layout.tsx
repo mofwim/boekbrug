@@ -8,6 +8,8 @@ import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
+import { getActingFor } from '@/lib/acting-for-server'
+import { isNamens } from '@/lib/acting-for'
 
 export default async function DashboardLayout({
   children,
@@ -32,6 +34,18 @@ export default async function DashboardLayout({
   // parent/home via src/lib/navigation.ts).
   const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
 
+  // [NAMENS] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
+  //
+  // Zijn profiles.role is gewoon 'zzper' — hij is een normale gebruiker die toevallig voor
+  // iemand anders werkt. Zonder deze regel ziet hij dus de volledige balk: Bank, Kas, Aangifte,
+  // Brug. Klikken bounct hem terug (de middleware), en een menu vol links die je terugwerpen is
+  // erger dan geen menu: het laat de app kapot lijken terwijl hij precies doet wat hij moet doen.
+  //
+  // Dit is presentatie, geen grens — de grens is RLS. Verdwijnt deze regel, dan ziet hij weer
+  // links die nergens heen gaan, geen gegevens van zijn baas.
+  const acting = await getActingFor()
+  const isMedewerker = !!acting && isNamens(acting)
+
   return (
     <>
       {profile && (
@@ -47,17 +61,17 @@ export default async function DashboardLayout({
           {children} so a page's useSubPageHeader() registration reaches the bar.
           The bar is placed before {children} so its sticky bar sits at top. */}
       <SubPageHeaderProvider>
-        {profile && <DashboardChrome role={subnavRole} />}
+        {profile && !isMedewerker && <DashboardChrome role={subnavRole} />}
         {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
             so the last row of a list is not left sitting behind it. */}
         <div className="dash-content">{children}</div>
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
-      {profile && <GlobalSearchLauncher />}
+      {profile && !isMedewerker && <GlobalSearchLauncher />}
       {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
           links that hide below 640px. Role-aware destinations; see the component. */}
-      {profile && <BottomNav role={subnavRole} />}
+      {profile && !isMedewerker && <BottomNav role={subnavRole} />}
     </>
   )
 }
