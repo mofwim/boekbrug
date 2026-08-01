@@ -29,12 +29,19 @@ import {
   type UblInvoiceLine,
   type UblSupplier,
 } from "@/lib/ubl-export";
+// [EENHEID] Herkent "die kolom ken ik niet" (42703/PGRST204) — zie de terugval bij de regels.
+import { isKolomOnbekend } from "@/lib/created-by";
 
 // [BOEK-020] Single-line SELECT literals — avoids GenericStringError (see BOEK-014)
 const INVOICE_SELECT =
   "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number" as const;
 
+// [EENHEID] `unit` komt uit migratie invoice_line_unit.sql. Selecteren van een kolom die nog
+// niet bestaat laat de HELE query falen (42703) — en dan zou een boekhouder geen enkele UBL meer
+// kunnen ophalen. Vandaar twee lijsten en de terugval hieronder; zelfde les als created_by.
 const LINES_SELECT =
+  "description, quantity, unit_price, btw_rate, line_total, unit" as const;
+const LINES_SELECT_ZONDER_EENHEID =
   "description, quantity, unit_price, btw_rate, line_total" as const;
 
 const PROFILE_SELECT =
@@ -146,11 +153,23 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Lines (RLS: own, or accountant on paid client invoice) ──
-  const { data: lineRows, error: linesErr } = await supabase
+  // [EENHEID] Eerst mét de eenheidskolom; bestaat die nog niet (migratie invoice_line_unit.sql
+  // open), dan opnieuw zonder. Zonder deze terugval faalt de hele query met 42703 en kan een
+  // boekhouder GEEN ENKELE e-factuur meer ophalen — dezelfde vorm van fout als created_by, en
+  // die had ik vandaag al één keer te pakken.
+  const eersteLezing = await supabase
     .from("invoice_lines")
     .select(LINES_SELECT)
     .eq("invoice_id", invoiceId)
     .order("id", { ascending: true });
+
+  const { data: lineRows, error: linesErr } = isKolomOnbekend(eersteLezing.error, "unit")
+    ? await supabase
+        .from("invoice_lines")
+        .select(LINES_SELECT_ZONDER_EENHEID)
+        .eq("invoice_id", invoiceId)
+        .order("id", { ascending: true })
+    : eersteLezing;
 
   if (linesErr) {
     return NextResponse.json({ error: linesErr.message }, { status: 500 });
@@ -193,12 +212,16 @@ export async function GET(req: NextRequest) {
     unit_price: number | null;
     btw_rate: number | null;
     line_total: number | null;
+    unit?: string | null;
   }>).map((l) => ({
     description: l.description,
     quantity: l.quantity,
     unit_price: l.unit_price,
     btw_rate: l.btw_rate,
     line_total: l.line_total,
+    // [EENHEID] Ontbreekt de kolom (migratie invoice_line_unit.sql nog niet toegepast), dan is
+    // dit undefined en valt de export terug op C62 — precies het gedrag van vóór deze regel.
+    unit: l.unit ?? null,
   }));
 
   const supplier: UblSupplier = profileRow as unknown as UblSupplier;

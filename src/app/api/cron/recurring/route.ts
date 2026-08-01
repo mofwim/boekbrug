@@ -185,18 +185,27 @@ export async function GET(req: NextRequest) {
       // failure here removes the draft again rather than leaving it behind.
       const { data: lines } = await pipeline
         .from("invoice_lines")
-        .select("description, quantity, unit_price, btw_rate, line_total")
+        // [EENHEID] '*' zodat de eenheid meekomt; de INSERT typt hieronder expliciet over.
+        .select("*")
         .eq("invoice_id", s.source_invoice_id);
       if (lines && lines.length > 0) {
-        const { error: lineErr } = await pipeline.from("invoice_lines").insert(
-          lines.map((l) => ({
-            invoice_id: draft.id as string,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            btw_rate: l.btw_rate,
-            line_total: l.line_total,
-          })),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: lineErr } = await (pipeline as any).from("invoice_lines").insert(
+          lines.map((l) => {
+            const bron = l as unknown as { unit?: string | null };
+            const regel: Record<string, unknown> = {
+              invoice_id: draft.id as string,
+              description: l.description,
+              quantity: l.quantity,
+              unit_price: l.unit_price,
+              btw_rate: l.btw_rate,
+              line_total: l.line_total,
+            };
+            // [EENHEID] Een terugkerende factuur is een KOPIE van dezelfde levering; de eenheid
+            // hoort dus mee. Undefined zolang invoice_line_unit.sql niet is toegepast.
+            if (bron.unit !== undefined) regel.unit = bron.unit ?? null;
+            return regel;
+          }),
         );
         if (lineErr) {
           await pipeline.from("invoices").delete().eq("id", draft.id as string);

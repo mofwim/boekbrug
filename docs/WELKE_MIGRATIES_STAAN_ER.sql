@@ -117,7 +117,16 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- spoor" (src/lib/created-by.ts) en bewaakt namens-poorten.test.ts dat dat zo blijft.
   (24, 'company_members_sales_role.sql',
        'De ene extra rol: een medewerker die facturen maakt NAMENS de eigenaar. Eén nummerreeks per bedrijf (Art. 35), en created_by als leesgrens — hij ziet alleen wat hij zelf maakte',
-       'table', 'company_members')
+       'table', 'company_members'),
+
+  -- ── De eenheid op een factuurregel ──────────────────────────────────────────────────────
+  -- Zonder deze kolom werkt alles gewoon door: een regel zonder eenheid komt in de e-factuur
+  -- neer op C62 (stuk), precies zoals het jarenlang was. Wat je zonder hem mist is de JUISTE
+  -- code op nieuwe facturen — "2 uur" gaat dan nog steeds de deur uit als "2 stuks", en dat is
+  -- wat Peppol BIS Billing 3.0 met UN/ECE Rec 20 nu juist wil voorkomen.
+  (25, 'invoice_line_unit.sql',
+       'De eenheid van een factuurregel (uur, m², km). De catalogus had hem al; op de factuur viel hij eraf — dus stond er op de PDF "2" waar "2 uur" hoort, en in de e-factuur "2 stuks"',
+       'column', 'invoice_lines.unit')
 )
 select
   nr                                                        as "#",
