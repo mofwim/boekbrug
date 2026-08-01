@@ -18,6 +18,11 @@
 // call evaluateArithmetic and persist _safecore. This module only makes the
 // shared logic available; it does not change any write path.
 
+// [BTW-RECONCILE] Purely to make the MESSAGE usable. This import changes no verdict: the gate
+// below flags exactly the same cases as before, it only adds which of the three amounts is the odd
+// one out. reconcile* computes and writes nothing.
+import { reconcileBtw, reconcileHint, rateHint } from './btw-reconcile'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule 1 — arithmetic safety (no silent arithmetic error)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +137,8 @@ export function evaluateArithmetic(
   // (No point checking ex+btw=incl when one of them is already NaN/∞.)
   if (finiteNonNeg(ex) && finiteNonNeg(btw) && finiteNonNeg(incl) && incl > 0) {
     // excl + BTW must equal incl (tolerance 0.02 for rounding)
-    if (Math.abs(ex + btw - incl) > 0.02) {
+    const sumOk = Math.abs(ex + btw - incl) <= 0.02
+    if (!sumOk) {
       flags.push('sum_mismatch')
       // [BREAKDOWN-MISSING] Distinguish "the split couldn't be READ" (both ex and BTW absent,
       // only the printed total came through — the common email case that showed a confusing
@@ -140,10 +146,18 @@ export function evaluateArithmetic(
       // but doesn't add up). Same flag, clearer owner-facing reason. The total is still the money;
       // the invoice is held either way until the human supplies the breakdown.
       const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
+      // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
+      // arithmetic can often already point at it — and where it cannot, it can at least name the
+      // DIFFERENCE, which on wholesale invoices is usually literally the deposit or crates row.
+      // See btw-reconcile.ts: that file only computes, it repairs nothing.
+      const hint = breakdownMissing ? null : reconcileHint(reconcileBtw(ex, btw, incl))
       reasons.push(
         breakdownMissing
           ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
-          : 'excl + BTW ≠ totaal'
+          : hint
+            ? `excl + BTW ≠ totaal. ${hint}`
+            : 'excl + BTW ≠ totaal'
       )
     }
     // Legal BTW rate: computed (btw_rate is NOT stored). Guard division by zero;
@@ -157,7 +171,18 @@ export function evaluateArithmetic(
       // 21 is truly impossible (no NL rate exceeds 21, so no blend can either).
       if (rate < 0 || rate > 21) {
         flags.push('illegal_btw_rate')
-        reasons.push(`ongeldig BTW-tarief (${rate}%)`)
+        // [BTW-RECONCILE] An impossible rate means one of the two amounts is wrong, and the sum can
+        // point at nothing here: it often simply holds (the real case: 26.00 + 13.42 = 39.42,
+        // neatly, and all three still wrong). The btw itself does point the way — at a known rate
+        // exactly one base belongs to it. See btw-reconcile.ts.
+        //
+        // ONLY when the sum DOES hold. Otherwise the two hints contradict each other: on the horeca
+        // invoice the sum hint rightly said "btw should be € 405.90", after which this hint happily
+        // carried on with that € 995.90 and proposed a base of € 11,065.56 — reasoning from the very
+        // number we had just declared wrong. If the sum fails, that hint is in charge and this one
+        // stays quiet.
+        const rh = sumOk ? rateHint(btw, ex) : null
+        reasons.push(rh ? `ongeldig BTW-tarief (${rate}%). ${rh}` : `ongeldig BTW-tarief (${rate}%)`)
       }
     }
   }
@@ -224,15 +249,24 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   // ── Consistency: sign-agnostic on ex/BTW, only the net total must be negative. ──
   if (allFinite && incl < 0) {
     // excl + BTW must equal incl — the identity holds regardless of the individual signs.
-    if (Math.abs(ex + btw - incl) > 0.02) {
+    const sumOk = Math.abs(ex + btw - incl) <= 0.02
+    if (!sumOk) {
       flags.push('sum_mismatch')
       // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
       // (both absent) reads clearer than a false "≠ totaal".
       const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
+      // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
+      // arithmetic can often already point at it — and where it cannot, it can at least name the
+      // DIFFERENCE, which on wholesale invoices is usually literally the deposit or crates row.
+      // See btw-reconcile.ts: that file only computes, it repairs nothing.
+      const hint = breakdownMissing ? null : reconcileHint(reconcileBtw(ex, btw, incl))
       reasons.push(
         breakdownMissing
           ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
-          : 'excl + BTW ≠ totaal'
+          : hint
+            ? `excl + BTW ≠ totaal. ${hint}`
+            : 'excl + BTW ≠ totaal'
       )
     }
     // Legal blended NL rate: |BTW / excl| ∈ [0..21]. The full-ratio abs() covers a mixed-sign
@@ -242,7 +276,18 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
       const rate = Math.round(Math.abs(btw / ex) * 100)
       if (rate > 21) {
         flags.push('illegal_btw_rate')
-        reasons.push(`ongeldig BTW-tarief (${rate}%)`)
+        // [BTW-RECONCILE] An impossible rate means one of the two amounts is wrong, and the sum can
+        // point at nothing here: it often simply holds (the real case: 26.00 + 13.42 = 39.42,
+        // neatly, and all three still wrong). The btw itself does point the way — at a known rate
+        // exactly one base belongs to it. See btw-reconcile.ts.
+        //
+        // ONLY when the sum DOES hold. Otherwise the two hints contradict each other: on the horeca
+        // invoice the sum hint rightly said "btw should be € 405.90", after which this hint happily
+        // carried on with that € 995.90 and proposed a base of € 11,065.56 — reasoning from the very
+        // number we had just declared wrong. If the sum fails, that hint is in charge and this one
+        // stays quiet.
+        const rh = sumOk ? rateHint(btw, ex) : null
+        reasons.push(rh ? `ongeldig BTW-tarief (${rate}%). ${rh}` : `ongeldig BTW-tarief (${rate}%)`)
       }
     } else if (Math.abs(btw) > 0.02) {
       // [NO-BASE] A non-trivial BTW on an essentially-ZERO base is physically impossible (implied

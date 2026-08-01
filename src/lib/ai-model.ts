@@ -1,97 +1,98 @@
 // src/lib/ai-model.ts
-// [MODEL-CONFIG] Welk Claude-model er wordt gelezen, en hoe je een mislukking DUIDT. Puur, geen I/O.
+// [MODEL-CONFIG] Which Claude model we read with, and how to INTERPRET a failure. Pure, no I/O.
 //
-// ── WAAROM DIT BESTAAT ──
-// Dit project heeft twee keer hetzelfde gehad: iemand zet een model-id met de hand in de code, dat
-// id blijkt niet vrijgegeven op dit account, de API antwoordt HTTP 404 — en een functie die het
-// altijd deed doet ineens niets meer.
+// ── WHY THIS EXISTS ──
+// This project has hit the same thing twice: someone hard-codes a model id, that id turns out not
+// to be enabled on this account, the API answers HTTP 404 — and a feature that always worked
+// suddenly does nothing.
 //
-//   · De eerste keer was 'claude-sonnet-4-5-20251001' in de lezer. Gevolg: ELKE factuurclassificatie
-//     brak, geen enkele factuur kon nog worden ingelezen. De reparatie staat in ai.ts: het model
-//     werd instelbaar (CLAUDE_MODEL) met een BEWEZEN standaard eronder, zodat een verkeerd id niets
-//     meer breekt en je zonder deploy terugvalt.
-//   · De tweede keer was 'claude-sonnet-5' in de handmatige herlezing. Diezelfde reparatie stond
-//     ernaast en werd niet gebruikt: de knop "Opnieuw inlezen" ging langs CLAUDE_MODEL heen en viel
-//     stil terug op een 404. Erger nog: de eigenaar las "probeer het later opnieuw", terwijl later
-//     nooit zou werken.
+//   · The first time was 'claude-sonnet-4-5-20251001' in the reader. Result: EVERY invoice
+//     classification broke, no invoice could be read at all. The fix lives in ai.ts: the model
+//     became configurable (CLAUDE_MODEL) with a PROVEN default underneath, so a wrong id breaks
+//     nothing and you fall back without a deploy.
+//   · The second time was 'claude-sonnet-5' in the manual re-read. That same fix stood right next
+//     to it and was not used: the "Opnieuw inlezen" button bypassed CLAUDE_MODEL and quietly fell
+//     over a 404. Worse, the owner read "try again later" while later was never going to work.
 //
-// De les uit die twee is niet "beter opletten" maar: er hoort GEEN model-id met de hand in een
-// route te staan, en de app hoort een niet-vrijgegeven model te HERKENNEN in plaats van hem als
-// storing te behandelen. Dat is precies wat dit bestand doet, op één plek, met tests.
+// The lesson from those two is not "pay more attention" but: NO model id belongs hard-coded in a
+// route, and the app should RECOGNISE an unavailable model instead of treating it as an outage.
+// That is exactly what this file does, in one place, with tests.
 //
-// ── DRIE SOORTEN "NEE" ──
-// De sync-lezer maakte al onderscheid tussen "dit is de schuld van dit bestand" en "dit is een
-// app-brede configuratiefout" — met één regexp die beide gevallen ving. Voor het HERLEZEN is dat
-// niet fijn genoeg, want daar bestaat een handeling die alleen bij het eerste geval helpt:
+// ── THREE KINDS OF "NO" ──
+// The sync reader already distinguished "this file's fault" from "an app-wide config error" — with
+// one regex catching both. For the RE-READ that is not fine-grained enough, because there exists an
+// action that only helps in the first case:
 //
-//   isModelUnavailableError  → het MODEL is het probleem (404 / not_found / "model: ...").
-//                              Een ANDER model kan wél werken → terugvallen heeft zin.
-//   isAiCredentialError      → de SLEUTEL of de rechten zijn het probleem (auth/permission).
-//                              Geen enkel model gaat werken → terugvallen is een verspilde call.
-//   isAiConfigError          → één van beide. App-breed, nooit de schuld van dit ene bestand.
+//   isModelUnavailableError  → the MODEL is the problem (404 / not_found / "model: ...").
+//                              Another model may still work → falling back makes sense.
+//   isAiCredentialError      → the KEY or the permissions are the problem (auth/permission).
+//                              No model will work → falling back is a wasted paid call.
+//   isAiConfigError          → either of the two. App-wide, never this one file's fault.
 //
-// isAiConfigError is met opzet EXACT de vereniging van de twee, en exact gelijk aan de regexp die
-// email-integration.ts al gebruikte — daar is een test voor, zodat de splitsing hierboven het
-// gedrag van de sync niet stilletjes kan verschuiven.
+// isAiConfigError is deliberately the EXACT union of the two, and exactly equal to the regex
+// email-integration.ts already used — there is a test for that, so the split above cannot quietly
+// shift the sync's behaviour.
 
 /**
- * Het model waar deze app aantoonbaar op draait.
+ * The model this app demonstrably runs on.
  *
- * Verander dit NIET naar iets nieuwers zonder het eerst op het echte account te proberen. Wil je
- * een sterker model proberen: zet CLAUDE_MODEL (of REREAD_MODEL) in de omgeving. Blijkt dat id
- * niet beschikbaar, dan wis je de variabele en staat alles weer op deze waarde — zonder deploy.
+ * Do NOT change this to something newer without trying it on the real account first. To try a
+ * stronger model, set CLAUDE_MODEL (or REREAD_MODEL) in the environment. If that id turns out to be
+ * unavailable, clear the variable and everything is back on this value — without a deploy.
  */
 export const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001";
 
 /**
- * Een model-id uit de omgeving, met een bewezen terugval eronder.
+ * A model id from the environment, with a proven fallback underneath.
  *
- * Leeg, spaties of afwezig telt als "niet ingesteld" — en niet als een leeg model-id, want dat
- * laatste zou de API afwijzen en dus precies de storing veroorzaken die dit bestand voorkomt.
+ * Empty, whitespace or absent counts as "not set" — not as an empty model id, because the API
+ * would reject that and cause precisely the outage this file prevents.
  */
 export function resolveModel(raw: string | null | undefined, fallback: string): string {
   const v = (raw ?? "").trim();
   return v || fallback;
 }
 
-/** De tekst van een fout, ongeacht of het een Error, een string of iets anders is. */
+/** An error's text, whether it is an Error, a string or something else. */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error ?? "");
 }
 
 /**
- * Zegt de API dat DIT MODEL er niet is? (404 / not_found_error / een "model: ..."-validatiefout)
+ * Is the API saying THIS MODEL does not exist? (404 / not_found_error / a "model: ..." validation)
  *
- * Dit is de enige fout waarbij het zin heeft dezelfde lezing met een ANDER model over te doen.
+ * This is the only error where redoing the same read with a DIFFERENT model makes sense.
  */
 export function isModelUnavailableError(error: unknown): boolean {
   return /not_found_error|404|model:/i.test(messageOf(error));
 }
 
 /**
- * Zegt de API dat de SLEUTEL of de rechten niet kloppen?
+ * Is the API saying the KEY or the permissions are wrong?
  *
- * Hier helpt een ander model niet: dezelfde sleutel gaat opnieuw stuk. Een terugval zou hier een
- * tweede betaalde poging zijn met een gegarandeerde uitkomst.
+ * Another model does not help here: the same key fails again. A fallback would be a second paid
+ * attempt with a guaranteed outcome.
  */
 export function isAiCredentialError(error: unknown): boolean {
   return /authentication_error|permission_error|invalid[_ ]?api/i.test(messageOf(error));
 }
 
 /**
- * App-brede configuratiefout: model óf sleutel. Nooit de schuld van het bestand dat toevallig
- * langskwam, dus nooit een reden om dat bestand als "onleesbaar" weg te zetten.
+ * App-wide configuration error: model or key. Never the fault of whichever file happened to come
+ * past, so never a reason to file that document as "unreadable".
  */
 export function isAiConfigError(error: unknown): boolean {
   return isModelUnavailableError(error) || isAiCredentialError(error);
 }
 
 /**
- * Wat de eigenaar hierover te horen krijgt.
+ * What the owner gets told about this.
  *
- * Zonder het woord "opnieuw". Dat is het hele punt: dit is een instelling die fout staat, en
- * nog een keer op de knop drukken kan per definitie niet helpen — de melding die dat wél
- * suggereerde is precies waarom deze storing zo lang onopgemerkt bleef.
+ * Without the word "again". That is the whole point: this is a setting that is wrong, and pressing
+ * the button once more cannot help by definition — the message that did suggest it is precisely
+ * why this outage went unnoticed for so long.
+ *
+ * Dutch string: UI text shown to the owner, per the language rule in AGENTS.md.
  */
 export const MODEL_UNAVAILABLE_MESSAGE =
   "Het leesmodel is niet beschikbaar op dit account. Opnieuw proberen helpt hier niet — dit moet in de instellingen van de app worden rechtgezet.";
