@@ -44,6 +44,9 @@ import { openAmount, openAmountSigned, settledAmountSigned, interpretAmountEntry
 // showed it, so an invoice that entered the books with a broken breakdown looked perfectly fine on
 // the one screen the owner pays from.
 import { classifyImportHealth } from '@/lib/import-health'
+// [INVOICE-SCAN] How many booked invoices are wrong, and which quarters they touch — read-only.
+import { scanInvoices, scanFindingIds } from '@/lib/invoice-scan'
+import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
 import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
@@ -267,7 +270,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
-  readFailed = [],
+  readFailed = [], filedQuarters,
 }: {
   profile: { id: string }
   initialInvoices: IncomingRow[]
@@ -281,6 +284,9 @@ export default function IncomingManageClient({
   // complete, because "je hoeft niemand te betalen" is the one thing this screen must not say
   // when it does not know.
   readFailed?: string[]
+  // [INVOICE-SCAN] Quarters the owner has already filed. null = we could not look — the banner then
+  // omits the filed warning rather than implying every quarter is still open.
+  filedQuarters?: string[] | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -535,10 +541,34 @@ export default function IncomingManageClient({
   // van amsterdamToday) — nooit tegen de klok van het apparaat, want dan zou een telefoon in een
   // andere tijdzone rond middernacht een andere maand tonen dan de rest van de app.
   const periodWindow = resolveInvoicePeriod(period, todayIso)
+
+  // ── [INVOICE-SCAN] What is standing wrong in the books, over the WHOLE list ──
+  // Computed over `invoices`, never over the filtered view: the credit-note signal needs every
+  // number a supplier used to see that they keep two kinds apart, and a count over a filtered list
+  // answers a question nobody asked. Recomputed when the list changes, so correcting an invoice
+  // makes it drop out of the banner immediately.
+  //
+  // [ORDER] This block sits ABOVE `displayed` because `displayed` reads it. That is not a style
+  // choice and it must not be tidied down to where the other totals are computed: `displayed` is a
+  // plain expression evaluated during render, so a `const` declared below it is in its temporal
+  // dead zone and the screen throws "Cannot access 'scanIds' before initialization" on EVERY render.
+  // It was written that way first, and none of the five gates caught it — tsc does not see through
+  // the .filter() closure, the build compiles it fine, and the smoke test only covers the public
+  // surface, so a logged-in screen that crashed on load passed everything.
+  const scan = useMemo(() => scanInvoices(invoices), [invoices])
+  const scanIds = useMemo(() => scanFindingIds(scan), [scan])
+  // Show only the flagged rows. A count the owner cannot act on is a statistic; this turns it into
+  // a worklist.
+  const [onlyFlagged, setOnlyFlagged] = useState(false)
+
   const displayed = sortRows(
     invoices.filter(inv => {
       const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
       if (!tabOk) return false
+      // [INVOICE-SCAN] The worklist view: only the rows the scan flagged. Placed FIRST among the
+      // filters so it composes with period and search rather than replacing them — "everything
+      // wrong in Q1" is a question the owner actually has.
+      if (onlyFlagged && !scanIds.has(inv.id)) return false
       // [PERIODE] Op de FACTUURDATUM — de datum die op de rij staat afgedrukt en waarop de lijst
       // standaard sorteert. Niet op de betaaldatum: dan zou een factuur van maart die je in april
       // betaalde uit maart verdwijnen, terwijl je hem daar zoekt.
@@ -601,6 +631,7 @@ export default function IncomingManageClient({
   // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
   const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
   const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
+
   // ── [AMOUNT-CORRECTION] Correcting the amounts of a confirmed invoice ──
   // Local state only; nothing is written until the owner taps save, and the server re-checks every
   // precondition anyway (see the route header). The triplet keeps ex + btw = total exact while
@@ -1433,6 +1464,52 @@ export default function IncomingManageClient({
               >
                 Opnieuw proberen
               </button>
+            </div>
+          </div>
+        )}
+        {/* [INVOICE-SCAN] How much is standing wrong, and where.
+            Before this, every warning lived on a single card: useful once you were already looking
+            at that card, useless for the question the owner has after seeing two of them — how many
+            more are there? A list of hundreds cannot be checked by eye, and the ones that WERE
+            noticed were noticed by accident.
+            The quarter matters as much as the count: in an open quarter a correction is just a
+            correction; in a filed one it is a correction to the return itself. */}
+        {scan.total > 0 && (
+          <div role="status" style={{ marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5D9A8', background: M3.warningContainer, fontFamily: FONT }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', flexShrink: 0, marginTop: 1 }}>fact_check</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
+                  {scan.total === 1 ? '1 geboekte factuur klopt niet' : `${scan.total} geboekte facturen kloppen niet`}
+                </p>
+                <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
+                  Gecontroleerd: {scan.scanned} {scan.scanned === 1 ? 'factuur' : 'facturen'}.
+                  {' '}Deze tellen nu mee in je openstaande saldo en in de btw die je terugvraagt.
+                </p>
+                {/* Per quarter, newest first. The filed marker is the part that changes what the
+                    owner has to DO, so it stands in the same line as the count. */}
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {scan.quarters.map(q => {
+                    const filed = filedQuarters == null ? null : q.quarter != null && filedQuarters.includes(q.quarter)
+                    const n = q.signConflict + q.creditSuspect + q.arithmetic
+                    return (
+                      <p key={q.quarter ?? 'geen'} style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.5 }}>
+                        <strong>{q.quarter ? quarterLabelOf(q.quarter) : 'Zonder factuurdatum'}</strong>
+                        {' · '}{n} {n === 1 ? 'factuur' : 'facturen'}
+                        {' · '}{fmtEur(q.amount)}
+                        {filed === true && <span style={{ fontWeight: 700 }}> · aangifte al ingediend — dit wordt een correctie</span>}
+                        {filed === null && <span> · we konden niet nagaan of dit kwartaal al is ingediend</span>}
+                      </p>
+                    )
+                  })}
+                </div>
+                <button
+                  onClick={() => setOnlyFlagged(v => !v)}
+                  style={{ marginTop: 10, padding: '7px 14px', borderRadius: R.full, border: 'none', background: onlyFlagged ? '#7C5800' : '#fff', color: onlyFlagged ? '#fff' : '#7C5800', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}
+                >
+                  {onlyFlagged ? 'Toon alle facturen' : 'Toon alleen deze'}
+                </button>
+              </div>
             </div>
           </div>
         )}

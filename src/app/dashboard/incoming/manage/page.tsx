@@ -132,6 +132,31 @@ export default async function Page({
     .in('status', ['received', 'paid'])
   if (countErr) console.error('[INVOICE-COUNTER] count read failed — disclosure omitted', { userId: user.id, error: countErr.message })
 
+  // [INVOICE-SCAN] Which quarters has the owner already FILED? That single fact changes what a
+  // wrong invoice means: in an open quarter a correction is just a correction, in a filed one it is
+  // a correction to the return itself. The scan on the client counts and groups; this read supplies
+  // the one piece it cannot know.
+  //
+  // [NO-SILENT-EMPTY] A failed read must not come back as "nothing is filed" — that would tell the
+  // owner they can freely correct a quarter that is already closed. null means "we could not look",
+  // and the banner says so instead of guessing.
+  let filedQuarters: string[] | null = []
+  try {
+    // btw_filings is not in the generated types yet — the same cast /api/btw/file uses.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('btw_filings')
+      .select('year, quarter')
+      .eq('user_id', user.id)
+    if (error) throw new Error(error.message)
+    filedQuarters = (data ?? []).map((f: { year: number; quarter: number }) => `${f.year}-Q${f.quarter}`)
+  } catch (e) {
+    // A missing table (the migration is applied by hand) is not the same as a failed read, but for
+    // this banner both mean the same thing: we cannot say which quarters are closed, so we do not.
+    console.error('[INVOICE-SCAN] filed-quarter read failed — banner omits the filed warning', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    filedQuarters = null
+  }
+
   // [INBOX-CROWD-OUT] Deep-link guarantee: Vandaag routes here with ?focus={id}
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
@@ -159,6 +184,7 @@ export default async function Page({
       initialInvoices={rows}
       totalCount={totalCount ?? null}
       readFailed={readFailed}
+      filedQuarters={filedQuarters}
     />
   )
 }
