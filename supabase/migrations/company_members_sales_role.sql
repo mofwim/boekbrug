@@ -301,11 +301,17 @@ $$;
 -- 2) De vijf nieuwe policies — en GEEN andere die is aangeraakt:
 --    SELECT tablename, policyname FROM pg_policies
 --     WHERE schemaname='public' AND policyname LIKE '%_member_%' ORDER BY 1,2;
---    Verwacht precies deze zeven: clients_member_insert, clients_member_read,
---              clients_member_update, invoice_lines_member_read,
---              invoice_lines_member_write_draft, invoices_member_read,
---              invoices_member_update_draft.
---    Staat er een ACHTSTE, dan is er ergens een policy bij gekomen die hier niet is besproken —
+--    Verwacht TIEN rijen, en geen elfde. Het patroon '%_member_%' vangt namelijk twee groepen:
+--
+--      de ZEVEN die een medewerker rechten geven:
+--        clients_member_insert, clients_member_read, clients_member_update,
+--        invoice_lines_member_read, invoice_lines_member_write_draft,
+--        invoices_member_read, invoices_member_update_draft
+--
+--      plus DRIE die over de koppeltabellen zelf gaan (die hebben 'member' in hun TABELnaam):
+--        company_members_read, company_members_revoke, company_member_invites_owner_all
+--
+--    Staat er een ELFDE, dan is er ergens een policy bij gekomen die hier niet is besproken —
 --    kijk daar naar, want dit is de enige plek waar een medewerker rechten krijgt.
 --
 -- 3) DE BELANGRIJKSTE: verleent de helper iets aan wie GEEN lid is?
