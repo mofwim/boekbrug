@@ -3173,7 +3173,18 @@ export default function IncomingInvoicesClient({
   //     (zie het [AFZENDERREGEL]-blok). Die weg blijft dus per factuur lopen.
   const handleIgnoreBatch = useCallback(async () => {
     const targets = pending.filter((p) => selected.has(p.id));
-    if (targets.length === 0) return;
+    // Een selectie kan tussen kiezen en bevestigen leeglopen: [REIMPORT-ALL] staat in dezelfde
+    // knoppenrij en herlaadt de wachtrij, dus een aangevinkte factuur kan er dan niet meer in
+    // staan. Zonder deze tak blijft de dialoog open staan bij een tik op "Ja, negeer" en gebeurt
+    // er niets — een dode knop, en de eigenaar denkt dat het scherm hangt. Sluiten én zeggen.
+    if (targets.length === 0) {
+      setBulkIgnoreOpen(false);
+      setBulkIgnoreReason(null);
+      setSelectMode(false);
+      setSelected(new Set());
+      showToast("Die facturen staan niet meer in de wachtrij — ververs de pagina");
+      return;
+    }
     const reason = bulkIgnoreReason;
 
     setBulkIgnoreOpen(false);
