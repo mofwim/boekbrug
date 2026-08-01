@@ -112,5 +112,37 @@ console.log("\n— regimeFlagNote —");
   check("kor note has no evidence clause", !korNote.includes("bijv. factuur"));
 }
 
+console.log("\n— [KOR-5B] + [KOR-JAARGRENS]: wat de KOR-vlag verzweeg —");
+{
+  // Two omissions in one sentence, both costing the owner money — and both invisible, because
+  // the concept looks complete either way.
+  const kor = detectRegimeFlags({ korActive: true, lines: [] }).find((f) => f.code === "kor");
+  const d = kor ? kor.detail : "";
+
+  // 1. The concept computes 5b from the purchase invoices. Under the KOR there is no right to
+  //    deduct at all, so that is a refund the owner is not entitled to. The old text said only
+  //    "the afdracht lapses", which reads as "the deduction survives" — and a wrongly claimed
+  //    refund comes back as a naheffing with interest.
+  check("de KOR-vlag noemt 5a", /5a/.test(d));
+  check("[KOR-5B] de KOR-vlag noemt OOK 5b — de aftrek die vervalt", /5b/.test(d));
+  check("[KOR-5B] en zegt expliciet dat die niet mag worden teruggevraagd",
+    /NIET worden teruggevraagd|niet worden teruggevraagd/.test(d));
+
+  // 2. The threshold flag is tested against the omzet this computation sees, which is ONE
+  //    quarter. €6.000 per quarter never trips €20.000 and still blows the annual ceiling.
+  //    The flag simply stays silent, so the gap has to be said in words instead.
+  check("[KOR-JAARGRENS] de vlag zegt dat de grens per JAAR geldt", /per JAAR|jaargrens/i.test(d));
+  check("[KOR-JAARGRENS] en dat dit concept maar één kwartaal ziet", /alleen dit kwartaal/.test(d));
+  check("[KOR-JAARGRENS] en dat overschrijden terugwerkt", /terugwerkende kracht/.test(d));
+
+  // The threshold flag itself still only fires on what it can see — that is honest, as long as
+  // the sentence above tells the owner the flag's silence is not an all-clear.
+  const onder = detectRegimeFlags({ korActive: true, omzetForKorCheck: 6000, lines: [] });
+  check("een kwartaal van €6.000 laat de drempelvlag zwijgen (zoals verwacht)",
+    !onder.some((f) => f.code === "kor_threshold"));
+  check("...maar de KOR-vlag waarschuwt dan nog steeds over de jaargrens",
+    onder.some((f) => f.code === "kor" && /per JAAR/.test(f.detail)));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
