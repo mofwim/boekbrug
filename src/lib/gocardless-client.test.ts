@@ -100,6 +100,65 @@ test("the token is fetched once and reused across calls", async () => {
   assert.equal(calls[1].headers.Authorization, "Bearer access-1");
 });
 
+test("a /token/new/ that returns ONLY a refresh token still yields a working client", async () => {
+  // The two official sources disagree, and this one would have been fatal on first contact:
+  // the OpenAPI schema documents access + refresh, but the quickstart's own example response is
+  //     {"refresh": "string", "refresh_expires": 2592000}
+  // with prose to match ("returns a long-lived refresh token"; /token/refresh/ is used
+  // "subsequently to exchange the refresh token for a new access token"). Demanding `access`
+  // here failed the very first live call — as INVALID_CREDENTIALS, sending someone to re-check
+  // secrets that were perfectly fine.
+  clearGoCardlessTokenCache();
+  const { impl, calls } = fakeFetch([
+    { body: { refresh: "refresh-only-1", refresh_expires: 2_592_000 } },
+    { body: { access: "access-from-refresh", access_expires: 86_400 } },
+    { body: [] },
+  ]);
+  const client = createGoCardlessClient({ secretId: SECRET_ID, secretKey: SECRET_KEY, fetchImpl: impl });
+
+  await client.getInstitutions("nl");
+
+  assert.equal(calls[0].url, `${GOCARDLESS_API_BASE}/token/new/`);
+  assert.equal(calls[1].url, `${GOCARDLESS_API_BASE}/token/refresh/`);
+  assert.equal(JSON.parse(calls[1].body ?? "{}").refresh, "refresh-only-1");
+  assert.equal(calls[2].headers.Authorization, "Bearer access-from-refresh");
+});
+
+test("the refresh token survives the refresh-only path, so the next expiry costs one call", async () => {
+  // If the refresh token were not cached on that path, every 24h expiry would go back to
+  // /token/new/ — the endpoint with its own rate limit, and the one a cron run must not hammer.
+  clearGoCardlessTokenCache();
+  let clock = 1_000_000;
+  const { impl, calls } = fakeFetch([
+    { body: { refresh: "refresh-only-1", refresh_expires: 2_592_000 } },
+    { body: { access: "access-1", access_expires: 86_400 } },
+    { body: [] },
+    { body: { access: "access-2", access_expires: 86_400 } },
+    { body: [] },
+  ]);
+  const client = createGoCardlessClient({
+    secretId: SECRET_ID, secretKey: SECRET_KEY, fetchImpl: impl, now: () => clock,
+  });
+
+  await client.getInstitutions("nl");
+  clock += 86_400_000; // a day later: access dead, refresh still good
+  await client.getInstitutions("nl");
+
+  assert.equal(calls.filter((c) => c.url.endsWith("/token/new/")).length, 1, "only ever exchanged once");
+  assert.equal(calls[3].url, `${GOCARDLESS_API_BASE}/token/refresh/`);
+  assert.equal(calls[4].headers.Authorization, "Bearer access-2");
+});
+
+test("a token response with neither token is a credentials failure, not a crash", async () => {
+  clearGoCardlessTokenCache();
+  const { impl } = fakeFetch([{ body: {} }]);
+  const client = createGoCardlessClient({ secretId: SECRET_ID, secretKey: SECRET_KEY, fetchImpl: impl });
+  await assert.rejects(
+    () => client.getInstitutions("nl"),
+    (err: unknown) => err instanceof GoCardlessError && err.code === "INVALID_CREDENTIALS",
+  );
+});
+
 test("an expired access token is refreshed with the refresh token, not re-exchanged", async () => {
   clearGoCardlessTokenCache();
   let clock = 1_000_000;

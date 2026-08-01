@@ -95,9 +95,12 @@ an intent to reach 4/day. Consequences already built in:
   day he is actually watching it. The cron runs daily and the button carries its own hourly
   limit, so not backing off on a transient failure cannot become hammering.
 
-**Consent expiry.** A PSD2 consent lasts at most 90 days by default, and up to **180** where the
-bank allows it — each institution publishes its own ceiling as `max_access_valid_for_days`, so
-the connect route asks for that rather than the default. It is the difference between the owner
+**Consent expiry.** A PSD2 consent lasts 90 days by default. The ceiling is **per institution**,
+published as `max_access_valid_for_days`, and it genuinely varies: GoCardless's own examples show
+`"90"` for UK banks (the FCA's 90-day reconfirmation rule) and `"180"` for an EEA one — the
+Netherlands sits in the second group, where re-authentication is required every 180 days rather
+than 90. So the connect route asks for whatever the chosen bank publishes, capped at 180, instead
+of assuming either number. Where a bank does grant 180 that is the difference between the owner
 re-authorising twice a year and four times. After expiry the feed goes silent with no error, just
 nothing. `access_valid_until` stores the window the bank *granted* (it may cap shorter than we
 asked), the panel shows it, and the cron warns at 10, 3, 1 and 0 days. Those warnings are the only
@@ -124,7 +127,26 @@ status:
 | Free usage limit exceeded | **402** | `QUOTA_EXCEEDED` | **us** — our plan |
 | `InvalidToken` | 401 | `INVALID_CREDENTIALS` | us — rotated secrets |
 
-Three consequences worth knowing before you touch this:
+### The token endpoint returns one of two shapes
+
+`POST /token/new/` is documented twice, differently, and both are official:
+
+| Source | Says it returns |
+|---|---|
+| OpenAPI schema (`SpectacularJWTObtain`) | `access`, `access_expires`, `refresh`, `refresh_expires` |
+| Quickstart, Step 2 | **`refresh` and `refresh_expires` only** |
+
+The quickstart's prose backs its own example — the endpoint "returns a long-lived refresh
+token", and `/token/refresh/` is "used **subsequently** to exchange the refresh token for a new
+access token".
+
+So `ensureToken()` accepts either: if `access` came back it is used, otherwise the refresh token
+is cached and immediately exchanged. Requiring `access` would have failed the very first live
+call — and failed it as `INVALID_CREDENTIALS`, sending whoever set it up to re-check secrets that
+were perfectly fine. The refresh token is cached on that path too, so the next 24-hour expiry
+costs one `/token/refresh/` rather than a fresh exchange against the more limited endpoint.
+
+Three more consequences worth knowing before you touch this:
 
 - **`EUAExpiredError` is a 401 with no `type` field.** On the status alone it is
   indistinguishable from our credentials dying. Getting this one wrong defeats the entire point

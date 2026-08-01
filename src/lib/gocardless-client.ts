@@ -641,8 +641,29 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
     }
   }
 
-  /** POST /token/new/ — exchanges our two secrets for an access + refresh token pair. */
-  async function newTokens(): Promise<CachedTokens> {
+  /**
+   * POST /token/new/ — exchanges our two secrets for tokens.
+   *
+   * ⚠ The two official sources disagree about what comes back, so this returns what it ACTUALLY
+   * got and lets ensureToken() cope:
+   *
+   *   · the OpenAPI schema (SpectacularJWTObtain) documents all four fields —
+   *     access, access_expires, refresh, refresh_expires;
+   *   · the quickstart's own example response shows ONLY {refresh, refresh_expires}, and its
+   *     prose agrees: this endpoint "returns a long-lived refresh token", and /token/refresh/ is
+   *     "used subsequently to exchange the refresh token for a new access token".
+   *
+   * Demanding `access` here would therefore fail the very first call against a live account —
+   * and fail it as INVALID_CREDENTIALS, sending someone to re-check secrets that are perfectly
+   * fine. Accepting either shape costs one extra request in the refresh-only case and nothing
+   * at all in the other.
+   */
+  async function newTokens(): Promise<{
+    access: string | null;
+    accessExpiresAtMs: number;
+    refresh: string | null;
+    refreshExpiresAtMs: number;
+  }> {
     const res = await fetchOrThrow(`${GOCARDLESS_API_BASE}/token/new/`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -678,8 +699,10 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
       refresh_expires?: number;
     } | null;
 
-    if (!json?.access) {
-      throw new GoCardlessError("INVALID_CREDENTIALS", "GoCardless returned no access token");
+    // Neither token present means the pair was accepted but gave us nothing usable — the only
+    // reading of that is credentials that cannot be used.
+    if (!json?.access && !json?.refresh) {
+      throw new GoCardlessError("INVALID_CREDENTIALS", "GoCardless returned neither an access nor a refresh token");
     }
 
     // Documented lifetimes: access 24h, refresh 30d. Fall back to those when the field is absent
@@ -689,7 +712,7 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
       (typeof json.refresh_expires === "number" ? json.refresh_expires : 2_592_000) * 1000;
 
     return {
-      access: json.access,
+      access: json.access ?? null,
       accessExpiresAtMs: now() + accessTtl,
       refresh: json.refresh ?? null,
       refreshExpiresAtMs: now() + refreshTtl,
@@ -699,7 +722,11 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
   /** POST /token/refresh/ — cheaper than a full exchange, and the documented way to stay under
    *  the token endpoint's own limit. Returns null when the refresh token is no longer accepted,
    *  so the caller falls back to a full exchange instead of failing the whole sync. */
-  async function refreshTokens(refresh: string): Promise<CachedTokens | null> {
+  async function refreshTokens(
+    refresh: string,
+    /** The refresh token's own expiry, when the caller knows it and the cache does not yet. */
+    knownRefreshExpiresAtMs?: number,
+  ): Promise<CachedTokens | null> {
     const res = await fetchOrThrow(`${GOCARDLESS_API_BASE}/token/refresh/`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -717,7 +744,8 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
       accessExpiresAtMs: now() + accessTtl,
       // The refresh token itself is unchanged by a refresh — keep it and its own expiry.
       refresh,
-      refreshExpiresAtMs: cached?.refreshExpiresAtMs ?? now() + 2_592_000_000,
+      refreshExpiresAtMs:
+        knownRefreshExpiresAtMs ?? cached?.refreshExpiresAtMs ?? now() + 2_592_000_000,
     };
   }
 
@@ -737,8 +765,26 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
     }
 
     const fresh = await newTokens();
-    TOKEN_CACHE.set(key, fresh);
-    return fresh.access;
+
+    if (fresh.access) {
+      TOKEN_CACHE.set(key, { ...fresh, access: fresh.access });
+      return fresh.access;
+    }
+
+    // The refresh-only shape (see newTokens). Cache the refresh token FIRST so the exchange below
+    // — and every later expiry — has it, then trade it for an access token straight away.
+    if (!fresh.refresh) {
+      throw new GoCardlessError("INVALID_CREDENTIALS", "GoCardless returned no usable token");
+    }
+    const exchanged = await refreshTokens(fresh.refresh, fresh.refreshExpiresAtMs);
+    if (!exchanged) {
+      throw new GoCardlessError(
+        "INVALID_CREDENTIALS",
+        "GoCardless issued a refresh token it then refused to exchange",
+      );
+    }
+    TOKEN_CACHE.set(key, exchanged);
+    return exchanged.access;
   }
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
