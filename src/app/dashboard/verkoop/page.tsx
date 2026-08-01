@@ -1,5 +1,5 @@
 // src/app/dashboard/verkoop/page.tsx
-// [NAMENS] Het werkbord van de verkoopmedewerker.
+// [ACTING-FOR] Het werkbord van de verkoopmedewerker.
 //
 // Eén scherm, en dat is het hele ontwerp. Hij maakt facturen voor het bedrijf van zijn baas, ziet
 // wat hij zelf heeft gemaakt, en kan een te late factuur een herinnering sturen — verder niets:
@@ -20,10 +20,10 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
-import { getActingFor, loadIngetrokkenLidmaatschap } from '@/lib/acting-for-server'
-import { isNamens } from '@/lib/acting-for'
+import { getActingFor, loadRevokedMembership } from '@/lib/acting-for-server'
+import { isActingForOther } from '@/lib/acting-for'
 import { FONT, M3, R } from '@/lib/design/tokens'
-import type { VerkoopFactuur } from '@/lib/verkoop-overzicht'
+import type { SalesInvoice } from '@/lib/sales-overview'
 import VerkoopClient from './VerkoopClient'
 
 export const dynamic = 'force-dynamic'
@@ -45,8 +45,8 @@ export default async function VerkoopPage() {
   const acting = await getActingFor()
   if (!acting) redirect('/login')
 
-  if (!isNamens(acting)) {
-    // [NAMENS] Twee heel verschillende mensen komen hier terecht zonder koppeling.
+  if (!isActingForOther(acting)) {
+    // [ACTING-FOR] Twee heel verschillende mensen komen hier terecht zonder koppeling.
     //
     // 1) Een EIGENAAR — die hoort op /dashboard/facturen, waar álles staat; dit scherm zou hem
     //    een halve waarheid tonen.
@@ -55,21 +55,21 @@ export default async function VerkoopPage() {
     //    uitleg, met de volledige navigatie van een eigenaar eromheen. Hij zou denken dat de app
     //    stuk is of dat zijn facturen zijn verwijderd. Ze zijn niet verwijderd: ze staan bij zijn
     //    werkgever, waar ze horen. Dat is één zin, en die zin hoort er te staan.
-    const ingetrokken = await loadIngetrokkenLidmaatschap(acting.actorId)
-    if (!ingetrokken) redirect('/dashboard/facturen')
+    const revoked = await loadRevokedMembership(acting.actorId)
+    if (!revoked) redirect('/dashboard/facturen')
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pipelineNaam = createPipelineClient() as any
     const { data: exBaas } = await pipelineNaam
       .from('profiles')
       .select('company_name, full_name')
-      .eq('id', ingetrokken.ownerId)
+      .eq('id', revoked.ownerId)
       .single()
 
     return (
       <GeenToegangMeer
         bedrijf={exBaas?.company_name || exBaas?.full_name || 'je werkgever'}
-        sinds={ingetrokken.revokedAt}
+        sinds={revoked.revokedAt}
       />
     )
   }
@@ -89,9 +89,9 @@ export default async function VerkoopPage() {
     .eq('sender_id', acting.ownerId)
     .eq('created_by', acting.actorId)
     .order('created_at', { ascending: false })
-    .limit(200) as { data: VerkoopFactuur[] | null }
+    .limit(200) as { data: SalesInvoice[] | null }
 
-  const facturen: VerkoopFactuur[] = facturenRuw ?? []
+  const facturen: SalesInvoice[] = facturenRuw ?? []
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pipeline = createPipelineClient() as any
@@ -127,14 +127,14 @@ export default async function VerkoopPage() {
       }
       for (const f of facturen) {
         const b = perFactuur.get(f.id)
-        f.laatste_herinnering = b?.laatste ?? null
-        f.herinneringen = b?.aantal ?? 0
+        f.last_reminder_at = b?.laatste ?? null
+        f.reminder_count = b?.aantal ?? 0
       }
     } catch {
       // De tabel bestaat, maar mocht de lezing mislukken dan blijft het spoor leeg. Dat maakt de
       // knop RUIMER dan hij hoort te zijn, dus zetten we hem dan liever helemaal uit: de route
       // toetst dezelfde regel nog een keer en weigert alsnog, met de juiste zin erbij.
-      for (const f of facturen) f.herinneringen = undefined
+      for (const f of facturen) f.reminder_count = undefined
     }
   }
 
@@ -146,7 +146,7 @@ export default async function VerkoopPage() {
 /**
  * Het eerlijke einde van een koppeling.
  *
- * Geen foutmelding — er is niets misgegaan. Zijn werkgever heeft de toegang ingetrokken, en dat
+ * Geen foutmelding — er is niets misgegaan. Zijn werkgever heeft de toegang revoked, en dat
  * mag die op elk moment. Wat deze medewerker moet weten is precies drie dingen: dat het bewust
  * is gebeurd, dat zijn werk niet weg is, en bij wie hij moet zijn.
  */
@@ -160,7 +160,7 @@ function GeenToegangMeer({ bedrijf, sinds }: { bedrijf: string; sinds: string })
           Je maakt geen facturen meer voor {bedrijf}
         </h1>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-          {bedrijf} heeft je toegang{datum ? ` op ${datum}` : ''} ingetrokken. Dat is een keuze van
+          {bedrijf} heeft je toegang{datum ? ` op ${datum}` : ''} revoked. Dat is een keuze van
           je werkgever en er is niets misgegaan met je account.
         </p>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>

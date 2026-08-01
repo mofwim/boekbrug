@@ -1,5 +1,5 @@
 -- supabase/migrations/invoice_line_unit.sql
--- [EENHEID] De eenheid van een factuurregel — één kolom, en het gat dat hij dicht is groter
+-- [UNIT] De eenheid van een factuurregel — één kolom, en het gat dat hij dicht is groter
 -- dan hij eruitziet.
 --
 -- WAT ER MIS WAS
@@ -20,7 +20,7 @@
 -- WAT DEZE MIGRATIE WEL EN NIET DOET
 -- Eén nullable tekstkolom. Geen enkele bestaande rij verandert, geen bedrag wordt herrekend, en
 -- een lege eenheid blijft precies doen wat hij nu doet: terugvallen op C62 (zie
--- src/lib/eenheden.ts). De code werkt ook ZONDER deze migratie — de schrijfactie valt dan terug
+-- src/lib/units.ts). De code werkt ook ZONDER deze migratie — de schrijfactie valt dan terug
 -- op een regel zonder eenheid, net als bij created_by. Wat je zonder deze kolom mist is de
 -- juiste code op nieuwe facturen, niet het factureren zelf.
 --
@@ -30,7 +30,7 @@ ALTER TABLE public.invoice_lines
   ADD COLUMN IF NOT EXISTS unit text;
 
 COMMENT ON COLUMN public.invoice_lines.unit IS
-  '[EENHEID] De eenheid zoals de ondernemer hem koos (uur, m², stuk, km). Vertaald naar een UN/ECE Rec 20-code bij de UBL-export — zie src/lib/eenheden.ts. NULL = geen eenheid, wat neerkomt op C62 (stuk), precies zoals het gedrag vóór deze kolom.';
+  '[UNIT] De eenheid zoals de ondernemer hem koos (uur, m², stuk, km). Vertaald naar een UN/ECE Rec 20-code bij de UBL-export — zie src/lib/units.ts. NULL = geen eenheid, wat neerkomt op C62 (stuk), precies zoals het gedrag vóór deze kolom.';
 
 -- =====================================================================
 -- CONTROLE — draai dit blok NA de migratie.

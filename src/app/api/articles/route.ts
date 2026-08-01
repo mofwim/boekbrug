@@ -8,14 +8,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { normalizeArticleInput } from "@/lib/articles";
-// [NAMENS] De artikelencatalogus hoort bij het BEDRIJF, niet bij de mens achter het toetsenbord.
+// [ACTING-FOR] De artikelencatalogus hoort bij het BEDRIJF, niet bij de mens achter het toetsenbord.
 // Zonder dit zag een verkoopmedewerker een LEGE suggestielijst en typte hij elke regel met de
 // hand — precies het probleem dat deze catalogus oplost, alleen dan voor de verkeerde persoon.
 // Hij en zijn werkgever factureren uit dezelfde lijst; dat is de bedoeling.
 import { getActingFor } from "@/lib/acting-for-server";
-import { factuurEigenaar } from "@/lib/acting-for";
+import { invoiceOwnerId } from "@/lib/acting-for";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { isNamens } from "@/lib/acting-for";
+import { isActingForOther } from "@/lib/acting-for";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -23,8 +23,8 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   const acting = await getActingFor();
   if (!acting) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
-  const ownerId = factuurEigenaar(acting);
-// [NAMENS] Waarom service_role zodra er NAMENS iemand wordt gehandeld: articles heeft geen
+  const ownerId = invoiceOwnerId(acting);
+// [ACTING-FOR] Waarom service_role zodra er NAMENS iemand wordt gehandeld: articles heeft geen
 // RLS-policy voor een medewerker (die zou een derde migratie kosten, en die staat nog niet op de
 // database van de gebruiker). De scoping blijft expliciet en even strak: `.eq("user_id", ownerId)`,
 // waarbij ownerId alleen een andere waarde krijgt bij een geldige, niet-ingetrokken koppeling —
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
 const dbVoor = (namens: boolean) => (namens ? createPipelineClient() : supabase);
 
   const includeArchived = req.nextUrl.searchParams.get("all") === "1";
-  let q = dbVoor(isNamens(acting))
+  let q = dbVoor(isActingForOther(acting))
     .from("articles")
     .select("id, code, description, unit_price, btw_rate, unit, active, usage_count")
     .eq("user_id", ownerId)
@@ -51,8 +51,8 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   const acting = await getActingFor();
   if (!acting) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
-  const ownerId = factuurEigenaar(acting);
-// [NAMENS] Waarom service_role zodra er NAMENS iemand wordt gehandeld: articles heeft geen
+  const ownerId = invoiceOwnerId(acting);
+// [ACTING-FOR] Waarom service_role zodra er NAMENS iemand wordt gehandeld: articles heeft geen
 // RLS-policy voor een medewerker (die zou een derde migratie kosten, en die staat nog niet op de
 // database van de gebruiker). De scoping blijft expliciet en even strak: `.eq("user_id", ownerId)`,
 // waarbij ownerId alleen een andere waarde krijgt bij een geldige, niet-ingetrokken koppeling —
@@ -65,7 +65,7 @@ const dbVoor = (namens: boolean) => (namens ? createPipelineClient() : supabase)
   const norm = normalizeArticleInput(body);
   if (!norm.ok) return NextResponse.json({ error: norm.error }, { status: 400 });
 
-  const { data, error } = await dbVoor(isNamens(acting))
+  const { data, error } = await dbVoor(isActingForOther(acting))
     .from("articles")
     .insert({ user_id: ownerId, ...norm.value })
     .select("id, code, description, unit_price, btw_rate, unit, active, usage_count")

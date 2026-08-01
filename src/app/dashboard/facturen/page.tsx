@@ -23,7 +23,7 @@ export default async function Page() {
 
   if (!profile) redirect('/login')
 
-  // [NAMENS] Wie maakte welke factuur?
+  // [ACTING-FOR] Wie maakte welke factuur?
   //
   // created_by werd geschreven en door niemand gelezen — een spoor dat niemand kan lezen is geen
   // spoor. De eigenaar geeft het recht weg om facturen uit te geven op zijn naam en BTW-nummer,
@@ -33,8 +33,8 @@ export default async function Page() {
   // extra voor de 99% die alleen werkt. En hij is deploy-veilig: bestaat created_by nog niet,
   // dan faalt de select en blijft de map leeg — dan is er ook niets te tonen.
   const makers: Record<string, string> = {}
-  const teamNamen = await loadTeamNames(user.id)
-  if (Object.keys(teamNamen).length > 0) {
+  const teamNames = await loadTeamNames(user.id)
+  if (Object.keys(teamNames).length > 0) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pipeline = createPipelineClient() as any
@@ -46,7 +46,7 @@ export default async function Page() {
         .neq('created_by', user.id)
         .limit(2000)
       for (const r of (data ?? []) as Array<{ id: string; created_by: string }>) {
-        const naam = teamNamen[r.created_by]
+        const naam = teamNames[r.created_by]
         // Alleen namen van mensen die (ooit) bij dit bedrijf hoorden — nooit een losse uuid.
         if (naam) makers[r.id] = naam
       }

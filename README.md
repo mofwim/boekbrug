@@ -1,5 +1,10 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+> **Before you write code:** read [CONTRIBUTING.md](./CONTRIBUTING.md).
+> The short version — **English in the code, Dutch on the screen.** Identifiers, comments, test
+> names and commit messages are English; UI text, PDF/e-mail content and legal pages stay Dutch,
+> because that is what the user reads.
+
 ## Getting Started
 
 First, run the development server:

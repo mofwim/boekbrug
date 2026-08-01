@@ -5,22 +5,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
-// [NAMENS] Omgebouwd in plaats van dichtgezet: "maak er nog zo een" is het hart van
+// [ACTING-FOR] Omgebouwd in plaats van dichtgezet: "maak er nog zo een" is het hart van
 // factureerwerk. De kopie wordt een CONCEPT zonder nummer, dus er wordt hier niets uitgegeven —
 // het nummer valt pas bij versturen, en dat loopt langs de reeks van de eigenaar.
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, factuurGemaaktDoor, magFactuur } from '@/lib/acting-for'
-// [NAMENS] created_by bestaat pas ná de migratie — zonder terugval faalt het dupliceren.
-import { schrijfMetSpoor } from '@/lib/created-by'
+import { invoiceOwnerId, invoiceCreatedBy, canAccessInvoice } from '@/lib/acting-for'
+// [ACTING-FOR] created_by bestaat pas ná de migratie — zonder terugval faalt het dupliceren.
+import { writeWithTrail } from '@/lib/created-by'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
   const acting = await getActingFor()
   if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const ownerId = factuurEigenaar(acting)
+  const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
   try {
@@ -39,10 +39,10 @@ export async function POST(
     if (fetchError || !original) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
-    // [NAMENS] Een medewerker dupliceert alleen wat hij zelf maakte — niet de factuur van zijn
+    // [ACTING-FOR] Een medewerker dupliceert alleen wat hij zelf maakte — niet de factuur van zijn
     // baas, waarmee hij anders diens bedragen en klantgegevens zou kunnen inzien.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (!magFactuur(acting, original as any)) {
+    if (!canAccessInvoice(acting, original as any)) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
@@ -50,7 +50,7 @@ export async function POST(
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 30)
 
-    const { data: newInvoice, error: insertError } = await schrijfMetSpoor<{ id: string }>(
+    const { data: newInvoice, error: insertError } = await writeWithTrail<{ id: string }>(
       (spoor) => supabase
       .from('invoices')
       .insert({
@@ -82,7 +82,7 @@ export async function POST(
       })
       .select()
       .single(),
-      { created_by: factuurGemaaktDoor(acting) },
+      { created_by: invoiceCreatedBy(acting) },
     )
 
     if (insertError || !newInvoice) {
@@ -91,11 +91,11 @@ export async function POST(
 
     const { data: originalLines } = await supabase
       .from('invoice_lines')
-      .select('*')  // [EENHEID] '*' zodat de eenheid meekomt zonder een tweede kolommenlijst die kan verouderen
+      .select('*')  // [UNIT] '*' zodat de eenheid meekomt zonder een tweede kolommenlijst die kan verouderen
       .eq('invoice_id', id)
 
     if (originalLines && originalLines.length > 0) {
-      // [EENHEID] Expliciet overtypen, NIET `{ ...l }` spreiden.
+      // [UNIT] Expliciet overtypen, NIET `{ ...l }` spreiden.
       //
       // Ik had hier eerst select('*') met een spread staan, en dat was fout: dan gaat het `id`
       // van de ORIGINELE regel mee de INSERT in — een primaire sleutel die al bestaat. Wat er

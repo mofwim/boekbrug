@@ -132,7 +132,7 @@ export async function sendClientInvite({
   }
 }
 
-// ── [NAMENS] Uitnodiging voor een verkoopmedewerker ──────────────────────────
+// ── [ACTING-FOR] Uitnodiging voor een verkoopmedewerker ──────────────────────────
 // Een andere mail dan sendClientInvite, met opzet: hier wordt iemand geen KLANT van een
 // boekhouder maar krijgt hij het recht om facturen te versturen ONDER HET BTW-NUMMER van een
 // ander. Dat hoort in de uitnodiging te staan — wie op een knop klikt zonder te weten wat hij

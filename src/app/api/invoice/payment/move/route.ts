@@ -27,7 +27,7 @@ import {
 } from "@/lib/payment-move";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
-import { vereisEigenaar } from '@/lib/alleen-eigenaar'
+import { requireOwner } from '@/lib/owner-only'
 
 export const dynamic = "force-dynamic";
 
@@ -37,9 +37,9 @@ const INVOICE_FIELDS =
 // ── GET — what can move, and where to ─────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een betaling verplaatsen'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('Een betaling verplaatsen'); if (w.response) return w.response }
 
   const supabase = await createServerSupabaseClient();
   const {
@@ -223,9 +223,9 @@ export async function GET(req: NextRequest) {
 // ── POST — move it ────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een betaling verplaatsen'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('Een betaling verplaatsen'); if (w.response) return w.response }
 
   const supabase = await createServerSupabaseClient();
   const {

@@ -185,7 +185,7 @@ export async function GET(req: NextRequest) {
       // failure here removes the draft again rather than leaving it behind.
       const { data: lines } = await pipeline
         .from("invoice_lines")
-        // [EENHEID] '*' zodat de eenheid meekomt; de INSERT typt hieronder expliciet over.
+        // [UNIT] '*' zodat de eenheid meekomt; de INSERT typt hieronder expliciet over.
         .select("*")
         .eq("invoice_id", s.source_invoice_id);
       if (lines && lines.length > 0) {
@@ -201,7 +201,7 @@ export async function GET(req: NextRequest) {
               btw_rate: l.btw_rate,
               line_total: l.line_total,
             };
-            // [EENHEID] Een terugkerende factuur is een KOPIE van dezelfde levering; de eenheid
+            // [UNIT] Een terugkerende factuur is een KOPIE van dezelfde levering; de eenheid
             // hoort dus mee. Undefined zolang invoice_line_unit.sql niet is toegepast.
             if (bron.unit !== undefined) regel.unit = bron.unit ?? null;
             return regel;

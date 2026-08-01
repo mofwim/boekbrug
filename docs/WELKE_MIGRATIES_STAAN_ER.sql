@@ -114,7 +114,7 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- antwoordde met PGRST204 en het hele verzoek faalde, dus kon er op een niet-gemigreerde
   -- installatie GEEN FACTUUR MEER WORDEN AANGEMAAKT. tsc schoon, tests groen, build compleet;
   -- geen van drieën kijkt naar een echte database. Nu valt elke schrijfactie terug op "zonder
-  -- spoor" (src/lib/created-by.ts) en bewaakt namens-poorten.test.ts dat dat zo blijft.
+  -- spoor" (src/lib/created-by.ts) en bewaakt acting-for-gates.test.ts dat dat zo blijft.
   (24, 'company_members_sales_role.sql',
        'De ene extra rol: een medewerker die facturen maakt NAMENS de eigenaar. Eén nummerreeks per bedrijf (Art. 35), en created_by als leesgrens — hij ziet alleen wat hij zelf maakte',
        'table', 'company_members'),

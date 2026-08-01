@@ -9,22 +9,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { buildBetaalverzoek, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { SITE_URL } from '@/lib/site'
-// [NAMENS] Omgebouwd in plaats van dichtgezet. Een betaalverzoek is een LINK naar een factuur
+// [ACTING-FOR] Omgebouwd in plaats van dichtgezet. Een betaalverzoek is een LINK naar een factuur
 // die al is uitgegeven — geen geldbeweging, geen nieuw document, en het IBAN erop is dat van de
 // eigenaar. Het hoort dus bij het werk van wie de factuur maakte: hij factureert om betaald te
 // worden. Stond dit dicht, dan zag een medewerker op zijn eigen factuur een knop die 403 gaf.
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, isNamens, magFactuur } from '@/lib/acting-for'
+import { invoiceOwnerId, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
   const acting = await getActingFor()
   if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-  const ownerId = factuurEigenaar(acting)
+  const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
   const supabase = await createServerSupabaseClient()
@@ -40,18 +40,18 @@ export async function POST(
     .single()
   if (!invoice) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
 
-  // [NAMENS] Tweede slot naast RLS. Een medewerker maakt alleen een betaallink voor een factuur
+  // [ACTING-FOR] Tweede slot naast RLS. Een medewerker maakt alleen een betaallink voor een factuur
   // die HIJ heeft gemaakt — niet voor die van zijn baas of een collega. Dit is het moment waarop
   // een geraden id binnenkomt, en het gevolg is een deelbare link naar andermans bedrag.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (!magFactuur(acting, invoice as any)) {
+  if (!canAccessInvoice(acting, invoice as any)) {
     return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
   }
 
   // The owner's OWN payout details — the beneficiary of the QR.
-  const { data: owner } = await (isNamens(acting) ? createPipelineClient() : supabase)
+  const { data: owner } = await (isActingForOther(acting) ? createPipelineClient() : supabase)
     .from('profiles')
-    // [NAMENS] Het IBAN op de betaallink is dat van de EIGENAAR — het is zijn factuur. Voor een
+    // [ACTING-FOR] Het IBAN op de betaallink is dat van de EIGENAAR — het is zijn factuur. Voor een
     // medewerker is die profielrij via RLS onleesbaar, dus dan langs service_role; anders zou de
     // link stranden op "geen IBAN bekend" terwijl het gewoon is ingevuld.
     .select('iban, company_name, full_name')

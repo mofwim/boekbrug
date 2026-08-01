@@ -37,7 +37,7 @@ import { logAuditAction } from "@/lib/audit";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
-import { vereisEigenaar } from '@/lib/alleen-eigenaar'
+import { requireOwner } from '@/lib/owner-only'
 
 export const dynamic = "force-dynamic";
 
@@ -90,9 +90,9 @@ const readFailedResponse = () =>
 // ── POST — archive ────────────────────────────────────────────────────────────────────────────
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een factuur negeren of terugzetten'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('Een factuur negeren of terugzetten'); if (w.response) return w.response }
 
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
@@ -256,9 +256,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 // ── PATCH — restore ───────────────────────────────────────────────────────────────────────────
 
 export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een factuur negeren of terugzetten'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('Een factuur negeren of terugzetten'); if (w.response) return w.response }
 
   const { id } = await params;
   const supabase = await createServerSupabaseClient();

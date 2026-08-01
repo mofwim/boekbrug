@@ -1,6 +1,6 @@
 'use client'
 
-// [NAMENS] Eén knop, en de zin eronder die zegt wat je aanneemt.
+// [ACTING-FOR] Eén knop, en de zin eronder die zegt wat je aanneemt.
 
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'

@@ -1,5 +1,5 @@
 // src/app/team/accepteren/page.tsx
-// [NAMENS] De genodigde landt hier vanuit zijn mail.
+// [ACTING-FOR] De genodigde landt hier vanuit zijn mail.
 //
 // Bewust GEEN automatische acceptatie bij het laden van de pagina. Wat hier wordt aangenomen is
 // het recht om facturen uit te geven onder het BTW-nummer van iemand anders — dat hoort een

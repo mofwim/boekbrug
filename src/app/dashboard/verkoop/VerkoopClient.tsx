@@ -1,10 +1,10 @@
 'use client'
 
-// [NAMENS] Het werkbord zelf. Alle regels (stand, openstaand, mag-ik-herinneren) komen uit
-// src/lib/verkoop-overzicht.ts en zijn daar getest; dit bestand toont ze alleen.
+// [ACTING-FOR] Het werkbord zelf. Alle regels (stand, openstaand, mag-ik-herinneren) komen uit
+// src/lib/sales-overview.ts en zijn daar getest; dit bestand toont ze alleen.
 //
 // DE KLOK KOMT VAN DE SERVER, ALS PROP.
-// `standVan` en `magHerinneren` hebben `nowMs` nodig. Date.now() aanroepen tijdens het renderen
+// `stateOf` en `canRemind` hebben `nowMs` nodig. Date.now() aanroepen tijdens het renderen
 // is in deze codebase een lint-fout met reden (react-hooks/purity): dezelfde render zou twee
 // uitkomsten kunnen geven. Hem in een effect zetten mag ook niet (set-state-in-effect), en zou
 // bovendien een flits opleveren waarin nog geen enkele factuur een stand heeft.
@@ -18,9 +18,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FONT, M3, R } from '@/lib/design/tokens'
 import {
-  standVan, openstaandBedrag, telOp, magHerinneren,
-  type VerkoopFactuur, type FactuurStand,
-} from '@/lib/verkoop-overzicht'
+  stateOf, outstandingAmount, summarise, canRemind,
+  type SalesInvoice, type InvoiceState,
+} from '@/lib/sales-overview'
 
 const EURO = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string | null) => {
@@ -28,14 +28,14 @@ const DATUM = (s: string | null) => {
   return Number.isFinite(ms) ? new Date(ms).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : '—'
 }
 
-const KLEUR: Record<FactuurStand, string> = {
+const KLEUR: Record<InvoiceState, string> = {
   concept: M3.warning,
   open: M3.neutral,
   'te-laat': M3.error,
   betaald: M3.success,
   vervallen: M3.mutedText,
 }
-const LABEL: Record<FactuurStand, string> = {
+const LABEL: Record<InvoiceState, string> = {
   concept: 'concept',
   open: 'open',
   'te-laat': 'te laat',
@@ -48,7 +48,7 @@ export default function VerkoopClient({
   bedrijf,
   nu,
 }: {
-  facturen: VerkoopFactuur[]
+  facturen: SalesInvoice[]
   bedrijf: string
   /** Servertijd in ms — zie de kop waarom hij niet hier wordt opgehaald. */
   nu: number
@@ -75,7 +75,7 @@ export default function VerkoopClient({
     }
   }
 
-  const t = telOp(facturen, nu)
+  const t = summarise(facturen, nu)
   const kaart: React.CSSProperties = {
     background: M3.surface, border: `1px solid ${M3.hairline}`, borderRadius: R.lg,
   }
@@ -88,7 +88,7 @@ export default function VerkoopClient({
           Facturen maken
         </h1>
 
-        {/* [NAMENS] De belangrijkste zin op dit scherm. Iemand die facturen uitgeeft onder het
+        {/* [ACTING-FOR] De belangrijkste zin op dit scherm. Iemand die facturen uitgeeft onder het
             BTW-nummer van een ander hoort dat te WETEN, en niet te moeten afleiden. */}
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 18px', lineHeight: 1.55 }}>
           Je maakt facturen namens <strong style={{ color: M3.onSurface }}>{bedrijf}</strong>. Ze gaan uit
@@ -103,29 +103,29 @@ export default function VerkoopClient({
                 Staat open
               </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, marginTop: 2 }}>
-                {EURO.format(t.openstaand)}
+                {EURO.format(t.outstanding)}
               </div>
-              <div style={{ fontSize: 12.5, color: M3.mutedText }}>{t.open + t.teLaat} facturen</div>
+              <div style={{ fontSize: 12.5, color: M3.mutedText }}>{t.open + t.overdue} facturen</div>
             </div>
-            {t.teLaat > 0 && (
+            {t.overdue > 0 && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: M3.error, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                   Te laat
                 </div>
                 <div style={{ fontSize: 24, fontWeight: 700, color: M3.error, marginTop: 2 }}>
-                  {EURO.format(t.teLaatBedrag)}
+                  {EURO.format(t.overdueAmount)}
                 </div>
                 <div style={{ fontSize: 12.5, color: M3.mutedText }}>
-                  {t.teLaat} {t.teLaat === 1 ? 'factuur' : 'facturen'} — hier kun je vandaag iets aan doen
+                  {t.overdue} {t.overdue === 1 ? 'factuur' : 'facturen'} — hier kun je vandaag iets aan doen
                 </div>
               </div>
             )}
-            {t.concepten > 0 && (
+            {t.drafts > 0 && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: M3.warning, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                   Concept
                 </div>
-                <div style={{ fontSize: 24, fontWeight: 700, color: M3.warning, marginTop: 2 }}>{t.concepten}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: M3.warning, marginTop: 2 }}>{t.drafts}</div>
                 <div style={{ fontSize: 12.5, color: M3.mutedText }}>nog niet verstuurd</div>
               </div>
             )}
@@ -164,9 +164,9 @@ export default function VerkoopClient({
           ) : (
             <div style={{ ...kaart, overflow: 'hidden' }}>
               {facturen.map((f, i) => {
-                const stand = standVan(f, nu)
-                const rest = openstaandBedrag(f)
-                const oordeel = magHerinneren(f, nu)
+                const stand = stateOf(f, nu)
+                const rest = outstandingAmount(f)
+                const oordeel = canRemind(f, nu)
                 return (
                   <div
                     key={f.id}
@@ -208,7 +208,7 @@ export default function VerkoopClient({
                         niet kan, helpt wel. */}
                     {stand === 'te-laat' && (
                       <div style={{ marginTop: 10 }}>
-                        {oordeel.mag ? (
+                        {oordeel.allowed ? (
                           <button
                             onClick={() => herinner(f.id)}
                             disabled={bezig === f.id}
@@ -224,12 +224,12 @@ export default function VerkoopClient({
                           </button>
                         ) : (
                           <p style={{ fontSize: 12.5, color: M3.mutedText, margin: 0, lineHeight: 1.5 }}>
-                            {oordeel.reden}
+                            {oordeel.reason}
                           </p>
                         )}
-                        {(f.herinneringen ?? 0) > 0 && (
-                          <span style={{ fontSize: 12, color: M3.mutedText, marginLeft: oordeel.mag ? 10 : 0 }}>
-                            {f.herinneringen} eerder verstuurd
+                        {(f.reminder_count ?? 0) > 0 && (
+                          <span style={{ fontSize: 12, color: M3.mutedText, marginLeft: oordeel.allowed ? 10 : 0 }}>
+                            {f.reminder_count} eerder verstuurd
                           </span>
                         )}
                       </div>
