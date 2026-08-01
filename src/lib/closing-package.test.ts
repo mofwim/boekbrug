@@ -14,6 +14,8 @@ import {
   cashCostsWithoutReceipt,
   assembleClosingPackageZip,
   effectiveDirection,
+  datelessWarning,
+  sharedOutsideWarning,
   type PackageInvoice,
   type PaymentDateInfo,
 } from "./closing-package";
@@ -361,4 +363,40 @@ test("[VOORBELASTING-KAS] sales and refunds are not costs", () => {
 test("[VOORBELASTING-KAS] an empty drawer says nothing", () => {
   assert.equal(cashCostWithoutReceiptWarning(0, 0), null);
   assert.deepEqual(cashCostsWithoutReceipt([]), { count: 0, total: 0 });
+});
+
+
+// [NO-SILENT-EMPTY] A verified invoice with no invoice_date sits in NO quarter package and NO
+// concept aangifte — Postgres range filters drop NULL rows — so its BTW simply vanishes. This
+// warning exists to catch that. When its own query fails it used to report count 0, which the
+// package then presented as "there are none": the invoices still vanished, and now the package had
+// actively said they did not exist.
+test("[NO-SILENT-EMPTY] a dateless check that could not run warns instead of reporting none", () => {
+  const unchecked = datelessWarning({ count: 0, labels: [], checked: false });
+  assert.ok(unchecked, "a failed check must still produce a warning");
+  assert.equal(unchecked!.code, "invoice_no_date");
+  assert.match(unchecked!.message, /konden niet nagaan/);
+
+  // A check that RAN and found nothing stays silent — otherwise the warning is on every package
+  // and means nothing.
+  assert.equal(datelessWarning({ count: 0, labels: [], checked: true }), null);
+
+  // And a real find still names the invoices, which is what makes it actionable.
+  const found = datelessWarning({ count: 2, labels: ["F-1", "F-2"], checked: true });
+  assert.match(found!.message, /F-1, F-2/);
+  assert.doesNotMatch(found!.message, /konden niet nagaan/);
+});
+
+test("[NO-SILENT-EMPTY] shared documents that could not be read are named, not assumed absent", () => {
+  // This read decides BOTH what goes into the ZIP and what the package warns about. A dropped error
+  // shipped the accountant a quarter with its shared documents missing and nothing saying they were
+  // ever expected.
+  const unchecked = sharedOutsideWarning(0, false);
+  assert.ok(unchecked, "a failed read must still produce a warning");
+  assert.match(unchecked!.message, /konden de gedeelde bestanden nu niet ophalen/);
+
+  // A read that RAN with everything in this quarter stays silent.
+  assert.equal(sharedOutsideWarning(0, true), null);
+  // And a real count still says how many sit outside.
+  assert.match(sharedOutsideWarning(3, true)!.message, /3 gedeeld/);
 });

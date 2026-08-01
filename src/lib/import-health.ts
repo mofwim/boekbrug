@@ -140,6 +140,12 @@ export interface FieldConfidence {
     iban_changed?: boolean
     iban_changed_from?: string
     iban_changed_to?: string
+    // [IBAN-CHECK-HONEST] De keerzijde van de vlag hierboven, in dezelfde geest als
+    // [ONE-INVOICE-UNVERIFIED]: niet "het nummer is gewijzigd", maar "we konden het niet nagaan".
+    // De leveranciersregistratie was onbereikbaar, dus er is niets vergeleken. Bij factuurfraude
+    // klopt de rekensom juist wél en is het rekeningnummer het enige signaal — dus een controle
+    // die stil is overgeslagen mag niet als een geslaagde controle ogen.
+    iban_check_unavailable?: boolean
     // [MULTI-INVOICE] Written at import time when one uploaded PDF carried several different
     // labelled invoice numbers, each with its own settlement. The reader returns ONE invoice, so
     // the rest were silently lost — the reason below names the numbers so the owner can go and
@@ -233,6 +239,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
         ? ibanChangeReason({ from, to })
         : 'het rekeningnummer van deze leverancier is veranderd — controleer dit vóór je betaalt, ' +
           'en bel de leverancier op een nummer dat je zelf opzoekt (niet het nummer op deze factuur)'
+    )
+  }
+  // [IBAN-CHECK-HONEST] De controle kon niet draaien. Zelfde vlag als een echte wissel, en dus
+  // dezelfde gevolgen (needs-review, buiten "Selecteer klaar", geen automatische boeking) — want
+  // het risico dat de vlag afdekt is hier niet kleiner, alleen ongemeten. Alleen de zin verschilt:
+  // hij belooft geen wissel die we niet hebben gezien.
+  else if (storedSafecore?.iban_check_unavailable === true) {
+    flags.ibanChanged = true
+    reasons.push(
+      'we konden het rekeningnummer van deze leverancier nu niet vergelijken met wat we eerder ' +
+      'van hem kenden — controleer het zelf vóór je betaalt, en bel bij twijfel op een nummer dat ' +
+      'je zelf opzoekt (niet het nummer op deze factuur)'
     )
   }
   // [MULTI-INVOICE] Eén bestand, meerdere facturen. Dit staat bewust hoog: alle andere assen

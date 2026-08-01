@@ -805,19 +805,29 @@ const INVOICE_FIELDS =
  * this owner and is verified, yet appears in NO quarter's package and NO concept
  * aangifte — its BTW just vanishes (voorbelasting too low / te-betalen too high) with
  * zero trace. This finds them so the package can WARN instead of losing them. Returns
- * the count + up-to-`cap` human labels. Never throws (a query error → empty, no crash).
+ * the count + up-to-`cap` human labels.
+ *
+ * [NO-SILENT-EMPTY] `checked: false` when the query failed. This function exists to WARN, and a
+ * warning-finder that answers "nothing to warn about" because it could not look is the most
+ * misleading shape it could take: the invoices still vanish from every quarter, and now the package
+ * has actively said they do not exist. Never throws — the package is still built — but the caller
+ * gets to say which of the two it is.
  */
 async function datelessVerifiedInvoices(
   supabase: PipelineClient,
   ownerId: string,
   cap = 10,
-): Promise<{ count: number; labels: string[] }> {
-  const { data } = await supabase
+): Promise<{ count: number; labels: string[]; checked: boolean }> {
+  const { data, error } = await supabase
     .from("invoices")
     .select(INVOICE_FIELDS)
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .is("invoice_date", null)
     .neq("status", "archived");
+  if (error) {
+    console.error("[NO-SILENT-EMPTY] dateless-invoice check failed — the package says so", { ownerId, error: error.message });
+    return { count: 0, labels: [], checked: false };
+  }
   const verified = (data ?? [])
     .map((raw) => {
       const row = raw as unknown as PackageInvoice;
@@ -825,6 +835,7 @@ async function datelessVerifiedInvoices(
     })
     .filter(isVerifiedForPackage);
   return {
+    checked: true,
     count: verified.length,
     labels: verified.slice(0, cap).map((i) => i.invoice_number ?? i.id),
   };
@@ -832,7 +843,19 @@ async function datelessVerifiedInvoices(
 
 /** A warning for dateless verified invoices, or null when there are none. Shared by the
  * ZIP builder and the preview summary so both tell the SAME truth. */
-function datelessWarning(d: { count: number; labels: string[] }): ClosingPackageWarning | null {
+// Exported for its test: the difference between "none" and "could not look" is the whole point.
+export function datelessWarning(d: { count: number; labels: string[]; checked: boolean }): ClosingPackageWarning | null {
+  // [NO-SILENT-EMPTY] "We could not look" is not "there are none". A dateless verified invoice sits
+  // in no quarter package and no concept aangifte — its BTW simply vanishes — so the accountant has
+  // to know the difference between a package that checked and a package that could not.
+  if (!d.checked) {
+    return {
+      code: "invoice_no_date",
+      message:
+        "We konden niet nagaan of er geverifieerde facturen ZONDER datum zijn. Die vallen buiten elk " +
+        "kwartaalpakket en hun BTW/voorbelasting ontbreekt dan — controleer dit vóór je de aangifte indient.",
+    };
+  }
   if (d.count === 0) return null;
   const shown = d.labels.join(", ");
   const more = d.count > d.labels.length ? ` (+${d.count - d.labels.length} meer)` : "";
@@ -902,15 +925,22 @@ async function sharedDocsForQuarter(
   ownerId: string,
   year: number,
   quarter: Quarter,
-): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number; checked: boolean }> {
   const sharedPeriod = `${year}-Q${quarter}`;
-  const { data } = await supabase
+  // [NO-SILENT-EMPTY] Same rule as datelessVerifiedInvoices above. This read decides BOTH what goes
+  // into the package and what the package warns about, so a dropped error shipped an accountant a
+  // quarter with its shared documents missing and nothing saying they were ever expected.
+  const { data, error } = await supabase
     .from("documents")
     .select("file_url, file_name, doc_type, invoice_id, period")
     .eq("user_id", ownerId)
     .eq("shared", true)
     .eq("trashed", false)
     .is("invoice_id", null);
+  if (error) {
+    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", { ownerId, error: error.message });
+    return { paths: [], outsideCount: 0, checked: false };
+  }
   const rows = (data ?? []) as Array<{
     file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
   }>;
@@ -921,7 +951,7 @@ async function sharedDocsForQuarter(
     if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
     else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
   }
-  return { paths, outsideCount };
+  return { paths, outsideCount, checked: true };
 }
 
 // [PACKAGE-VOORBELASTING] A bank payment CODED as a business cost with no purchase invoice
@@ -1029,7 +1059,16 @@ export function costWithoutInvoiceWarning(count: number, total: number): Closing
 
 /** A warning for shared files that fall outside this quarter's package, or null. Shared by
  *  the ZIP builder and the preview summary so both tell the SAME truth. */
-function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+// Exported for its test — "we could not look" and "there are none" must not read the same.
+export function sharedOutsideWarning(outsideCount: number, checked = true): ClosingPackageWarning | null {
+  if (!checked) {
+    return {
+      code: "shared_doc_other_quarter",
+      message:
+        "We konden de gedeelde bestanden nu niet ophalen. Er zitten daardoor mogelijk documenten " +
+        "niet in dit pakket die er wel bij horen — controleer dit vóór je het naar je boekhouder stuurt.",
+    };
+  }
   if (outsideCount <= 0) return null;
   return {
     code: "shared_outside_quarter",
@@ -1245,7 +1284,7 @@ export async function summarizeClosingPackage(args: {
   if (costNoInvoiceWarning) warnings.push(costNoInvoiceWarning);
 
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   return {
@@ -1461,7 +1500,7 @@ export async function buildClosingPackageZip(args: {
   const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
   const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
@@ -1651,6 +1690,17 @@ export async function buildClosingPackageZip(args: {
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
   const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  // [TRIANGLE-ZERO] The 6th argument is the acquirer commission, and 0 here is deliberate.
+  //
+  // This call feeds ONLY the BTW side of the package: salesByRate, cashOmzetZonderBtw and
+  // btwVoorbelasting (see the three reads below). The commission is a cost with NO BTW, so it
+  // cannot move a single figure this package reports — while /api/result, which DOES report
+  // profit, books it via commissionActuallyBooked in compute-result-range.ts.
+  //
+  // Written down because the bare 0 reads like an omission: the same file runs reconcileTriangle
+  // a few hundred lines up, so "the triangle is computed but not passed on" looks exactly like a
+  // bug. It is not — but it WOULD become one the day this package starts reporting kosten or
+  // winst. If that day comes, this argument has to change with it.
   const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,

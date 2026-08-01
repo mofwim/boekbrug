@@ -27,7 +27,7 @@ import {
   deriveDueDate,
   type PossibleDuplicate,
 } from '@/lib/safecore'
-import { collectPossibleDuplicate, mergePossibleDuplicate } from '@/lib/possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
@@ -2708,6 +2708,12 @@ export async function syncUserEmails(
       // flagged so the verify queue shows "mogelijk dubbel met X" and it can never auto-advance as
       // a second cost. Never blocks the import. Reset per attachment.
       let possibleDup: PossibleDuplicate | null = null
+      // [DEDUP-READ-HONEST] Did a duplicate probe fail to RUN? This is the automatic path — nobody
+      // is watching it happen — so a silently skipped check is the one most likely to go unnoticed.
+      // The invoice still imports (a database hiccup may not stop the mail sync), but it arrives
+      // carrying the same soft flag a real look-alike gets: needs-review, held out of auto-advance
+      // and out of "Selecteer klaar", reason on the card.
+      let dedupCheckFailed = false
 
       // [SUPPLIER-DEDUP] Resolve the canonical supplier BEFORE the duplicate check, so Check B
       // can key on supplier IDENTITY (supplier_id) rather than the STORED name string. Since the
@@ -2945,7 +2951,10 @@ export async function syncUserEmails(
             invoiceDate: classification.invoiceDate,
           },
           async (total) => {
-            const { data } = await supabase
+            // [DEDUP-READ-HONEST] A dropped error turned "we could not look" into "there is no
+            // duplicate" — the one answer that lets a second copy of a bill into the books, cost
+            // and voorbelasting counted twice. Same rule as the other three ingestion paths.
+            const { data, error: dedupErr } = await supabase
               .from('invoices')
               .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
               .eq('receiver_id', userId)
@@ -2956,6 +2965,7 @@ export async function syncUserEmails(
               .lte('total_inc_btw', total + 0.005)
               .order('id', { ascending: false })
               .limit(200)
+            if (dedupErr) dedupCheckFailed = true
             return data ?? []
           },
           // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount. A supplier
@@ -2964,7 +2974,8 @@ export async function syncUserEmails(
           // without wildcards is an exact case-insensitive match; the pure assessor re-checks with
           // full normalization before flagging.
           async (invoiceNumber) => {
-            const { data } = await supabase
+            // [DEDUP-READ-HONEST] Same rule.
+            const { data, error: dedupErr } = await supabase
               .from('invoices')
               .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
               .eq('receiver_id', userId)
@@ -2972,6 +2983,7 @@ export async function syncUserEmails(
               .ilike('invoice_number', escapeLikeValue(invoiceNumber))
               .order('id', { ascending: false })
               .limit(50)
+            if (dedupErr) dedupCheckFailed = true
             return data ?? []
           }
         )
@@ -3173,12 +3185,24 @@ export async function syncUserEmails(
           }
           Object.assign(safecore, merged._safecore ?? {})
         }
+        // [DEDUP-READ-HONEST] A probe that could not RUN is not a clean result. Never applied over
+        // a real find — markDuplicateCheckUnavailable keeps a named look-alike, which is the more
+        // useful sentence.
+        if (dedupCheckFailed) {
+          Object.assign(safecore, (markDuplicateCheckUnavailable({ _safecore: safecore }) as { _safecore: Record<string, unknown> })._safecore)
+        }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.
-        if (ibanChange) {
+        if (ibanChange.status === 'unavailable') {
+          // [IBAN-CHECK-HONEST] De controle kon niet draaien. Dat is iets anders dan "geen wissel",
+          // en het verschil is duur: bij factuurfraude is het gewijzigde rekeningnummer het enige
+          // signaal, dus een stil overgeslagen controle laat de eigenaar naar de rekening van de
+          // fraudeur betalen zonder dat iets dat ooit heeft gezegd.
+          safecore.iban_check_unavailable = true
+        } else if (ibanChange.change) {
           safecore.iban_changed = true
-          safecore.iban_changed_from = ibanChange.from
-          safecore.iban_changed_to = ibanChange.to
+          safecore.iban_changed_from = ibanChange.change.from
+          safecore.iban_changed_to = ibanChange.change.to
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
