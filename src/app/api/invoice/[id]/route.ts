@@ -26,19 +26,39 @@ import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-tota
 // magFactuur() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, magFactuur } from '@/lib/acting-for'
+import { leesMetSpoor } from '@/lib/created-by'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ownedInvoice(supabase: any, id: string, userId: string) {
-  return supabase
-    .from('invoices')
-    // [EDIT-LINES-SAFE] The stored totals come along as the PRE-IMAGE: if the line swap below
-    // fails after the header is already written, restoring the old lines is only half the undo —
-    // the header would still carry the new amounts. Both go back, or neither.
-    // [NAMENS] created_by komt mee: dat is de grens waarop magFactuur() een medewerker toetst.
-    .select('id, status, sender_id, created_by, total_ex_btw, btw_amount, total_inc_btw')
-    .eq('id', id)
-    .eq('sender_id', userId)
-    .single()
+  // [EDIT-LINES-SAFE] The stored totals come along as the PRE-IMAGE: if the line swap below
+  // fails after the header is already written, restoring the old lines is only half the undo —
+  // the header would still carry the new amounts. Both go back, or neither.
+  //
+  // [NAMENS] created_by komt mee: dat is de grens waarop magFactuur() een medewerker toetst.
+  // Maar die kolom bestaat pas ná company_members_sales_role.sql, en een SELECT op een kolom die
+  // er niet is faalt HELEMAAL — dan zou een eigenaar zijn eigen concept niet meer kunnen
+  // bewerken of verwijderen op een installatie waar de migratie nog open staat. Vandaar de
+  // terugval; zonder created_by rekent magFactuur() de rij nooit aan een medewerker toe, en dat
+  // is de veilige kant (zonder migratie bestaat er sowieso geen medewerker).
+  return leesMetSpoor<{
+    id: string
+    status: string | null
+    sender_id: string | null
+    created_by?: string | null
+    total_ex_btw: number | null
+    btw_amount: number | null
+    total_inc_btw: number | null
+  }>(
+     
+    (kolommen: string) => supabase
+      .from('invoices')
+      .select(kolommen)
+      .eq('id', id)
+      .eq('sender_id', userId)
+      .single(),
+    'id, status, sender_id, created_by, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, total_ex_btw, btw_amount, total_inc_btw',
+  )
 }
 
 // GET /api/invoice/[id] — the invoice + its lines (owner only).

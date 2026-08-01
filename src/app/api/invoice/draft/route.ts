@@ -22,6 +22,10 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, factuurGemaaktDoor, isNamens } from '@/lib/acting-for'
 import { berekenTotalen, controleerRegels } from '@/lib/factuur-totalen'
+// [NAMENS] created_by bestaat pas ná company_members_sales_role.sql. Zonder deze terugval faalt
+// de INSERT hieronder met PGRST204 op een installatie waar de migratie nog open staat — en dan
+// kan er GEEN FACTUUR MEER WORDEN AANGEMAAKT. Zie de kop van created-by.ts.
+import { schrijfMetSpoor } from '@/lib/created-by'
 
 export const dynamic = 'force-dynamic'
 
@@ -91,26 +95,29 @@ export async function POST(request: NextRequest) {
       if (!bestaand) clientId = null
     }
     if (!clientId) {
-      const { data: nieuw } = await pipeline
-        .from('clients')
-        .insert({
-          user_id: ownerId,
-          name: klantNaam,
-          email: body.client_email || null,
-          address: body.client_address || null,
-          postal_code: body.client_postal_code || null,
-          city: body.client_city || null,
-          btw_number: body.client_btw_number || null,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ...( { created_by: createdBy } as any ),
-        })
-        .select('id')
-        .single()
+      const { data: nieuw } = await schrijfMetSpoor<{ id: string }>(
+        (spoor) => pipeline
+          .from('clients')
+          .insert({
+            user_id: ownerId,
+            name: klantNaam,
+            email: body.client_email || null,
+            address: body.client_address || null,
+            postal_code: body.client_postal_code || null,
+            city: body.client_city || null,
+            btw_number: body.client_btw_number || null,
+            ...spoor,
+          })
+          .select('id')
+          .single(),
+        { created_by: createdBy },
+      )
       clientId = nieuw?.id ?? null
     }
 
     // ── De factuur ───────────────────────────────────────────────────────────
-    const { data: factuur, error: insertErr } = await pipeline
+    const { data: factuur, error: insertErr } = await schrijfMetSpoor<{ id: string }>(
+      (spoor) => pipeline
       .from('invoices')
       .insert({
         sender_id: ownerId,
@@ -134,11 +141,12 @@ export async function POST(request: NextRequest) {
         client_city: body.client_city || null,
         client_btw_number: body.client_btw_number || null,
         original_invoice_id: soort === 'creditnota' ? null : (body.replaces_id || null),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...( { created_by: createdBy } as any ),
+        ...spoor,
       })
       .select('id')
-      .single()
+      .single(),
+      { created_by: createdBy },
+    )
 
     if (insertErr || !factuur) {
       console.error('[NAMENS] concept aanmaken mislukt', { insertErr, ownerId, namens: isNamens(acting) })

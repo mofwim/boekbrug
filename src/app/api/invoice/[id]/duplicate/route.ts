@@ -10,6 +10,8 @@ import { logAuditAction } from '@/lib/audit'
 // het nummer valt pas bij versturen, en dat loopt langs de reeks van de eigenaar.
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, factuurGemaaktDoor, magFactuur } from '@/lib/acting-for'
+// [NAMENS] created_by bestaat pas ná de migratie — zonder terugval faalt het dupliceren.
+import { schrijfMetSpoor } from '@/lib/created-by'
 
 export async function POST(
   request: NextRequest,
@@ -48,13 +50,13 @@ export async function POST(
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 30)
 
-    const { data: newInvoice, error: insertError } = await supabase
+    const { data: newInvoice, error: insertError } = await schrijfMetSpoor<{ id: string }>(
+      (spoor) => supabase
       .from('invoices')
       .insert({
         sender_id: ownerId,
         // De kopie is van wie hem maakt, niet van wie het origineel maakte.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...({ created_by: factuurGemaaktDoor(acting) } as any),
+        ...spoor,
         invoice_number: null,
         // [DUP-TYPE] Preserve the document type — otherwise a duplicated
         // creditnota/pro_forma silently became a 'factuur' (DB default) carrying
@@ -79,7 +81,9 @@ export async function POST(
         client_btw_number: original.client_btw_number
       })
       .select()
-      .single()
+      .single(),
+      { created_by: factuurGemaaktDoor(acting) },
+    )
 
     if (insertError || !newInvoice) {
       return NextResponse.json({ error: 'Dupliceren mislukt' }, { status: 500 })

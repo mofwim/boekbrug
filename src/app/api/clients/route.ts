@@ -14,6 +14,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, factuurGemaaktDoor } from '@/lib/acting-for'
+// [NAMENS] created_by bestaat pas ná de migratie — zonder deze terugval kan er op een
+// installatie met een openstaande migratie geen klant meer worden toegevoegd.
+import { schrijfMetSpoor, isKolomOnbekend } from '@/lib/created-by'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,16 +52,14 @@ export async function POST(request: NextRequest) {
 
     // service_role: user_id en created_by worden door de SERVER gezet, niet door de browser.
     const pipeline = createPipelineClient()
-    const { data, error } = await pipeline
-      .from('clients')
-      .insert({
-        ...v,
-        user_id: factuurEigenaar(acting),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...({ created_by: factuurGemaaktDoor(acting) } as any),
-      })
-      .select('id')
-      .single()
+    const { data, error } = await schrijfMetSpoor<{ id: string }>(
+      (spoor) => pipeline
+        .from('clients')
+        .insert({ ...v, name: v.name as string, user_id: factuurEigenaar(acting), ...spoor })
+        .select('id')
+        .single(),
+      { created_by: factuurGemaaktDoor(acting) },
+    )
 
     if (error || !data) {
       console.error('[NAMENS] klant aanmaken mislukt', { error })
@@ -96,6 +97,15 @@ export async function PATCH(request: NextRequest) {
       q = (q as any).eq('created_by', factuurGemaaktDoor(acting))
     }
     const { error } = await q
+
+    // Filtert een medewerker op een kolom die nog niet bestaat, dan is dat GEEN reden om het
+    // filter te laten vallen: zonder created_by is er geen leesgrens, en dan zou hij de klant van
+    // zijn baas kunnen herschrijven. Zonder migratie bestaat een medewerker sowieso niet, dus dit
+    // is een onmogelijke toestand — die dan ook als fout terugkomt, niet als stille doorgang.
+    if (error && isKolomOnbekend(error)) {
+      console.error('[NAMENS] klant bijwerken zonder created_by-kolom geweigerd', { id })
+      return NextResponse.json({ error: 'Opslaan mislukt — probeer opnieuw' }, { status: 500 })
+    }
 
     if (error) {
       console.error('[NAMENS] klant bijwerken mislukt', { error })

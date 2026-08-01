@@ -122,6 +122,45 @@ test("de twee routes die een NUMMER uitgeven doen dat met de sessie-client", () 
   }
 });
 
+test("niemand schrijft created_by zonder terugval — dat brak het aanmaken van een factuur", () => {
+  // ECHT GEBEURD, EN DIT WAS DE ERNSTIGSTE FOUT VAN DEZE HELE BOUW.
+  //
+  // created_by komt uit company_members_sales_role.sql. De code die hem schrijft stond al op
+  // main, met `as any` erbij omdat de gegenereerde types hem niet kennen. Maar `as any` zwijgt de
+  // TYPECONTROLE, niet de database: zolang de migratie niet is toegepast antwoordt PostgREST met
+  // PGRST204 en faalt het HELE verzoek. Op zo'n installatie kon er geen factuur meer worden
+  // aangemaakt — door niemand.
+  //
+  // tsc was schoon, 441 tests waren groen, de build slaagde. Geen van drieën kijkt naar de echte
+  // database. Daarom staat de regel nu hier, waar hij wél gecontroleerd wordt.
+  const OVERAL = ["src/app/api", "src/app/dashboard"];
+  const teControleren: string[] = [];
+  const loop = (dir: string) => {
+    for (const naam of readdirSync(dir)) {
+      const pad = join(dir, naam);
+      if (statSync(pad).isDirectory()) loop(pad);
+      else if (/\.tsx?$/.test(naam)) teControleren.push(pad);
+    }
+  };
+  for (const d of OVERAL) loop(d);
+
+  const zondig: string[] = [];
+  for (const pad of teControleren) {
+    const bron = readFileSync(pad, "utf8");
+    // Een SCHRIJFACTIE: created_by als objectsleutel met een waarde erachter.
+    const schrijft = /created_by:\s*[^\s/]/.test(bron);
+    if (!schrijft) continue;
+    // Mag alleen binnen de terugval, of als de sleutel via `...spoor` binnenkomt.
+    if (!/schrijfMetSpoor/.test(bron)) zondig.push(pad);
+  }
+  assert.deepEqual(
+    zondig,
+    [],
+    "Deze bestanden schrijven created_by rechtstreeks. Op een database zonder de migratie faalt " +
+      "dat verzoek volledig (PGRST204). Gebruik schrijfMetSpoor() uit src/lib/created-by.ts.",
+  );
+});
+
 test("wat een medewerker NIET mag, weigert hem met een leesbare zin", () => {
   // De andere kant van de grens. Deze routes gaan er allemaal van uit dat de ingelogde mens de
   // eigenaar is; ze zijn bewust dicht in plaats van half omgebouwd.

@@ -39,6 +39,9 @@ import * as Sentry from '@sentry/nextjs'
 // heeft. Het nummer komt uit de reeks van de EIGENAAR — dat is de hele reden dat dit zo loopt.
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, factuurGemaaktDoor, isNamens, magFactuur } from '@/lib/acting-for'
+// [NAMENS] created_by bestaat pas ná de migratie — zonder terugval faalt de creditnota, en dat
+// is de enige wettelijke weg terug bij een fout in een verstuurde factuur.
+import { schrijfMetSpoor } from '@/lib/created-by'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -149,13 +152,14 @@ export async function POST(request: NextRequest) {
     // Bedragen zijn NEGATIEF — creditnota annuleert de originele factuur
     // [FACTUUR-A] original_invoice_id now stored properly (column exists);
     // source:'created' restored (was swallowed by an inline comment).
-    const { data: creditnota, error: insertError } = await supabase
+    const { data: creditnota, error: insertError } = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await schrijfMetSpoor<any>(
+      (spoor) => supabase
       .from('invoices')
 
       .insert({
         sender_id: ownerId,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...({ created_by: factuurGemaaktDoor(acting) } as any),
+        ...spoor,
         invoice_number: creditnotaNumber,
         invoice_date: today,
         due_date: today,
@@ -187,7 +191,9 @@ export async function POST(request: NextRequest) {
         delivery_date: original.delivery_date ?? original.invoice_date ?? null,
       })
       .select()
-      .single()
+      .single(),
+      { created_by: factuurGemaaktDoor(acting) },
+    )
 
     if (insertError || !creditnota) {
       // [IN1] The DB partial-unique index (invoices_one_creditnota_per_original) is the real
