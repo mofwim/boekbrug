@@ -147,8 +147,13 @@ test("niemand schrijft created_by zonder terugval — dat brak het aanmaken van 
   const zondig: string[] = [];
   for (const pad of teControleren) {
     const bron = readFileSync(pad, "utf8");
-    // Een SCHRIJFACTIE: created_by als objectsleutel met een waarde erachter.
-    const schrijft = /created_by:\s*[^\s/]/.test(bron);
+    // Alleen een SCHRIJFACTIE telt: created_by binnen een .insert()/.update()/.upsert().
+    //
+    // Niet elk voorkomen is er een. Een typedeclaratie (`{ id: string; created_by: string }`),
+    // een leesfilter (`.eq('created_by', …)`) en een select-lijst raken de kolom ook, maar die
+    // zijn ofwel onschadelijk ofwel al in een try/catch gevangen. Deze test viel eerst op zo'n
+    // typedeclaratie — een poort die op de verkeerde dingen afgaat, leert mensen hem te negeren.
+    const schrijft = /\.(insert|update|upsert)\([\s\S]{0,4000}?created_by/.test(bron);
     if (!schrijft) continue;
     // Mag alleen binnen de terugval, of als de sleutel via `...spoor` binnenkomt.
     if (!/schrijfMetSpoor/.test(bron)) zondig.push(pad);

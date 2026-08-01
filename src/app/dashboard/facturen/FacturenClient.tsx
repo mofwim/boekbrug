@@ -145,7 +145,16 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 ]
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function FacturenClient({ profile }: { profile: { id: string } }) {
+export default function FacturenClient({
+  profile,
+  // [NAMENS] factuur-id → naam van de MEDEWERKER die hem maakte. Alleen gevuld voor facturen die
+  // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
+  // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
+  makers = {},
+}: {
+  profile: { id: string }
+  makers?: Record<string, string>
+}) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
@@ -1100,6 +1109,19 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {CHIP[displayStatus] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[displayStatus].bg, color: CHIP[displayStatus].color }}>
                             {displayStatus === 'paid' ? 'Betaald' : displayStatus === 'sent' ? 'Verzonden' : displayStatus === 'overdue' ? 'Verlopen' : 'Concept'}
+                          </span>
+                        )}
+                        {/* [NAMENS] Wie maakte deze factuur? Alleen zichtbaar als dat NIET de
+                            eigenaar zelf was — anders staat er op elke rij een naam die niets
+                            toevoegt. Dit is de leesbare kant van created_by; zonder deze chip
+                            werd het spoor wel geschreven en nooit gelezen. */}
+                        {makers[inv.id] && (
+                          <span
+                            title={`Aangemaakt door ${makers[inv.id]}`}
+                            style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#F3E5F5', color: '#6A1B9A', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>person</span>
+                            {makers[inv.id]}
                           </span>
                         )}
                         {recon[inv.id] && (

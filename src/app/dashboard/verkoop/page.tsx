@@ -20,8 +20,9 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
-import { getActingFor } from '@/lib/acting-for-server'
+import { getActingFor, loadIngetrokkenLidmaatschap } from '@/lib/acting-for-server'
 import { isNamens } from '@/lib/acting-for'
+import { FONT, M3, R } from '@/lib/design/tokens'
 import type { VerkoopFactuur } from '@/lib/verkoop-overzicht'
 import VerkoopClient from './VerkoopClient'
 
@@ -44,9 +45,34 @@ export default async function VerkoopPage() {
   const acting = await getActingFor()
   if (!acting) redirect('/login')
 
-  // Een eigenaar hoort hier niet: hij heeft /dashboard/facturen, waar álles staat. Dit scherm
-  // zou hem een halve waarheid tonen.
-  if (!isNamens(acting)) redirect('/dashboard/facturen')
+  if (!isNamens(acting)) {
+    // [NAMENS] Twee heel verschillende mensen komen hier terecht zonder koppeling.
+    //
+    // 1) Een EIGENAAR — die hoort op /dashboard/facturen, waar álles staat; dit scherm zou hem
+    //    een halve waarheid tonen.
+    // 2) Een medewerker van wie de toegang zojuist is INGETROKKEN. Die viel hiervoor onder
+    //    dezelfde redirect en belandde op zijn eigen, lege facturenlijst — zonder één woord
+    //    uitleg, met de volledige navigatie van een eigenaar eromheen. Hij zou denken dat de app
+    //    stuk is of dat zijn facturen zijn verwijderd. Ze zijn niet verwijderd: ze staan bij zijn
+    //    werkgever, waar ze horen. Dat is één zin, en die zin hoort er te staan.
+    const ingetrokken = await loadIngetrokkenLidmaatschap(acting.actorId)
+    if (!ingetrokken) redirect('/dashboard/facturen')
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pipelineNaam = createPipelineClient() as any
+    const { data: exBaas } = await pipelineNaam
+      .from('profiles')
+      .select('company_name, full_name')
+      .eq('id', ingetrokken.ownerId)
+      .single()
+
+    return (
+      <GeenToegangMeer
+        bedrijf={exBaas?.company_name || exBaas?.full_name || 'je werkgever'}
+        sinds={ingetrokken.revokedAt}
+      />
+    )
+  }
 
   const supabase = await createServerSupabaseClient()
 
@@ -115,4 +141,38 @@ export default async function VerkoopPage() {
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.
   return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} />
+}
+
+/**
+ * Het eerlijke einde van een koppeling.
+ *
+ * Geen foutmelding — er is niets misgegaan. Zijn werkgever heeft de toegang ingetrokken, en dat
+ * mag die op elk moment. Wat deze medewerker moet weten is precies drie dingen: dat het bewust
+ * is gebeurd, dat zijn werk niet weg is, en bij wie hij moet zijn.
+ */
+function GeenToegangMeer({ bedrijf, sinds }: { bedrijf: string; sinds: string }) {
+  const ms = Date.parse(sinds)
+  const datum = Number.isFinite(ms) ? new Date(ms).toLocaleDateString('nl-NL') : null
+  return (
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: M3.surface, border: `1px solid ${M3.hairline}`, borderRadius: R.lg, padding: 28, maxWidth: 460 }}>
+        <h1 style={{ fontSize: 19, fontWeight: 700, color: M3.onSurface, margin: '0 0 10px' }}>
+          Je maakt geen facturen meer voor {bedrijf}
+        </h1>
+        <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
+          {bedrijf} heeft je toegang{datum ? ` op ${datum}` : ''} ingetrokken. Dat is een keuze van
+          je werkgever en er is niets misgegaan met je account.
+        </p>
+        <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
+          <strong style={{ color: M3.onSurface }}>Je facturen zijn niet verwijderd.</strong> Ze horen
+          bij de boekhouding van {bedrijf} en staan daar gewoon — met de nummers die ze bij het
+          versturen hebben gekregen.
+        </p>
+        <p style={{ fontSize: 13.5, color: M3.mutedText, margin: 0, lineHeight: 1.6 }}>
+          Klopt dit niet? Vraag het aan {bedrijf} — alleen zij kunnen de toegang terugzetten.
+          Je eigen account blijft van jou en werkt gewoon.
+        </p>
+      </div>
+    </div>
+  )
 }

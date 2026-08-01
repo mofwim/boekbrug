@@ -60,6 +60,76 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
   return resolveActingFor(user.id, link, Date.now());
 });
 
+/**
+ * Wie heeft er, van dit bedrijf, iets aangemaakt — en hoe heet die persoon?
+ *
+ * WAAROM DIT BESTAAT
+ * created_by werd geschreven en door NIEMAND gelezen. Een spoor dat niemand kan lezen is geen
+ * spoor: de eigenaar geeft het recht weg om facturen uit te geven op zijn naam en BTW-nummer, en
+ * kon vervolgens nergens zien wie welke had gemaakt.
+ *
+ * WAAROM HET ZO SMAL IS
+ * Er wordt hier NOOIT een willekeurige uuid naar een naam vertaald. Alleen mensen die lid zijn
+ * (of waren) van DIT bedrijf komen erin — de koppeling is het bewijs dat de eigenaar hun naam
+ * mag zien. Ingetrokken leden horen er ook bij: hun facturen bestaan nog, en een factuur van
+ * "Onbekend" is precies de vraag die dit moest beantwoorden.
+ *
+ * Lege map = geen team, of de migratie staat nog open. Beide betekenen: niets te tonen.
+ */
+export async function loadTeamNames(ownerId: string): Promise<Record<string, string>> {
+  const { beschikbaar, leden } = await loadCompanyMembers(ownerId);
+  if (!beschikbaar || leden.length === 0) return {};
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pipeline = createPipelineClient() as any;
+    const { data } = await pipeline
+      .from("profiles")
+      .select("id, full_name, company_name")
+      .in("id", leden.map((l) => l.member_id));
+    const uit: Record<string, string> = {};
+    for (const p of (data ?? []) as Array<{ id: string; full_name: string | null; company_name: string | null }>) {
+      uit[p.id] = p.full_name || p.company_name || "Teamlid";
+    }
+    // Een lid zonder profielrij (verwijderd account) blijft toch benoembaar: "Teamlid" is
+    // waarachtiger dan niets, want de factuur is wél door een ander gemaakt.
+    for (const l of leden) if (!uit[l.member_id]) uit[l.member_id] = "Teamlid";
+    return uit;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Was deze gebruiker ooit lid van een bedrijf, en is dat ingetrokken?
+ *
+ * Alleen om het te KUNNEN UITLEGGEN. Een medewerker wiens toegang wordt ingetrokken viel
+ * hiervoor terug op zijn eigen lege facturenlijst, zonder één woord — hij zou denken dat de app
+ * stuk is of dat zijn facturen verwijderd zijn. Ze zijn niet verwijderd: ze staan bij zijn
+ * werkgever, waar ze horen.
+ */
+export async function loadIngetrokkenLidmaatschap(
+  userId: string,
+): Promise<{ ownerId: string; revokedAt: string } | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pipeline = createPipelineClient() as any;
+    const { data } = await pipeline
+      .from("company_members")
+      .select("owner_id, revoked_at")
+      .eq("member_id", userId)
+      .not("revoked_at", "is", null)
+      .order("revoked_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const rij = data as { owner_id?: string; revoked_at?: string } | null;
+    return rij?.owner_id && rij.revoked_at
+      ? { ownerId: rij.owner_id, revokedAt: rij.revoked_at }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface CompanyMemberRow {
   id: string;
   member_id: string;

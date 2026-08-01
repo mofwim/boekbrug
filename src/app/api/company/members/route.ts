@@ -70,6 +70,9 @@ export async function GET() {
     beschikbaar,
     leden: leden.map((l) => ({
       id: l.id,
+      // [NAMENS] Het PROFIEL-id, niet het rij-id: de factuurpagina heeft dit nodig om
+      // created_by aan een naam te koppelen.
+      member_id: l.member_id,
       naam: namen.get(l.member_id)?.naam ?? 'Onbekend',
       email: namen.get(l.member_id)?.email ?? null,
       sinds: l.created_at,
