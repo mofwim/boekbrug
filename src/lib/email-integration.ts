@@ -1774,11 +1774,6 @@ export async function syncUserEmails(
   const receiverKvk = profile?.kvk_number || null
   const receiverBtw = profile?.btw_number || null
   const receiverIban = profile?.iban || null
-  // [READING-MEMORY] Loaded ONCE per sync run, never per attachment: PHASE 1 classifies in parallel
-  // (mapConcurrent), so a per-file load would fire the same query for every attachment in the batch.
-  // Fields only, never amounts — see readingPromptHint. Null for almost every owner, and null when
-  // the audit read fails, in which case the reader behaves exactly as it did before this existed.
-  const readingHint = readingPromptHint(await loadReadingMemory(supabase, userId))
 
   // [BOEK-011] Sync start boundary.
   //
@@ -2394,6 +2389,20 @@ export async function syncUserEmails(
     thisBatch: freshAttachments.length,
     remainingForNextSync: remainingAfterBatch,
   })
+
+  // [READING-MEMORY] Loaded here, and only here.
+  //
+  // ONCE per run, not per attachment: PHASE 1 classifies in parallel below, so a per-file load would
+  // fire the same query for every attachment in the batch. And only when there IS something to
+  // classify — most syncs find no new mail, and this cron runs for every connected owner all day,
+  // so a load next to the profile read (where it started) was a query per owner per sync forever,
+  // for a value nothing would use.
+  //
+  // Fields only, never amounts — see readingPromptHint. Null for almost every owner, and null when
+  // the audit read fails, in which case the reader behaves exactly as it did before this existed.
+  const readingHint = freshAttachments.length > 0
+    ? readingPromptHint(await loadReadingMemory(supabase, userId))
+    : null
 
   // PHASE 1 — classify only NEW attachments in parallel (AI_CONCURRENCY in flight)
   const classified: Classified[] = await mapConcurrent(
