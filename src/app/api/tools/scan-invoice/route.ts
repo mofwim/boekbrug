@@ -22,12 +22,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { reserveAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
+import { DEFAULT_CLAUDE_MODEL, resolveModel } from '@/lib/ai-model'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
+// [MODEL-CONFIG] Zelfde bron als de rest van de app, en om dezelfde reden: een met de hand
+// ingetypt model-id is hier twee keer een storing geworden (zie de kop van ai-model.ts). Deze
+// route leest bewust alleen uit die kleine, pure module en niet uit ai.ts — dit is het enige
+// login-vrije eindpunt, en het hoort licht te blijven.
+const CLAUDE_MODEL = resolveModel(process.env.CLAUDE_MODEL, DEFAULT_CLAUDE_MODEL)
 const MAX_TOKENS = 1500
 
 // Reject anything larger than this before touching Claude. Real invoices —
