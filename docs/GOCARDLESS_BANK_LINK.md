@@ -88,6 +88,12 @@ an intent to reach 4/day. Consequences already built in:
   silently no-ops teaches the owner the app is broken.
 - A 429 is a first-class, calm outcome ("morgen halen we automatisch de rest op"), never an error
   state. `force` is deliberately not something the browser can ask for.
+- **A failed read only counts as a spent read when it will still be true in an hour**
+  (`shouldBackOffAfter`). This matters most on the very first sync: right after consenting a bank
+  commonly still reports the account as `PROCESSING`, and treating that as spent would grey out
+  the owner's "Ververs" button for twenty hours — a working connection looking broken on the one
+  day he is actually watching it. The cron runs daily and the button carries its own hourly
+  limit, so not backing off on a transient failure cannot become hammering.
 
 **Consent expiry.** A PSD2 consent lasts at most 90 days by default, and up to **180** where the
 bank allows it — each institution publishes its own ceiling as `max_access_valid_for_days`, so
@@ -111,6 +117,7 @@ status:
 | `AccountValidEUAError` | 403 | `CONSENT_EXPIRED` | owner — reconnect |
 | `AccountSuspendedError` | 409 | `ACCOUNT_SUSPENDED` | owner — reconnect |
 | `AccountInactiveError` | 401 | `ACCOUNT_INACTIVE` | owner — reconnect |
+| `AccountStateError`, status `PROCESSING` | 409 | `ACCOUNT_NOT_READY` | nobody — wait a minute |
 | `RateLimitError` | 429 | `RATE_LIMITED` | nobody — tomorrow |
 | `ServiceError` / `ConnectionError` | 503 | `SERVER` | nobody — the *bank* is down |
 | `IPAccessDenied` | 403 | `IP_NOT_ALLOWED` | **us** — portal IP whitelist |
@@ -130,6 +137,11 @@ Three consequences worth knowing before you touch this:
   key (`{"access_scope": [{summary, detail}], "status_code": 400}`) with no top-level `summary`
   at all. `parseErrorBody` flattens both shapes; reading only `ErrorResponse` makes every
   connect-time validation error look like an empty body.
+- **And a third shape**: `AccountStateError` answers 409 with the *account object* — no
+  `summary`, `detail` or `type`, just `{id, created, last_accessed, iban, status}`. Its `status`
+  is the only thing separating "your bank is still preparing this, wait a minute" from "this
+  account is suspended, reconnect", so a flat reading of 409 sends brand-new owners back to
+  their bank for nothing.
 
 ## 4b. Access scope: ask for what we use, but survive a bank that says no
 
@@ -155,8 +167,16 @@ advances the ladder; any other error is the real answer and is thrown immediatel
   originele bankafschrift-bestand kon niet automatisch worden bijgevoegd"), and the panel repeats
   it. A generated file would *look* like a bank statement without being one, and an accountant
   cannot tell the difference by eye. **The upload card stays** — a linked bank does not replace it.
-- **No statement-balance check.** That check proves an uploaded *file* is internally complete
-  (opening + Σtx = closing). A feed has no statement boundaries, so a "pass" would be fabricated.
+- **No statement-balance check, and no saldo at all.** The balance check proves an uploaded
+  *file* is internally complete (opening + Σtx = closing); a feed has no statement boundaries, so
+  a "pass" would be fabricated. And since nothing here displays a saldo, `balances` is not in the
+  requested scope and there is no client method for it — one would only ever 403, while implying
+  to the next reader that we do fetch balances. If a saldo-based completeness check is ever
+  wanted, it is a scope change plus a feature, not a leftover to switch on.
+- **No fabricated account status.** `bank_connection_accounts.status` is read from
+  `/accounts/{id}/`, not asserted. It used to be written as a flat `"READY"` the moment the
+  details call succeeded — a claim about the bank nobody had checked, and a false one whenever
+  the account was still being prepared or already in ERROR. Unreadable stays `null`.
 
 ## 6. Security notes
 

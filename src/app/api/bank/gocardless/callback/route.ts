@@ -126,6 +126,22 @@ export async function GET(req: NextRequest) {
   }> = [];
 
   for (const accountId of requisition.accounts) {
+    // The account's PROCESSING STATE, asked for rather than assumed. This used to be written as
+    // a flat "READY" the moment the details call succeeded — a claim about the bank that nobody
+    // had checked, and a false one whenever the bank was still preparing the account (common in
+    // the first minutes after consent) or had already put it in ERROR. /accounts/{id}/ is
+    // GoCardless's own metadata: it is not subject to the institution's daily budget, so asking
+    // costs nothing that matters. Unreadable stays null — never a fabricated status.
+    let status: string | null = null;
+    try {
+      status = (await client.getAccount(accountId)).status;
+    } catch (err) {
+      console.warn("[GOCARDLESS] account status unavailable", {
+        accountId,
+        code: err instanceof GoCardlessError ? err.code : "UNKNOWN",
+      });
+    }
+
     try {
       const details = await client.getAccountDetails(accountId);
       accounts.push({
@@ -133,14 +149,16 @@ export async function GET(req: NextRequest) {
         iban: details.iban,
         ownerName: details.ownerName ?? details.name,
         currency: details.currency,
-        status: "READY",
+        status,
       });
     } catch (err) {
+      // Details are best-effort: a failure here must not undo a consent the owner just gave, and
+      // the account id alone is enough to sync. He simply sees no IBAN on the card yet.
       console.warn("[GOCARDLESS] account details unavailable — storing the account anyway", {
         accountId,
         code: err instanceof GoCardlessError ? err.code : "UNKNOWN",
       });
-      accounts.push({ accountId, iban: null, ownerName: null, currency: null, status: null });
+      accounts.push({ accountId, iban: null, ownerName: null, currency: null, status });
     }
   }
 

@@ -347,6 +347,11 @@ export async function recordAccountSync(params: {
   accountRowId: string;
   syncedThrough: string | null;
   lastError: string | null;
+  /**
+   * Whether this attempt counts as "we looked today" — see shouldBackOffAfter. Defaults to true
+   * so a caller that forgets it errs towards backing off rather than towards hammering a bank.
+   */
+  backOff?: boolean;
 }): Promise<void> {
   const supabase = createPipelineClient();
   const now = new Date().toISOString();
@@ -354,11 +359,13 @@ export async function recordAccountSync(params: {
     last_error: params.lastError?.slice(0, 500) ?? null,
     updated_at: now,
   };
-  // A FAILED read must still move last_synced_at. GoCardless counts successful reads against
-  // the daily budget, but a run that retried a failing account every hour would burn the
-  // general limit and hammer a bank that is already unhappy. Only last_synced_through — the
-  // proof of what we actually hold — stays put on failure.
-  patch.last_synced_at = now;
+  // A failure that will still be true in an hour moves last_synced_at, so we back off instead of
+  // retrying against a bank that is already unhappy. A TRANSIENT one must not: right after
+  // consenting, a bank commonly still reports the account as PROCESSING, and counting that as a
+  // spent read would grey out the owner's "Ververs" button for twenty hours — a working
+  // connection looking broken on the one day he is actually watching it.
+  if (!params.lastError || (params.backOff ?? true)) patch.last_synced_at = now;
+  // last_synced_through is the proof of what we actually hold, so it only ever moves on success.
   if (!params.lastError && params.syncedThrough) patch.last_synced_through = params.syncedThrough;
 
   const { error } = await supabase

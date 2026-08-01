@@ -35,6 +35,7 @@ import {
   GoCardlessError,
   MAX_HISTORICAL_DAYS_CAP,
   needsReconnect,
+  shouldBackOffAfter,
   type GoCardlessClient,
   type GoCardlessErrorCode,
 } from "./gocardless-client";
@@ -239,7 +240,15 @@ async function syncOneAccount(args: {
       accountId: account.accountId,
       code: code ?? "UNKNOWN",
     });
-    await recordAccountSync({ accountRowId: account.id, syncedThrough: null, lastError: dutch });
+    await recordAccountSync({
+      accountRowId: account.id,
+      syncedThrough: null,
+      lastError: dutch,
+      // A bank that is down, or an account it is still preparing, must not spend the owner's
+      // daily read — otherwise his first sync after connecting greys out the button until
+      // tomorrow for something that fixes itself in minutes.
+      backOff: shouldBackOffAfter(code),
+    });
     return { ...base, error: dutch, errorCode: code };
   }
 

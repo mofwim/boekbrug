@@ -102,6 +102,7 @@ export type GoCardlessErrorCode =
   | "CONSENT_EXPIRED" // 401/403 — the end-user agreement ran out; the owner must reconnect
   | "ACCOUNT_SUSPENDED" // 409 — suspended after repeated failures; the owner must reconnect
   | "ACCOUNT_INACTIVE" // 401 — the account was deactivated or no longer exists at the bank
+  | "ACCOUNT_NOT_READY" // 409 — the bank is still preparing this account. Transient: wait, retry.
   | "SCOPE_UNSUPPORTED" // 400 — this institution refuses the access_scope combination we asked for
   | "VALIDATION" // 400/422 — we asked something the API refuses
   | "NOT_FOUND" // 404
@@ -153,6 +154,8 @@ export function dutchGoCardlessError(code: GoCardlessErrorCode): string {
       return "De bank heeft deze koppeling stilgezet na herhaalde fouten. Koppel je bank opnieuw.";
     case "ACCOUNT_INACTIVE":
       return "Deze rekening bestaat niet meer bij je bank, of is opgeheven. Koppel je bank opnieuw.";
+    case "ACCOUNT_NOT_READY":
+      return "Je bank is deze rekening nog aan het klaarzetten. Dat duurt meestal een paar minuten — probeer het zo nog eens.";
     case "SCOPE_UNSUPPORTED":
       return "Deze bank staat de gevraagde toegang niet toe. Upload je afschrift zoals je gewend bent.";
     case "VALIDATION":
@@ -170,6 +173,32 @@ export function dutchGoCardlessError(code: GoCardlessErrorCode): string {
  *  sync, the callback and the panel all agree on what "dead connection" means. */
 export function needsReconnect(code: GoCardlessErrorCode): boolean {
   return code === "CONSENT_EXPIRED" || code === "ACCOUNT_SUSPENDED" || code === "ACCOUNT_INACTIVE";
+}
+
+/**
+ * After a FAILED read, should the account be treated as "already looked at today"?
+ *
+ * This decides whether the owner's "Ververs" button stays available, and it is the first thing
+ * a brand-new connection runs into. Right after consenting, a bank often still reports the
+ * account as PROCESSING — the very first sync then fails through no fault of anyone. Counting
+ * that as a spent read would disable the button for the next twenty hours, so a working
+ * connection would look broken on the one day the owner is actually watching it.
+ *
+ * So only failures that will still be true in an hour back off: a spent daily budget, a dead
+ * consent, a suspended account, our own misconfiguration. A transient one (the bank being
+ * down, a network blip, an account still being prepared) leaves the watermark alone so a retry
+ * is allowed — the cron runs only daily and the button carries its own hourly rate limit, so
+ * nothing here can turn into hammering.
+ */
+export function shouldBackOffAfter(code: GoCardlessErrorCode | null): boolean {
+  switch (code) {
+    case "SERVER":
+    case "NETWORK":
+    case "ACCOUNT_NOT_READY":
+      return false;
+    default:
+      return true;
+  }
 }
 
 /**
@@ -214,6 +243,13 @@ export interface GoCardlessErrorBody {
   fields: string[];
   /** Every summary/detail in the body, lowercased and joined. */
   text: string;
+  /**
+   * A third shape, and the reason this field exists: AccountStateError answers 409 with the
+   * ACCOUNT OBJECT itself — `{id, created, last_accessed, iban, aspsp_identifier, status}` — no
+   * summary, no detail, no type. Its `status` is the only thing that distinguishes "your bank is
+   * still preparing this account, wait a minute" from "this account is suspended, reconnect".
+   */
+  accountStatus?: string;
 }
 
 /** Keys that are envelope metadata rather than a complaining field. */
@@ -265,8 +301,12 @@ export function parseErrorBody(raw: string | undefined): GoCardlessErrorBody | n
     status_code: typeof rec.status_code === "number" ? rec.status_code : undefined,
     fields,
     text: parts.join(" ").toLowerCase(),
+    accountStatus: typeof rec.status === "string" ? rec.status.toUpperCase() : undefined,
   };
 }
+
+/** Account statuses that resolve themselves — the bank is still fetching, not refusing. */
+const TRANSIENT_ACCOUNT_STATUSES = new Set(["DISCOVERED", "PROCESSING"]);
 
 /**
  * Turn one HTTP failure into the code the caller acts on.
@@ -311,7 +351,14 @@ export function refineErrorCode(
       return "SERVER";
   }
 
-  // 2. A complaint about access_scope, named by the field itself. Checked BEFORE the prose
+  // 2. AccountStateError — a 409 whose body is the account, not an error envelope. A
+  //    still-preparing account must NOT be read as a suspended one: the first is a minute's
+  //    wait right after connecting, the second sends the owner back to his bank for nothing.
+  if (body.accountStatus && TRANSIENT_ACCOUNT_STATUSES.has(body.accountStatus)) {
+    return "ACCOUNT_NOT_READY";
+  }
+
+  // 3. A complaint about access_scope, named by the field itself. Checked BEFORE the prose
   //    rules because the retry ladder in createAgreement hangs on it, and the message wording
   //    varies across the three documented scope refusals while the field name does not.
   if (body.fields.includes("access_scope")) return "SCOPE_UNSUPPORTED";
@@ -319,13 +366,13 @@ export function refineErrorCode(
   const text = body.text;
   if (!text.trim()) return fromStatus;
 
-  // 3. IPAccessDenied — OURS, on every endpoint. Without this it reads as "the bank refuses",
+  // 4. IPAccessDenied — OURS, on every endpoint. Without this it reads as "the bank refuses",
   //    and the owner reconnects forever against a whitelist only we can change.
   if (text.includes("isn't whitelisted") || text.includes("ip address access denied")) {
     return "IP_NOT_ALLOWED";
   }
 
-  // 4. The End User Agreement errors. These carry NO `type`, and they are the single most
+  // 5. The End User Agreement errors. These carry NO `type`, and they are the single most
   //    important thing to get right: EUAExpiredError arrives as a 401, so on status alone it
   //    reads as "our credentials broke" and the owner is told to contact support when in fact
   //    one tap on "opnieuw koppelen" fixes it. AccountValidEUAError (403) means the same thing.
@@ -338,7 +385,7 @@ export function refineErrorCode(
   }
   if (text.includes("suspended")) return "ACCOUNT_SUSPENDED";
 
-  // 5. A scope refusal that named itself only in prose.
+  // 6. A scope refusal that named itself only in prose.
   if (text.includes("access_scope") || text.includes("access scope")) return "SCOPE_UNSUPPORTED";
 
   return fromStatus;
@@ -463,11 +510,25 @@ export interface GoCardlessAccountDetails {
   bic: string | null;
 }
 
-export interface GoCardlessBalance {
-  amount: number | null;
-  currency: string | null;
-  balanceType: string | null;
-  referenceDate: string | null;
+/**
+ * The account's own record at GoCardless — its processing state, above all.
+ *
+ * Read from `/accounts/{id}/`, which is metadata GoCardless holds itself: unlike details,
+ * balances and transactions it is NOT subject to the institution's daily budget (its spec lists
+ * only the general rate limit), so asking at connect time costs nothing that matters.
+ *
+ * There is deliberately no balances counterpart to this. `balances` is not in the scope we ask
+ * for (see ACCESS_SCOPE_LADDER) because nothing in this app reads a saldo, so a client method
+ * for it would be a method that can only ever 403 — and a reader would reasonably assume from
+ * its presence that we do fetch balances.
+ */
+export interface GoCardlessAccount {
+  id: string;
+  /** DISCOVERED · PROCESSING · READY · ERROR · SUSPENDED · EXPIRED, or null when unreadable. */
+  status: string | null;
+  iban: string | null;
+  ownerName: string | null;
+  institutionId: string | null;
 }
 
 /**
@@ -541,7 +602,7 @@ export interface GoCardlessClient {
   getRequisition(id: string): Promise<GoCardlessRequisition>;
   deleteRequisition(id: string): Promise<void>;
   getAccountDetails(accountId: string): Promise<GoCardlessAccountDetails>;
-  getAccountBalances(accountId: string): Promise<GoCardlessBalance[]>;
+  getAccount(accountId: string): Promise<GoCardlessAccount>;
   getAccountTransactions(
     accountId: string,
     range?: { dateFrom?: string | null; dateTo?: string | null },
@@ -804,12 +865,9 @@ export function createGoCardlessClient(opts: GoCardlessClientOptions = {}): GoCa
       return normalizeAccountDetails(raw?.account ?? null);
     },
 
-    async getAccountBalances(accountId) {
-      const raw = await request<{ balances?: unknown }>(
-        "GET",
-        `/accounts/${encodeURIComponent(accountId)}/balances/`,
-      );
-      return normalizeBalances(raw?.balances);
+    async getAccount(accountId) {
+      const raw = await request<unknown>("GET", `/accounts/${encodeURIComponent(accountId)}/`);
+      return normalizeAccount(raw, accountId);
     },
 
     async getAccountTransactions(accountId, range) {
@@ -885,36 +943,25 @@ export function normalizeAccountDetails(raw: unknown): GoCardlessAccountDetails 
   };
 }
 
-export function normalizeBalances(raw: unknown): GoCardlessBalance[] {
-  if (!Array.isArray(raw)) return [];
-  const out: GoCardlessBalance[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const rec = item as Record<string, unknown>;
-    const amt = (rec.balanceAmount ?? null) as Record<string, unknown> | null;
-    const rawAmount = amt?.amount;
-    const parsed = typeof rawAmount === "string" ? Number(rawAmount) : rawAmount;
-    out.push({
-      // A non-finite balance becomes null rather than NaN: a saldo we cannot read must show as
-      // unknown, never as a number that poisons a sum somewhere downstream.
-      amount: typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null,
-      currency: typeof amt?.currency === "string" ? amt.currency : null,
-      balanceType: typeof rec.balanceType === "string" ? rec.balanceType : null,
-      referenceDate: typeof rec.referenceDate === "string" ? rec.referenceDate : null,
-    });
-  }
-  return out;
+export function normalizeAccount(raw: unknown, fallbackId: string): GoCardlessAccount {
+  const rec = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return {
+    id: str(rec.id) ?? fallbackId,
+    // Upper-cased so a caller can compare against one spelling. null when the field is missing —
+    // never a fabricated "READY", which would be a claim about the bank we never checked.
+    status: str(rec.status)?.toUpperCase() ?? null,
+    iban: str(rec.iban),
+    ownerName: str(rec.owner_name),
+    institutionId: str(rec.institution_id),
+  };
 }
 
-/**
- * Pick the balance to show. `interimAvailable` is what a bank app calls "beschikbaar saldo" and
- * is the number the owner recognises; `closingBooked` is the bookkeeping truth at end of day.
- * Prefer booked (it matches what the transactions add up to), fall back to available.
- */
-export function pickDisplayBalance(balances: GoCardlessBalance[]): GoCardlessBalance | null {
-  const byType = (t: string) =>
-    balances.find((b) => b.balanceType?.toLowerCase() === t.toLowerCase() && b.amount !== null);
-  return byType("closingBooked") ?? byType("interimBooked") ?? byType("interimAvailable") ?? balances.find((b) => b.amount !== null) ?? null;
+/** Is this account in a state where a sync can succeed? Unknown counts as usable: refusing to
+ *  sync on a status we could not read would stop a working feed on no evidence. */
+export function accountIsUsable(status: string | null): boolean {
+  if (!status) return true;
+  return !["ERROR", "SUSPENDED", "EXPIRED"].includes(status.toUpperCase());
 }
 
 function asTransactionArray(raw: unknown): GoCardlessRawTransaction[] {

@@ -18,11 +18,12 @@ import {
   GOCARDLESS_API_BASE,
   isTokenFailure,
   needsReconnect,
-  normalizeBalances,
+  accountIsUsable,
+  normalizeAccount,
   normalizeInstitutions,
   normalizeRequisition,
   parseErrorBody,
-  pickDisplayBalance,
+  shouldBackOffAfter,
   refineErrorCode,
   REQUISITION_IN_PROGRESS,
   requisitionNeedsReconnect,
@@ -609,18 +610,62 @@ test("a requisition with no accounts yet normalises to an empty list, never unde
   assert.equal(normalizeRequisition(null).id, "");
 });
 
-test("the displayed saldo prefers the booked balance over the available one", () => {
-  const balances = normalizeBalances([
-    { balanceAmount: { amount: "1500.25", currency: "EUR" }, balanceType: "interimAvailable" },
-    { balanceAmount: { amount: "1420.00", currency: "EUR" }, balanceType: "closingBooked", referenceDate: "2026-03-31" },
-  ]);
-  // Booked is what the transactions add up to; available includes reservations that are not
-  // transactions yet, so it would never reconcile against the imported lines.
-  assert.equal(pickDisplayBalance(balances)?.amount, 1420);
+test("an account's status is read, and an unreadable one stays null rather than becoming READY", () => {
+  // The callback used to write a flat "READY" the moment the details call succeeded — a claim
+  // about the bank nobody had checked, and false whenever the account was still being prepared
+  // or already in ERROR.
+  const acc = normalizeAccount(
+    { id: "acc-1", status: "ready", iban: "NL02ABNA0123456789", owner_name: "Jansen Bouw", institution_id: "ING_INGBNL2A" },
+    "fallback",
+  );
+  assert.equal(acc.status, "READY", "compared against one spelling everywhere");
+  assert.equal(acc.iban, "NL02ABNA0123456789");
+  assert.equal(acc.ownerName, "Jansen Bouw");
+
+  const unknown = normalizeAccount({ id: "acc-2" }, "fallback");
+  assert.equal(unknown.status, null, "no status read means no status claimed");
+  assert.equal(normalizeAccount(null, "acc-3").id, "acc-3");
 });
 
-test("an unreadable saldo is null, never NaN", () => {
-  const balances = normalizeBalances([{ balanceAmount: { amount: "n/a" }, balanceType: "closingBooked" }]);
-  assert.equal(balances[0].amount, null);
-  assert.equal(pickDisplayBalance(balances), null);
+test("only a genuinely broken account is treated as unusable", () => {
+  assert.equal(accountIsUsable("READY"), true);
+  assert.equal(accountIsUsable("PROCESSING"), true, "still being prepared — it will work shortly");
+  assert.equal(accountIsUsable(null), true, "a status we could not read is no evidence of breakage");
+  assert.equal(accountIsUsable("ERROR"), false);
+  assert.equal(accountIsUsable("SUSPENDED"), false);
+  assert.equal(accountIsUsable("EXPIRED"), false);
+});
+
+test("an account the bank is still preparing is transient, NOT a suspension", () => {
+  // AccountStateError answers 409 with the ACCOUNT OBJECT — no summary, no detail, no type —
+  // and its status is the only thing separating "wait a minute" from "reconnect your bank".
+  // Reading 409 as a flat suspension would send a brand-new owner back to his bank for nothing.
+  const stillWorking = codeFor(409, {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    created: "2026-08-01 19:01:47",
+    last_accessed: "2026-08-01 19:01:47",
+    iban: "NL02ABNA0123456789",
+    status: "PROCESSING",
+  });
+  assert.equal(stillWorking, "ACCOUNT_NOT_READY");
+
+  // The same shape with a genuinely broken account still means reconnect.
+  assert.equal(codeFor(409, { id: "x", iban: "NL02", status: "ERROR" }), "ACCOUNT_SUSPENDED");
+});
+
+test("a transient failure does NOT spend the owner's daily read", () => {
+  // The first sync after connecting is exactly when a bank is most likely to say "not ready".
+  // Backing off there would grey out the Ververs button for twenty hours, so a working
+  // connection would look broken on the one day the owner is actually watching it.
+  assert.equal(shouldBackOffAfter("ACCOUNT_NOT_READY"), false);
+  assert.equal(shouldBackOffAfter("SERVER"), false, "the bank is down — not our budget");
+  assert.equal(shouldBackOffAfter("NETWORK"), false);
+
+  // Everything that will still be true in an hour backs off.
+  assert.equal(shouldBackOffAfter("RATE_LIMITED"), true);
+  assert.equal(shouldBackOffAfter("CONSENT_EXPIRED"), true);
+  assert.equal(shouldBackOffAfter("ACCOUNT_SUSPENDED"), true);
+  assert.equal(shouldBackOffAfter("QUOTA_EXCEEDED"), true);
+  // An unrecognised failure errs towards backing off, never towards hammering.
+  assert.equal(shouldBackOffAfter(null), true);
 });
