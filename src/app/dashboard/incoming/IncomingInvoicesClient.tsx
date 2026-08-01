@@ -25,6 +25,11 @@ import { rowMatchesQuery } from "@/lib/search";
 import { ARCHIVE_REASONS, ARCHIVE_REASON_LABELS, archiveReasonLabel, type ArchiveReason } from "@/lib/archive-reason";
 // [AFZENDERREGEL] Alleen bij "geen factuur" mag een blijvende regel voorgesteld worden.
 import { mayOfferSenderRule } from "@/lib/sender-rules";
+// [NEGEER-BULK] Eerlijk tellen na een stapel: blijvend geweigerd ≠ tijdelijk niet gelukt.
+import {
+  classifyIgnoreFailure, bulkIgnoreSummary, bulkIgnoreOffersUndo, bulkRestoreSummary,
+  type BulkIgnoreTally,
+} from "@/lib/bulk-ignore";
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
@@ -2873,6 +2878,18 @@ export default function IncomingInvoicesClient({
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
 
+  // ── [NEGEER-BULK] Dezelfde selectie, de andere uitgang ──
+  // De wachtrij loopt vol met twee soorten post tegelijk: facturen die bevestigd moeten worden, en
+  // rommel (reclame, dubbelingen, post van de buurman). Voor de eerste soort was er één tik voor
+  // een hele stapel; voor de tweede moest je twintig keer dezelfde drie tikken doen. Dat verschil
+  // had geen reden — het was er gewoon nooit gebouwd.
+  const [bulkIgnoreOpen, setBulkIgnoreOpen] = useState(false);
+  // Eén reden voor de hele stapel, en net als bij de losse dialoog: altijd leeg bij openen. Wie
+  // twintig reclamemails wegzet kiest één keer "geen factuur"; dat is precies wat er te zeggen valt.
+  const [bulkIgnoreReason, setBulkIgnoreReason] = useState<ArchiveReason | null>(null);
+  const [bulkIgnoreRunning, setBulkIgnoreRunning] = useState(false);
+  const [bulkIgnoreDone, setBulkIgnoreDone] = useState(0);
+
   // ── [REIMPORT-ALL] One-tap re-read of every "Aandacht nodig" invoice ──
   // Re-runs the extractor over each flagged invoice's stored file, exactly like the
   // per-card "Opnieuw inlezen" — improve-or-keep, never auto-verifies, status stays
@@ -3054,6 +3071,31 @@ export default function IncomingInvoicesClient({
     }
   }, []);
 
+  // ── [NEGEER-BULK] De terugweg voor een hele stapel ──
+  // Eén PATCH per factuur — exact hetzelfde herstelpad als de losse knop, dus er is geen tweede
+  // waarheid over wat "terugzetten" betekent. Bewust GEEN hergebruik van handleRestore zelf: die
+  // toont per factuur een snackbar, en twintig snackbars achter elkaar is geen bevestiging maar
+  // een storing. Verplaatsen doen we hier pas NA het antwoord van de server, per factuur.
+  const restoreMany = useCallback(async (invoices: IncomingInvoice[]) => {
+    let ok = 0;
+    let failed = 0;
+    for (const inv of invoices) {
+      try {
+        const res = await fetch(`/api/email/confirm/${inv.id}`, { method: "PATCH" });
+        if (res.ok) {
+          ok++;
+          setIgnored((prev) => prev.filter((p) => p.id !== inv.id));
+          setPending((prev) => (prev.some((p) => p.id === inv.id) ? prev : [inv, ...prev]));
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+    }
+    showToast(bulkRestoreSummary(ok, failed));
+  }, []);
+
   // ── Ignore — archive ──
   const handleIgnore = useCallback(async (invoice: IncomingInvoice, reason: ArchiveReason | null) => {
     setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
@@ -3109,6 +3151,77 @@ export default function IncomingInvoicesClient({
       showToast("Fout — factuur staat nog in de wachtrij");
     }
   }, [handleRestore]);
+
+  // ── [NEGEER-BULK] Negeer de hele selectie ──
+  //
+  // Drie keuzes die hier bewust ANDERS zijn dan bij het bevestigen van een stapel — en die alle
+  // drie uit hetzelfde verschil volgen: bevestigen schrijft geld in de boeken, negeren haalt een
+  // rij uit een wachtrij en is met één tik terug te draaien.
+  //
+  //  1. GEEN gezondheidsfilter. handleVerifyBatch weigert "Aandacht nodig"-facturen ([TRUST-BULK]):
+  //     die zou hij ongezien met een onzeker bedrag in de boeken zetten. Hier is het omgekeerde
+  //     waar — een reclamefolder of een onleesbare scan is juist ALTIJD gemarkeerd, dus precies wat
+  //     je wilt wegzetten. Ze eruit filteren zou de knop nutteloos maken voor waar hij voor is.
+  //     Wie dit later "gelijktrekt met bevestigen" sloopt de functie; vandaar deze alinea.
+  //  2. NIET optimistisch verplaatsen. De losse knop haalt de kaart meteen weg en rolt terug bij
+  //     een fout — prettig bij één factuur, en één rollback. Bij twintig zou dat twintig
+  //     rollbacks zijn die door elkaar lopen. Hier draait een overlay over de pagina, dus er is
+  //     niets te winnen met vooruitlopen: elke factuur verhuist pas als de server ja heeft gezegd.
+  //  3. GEEN afzenderregel aanbieden. Het losse pad biedt na "geen factuur" aan om post van dat
+  //     adres voortaan over te slaan. Twintig van die dialogen achter elkaar is geen aanbod maar
+  //     een hinderlaag — en de regel die post ONGEZIEN tegenhoudt verdient sowieso zijn eigen ja
+  //     (zie het [AFZENDERREGEL]-blok). Die weg blijft dus per factuur lopen.
+  const handleIgnoreBatch = useCallback(async () => {
+    const targets = pending.filter((p) => selected.has(p.id));
+    if (targets.length === 0) return;
+    const reason = bulkIgnoreReason;
+
+    setBulkIgnoreOpen(false);
+    setBulkIgnoreRunning(true);
+    setBulkIgnoreDone(0);
+
+    const tally: BulkIgnoreTally = { ok: 0, refused: 0, unavailable: 0 };
+    // Wat er ECHT is gearchiveerd — alleen dit gaat mee in de "Ongedaan maken", nooit de hele
+    // selectie. Een undo die facturen probeert terug te zetten die nooit weg zijn geweest, zou
+    // met 409's terugkomen en de eigenaar vertellen dat er iets mis is terwijl alles klopt.
+    const archived: IncomingInvoice[] = [];
+
+    for (const inv of targets) {
+      try {
+        const res = await fetch(`/api/email/confirm/${inv.id}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        });
+        if (res.ok) {
+          tally.ok++;
+          archived.push(inv);
+          setPending((prev) => prev.filter((p) => p.id !== inv.id));
+          // [NEGEER-REDEN] Meteen mét de gekozen reden in de Genegeerd-lijst, zodat het label daar
+          // klopt zonder een paginalading — net als bij het losse pad.
+          setIgnored((prev) => (prev.some((p) => p.id === inv.id) ? prev : [{ ...inv, archive_reason: reason }, ...prev]));
+        } else {
+          tally[classifyIgnoreFailure(res.status)]++;
+        }
+      } catch {
+        // Netwerkfout: geen status, en er is niets gewijzigd. classifyIgnoreFailure(0) → tijdelijk.
+        tally[classifyIgnoreFailure(0)]++;
+      }
+      setBulkIgnoreDone((n) => n + 1);
+    }
+
+    setBulkIgnoreRunning(false);
+    setBulkIgnoreReason(null);
+    setSelectMode(false);
+    setSelected(new Set());
+
+    const message = bulkIgnoreSummary(tally);
+    if (bulkIgnoreOffersUndo(tally)) {
+      showToast(message, { label: "Ongedaan maken", run: () => { void restoreMany(archived); } });
+    } else {
+      showToast(message);
+    }
+  }, [pending, selected, bulkIgnoreReason, restoreMany]);
 
   // [RITME] Eén keer per paginabezoek ophalen. Het is een read-only rekensom over bestaande
   // facturen — geen AI, geen kosten — en het antwoord is meestal een lege lijst.
@@ -3629,7 +3742,7 @@ export default function IncomingInvoicesClient({
       )}
 
       {/* [INTAKE-VERIFY-BULK] Sticky action bar — select mode, ≥1 selected */}
-      {tab === "pending" && selectMode && selected.size > 0 && !bulkRunning && (
+      {tab === "pending" && selectMode && selected.size > 0 && !bulkRunning && !bulkIgnoreRunning && (
         <div
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
@@ -3639,16 +3752,36 @@ export default function IncomingInvoicesClient({
             display: "flex", justifyContent: "center",
           }}
         >
-          <button
-            onClick={() => setBulkConfirmOpen(true)}
-            style={{
-              width: "100%", maxWidth: 430, padding: "16px", borderRadius: 14,
-              background: "#34a853", color: "#fff", border: "none",
-              fontWeight: 700, fontSize: 16, cursor: "pointer",
-            }}
-          >
-            Bevestig {selected.size} factuur{selected.size > 1 ? "en" : ""}
-          </button>
+          {/* [NEGEER-BULK] Twee uitgangen voor dezelfde selectie, in één rij.
+              De verhouding is niet cosmetisch. Bevestigen schrijft geld in de boeken en blijft
+              daarom de volle, groene, dominante knop; negeren is de smalle nevenknop ernaast. Zo
+              kan de duim die naar "bevestig" gaat er niet naast zitten en per ongeluk een stapel
+              wegzetten — het omgekeerde risico (per ongeluk bevestigen terwijl je wilde negeren)
+              is het gevaarlijke, want dat schrijft wél iets weg. Beide gaan alsnog eerst door een
+              bevestigingsdialoog; dit is de tweede laag, niet de enige. */}
+          <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 430 }}>
+            <button
+              onClick={() => setBulkConfirmOpen(true)}
+              style={{
+                flex: "1 1 auto", minWidth: 0, padding: "16px", borderRadius: 14,
+                background: "#34a853", color: "#fff", border: "none",
+                fontWeight: 700, fontSize: 16, cursor: "pointer",
+              }}
+            >
+              Bevestig {selected.size} factuur{selected.size > 1 ? "en" : ""}
+            </button>
+            <button
+              onClick={() => { setBulkIgnoreReason(null); setBulkIgnoreOpen(true); }}
+              aria-label={`${selected.size} geselecteerde factuur${selected.size > 1 ? "en" : ""} negeren`}
+              style={{
+                flex: "0 0 auto", padding: "16px 18px", borderRadius: 14,
+                background: "#fce8e6", color: "#c5221f", border: "none",
+                fontWeight: 700, fontSize: 16, cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >
+              Negeer {selected.size}
+            </button>
+          </div>
         </div>
       )}
 
@@ -3657,6 +3790,21 @@ export default function IncomingInvoicesClient({
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
             Bezig met verifiëren…
+          </div>
+        </div>
+      )}
+
+      {/* [NEGEER-BULK] Zelfde overlay, zelfde reden als bij [REIMPORT-ALL]: de lus loopt per
+          factuur, dus zonder blokkade kan er halverwege een kaart worden geopend of bevestigd die
+          een tel later alsnog wordt gearchiveerd. De teller staat erbij omdat een stapel van
+          twintig merkbaar duurt en een stil scherm dan als vastgelopen leest. */}
+      {bulkIgnoreRunning && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
+            Bezig met negeren…
+            <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
+              {bulkIgnoreDone}/{selected.size}
+            </div>
           </div>
         </div>
       )}
@@ -3730,6 +3878,28 @@ export default function IncomingInvoicesClient({
           confirmColor="#1a73e8"
           onConfirm={() => addSenderRule(ruleOfferFor)}
           onCancel={() => setRuleOfferFor(null)}
+        />
+      )}
+
+      {/* [NEGEER-BULK] Bevestiging vóór de stapel. Dezelfde dialoog en dezelfde redenenlijst als
+          bij één factuur — één vorm voor één handeling, of het er nu één of twintig zijn. De reden
+          is ook hier vrijwillig: wie twintig reclamemails wegzet weet waarom, wie twijfelt hoeft
+          niets in te vullen. */}
+      {bulkIgnoreOpen && selected.size > 0 && (
+        <ConfirmDialog
+          title={`${selected.size} factuur${selected.size > 1 ? "en" : ""} negeren?`}
+          message={`Ze gaan naar Genegeerd en tellen nergens meer mee. Je kunt ze daar terugzetten — of meteen hierna met één tik ongedaan maken.`}
+          confirmLabel={`Ja, negeer ${selected.size}`}
+          confirmColor="#ea4335"
+          choices={ARCHIVE_REASONS.map((v) => ({
+            value: v,
+            label: ARCHIVE_REASON_LABELS[v].label,
+            hint: ARCHIVE_REASON_LABELS[v].hint,
+          }))}
+          choiceValue={bulkIgnoreReason}
+          onChoice={(v) => setBulkIgnoreReason(v as ArchiveReason | null)}
+          onConfirm={handleIgnoreBatch}
+          onCancel={() => { setBulkIgnoreOpen(false); setBulkIgnoreReason(null); }}
         />
       )}
 
