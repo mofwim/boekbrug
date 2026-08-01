@@ -41,8 +41,7 @@ export async function GET() {
   const { available, members } = await loadCompanyMembers(ownerId)
 
   // De namen erbij — een lijst met uuid's is geen lijst.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipeline = createPipelineClient() as any
+  const pipeline = createPipelineClient()
   const ids = members.map((l) => l.member_id)
   const namen = new Map<string, { naam: string; email: string | null }>()
   if (ids.length) {
@@ -110,8 +109,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Vul een geldig e-mailadres in' }, { status: 400 })
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipeline = createPipelineClient() as any
+  const pipeline = createPipelineClient()
 
   const { data: eigenProfiel } = await pipeline
     .from('profiles')
@@ -182,8 +180,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Niets om in te trekken' }, { status: 400 })
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipeline = createPipelineClient() as any
+  const pipeline = createPipelineClient()
 
   if (memberRowId) {
     // Intrekken is een tijdstip, geen DELETE: de facturen die dit lid maakte moeten toewijsbaar

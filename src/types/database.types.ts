@@ -1,3 +1,28 @@
+// src/types/database.types.ts
+// Generated from the database, with hand-written additions — read this before editing.
+//
+// The bulk of this file comes from `supabase gen types typescript`. Three things were added by
+// hand, because the generator could not be run at the time (no Supabase credentials in that
+// environment). They match the applied migrations column for column:
+//
+//   · company_members            — supabase/migrations/company_members_sales_role.sql
+//   · company_member_invites     — same migration
+//   · invoices.created_by        — same migration (uuid, nullable, FK → profiles.id)
+//   · clients.created_by         — same migration
+//   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
+//
+// WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
+// stays green while the request fails at runtime — exactly how `created_by` once broke invoice
+// creation for everyone (see src/lib/created-by.ts). So: when you next regenerate this file,
+//
+//   supabase gen types typescript --project-id <ref> > src/types/database.types.ts
+//
+// check that the five entries above survive. If the generator drops one, the migration is not
+// applied on the database you generated from — fix that, do not re-add the type by hand.
+//
+// NOTE: src/lib/database.types.ts is an older, unused copy. Nothing imports it. Do not edit it
+// expecting an effect.
+
 export type Json =
   | string
   | number
@@ -637,6 +662,7 @@ export type Database = {
       }
       clients: {
         Row: {
+          created_by: string | null
           address: string | null
           btw_number: string | null
           city: string | null
@@ -651,6 +677,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          created_by?: string | null
           address?: string | null
           btw_number?: string | null
           city?: string | null
@@ -665,6 +692,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          created_by?: string | null
           address?: string | null
           btw_number?: string | null
           city?: string | null
@@ -682,6 +710,89 @@ export type Database = {
           {
             foreignKeyName: "clients_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_member_invites: {
+        Row: {
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          owner_id: string
+          role: string
+          status: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          owner_id: string
+          role?: string
+          status?: string
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          owner_id?: string
+          role?: string
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_member_invites_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_members: {
+        Row: {
+          created_at: string
+          id: string
+          member_id: string
+          owner_id: string
+          revoked_at: string | null
+          role: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_id: string
+          owner_id: string
+          revoked_at?: string | null
+          role?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_id?: string
+          owner_id?: string
+          revoked_at?: string | null
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_members_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_members_owner_id_fkey"
+            columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1117,6 +1228,7 @@ export type Database = {
           invoice_id: string | null
           line_total: number | null
           quantity: number | null
+          unit: string | null
           unit_price: number | null
         }
         Insert: {
@@ -1126,6 +1238,7 @@ export type Database = {
           invoice_id?: string | null
           line_total?: number | null
           quantity?: number | null
+          unit?: string | null
           unit_price?: number | null
         }
         Update: {
@@ -1135,6 +1248,7 @@ export type Database = {
           invoice_id?: string | null
           line_total?: number | null
           quantity?: number | null
+          unit?: string | null
           unit_price?: number | null
         }
         Relationships: [
@@ -1149,6 +1263,7 @@ export type Database = {
       }
       invoices: {
         Row: {
+          created_by: string | null
           accountant_note: string | null
           accountant_status: string | null
           amount_paid: number
@@ -1199,6 +1314,7 @@ export type Database = {
           vendor_iban: string | null
         }
         Insert: {
+          created_by?: string | null
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
@@ -1248,6 +1364,7 @@ export type Database = {
           vendor_iban?: string | null
         }
         Update: {
+          created_by?: string | null
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
