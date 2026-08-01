@@ -216,19 +216,29 @@ export async function POST(request: NextRequest) {
     // [BOEK-031] Haal originele regels op en kopieer ze negatief
     const { data: originalLines } = await supabase
       .from('invoice_lines')
-      .select('description, quantity, unit_price, btw_rate, line_total')
+      // [EENHEID] '*' zodat de eenheid meekomt zonder tweede kolommenlijst; de INSERT typt
+      // hieronder expliciet over, dus het id van de bronregel gaat NIET mee.
+      .select('*')
       .eq('invoice_id', original_invoice_id)
 
     if (originalLines && originalLines.length > 0) {
-      await supabase.from('invoice_lines').insert(
-        originalLines.map(line => ({
-          invoice_id: creditnota.id,
-          description: `[Creditnota] ${line.description}${reason ? ` — ${reason}` : ''}`,
-          quantity: -(line.quantity || 0), // negatief aantal
-          unit_price: line.unit_price,
-          btw_rate: line.btw_rate,
-          line_total: -(line.line_total || 0),
-        }))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from('invoice_lines').insert(
+        originalLines.map((line) => {
+          const bron = line as unknown as { unit?: string | null }
+          const regel: Record<string, unknown> = {
+            invoice_id: creditnota.id,
+            description: `[Creditnota] ${line.description}${reason ? ` — ${reason}` : ''}`,
+            quantity: -(line.quantity || 0), // negatief aantal
+            unit_price: line.unit_price,
+            btw_rate: line.btw_rate,
+            line_total: -(line.line_total || 0),
+          }
+          // [EENHEID] Een creditnota corrigeert DEZELFDE levering, dus met dezelfde eenheid:
+          // "-2 uur", niet "-2 stuks". Undefined zolang de migratie niet is toegepast.
+          if (bron.unit !== undefined) regel.unit = bron.unit ?? null
+          return regel
+        }),
       )
     }
 

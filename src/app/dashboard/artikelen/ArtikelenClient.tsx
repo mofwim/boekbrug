@@ -122,6 +122,7 @@ export default function ArtikelenClient() {
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>Je vaste factuurregels — één keer opslaan, steeds hergebruiken.</p>
         </header>
 
+
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           {/* [SMART-FILTER] Zoekveld met label voor schermlezers en een wis-knop, net als bij facturen/categoriseren. */}
           <div style={{ flex: 1, position: 'relative' }}>

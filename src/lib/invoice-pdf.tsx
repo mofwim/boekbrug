@@ -30,6 +30,8 @@ import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 import { reverseChargeNotice } from './icp'
 // [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
 import { creditnotaReferenceLine } from './creditnota'
+// [EENHEID] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
+import { eenheidLabel } from './eenheden'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -98,7 +100,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f1f3f4',
   },
-  colAantal: { width: 44, fontSize: 10 },
+  // [EENHEID] 44pt was genoeg voor alleen een getal. Er staat nu "2 uur" / "14 m²" in, dus iets
+  // ruimer — anders breekt de eenheid naar de volgende regel en leest de kolom als twee waarden.
+  // De omschrijving is `flex: 1` en geeft die punten vanzelf terug.
+  colAantal: { width: 62, fontSize: 10 },
   colOmschrijving: { flex: 1, fontSize: 10, paddingRight: 8 },
   colPrijs: { width: 78, fontSize: 10, textAlign: 'right' },
   colTotaal: { width: 84, fontSize: 10, textAlign: 'right' },
@@ -185,6 +190,11 @@ type LineLike = {
   unit_price?: number | null
   btw_rate?: number | null
   line_total?: number | null
+  /**
+   * [EENHEID] De eenheid van deze regel ("uur", "m²"). Optioneel: leeg of afwezig levert precies
+   * de oude weergave op — alleen het aantal, zoals het altijd was.
+   */
+  unit?: string | null
 }
 
 function btwBreakdown(lines: LineLike[]): { rate: number; ex: number; btw: number }[] {
@@ -369,7 +379,14 @@ export function InvoicePDF({
               line.line_total ?? Number(line.quantity ?? 0) * Number(line.unit_price ?? 0)
             return (
               <View key={index} style={styles.tableRow}>
-                <Text style={styles.colAantal}>{formatQtyNL(line.quantity)}</Text>
+                {/* [EENHEID] "2 uur" leest als een levering; "2" leest als niets. De eenheid
+                    stond wél in de e-factuur en niet op het papier dat de klant leest — en de
+                    PDF is het document dat hij bewaart. Onbekende eenheid blijft staan zoals de
+                    ondernemer hem schreef; geen eenheid geeft exact de oude weergave. */}
+                <Text style={styles.colAantal}>
+                  {formatQtyNL(line.quantity)}
+                  {line.unit ? ` ${eenheidLabel(line.unit, Number(line.quantity ?? 1))}` : ''}
+                </Text>
                 <Text style={styles.colOmschrijving}>{line.description}</Text>
                 <Text style={styles.colPrijs}>{formatEuroNL(line.unit_price)}</Text>
                 <Text style={styles.colTotaal}>{formatEuroNL(lineTotal)}</Text>

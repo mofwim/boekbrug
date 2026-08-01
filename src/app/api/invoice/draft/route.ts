@@ -22,6 +22,9 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, factuurGemaaktDoor, isNamens } from '@/lib/acting-for'
 import { berekenTotalen, controleerRegels } from '@/lib/factuur-totalen'
+// [EENHEID] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
+// gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
+import { isBekendeEenheid } from '@/lib/eenheden'
 // [NAMENS] created_by bestaat pas ná company_members_sales_role.sql. Zonder deze terugval faalt
 // de INSERT hieronder met PGRST204 op een installatie waar de migratie nog open staat — en dan
 // kan er GEEN FACTUUR MEER WORDEN AANGEMAAKT. Zie de kop van created-by.ts.
@@ -30,6 +33,19 @@ import { schrijfMetSpoor } from '@/lib/created-by'
 export const dynamic = 'force-dynamic'
 
 type Soort = 'factuur' | 'creditnota' | 'offerte'
+
+/**
+ * De eenheid van één regel, of null.
+ *
+ * Alleen wat de app KENT komt erdoor. Een onbekend woord wordt null in plaats van te worden
+ * opgeslagen: het zou bij de UBL-export toch op C62 uitkomen, en dan staat er in de database een
+ * eenheid die nergens iets doet — precies het soort veld waarvan later niemand meer weet of het
+ * betekenis heeft.
+ */
+function schoonEenheid(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s && isBekendeEenheid(s) ? s : null
+}
 
 const DB_TYPE: Record<Soort, string> = {
   factuur: 'factuur',
@@ -155,15 +171,28 @@ export async function POST(request: NextRequest) {
 
     // ── De regels ────────────────────────────────────────────────────────────
     const bron = body.lines as Array<Record<string, unknown>>
-    const { error: lineErr } = await pipeline.from('invoice_lines').insert(
-      gecontroleerd.regels.map((l, i) => ({
-        invoice_id: factuur.id,
-        description: String(bron[i]?.description ?? '').trim(),
-        quantity: sign * l.quantity,
-        unit_price: l.unit_price,
-        btw_rate: l.btw_rate,
-        line_total: sign * l.quantity * l.unit_price,
-      })),
+    // [EENHEID] `unit` komt uit migratie invoice_line_unit.sql en gaat via dezelfde terugval
+    // als created_by: bestaat de kolom nog niet, dan worden de regels ZONDER eenheid geschreven
+    // in plaats van dat het aanmaken van de factuur helemaal faalt (PGRST204). Wat je dan mist is
+    // de juiste eenheidscode in de e-factuur, niet de factuur zelf.
+    const { error: lineErr } = await schrijfMetSpoor(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (spoor) => (pipeline as any).from('invoice_lines').insert(
+        gecontroleerd.regels.map((l, i) => ({
+          invoice_id: factuur.id,
+          description: String(bron[i]?.description ?? '').trim(),
+          quantity: sign * l.quantity,
+          unit_price: l.unit_price,
+          btw_rate: l.btw_rate,
+          line_total: sign * l.quantity * l.unit_price,
+          // De eenheid hoort bij de regel, dus per regel — niet één keer voor de hele factuur.
+          ...(Object.keys(spoor).length
+            ? { unit: schoonEenheid(bron[i]?.unit) }
+            : {}),
+        })),
+      ),
+      // De sleutel is een vlag: is hij aanwezig, dan wordt `unit` per regel meegeschreven.
+      { unit: true },
     )
     if (lineErr) {
       // Een factuurkop zonder regels is erger dan geen factuur: hij telt mee in overzichten en

@@ -27,6 +27,38 @@ import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-tota
 import { getActingFor } from '@/lib/acting-for-server'
 import { factuurEigenaar, magFactuur } from '@/lib/acting-for'
 import { leesMetSpoor } from '@/lib/created-by'
+// [EENHEID] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
+import { isBekendeEenheid } from '@/lib/eenheden'
+
+/**
+ * Eén regel klaarmaken voor de database.
+ *
+ * `unit` bestaat pas na migratie invoice_line_unit.sql. Meesturen op een database zonder die
+ * kolom laat de HELE insert falen (PGRST204) — en dat is hier het opslaan van een concept.
+ * Daarom: alleen meesturen als er iets te sturen is, en anders precies de oude vorm.
+ */
+type NormLine = {
+  description: string
+  quantity: number
+  unit_price: number
+  btw_rate: number
+  line_total: number
+  /** [EENHEID] Alleen een eenheid die de app kent, of null. */
+  unit: string | null
+}
+
+function schoonRegel(invoiceId: string, l: NormLine): Record<string, unknown> {
+  const regel: Record<string, unknown> = {
+    invoice_id: invoiceId,
+    description: l.description,
+    quantity: l.quantity,
+    unit_price: l.unit_price,
+    btw_rate: l.btw_rate,
+    line_total: l.line_total,
+  }
+  if (l.unit) regel.unit = l.unit
+  return regel
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ownedInvoice(supabase: any, id: string, userId: string) {
@@ -135,13 +167,6 @@ export async function PUT(
 
   // Normalize lines and recompute totals (line sign is preserved, so a
   // creditnota draft keeps its negative amounts).
-  type NormLine = {
-    description: string
-    quantity: number
-    unit_price: number
-    btw_rate: number
-    line_total: number
-  }
   // [BTW-TARIEF] Only a rate a Dutch invoice may actually carry. `Number(l.btw_rate) || 0`
   // silently turned anything unparseable — and a MISSING rate — into 0%, which is a real tariff
   // with a real meaning (vrijgesteld/verlegd). A draft saved that way looks perfect and books
@@ -164,6 +189,10 @@ export async function PUT(
       unit_price,
       btw_rate: Number(l.btw_rate),
       line_total: round2(quantity * unit_price),
+      // [EENHEID] Alleen een eenheid die de app KENT. Vrije tekst uit een verzoek hoort niet op
+      // een regel die straks een e-factuur wordt; onbekend wordt null, en dat komt in de export
+      // neer op C62 — precies het gedrag van vóór dit veld.
+      unit: typeof l.unit === 'string' && isBekendeEenheid(l.unit) ? l.unit.trim() : null,
     }
   })
   const { total_ex_btw, btw_amount, total_inc_btw } = computeInvoiceTotals(lines)
@@ -223,21 +252,40 @@ export async function PUT(
   // internally consistent (old lines, and the caller knows the save failed).
   const { data: previousLines } = await supabase
     .from('invoice_lines')
-    .select('description, quantity, unit_price, btw_rate, line_total')
+    // [EENHEID] '*' zodat de eenheid meekomt in het TERUGZETPAD. Zou hij hier ontbreken, dan
+    // zou een mislukte opslag de regels herstellen ZONDER eenheid — een stille wijziging bij
+    // een handeling die juist bedoeld is om niets te veranderen.
+    .select('*')
     .eq('invoice_id', id)
 
   await supabase.from('invoice_lines').delete().eq('invoice_id', id)
   const { error: insErr } = await supabase
     .from('invoice_lines')
-    .insert(lines.map((l) => ({ invoice_id: id, ...l })))
+    // [EENHEID] `unit` gaat alleen mee als de kolom bestaat. Zonder deze terugval faalde het
+    // OPSLAAN van een concept volledig op een database waar invoice_line_unit.sql nog open staat.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .insert(lines.map((l) => schoonRegel(id, l)) as any)
   if (insErr) {
     // Put BOTH halves back: the old lines, and the header totals that belong to them. Restoring
     // only the lines would leave a draft whose stored amounts describe a version that no longer
     // exists — the same mismatch, just harder to notice.
     if (previousLines && previousLines.length > 0) {
-      await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any)
         .from('invoice_lines')
-        .insert(previousLines.map((l) => ({ invoice_id: id, ...l })))
+        .insert(previousLines.map((l) => {
+          const bron = l as unknown as { unit?: string | null }
+          const regel: Record<string, unknown> = {
+            invoice_id: id,
+            description: l.description,
+            quantity: l.quantity,
+            unit_price: l.unit_price,
+            btw_rate: l.btw_rate,
+            line_total: l.line_total,
+          }
+          if (bron.unit !== undefined) regel.unit = bron.unit ?? null
+          return regel
+        }))
     }
     await supabase
       .from('invoices')

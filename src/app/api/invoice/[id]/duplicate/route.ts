@@ -91,12 +91,33 @@ export async function POST(
 
     const { data: originalLines } = await supabase
       .from('invoice_lines')
-      .select('description, quantity, unit_price, btw_rate, line_total')
+      .select('*')  // [EENHEID] '*' zodat de eenheid meekomt zonder een tweede kolommenlijst die kan verouderen
       .eq('invoice_id', id)
 
     if (originalLines && originalLines.length > 0) {
-      await supabase.from('invoice_lines').insert(
-        originalLines.map(l => ({ ...l, invoice_id: newInvoice.id }))
+      // [EENHEID] Expliciet overtypen, NIET `{ ...l }` spreiden.
+      //
+      // Ik had hier eerst select('*') met een spread staan, en dat was fout: dan gaat het `id`
+      // van de ORIGINELE regel mee de INSERT in — een primaire sleutel die al bestaat. Wat er
+      // gekopieerd moet worden is de INHOUD van een regel, niet haar identiteit.
+      //
+      // `unit` komt uit migratie invoice_line_unit.sql en is undefined zolang die niet is
+      // toegepast; dan wordt hij niet meegestuurd en blijft de INSERT geldig.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from('invoice_lines').insert(
+        originalLines.map((l) => {
+          const bron = l as unknown as { unit?: string | null }
+          const regel: Record<string, unknown> = {
+            invoice_id: newInvoice.id,
+            description: l.description,
+            quantity: l.quantity,
+            unit_price: l.unit_price,
+            btw_rate: l.btw_rate,
+            line_total: l.line_total,
+          }
+          if (bron.unit !== undefined) regel.unit = bron.unit ?? null
+          return regel
+        }),
       )
     }
 

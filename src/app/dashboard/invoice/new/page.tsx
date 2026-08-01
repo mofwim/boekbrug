@@ -91,6 +91,10 @@ type InvoiceLine = {
   quantity: number
   unit_price: number
   btw_rate: number
+  // [EENHEID] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
+  // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
+  // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
+  unit?: string | null
   // [BOEK-031] AI translation support per line
   translating?: boolean
   rawInput?: string
@@ -716,7 +720,10 @@ function NewInvoicePageContent() {
     fetch('/api/articles').then(r => r.ok ? r.json() : null).then(j => { if (j?.articles) setCatalog(j.articles) }).catch(() => {})
   }, [])
   function pickArticle(i: number, a: Article) {
-    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, description: a.description, unit_price: a.unit_price, btw_rate: a.btw_rate } : l))
+    // [EENHEID] De eenheid komt mee uit de catalogus. Zonder deze regel viel hij eraf op precies
+    // het moment dat een artikel een factuurregel werd — en dan stond er in de e-factuur "2 stuks"
+    // waar "2 uur" hoorde te staan.
+    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, description: a.description, unit_price: a.unit_price, btw_rate: a.btw_rate, unit: a.unit ?? null } : l))
     setPickerLine(null)
     // Bump usage so the picker learns the owner's most-used lines. Best-effort.
     fetch(`/api/articles/${a.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bump: true }) }).catch(() => {})
@@ -826,6 +833,7 @@ function NewInvoicePageContent() {
           quantity: l.quantity,
           unit_price: l.unit_price,
           btw_rate: l.btw_rate,
+          unit: l.unit ?? null,
         })),
       }),
     })
@@ -980,6 +988,7 @@ function NewInvoicePageContent() {
           quantity: l.quantity,
           unit_price: l.unit_price,
           btw_rate: l.btw_rate,
+          unit: l.unit ?? null,
         })),
       }),
     })
