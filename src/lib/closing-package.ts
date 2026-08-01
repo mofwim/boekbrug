@@ -920,6 +920,70 @@ async function sharedDocsForQuarter(
   return { paths, outsideCount };
 }
 
+// [PACKAGE-VOORBELASTING] A bank payment CODED as a business cost with no purchase invoice
+// behind it — rent, telecom, insurance, a supplier paid straight from the account.
+//
+// WHY THIS IS ITS OWN WARNING
+// A bare bank line carries no BTW document, so financial-result books it as a NET cost with
+// zero voorbelasting. The euro is in the profit; the deductible BTW is not. The owner therefore
+// pays MORE BTW than they owe — silently, because from the app's side nothing is missing: the
+// line has a category, it is placed, every total adds up.
+//
+// It is NOT covered by 'bank_unresolved', and deliberately so: that one counts lines with NO
+// category at all. Once auto-categorisation has learned "this counterpart is rent", the line
+// gets a category and drops out of that warning entirely — which is exactly when this one has
+// to take over. The two are disjoint by construction (category IS NULL vs category = 'kosten').
+//
+// readiness.ts already tells the OWNER this ([VOORBELASTING-RISK]), as a risk rather than a
+// hard block. But a risk does not stop a hand-over, so the quarter could reach the accountant
+// with deductible BTW missing and nothing in the package saying so. Same reasoning as
+// [PACKAGE-UNVERIFIED]: the preview warned, the thing the accountant actually receives did not.
+//
+// 'fee' (bankkosten) is excluded on purpose — payment services are BTW-exempt (art. 11 lid 1-i
+// Wet OB), so there is no voorbelasting to lose there and flagging it would be noise.
+// The lines behind that warning. Scoped EXACTLY like readiness.ts's undocumentedCount — pending,
+// no linked invoice, coded 'kosten' — so the owner's screen and the accountant's package can
+// never quote two different numbers for the same thing. Debits only: a credit coded 'kosten'
+// (a refund) has no voorbelasting to reclaim.
+//
+// Fail-soft, like every other completeness probe here: if the read fails, this one check lapses
+// rather than taking the whole hand-over down with it.
+async function costLinesWithoutInvoice(
+  supabase: PipelineClient,
+  ownerId: string,
+  start: string,
+  end: string,
+): Promise<{ count: number; total: number }> {
+  const rows = await fetchAllRows<{ id: string; amount: number | null }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("id, amount")
+      .eq("user_id", ownerId)
+      .eq("status", "pending")
+      .eq("category", "kosten")
+      .is("invoice_id", null)
+      .lt("amount", 0)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => [] as { id: string; amount: number | null }[]);
+  const total = rows.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+  return { count: rows.length, total: Math.round(total * 100) / 100 };
+}
+
+export function costWithoutInvoiceWarning(count: number, total: number): ClosingPackageWarning | null {
+  if (count <= 0) return null;
+  return {
+    code: "bank_cost_without_invoice",
+    message:
+      `${count} banktransactie(s) van samen ${formatEuroNL(total)} zijn geboekt als zakelijke kosten, ` +
+      `maar er hoort geen inkoopfactuur bij. Het bedrag telt wel mee in de kosten, de BTW erop ` +
+      `NIET — zonder factuur is er geen voorbelasting (5b) om terug te vragen. Controleer of de ` +
+      `facturen nog geleverd kunnen worden voordat de aangifte weggaat.`,
+  };
+}
+
 /** A warning for shared files that fall outside this quarter's package, or null. Shared by
  *  the ZIP builder and the preview summary so both tell the SAME truth. */
 function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
@@ -1130,6 +1194,13 @@ export async function summarizeClosingPackage(args: {
         `niet in omzet, niet in kosten en niet in de voorbelasting.`,
     });
   }
+  // [PACKAGE-VOORBELASTING] Costs paid by bank with no purchase invoice — deductible BTW the
+  // owner is about to leave on the table. See the helper for why this is separate from
+  // 'bank_unresolved'.
+  const costNoInvoice = await costLinesWithoutInvoice(supabase, ownerId, start, end);
+  const costNoInvoiceWarning = costWithoutInvoiceWarning(costNoInvoice.count, costNoInvoice.total);
+  if (costNoInvoiceWarning) warnings.push(costNoInvoiceWarning);
+
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
   const sharedOutside = sharedOutsideWarning(shared.outsideCount);
   if (sharedOutside) warnings.push(sharedOutside);
@@ -1227,6 +1298,13 @@ export async function buildClosingPackageZip(args: {
           : `${unverifiedInQuarterZip} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
     });
   }
+
+  // [PACKAGE-VOORBELASTING] Same mirror, for costs paid by bank with no purchase invoice. The
+  // owner's readiness screen flags these as a risk, but a risk does not block a hand-over — so
+  // without this the accountant receives a quarter with unclaimed voorbelasting and no signal.
+  const costNoInvoiceZip = await costLinesWithoutInvoice(supabase, ownerId, start, end);
+  const costNoInvoiceZipWarning = costWithoutInvoiceWarning(costNoInvoiceZip.count, costNoInvoiceZip.total);
+  if (costNoInvoiceZipWarning) warnings.push(costNoInvoiceZipWarning);
 
   // ── Resolve PDF storage paths ──
   // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import JSZip from "jszip";
 import {
   buildOverviewCsv,
+  costWithoutInvoiceWarning,
   assembleClosingPackageZip,
   effectiveDirection,
   type PackageInvoice,
@@ -276,4 +277,46 @@ test("[NO-EMPTY-LEDGER] de waarschuwing staat leesbaar in overzicht.csv", async 
   ], noPayDates);
   assert.ok(csv.includes("kasboekingen konden niet volledig worden gelezen"),
     "de reden hoort in het overzicht te staan dat de boekhouder daadwerkelijk opent");
+});
+
+// ─── [PACKAGE-VOORBELASTING] Costs paid by bank with no purchase invoice ──────
+//
+// THE SILENT LOSS THIS GUARDS
+// Rent, telecom, insurance paid straight from the account. A bare bank line carries no BTW
+// document, so the euro lands in the costs and the deductible BTW does NOT — the owner pays
+// more BTW than they owe. Nothing looks wrong from the app's side: the line has a category,
+// it is placed, every total adds up. That is exactly why it needs to be said out loud.
+//
+// readiness.ts warns the OWNER. This test is about the ACCOUNTANT: the warning has to reach
+// the package too, because a risk does not block a hand-over.
+
+test("[VOORBELASTING] costs without a purchase invoice produce a warning for the accountant", () => {
+  const w = costWithoutInvoiceWarning(3, 1250.5);
+  assert.ok(w, "three coded costs without an invoice must warn");
+  assert.equal(w!.code, "bank_cost_without_invoice");
+  assert.match(w!.message, /3 banktransactie/);
+  assert.match(w!.message, /voorbelasting/, "the consequence must be named, not just the count");
+  assert.match(w!.message, /5b/, "and the rubriek, so the accountant can place it");
+});
+
+test("[VOORBELASTING] the AMOUNT is in the message — a count alone does not convey the size", () => {
+  // "2 transactions" reads the same whether it is €40 or €40.000. The euro figure is what makes
+  // an owner go and look for the invoices.
+  const w = costWithoutInvoiceWarning(2, 4000);
+  assert.ok(w!.message.includes("4.000") || w!.message.includes("4000"), w!.message);
+});
+
+test("[VOORBELASTING] nothing to report stays silent — no invented warning", () => {
+  // A package full of warnings that are not real teaches the owner to skip the list, and then
+  // the ONE that matters is skipped too.
+  assert.equal(costWithoutInvoiceWarning(0, 0), null);
+  assert.equal(costWithoutInvoiceWarning(-1, 0), null, "a negative count is a bug, not a warning");
+});
+
+test("[VOORBELASTING] the message says the cost DID count — only the BTW did not", () => {
+  // The trap in wording this: an owner who reads "no invoice" may conclude the amount fell out
+  // of the books entirely and start correcting a thing that is already right. The cost counts;
+  // the voorbelasting is what is missing.
+  const w = costWithoutInvoiceWarning(1, 100);
+  assert.match(w!.message, /telt wel mee in de kosten/);
 });
