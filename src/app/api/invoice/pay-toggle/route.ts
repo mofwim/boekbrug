@@ -393,8 +393,17 @@ export async function POST(req: NextRequest) {
           .update({ status: prev.status, invoice_id: prev.invoice_id })
           .eq("id", txId).eq("user_id", user.id);
       }
-      await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
-    } catch { /* best-effort */ }
+      // [PARTIAL-PAY-INVARIANT] Best-effort is right HERE — this is the rollback of an operation
+      // that already failed, and there is nothing left to refuse to. But the error is read and
+      // logged rather than dropped: supabase-js does not throw on an RPC, so the catch around this
+      // never saw it, and a rollback that half-worked left no trace at all.
+      const { error: rbRecomputeErr } = await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
+      if (rbRecomputeErr) {
+        console.error("[PARTIAL-PAY-INVARIANT] recompute failed during rollback — amount_paid may not match the surviving links", {
+          invoiceId, userId: user.id, message: rbRecomputeErr.message,
+        });
+      }
+    } catch { /* the bank-state restore above is itself best-effort */ }
   };
 
   // Detach — scoped. Batch tx (hasOthers): keep it 'matched' for the siblings, only drop a

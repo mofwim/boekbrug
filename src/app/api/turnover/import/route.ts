@@ -21,7 +21,8 @@ import {
   amsterdamToday,
 } from "@/lib/turnover-import";
 import { detectSheetKind } from "@/lib/detect-file";
-import type { DailyTurnover } from "@/lib/turnover";
+// [TURNOVER-ARITHMETIC] The write gate — daily_turnover feeds rubriek 1a/1b directly.
+import { checkTurnoverArithmetic, type DailyTurnover } from "@/lib/turnover";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
@@ -111,6 +112,47 @@ export async function POST(req: NextRequest) {
             `Er is niets opgeslagen. Staat er per dag één totaal in je Z-rapport? Verwijder dan de ` +
             `dubbele regel. Zijn het losse shifts van dezelfde dag? Tel ze eerst bij elkaar op — ` +
             `anders zou de omzet van die dag dubbel in je BTW terechtkomen.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    // [TURNOVER-ARITHMETIC] Can these days be true at all?
+    //
+    // Everything above this point checks the DATE — a real calendar day, not in the future, no day
+    // twice — and nothing checked the money. But daily_turnover is BTW-authoritative: /api/aangifte
+    // reads btw_9 and btw_21 straight out of it into rubriek 1a/1b as tax OWED. So a day arriving
+    // with base_9 = 100 and btw_9 = 52 went into the return, and both directions cost real money:
+    // overstated you pay what you do not owe, understated the return is wrong.
+    //
+    // The parser derives the split correctly. That is not the point — a server that trusts the
+    // client's arithmetic is not a guard, which is the same sentence written over the amount-
+    // correction route.
+    //
+    // REFUSES the whole file, and names the days. That is this route's established contract: the
+    // duplicate-day check three lines up does exactly the same, for the same reason — a half-imported
+    // month is worse than an unimported one, because nobody can tell which half is in.
+    const badDays: string[] = [];
+    for (const r of records) {
+      const breaks = checkTurnoverArithmetic({
+        turnover_date: r.turnover_date,
+        base_0: r.base_0, base_9: r.base_9, base_21: r.base_21,
+        btw_9: r.btw_9, btw_21: r.btw_21,
+        total_incl: r.total_incl, pin_amount: r.pin_amount,
+        cash_amount: r.cash_amount, other_amount: r.other_amount,
+      });
+      if (breaks.length > 0) badDays.push(`${r.turnover_date} (${breaks[0].note})`);
+    }
+    if (badDays.length > 0) {
+      const shown = badDays.slice(0, 3).join("; ");
+      const more = badDays.length > 3 ? ` en ${badDays.length - 3} andere dag(en)` : "";
+      return NextResponse.json(
+        {
+          error: "bedragen_kloppen_niet",
+          detail:
+            `De bedragen van ${badDays.length === 1 ? "één dag" : `${badDays.length} dagen`} kunnen niet kloppen: ` +
+            `${shown}${more}. Er is niets opgeslagen. Deze bedragen gaan rechtstreeks naar je ` +
+            `btw-aangifte, dus controleer ze eerst in je Z-rapport en importeer daarna opnieuw.`,
         },
         { status: 400 },
       );

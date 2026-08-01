@@ -218,10 +218,21 @@ export async function POST(req: Request) {
   // The JS decrement above is a fast optimistic write; this atomic recompute is order-independent,
   // so two near-simultaneous unlinks of different instalments of the same invoice can never leave a
   // phantom amount_paid — both converge on the true remaining sum (0 when no links remain).
-  try {
-    await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
-  } catch {
-    /* non-fatal — the optimistic amount_paid above stands; a later op re-reconciles */
+  // [PARTIAL-PAY-INVARIANT] The error is READ, not swallowed. supabase-js does not throw on an RPC
+  // failure — it answers { data, error } — so the try/catch this replaced could never have caught
+  // anything, and a failed recompute of the one function that maintains
+  // `amount_paid = Σ bank_tx_invoices.amount_applied` was completely invisible.
+  //
+  // Still non-fatal HERE, and that is a real difference from the batch path below: the optimistic
+  // JS decrement a few lines up already wrote the right number for the ordinary case. What the
+  // recompute adds is order-independence under concurrent unlinks — so a failure means that
+  // protection is gone, not that the balance is wrong. Logged loudly and carried into the audit
+  // trail, because "silently unprotected" is exactly the state nobody would ever notice.
+  const { error: recomputeErr } = await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
+  if (recomputeErr) {
+    console.error("[PARTIAL-PAY-INVARIANT] recompute failed after unlink — optimistic amount_paid stands", {
+      invoiceId, userId: user.id, transactionId, message: recomputeErr.message,
+    });
   }
 
   await logAuditAction({
@@ -229,7 +240,13 @@ export async function POST(req: Request) {
     action: "bank.unlinked",
     entityType: "invoice",
     entityId: invoiceId,
-    newValue: { transaction_id: transactionId, restored_status: restoredStatus },
+    newValue: {
+      transaction_id: transactionId,
+      restored_status: restoredStatus,
+      // [PARTIAL-PAY-INVARIANT] So an accountant reconstructing this a year later can see that the
+      // authoritative recompute did not run, rather than wondering why a balance drifted.
+      ...(recomputeErr ? { recompute_failed: true } : {}),
+    },
   });
 
   return NextResponse.json({ ok: true });
@@ -417,12 +434,24 @@ async function unlinkBatch(args: {
   // offered its full amount for re-booking: the same euros twice. delete-statement fixes this
   // identical hole by iterating its whole affected set; this is the same rule here.
   // Best-effort + atomic (row-locked, order-independent).
+  // [PARTIAL-PAY-INVARIANT] This one is NOT the same as the single-invoice path, and the old
+  // "non-fatal" comment obscured the difference. There, an optimistic decrement had already written
+  // a sensible number. HERE every invoice in the batch was forced to `amount_paid = 0` on the
+  // explicit promise that this recompute reconciles it — and for an invoice that ALSO carries an
+  // instalment from a DIFFERENT bank line, 0 is simply wrong. It then reads as more open than it is,
+  // which is the direction that makes an owner pay the same money twice.
+  //
+  // The try/catch could never fire: supabase-js returns { data, error } on an RPC and does not
+  // throw. So the failure was not merely tolerated, it was unobservable.
   const affected = new Set<string>([...idSet, ...restored.map((r) => r.id)]);
+  const staleBalances: string[] = [];
   for (const id of affected) {
-    try {
-      await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: userId, p_invoice_id: id });
-    } catch {
-      /* non-fatal — the amount_paid:0 restore above already stands for the restored set */
+    const { error: recErr } = await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: userId, p_invoice_id: id });
+    if (recErr) {
+      staleBalances.push(id);
+      console.error("[PARTIAL-PAY-INVARIANT] recompute failed after batch unlink — amount_paid may understate what is applied", {
+        invoiceId: id, userId, transactionId, message: recErr.message,
+      });
     }
   }
   // A partial invoice whose settlement just dropped to zero must not keep advertising a payment
@@ -448,8 +477,32 @@ async function unlinkBatch(args: {
     action: "bank.unlinked",
     entityType: "bank_transaction",
     entityId: transactionId,
-    newValue: { transaction_id: transactionId, invoice_ids: restored.map((r) => r.id), invoice_count: restored.length, batch: true },
+    newValue: {
+      transaction_id: transactionId,
+      invoice_ids: restored.map((r) => r.id),
+      invoice_count: restored.length,
+      batch: true,
+      // [PARTIAL-PAY-INVARIANT] The ids whose balance could not be re-derived, in the trail rather
+      // than only in a log line — this is a money invariant, and an accountant reading this row a
+      // year later should not have to guess why a figure drifted.
+      ...(staleBalances.length ? { recompute_failed_for: staleBalances } : {}),
+    },
   });
 
-  return NextResponse.json({ ok: true, batch: true, restored: restored.length });
+  // The unlink itself DID happen — the links are cleared and undoing that would be worse than
+  // reporting it. So it succeeds, and says what it could not finish. `balanceWarning` is Dutch
+  // because the screen shows it verbatim.
+  return NextResponse.json({
+    ok: true,
+    batch: true,
+    restored: restored.length,
+    ...(staleBalances.length
+      ? {
+          balanceWarning:
+            `De koppeling is ongedaan gemaakt, maar van ${staleBalances.length === 1 ? "één factuur" : `${staleBalances.length} facturen`} ` +
+            `kon het openstaande bedrag niet opnieuw worden berekend. Dat bedrag kan nu te hoog staan — ` +
+            `controleer die facturen voordat je ze betaalt.`,
+        }
+      : {}),
+  });
 }

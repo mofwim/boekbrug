@@ -4,6 +4,9 @@ import {
   buildForeignPurchases, foreignPurchaseNote, buildForeignPurchaseCsv, reverseChargeNotice,
   type IcpInvoice,
 } from "./icp";
+// [ICP-3B] The concept aangifte, so the two can be checked AGAINST EACH OTHER — see the block at
+// the end of this file for why testing them separately is not enough.
+import { buildAangifte } from "./aangifte";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -178,6 +181,66 @@ console.log("\n— the sentence that has to be ON the invoice (art. 226 punt 11a
     rc({ lineTexts: ["Advies Q3 — BTW verlegd"] }) === null);
   check("…however they spelled it", rc({ lineTexts: ["reverse charge applies"] }) === null);
   check("…and an unrelated line does not suppress it", rc({ lineTexts: ["Advies Q3"] }) !== null);
+}
+
+
+// ── [ICP-3B] the concept and the opgaaf, checked against each other ──────────────────────────
+//
+// The Belastingdienst lays rubriek 3b and the ICP-opgaaf side by side; a difference between them is
+// a letter. In this app the routes tie the two together with one line — `intraEuOmzet:
+// icp.totalExBtw` in /api/aangifte and in the closing package — and until now nothing tested that
+// tie. icp.test.ts fed buildIcp real invoices and checked its total; aangifte.test.ts fed
+// buildAangifte invented numbers (1200, 3000, 9999, -500) and checked where they landed. Both stay
+// green if buildIcp ever changes what it returns — a sign convention, a rounding, an inclusion —
+// while the two figures the tax office compares quietly stop matching.
+//
+// So this drives the REAL chain: invoices → buildIcp → buildAangifte → rubriek 3b.
+console.log("\n— rubriek 3b and the ICP-opgaaf must agree, or say they do not —");
+{
+  const compl = () => ({
+    turnoverDays: 90, quarterDays: 90, incomingInvoiceCount: 1,
+    outgoingInvoiceCount: 1, hasEuPurchase: false, scheme: "factuur" as const,
+  });
+  // The 0%-bucket is what 3b can draw from — 1e holds intra-EU supplies until they are moved.
+  const chain = (invoices: IcpInvoice[], zeroRateOmzet: number) => {
+    const icp = buildIcp({ invoices });
+    const a = buildAangifte(
+      { salesByRate: [{ rate: 0, omzet: zeroRateOmzet, btw: 0 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: icp.totalExBtw },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      compl() as any,
+      "Q1 2026",
+    );
+    return {
+      icpTotal: icp.totalExBtw,
+      problems: icp.problems.map((p) => p.kind),
+      r3b: a.rows.find((r) => r.code === "3b")?.omzet ?? 0,
+      flagged: a.notes.some((n) => n.includes("rubriek 3b kon er")),
+    };
+  };
+
+  const ordinary = chain([inv()], 1000);
+  check("an ordinary EU sale lands in 3b unchanged", near(ordinary.r3b, ordinary.icpTotal) && !ordinary.flagged);
+
+  // A creditnota for a sale invoiced in an EARLIER quarter: the opgaaf is negative, and 3b has to
+  // be too. Clamping it to zero would leave the credit in 1e while the opgaaf beside it reports
+  // the minus — the two handed to the same accountant, contradicting each other.
+  const credit = chain([inv({ invoiceNumber: "CN-1", totalExBtw: -400 })], -400);
+  check("a negative quarter carries its minus into 3b", near(credit.r3b, -400) && near(credit.icpTotal, -400) && !credit.flagged);
+
+  // When 1e cannot hold the whole intra-EU figure the two genuinely disagree — and the concept must
+  // SAY so rather than quietly reporting the smaller number.
+  const capped = chain([inv()], 300);
+  check("a capped 3b is flagged, not silently smaller", near(capped.r3b, 300) && capped.icpTotal === 1000 && capped.flagged);
+
+  // BTW charged on an EU sale: it is not an ICP supply at all. Its turnover stays in 1a/1b where
+  // its BTW already is, so 3b must not claim it — and the problem must be raised.
+  const charged = chain([inv({ btwAmount: 210 })], 0);
+  check("btw charged on an EU sale keeps it out of 3b", charged.icpTotal === 0 && charged.r3b === 0 && charged.problems.includes("btw_charged"));
+
+  // A malformed EU vat number: reported as a problem, and the turnover stays 0%-rated in 1e rather
+  // than being put on an opgaaf that would be rejected.
+  const suspect = chain([inv({ clientVatNumber: "DE1" })], 1000);
+  check("a suspect vat number is a problem, not an opgaaf line", suspect.icpTotal === 0 && suspect.r3b === 0 && suspect.problems.includes("suspect_vat"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

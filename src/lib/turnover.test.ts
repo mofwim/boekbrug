@@ -5,6 +5,7 @@ import {
   parsePosSettlement,
   sumPosSettlements,
   reconcileDay,
+  checkTurnoverArithmetic,
   type DailyTurnover,
 } from "./turnover";
 
@@ -107,6 +108,56 @@ check("impossible calendar date (Feb 31) is rejected → null",
   parsePosSettlement("x DAT. 20260231/1 AANT. 3").date === null);
 check("a genuine end-of-Feb date still parses", parsePosSettlement("x DAT. 20260228/1 AANT. 3").date === "2026-02-28");
 check("Apr 31 (30-day month) rejected", parsePosSettlement("x DAT. 20260431/1 AANT. 3").date === null);
+
+
+// ── [TURNOVER-ARITHMETIC] can this day be true at all? ────────────────────────
+// daily_turnover is BTW-authoritative — /api/aangifte reads btw_9 and btw_21 out of it and puts
+// them in rubriek 1a/1b as tax OWED — and /api/turnover/import wrote them from the request body
+// with nothing but a numeric coercion. It checked the date three ways and never looked at the money.
+console.log("\n— a day's figures have to be possible —");
+{
+  const d = (over: Partial<DailyTurnover> = {}): DailyTurnover => ({
+    turnover_date: "2026-03-12",
+    base_0: 0, base_9: 1000, base_21: 500, btw_9: 90, btw_21: 105,
+    total_incl: 1695, pin_amount: null, cash_amount: null, other_amount: null, ...over,
+  });
+
+  check("a correct day passes silently", checkTurnoverArithmetic(d()).length === 0);
+
+  // The whole reason this exists: a rate that cannot be. 52% on a 9% base.
+  const impossible = checkTurnoverArithmetic(d({ base_9: 100, btw_9: 52, base_21: 0, btw_21: 0, total_incl: 152 }));
+  check("an impossible rate is caught", impossible.some((b) => b.kind === "rate_9"));
+
+  // Swapped rates — the misread a mixed-rate Z-report actually produces.
+  check("9% charged at 21% is caught",
+    checkTurnoverArithmetic(d({ btw_9: 210 })).some((b) => b.kind === "rate_9"));
+
+  // BTW with no turnover behind it.
+  const noBase = checkTurnoverArithmetic(d({ base_9: 0, btw_9: 90, base_21: 0, btw_21: 0, total_incl: 90 }));
+  check("btw without a base is caught", noBase.some((b) => b.kind === "rate_9"));
+  check("and says so in words the owner reads", /geen omzet/.test(noBase.find((b) => b.kind === "rate_9")!.note));
+
+  // A till rounds per line, hundreds of times a day. That drift must never be flagged — a gate
+  // that rejects honest work gets switched off.
+  check("per-line rounding drift is not a break", checkTurnoverArithmetic(d({ btw_9: 90.31, total_incl: 1695.31 })).length === 0);
+  check("a whole euro off on a 90-euro btw IS a break",
+    checkTurnoverArithmetic(d({ btw_9: 96 })).some((b) => b.kind === "rate_9"));
+
+  // A correction day: more refunds than sales. Negative throughout, and entirely legitimate.
+  check("a negative correction day is not a break",
+    checkTurnoverArithmetic(d({ base_9: -200, btw_9: -18, base_21: 0, btw_21: 0, total_incl: -218 })).length === 0);
+  // But a negative base carrying a POSITIVE btw is not something a till produces.
+  check("a negative base with positive btw is caught",
+    checkTurnoverArithmetic(d({ base_9: -200, btw_9: 18, base_21: 0, btw_21: 0, total_incl: -182 })).some((b) => b.kind === "rate_9"));
+
+  // The identity, on the write path. reconcileDay checks it too, but that runs on the SCREEN and
+  // needs bank and cash figures as inputs — it cannot be a gate on the write.
+  check("omzet + btw ≠ totaal is caught", checkTurnoverArithmetic(d({ total_incl: 2000 })).some((b) => b.kind === "total"));
+  check("a missing printed total is not a break", checkTurnoverArithmetic(d({ total_incl: null })).length === 0);
+
+  // 0% turnover carries no btw and must not be compared against a rate.
+  check("a 0%-only day passes", checkTurnoverArithmetic(d({ base_0: 500, base_9: 0, base_21: 0, btw_9: 0, btw_21: 0, total_incl: 500 })).length === 0);
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1547,7 +1547,11 @@ async function handleDailySalesPdf(
   if (!booked.ok) {
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
-      message: "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+      // [TURNOVER-ARITHMETIC] Two different failures, two different sentences. "Opslaan is mislukt"
+      // sends the owner to retry an import that will fail again in exactly the same way.
+      message: booked.rejected.length
+        ? `De bedragen van deze dag kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en voer de dag zelf in.`
+        : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
     })
   }
   await logAuditAction({
@@ -1618,7 +1622,11 @@ async function handleSpreadsheet(
       // Never claim a booking that didn't happen. Store stays; tell the owner to retry via Dagomzet.
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
-        message: "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+        // [TURNOVER-ARITHMETIC] As above: refused figures are not a failed save, and telling the
+        // owner to retry would send them into the same refusal.
+        message: booked.rejected.length
+          ? `De bedragen van ${booked.rejected.length === 1 ? "één dag" : `${booked.rejected.length} dagen`} kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en importeer opnieuw.`
+          : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
       })
     }
     await logAuditAction({
