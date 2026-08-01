@@ -2,7 +2,7 @@
 // The headline case is PINNED to a REAL accountant filing: Kiwi Food Market, Btw-aangifte
 // 1e kwartaal 2026. If the mapper reproduces that form line-for-line from the same
 // numbers, the concept is trustworthy.
-import { buildAangifte, buildAangifteCsv, type AangifteInput, type AangifteCompleteness } from "./aangifte";
+import { buildAangifte, buildAangifteCsv, privegebruikNote, type AangifteInput, type AangifteCompleteness } from "./aangifte";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -233,6 +233,39 @@ console.log("\n— [COUNT-BASIS] de tellingen beschrijven de set waar de cijfers
   const geen = buildAangifte(input, compl({ outgoingInvoiceCount: 0, scheme: "kas" }), "Q1 2026");
   check("geen verkoopfacturen: geen losse bijzin, in geen van beide stelsels",
     /uit 90 dag\(en\) dagomzet\./.test(note(geen, /Verkoop-BTW/)));
+}
+
+console.log("\n— [PRIVEGEBRUIK] rubriek 1d: de correctie die deze app niet kan berekenen —");
+{
+  // Leaving 1d out means declaring too LITTLE BTW. That surfaces as a naheffing with
+  // belastingrente months later, never as an error on screen. The app cannot compute it (it does
+  // not know a vehicle's catalogue value or anyone's private kilometres), so the only honest move
+  // is to say so — while the owner can still act on it.
+  const q4 = privegebruikNote(4);
+  check("Q4 says the correction belongs in THIS filing", /DEZE aangifte/.test(q4));
+  check("Q4 names the rubriek", /1d/.test(q4));
+  check("Q4 never implies the app computed it", /NIET berekend/.test(q4));
+
+  // The whole reason this is said before Q4: a kilometre administration cannot be reconstructed
+  // in January. A note that appears only in the last quarter arrives too late to act on.
+  let earlyOk = true, earlyActionable = true;
+  for (const q of [1, 2, 3] as const) {
+    const n = privegebruikNote(q);
+    if (!/LAATSTE aangifte van het jaar/.test(n)) earlyOk = false;
+    if (!/NU bijhoudt|kilometeradministratie/.test(n)) earlyActionable = false;
+  }
+  check("Q1-Q3 say when the correction lands", earlyOk);
+  check("Q1-Q3 say what to do TODAY — the records, not the filing", earlyActionable);
+
+  // Same discipline as rubriek 4b: state what is NOT computed rather than guessing. A fabricated
+  // 1d would be worse than none — it would look settled.
+  let noAmount = true, allPresent = true;
+  for (const q of [1, 2, 3, 4] as const) {
+    if (/€/.test(privegebruikNote(q))) noAmount = false;
+    if (privegebruikNote(q).length < 40) allPresent = false;
+  }
+  check("the note never carries an amount", noAmount);
+  check("every quarter gets a note — the rubriek exists all year", allPresent);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

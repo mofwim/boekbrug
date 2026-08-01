@@ -222,6 +222,39 @@ export function buildAangifte(
  * it travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in the same
  * ZIP, so every figure is traceable to its source. Pure (semicolon CSV, Excel-NL).
  */
+// [PRIVEGEBRUIK] Rubriek 1d — the correction this app cannot compute, and never mentioned.
+//
+// WHAT IS MISSING
+// BTW is owed on the PRIVATE use of business goods and services: a van also driven privately,
+// a phone or internet subscription used at home, electricity, goods taken from stock. That
+// correction belongs in rubriek 1d, in the LAST aangifte of the year. This app builds
+// 1a/1b/1c/1e/3b and has never had a 1d — not in the concept, not in a note, nowhere.
+//
+// WHY IT IS A NOTE AND NOT A FIGURE
+// The inputs simply are not here: the catalogue value of a vehicle, the private kilometres, the
+// private share of a subscription. Computing 1d would mean inventing all three. Same rule as
+// rubriek 4b (EU purchases) right above: say plainly that it is not computed, never guess.
+//
+// WHY IT IS SAID BEFORE Q4 AS WELL
+// A note that only appears in the last quarter arrives too late to act on. The correction can
+// only be substantiated with records kept DURING the year — a kilometre administration cannot
+// be reconstructed in January. So Q1–Q3 get the one thing still actionable then (keep the
+// records), and Q4 gets the actual instruction (it belongs in THIS filing).
+//
+// The failure direction matters: leaving 1d out means declaring too LITTLE BTW, which surfaces
+// as a naheffing with belastingrente — the owner never finds out on their own. That is exactly
+// the kind of silence this product refuses.
+export function privegebruikNote(quarter: 1 | 2 | 3 | 4): string {
+  return quarter === 4
+    ? "Privégebruik (rubriek 1d) hoort in DEZE aangifte — de laatste van het jaar — en wordt hier " +
+      "NIET berekend. Gebruik je zakelijke spullen ook privé (auto, telefoon, internet, energie, " +
+      "goederen uit voorraad), dan is daarover BTW verschuldigd. Je boekhouder bepaalt het bedrag."
+    : "Denk aan het privégebruik (rubriek 1d): de BTW-correctie over zakelijk gebruik dat ook privé " +
+      "is (auto, telefoon, internet, energie) komt in de LAATSTE aangifte van het jaar. Die wordt " +
+      "hier niet berekend en kan alleen worden onderbouwd met gegevens die je NU bijhoudt — " +
+      "bijvoorbeeld een kilometeradministratie.";
+}
+
 export function buildAangifteCsv(a: ConceptAangifte): string {
   const EUR = (n: number) => n.toFixed(2).replace(".", ",");
   const esc = (v: string | number) => {
