@@ -21,14 +21,6 @@ const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const RATES = [21, 9, 0]
 
-// [VAK] Wat /api/articles/vak teruggeeft. Alleen tonen — de regels zelf komen van de server, zodat
-// de tarieven op één plek staan (src/lib/vaksjablonen.ts) en niet ook nog eens hier.
-type VakOptie = {
-  key: string
-  naam: string
-  regels: Array<{ description: string; unit: string | null; btw_rate: number; let_op: string | null }>
-}
-
 type Form = { code: string; description: string; unit_price: string; btw_rate: number; unit: string }
 const EMPTY: Form = { code: '', description: '', unit_price: '', btw_rate: 21, unit: '' }
 
@@ -45,10 +37,6 @@ export default function ArtikelenClient() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<Form>(EMPTY)
   const [saving, setSaving] = useState(false)
-  // [VAK] De startbundel: kies je vak en krijg de regels van dat vak, met het juiste BTW-tarief.
-  const [vakOpen, setVakOpen] = useState(false)
-  const [vakken, setVakken] = useState<VakOptie[]>([])
-  const [vakBezig, setVakBezig] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
@@ -107,39 +95,6 @@ export default function ArtikelenClient() {
     await load()
   }
 
-  async function openVakken() {
-    setVakOpen(true)
-    if (vakken.length) return
-    try {
-      const res = await fetch('/api/articles/vak')
-      const json = await res.json().catch(() => ({}))
-      if (res.ok && json?.vakken) setVakken(json.vakken)
-    } catch { setToast('Kon de vaklijst niet laden — probeer opnieuw.') }
-  }
-
-  async function voegVakToe(key: string) {
-    setVakBezig(key)
-    try {
-      const res = await fetch('/api/articles/vak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vak: key }),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) { setToast(json?.error || 'Toevoegen mislukt — probeer opnieuw.'); return }
-      // Eerlijk zijn over wat er gebeurde: 0 toegevoegd is geen fout, het betekent dat je ze al
-      // had. Een "gelukt!" zonder getal laat iemand zoeken naar regels die er al stonden.
-      setToast(
-        json.toegevoegd === 0
-          ? 'Je had deze regels al — er is niets veranderd.'
-          : `${json.toegevoegd} regel${json.toegevoegd === 1 ? '' : 's'} toegevoegd${json.bestondAl ? ` (${json.bestondAl} had je al)` : ''}`,
-      )
-      setVakOpen(false)
-      await load()
-    } catch { setToast('Toevoegen mislukt — probeer opnieuw.') }
-    finally { setVakBezig(null) }
-  }
-
   async function remove(id: string) {
     const ok = await dialog.confirm({
       title: 'Dit artikel verwijderen?',
@@ -167,42 +122,6 @@ export default function ArtikelenClient() {
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>Je vaste factuurregels — één keer opslaan, steeds hergebruiken.</p>
         </header>
 
-        {/* [VAK] De catalogus begint leeg, en dat is precies waar hij het minst helpt. Deze knop
-            vult hem met de regels van jouw vak — met het JUISTE BTW-tarief, en met de voorwaarde
-            erbij waar 9% ergens van afhangt. Nooit met een prijs: wat het kost bepaal jij. */}
-        <div style={{ marginBottom: 16 }}>
-          {!vakOpen ? (
-            <button onClick={openVakken}
-              style={{ border: `1px solid ${M3.outline}`, background: M3.surface, color: M3.onSurface, borderRadius: R.full, padding: '9px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-              Regels van mijn vak toevoegen
-            </button>
-          ) : (
-            <div style={{ background: M3.surface, border: `1px solid ${M3.outline}`, borderRadius: R.lg, padding: 16, boxShadow: EL1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
-                <p style={{ fontSize: 14, color: M3.neutral, margin: 0, lineHeight: 1.55 }}>
-                  Kies je vak. Je krijgt de regels die daarbij horen, met het BTW-tarief dat erop hoort —
-                  en een waarschuwing waar 9% van een voorwaarde afhangt. <strong>Zonder prijzen</strong>:
-                  wat het kost bepaal je zelf. Wat je al hebt blijft ongewijzigd.
-                </p>
-                <button onClick={() => setVakOpen(false)} aria-label="Sluiten"
-                  style={{ border: 'none', background: 'transparent', color: M3.neutral, cursor: 'pointer', fontSize: 18, lineHeight: 1, fontFamily: FONT }}>×</button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {vakken.map(v => (
-                  <button key={v.key} onClick={() => voegVakToe(v.key)} disabled={vakBezig !== null}
-                    title={v.regels.map(r => `${r.description} — ${r.btw_rate}%`).join('\n')}
-                    style={{ border: `1px solid ${M3.outline}`, background: vakBezig === v.key ? M3.surfaceVariant : M3.surface, color: M3.onSurface, borderRadius: R.full, padding: '8px 16px', fontSize: 13.5, cursor: vakBezig ? 'default' : 'pointer', fontFamily: FONT }}>
-                    {vakBezig === v.key ? 'Bezig…' : v.naam}
-                    <span style={{ color: M3.neutral, marginLeft: 6 }}>({v.regels.length})</span>
-                  </button>
-                ))}
-                {vakken.length === 0 && (
-                  <span style={{ fontSize: 13.5, color: M3.neutral }}>Laden…</span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           {/* [SMART-FILTER] Zoekveld met label voor schermlezers en een wis-knop, net als bij facturen/categoriseren. */}
