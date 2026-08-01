@@ -295,7 +295,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
                 onClick={() => router.push('/dashboard/werkplek')}
               />
-              {/* [NAMENS] Team — wie mag er onder JOUW BTW-nummer factureren.
+              {/* [ACTING-FOR] Team — wie mag er onder JOUW BTW-nummer factureren.
                   Stond alleen in Instellingen, en dat is te ver weg voor de zwaarste bevoegdheid
                   die een eigenaar kan weggeven: een medewerker geeft facturen uit die bij een
                   controle niet van die van de eigenaar zijn te onderscheiden. Wat je uitdeelt en

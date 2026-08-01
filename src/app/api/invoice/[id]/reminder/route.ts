@@ -1,5 +1,5 @@
 // src/app/api/invoice/[id]/reminder/route.ts
-// [NAMENS] Eén herinnering, met de hand verstuurd.
+// [ACTING-FOR] Eén herinnering, met de hand verstuurd.
 //
 // WAAROM DIT ER MOET ZIJN
 // Iemand die facturen maakt, maakt ze om betaald te worden. Zonder deze knop kan een verkoper
@@ -9,7 +9,7 @@
 // WAAROM HIJ STRENG IS
 // Aan de andere kant zit een KLANT van de ondernemer, geen gebruiker van ons. Een herinnering te
 // veel kost hem een relatie die hij niet zelf heeft beschadigd. Alle regels staan puur en getest
-// in verkoop-overzicht.ts (magHerinneren); hier wordt er alleen naar geluisterd.
+// in sales-overview.ts (canRemind); hier wordt er alleen naar geluisterd.
 //
 // DRIE DINGEN DIE DEZE ROUTE BEWUST NIET DOET
 //  · geen WIK-aanmaning. Dat is de wettelijke stap die incassokosten mogelijk maakt (art. 6:96
@@ -26,8 +26,8 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendInvoiceReminder } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, isNamens, magFactuur } from '@/lib/acting-for'
-import { magHerinneren, volgendeHandmatigeOffset, openstaandBedrag } from '@/lib/verkoop-overzicht'
+import { invoiceOwnerId, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
+import { canRemind, nextManualOffset, outstandingAmount } from '@/lib/sales-overview'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     })
     if (!limit.allowed) return rateLimitResponse(limit)
 
-    const ownerId = factuurEigenaar(acting)
+    const ownerId = invoiceOwnerId(acting)
     const supabase = await createServerSupabaseClient()
     const pipeline = createPipelineClient()
 
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     // Tweede slot naast RLS — dit is het moment waarop een geraden id binnenkomt, en het gevolg
     // is een mail naar de klant van iemand anders.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (!magFactuur(acting, inv as any)) {
+    if (!canAccessInvoice(acting, inv as any)) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const rijen: Array<{ day_offset: number; sent_at: string; status: string }> = eerder ?? []
     const geslaagd = rijen.filter((r) => r.status !== 'failed')
 
-    const oordeel = magHerinneren(
+    const oordeel = canRemind(
       {
         id: inv.id,
         invoice_number: inv.invoice_number,
@@ -87,18 +87,18 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         amount_paid: (inv as any).amount_paid ?? 0,
         status: inv.status,
-        laatste_herinnering: geslaagd[0]?.sent_at ?? null,
-        herinneringen: geslaagd.length,
+        last_reminder_at: geslaagd[0]?.sent_at ?? null,
+        reminder_count: geslaagd.length,
       },
       Date.now(),
     )
-    if (!oordeel.mag) return NextResponse.json({ error: oordeel.reden }, { status: 409 })
+    if (!oordeel.allowed) return NextResponse.json({ error: oordeel.reason }, { status: 409 })
 
     // ── Claim vóór de mail ──────────────────────────────────────────────────
     // Zelfde volgorde als bij SnelStart: het onomkeerbare (een mail bij een klant) gebeurt pas
     // nadat het spoor vaststaat. Andersom kan een dubbele tik twee mails opleveren waarvan er
     // één nergens staat.
-    const offset = volgendeHandmatigeOffset(rijen.map((r) => r.day_offset))
+    const offset = nextManualOffset(rijen.map((r) => r.day_offset))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: claim, error: claimErr } = await (pipeline as any)
       .from('invoice_reminders')
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     if (claimErr || !claim) {
       // Kon het spoor niet worden vastgelegd, dan gaat er geen mail. Zie de kop.
-      console.error('[NAMENS] herinnering claimen mislukt', { claimErr, id })
+      console.error('[ACTING-FOR] herinnering claimen mislukt', { claimErr, id })
       return NextResponse.json({ error: 'Herinneren lukte niet — probeer het zo nog eens' }, { status: 503 })
     }
 
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         zzperName: eigenaarProfiel?.company_name || eigenaarProfiel?.full_name || 'BoekBrug',
         invoiceNumber: inv.invoice_number?.trim() || '—',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        openstaand: openstaandBedrag(inv as any),
+        openstaand: outstandingAmount(inv as any),
         dueDate: inv.due_date as string,
         // Nooit 'firm' en nooit een WIK-aanmaning vanaf deze knop — zie de kop.
         firm: false,
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       // wordt geteld.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (pipeline as any).from('invoice_reminders').update({ status: 'failed' }).eq('id', claim.id)
-      console.error('[NAMENS] herinnering versturen mislukt', { id, error: String(e) })
+      console.error('[ACTING-FOR] herinnering versturen mislukt', { id, error: String(e) })
       return NextResponse.json({ error: 'De herinnering kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
     }
 
@@ -153,13 +153,13 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       action: 'invoice.reminder_sent',
       entityType: 'invoice',
       entityId: id,
-      newValue: { to: inv.client_email, offset, namens: isNamens(acting) ? ownerId : null },
+      newValue: { to: inv.client_email, offset, namens: isActingForOther(acting) ? ownerId : null },
       ipAddress: getClientIP(request),
     }).catch(() => {})
 
     return NextResponse.json({ ok: true, verstuurd: geslaagd.length + 1 })
   } catch (e) {
-    console.error('[NAMENS] /api/invoice/[id]/reminder', e)
+    console.error('[ACTING-FOR] /api/invoice/[id]/reminder', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }

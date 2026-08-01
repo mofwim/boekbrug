@@ -1,5 +1,5 @@
 // src/app/api/invoice/draft/route.ts
-// [NAMENS] De ENIGE plek waar een conceptfactuur ontstaat.
+// [ACTING-FOR] De ENIGE plek waar een conceptfactuur ontstaat.
 //
 // WAAROM DEZE ROUTE BESTAAT
 // Tot nu toe schreef de browser de factuur zelf: `supabase.from('invoices').insert({ sender_id:
@@ -13,22 +13,22 @@
 //
 // WAT ER VOOR EEN EIGENAAR VERANDERT: NIETS.
 // Voor iemand zonder koppeling is ownerId gelijk aan zijn eigen id, en de rekensom in
-// factuur-totalen.ts is letterlijk dezelfde als die in de pagina stond — inclusief het niet
+// draft-totals.ts is letterlijk dezelfde als die in de pagina stond — inclusief het niet
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, factuurGemaaktDoor, isNamens } from '@/lib/acting-for'
-import { berekenTotalen, controleerRegels } from '@/lib/factuur-totalen'
-// [EENHEID] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
+import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
+import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
+// [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
 // gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
-import { isBekendeEenheid } from '@/lib/eenheden'
-// [NAMENS] created_by bestaat pas ná company_members_sales_role.sql. Zonder deze terugval faalt
+import { isKnownUnit } from '@/lib/units'
+// [ACTING-FOR] created_by bestaat pas ná company_members_sales_role.sql. Zonder deze terugval faalt
 // de INSERT hieronder met PGRST204 op een installatie waar de migratie nog open staat — en dan
 // kan er GEEN FACTUUR MEER WORDEN AANGEMAAKT. Zie de kop van created-by.ts.
-import { schrijfMetSpoor } from '@/lib/created-by'
+import { writeWithTrail } from '@/lib/created-by'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +44,7 @@ type Soort = 'factuur' | 'creditnota' | 'offerte'
  */
 function schoonEenheid(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : ''
-  return s && isBekendeEenheid(s) ? s : null
+  return s && isKnownUnit(s) ? s : null
 }
 
 const DB_TYPE: Record<Soort, string> = {
@@ -75,20 +75,20 @@ export async function POST(request: NextRequest) {
       body.invoiceType === 'creditnota' ? 'creditnota' : body.invoiceType === 'offerte' ? 'offerte' : 'factuur'
 
     // ── De regels, gecontroleerd vóór ze de database raken ───────────────────
-    const gecontroleerd = controleerRegels(body.lines)
+    const gecontroleerd = validateDraftLines(body.lines)
     if (!gecontroleerd.ok) {
-      return NextResponse.json({ error: 'De regels kloppen niet', fouten: gecontroleerd.fouten }, { status: 400 })
+      return NextResponse.json({ error: 'De regels kloppen niet', fouten: gecontroleerd.errors }, { status: 400 })
     }
     const sign = soort === 'creditnota' ? -1 : 1
-    const totalen = berekenTotalen(gecontroleerd.regels, sign)
+    const totalen = computeDraftTotals(gecontroleerd.lines, sign)
 
     const klantNaam = typeof body.client_name === 'string' ? body.client_name.trim() : ''
     if (!klantNaam) {
       return NextResponse.json({ error: 'Een factuur zonder klant kan niet' }, { status: 400 })
     }
 
-    const ownerId = factuurEigenaar(acting)
-    const createdBy = factuurGemaaktDoor(acting)
+    const ownerId = invoiceOwnerId(acting)
+    const createdBy = invoiceCreatedBy(acting)
 
     // service_role: de browser mag sender_id en created_by niet kiezen. Dat is het hele punt van
     // deze route — RLS zou een INSERT met een zelfgekozen sender_id namelijk gewoon toestaan als
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       if (!bestaand) clientId = null
     }
     if (!clientId) {
-      const { data: nieuw } = await schrijfMetSpoor<{ id: string }>(
+      const { data: nieuw } = await writeWithTrail<{ id: string }>(
         (spoor) => pipeline
           .from('clients')
           .insert({
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── De factuur ───────────────────────────────────────────────────────────
-    const { data: factuur, error: insertErr } = await schrijfMetSpoor<{ id: string }>(
+    const { data: factuur, error: insertErr } = await writeWithTrail<{ id: string }>(
       (spoor) => pipeline
       .from('invoices')
       .insert({
@@ -165,20 +165,20 @@ export async function POST(request: NextRequest) {
     )
 
     if (insertErr || !factuur) {
-      console.error('[NAMENS] concept aanmaken mislukt', { insertErr, ownerId, namens: isNamens(acting) })
+      console.error('[ACTING-FOR] concept aanmaken mislukt', { insertErr, ownerId, namens: isActingForOther(acting) })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
     }
 
     // ── De regels ────────────────────────────────────────────────────────────
     const bron = body.lines as Array<Record<string, unknown>>
-    // [EENHEID] `unit` komt uit migratie invoice_line_unit.sql en gaat via dezelfde terugval
+    // [UNIT] `unit` komt uit migratie invoice_line_unit.sql en gaat via dezelfde terugval
     // als created_by: bestaat de kolom nog niet, dan worden de regels ZONDER eenheid geschreven
     // in plaats van dat het aanmaken van de factuur helemaal faalt (PGRST204). Wat je dan mist is
     // de juiste eenheidscode in de e-factuur, niet de factuur zelf.
-    const { error: lineErr } = await schrijfMetSpoor(
+    const { error: lineErr } = await writeWithTrail(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (spoor) => (pipeline as any).from('invoice_lines').insert(
-        gecontroleerd.regels.map((l, i) => ({
+        gecontroleerd.lines.map((l, i) => ({
           invoice_id: factuur.id,
           description: String(bron[i]?.description ?? '').trim(),
           quantity: sign * l.quantity,
@@ -198,13 +198,13 @@ export async function POST(request: NextRequest) {
       // Een factuurkop zonder regels is erger dan geen factuur: hij telt mee in overzichten en
       // is leeg als je hem opent. Terugdraaien, en eerlijk melden dat het niet lukte.
       await pipeline.from('invoices').delete().eq('id', factuur.id)
-      console.error('[NAMENS] regels wegschrijven mislukt — concept teruggedraaid', { lineErr })
+      console.error('[ACTING-FOR] regels wegschrijven mislukt — concept teruggedraaid', { lineErr })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
     }
 
     return NextResponse.json({ ok: true, invoiceId: factuur.id, clientId })
   } catch (e) {
-    console.error('[NAMENS] /api/invoice/draft', e)
+    console.error('[ACTING-FOR] /api/invoice/draft', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }

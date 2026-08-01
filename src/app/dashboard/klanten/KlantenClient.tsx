@@ -107,7 +107,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     if (!form.name.trim()) { setError('Naam is verplicht'); return }
     setSaving(true); setError(null)
 
-    // [NAMENS] Beide schrijfacties lopen nu via de server.
+    // [ACTING-FOR] Beide schrijfacties lopen nu via de server.
     //
     // De insert zette `user_id: profile.id` — de INGELOGDE mens. Dat klopt zolang dat de
     // eigenaar is, en is fout zodra een verkoopmedewerker dit scherm gebruikt: zijn klant zou

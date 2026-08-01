@@ -91,7 +91,7 @@ type InvoiceLine = {
   quantity: number
   unit_price: number
   btw_rate: number
-  // [EENHEID] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
+  // [UNIT] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
   // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
   // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
   unit?: string | null
@@ -641,7 +641,7 @@ function NewInvoicePageContent() {
     setShowDropdown(false)
   }
 
-  // [NAMENS] saveNewClient() stond hier. Hij schreef de inline ingetikte klant weg met
+  // [ACTING-FOR] saveNewClient() stond hier. Hij schreef de inline ingetikte klant weg met
   // user_id = de INGELOGDE mens — wat klopt zolang dat de eigenaar is, en fout is zodra een
   // verkoopmedewerker het scherm gebruikt. /api/invoice/draft maakt de klant nu aan onder de
   // EIGENAAR, met created_by als spoor, en geeft het verse id terug (draftJson.clientId) —
@@ -720,7 +720,7 @@ function NewInvoicePageContent() {
     fetch('/api/articles').then(r => r.ok ? r.json() : null).then(j => { if (j?.articles) setCatalog(j.articles) }).catch(() => {})
   }, [])
   function pickArticle(i: number, a: Article) {
-    // [EENHEID] De eenheid komt mee uit de catalogus. Zonder deze regel viel hij eraf op precies
+    // [UNIT] De eenheid komt mee uit de catalogus. Zonder deze regel viel hij eraf op precies
     // het moment dat een artikel een factuurregel werd — en dan stond er in de e-factuur "2 stuks"
     // waar "2 uur" hoorde te staan.
     setLines(prev => prev.map((l, idx) => idx === i ? { ...l, description: a.description, unit_price: a.unit_price, btw_rate: a.btw_rate, unit: a.unit ?? null } : l))
@@ -774,8 +774,8 @@ function NewInvoicePageContent() {
   const btwAmount = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
   const totalInc  = totalEx + btwAmount
 
-  // [NAMENS] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
-  // Die som woont nu op de server, in src/lib/factuur-totalen.ts — letterlijk dezelfde formule,
+  // [ACTING-FOR] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
+  // Die som woont nu op de server, in src/lib/draft-totals.ts — letterlijk dezelfde formule,
   // inclusief het niet afronden, zodat er voor een bestaande eigenaar geen cent verandert. De
   // reden voor de verhuizing is niet netheid: zodra een tweede mens facturen mag maken onder
   // hetzelfde BTW-nummer, hoort de server te bepalen wat er in de boeken komt, niet de pagina.
@@ -804,7 +804,7 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    // [NAMENS] Het concept + de regels worden door de SERVER geschreven, niet meer hier.
+    // [ACTING-FOR] Het concept + de regels worden door de SERVER geschreven, niet meer hier.
     // Waarom: sender_id was `user.id` — de ingelogde mens. Voor een verkoopmedewerker is dat
     // NIET de eigenaar van de boekhouding, en zou hij onder zijn eigen id boeken dan liepen er
     // twee nummerreeksen onder één BTW-nummer (Art. 35: doorlopend, zonder gaten, forward-only).
@@ -947,7 +947,7 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    // [NAMENS] Eén serverroute schrijft nu de klant, de factuurkop én de regels.
+    // [ACTING-FOR] Eén serverroute schrijft nu de klant, de factuurkop én de regels.
     //
     // Wat hier stond was: saveNewClient() met user_id = user.id, daarna een INSERT met
     // sender_id = user.id en de totalen die deze pagina had uitgerekend. Drie browser-
@@ -982,7 +982,7 @@ function NewInvoicePageContent() {
         client_btw_number: clientBtw,
         // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
         replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
-        // Het teken (credit = negatief) zet de server, op één plek — zie factuur-totalen.ts.
+        // Het teken (credit = negatief) zet de server, op één plek — zie draft-totals.ts.
         lines: lines.map(l => ({
           description: l.description,
           quantity: l.quantity,

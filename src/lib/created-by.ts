@@ -1,106 +1,106 @@
 // src/lib/created-by.ts
-// [NAMENS] Schrijven en lezen van `created_by` op een database die de kolom misschien nog NIET heeft.
+// [ACTING-FOR] Writing and reading `created_by` on a database that may NOT have the column yet.
 // Run: npx tsx --test src/lib/created-by.test.ts
 //
-// ═══ DE FOUT DIE DIT BESTAND REPAREERT ═══
+// ═══ THE BUG THIS FILE REPAIRS ═══
 //
-// company_members_sales_role.sql voegt `created_by` toe aan invoices en clients. De code die die
-// kolom gebruikt stond al op main — met een `as any` erbij, want de gegenereerde types kennen hem
-// nog niet.
+// company_members_sales_role.sql adds `created_by` to invoices and clients. The code using that
+// column was already on main — with an `as any` next to it, because the generated types do not
+// know it yet.
 //
-// Die `as any` zwijgt de TYPECONTROLE, niet de DATABASE. Op een installatie waar de migratie nog
-// niet is toegepast antwoordt PostgREST met PGRST204 ("Could not find the 'created_by' column")
-// en faalt het hele verzoek. Gevolg, met de migratie nog open:
+// That `as any` silences the TYPE CHECKER, not the DATABASE. On an installation where the
+// migration has not been applied, PostgREST answers with PGRST204 ("Could not find the
+// 'created_by' column") and the whole request fails. With the migration still open, that means:
 //
-//   · /api/invoice/draft      → EEN FACTUUR AANMAKEN LUKT NIET. Voor iedereen.
-//   · /api/clients            → een klant toevoegen lukt niet
-//   · /api/invoice/[id]       → een concept bewerken of verwijderen lukt niet
-//   · /api/invoice/duplicate  → dupliceren lukt niet
-//   · /api/invoice/creditnota → een creditnota maken lukt niet
+//   · /api/invoice/draft      → CREATING AN INVOICE FAILS. For everyone.
+//   · /api/clients            → adding a client fails
+//   · /api/invoice/[id]       → editing or deleting a draft fails
+//   · /api/invoice/duplicate  → duplicating fails
+//   · /api/invoice/creditnota → creating a credit note fails
 //
-// Dat is geen randgeval maar de kern van het product, en het zou pas zichtbaar zijn geworden bij
-// de eerste factuur ná de deploy. tsc was schoon, de tests waren groen en de build slaagde — geen
-// van drieën kijkt naar de echte database. Precies de vorm van fout waar dit product niet tegen kan.
+// That is not an edge case but the core of the product, and it would only have surfaced on the
+// first invoice AFTER the deploy. tsc was clean, the tests were green and the build succeeded —
+// none of the three looks at a real database. Exactly the shape of bug this product cannot take.
 //
-// ═══ DE OPLOSSING ═══
+// ═══ THE FIX ═══
 //
-// Niet cachen of vooraf peilen: een gecachte "de kolom bestaat niet" blijft hangen tot de
-// volgende deploy, dus dan werkt de migratie pas na een herstart. In plaats daarvan: PROBEER het
-// met het spoor, en val bij precies die twee foutcodes terug op zonder. Zodra de migratie draait,
-// slaagt de eerste poging en wordt de terugval nooit meer aangeraakt.
+// Do not cache and do not probe up front: a cached "the column does not exist" survives until
+// the next deploy, so the migration would only take effect after a restart. Instead: TRY it with
+// the trail, and fall back to without on exactly those two error codes. As soon as the migration
+// has run, the first attempt succeeds and the fallback is never touched again.
 //
-// Wat er verloren gaat zonder de kolom is het SPOOR (wie maakte deze rij), niet het werk. En dat
-// is de juiste kant om op te vallen: zonder migratie bestaat de verkoopmedewerker sowieso niet —
-// er is dan één mens per boekhouding, en die is per definitie de eigenaar.
+// What is lost without the column is the TRAIL (who created this row), not the work. And that is
+// the right way to fall: without the migration the sales member does not exist at all — there is
+// one human per administration, and that human is the owner by definition.
 
-/** De twee manieren waarop PostgREST/Postgres zegt: die kolom ken ik niet. */
-export const KOLOM_ONBEKEND = ["PGRST204", "42703"] as const;
+/** The two ways PostgREST/Postgres says: I do not know that column. */
+export const UNKNOWN_COLUMN_CODES = ["PGRST204", "42703"] as const;
 
 /**
- * Gaat deze fout over een kolom die (nog) niet bestaat?
+ * Is this error about a column that does not (yet) exist?
  *
- * De code is leidend. De boodschap wordt er alleen bij gebruikt als er géén code is — sommige
- * clients geven bij een schema-cache-misser alleen tekst terug.
+ * The code decides. The message is only consulted when there is NO code — some clients return
+ * only text on a schema-cache miss.
  */
-export function isKolomOnbekend(error: unknown, kolom = "created_by"): boolean {
+export function isUnknownColumn(error: unknown, column = "created_by"): boolean {
   if (!error || typeof error !== "object") return false;
   const e = error as { code?: unknown; message?: unknown };
   const code = typeof e.code === "string" ? e.code : "";
-  if ((KOLOM_ONBEKEND as readonly string[]).includes(code)) return true;
+  if ((UNKNOWN_COLUMN_CODES as readonly string[]).includes(code)) return true;
   if (code) return false;
   const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
-  return msg.includes(kolom.toLowerCase()) && (msg.includes("column") || msg.includes("kolom"));
+  return msg.includes(column.toLowerCase()) && (msg.includes("column") || msg.includes("kolom"));
 }
 
-export interface PogingResultaat<T> {
+export interface AttemptResult<T> {
   data: T | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   error: any;
 }
 
-export interface SpoorResultaat<T> extends PogingResultaat<T> {
-  /** false ⇒ de rij is geschreven ZONDER created_by, omdat de kolom nog niet bestaat. */
-  spoorGezet: boolean;
+export interface TrailResult<T> extends AttemptResult<T> {
+  /** false ⇒ the row was written WITHOUT created_by, because the column does not exist yet. */
+  trailWritten: boolean;
 }
 
 /**
- * Voert een schrijfactie uit MET het spoor, en zonder als de kolom nog niet bestaat.
+ * Runs a write WITH the trail, and without it when the column does not exist yet.
  *
- * `uitvoeren` krijgt de extra velden mee en moet de query bouwen én uitvoeren. Twee aanroepen in
- * het slechtste geval, één in het normale — en na de migratie altijd één.
+ * `run` receives the extra fields and must build AND execute the query. Two calls in the worst
+ * case, one in the normal case — and always one after the migration.
  */
-export async function schrijfMetSpoor<T>(
-  uitvoeren: (extra: Record<string, unknown>) => PromiseLike<PogingResultaat<T>>,
-  spoor: Record<string, unknown>,
-): Promise<SpoorResultaat<T>> {
-  const eerste = await uitvoeren(spoor);
-  if (!eerste.error || !isKolomOnbekend(eerste.error)) {
-    return { ...eerste, spoorGezet: true };
+export async function writeWithTrail<T>(
+  run: (extra: Record<string, unknown>) => PromiseLike<AttemptResult<T>>,
+  trail: Record<string, unknown>,
+): Promise<TrailResult<T>> {
+  const first = await run(trail);
+  if (!first.error || !isUnknownColumn(first.error)) {
+    return { ...first, trailWritten: true };
   }
-  // Luid, want dit hoort tijdelijk te zijn: het betekent dat de migratie nog open staat.
+  // Loud, because this is meant to be temporary: it means the migration is still open.
   console.warn(
-    "[NAMENS] created_by bestaat nog niet — rij geschreven zonder spoor. " +
-      "Pas supabase/migrations/company_members_sales_role.sql toe.",
-    { velden: Object.keys(spoor) },
+    "[ACTING-FOR] created_by does not exist yet — row written without a trail. " +
+      "Apply supabase/migrations/company_members_sales_role.sql.",
+    { fields: Object.keys(trail) },
   );
-  const tweede = await uitvoeren({});
-  return { ...tweede, spoorGezet: false };
+  const second = await run({});
+  return { ...second, trailWritten: false };
 }
 
 /**
- * Zelfde truc voor een SELECT: probeer de kolommenlijst mét het spoor, en zonder als hij ontbreekt.
+ * Same trick for a SELECT: try the column list WITH the trail, and without it when it is missing.
  *
- * `uitvoeren` krijgt de kolommenreeks die hij moet selecteren.
+ * `run` receives the column string it should select.
  */
-export async function leesMetSpoor<T>(
-  uitvoeren: (kolommen: string) => PromiseLike<PogingResultaat<T>>,
-  kolommenMet: string,
-  kolommenZonder: string,
-): Promise<SpoorResultaat<T>> {
-  const eerste = await uitvoeren(kolommenMet);
-  if (!eerste.error || !isKolomOnbekend(eerste.error)) {
-    return { ...eerste, spoorGezet: true };
+export async function readWithTrail<T>(
+  run: (columns: string) => PromiseLike<AttemptResult<T>>,
+  columnsWithTrail: string,
+  columnsWithoutTrail: string,
+): Promise<TrailResult<T>> {
+  const first = await run(columnsWithTrail);
+  if (!first.error || !isUnknownColumn(first.error)) {
+    return { ...first, trailWritten: true };
   }
-  const tweede = await uitvoeren(kolommenZonder);
-  return { ...tweede, spoorGezet: false };
+  const second = await run(columnsWithoutTrail);
+  return { ...second, trailWritten: false };
 }

@@ -1,5 +1,5 @@
 // src/app/api/clients/route.ts
-// [NAMENS] Klanten aanmaken en bijwerken — de server bepaalt onder wie ze vallen.
+// [ACTING-FOR] Klanten aanmaken en bijwerken — de server bepaalt onder wie ze vallen.
 //
 // Zelfde reden als /api/invoice/draft: de pagina schreef `user_id: profile.id`, oftewel de
 // INGELOGDE mens. Dat klopt zolang dat de eigenaar is, en is fout zodra een verkoopmedewerker
@@ -13,10 +13,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { getActingFor } from '@/lib/acting-for-server'
-import { factuurEigenaar, factuurGemaaktDoor } from '@/lib/acting-for'
-// [NAMENS] created_by bestaat pas ná de migratie — zonder deze terugval kan er op een
+import { invoiceOwnerId, invoiceCreatedBy } from '@/lib/acting-for'
+// [ACTING-FOR] created_by bestaat pas ná de migratie — zonder deze terugval kan er op een
 // installatie met een openstaande migratie geen klant meer worden toegevoegd.
-import { schrijfMetSpoor, isKolomOnbekend } from '@/lib/created-by'
+import { writeWithTrail, isUnknownColumn } from '@/lib/created-by'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,22 +52,22 @@ export async function POST(request: NextRequest) {
 
     // service_role: user_id en created_by worden door de SERVER gezet, niet door de browser.
     const pipeline = createPipelineClient()
-    const { data, error } = await schrijfMetSpoor<{ id: string }>(
+    const { data, error } = await writeWithTrail<{ id: string }>(
       (spoor) => pipeline
         .from('clients')
-        .insert({ ...v, name: v.name as string, user_id: factuurEigenaar(acting), ...spoor })
+        .insert({ ...v, name: v.name as string, user_id: invoiceOwnerId(acting), ...spoor })
         .select('id')
         .single(),
-      { created_by: factuurGemaaktDoor(acting) },
+      { created_by: invoiceCreatedBy(acting) },
     )
 
     if (error || !data) {
-      console.error('[NAMENS] klant aanmaken mislukt', { error })
+      console.error('[ACTING-FOR] klant aanmaken mislukt', { error })
       return NextResponse.json({ error: 'Opslaan mislukt — probeer opnieuw' }, { status: 500 })
     }
     return NextResponse.json({ ok: true, id: data.id })
   } catch (e) {
-    console.error('[NAMENS] /api/clients POST', e)
+    console.error('[ACTING-FOR] /api/clients POST', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }
@@ -91,10 +91,10 @@ export async function PATCH(request: NextRequest) {
     // De rij MOET van dit bedrijf zijn — en, is de schrijver een medewerker, ook door hem
     // ingevoerd. Zonder deze twee filters zou een geraden id de klantgegevens van een ander
     // bedrijf laten herschrijven; service_role kent geen RLS die dat nog tegenhoudt.
-    let q = pipeline.from('clients').update(patch).eq('id', id).eq('user_id', factuurEigenaar(acting))
+    let q = pipeline.from('clients').update(patch).eq('id', id).eq('user_id', invoiceOwnerId(acting))
     if (acting.role !== 'eigenaar') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      q = (q as any).eq('created_by', factuurGemaaktDoor(acting))
+      q = (q as any).eq('created_by', invoiceCreatedBy(acting))
     }
     const { error } = await q
 
@@ -102,18 +102,18 @@ export async function PATCH(request: NextRequest) {
     // filter te laten vallen: zonder created_by is er geen leesgrens, en dan zou hij de klant van
     // zijn baas kunnen herschrijven. Zonder migratie bestaat een medewerker sowieso niet, dus dit
     // is een onmogelijke toestand — die dan ook als fout terugkomt, niet als stille doorgang.
-    if (error && isKolomOnbekend(error)) {
-      console.error('[NAMENS] klant bijwerken zonder created_by-kolom geweigerd', { id })
+    if (error && isUnknownColumn(error)) {
+      console.error('[ACTING-FOR] klant bijwerken zonder created_by-kolom geweigerd', { id })
       return NextResponse.json({ error: 'Opslaan mislukt — probeer opnieuw' }, { status: 500 })
     }
 
     if (error) {
-      console.error('[NAMENS] klant bijwerken mislukt', { error })
+      console.error('[ACTING-FOR] klant bijwerken mislukt', { error })
       return NextResponse.json({ error: 'Opslaan mislukt — probeer opnieuw' }, { status: 500 })
     }
     return NextResponse.json({ ok: true })
   } catch (e) {
-    console.error('[NAMENS] /api/clients PATCH', e)
+    console.error('[ACTING-FOR] /api/clients PATCH', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }

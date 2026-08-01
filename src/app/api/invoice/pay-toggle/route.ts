@@ -21,7 +21,7 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
 import { buildPaymentResult } from "@/lib/partial-payment";
-import { vereisEigenaar } from '@/lib/alleen-eigenaar'
+import { requireOwner } from '@/lib/owner-only'
 
 export const dynamic = "force-dynamic";
 
@@ -61,9 +61,9 @@ async function reconcileCashWithRetry(
 }
 
 export async function POST(req: NextRequest) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier
   // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een factuur op betaald zetten'); if (w.antwoord) return w.antwoord }
+  { const w = await requireOwner('Een factuur op betaald zetten'); if (w.response) return w.response }
 
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();

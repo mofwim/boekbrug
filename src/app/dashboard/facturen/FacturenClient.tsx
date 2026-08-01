@@ -147,7 +147,7 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({
   profile,
-  // [NAMENS] factuur-id → naam van de MEDEWERKER die hem maakte. Alleen gevuld voor facturen die
+  // [ACTING-FOR] factuur-id → naam van de MEDEWERKER die hem maakte. Alleen gevuld voor facturen die
   // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
   // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
   makers = {},
@@ -1111,7 +1111,7 @@ export default function FacturenClient({
                             {displayStatus === 'paid' ? 'Betaald' : displayStatus === 'sent' ? 'Verzonden' : displayStatus === 'overdue' ? 'Verlopen' : 'Concept'}
                           </span>
                         )}
-                        {/* [NAMENS] Wie maakte deze factuur? Alleen zichtbaar als dat NIET de
+                        {/* [ACTING-FOR] Wie maakte deze factuur? Alleen zichtbaar als dat NIET de
                             eigenaar zelf was — anders staat er op elke rij een naam die niets
                             toevoegt. Dit is de leesbare kant van created_by; zonder deze chip
                             werd het spoor wel geschreven en nooit gelezen. */}

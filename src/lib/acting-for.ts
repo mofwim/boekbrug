@@ -1,200 +1,205 @@
 // src/lib/acting-for.ts
-// [NAMENS] Wie handelt er, namens wie, en wat mag dat? Puur, geen I/O.
+// [ACTING-FOR] Who is acting, on whose behalf, and what may they do? Pure, no I/O.
 // Run: npx tsx --test src/lib/acting-for.test.ts
 //
-// WAAROM DIT BESTAAT
+// WHY THIS EXISTS
 //
-// Tot nu toe was BoekBrug één mens per boekhouding: elke rij hangt aan `user_id`, en de vraag
-// "mag jij hierbij?" had één antwoord — is deze rij van jou? Er komt nu één tweede rol bij: een
-// verkoopmedewerker die facturen maakt en verstuurt VOOR het bedrijf van zijn baas.
+// Until now BoekBrug was one human per administration: every row hangs off `user_id`, and the
+// question "may you touch this?" had one answer — is this row yours? Exactly one second role is
+// added now: a sales member who creates and sends invoices FOR their employer's company.
 //
-// DE VALKUIL DIE DIT BESTAND BEWAAKT
+// THE TRAP THIS FILE GUARDS
 //
-// Het ligt voor de hand om zo'n medewerker gewoon een account te geven. Dan schrijft hij
-// facturen met sender_id = ZIJN id, en dus met ZIJN nummerreeks. Twee mensen, twee reeksen,
-// één bedrijf. invoice-numbering.ts zegt in zijn kop waarom dat niet mag:
+// The obvious move is to just give such a member an account. Then they write invoices with
+// sender_id = THEIR id, and therefore THEIR number series. Two humans, two series, one company.
+// invoice-numbering.ts says in its header why that is not allowed:
 //
 //   "per Dutch Belastingdienst (Article 35 — Wet OB 1968): numbers must be sequential
 //    without gaps, and forward-only (no rollback once issued)."
 //
-// Twee parallelle reeksen onder één BTW-nummer zijn bij een controle geen slordigheid maar
-// gaten in de nummering. En het is niet terug te draaien: een uitgegeven nummer blijft uitgegeven.
+// Two parallel series under one VAT number are not sloppiness during an audit but gaps in the
+// numbering. And it cannot be undone: an issued number stays issued.
 //
-// DE REGEL DIE ALLES OPLOST
+// THE RULE THAT SOLVES EVERYTHING
 //
-//   De medewerker BEZIT niets. Hij HANDELT NAMENS de eigenaar.
+//   The member OWNS nothing. The member ACTS ON BEHALF OF the owner.
 //
-// Alles wat de boekhouding raakt — het factuurnummer, sender_id, het PDF-pad, de eerlijk-
-// gebruikteller — hangt aan `ownerId`. Wie er achter het toetsenbord zat, staat in `actorId` en
-// belandt in created_by: een spoor, nooit een eigendom. Eén reeks per bedrijf, per constructie.
+// Everything that touches the books — the invoice number, sender_id, the PDF path, the fair-use
+// counter — hangs off `ownerId`. Whoever sat behind the keyboard goes into `actorId` and ends up
+// in created_by: a trail, never ownership. One series per company, by construction.
 //
-// EN DE TWEEDE REDEN DAT DIT ZO IS OPGEZET
+// AND THE SECOND REASON IT IS BUILT THIS WAY
 //
-// RLS is in dit product de ENIGE echte grens (131 policies, 184 keer auth.uid()). Een rollen-
-// systeem dat die 131 policies verbouwt tot "mag deze actor dit doen" is geen functie maar een
-// nieuw fundament — en een fout daarin is niet een schermpje dat raar staat, maar een
-// medewerker die de winst van zijn baas leest. Door de medewerker NOOIT rechtstreeks op de
-// rijen van de eigenaar te laten lezen, blijft elke bestaande policy exact zoals hij was.
+// RLS is the ONLY real boundary in this product (131 policies, 184 uses of auth.uid()). A role
+// system that rebuilds those 131 policies into "may this actor do this" is not a feature but a
+// new foundation — and a mistake there is not a screen that looks odd, but a member reading
+// their employer's profit. By NEVER letting the member read the owner's rows directly, every
+// existing policy stays exactly as it was.
 
-/** De rollen binnen één bedrijf. Bewust twee — zie de kop: dit is geen rollensysteem. */
+/** The roles within one company. Deliberately two — see the header: this is not a role system. */
 export type CompanyRole = "eigenaar" | "verkoop";
 
-/** Eén rij uit company_members, zoals de database hem teruggeeft. */
+/** One row from company_members, as the database returns it. */
 export interface MemberLink {
   owner_id: string;
   member_id: string;
   role: string;
-  /** Gezet ⇒ de koppeling is ingetrokken en verleent vanaf dat moment niets meer. */
+  /** Set ⇒ the link is revoked and grants nothing from that moment on. */
   revoked_at: string | null;
 }
 
 export interface ActingFor {
   /**
-   * Wiens boekhouding dit is. ALLES wat de boeken raakt wordt hieronder geschreven:
-   * het factuurnummer, sender_id, het PDF-pad, de eerlijk-gebruikteller.
+   * Whose administration this is. EVERYTHING that touches the books is written under this:
+   * the invoice number, sender_id, the PDF path, the fair-use counter.
    */
   ownerId: string;
   /**
-   * Wie er achter het toetsenbord zat. Gaat naar created_by — een spoor, geen eigendom.
-   * Voor een eigenaar is dit hetzelfde als ownerId.
+   * Who sat behind the keyboard. Goes to created_by — a trail, not ownership.
+   * For an owner this equals ownerId.
    */
   actorId: string;
   role: CompanyRole;
 }
 
-/** Handelt deze persoon namens iemand anders? */
-export function isNamens(a: ActingFor): boolean {
+/** Is this person acting on someone else's behalf? */
+export function isActingForOther(a: ActingFor): boolean {
   return a.ownerId !== a.actorId;
 }
 
 /**
- * Wie handelt hier, namens wie?
+ * Who is acting here, on whose behalf?
  *
- * FAALT ALTIJD NAAR "ALLEEN JEZELF". Elke twijfel — geen koppeling, ingetrokken, een rol die we
- * niet kennen, een rij die niet over deze gebruiker gaat — levert een eigenaar-van-zichzelf op.
- * Dat is de veilige kant: iemand ziet dan zijn eigen (lege) boekhouding in plaats van die van een
- * ander. De omgekeerde faalrichting is een vreemde in andermans cijfers.
+ * ALWAYS FAILS TO "YOURSELF ONLY". Any doubt — no link, revoked, a role we do not know, a row
+ * that is not about this user — yields an owner-of-self. That is the safe side: someone then
+ * sees their own (empty) administration instead of someone else's. The opposite failure
+ * direction is a stranger inside another person's numbers.
  *
- * `nowMs` wordt meegegeven — geen klok in een pure functie, en het maakt de test exact.
+ * `nowMs` is passed in — no clock inside a pure function, and it makes the test exact.
  */
 export function resolveActingFor(
   sessionUserId: string,
   link: MemberLink | null | undefined,
   nowMs: number,
 ): ActingFor {
-  const alleen: ActingFor = { ownerId: sessionUserId, actorId: sessionUserId, role: "eigenaar" };
-  if (!sessionUserId) throw new Error("[NAMENS] resolveActingFor zonder gebruiker");
-  if (!link) return alleen;
+  const selfOnly: ActingFor = { ownerId: sessionUserId, actorId: sessionUserId, role: "eigenaar" };
+  if (!sessionUserId) throw new Error("[ACTING-FOR] resolveActingFor without a user");
+  if (!link) return selfOnly;
 
-  // De rij MOET over deze sessie gaan. Zou een verkeerde rij hier ooit binnenkomen (een bug in
-  // de query, een verwisselde parameter), dan is dat precies het geval waarin doorgaan iemand in
-  // andermans boekhouding zet. Dus: negeren.
-  if (link.member_id !== sessionUserId) return alleen;
+  // The row MUST be about this session. If a wrong row ever arrived here (a bug in the query, a
+  // swapped parameter), that is precisely the case where continuing puts someone inside another
+  // person's administration. So: ignore it.
+  if (link.member_id !== sessionUserId) return selfOnly;
 
-  // Een zelf-koppeling is onzin en zou iemand met de LEESFILTER van een medewerker naar zijn
-  // eigen boekhouding laten kijken — hij zou zijn eigen oudere facturen kwijt zijn.
-  if (link.owner_id === link.member_id) return alleen;
-  if (!link.owner_id) return alleen;
+  // A self-link is nonsense and would let someone look at their own administration through a
+  // member's READ FILTER — they would lose sight of their own older invoices.
+  if (link.owner_id === link.member_id) return selfOnly;
+  if (!link.owner_id) return selfOnly;
 
-  // Ingetrokken is onmiddellijk. Geen respijt, geen "tot einde dag".
+  // Revoked is immediate. No grace, no "until end of day".
   if (link.revoked_at) {
     const ms = Date.parse(link.revoked_at);
-    // Onleesbare datum ⇒ behandelen als ingetrokken. Liever een medewerker die te vroeg buiten
-    // staat dan een ingetrokken medewerker die binnen blijft.
-    if (!Number.isFinite(ms) || ms <= nowMs) return alleen;
+    // Unreadable date ⇒ treat as revoked. Better a member locked out too early than a revoked
+    // member who stays inside.
+    if (!Number.isFinite(ms) || ms <= nowMs) return selfOnly;
   }
 
-  // Een rol die we niet kennen verleent NIETS. Zo kan een toekomstige rol nooit per ongeluk de
-  // rechten van 'verkoop' erven omdat iemand vergat hem hier te noemen.
-  if (link.role !== "verkoop") return alleen;
+  // A role we do not know grants NOTHING. That way a future role can never accidentally inherit
+  // the rights of 'verkoop' because someone forgot to name it here.
+  if (link.role !== "verkoop") return selfOnly;
 
   return { ownerId: link.owner_id, actorId: sessionUserId, role: "verkoop" };
 }
 
-// ── Wat mag deze actor? ───────────────────────────────────────────────────────────────────────
+// ── What may this actor do? ───────────────────────────────────────────────────────────────────
 
 /**
- * De schermen die een verkoopmedewerker MAG zien. Een gesloten lijst, en dat is het hele punt.
+ * The screens a sales member MAY see. A closed list, and that is the whole point.
  *
- * Alles wat hier niet staat is dicht — ook een scherm dat morgen wordt toegevoegd. Dat is de
- * juiste faalrichting: een nieuw scherm dat per ongeluk openstaat voor een medewerker is een
- * lek dat niemand opmerkt, een nieuw scherm dat per ongeluk dicht staat is een klacht binnen een
- * dag. Openzetten is een bewuste handeling, precies één regel hieronder.
+ * Anything not listed here is shut — including a screen added tomorrow. That is the right
+ * failure direction: a new screen accidentally open to a member is a leak nobody notices, a new
+ * screen accidentally shut is a complaint within a day. Opening up is a deliberate act, exactly
+ * one line below.
+ *
+ * The paths themselves are Dutch because they are URLs in a Dutch app — user-facing text, not
+ * identifiers.
  */
-export const VERKOOP_SCHERMEN: readonly string[] = [
-  // Zijn eigen scherm: de facturen die hij maakte.
+export const SALES_SCREENS: readonly string[] = [
+  // Their own screen: the invoices they created.
   "/dashboard/verkoop",
-  // Maken, bekijken en bewerken van één factuur. Dit dekt bewust ook /dashboard/invoice/<id>:
-  // zonder die tak liep de eigen lijst dood — elke rij verwijst naar het detailscherm. Veilig
-  // omdat die schermen met de SESSIE van de medewerker lezen, en RLS hem alleen zijn eigen
-  // rijen geeft (invoices_member_read). Een geraden id levert dus niets op.
+  // Creating, viewing and editing a single invoice. This deliberately covers
+  // /dashboard/invoice/<id> too: without that branch their own list dead-ends — every row links
+  // to the detail screen. Safe because those screens read with the member's SESSION, and RLS
+  // only gives them their own rows (invoices_member_read). So a guessed id yields nothing.
   "/dashboard/invoice",
-  // Zijn klanten. Ook hier: RLS (clients_member_read) beperkt het tot wat hij zelf invoerde.
+  // Their clients. Same here: RLS (clients_member_read) limits it to what they entered.
   "/dashboard/klanten",
 ];
 
 /**
- * Mag deze actor bij dit pad?
+ * May this actor reach this path?
  *
- * Een eigenaar: overal (zijn eigen boekhouding). Een medewerker: alleen de lijst hierboven, en
- * alleen als exacte match of als submap — zodat /dashboard/verkoop/x meekomt maar
- * /dashboard/verkoopcijfers NIET (een prefixvergelijking zonder grens is hoe dit soort wachten
- * stilletjes te ruim worden).
+ * An owner: everywhere (their own administration). A member: only the list above, and only as an
+ * exact match or as a subpath — so /dashboard/verkoop/x is included but /dashboard/verkoopcijfers
+ * is NOT (a prefix comparison without a boundary is how guards like this silently grow too wide).
  */
-export function magScherm(a: ActingFor, pad: string): boolean {
+export function canAccessScreen(a: ActingFor, path: string): boolean {
   if (a.role === "eigenaar") return true;
-  return VERKOOP_SCHERMEN.some((s) => pad === s || pad.startsWith(s + "/"));
+  return SALES_SCREENS.some((s) => path === s || path.startsWith(s + "/"));
 }
 
 /**
- * Onder wiens naam wordt deze factuur geboekt? ALTIJD de eigenaar — zie de kop van dit bestand.
- * Deze functie bestaat zodat er nergens anders in de codebase een keuze te maken valt.
+ * Under whose name is this invoice booked? ALWAYS the owner — see the header of this file.
+ * This function exists so there is no choice left to make anywhere else in the codebase.
  */
-export function factuurEigenaar(a: ActingFor): string {
+export function invoiceOwnerId(a: ActingFor): string {
   return a.ownerId;
 }
 
-/** Wie maakte hem? Het spoor, nooit het eigendom. */
-export function factuurGemaaktDoor(a: ActingFor): string {
+/** Who created it? The trail, never the ownership. */
+export function invoiceCreatedBy(a: ActingFor): string {
   return a.actorId;
 }
 
 /**
- * De filter waarmee deze actor facturen mag LEZEN.
+ * The filter this actor may READ invoices with.
  *
- * De eigenaar ziet alles van zichzelf. De medewerker ziet alleen wat hij zelf aanmaakte — niet
- * de omzet van zijn baas, niet de facturen van een collega. `created_by` is daarmee geen
- * sierveld: het is de leesgrens.
+ * The owner sees everything of their own. The member sees only what they created themselves —
+ * not their employer's revenue, not a colleague's invoices. `created_by` is therefore not a
+ * decorative field: it is the read boundary.
  */
-export function factuurLeesFilter(a: ActingFor): { sender_id: string; created_by?: string } {
+export function invoiceReadFilter(a: ActingFor): { sender_id: string; created_by?: string } {
   return a.role === "eigenaar"
     ? { sender_id: a.ownerId }
     : { sender_id: a.ownerId, created_by: a.actorId };
 }
 
 /**
- * Mag deze actor DEZE factuur openen/versturen?
+ * May this actor open/send THIS invoice?
  *
- * Bewust een aparte functie naast de leesfilter: een lijst filteren en één rij toetsen zijn twee
- * verschillende momenten, en het tweede is het moment waarop een geraden id binnenkomt.
+ * Deliberately a separate function next to the read filter: filtering a list and checking a
+ * single row are two different moments, and the second is the moment a guessed id arrives.
  */
-export function magFactuur(
+export function canAccessInvoice(
   a: ActingFor,
-  factuur: { sender_id: string | null; created_by?: string | null },
+  invoice: { sender_id: string | null; created_by?: string | null },
 ): boolean {
-  if (factuur.sender_id !== a.ownerId) return false;
+  if (invoice.sender_id !== a.ownerId) return false;
   if (a.role === "eigenaar") return true;
-  return factuur.created_by === a.actorId;
+  return invoice.created_by === a.actorId;
 }
 
 /**
- * Mag deze actor versturen?
+ * May this actor send?
  *
- * Ja — dat is de gekozen inrichting: de medewerker maakt de factuur áf, inclusief het nummer en
- * de mail. Maar het nummer komt uit de reeks van de EIGENAAR (factuurEigenaar), en dat is wat
- * deze hele module bewaakt. Versturen is onomkeerbaar; de eigenaar houdt de controle via het
- * intrekken van de koppeling, niet via een knop per factuur.
+ * Yes — that is the chosen design: the member finishes the invoice, including the number and the
+ * mail. But the number comes from the OWNER's series (invoiceOwnerId), and that is what this
+ * whole module guards. Sending is irreversible; the owner keeps control by revoking the link,
+ * not through a per-invoice button.
  */
-export function magVersturen(a: ActingFor, factuur: { sender_id: string | null; created_by?: string | null }): boolean {
-  return magFactuur(a, factuur);
+export function canSendInvoice(
+  a: ActingFor,
+  invoice: { sender_id: string | null; created_by?: string | null },
+): boolean {
+  return canAccessInvoice(a, invoice);
 }
