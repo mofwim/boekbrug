@@ -34,6 +34,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { refuseArchive, restoreStatus, type RemovalInvoice } from "@/lib/invoice-removal";
 import { quarterKeyOf } from "@/lib/quarter";
 import { logAuditAction } from "@/lib/audit";
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,10 @@ async function loadOwned(id: string, userId: string) {
 // ── POST — archive ────────────────────────────────────────────────────────────────────────────
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur negeren of terugzetten'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -193,6 +198,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 // ── PATCH — restore ───────────────────────────────────────────────────────────────────────────
 
 export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur negeren of terugzetten'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();

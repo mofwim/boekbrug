@@ -107,27 +107,30 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     if (!form.name.trim()) { setError('Naam is verplicht'); return }
     setSaving(true); setError(null)
 
-    if (editingId) {
-      // [BOEK-029] Update existing client
-      const { error: err } = await supabase.from('clients').update({
-        name: form.name.trim(),
-        email: form.email || null, kvk_number: form.kvk_number || null,
-        btw_number: form.btw_number || null, iban: form.iban || null,
-        address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
-      }).eq('id', editingId)
-      if (err) { setError('Opslaan mislukt'); setSaving(false); return }
-      showToast('Klant bijgewerkt')
-    } else {
-      // Insert new client
-      const { error: err } = await supabase.from('clients').insert({
-        user_id: profile.id, name: form.name.trim(),
-        email: form.email || null, kvk_number: form.kvk_number || null,
-        btw_number: form.btw_number || null, iban: form.iban || null,
-        address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
-      })
-      if (err) { setError('Opslaan mislukt'); setSaving(false); return }
-      showToast('Klant toegevoegd')
+    // [NAMENS] Beide schrijfacties lopen nu via de server.
+    //
+    // De insert zette `user_id: profile.id` — de INGELOGDE mens. Dat klopt zolang dat de
+    // eigenaar is, en is fout zodra een verkoopmedewerker dit scherm gebruikt: zijn klant zou
+    // onder zijn eigen (lege) administratie belanden. De server bepaalt nu onder wie de klant
+    // valt en noteert in created_by wie hem invoerde; voor een eigenaar is dat dezelfde rij als
+    // voorheen. De update kreeg dezelfde behandeling — die had alleen .eq('id'), zonder enige
+    // controle op wiens klant het was; RLS ving dat af, maar nu staat het er ook met zoveel woorden.
+    const payload = {
+      name: form.name.trim(),
+      email: form.email || null, kvk_number: form.kvk_number || null,
+      btw_number: form.btw_number || null, iban: form.iban || null,
+      address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
     }
+    const res = await fetch('/api/clients', {
+      method: editingId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editingId ? { ...payload, id: editingId } : payload),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      setError(json?.error || 'Opslaan mislukt'); setSaving(false); return
+    }
+    showToast(editingId ? 'Klant bijgewerkt' : 'Klant toegevoegd')
 
     setForm(EMPTY); setShowForm(false); setEditingId(null)
     await loadClients()

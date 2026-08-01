@@ -612,25 +612,14 @@ function NewInvoicePageContent() {
     setShowDropdown(false)
   }
 
-  // Returns the client_id to persist on the invoice. When a customer is typed
-  // inline (no dropdown pick, no ?client_id), we insert the client row here and
-  // return its fresh id — the caller MUST use this return value, not the
-  // selectedClientId state, which React has not yet updated within the same
-  // handler tick (stale closure would otherwise drop the invoice→klant link).
-  async function saveNewClient(userId: string): Promise<string | null> {
-    if (!clientName || selectedClientId) return selectedClientId
-    const { data } = await supabase.from('clients').insert({
-      user_id: userId,
-      name: clientName,
-      email: clientEmail,
-      address: clientAddress,
-      postal_code: clientPostal,
-      city: clientCity,
-      btw_number: clientBtw,
-    }).select().single()
-    if (data) { setSelectedClientId(data.id); return data.id }
-    return null
-  }
+  // [NAMENS] saveNewClient() stond hier. Hij schreef de inline ingetikte klant weg met
+  // user_id = de INGELOGDE mens — wat klopt zolang dat de eigenaar is, en fout is zodra een
+  // verkoopmedewerker het scherm gebruikt. /api/invoice/draft maakt de klant nu aan onder de
+  // EIGENAAR, met created_by als spoor, en geeft het verse id terug (draftJson.clientId) —
+  // dezelfde reden als toen: de state is binnen dezelfde handler-tick nog niet bijgewerkt.
+  //
+  // Bewust weggehaald in plaats van laten staan: een ongebruikte browserfunctie die facturen
+  // en klanten kan wegschrijven is precies het soort code dat later per ongeluk terugkomt.
 
   // ─── Lines ─────────────────────────────────────────────────────────────────
 
@@ -707,17 +696,14 @@ function NewInvoicePageContent() {
   const btwAmount = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
   const totalInc  = totalEx + btwAmount
 
-  // [BOEK-031] computeTotals — always fresh from current lines state — May 2026
-  // Used inside submit functions to avoid stale closure values
-  function computeTotals(currentLines: InvoiceLine[], currentSign = 1) {
-    const ex  = currentLines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
-    const btw = currentLines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
-    return {
-      total_ex_btw:  currentSign * ex,
-      btw_amount:    currentSign * btw,
-      total_inc_btw: currentSign * (ex + btw),
-    }
-  }
+  // [NAMENS] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
+  // Die som woont nu op de server, in src/lib/factuur-totalen.ts — letterlijk dezelfde formule,
+  // inclusief het niet afronden, zodat er voor een bestaande eigenaar geen cent verandert. De
+  // reden voor de verhuizing is niet netheid: zodra een tweede mens facturen mag maken onder
+  // hetzelfde BTW-nummer, hoort de server te bepalen wat er in de boeken komt, niet de pagina.
+  //
+  // De drie getallen hierboven (totalEx/btwAmount/totalInc) blijven — die zijn alleen voor wat
+  // je op het scherm ziet terwijl je typt, en raken de database niet.
 
   // BTW breakdown per rate
   const btwByRate: Record<number, number> = {}
@@ -740,50 +726,43 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    // [BOEK-031] Always compute fresh from current lines — May 2026
-    const totals = computeTotals(lines)
-
-    // [FACTUUR-A] Unified path: insert as DRAFT (no browser number), then the
-    // send route mints the atomic legal number, renders the PDF and delivers
-    // the e-mail. The on-page offerte→factuur convert no longer writes
-    // status:'sent' with a client-generated number.
-    const { data: factuur, error: err } = await supabase.from('invoices').insert({
-      sender_id: user.id,
-      invoice_number: null,
-      invoice_date: invoiceDate,
-      due_date: dueDate,
-      status: 'draft',
-      invoice_type: 'factuur',
-      direction: 'outgoing',
-      ...totals,
-      // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
-      // [FACTUUR-A] fix: this `source` field was previously commented out by a
-      // BRIDGE-A comment merged onto the same line — restored.
-      source: 'created',
-      // [FACTUUR-A] offerte conversion gets a Leverdatum too (Art. 35a sub f),
-      // defaulting to the invoice date.
-      delivery_date: invoiceDate,
-      client_name: clientName,
-      client_id: selectedClientId,
-      client_email: clientEmail,
-      client_address: clientAddress,
-      client_postal_code: clientPostal,
-      client_city: clientCity,
-      client_btw_number: clientBtw,
-    }).select().single()
-
-    if (err || !factuur) { setError('Omzetten mislukt'); setConvertingOfferte(false); return }
-
-    await supabase.from('invoice_lines').insert(
-      lines.map(l => ({
-        invoice_id: factuur.id,
-        description: l.description,
-        quantity: l.quantity,
-        unit_price: l.unit_price,
-        btw_rate: l.btw_rate,
-        line_total: l.quantity * l.unit_price,
-      }))
-    )
+    // [NAMENS] Het concept + de regels worden door de SERVER geschreven, niet meer hier.
+    // Waarom: sender_id was `user.id` — de ingelogde mens. Voor een verkoopmedewerker is dat
+    // NIET de eigenaar van de boekhouding, en zou hij onder zijn eigen id boeken dan liepen er
+    // twee nummerreeksen onder één BTW-nummer (Art. 35: doorlopend, zonder gaten, forward-only).
+    // De route lost de eigenaar op en rekent de totalen zelf uit — met exact dezelfde som als
+    // computeTotals() hier, dus voor een eigenaar verandert er geen cent.
+    // [FACTUUR-A] Nog steeds als DRAFT: de send-route slaat daarna het wettelijke nummer.
+    const draftRes = await fetch('/api/invoice/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceType: 'factuur',
+        invoice_date: invoiceDate,
+        due_date: dueDate,
+        // [FACTUUR-A] offerte conversion gets a Leverdatum too (Art. 35a sub f),
+        // defaulting to the invoice date.
+        delivery_date: invoiceDate,
+        client_id: selectedClientId,
+        client_name: clientName,
+        client_email: clientEmail,
+        client_address: clientAddress,
+        client_postal_code: clientPostal,
+        client_city: clientCity,
+        client_btw_number: clientBtw,
+        lines: lines.map(l => ({
+          description: l.description,
+          quantity: l.quantity,
+          unit_price: l.unit_price,
+          btw_rate: l.btw_rate,
+        })),
+      }),
+    })
+    const draftJson = await draftRes.json().catch(() => ({}))
+    if (!draftRes.ok || !draftJson?.invoiceId) {
+      setError(draftJson?.error || 'Omzetten mislukt'); setConvertingOfferte(false); return
+    }
+    const factuur = { id: draftJson.invoiceId as string }
 
     // Mark offerte as converted
     if (offerteId) {
@@ -889,67 +868,57 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const resolvedClientId = await saveNewClient(user.id)
-
-    // [BOEK-031] Always compute fresh totals — avoid stale closure — May 2026
-    const currentSign = invoiceType === 'creditnota' ? -1 : 1
-    const freshTotals = computeTotals(lines, currentSign)
-
-    // [FACTUUR-A] Unified path — June 2026:
-    // The browser NEVER mints a number anymore. We always INSERT a draft
-    // (invoice_number = null); the send route mints the atomic, legal number.
-    // Offerte is the one exception that needs a PF- preview, but it too is
-    // saved without a final factuur number — it gets one only on conversion.
-    const dbType = invoiceType === 'creditnota' ? 'creditnota'
-                 : invoiceType === 'offerte' ? 'pro_forma'
-                 : 'factuur'
-
-    const { data: invoice, error: insertErr } = await supabase.from('invoices').insert({
-      sender_id: user.id,
-      // [FACTUUR-A] Always null on insert — number is minted on send (Art. 35)
-      invoice_number: null,
-      invoice_date: invoiceDate,
-      due_date: dueDate,
-      // [FACTUUR-A] Leverdatum — only meaningful for factuur; null otherwise.
-      // Requires the delivery_date migration + type regen (CMD) before deploy.
-      delivery_date: invoiceType === 'factuur' ? deliveryDate : null,
-      // [FACTUUR-A] Always insert as draft. Sending is a separate, explicit,
-      // server-side step — the page no longer writes status:'sent' directly.
-      status: 'draft',
-      invoice_type: dbType,
-      direction: 'outgoing',
-      // [BOEK-031] credit: bedragen zijn negatief — gebruik freshTotals
-      ...freshTotals,
-      // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
-      source: 'created',
-      client_name: clientName,
-      // Use the id returned by saveNewClient (fresh, non-stale) so an inline-typed
-      // customer's just-created row is linked — not the not-yet-updated state.
-      client_id: resolvedClientId,
-      client_email: clientEmail,
-      client_address: clientAddress,
-      client_postal_code: clientPostal,
-      client_city: clientCity,
-      client_btw_number: clientBtw,
-      // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
-      original_invoice_id: invoiceType === 'creditnota' ? null : (replacesId || null),
-    }).select().single()
-
-    if (insertErr || !invoice) {
-      setError('Aanmaken mislukt — probeer opnieuw')
+    // [NAMENS] Eén serverroute schrijft nu de klant, de factuurkop én de regels.
+    //
+    // Wat hier stond was: saveNewClient() met user_id = user.id, daarna een INSERT met
+    // sender_id = user.id en de totalen die deze pagina had uitgerekend. Drie browser-
+    // schrijfacties waarin de PAGINA bepaalde wie de eigenaar is en wat de bedragen zijn.
+    //
+    // Dat kon zolang er één mens per boekhouding was. Met een verkoopmedewerker erbij is
+    // `user.id` niet de eigenaar, en twee reeksen onder één BTW-nummer zijn bij een controle
+    // gaten in de nummering (Art. 35 Wet OB, forward-only — niet terug te draaien). De server
+    // lost de eigenaar op, zet created_by als spoor, en rekent zelf. De som is letterlijk
+    // dezelfde als computeTotals() hierboven, inclusief het niet afronden: voor een eigenaar
+    // verandert er geen cent en geen veld.
+    //
+    // [FACTUUR-A] Nog steeds altijd als DRAFT met invoice_number = null; de send-route slaat
+    // het wettelijke nummer. De browser heeft er nooit een mogen bedenken.
+    const draftRes = await fetch('/api/invoice/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceType,
+        invoice_date: invoiceDate,
+        due_date: dueDate,
+        // [FACTUUR-A] Leverdatum — only meaningful for factuur; null otherwise.
+        delivery_date: invoiceType === 'factuur' ? deliveryDate : null,
+        // Leeg ⇒ de route maakt de inline ingetikte klant zelf aan, onder de eigenaar. Dat
+        // vervangt saveNewClient(): die schreef de klant op naam van de ingelogde mens.
+        client_id: selectedClientId,
+        client_name: clientName,
+        client_email: clientEmail,
+        client_address: clientAddress,
+        client_postal_code: clientPostal,
+        client_city: clientCity,
+        client_btw_number: clientBtw,
+        // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
+        replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
+        // Het teken (credit = negatief) zet de server, op één plek — zie factuur-totalen.ts.
+        lines: lines.map(l => ({
+          description: l.description,
+          quantity: l.quantity,
+          unit_price: l.unit_price,
+          btw_rate: l.btw_rate,
+        })),
+      }),
+    })
+    const draftJson = await draftRes.json().catch(() => ({}))
+    if (!draftRes.ok || !draftJson?.invoiceId) {
+      setError(draftJson?.error || 'Aanmaken mislukt — probeer opnieuw')
       setLoading(false); return
     }
-
-    await supabase.from('invoice_lines').insert(
-      lines.map(l => ({
-        invoice_id: invoice.id,
-        description: l.description,
-        quantity: sign * l.quantity,
-        unit_price: l.unit_price,
-        btw_rate: l.btw_rate,
-        line_total: sign * l.quantity * l.unit_price,
-      }))
-    )
+    const invoice = { id: draftJson.invoiceId as string }
+    if (draftJson.clientId) setSelectedClientId(draftJson.clientId)
 
     // [BOEK-031] Replace flow — de LINK naar de oude factuur wordt hierboven vastgelegd
     // (original_invoice_id). Wat hier stond, is weg:

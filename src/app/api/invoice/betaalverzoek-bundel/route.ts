@@ -16,10 +16,15 @@ import {
 import { SITE_URL } from '@/lib/site'
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
 import { creditedIdsFrom } from '@/lib/credited-invoices'
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function POST(req: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een betaalbundel maken'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })

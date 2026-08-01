@@ -19,6 +19,7 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
 import { buildPaymentResult } from "@/lib/partial-payment";
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,10 @@ export const dynamic = "force-dynamic";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur op betaald zetten'); if (w.antwoord) return w.antwoord }
+
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

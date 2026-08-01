@@ -9,11 +9,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { buildBetaalverzoek, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { SITE_URL } from '@/lib/site'
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een betaalverzoek maken'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

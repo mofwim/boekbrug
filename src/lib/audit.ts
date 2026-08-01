@@ -71,6 +71,15 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [NAMENS] Wie mag er onder MIJN BTW-nummer factureren?
+  //
+  // Dit is de zwaarste bevoegdheid die een eigenaar kan weggeven: een verkoopmedewerker geeft
+  // facturen uit met het nummer, de naam en het BTW-id van zijn baas, en dat is bij een controle
+  // niet te onderscheiden van de baas zelf. Zowel het geven als het intrekken hoort dus
+  // aantoonbaar te zijn — een bevoegdheid zonder spoor is achteraf een woord tegen een woord.
+  | 'member.invited'
+  | 'member.joined'
+  | 'member.revoked'
   // [BEWIJS] Wat de boekhouder van zijn klant HEEFT OPGEHAALD.
   //
   // De vertrouwensgrens was afgedwongen maar niet aantoonbaar: de klant kon nergens zien

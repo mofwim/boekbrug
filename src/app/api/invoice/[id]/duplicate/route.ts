@@ -5,11 +5,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
+import { vereisEigenaar } from '@/lib/alleen-eigenaar'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
+  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
+  { const w = await vereisEigenaar('Een factuur dupliceren'); if (w.antwoord) return w.antwoord }
+
   const { id } = await params
   try {
     const supabase = await createServerSupabaseClient()

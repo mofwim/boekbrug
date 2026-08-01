@@ -750,6 +750,26 @@ export default function SettingsPage() {
           </Link>
         )}
 
+        {/* [NAMENS] Wie mag er onder MIJN BTW-nummer factureren? Alleen voor een eigenaar: een
+            medewerker kan geen medewerkers uitnodigen (dat zou een keten worden waarin niemand
+            meer kan zeggen wie er precies factureert), en de route erachter weigert het ook. */}
+        {profile.role === 'zzper' && (
+          <Link
+            href="/dashboard/settings/team"
+            className="pressable-row bg-white rounded-2xl p-5 shadow-sm flex items-center justify-between no-underline"
+          >
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                Team
+              </p>
+              <p className="text-sm font-medium text-gray-900">Wie mag er facturen maken voor je bedrijf</p>
+            </div>
+            <span className="material-symbols-outlined text-gray-400" aria-hidden>
+              chevron_right
+            </span>
+          </Link>
+        )}
+
         {/* [BOEK-032] Gevarenzone — gegevens exporteren + account verwijderen */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3 border border-red-100">
           <p className="text-xs font-semibold text-red-400 uppercase tracking-wide">
