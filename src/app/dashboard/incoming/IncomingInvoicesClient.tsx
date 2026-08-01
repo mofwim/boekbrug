@@ -3342,7 +3342,18 @@ export default function IncomingInvoicesClient({
     let archivedNotInvoice = 0;
     let skipped = 0;
     let failed = 0;
+    // [MODEL-CONFIG] Antwoordt de server dat het leesmodel niet beschikbaar is, dan gaat GEEN van de
+    // volgende facturen het halen: het is één instelling die voor alle lezingen tegelijk fout staat.
+    // Dan is doorlopen geen doorzettingsvermogen maar twintig keer dezelfde betaalde muur inlopen —
+    // twintig ronden wachten, twintig tikken van de snelheidslimiet, en één storing die twintig keer
+    // als "niet gelukt" in de samenvatting belandt alsof het per factuur iets anders was.
+    let stoppedReason: string | null = null;
+    // Hoeveel er daadwerkelijk langs de server zijn geweest. Exact geteld en niet achteraf
+    // uitgerekend, zodat "niet geprobeerd" een feit is en geen aftreksom die bij de volgende
+    // wijziging stilletjes een factuur verkeerd indeelt.
+    let attempted = 0;
     for (const inv of targets) {
+      attempted++;
       try {
         const res = await fetch(`/api/email/reimport/${inv.id}`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
@@ -3351,6 +3362,11 @@ export default function IncomingInvoicesClient({
         // 409 = the card is no longer 'processing' (e.g. the owner verified it just before this
         // reached it). That is not a failure — count it as skipped so the summary stays honest.
         else if (res.status === 409) skipped++;
+        else if (data.code === "model_unavailable") {
+          stoppedReason = typeof data.error === "string" ? data.error : "Het leesmodel is niet beschikbaar op dit account.";
+          setReimportAllDone((n) => n + 1);
+          break;
+        }
         else failed++;
       } catch {
         failed++;
@@ -3362,12 +3378,16 @@ export default function IncomingInvoicesClient({
     // A blocking summary only when something needs the owner's eye; otherwise the refreshed cards
     // are the feedback. "opnieuw ingelezen" (re-read), not "bijgewerkt" — reimport always re-reads
     // but keeps the stored amounts when the fresh read is no better, so it may not have changed.
-    if (notInvoice > 0 || failed > 0) {
+    if (notInvoice > 0 || failed > 0 || stoppedReason) {
+      const untried = Math.max(0, targets.length - attempted);
       // Kept as a dialog rather than a snackbar: this is a multi-line result
       // the owner has to act on, and it must not scroll away unread.
       await dialog.alert({
-        title: "Opnieuw inlezen klaar",
+        // [MODEL-CONFIG] Een afgebroken ronde heet niet "klaar". De titel is het eerste wat gelezen
+        // wordt, en die mag niet suggereren dat de stapel behandeld is terwijl er niets is gebeurd.
+        title: stoppedReason ? "Opnieuw inlezen gestopt" : "Opnieuw inlezen klaar",
         message:
+          (stoppedReason ? `${stoppedReason}\n\n` : "") +
           `• ${reread} opnieuw ingelezen\n` +
           (archivedNotInvoice
             ? `• ${archivedNotInvoice} bleek geen boekbare factuur — verplaatst naar Genegeerd (reden: geen factuur)\n`
@@ -3376,7 +3396,10 @@ export default function IncomingInvoicesClient({
             ? `• ${notInvoice - archivedNotInvoice} bleek geen boekbare factuur, maar kon niet worden weggezet — bekijk die zelf\n`
             : "") +
           (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
-          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw` : ""),
+          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "") +
+          // Niet als "mislukt" geteld: deze zijn nooit langs de server geweest. Ze staan
+          // ongewijzigd in de wachtrij en er is niets aan ze geprobeerd.
+          (untried ? `• ${untried} niet geprobeerd — ze staan onveranderd in de wachtrij` : ""),
       });
     }
     router.refresh();
