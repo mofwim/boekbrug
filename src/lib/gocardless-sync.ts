@@ -34,7 +34,9 @@ import {
   dutchGoCardlessError,
   GoCardlessError,
   MAX_HISTORICAL_DAYS_CAP,
+  needsReconnect,
   type GoCardlessClient,
+  type GoCardlessErrorCode,
 } from "./gocardless-client";
 import {
   recordAccountSync,
@@ -79,6 +81,16 @@ export interface AccountSyncResult {
   warnings: string[];
   /** Dutch error when this account failed entirely, else null. */
   error: string | null;
+  /**
+   * The machine-readable cause behind `error`.
+   *
+   * Kept separate on purpose: the connection-level decision below ("is this a dead consent, or a
+   * bank having a bad afternoon?") used to be made by comparing the DUTCH sentence to
+   * dutchGoCardlessError("CONSENT_EXPIRED"). That works exactly until someone improves the
+   * wording, at which point every expired connection silently starts being filed as a generic
+   * error and nobody is ever asked to reconnect. A code cannot rot that way.
+   */
+  errorCode: GoCardlessErrorCode | null;
   /** True when the account was skipped because it was read recently (rate-limit guard). */
   skippedTooSoon: boolean;
 }
@@ -206,6 +218,7 @@ async function syncOneAccount(args: {
     skipped: 0,
     warnings: [],
     error: null,
+    errorCode: null,
     skippedTooSoon: false,
   };
 
@@ -220,13 +233,14 @@ async function syncOneAccount(args: {
     const txs = await client.getAccountTransactions(account.accountId, { dateFrom, dateTo });
     booked = txs.booked;
   } catch (err) {
-    const dutch = err instanceof GoCardlessError ? dutchGoCardlessError(err.code) : "Ophalen bij de bank mislukt.";
+    const code = err instanceof GoCardlessError ? err.code : null;
+    const dutch = code ? dutchGoCardlessError(code) : "Ophalen bij de bank mislukt.";
     console.warn("[GOCARDLESS] fetching transactions failed", {
       accountId: account.accountId,
-      code: err instanceof GoCardlessError ? err.code : "UNKNOWN",
+      code: code ?? "UNKNOWN",
     });
     await recordAccountSync({ accountRowId: account.id, syncedThrough: null, lastError: dutch });
-    return { ...base, error: dutch };
+    return { ...base, error: dutch, errorCode: code };
   }
 
   const { transactions, warnings } = mapGoCardlessTransactions(booked);
@@ -294,10 +308,14 @@ export async function syncBankConnection(args: {
   const errored = result.accounts.filter((a) => a.error);
   if (errored.length > 0 && errored.length === result.accounts.length) {
     result.error = errored[0].error;
-    const expired = errored[0].error === dutchGoCardlessError("CONSENT_EXPIRED");
+    // 'expired' is the status that makes the panel offer "Opnieuw koppelen" instead of a
+    // "Ververs" button that can only fail — so it must cover every cause that only a fresh
+    // consent can fix (lapsed agreement, suspended after repeated failures, account gone at the
+    // bank), not just the literal expiry. Decided on the CODE, never on the Dutch sentence.
+    const dead = errored[0].errorCode !== null && needsReconnect(errored[0].errorCode);
     await setConnectionStatus({
       connectionId: connection.id,
-      status: expired ? "expired" : "error",
+      status: dead ? "expired" : "error",
       lastError: errored[0].error,
     });
   } else if (result.accounts.some((a) => !a.error && !a.skippedTooSoon)) {

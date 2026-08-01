@@ -20,11 +20,13 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { appOrigin } from "@/lib/app-origin";
 import {
+  API_DEFAULT_DAYS,
   createGoCardlessClient,
   dutchGoCardlessError,
   DEFAULT_ACCESS_VALID_FOR_DAYS,
   GoCardlessError,
   isGoCardlessConfigured,
+  MAX_ACCESS_VALID_FOR_DAYS,
   MAX_HISTORICAL_DAYS_CAP,
 } from "@/lib/gocardless-client";
 import { createBankConnection, newConnectionReference } from "@/lib/gocardless-connection";
@@ -89,16 +91,32 @@ export async function POST(req: NextRequest) {
   try {
     const client = createGoCardlessClient();
 
-    // How much history to ask for: what THIS bank offers, capped. Asking for more than the bank
-    // allows makes the agreement call fail outright, so the institution's own number is used.
     const institutions = await client.getInstitutions("NL");
     const institution = institutions.find((i) => i.id === institutionId) ?? null;
+
+    // How much history to ask for: what THIS bank offers, capped. Asking for more is a hard 400
+    // ("max_historical_days must be > 0 and <= transaction_total_days"), which would fail the
+    // whole connect — so when the institution is unknown to us we fall back to the API's own
+    // default of 90 rather than a guess that can be too high.
     const maxHistoricalDays = Math.min(
-      institution?.transactionTotalDays ?? 365,
+      institution?.transactionTotalDays ?? API_DEFAULT_DAYS,
       MAX_HISTORICAL_DAYS_CAP,
     );
 
-    const agreement = await client.createAgreement({ institutionId, maxHistoricalDays });
+    // How LONG the consent should last: the longest this bank grants. Many allow 180 days rather
+    // than the 90-day default, and that is the difference between the owner re-authorising twice
+    // a year or four times — the single most annoying thing about a PSD2 link. Capped at the
+    // documented ceiling for a plain (non-reconfirmation) agreement.
+    const accessValidForDays = Math.min(
+      institution?.maxAccessValidForDays ?? DEFAULT_ACCESS_VALID_FOR_DAYS,
+      MAX_ACCESS_VALID_FOR_DAYS,
+    );
+
+    const agreement = await client.createAgreement({
+      institutionId,
+      maxHistoricalDays,
+      accessValidForDays,
+    });
     const requisition = await client.createRequisition({
       institutionId,
       redirect,

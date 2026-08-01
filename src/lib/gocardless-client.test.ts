@@ -16,11 +16,16 @@ import {
   dutchGoCardlessError,
   GoCardlessError,
   GOCARDLESS_API_BASE,
+  isTokenFailure,
+  needsReconnect,
   normalizeBalances,
   normalizeInstitutions,
   normalizeRequisition,
+  parseErrorBody,
   pickDisplayBalance,
   refineErrorCode,
+  REQUISITION_IN_PROGRESS,
+  requisitionNeedsReconnect,
 } from "./gocardless-client";
 
 const SECRET_ID = "test-secret-id";
@@ -204,38 +209,230 @@ test("the Dutch text for a spent budget reassures rather than alarms", () => {
   assert.doesNotMatch(text, /fout|mislukt/i);
 });
 
-// ─── consent expiry ───────────────────────────────────────────────────────────────────────────
+// ─── error classification ─────────────────────────────────────────────────────────────────────
+//
+// Every payload below is copied VERBATIM from the published OpenAPI spec's own examples
+// (bankaccountdata.gocardless.com/api/v2/swagger.json). That matters: this whole layer decides
+// who is asked to fix a problem — the owner, or us — and a hand-invented error string would
+// prove only that the code agrees with my imagination of the API.
 
-test("an expired consent is told apart from a validation error, so the owner is asked to reconnect", () => {
-  // GoCardless answers both with a 4xx; only the body distinguishes them. Getting this wrong
-  // leaves the owner with a dead connection and a message he cannot act on.
+/** Reduce a spec example to the code the callers act on, exactly as request() does. */
+const codeFor = (status: number, body: unknown) =>
+  refineErrorCode(classifyStatus(status), parseErrorBody(JSON.stringify(body)));
+
+test("an expired End User Agreement asks the owner to reconnect — it does NOT read as a broken login", () => {
+  // THE bug this file exists to prevent. EUAExpiredError arrives as a 401 and carries no `type`,
+  // so on the status alone it is indistinguishable from "our credentials died" — and the owner
+  // would be told to contact support when one tap on "opnieuw koppelen" is the actual fix.
   assert.equal(
-    refineErrorCode("VALIDATION", '{"summary":"Access expired","detail":"End User Agreement expired"}'),
+    codeFor(401, {
+      summary: "End User Agreement (EUA) $EUA_ID has expired",
+      detail: "EUA was valid for 90 days and it expired at 2026-08-01. The end user must connect the account once more with new EUA and Requisition",
+      status_code: 401,
+    }),
     "CONSENT_EXPIRED",
   );
+
+  // The typed twin, on the same endpoints.
   assert.equal(
-    refineErrorCode("VALIDATION", '{"summary":"Account suspended","detail":"suspended after failures"}'),
-    "ACCOUNT_SUSPENDED",
+    codeFor(401, {
+      summary: "Couldn't update account transactions",
+      detail: "Access has expired or it has been revoked. To restore access reconnect the account.",
+      type: "AccessExpiredError",
+      status_code: 401,
+    }),
+    "CONSENT_EXPIRED",
   );
-  // An unrecognised body must NOT be promoted — a real bug of ours would otherwise read as
-  // "reconnect your bank", which the owner can do nothing about.
-  assert.equal(refineErrorCode("VALIDATION", '{"detail":"institution_id is required"}'), "VALIDATION");
-  assert.equal(refineErrorCode("SERVER", undefined), "SERVER");
+
+  // A 403 saying there is no valid agreement means the same thing to the owner.
+  assert.equal(
+    codeFor(403, {
+      summary: "No valid End User Agreement",
+      detail: "Account exists but there is no valid End User Agreement permitting you to access it",
+      status_code: 403,
+    }),
+    "CONSENT_EXPIRED",
+  );
 });
 
-test("classifyStatus maps the statuses each caller branches on", () => {
+test("a genuinely dead token still reads as a credentials failure", () => {
+  // The other side of the same 401: this one really is ours.
+  assert.equal(
+    codeFor(401, { summary: "Invalid token", detail: "Token is invalid or expired", status_code: 401 }),
+    "INVALID_CREDENTIALS",
+  );
+});
+
+test("the token cache is only dropped for a token failure, never for a lapsed consent", () => {
+  // Load-bearing for the cron: one owner's expired consent must not force a fresh token
+  // exchange for every account behind it, because the token endpoint has its own rate limit.
+  const tokenDead = parseErrorBody('{"summary":"Invalid token","detail":"Token is invalid or expired"}');
+  assert.equal(isTokenFailure(tokenDead), true);
+
+  const consentDead = parseErrorBody(
+    '{"summary":"End User Agreement (EUA) x has expired","detail":"EUA was valid for 90 days"}',
+  );
+  assert.equal(isTokenFailure(consentDead), false);
+
+  const accessDead = parseErrorBody(
+    '{"summary":"Couldn\'t update account transactions","detail":"Access has expired or it has been revoked.","type":"AccessExpiredError"}',
+  );
+  assert.equal(isTokenFailure(accessDead), false);
+
+  // An unreadable body on a 401 falls to the safe side: assume the token and re-fetch it.
+  assert.equal(isTokenFailure(null), true);
+});
+
+test("the account-level errors are read from `type`, not guessed from prose", () => {
+  assert.equal(
+    codeFor(429, { summary: "Couldn't update account transactions", detail: "Daily request limit set by the Institution has been exceeded.", type: "RateLimitError" }),
+    "RATE_LIMITED",
+  );
+  assert.equal(
+    codeFor(401, { summary: "Couldn't update account balances", detail: "Account has been deactivated or it no longer exists.", type: "AccountInactiveError" }),
+    "ACCOUNT_INACTIVE",
+  );
+  assert.equal(
+    codeFor(403, { summary: "Couldn't update account details", detail: "Access to account is forbidden.", type: "AccountAccessForbidden" }),
+    "FORBIDDEN",
+  );
+  // The INSTITUTION is down, not GoCardless — same instruction ("try later"), and never a
+  // reason to mark the owner's connection dead.
+  assert.equal(
+    codeFor(503, { summary: "Couldn't update account transactions", detail: "Institution service unavailable", type: "ServiceError" }),
+    "SERVER",
+  );
+  assert.equal(
+    codeFor(503, { summary: "Couldn't update account transactions", detail: "Couldn't connect to Institution", type: "ConnectionError" }),
+    "SERVER",
+  );
+});
+
+test("a suspended account is its own outcome, and needs a new consent", () => {
+  assert.equal(
+    codeFor(409, {
+      summary: "Account suspended",
+      detail: "This account or its requisition was suspended due to numerous errors that occurred while accessing it.",
+      status_code: 409,
+    }),
+    "ACCOUNT_SUSPENDED",
+  );
+});
+
+test("our own misconfigurations are never dressed up as the owner's problem", () => {
+  // An un-whitelisted server IP fails EVERY endpoint. Read as a plain 403 it says "the bank
+  // refuses", and the owner reconnects forever against a setting only we can change.
+  assert.equal(
+    codeFor(403, {
+      summary: "IP address access denied",
+      detail: "Your IP $IP_ADDRESS isn't whitelisted to perform this action",
+      status_code: 403,
+    }),
+    "IP_NOT_ALLOWED",
+  );
+  // A spent free tier is a 402 on connect. As a generic validation error it reads "the bank
+  // refused, try again" — an instruction that can never succeed.
+  assert.equal(
+    codeFor(402, { summary: "Payment Required", detail: "Free usage limit exceeded", status_code: 402 }),
+    "QUOTA_EXCEEDED",
+  );
+  // Both must say plainly that it is on us.
+  for (const code of ["IP_NOT_ALLOWED", "QUOTA_EXCEEDED"] as const) {
+    assert.match(dutchGoCardlessError(code), /support/i);
+    assert.match(dutchGoCardlessError(code), /uploaden/i, "the owner still has a way forward");
+  }
+});
+
+test("an access_scope refusal is recognised, so the caller can retry with a narrower scope", () => {
+  assert.equal(
+    codeFor(400, {
+      access_scope: [{ summary: "Institution access scope dependencies error", detail: "For this institution the following scopes are required together: ['balances', 'details']" }],
+      summary: "Unsupported access scope selected.",
+      detail: "The access scopes supported by the institution are ['transactions'].",
+      status_code: 400,
+    }),
+    "SCOPE_UNSUPPORTED",
+  );
+});
+
+test("a field-level validation error is read at all — the message hangs under the FIELD, not under summary", () => {
+  // The API uses two non-overlapping error shapes. On connect it returns the second one: the
+  // offending field is the KEY and there is no top-level summary or detail anywhere. Reading
+  // only the ErrorResponse shape makes every one of these look like an empty body — so the
+  // scope refusal would never be recognised and the retry ladder would never walk.
+  const body = parseErrorBody(JSON.stringify({
+    access_scope: [
+      { summary: "Institution access scope dependencies error", detail: "For this institution the following scopes are required together: ['balances', 'details']" },
+    ],
+    status_code: 400,
+  }));
+  assert.ok(body);
+  assert.equal(body.summary, undefined, "there genuinely is no top-level summary");
+  assert.deepEqual(body.fields, ["access_scope"]);
+  assert.match(body.text, /required together/);
+
+  // And the single-object form, used for institution_id.
+  const single = parseErrorBody(JSON.stringify({
+    institution_id: { summary: "Unknown Institution ID X", detail: "Get Institution IDs from /institutions/" },
+    status_code: 400,
+  }));
+  assert.deepEqual(single?.fields, ["institution_id"]);
+  assert.match(single?.text ?? "", /unknown institution id/);
+});
+
+test("an unrecognised body keeps whatever the status said", () => {
+  // A real bug of ours must never be promoted into a "reconnect your bank" nudge the owner can
+  // do nothing about.
+  assert.equal(
+    codeFor(400, { summary: "Fields required", detail: "institution_id: This field is required.", status_code: 400 }),
+    "VALIDATION",
+  );
+  assert.equal(refineErrorCode("SERVER", null), "SERVER");
+  assert.equal(parseErrorBody("not json at all"), null);
+  assert.equal(parseErrorBody(undefined), null);
+});
+
+test("classifyStatus maps every status the spec documents", () => {
   assert.equal(classifyStatus(401), "INVALID_CREDENTIALS");
+  assert.equal(classifyStatus(402), "QUOTA_EXCEEDED");
   assert.equal(classifyStatus(403), "FORBIDDEN");
   assert.equal(classifyStatus(404), "NOT_FOUND");
+  assert.equal(classifyStatus(409), "ACCOUNT_SUSPENDED");
   assert.equal(classifyStatus(429), "RATE_LIMITED");
   assert.equal(classifyStatus(500), "SERVER");
+  assert.equal(classifyStatus(503), "SERVER");
   assert.equal(classifyStatus(400), "VALIDATION");
+});
+
+test("needsReconnect names exactly the outcomes a new consent fixes", () => {
+  // This predicate decides whether the panel offers "Opnieuw koppelen" or a "Ververs" button
+  // that could only fail.
+  assert.equal(needsReconnect("CONSENT_EXPIRED"), true);
+  assert.equal(needsReconnect("ACCOUNT_SUSPENDED"), true);
+  assert.equal(needsReconnect("ACCOUNT_INACTIVE"), true);
+  assert.equal(needsReconnect("RATE_LIMITED"), false, "tomorrow it works again — nothing to reconnect");
+  assert.equal(needsReconnect("SERVER"), false);
+  assert.equal(needsReconnect("QUOTA_EXCEEDED"), false, "ours to fix, not his");
+});
+
+test("the requisition statuses that only a new consent can resolve", () => {
+  // The spec's StatusEnum has eleven values; treating anything but LN as "try again" would
+  // leave an owner retrying a link that is permanently dead.
+  assert.equal(requisitionNeedsReconnect("EX"), true, "expired");
+  assert.equal(requisitionNeedsReconnect("SU"), true, "suspended");
+  assert.equal(requisitionNeedsReconnect("ER"), true, "error");
+  for (const inFlight of REQUISITION_IN_PROGRESS) {
+    assert.equal(requisitionNeedsReconnect(inFlight), false, `${inFlight} is mid-journey, not dead`);
+  }
+  assert.equal(requisitionNeedsReconnect("LN"), false);
+  assert.equal(requisitionNeedsReconnect("RJ"), false, "rejected — retrying the same link CAN work");
 });
 
 test("every error code has Dutch text — no owner ever sees an empty message", () => {
   const codes = [
-    "NOT_CONFIGURED", "INVALID_CREDENTIALS", "FORBIDDEN", "RATE_LIMITED",
-    "CONSENT_EXPIRED", "ACCOUNT_SUSPENDED", "VALIDATION", "NOT_FOUND", "SERVER", "NETWORK",
+    "NOT_CONFIGURED", "INVALID_CREDENTIALS", "IP_NOT_ALLOWED", "QUOTA_EXCEEDED", "FORBIDDEN",
+    "RATE_LIMITED", "CONSENT_EXPIRED", "ACCOUNT_SUSPENDED", "ACCOUNT_INACTIVE",
+    "SCOPE_UNSUPPORTED", "VALIDATION", "NOT_FOUND", "SERVER", "NETWORK",
   ] as const;
   for (const code of codes) {
     assert.ok(dutchGoCardlessError(code).length > 10, `${code} has no usable Dutch text`);
@@ -256,7 +453,7 @@ test("a fetch that never completes is NETWORK, not an unhandled crash", async ()
 
 // ─── request shapes ───────────────────────────────────────────────────────────────────────────
 
-test("an agreement asks for the three scopes and reads back what was GRANTED", async () => {
+test("an agreement asks only for the access we use, and reads back what was GRANTED", async () => {
   clearGoCardlessTokenCache();
   const { impl, calls } = fakeFetch([
     { body: tokenBody },
@@ -270,12 +467,59 @@ test("an agreement asks for the three scopes and reads back what was GRANTED", a
   assert.equal(sent.institution_id, "ING_INGBNL2A");
   assert.equal(sent.max_historical_days, 365);
   assert.equal(sent.access_valid_for_days, 90);
-  assert.deepEqual(sent.access_scope, ["balances", "details", "transactions"]);
+  // NOT balances: nothing in this app reads a saldo, and asking an owner to hand over data we
+  // will not use is over-collection.
+  assert.deepEqual(sent.access_scope, ["details", "transactions"]);
 
   // The bank may cap the window lower than we asked. The expiry we show the owner has to be the
   // one the bank granted, or his connection dies before the date on his screen.
   assert.equal(agreement.accessValidForDays, 30);
   assert.equal(agreement.maxHistoricalDays, 180);
+});
+
+test("a bank that refuses our scope combination is still connectable", async () => {
+  // Without the ladder, an institution whose scopes must be requested together — or which only
+  // supports 'transactions' — is IMPOSSIBLE to connect: the owner picks his bank, gets
+  // "koppelen mislukt", and no amount of retrying helps.
+  clearGoCardlessTokenCache();
+  const scopeRefusal = {
+    status: 400,
+    body: {
+      access_scope: [{ summary: "Institution access scope dependencies error", detail: "For this institution the following scopes are required together: ['balances', 'details']" }],
+      status_code: 400,
+    },
+  };
+  const { impl, calls } = fakeFetch([
+    { body: tokenBody },
+    scopeRefusal,                                    // ["details","transactions"] → refused
+    { body: { id: "agr-2", access_scope: ["balances", "details", "transactions"] } },
+  ]);
+  const client = createGoCardlessClient({ secretId: SECRET_ID, secretKey: SECRET_KEY, fetchImpl: impl });
+
+  const agreement = await client.createAgreement({ institutionId: "ODD_BANK", maxHistoricalDays: 90 });
+
+  assert.equal(agreement.id, "agr-2");
+  assert.deepEqual(JSON.parse(calls[1].body ?? "{}").access_scope, ["details", "transactions"]);
+  assert.deepEqual(JSON.parse(calls[2].body ?? "{}").access_scope, ["balances", "details", "transactions"]);
+  // And the granted scope travels back, so nothing downstream assumes what we asked for.
+  assert.deepEqual(agreement.accessScope, ["balances", "details", "transactions"]);
+});
+
+test("the scope ladder does not retry an error that is not about scope", async () => {
+  // A wrong institution id must fail once and say so, not burn three attempts and report a
+  // scope problem that does not exist.
+  clearGoCardlessTokenCache();
+  const { impl, calls } = fakeFetch([
+    { body: tokenBody },
+    { status: 400, body: { institution_id: { summary: "Unknown Institution ID X" }, summary: "Unknown Institution ID X", detail: "Get Institution IDs from /institutions/", status_code: 400 } },
+  ]);
+  const client = createGoCardlessClient({ secretId: SECRET_ID, secretKey: SECRET_KEY, fetchImpl: impl });
+
+  await assert.rejects(
+    () => client.createAgreement({ institutionId: "NOPE", maxHistoricalDays: 90 }),
+    (err: unknown) => err instanceof GoCardlessError && err.code === "VALIDATION",
+  );
+  assert.equal(calls.length, 2, "one token call, one agreement attempt — no ladder walk");
 });
 
 test("a requisition sends the redirect, reference and agreement, and returns the consent link", async () => {
@@ -335,16 +579,25 @@ test("a transactions body without the expected shape yields empty lists, not a c
 
 // ─── normalisation ────────────────────────────────────────────────────────────────────────────
 
-test("institutions keep the history window the bank actually offers", () => {
+test("institutions keep both day counts the bank publishes — as numbers, not strings", () => {
+  // Both arrive as STRINGS in this API ("90", "180"). max_access_valid_for_days is the one that
+  // decides whether the owner re-authorises twice a year or four times, so losing it is not
+  // cosmetic. Shape copied from the spec's own N26 example.
   const list = normalizeInstitutions([
-    { id: "ING_INGBNL2A", name: "ING", bic: "INGBNL2A", transaction_total_days: "730", logo: "https://x/l.png" },
+    {
+      id: "N26_NTSBDEB1", name: "N26 Bank", bic: "NTSBDEB1",
+      transaction_total_days: "90", max_access_valid_for_days: "180",
+      countries: ["NL"], logo: "https://cdn-logos.gocardless.com/ais/N26.png",
+    },
     { id: "RABO_RABONL2U", name: "Rabobank" },
     { name: "no id — dropped" },
     "not an object",
   ]);
   assert.equal(list.length, 2);
-  assert.equal(list[0].transactionTotalDays, 730);
+  assert.equal(list[0].transactionTotalDays, 90);
+  assert.equal(list[0].maxAccessValidForDays, 180);
   assert.equal(list[1].transactionTotalDays, null);
+  assert.equal(list[1].maxAccessValidForDays, null);
   assert.equal(list[1].bic, null);
 });
 

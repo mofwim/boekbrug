@@ -89,11 +89,61 @@ an intent to reach 4/day. Consequences already built in:
 - A 429 is a first-class, calm outcome ("morgen halen we automatisch de rest op"), never an error
   state. `force` is deliberately not something the browser can ask for.
 
-**Consent expiry.** A PSD2 consent lasts at most 90 days (`access_valid_for_days`). After that
-the feed goes silent — with no error, just nothing. `access_valid_until` stores the window the
-bank *granted* (a bank may cap it shorter than we asked), the panel shows it, and the cron warns
-at 10, 3, 1 and 0 days. Those warnings are the only thing standing between an expired consent and
-a quarter with a month missing.
+**Consent expiry.** A PSD2 consent lasts at most 90 days by default, and up to **180** where the
+bank allows it — each institution publishes its own ceiling as `max_access_valid_for_days`, so
+the connect route asks for that rather than the default. It is the difference between the owner
+re-authorising twice a year and four times. After expiry the feed goes silent with no error, just
+nothing. `access_valid_until` stores the window the bank *granted* (it may cap shorter than we
+asked), the panel shows it, and the cron warns at 10, 3, 1 and 0 days. Those warnings are the only
+thing standing between an expired consent and a quarter with a month missing.
+
+## 4a. Errors: who is being asked to fix this?
+
+The status code and the person who can act are different axes, and conflating them is how an
+integration ends up telling an owner to "contact support" for something one tap fixes — or
+telling him to reconnect against a setting only we control. `refineErrorCode` in
+`gocardless-client.ts` is the single place that decides, and it reads the body, not just the
+status:
+
+| What happened | Comes back as | Code | Who fixes it |
+|---|---|---|---|
+| `EUAExpiredError` / `AccessExpiredError` | **401** | `CONSENT_EXPIRED` | owner — reconnect |
+| `AccountValidEUAError` | 403 | `CONSENT_EXPIRED` | owner — reconnect |
+| `AccountSuspendedError` | 409 | `ACCOUNT_SUSPENDED` | owner — reconnect |
+| `AccountInactiveError` | 401 | `ACCOUNT_INACTIVE` | owner — reconnect |
+| `RateLimitError` | 429 | `RATE_LIMITED` | nobody — tomorrow |
+| `ServiceError` / `ConnectionError` | 503 | `SERVER` | nobody — the *bank* is down |
+| `IPAccessDenied` | 403 | `IP_NOT_ALLOWED` | **us** — portal IP whitelist |
+| Free usage limit exceeded | **402** | `QUOTA_EXCEEDED` | **us** — our plan |
+| `InvalidToken` | 401 | `INVALID_CREDENTIALS` | us — rotated secrets |
+
+Three consequences worth knowing before you touch this:
+
+- **`EUAExpiredError` is a 401 with no `type` field.** On the status alone it is
+  indistinguishable from our credentials dying. Getting this one wrong defeats the entire point
+  of the expiry machinery above, so it has its own test built from the spec's verbatim payload.
+- **A 401 only clears the token cache when it is *about* the token** (`isTokenFailure`). Our
+  token is fine when a consent lapses; dropping it would make one owner's expired connection
+  force a fresh exchange for every account behind it in the cron run, against a token endpoint
+  that has its own rate limit.
+- **Validation errors arrive in a second, non-overlapping shape**: the offending field is the
+  key (`{"access_scope": [{summary, detail}], "status_code": 400}`) with no top-level `summary`
+  at all. `parseErrorBody` flattens both shapes; reading only `ErrorResponse` makes every
+  connect-time validation error look like an empty body.
+
+## 4b. Access scope: ask for what we use, but survive a bank that says no
+
+The agreement requests `["details", "transactions"]` — the feature, plus the IBAN and holder
+name on the connection card. **`balances` is deliberately absent**: nothing in this app reads a
+saldo, and asking an owner to hand over data we will not use is over-collection, not
+future-proofing (see `docs/legal/05_Verwerkingsregister.md`).
+
+But the scope is not ours alone to pick. The API documents three separate refusals — scopes that
+must be requested *together*, scopes that are *mandatory*, and scopes an institution does not
+support at all. A single fixed list therefore makes some banks impossible to connect: the owner
+picks his bank, gets "koppelen mislukt", and retrying never helps. So `createAgreement` walks
+`ACCESS_SCOPE_LADDER`: what we use → everything → `transactions` only. Only a `SCOPE_UNSUPPORTED`
+advances the ladder; any other error is the real answer and is thrown immediately.
 
 ## 5. What it deliberately does not do
 
@@ -137,6 +187,15 @@ a quarter with a month missing.
 3. Confirm `CRON_SECRET` is set — without it the daily feed refuses to run (fail-closed) and says
    so loudly in the log.
 4. `vercel.json` already schedules `/api/cron/bank-sync` at 05:00 UTC daily.
+
+**Test it before trusting it with a real quarter.** GoCardless publishes a mock institution,
+`SANDBOXFINANCE_SFIN0000`, which walks the whole consent journey without a real bank. Connect it
+once from `/dashboard/bank` and check that transactions land, that they are matched, and that
+re-running the sync inserts nothing the second time (the dedup working).
+
+If the portal has an IP whitelist configured, add the deploy's egress IP — otherwise every call
+fails 403 `IPAccessDenied` and the app will correctly, but unhelpfully, tell users to contact
+support.
 
 The generated types in `src/types/database.types.ts` carry both new tables by hand until the next
 `supabase gen types` run; the header there lists them.

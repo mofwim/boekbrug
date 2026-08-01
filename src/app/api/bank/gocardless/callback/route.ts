@@ -29,6 +29,8 @@ import {
   dutchGoCardlessError,
   GoCardlessError,
   isGoCardlessConfigured,
+  REQUISITION_STATUS,
+  requisitionNeedsReconnect,
 } from "@/lib/gocardless-client";
 import {
   findBankConnectionByReference,
@@ -38,13 +40,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
-/**
- * Requisition statuses, from the API's own list. LN (LINKED) is the only one that means the
- * accounts are ours to read; the rest are either still in flight or a refusal.
- */
-const STATUS_LINKED = "LN";
-const STATUS_EXPIRED = "EX";
-const STATUS_REJECTED = "RJ";
+const STATUS_LINKED = REQUISITION_STATUS.LINKED;
+const STATUS_REJECTED = REQUISITION_STATUS.REJECTED;
 
 /** Everything the owner is told lands in the query string of /dashboard/bank. */
 function back(origin: string, params: Record<string, string>): NextResponse {
@@ -88,13 +85,18 @@ export async function GET(req: NextRequest) {
     return back(origin, { bank: "fout", reden: dutch });
   }
 
-  if (requisition.status === STATUS_EXPIRED) {
-    await setConnectionStatus({
-      connectionId: connection.id,
-      status: "expired",
-      lastError: dutchGoCardlessError("CONSENT_EXPIRED"),
-    });
-    return back(origin, { bank: "fout", reden: dutchGoCardlessError("CONSENT_EXPIRED") });
+  // EX (expired), SU (suspended) and ER (error) are all dead ends for THIS consent: retrying the
+  // same link can never fix them, only a fresh consent can. They are marked 'expired' so the
+  // panel offers "Opnieuw koppelen" rather than a "Ververs" button that would fail forever.
+  if (requisitionNeedsReconnect(requisition.status)) {
+    const reden =
+      requisition.status === REQUISITION_STATUS.SUSPENDED
+        ? dutchGoCardlessError("ACCOUNT_SUSPENDED")
+        : requisition.status === REQUISITION_STATUS.ERROR
+          ? "Het koppelen is bij je bank misgegaan. Probeer opnieuw te koppelen."
+          : dutchGoCardlessError("CONSENT_EXPIRED");
+    await setConnectionStatus({ connectionId: connection.id, status: "expired", lastError: reden });
+    return back(origin, { bank: "fout", reden });
   }
 
   if (requisition.status !== STATUS_LINKED || requisition.accounts.length === 0) {
