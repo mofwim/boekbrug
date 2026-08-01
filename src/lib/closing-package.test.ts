@@ -10,6 +10,8 @@ import JSZip from "jszip";
 import {
   buildOverviewCsv,
   costWithoutInvoiceWarning,
+  cashCostWithoutReceiptWarning,
+  cashCostsWithoutReceipt,
   assembleClosingPackageZip,
   effectiveDirection,
   type PackageInvoice,
@@ -319,4 +321,44 @@ test("[VOORBELASTING] the message says the cost DID count — only the BTW did n
   // the voorbelasting is what is missing.
   const w = costWithoutInvoiceWarning(1, 100);
   assert.match(w!.message, /telt wel mee in de kosten/);
+});
+
+// ─── [PACKAGE-VOORBELASTING-KAS] Cash costs booked without a receipt ──────────
+//
+// The same silent loss as the bank case, one drawer over: financial-result claims voorbelasting
+// on a cash cost ONLY when a bon is linked AND a rate is set. Without both, the FULL GROSS books
+// as cost and the BTW is gone. Correct behaviour — never invent a deduction — but nobody is told.
+
+test("[VOORBELASTING-KAS] a cash cost without a bon is counted, with its amount", () => {
+  const { count, total } = cashCostsWithoutReceipt([
+    { direction: "out", amount: 60, category: "kosten", document_id: null },
+    { direction: "out", amount: 40.5, category: "kosten" },
+  ]);
+  assert.equal(count, 2);
+  assert.equal(total, 100.5);
+  assert.match(cashCostWithoutReceiptWarning(count, total)!.message, /voorbelasting/);
+});
+
+test("[VOORBELASTING-KAS] a cost WITH a bon is not flagged — its BTW is already claimed", () => {
+  const { count } = cashCostsWithoutReceipt([
+    { direction: "out", amount: 60, category: "kosten", document_id: "doc-1" },
+  ]);
+  assert.equal(count, 0, "a documented cash cost has nothing to warn about");
+});
+
+test("[VOORBELASTING-KAS] sales and refunds are not costs", () => {
+  // A cash SALE needs no purchase document, and money IN under 'kosten' is a refund OF a cost —
+  // it has no voorbelasting of its own to reclaim. Counting either would be a false alarm, and a
+  // false alarm in this list is what teaches an owner to stop reading it.
+  const { count } = cashCostsWithoutReceipt([
+    { direction: "in", amount: 200, category: "omzet", document_id: null },
+    { direction: "in", amount: 25, category: "kosten", document_id: null },
+    { direction: "out", amount: 50, category: "prive", document_id: null },
+  ]);
+  assert.equal(count, 0);
+});
+
+test("[VOORBELASTING-KAS] an empty drawer says nothing", () => {
+  assert.equal(cashCostWithoutReceiptWarning(0, 0), null);
+  assert.deepEqual(cashCostsWithoutReceipt([]), { count: 0, total: 0 });
 });

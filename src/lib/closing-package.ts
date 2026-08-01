@@ -64,6 +64,9 @@ import {
   type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
 } from "./icp";
 import { fetchAllRows } from "./supabase-paginate";
+// [PACKAGE-ART29] Both sides of art. 29 Wet OB — see the call site for why they belong here.
+import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
+import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
 import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
@@ -972,6 +975,45 @@ async function costLinesWithoutInvoice(
   return { count: rows.length, total: Math.round(total * 100) / 100 };
 }
 
+// [PACKAGE-VOORBELASTING-KAS] The same loss, one drawer over.
+//
+// financial-result claims voorbelasting on a cash cost ONLY when a bon is linked AND a rate is
+// set ([CASH-COST-VAT]); without both it books the FULL GROSS as cost with €0 deductible. That
+// is the right call — never invent a deduction — but it means a cash purchase whose paper
+// receipt was never photographed quietly costs the owner the BTW on it.
+//
+// If anything this is the more common half: a cash purchase is exactly the one that comes with a
+// paper slip that ends up in a coat pocket. readiness carries a general sentence about it
+// ("Voorbelasting telt alleen ingevoerde inkoopfacturen/bonnen…"), but a sentence is not a
+// number — nobody goes looking through a quarter of receipts for a note that is always there.
+// A count and a euro figure is what makes someone go and look.
+export function cashCostWithoutReceiptWarning(count: number, total: number): ClosingPackageWarning | null {
+  if (count <= 0) return null;
+  return {
+    code: "cash_cost_without_receipt",
+    message:
+      `${count} contante kostenpost(en) van samen ${formatEuroNL(total)} hebben geen bon. ` +
+      `Het bedrag telt volledig mee in de kosten, maar er is geen voorbelasting (5b) op ` +
+      `terug te vragen zolang de bon ontbreekt.`,
+  };
+}
+
+/** Cash costs booked without a receipt, from entries already in memory. Pure. */
+export function cashCostsWithoutReceipt(
+  entries: readonly { direction: string; amount: number | null; category: string | null; document_id?: string | null }[],
+): { count: number; total: number } {
+  let count = 0;
+  let total = 0;
+  for (const c of entries) {
+    // Money OUT under 'kosten' with no linked document. A cash entry going IN under 'kosten' is a
+    // refund OF a cost, which has no voorbelasting of its own to reclaim.
+    if (c.direction !== "out" || c.category !== "kosten" || c.document_id) continue;
+    count++;
+    total += Math.abs(Number(c.amount) || 0);
+  }
+  return { count, total: Math.round(total * 100) / 100 };
+}
+
 export function costWithoutInvoiceWarning(count: number, total: number): ClosingPackageWarning | null {
   if (count <= 0) return null;
   return {
@@ -1554,6 +1596,12 @@ export async function buildClosingPackageZip(args: {
     date: c.entry_date,
     document_id: c.document_id ?? null, // [CASH-COST-VAT] documented cash cost → voorbelasting
   }));
+
+  // [PACKAGE-VOORBELASTING-KAS] The same loss on the cash side. Computed from the entries already
+  // read above — no extra query, and it can only ever agree with the figures in this same ZIP.
+  const cashNoReceipt = cashCostsWithoutReceipt(cashEntries);
+  const cashNoReceiptWarning = cashCostWithoutReceiptWarning(cashNoReceipt.count, cashNoReceipt.total);
+  if (cashNoReceiptWarning) warnings.push(cashNoReceiptWarning);
   // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
   const bankAllRows = await fetchAllRows<{
     amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
@@ -1648,6 +1696,47 @@ export async function buildClosingPackageZip(args: {
       });
       regimeNotes.push(`LET OP: ${kasResolution.undatedPaidCount} betaalde factu(u)r(en) zonder betaaldatum — concept mogelijk te laag.`);
     }
+  }
+
+  // [PACKAGE-ART29] Both sides of artikel 29 Wet OB, into the hand-over.
+  //
+  // These were computed for readiness and shown to the OWNER only. But art. 29 is not a tidiness
+  // issue, it is money in both directions, and neither direction is settled automatically:
+  //
+  //   lid 7 — voorbelasting deducted on purchase invoices never paid becomes payable AGAIN. A
+  //           LIABILITY, quietly growing belastingrente. bad-debt.ts calls it "the one an
+  //           entrepreneur never hears about until the naheffing arrives" — and until now the
+  //           one person who could have caught it, the accountant, was never told.
+  //   lid 1 — BTW declared on sales invoices the customer never paid can be reclaimed. Money to
+  //           GET, which is quietly left behind if nobody raises it.
+  //
+  // Deliberately warnings and not figures: whether a debt is truly uncollectible, and in which
+  // period to settle it, is the accountant's judgement. The package never books either one — same
+  // discipline as the rest of this file, which reports raw numbers and computes no vat_due.
+  //
+  // Same threshold as readiness (BAD_DEBT_MIN_EUR) so the owner's screen and this package can
+  // never name two different amounts. Fail-soft: a failed read drops the check, not the ZIP.
+  const clawback = await collectVatClawback(supabase, ownerId, kasResolution.scheme, end, korActive)
+    .catch(() => null);
+  if (clawback && clawback.eligible.length > 0 && clawback.totalRepayableBtw >= BAD_DEBT_MIN_EUR) {
+    warnings.push({
+      code: "vat_clawback_art29_7",
+      message:
+        `${clawback.eligible.length} inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `voorbelasting daarop (${formatEuroNL(clawback.totalRepayableBtw)}) wordt weer verschuldigd ` +
+        `(art. 29 lid 7 Wet OB) en is hier NIET verrekend. Zijn ze wél betaald, dan vervalt dit.`,
+    });
+  }
+  const badDebt = await collectBadDebt(supabase, ownerId, kasResolution.scheme, end)
+    .catch(() => null);
+  if (badDebt && badDebt.eligible.length > 0 && badDebt.totalReclaimableBtw >= BAD_DEBT_MIN_EUR) {
+    warnings.push({
+      code: "bad_debt_art29_1",
+      message:
+        `${badDebt.eligible.length} verkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `afgedragen BTW daarop (${formatEuroNL(badDebt.totalReclaimableBtw)}) is terug te vragen ` +
+        `(oninbare vordering, art. 29 Wet OB) en is hier NIET verrekend.`,
+    });
   }
 
   // Only emit a concept when there is something to declare — sales, unrated cash omzet,
