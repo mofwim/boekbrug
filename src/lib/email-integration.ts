@@ -3175,10 +3175,16 @@ export async function syncUserEmails(
         }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.
-        if (ibanChange) {
+        if (ibanChange.status === 'unavailable') {
+          // [IBAN-CHECK-HONEST] De controle kon niet draaien. Dat is iets anders dan "geen wissel",
+          // en het verschil is duur: bij factuurfraude is het gewijzigde rekeningnummer het enige
+          // signaal, dus een stil overgeslagen controle laat de eigenaar naar de rekening van de
+          // fraudeur betalen zonder dat iets dat ooit heeft gezegd.
+          safecore.iban_check_unavailable = true
+        } else if (ibanChange.change) {
           safecore.iban_changed = true
-          safecore.iban_changed_from = ibanChange.from
-          safecore.iban_changed_to = ibanChange.to
+          safecore.iban_changed_from = ibanChange.change.from
+          safecore.iban_changed_to = ibanChange.change.to
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),

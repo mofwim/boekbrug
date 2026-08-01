@@ -974,12 +974,20 @@ export async function POST(req: NextRequest) {
       kvk: v.vendor_kvk ?? null,
       iban: v.vendor_iban ?? null,
     })
-    if (ibanChange) {
+    if (ibanChange.status === 'unavailable') {
+      // [IBAN-CHECK-HONEST] The check could not run. Say so on the card instead of letting the
+      // invoice look verified — this is the flag that stands between the owner and a payment
+      // redirected to a fraudster's account.
+      fieldConfidence._safecore = {
+        ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
+        iban_check_unavailable: true,
+      }
+    } else if (ibanChange.change) {
       fieldConfidence._safecore = {
         ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
         iban_changed: true,
-        iban_changed_from: ibanChange.from,
-        iban_changed_to: ibanChange.to,
+        iban_changed_from: ibanChange.change.from,
+        iban_changed_to: ibanChange.change.to,
       }
     }
   }

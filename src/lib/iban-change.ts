@@ -41,6 +41,19 @@ export interface IbanChange {
   to: string
 }
 
+/**
+ * De uitkomst van de IBAN-controle, inclusief het geval dat hij NIET KON DRAAIEN.
+ *
+ * Dat derde geval is het hele punt van dit type. Eerder gaven "deze leverancier is nieuw", "het
+ * nummer is ongewijzigd" en "de leveranciersregistratie was onbereikbaar" alle drie `null` terug,
+ * en `null` betekent: geen waarschuwing. Bij factuurfraude klopt de rekensom juist wél — het
+ * gewijzigde rekeningnummer is het enige signaal — dus een stil overgeslagen controle is precies
+ * de dure fout.
+ */
+export type IbanCheck =
+  | { status: 'ok'; change: IbanChange | null }
+  | { status: 'unavailable' }
+
 /** "NL91 ABNA 0417 1643 00" — in blokken van vier, zoals het op een factuur staat. */
 export function formatIban(iban: string): string {
   return (iban.match(/.{1,4}/g) ?? [iban]).join(' ')
@@ -96,7 +109,11 @@ export async function knownIbanForVendor(
   try {
     const kvk = normalizeKvk(vendor.kvk)
     if (kvk) {
-      const { data } = await supabase
+      // [IBAN-CHECK-HONEST] A dropped error here is the difference between "this supplier has no
+      // IBAN on record yet" (normal — first invoice) and "we could not look". Both used to arrive
+      // as null, and null means NO FRAUD FLAG on the one check that stands between the owner and a
+      // redirected payment. Throw; detectIbanChange turns it into a stated 'unavailable'.
+      const { data, error } = await supabase
         .from('suppliers')
         .select('iban')
         .eq('user_id', userId)
@@ -104,6 +121,7 @@ export async function knownIbanForVendor(
         .not('iban', 'is', null)
         .limit(1)
         .maybeSingle()
+      if (error) throw new Error(error.message)
       const hit = (data as { iban: string | null } | null)?.iban
       if (hit) return normalizeIban(hit)
     }
@@ -115,7 +133,8 @@ export async function knownIbanForVendor(
     const key = supplierNameKey(cleanName)
     if (!key) return null
 
-    const { data } = await supabase
+    // [IBAN-CHECK-HONEST] Same rule as the kvk lookup above.
+    const { data, error } = await supabase
       .from('suppliers')
       .select('iban')
       .eq('user_id', userId)
@@ -124,6 +143,7 @@ export async function knownIbanForVendor(
       .order('created_at', { ascending: true }) // de oudste = het nummer waarop al betaald is
       .limit(1)
       .maybeSingle()
+    if (error) throw new Error(error.message)
     return normalizeIban((data as { iban: string | null } | null)?.iban)
   } catch {
     return null
@@ -138,13 +158,23 @@ export async function detectIbanChange(
   supabase: Client,
   userId: string,
   vendor: { name?: string | null; kvk?: string | null; iban?: string | null },
-): Promise<IbanChange | null> {
+): Promise<IbanCheck> {
+  const printed = normalizeIban(vendor.iban)
+  // Geen IBAN op de factuur → niets om mee te vergelijken. Dat is een volledig uitgevoerde check
+  // met een lege uitkomst, niet een mislukte: er valt niets te controleren.
+  if (!printed) return { status: 'ok', change: null }
   try {
-    const printed = normalizeIban(vendor.iban)
-    if (!printed) return null // geen IBAN op de factuur → niets om mee te vergelijken
     const known = await knownIbanForVendor(supabase, userId, vendor)
-    return assessIbanChange(printed, known)
-  } catch {
-    return null
+    return { status: 'ok', change: assessIbanChange(printed, known) }
+  } catch (e) {
+    // [IBAN-CHECK-HONEST] Swallowing this used to produce a clean-looking invoice with no flag —
+    // which on THIS check means the owner pays whatever account the paper prints, without ever
+    // being told the app could not verify it. The import still proceeds (a supplier-registry
+    // outage may not stop the books), but it proceeds SAYING so.
+    console.error('[IBAN-CHECK-HONEST] supplier lookup failed — invoice flagged as unverified', {
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    return { status: 'unavailable' }
   }
 }
