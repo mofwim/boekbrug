@@ -38,6 +38,8 @@ import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 import { requireOwner } from '@/lib/owner-only'
+// [FILED-QUARTER] "the table is not there yet" vs "the read failed" — see pg-missing.ts.
+import { isMissingRelation } from '@/lib/pg-missing'
 
 export const dynamic = "force-dynamic";
 
@@ -170,14 +172,32 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const [yearStr, qStr] = qKey.split("-Q");
     // btw_filings is not in the generated types yet — same cast the /api/btw/file route uses.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: filed } = await (pipeline as any)
+    const { data: filed, error: filedErr } = await (pipeline as any)
       .from("btw_filings")
       .select("year")
       .eq("user_id", user.id)
       .eq("year", Number(yearStr))
       .eq("quarter", Number(qStr))
       .maybeSingle();
-    if (filed) {
+    // [FILED-QUARTER] The error is READ, like the five other btw_filings call sites in this app.
+    // Dropped, it meant a failed read produced `filed = null` — no notice — and the owner archived
+    // an invoice out of a quarter they had already filed without ever being told their submitted
+    // aangifte no longer matches their figures. That is precisely what the block above promises not
+    // to do ("reported instead of hidden", "better to hear it here than to find it").
+    //
+    // A MISSING TABLE is not a failed read: the migration has not run, so nothing was ever filed
+    // through this app and "no notice" is the true answer. Same distinction /api/aangifte and
+    // /api/truth already draw — see pg-missing.ts for why the two differ.
+    if (filedErr && !isMissingRelation(filedErr.message)) {
+      console.error("[FILED-QUARTER] btw_filings read failed — saying so instead of staying silent", {
+        invoiceId: id, userId: user.id, quarter: qKey, error: filedErr.message,
+      });
+      notices.push(
+        `Deze factuur viel in ${qKey.replace("-", " ")}. We konden niet nagaan of je dat kwartaal al hebt ingediend — ` +
+        `als dat zo is, klopt je aangifte nu niet meer met je cijfers. Controleer het verschil op de Waarheid-pagina.`,
+      );
+      filedQuarterLink = `/dashboard/waarheid?year=${Number(yearStr)}&quarter=${Number(qStr)}`;
+    } else if (filed) {
       // [FILED-QUARTER] Name the screen that actually holds the answer. "De BTW-pagina" is not a
       // page in this app (the nav has "Aangifte" and "Waarheid"), and the difference between a
       // filing and the live figures is computed on WAARHEID — Aangifte shows the current concept.
