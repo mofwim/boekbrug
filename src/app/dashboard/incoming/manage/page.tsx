@@ -23,8 +23,13 @@ type IncomingRow = ComponentProps<typeof IncomingManageClient>['initialInvoices'
 
 // Exactly the columns the management UI needs — payment fields + accountant_status
 // for the read-only 'Verwerkt' badge (3b-2). No amounts edited here, but shown.
+// [CREDITNOTA-SIGNAAL] invoice_type stond hier niet bij, en daardoor kon dit scherm het verschil
+// tussen een factuur en een creditnota niet eens ZIEN — geen merkteken, geen minteken, en een
+// tegoed dat gewoon als schuld meetelde in "nog te betalen". De kolom bestaat al sinds het begin
+// (database.sql:327) en wordt door intake/upload/reimport netjes gevuld; alleen dit scherm vroeg
+// er niet om.
 const COLS =
-  'id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
+  'id, invoice_number, client_name, status, accountant_status, direction, invoice_type, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
 
 export default async function Page({
   searchParams,
