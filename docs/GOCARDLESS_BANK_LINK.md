@@ -50,6 +50,7 @@ From then on `/api/cron/bank-sync` runs daily and repeats the last step.
 | `src/app/api/cron/bank-sync/route.ts` | The daily feed, and the consent-expiry warnings. |
 | `src/app/dashboard/bank/BankConnectPanel.tsx` | The card above the upload zone. |
 | `supabase/migrations/bank_connections.sql` | Two tables, RLS, and the CONTROLE block. |
+| `src/lib/enablebanking-map.ts` | The same mapping for the second provider. Pure. **Inverts one field — see §3a.** |
 
 ## 3. The one property to never break
 
@@ -75,6 +76,39 @@ So the mapper does not re-implement those rules. It reshapes the JSON into what
 `src/lib/gocardless-map.test.ts` asserts this directly: it builds one transaction as CAMT XML and
 as bank-feed JSON and compares the resulting `contentKey`. **When you change either side, that
 test is the one that has to stay green.**
+
+### 3a. A second provider, and the one field that inverts
+
+`src/lib/enablebanking-map.ts` does the same job for Enable Banking, a second PSD2 aggregator
+(needed because GoCardless closed new Bank Account Data signups — §7, step 1). It mirrors the same
+helpers in the same order, and `enablebanking-map.test.ts` asserts the same cross-door
+`contentKey` property.
+
+One field does **not** carry over, and it is the one that cannot be got wrong:
+
+| | amount | direction |
+|---|---|---|
+| GoCardless | `transactionAmount.amount = "-15.00"` | already in the sign |
+| Enable Banking | `transaction_amount.amount = "15.0"` | `credit_debit_indicator = "DBIT"` |
+| CAMT.053 | `<Amt>15.00</Amt>` | `<CdtDbtInd>DBIT</CdtDbtInd>` |
+
+Enable Banking follows CAMT, not GoCardless. Checked against their own sample export: 611
+transactions, 439 of them `DBIT`, and **not one amount string carries a minus sign**. Copying
+`gocardless-map.ts` — whose header says in so many words *"already SIGNED — no indicator to
+apply"* — would import every expense as income. Silently, on every line, in the direction that
+looks like a good quarter.
+
+Two more things that sample settled, both pinned by tests:
+
+- `entry_reference` is **not** an identity. 611 transactions share 481 values; one of them covers
+  44 unrelated lines. It is stored for debugging and never keyed on.
+- `creditor_account.other.identification` is **not** an IBAN — in that sample it is always a card
+  PAN (`scheme_name: "CPAN"`) or a domestic account number. Only `.iban`, or `other` whose scheme
+  literally says `IBAN`, reaches `counterpart_iban`.
+
+The mapper is written against that sample export. The network layer is not written yet: it needs
+Enable Banking's authentication documentation (how the RSA-signed JWT is built and sent), and this
+integration has already been bitten three times by guessing at a spec instead of reading it.
 
 ## 4. Two limits that shape everything
 
@@ -224,6 +258,9 @@ advances the ladder; any other error is the real answer and is thrown immediatel
 1. Get a secret pair from <https://bankaccountdata.gocardless.com/user-secrets/> and set
    `GOCARDLESS_SECRET_ID` + `GOCARDLESS_SECRET_KEY`. Unset → the card hides itself, the routes
    answer 503, the cron reports `configured:false`. Uploading is unaffected.
+   *As of August 2026 that portal answers "New signups for Bank Account Data are currently
+   disabled", which is why §3a exists: an account that already has a secret pair works, a new one
+   cannot be created, and Enable Banking is the way in until that changes.*
 2. Apply `supabase/migrations/bank_connections.sql` and run its CONTROLE block. Every column must
    come back `true`.
 3. Confirm `CRON_SECRET` is set — without it the daily feed refuses to run (fail-closed) and says
