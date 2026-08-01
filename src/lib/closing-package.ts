@@ -1651,6 +1651,17 @@ export async function buildClosingPackageZip(args: {
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
   const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  // [TRIANGLE-ZERO] The 6th argument is the acquirer commission, and 0 here is deliberate.
+  //
+  // This call feeds ONLY the BTW side of the package: salesByRate, cashOmzetZonderBtw and
+  // btwVoorbelasting (see the three reads below). The commission is a cost with NO BTW, so it
+  // cannot move a single figure this package reports — while /api/result, which DOES report
+  // profit, books it via commissionActuallyBooked in compute-result-range.ts.
+  //
+  // Written down because the bare 0 reads like an omission: the same file runs reconcileTriangle
+  // a few hundred lines up, so "the triangle is computed but not passed on" looks exactly like a
+  // bug. It is not — but it WOULD become one the day this package starts reporting kosten or
+  // winst. If that day comes, this argument has to change with it.
   const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,

@@ -332,6 +332,11 @@ export async function GET(req: NextRequest) {
     }).length;
   }
 
+  // [TRIANGLE-ZERO] Acquirer commission = 0 on purpose — same reasoning as the closing package.
+  // Readiness reads only the BTW/omzet fields off this result (hasSales, cashOmzetZonderBtw,
+  // omzetZonderBtwNonCash, and the KOR turnover check); the commission is a cost with no BTW and
+  // cannot move any of them. /api/result, which reports profit, books it. The triangle IS run
+  // below — for the card-mismatch risk, not for a money figure.
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
