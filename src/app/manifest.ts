@@ -28,7 +28,11 @@ export default function manifest(): MetadataRoute.Manifest {
     // [PWA] Dutch UI, left-to-right — helps the store + a11y label the app.
     lang: 'nl',
     dir: 'ltr',
-    orientation: 'any',
+    // [PWA] Lock the installed app to portrait — a phone-first admin app that
+    // shouldn't flip to landscape when the device rotates. The TWA bakes this
+    // into the Android activity's screenOrientation when regenerated in
+    // PWABuilder; Chrome also applies it at runtime for the installed PWA.
+    orientation: 'portrait',
     categories: ['finance', 'business', 'productivity'],
     background_color: '#f8f9fa',
     theme_color: '#1a73e8',
