@@ -805,19 +805,29 @@ const INVOICE_FIELDS =
  * this owner and is verified, yet appears in NO quarter's package and NO concept
  * aangifte — its BTW just vanishes (voorbelasting too low / te-betalen too high) with
  * zero trace. This finds them so the package can WARN instead of losing them. Returns
- * the count + up-to-`cap` human labels. Never throws (a query error → empty, no crash).
+ * the count + up-to-`cap` human labels.
+ *
+ * [NO-SILENT-EMPTY] `checked: false` when the query failed. This function exists to WARN, and a
+ * warning-finder that answers "nothing to warn about" because it could not look is the most
+ * misleading shape it could take: the invoices still vanish from every quarter, and now the package
+ * has actively said they do not exist. Never throws — the package is still built — but the caller
+ * gets to say which of the two it is.
  */
 async function datelessVerifiedInvoices(
   supabase: PipelineClient,
   ownerId: string,
   cap = 10,
-): Promise<{ count: number; labels: string[] }> {
-  const { data } = await supabase
+): Promise<{ count: number; labels: string[]; checked: boolean }> {
+  const { data, error } = await supabase
     .from("invoices")
     .select(INVOICE_FIELDS)
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .is("invoice_date", null)
     .neq("status", "archived");
+  if (error) {
+    console.error("[NO-SILENT-EMPTY] dateless-invoice check failed — the package says so", { ownerId, error: error.message });
+    return { count: 0, labels: [], checked: false };
+  }
   const verified = (data ?? [])
     .map((raw) => {
       const row = raw as unknown as PackageInvoice;
@@ -825,6 +835,7 @@ async function datelessVerifiedInvoices(
     })
     .filter(isVerifiedForPackage);
   return {
+    checked: true,
     count: verified.length,
     labels: verified.slice(0, cap).map((i) => i.invoice_number ?? i.id),
   };
@@ -832,7 +843,19 @@ async function datelessVerifiedInvoices(
 
 /** A warning for dateless verified invoices, or null when there are none. Shared by the
  * ZIP builder and the preview summary so both tell the SAME truth. */
-function datelessWarning(d: { count: number; labels: string[] }): ClosingPackageWarning | null {
+// Exported for its test: the difference between "none" and "could not look" is the whole point.
+export function datelessWarning(d: { count: number; labels: string[]; checked: boolean }): ClosingPackageWarning | null {
+  // [NO-SILENT-EMPTY] "We could not look" is not "there are none". A dateless verified invoice sits
+  // in no quarter package and no concept aangifte — its BTW simply vanishes — so the accountant has
+  // to know the difference between a package that checked and a package that could not.
+  if (!d.checked) {
+    return {
+      code: "invoice_no_date",
+      message:
+        "We konden niet nagaan of er geverifieerde facturen ZONDER datum zijn. Die vallen buiten elk " +
+        "kwartaalpakket en hun BTW/voorbelasting ontbreekt dan — controleer dit vóór je de aangifte indient.",
+    };
+  }
   if (d.count === 0) return null;
   const shown = d.labels.join(", ");
   const more = d.count > d.labels.length ? ` (+${d.count - d.labels.length} meer)` : "";
