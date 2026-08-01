@@ -4,8 +4,8 @@
 //
 // Een verkoopmedewerker deelt de sessie-vorm van een gewone gebruiker: hij is ingelogd, hij heeft
 // een user.id, en elke bestaande factuurroute gaat er vanuit dat dát id de eigenaar van de
-// boekhouding is. Voor twee routes is dat omgebouwd (draft + send handelen NAMENS de eigenaar);
-// de rest is bewust dichtgezet (alleen-eigenaar.ts).
+// boekhouding is. De routes die hij nodig heeft zijn omgebouwd om NAMENS de eigenaar te werken
+// (zie de OMGEBOUWD-lijst hieronder); de rest is bewust dichtgezet (alleen-eigenaar.ts).
 //
 // DE FOUT DIE DIT VOORKOMT
 // Iemand voegt over een half jaar /api/invoice/iets-nieuws toe, schrijft `sender_id: user.id`
@@ -63,7 +63,7 @@ test("elke factuurroute lost de eigenaar op OF weigert een medewerker", () => {
 /**
  * De routes waar een verkoopmedewerker daadwerkelijk doorheen loopt — de hele levensloop van
  * een factuur zoals hij die kan bewandelen: maken, opslaan/bewerken/weggooien, versturen,
- * herinneren, dupliceren, en corrigeren met een creditnota.
+ * herinneren, dupliceren, corrigeren met een creditnota, en er een betaallink bij maken.
  *
  * Elk van deze moet de EIGENAAR hebben opgelost. Vergeet er één dat, dan boekt de medewerker
  * daar onder zijn eigen id — en dan lopen er twee nummerreeksen onder één BTW-nummer.
@@ -75,6 +75,7 @@ const OMGEBOUWD = [
   "src/app/api/invoice/[id]/duplicate/route.ts",
   "src/app/api/invoice/[id]/reminder/route.ts",
   "src/app/api/invoice/creditnota/route.ts",
+  "src/app/api/invoice/[id]/betaalverzoek/route.ts",
 ];
 
 test("elke route die een medewerker mag gebruiken, rekent op naam van de EIGENAAR", () => {

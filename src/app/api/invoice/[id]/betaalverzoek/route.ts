@@ -9,15 +9,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { buildBetaalverzoek, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { SITE_URL } from '@/lib/site'
-import { vereisEigenaar } from '@/lib/alleen-eigenaar'
+// [NAMENS] Omgebouwd in plaats van dichtgezet. Een betaalverzoek is een LINK naar een factuur
+// die al is uitgegeven — geen geldbeweging, geen nieuw document, en het IBAN erop is dat van de
+// eigenaar. Het hoort dus bij het werk van wie de factuur maakte: hij factureert om betaald te
+// worden. Stond dit dicht, dan zag een medewerker op zijn eigen factuur een knop die 403 gaf.
+import { getActingFor } from '@/lib/acting-for-server'
+import { factuurEigenaar, isNamens, magFactuur } from '@/lib/acting-for'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // [NAMENS] Alleen de eigenaar — zie src/lib/alleen-eigenaar.ts. Een medewerker hier
-  // doorlaten zou een tweede nummerreeks onder hetzelfde BTW-nummer openen.
-  { const w = await vereisEigenaar('Een betaalverzoek maken'); if (w.antwoord) return w.antwoord }
+  // [NAMENS] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
+  const acting = await getActingFor()
+  if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  const ownerId = factuurEigenaar(acting)
 
   const { id } = await params
   const supabase = await createServerSupabaseClient()
@@ -27,17 +34,28 @@ export async function POST(
   // Owner-scoped fetch (RLS + explicit sender_id). Only the fields the logic needs.
   const { data: invoice } = await supabase
     .from('invoices')
-    .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
+    .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date, sender_id')
     .eq('id', id)
-    .eq('sender_id', user.id)
+    .eq('sender_id', ownerId)
     .single()
   if (!invoice) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
 
+  // [NAMENS] Tweede slot naast RLS. Een medewerker maakt alleen een betaallink voor een factuur
+  // die HIJ heeft gemaakt — niet voor die van zijn baas of een collega. Dit is het moment waarop
+  // een geraden id binnenkomt, en het gevolg is een deelbare link naar andermans bedrag.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!magFactuur(acting, invoice as any)) {
+    return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  }
+
   // The owner's OWN payout details — the beneficiary of the QR.
-  const { data: owner } = await supabase
+  const { data: owner } = await (isNamens(acting) ? createPipelineClient() : supabase)
     .from('profiles')
+    // [NAMENS] Het IBAN op de betaallink is dat van de EIGENAAR — het is zijn factuur. Voor een
+    // medewerker is die profielrij via RLS onleesbaar, dus dan langs service_role; anders zou de
+    // link stranden op "geen IBAN bekend" terwijl het gewoon is ingevuld.
     .select('iban, company_name, full_name')
-    .eq('id', user.id)
+    .eq('id', ownerId)
     .single()
 
   // [CREDITNOTA-NO-CHASE] Refuse to mint a link for an invoice the owner already withdrew. The
@@ -69,7 +87,7 @@ export async function POST(
       .from('invoices')
       .update({ pay_token: token })
       .eq('id', id)
-      .eq('sender_id', user.id)
+      .eq('sender_id', ownerId)
     if (upErr) return NextResponse.json({ error: 'Betaallink aanmaken mislukt' }, { status: 500 })
   }
 
