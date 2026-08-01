@@ -11,10 +11,15 @@
 // Een stil kapotte quarter-close ontdek je een jaar later, met de vraag "waarom heeft mijn
 // boekhouder nooit iets ontvangen?" — precies de belofte van dit product.
 
-/** De zes crons uit vercel.json, met hun bedoelde ritme in uren. */
+/** De crons uit vercel.json, met hun bedoelde ritme in uren. */
 export const CRON_JOBS = {
   "email-sync": 2,
   reconcile: 1,
+  // [GOCARDLESS] De bankfeed. Draait dagelijks omdat de bank maar een handvol opvragingen per
+  // dag per rekening toestaat — vaker draaien levert niets op en zet de feed juist stil. Valt
+  // hij om, dan komen er geen banktransacties meer binnen terwijl het scherm er normaal uitziet:
+  // precies het stille falen waarvoor deze hartslag bestaat.
+  "bank-sync": 24,
   reminders: 24,
   recurring: 24,
   "retention-purge": 168,

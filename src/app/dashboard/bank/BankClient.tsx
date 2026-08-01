@@ -18,6 +18,9 @@ import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel }
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+// [GOCARDLESS] De bankkoppeling staat BOVEN de uploadkaart, niet in de plaats ervan: een
+// koppeling kan verlopen of geweigerd worden, en dan moet uploaden er gewoon nog staan.
+import BankConnectPanel from './BankConnectPanel'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -1171,6 +1174,58 @@ export default function BankClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
 
+  // [GOCARDLESS] De eigenaar komt terug van zijn bank. De callback-route zet het resultaat in de
+  // query string en stuurt hem hierheen; hier wordt het één zin op het scherm.
+  //
+  // De EERSTE ophaalronde start hier, niet in de callback: die callback is een redirect waar de
+  // eigenaar op staat te wachten, en een eerste sync kan een jaar historie over meerdere
+  // rekeningen zijn. Doe je dat daar, dan kijkt hij na een geslaagde toestemming tegen een
+  // time-out van zijn browser aan. Hier draait het terwijl de pagina er al staat.
+  const bankConnectHandledRef = useRef(false)
+  useEffect(() => {
+    const outcome = searchParams.get('bank')
+    if (!outcome || bankConnectHandledRef.current) return
+    bankConnectHandledRef.current = true
+
+    if (outcome === 'fout') {
+      showToast(searchParams.get('reden') ?? 'Koppelen mislukt.')
+      return
+    }
+    if (outcome !== 'gekoppeld') return
+
+    const accounts = Number(searchParams.get('rekeningen') ?? '0')
+    showToast(
+      accounts === 1
+        ? 'Je bank is gekoppeld. We halen je transacties op…'
+        : `Je bank is gekoppeld (${accounts} rekeningen). We halen je transacties op…`,
+    )
+    void (async () => {
+      try {
+        const res = await fetch('/api/bank/gocardless/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+        const json = await res.json()
+        if (!res.ok) { showToast(json?.error ?? 'Ophalen mislukt.'); return }
+        const inserted = Number(json.inserted ?? 0)
+        const unread = Array.isArray(json.warnings) ? json.warnings.length : 0
+        // Nooit stil een transactie kwijtraken — dezelfde regel als bij een upload.
+        showToast(
+          unread > 0
+            ? `${inserted} transacties opgehaald · ${unread} regel${unread === 1 ? '' : 's'} kon${unread === 1 ? '' : 'den'} niet gelezen worden.`
+            : inserted > 0
+              ? `${inserted} transacties opgehaald.`
+              : 'Nog geen transacties bij je bank gevonden.',
+        )
+        if (inserted > 0) { await runMatch(); await loadStatements() }
+      } catch {
+        showToast('Ophalen mislukt.')
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
   return (
     <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
       {/* [MOVE-PAYMENT] Which invoice does this payment belong to?
@@ -1248,8 +1303,14 @@ export default function BankClient() {
           (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
           removed. The descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
-        Upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
+        Koppel je bank of upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
+
+      {/* [GOCARDLESS] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
+      <BankConnectPanel
+        onMessage={showToast}
+        onImported={() => { void runMatch(); void loadStatements() }}
+      />
 
       {/* [P1-UNCATEGORIZED] Money that is NOT yet in your books. A bank line without a category
           is silently excluded from the W&V/BTW — so make it loud, not invisible. Links straight

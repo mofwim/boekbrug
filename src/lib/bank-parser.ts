@@ -94,7 +94,13 @@ export function parseMT940Balance(value: string): { amount: number; currency: st
 //   "Unive Premie 02-06-2026"                                      → "Unive Premie"
 // If the text is ONLY an opaque code (no real words), we still return it rather
 // than nothing — a code the owner can match against is better than "Onbekend".
-function deriveReadableName(raw: string | null): string | null {
+//
+// [GOCARDLESS] Exported since the API sync needs the SAME derivation: a bank-fed
+// transaction arrives without a counterpart name just as often as a parsed one
+// (the documented example has a debit line with only remittance text), and a
+// second copy of this rule would drift — see the extractInvoiceReference header
+// for what that costs.
+export function deriveReadableName(raw: string | null): string | null {
   if (!raw) return null;
   let s = raw.replace(/\s+/g, " ").trim();
   // Strip the "USTD//" / "USTD" unstructured-remittance marker and stray slashes
@@ -706,8 +712,10 @@ export function parseCAMT053(content: string): ParseResult {
 }
 
 // [M4] YYYY-MM-DD that is also a real calendar date (rejects 9999-99-99, 2026-13-40, a
-// datetime, or trailing junk). Kept local so the CAMT date guard cannot drift.
-function isValidIsoDate(s: string): boolean {
+// datetime, or trailing junk). [GOCARDLESS] Exported so the API sync guards its dates
+// with the SAME check — a malformed date reaching a Postgres `date` column fails the
+// whole batch INSERT, and the ingest swallows that, silently dropping every transaction.
+export function isValidIsoDate(s: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (!m) return false;
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);

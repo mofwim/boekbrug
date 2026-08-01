@@ -8,12 +8,14 @@ const NU = Date.parse("2026-07-30T12:00:00.000Z");
 const gelede = (uur: number) => new Date(NU - uur * 3_600_000).toISOString();
 const run = (uur: number, ok: boolean | null = true) => ({ job: "x", started_at: gelede(uur), ok });
 
-test("de zes crons uit vercel.json staan erin, met hun ritme", () => {
+test("de zeven crons uit vercel.json staan erin, met hun ritme", () => {
   assert.deepEqual(Object.keys(CRON_JOBS).sort(), [
-    "email-sync", "quarter-close", "reconcile", "recurring", "reminders", "retention-purge",
+    "bank-sync", "email-sync", "quarter-close", "reconcile", "recurring", "reminders", "retention-purge",
   ]);
   assert.equal(CRON_JOBS["reconcile"], 1);
   assert.equal(CRON_JOBS["email-sync"], 2);
+  // [GOCARDLESS] Dagelijks: de bank staat maar een handvol opvragingen per dag per rekening toe.
+  assert.equal(CRON_JOBS["bank-sync"], 24);
 });
 
 test("een verse geslaagde run is gewoon goed", () => {
@@ -60,6 +62,9 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
     {
       "email-sync": run(1),
       reconcile: run(0.5),
+      // [GOCARDLESS] De bankfeed hoort er ook bij. Ontbreekt hij hier, dan telt hij als
+      // nooit-gedraaid — precies de kant waar deze functie bewust op faalt (zie hieronder).
+      "bank-sync": run(2),
       reminders: run(2),
       recurring: run(2),
       "retention-purge": run(10),

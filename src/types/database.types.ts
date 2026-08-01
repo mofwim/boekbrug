@@ -10,6 +10,8 @@
 //   · invoices.created_by        — same migration (uuid, nullable, FK → profiles.id)
 //   · clients.created_by         — same migration
 //   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
+//   · bank_connections           — supabase/migrations/bank_connections.sql
+//   · bank_connection_accounts   — same migration
 //
 // WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
 // stays green while the request fails at runtime — exactly how `created_by` once broke invoice
@@ -17,7 +19,7 @@
 //
 //   supabase gen types typescript --project-id <ref> > src/types/database.types.ts
 //
-// check that the five entries above survive. If the generator drops one, the migration is not
+// check that the entries above survive. If the generator drops one, the migration is not
 // applied on the database you generated from — fix that, do not re-add the type by hand.
 //
 // NOTE: src/lib/database.types.ts is an older, unused copy. Nothing imports it. Do not edit it
@@ -156,6 +158,137 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "audit_logs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_connections: {
+        Row: {
+          access_valid_until: string | null
+          agreement_id: string | null
+          connected_at: string | null
+          created_at: string
+          id: string
+          institution_bic: string | null
+          institution_id: string
+          institution_name: string | null
+          last_error: string | null
+          last_synced_at: string | null
+          max_historical_days: number | null
+          provider: string
+          reference: string
+          requisition_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_valid_until?: string | null
+          agreement_id?: string | null
+          connected_at?: string | null
+          created_at?: string
+          id?: string
+          institution_bic?: string | null
+          institution_id: string
+          institution_name?: string | null
+          last_error?: string | null
+          last_synced_at?: string | null
+          max_historical_days?: number | null
+          provider?: string
+          reference: string
+          requisition_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_valid_until?: string | null
+          agreement_id?: string | null
+          connected_at?: string | null
+          created_at?: string
+          id?: string
+          institution_bic?: string | null
+          institution_id?: string
+          institution_name?: string | null
+          last_error?: string | null
+          last_synced_at?: string | null
+          max_historical_days?: number | null
+          provider?: string
+          reference?: string
+          requisition_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_connections_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_connection_accounts: {
+        Row: {
+          account_id: string
+          connection_id: string
+          created_at: string
+          currency: string | null
+          iban: string | null
+          id: string
+          last_error: string | null
+          last_synced_at: string | null
+          last_synced_through: string | null
+          owner_name: string | null
+          status: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          connection_id: string
+          created_at?: string
+          currency?: string | null
+          iban?: string | null
+          id?: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          last_synced_through?: string | null
+          owner_name?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          connection_id?: string
+          created_at?: string
+          currency?: string | null
+          iban?: string | null
+          id?: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          last_synced_through?: string | null
+          owner_name?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_connection_accounts_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_connection_accounts_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
