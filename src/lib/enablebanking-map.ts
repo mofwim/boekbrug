@@ -44,6 +44,7 @@
 
 import type { BankTransaction } from "./bank-parser";
 import { extractInvoiceReference, deriveReadableName, isValidIsoDate } from "./bank-parser";
+import { isValidIban, normalizeIban } from "./epc-qr";
 
 /** The Berlin Group amount object: a decimal STRING plus its currency. */
 export interface EnableBankingAmount {
@@ -202,9 +203,55 @@ export function collectRemittance(tx: EnableBankingRawTransaction): string {
   if (Array.isArray(tx.remittance_information)) {
     for (const p of tx.remittance_information) push(p);
   }
-  push(tx.reference_number);
 
-  return parts.join(" ");
+  // Un-compose BEFORE appending the structured reference. ING repeats that reference verbatim
+  // inside its composed line (560 of 560 rows in a real quarter), so appending it to the composed
+  // form adds a second copy the de-duplication cannot see — and extractInvoiceReference then reads
+  // the same invoice number twice. Against the un-composed text it matches exactly and falls away.
+  const described = statementRemittance(parts.join(" "));
+
+  const out = described ? [described] : [];
+  const ref = tx.reference_number?.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  if (ref && !out.includes(ref)) out.push(ref);
+  return out.join(" ");
+}
+
+/**
+ * Un-compose a bank's ready-made statement line back to the remittance text alone.
+ *
+ * ING does not send `<Ustrd>` over PSD2. It sends the line it prints on a statement, with the
+ * party, the account, the mandate and the value date folded in as labelled segments:
+ *
+ *     Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501
+ *     Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026
+ *
+ * Every one of those labels is data the CAMT file carries in its OWN element — `<Cdtr><Nm>`,
+ * `<CdtrAcct><IBAN>`, `<Refs>` — and that we already read from this transaction's own fields. Only
+ * `Omschrijving:` is the remittance. Leaving the rest in is not cosmetic: extractInvoiceReference
+ * then scoops up the Kenmerk, the Machtiging ID and the account digits, so a real quarter produced
+ * "TK10962798, 105289" where the file door produces nothing at all, and
+ * "610015412, 5049NM, INC046015959, 5768573815, MID100185910" where it produces "610015412, 5049NM".
+ * That is the [BANK-REF-ONE-SOURCE] triple failure exactly: a different reference is a different
+ * contentKey (a double import), it makes parseReferenceNumbers count several invoices so
+ * autoConfirmTier stops auto-booking the line, and isFullyCovered can then never be satisfied.
+ *
+ * A composition with no `Omschrijving:` at all is a transfer the payer left blank — the file door
+ * has an empty `<Ustrd>` there, so this returns empty rather than handing the metadata downstream
+ * as if it were the payer's text.
+ *
+ * Anything that is not recognisably composed is returned untouched. The recognition is deliberately
+ * narrow — an explicit `Omschrijving:` label, or a line that OPENS with `Naam:` — because the
+ * failure mode of guessing wrong is to throw away a payer's description, invoice number and all.
+ * A remittance that itself contains "IBAN:" is the known limit: ING destroyed the boundary when it
+ * composed the line, and no reader can put it back.
+ */
+export function statementRemittance(text: string): string {
+  const described = text.match(
+    /(?:^|\s)Omschrijving:\s*([\s\S]*?)(?=\s(?:IBAN|BIC|Kenmerk|Machtiging ID|Incassant ID|Datum\/Tijd|Valutadatum):|$)/,
+  );
+  if (described) return described[1].trim();
+  if (/^Naam:\s/.test(text)) return "";
+  return text;
 }
 
 /**
@@ -231,18 +278,29 @@ export function pickTransactionDate(tx: EnableBankingRawTransaction): string | n
 /**
  * The counterpart's IBAN, or null.
  *
+ * Two things are checked, and both were earned from real data.
+ *
  * `other.identification` is NOT an IBAN and must never be stored as one. In the vendor's sample
  * every single one is either a card PAN (scheme_name "CPAN", e.g. "233111XXXXXX4455") or a
  * domestic account number ("BBAN"/"BANK"/"OTHI") — 364 of them, and zero IBANs. Writing a card
  * number into counterpart_iban would put a PAN in a column nobody expects one in, and would match
  * against the owner's own IBANs as if it were an account. It is accepted only when the scheme
  * itself says it is an IBAN.
+ *
+ * And `.iban` is not automatically an IBAN either. On a real ING quarter the three bank-charge
+ * lines carry `"NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026"` in that field — the owner's
+ * OWN account with a billing period stapled to it. Stored as-is it is junk in the column
+ * [BANK-IBAN] matches suppliers on. So the value goes through the same mod-97 check as every other
+ * IBAN in the app, and is stored in the same normalized form the file door produces.
  */
 export function counterpartIbanOf(acc: EnableBankingAccountRef | null | undefined): string | null {
-  const iban = cleanString(acc?.iban);
-  if (iban) return iban;
+  const direct = cleanString(acc?.iban);
+  if (direct) return isValidIban(direct) ? normalizeIban(direct) : null;
   const scheme = cleanString(acc?.other?.scheme_name)?.toUpperCase();
-  if (scheme === "IBAN") return cleanString(acc?.other?.identification);
+  if (scheme === "IBAN") {
+    const other = cleanString(acc?.other?.identification);
+    return other && isValidIban(other) ? normalizeIban(other) : null;
+  }
   return null;
 }
 
@@ -297,18 +355,40 @@ export function mapEnableBankingTransaction(
     isCard: false,
   });
 
-  // [BANK-PARSE-CARD] A card purchase has no related party either — derive the store name and
-  // drop the terminal noise the structured pass may have taken for a reference.
-  if (
-    !counterpartName &&
-    /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i.test(description)
-  ) {
+  // [BANK-PARSE-CARD] A card purchase names no party in a file, so the store has to be derived
+  // from the terminal string — and derived the SAME way on both sides.
+  //
+  // Over PSD2 the acceptor string arrives in a field instead of in the text: ING sends
+  // creditor.name = "BCK*OMUR MARKT AMERSFOORT NLD" where the CAMT file has no <Cdtr> at all and
+  // the same string sits in the remittance. Taking that field as-is would store
+  // "BCK*OMUR MARKT AMERSFOORT NLD" against the file door's "OMUR MARKT" — different name,
+  // different dedupName(), different fingerprint, and the card line imports twice. Running the
+  // provider's string through the file door's own rule closes that: on a real ING quarter all
+  // eleven card lines came out identical to what the file door derives from the same text.
+  //
+  // The rescue is gated on the acceptor markers, not on "this looks like a card row", so an
+  // ordinary supplier name is never shortened. On that quarter the gate matched exactly the
+  // eleven Betaalautomaat rows and nothing else.
+  const CARD_MARKERS = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i;
+  const terminalText = CARD_MARKERS.test(description);
+  const acceptorName = counterpartName !== null && CARD_MARKERS.test(counterpartName);
+
+  if (!counterpartName && terminalText) {
     const store = deriveReadableName(description);
-    if (store) {
-      counterpartName = store;
-      reference = null;
-    }
+    if (store) counterpartName = store;
+  } else if (acceptorName && counterpartName) {
+    const store = deriveReadableName(counterpartName);
+    if (store) counterpartName = store;
   }
+
+  // Clearing the reference is separate from rescuing the name, because a terminal line can arrive
+  // WITH a usable party. A cash deposit does: ING names the party "STORTING ING" and leaves the
+  // Geldmaat location, the pasvolgnr and the RRN in the text, so the extractor offered
+  // "811391, 001, 616716432971" as the invoice number of a €10.150 deposit. None of those three is
+  // an invoice number, and booking one against a real invoice is the failure this branch exists to
+  // stop — the same reason the file door clears it. On a real ING quarter this touched exactly one
+  // line: the other eleven terminal rows already had no reference to lose.
+  if (terminalText || acceptorName) reference = null;
   // [BANK-PARSE-READABLE] Still nothing? Derive the most recognisable text from the description
   // so the owner never faces a blank counterpart.
   if (!counterpartName) {

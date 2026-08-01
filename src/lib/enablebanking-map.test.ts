@@ -24,6 +24,7 @@ import {
   parseSignedAmount,
   pickTransactionDate,
   readSignedAmount,
+  statementRemittance,
 } from "./enablebanking-map";
 import type { EnableBankingRawTransaction } from "./enablebanking-map";
 import { contentKey } from "./bank-import";
@@ -413,6 +414,200 @@ test("a fee line split only by column padding dedups too", () => {
   });
   assert.ok(fromApi);
   assert.equal(keyOf(fromApi), keyOf(fromFile[0]));
+});
+
+// ─── ING: a bank that sends its statement line instead of the remittance ──────────────────────
+//
+// Every row below is copied verbatim from a real ING business quarter (576 transactions,
+// April–June 2026). ING does not send <Ustrd> over PSD2; it sends the line it prints on a
+// statement, with the party, the account, the mandate and the value date folded in as labelled
+// segments. Reading that line as if it were remittance text broke references on 27 of those rows.
+
+test("the statement line is un-composed back to the remittance alone", () => {
+  assert.equal(
+    statementRemittance(
+      "Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501 " +
+        "Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026",
+    ),
+    "26002148",
+  );
+  // A transfer the payer left blank: the file door has an empty <Ustrd> there, so handing the
+  // metadata downstream as if it were his text would invent a description he never wrote.
+  assert.equal(
+    statementRemittance("Naam: Basil Ibrahim IBAN: NL20INGB0688754465 Datum/Tijd: 02-06-2026 15:07:59 Valutadatum: 02-06-2026"),
+    "",
+  );
+  // Not a composition — left completely alone. Destroying a payer's own text would take his
+  // invoice number with it, which is the worst thing this function could do.
+  assert.equal(statementRemittance("Betaling factuur 26302050"), "Betaling factuur 26302050");
+  assert.equal(
+    statementRemittance("Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026"),
+    "Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026",
+  );
+});
+
+test("the mandate id and the bank's own kenmerk never become an invoice number", () => {
+  // Read whole, this line yielded "TK10962798, 105289" — the Kenmerk and the Machtiging ID. Two
+  // numbers where the file door finds none: a different contentKey, and parseReferenceNumbers
+  // counting two invoices so autoConfirmTier stops booking the rent automatically.
+  const huur = mapEnableBankingTransaction({
+    entry_reference: "TK10962798",
+    transaction_amount: { currency: "EUR", amount: "81.51" },
+    creditor: { name: "WonenBreburg" },
+    creditor_account: { iban: "NL37BNGH0285007416" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    booking_date: "2026-04-01",
+    value_date: "2026-04-01",
+    reference_number: "Incasso Huur Periode: 01-04-2026 tot 01-05-2026",
+    remittance_information: [
+      "Naam: WonenBreburg Omschrijving: Incasso Huur Periode: 01-04-2026 tot 01-05-2026 " +
+        "IBAN: NL37BNGH0285007416 Kenmerk: TK10962798 Machtiging ID: 105289 " +
+        "Incassant ID: NL91ZZZ200671250000 Doorlopende incasso Valutadatum: 01-04-2026",
+    ],
+  });
+  assert.equal(huur?.reference, null);
+  assert.equal(huur?.description, "Incasso Huur Periode: 01-04-2026 tot 01-05-2026");
+  assert.equal(huur?.counterpartName, "WonenBreburg");
+
+  // And where the payer's own text does hold identifiers, those survive — only the bank's
+  // plumbing is stripped. Read whole this was "610015412, 5049NM, INC046015959, 5768573815,
+  // MID100185910".
+  const water = mapEnableBankingTransaction({
+    entry_reference: "INC046015959-5768573815",
+    transaction_amount: { currency: "EUR", amount: "20.00" },
+    creditor: { name: "Brabant Water N.V." },
+    creditor_account: { iban: "NL60RABO0339601213" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    value_date: "2026-04-01",
+    reference_number: "Klant:610015412 VOORSCHOT apr  BTW 1 65 5049NM 13",
+    remittance_information: [
+      "Naam: Brabant Water N.V. Omschrijving: Klant:610015412 VOORSCHOT apr  BTW 1 65 5049NM 13 " +
+        "IBAN: NL60RABO0339601213 Kenmerk: INC046015959-5768573815 Machtiging ID: MID100185910 " +
+        "Incassant ID: NL32ZZZ160050770000 Doorlopende incasso Valutadatum: 01-04-2026",
+    ],
+  });
+  assert.equal(water?.reference, "610015412, 5049NM");
+});
+
+test("the structured reference does not survive as a second copy of the text", () => {
+  // ING repeats reference_number verbatim inside the composed line on 560 of 560 rows. Appended
+  // to the composed form it is a copy the de-duplication cannot see; against the un-composed text
+  // it matches exactly and falls away.
+  assert.equal(
+    collectRemittance({
+      reference_number: "26002148",
+      remittance_information: [
+        "Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501 " +
+          "Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026",
+      ],
+    }),
+    "26002148",
+  );
+});
+
+test("a card acceptor is named the way the file door names it, not the way ING sends it", () => {
+  // ING puts the acceptor string in creditor.name; the CAMT file has no <Cdtr> at all and the same
+  // string sits in the remittance. Stored as sent it is "BCK*OMUR MARKT AMERSFOORT NLD" against
+  // the file door's "OMUR MARKT" — a different dedupName(), so the card line imports twice.
+  const pin = mapEnableBankingTransaction({
+    transaction_amount: { currency: "EUR", amount: "220.37" },
+    creditor: { name: "BCK*OMUR MARKT AMERSFOORT NLD" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    booking_date: "2026-04-05",
+    value_date: "2026-04-05",
+    remittance_information: ["Pasvolgnr: 001 04-04-2026 13:54 Transactie: W00082 Term: CT690475 Valutadatum: 05-04-2026"],
+  });
+  assert.equal(pin?.counterpartName, "OMUR MARKT");
+  assert.equal(pin?.reference, null);
+
+  // An ordinary supplier is never shortened by that rescue.
+  const supplier = mapEnableBankingTransaction({
+    transaction_amount: { currency: "EUR", amount: "224.85" },
+    creditor: { name: "W. Ketels en Zoon Eierhandel" },
+    credit_debit_indicator: "DBIT",
+    value_date: "2026-05-25",
+    remittance_information: ["Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501 Valutadatum: 25-05-2026"],
+  });
+  assert.equal(supplier?.counterpartName, "W. Ketels en Zoon Eierhandel");
+  assert.equal(supplier?.reference, "26002148");
+});
+
+test("a terminal line keeps its party but still loses the terminal's numbers", () => {
+  // A €10.150 cash deposit. ING names the party, so the card branch's usual "no party" trigger
+  // never fires — and the extractor offered the Geldmaat code, the pasvolgnr and the RRN as the
+  // invoice number. Booking one of those against a real invoice is exactly what this prevents.
+  const storting = mapEnableBankingTransaction({
+    transaction_amount: { currency: "EUR", amount: "10150.00" },
+    debtor: { name: "STORTING ING" },
+    credit_debit_indicator: "CRDT",
+    status: "BOOK",
+    value_date: "2026-06-16",
+    remittance_information: ["Geldmaat Wagnerplein 59 811391 PASVOLGNR 001 16-06-2026 16:08 RRN: 616716432971 Valutadatum: 16-06-2026"],
+  });
+  assert.equal(storting?.amount, 10150);
+  assert.equal(storting?.reference, null);
+});
+
+test("a billing period stapled to an IBAN is not an IBAN", () => {
+  // The three bank-charge lines of that quarter carry the owner's OWN account with a period
+  // appended, in the field [BANK-IBAN] matches suppliers on.
+  const kosten = mapEnableBankingTransaction({
+    transaction_amount: { currency: "EUR", amount: "327.86" },
+    creditor: { name: "Kosten Zakelijk Betalingsverkeer" },
+    creditor_account: { iban: "NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    value_date: "2026-04-26",
+    remittance_information: ["Factuurnr. 10001461242 Betreft IBAN: NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026 Valutadatum: 26-04-2026"],
+  });
+  assert.equal(kosten?.counterpartIban, null);
+  assert.equal(kosten?.counterpartName, "Kosten Zakelijk Betalingsverkeer");
+  assert.equal(kosten?.reference, "10001461242");
+});
+
+test("an ING transfer from both doors dedups", () => {
+  // The feed row is verbatim; the CAMT side is that same payment as ING lays it out in a file —
+  // the party, the account and the end-to-end id in their own elements, <Ustrd> holding only what
+  // the composed line labels "Omschrijving".
+  const camt = `<Document><Ntry>
+    <Amt Ccy="EUR">224.85</Amt>
+    <CdtDbtInd>DBIT</CdtDbtInd>
+    <ValDt><Dt>2026-05-25</Dt></ValDt>
+    <NtryDtls><TxDtls>
+      <Refs><EndToEndId>260514RABONL2U080320000100001</EndToEndId></Refs>
+      <RltdPties>
+        <Cdtr><Nm>W. Ketels en Zoon Eierhandel</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>NL89RABO0131703501</IBAN></Id></CdtrAcct>
+      </RltdPties>
+      <RmtInf><Ustrd>26002148</Ustrd></RmtInf>
+    </TxDtls></NtryDtls>
+  </Ntry></Document>`;
+
+  const fromFile = parseCAMT053(camt).transactions;
+  assert.equal(fromFile.length, 1);
+
+  const fromApi = mapEnableBankingTransaction({
+    entry_reference: "260514RABONL2U080320000100001",
+    transaction_amount: { currency: "EUR", amount: "224.85" },
+    creditor: { name: "W. Ketels en Zoon Eierhandel" },
+    creditor_account: { iban: "NL89RABO0131703501" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    booking_date: "2026-05-25",
+    value_date: "2026-05-25",
+    reference_number: "26002148",
+    remittance_information: [
+      "Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501 " +
+        "Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026",
+    ],
+  });
+  assert.ok(fromApi);
+
+  assert.equal(keyOf(fromApi), keyOf(fromFile[0]));
+  assert.equal(fromApi.counterpartIban, fromFile[0].counterpartIban);
 });
 
 // ─── list mapping ─────────────────────────────────────────────────────────────────────────────

@@ -106,9 +106,46 @@ Two more things that sample settled, both pinned by tests:
   PAN (`scheme_name: "CPAN"`) or a domestic account number. Only `.iban`, or `other` whose scheme
   literally says `IBAN`, reaches `counterpart_iban`.
 
-The mapper is written against that sample export. The network layer is not written yet: it needs
-Enable Banking's authentication documentation (how the RSA-signed JWT is built and sent), and this
-integration has already been bitten three times by guessing at a spec instead of reading it.
+### 3b. ING sends its statement line, not the remittance
+
+The vendor sample is Danish and settles none of this. A real ING business quarter (576
+transactions) does, and it broke the mapper in three places.
+
+**ING does not send `<Ustrd>`.** It sends the line it prints on a statement, with everything the
+CAMT file keeps in separate elements folded in as labelled segments:
+
+```
+Naam: W. Ketels en Zoon Eierhandel Omschrijving: 26002148 IBAN: NL89RABO0131703501
+Kenmerk: 260514RABONL2U080320000100001 Valutadatum: 25-05-2026
+```
+
+Only `Omschrijving:` is the remittance; the rest we already read from the transaction's own
+fields. Handed whole to `extractInvoiceReference` it produced `"TK10962798, 105289"` — a Kenmerk
+and a Machtiging ID — where the file door produces nothing, on 27 of 576 rows. That is the
+[BANK-REF-ONE-SOURCE] triple failure: a different `contentKey` (double import), `>1` reference so
+`autoConfirmTier` stops auto-booking, and `isFullyCovered` never satisfiable.
+`statementRemittance()` un-composes it, narrowly — an explicit `Omschrijving:`, or a line opening
+with `Naam:` — because guessing wrong throws away a payer's invoice number.
+
+Two more, same origin:
+
+- **A card acceptor arrives as a field.** `creditor.name = "BCK*OMUR MARKT AMERSFOORT NLD"`, where
+  the file has no `<Cdtr>` and derives `"OMUR MARKT"` from the text. Stored as sent, every card
+  line imports twice. The provider's string now goes through the file door's own
+  `deriveReadableName`; on that quarter all eleven came out identical.
+- **`.iban` is not always an IBAN.** The three bank-charge lines carry
+  `"NL73INGB0107197480 Periode: 01-03-2026 / 31-03-2026"` — the owner's own account with a billing
+  period stapled on. It now goes through the app's existing mod-97 `isValidIban`.
+
+**The sign convention is proven on that quarter, not just argued:** opening balance 6548,63 plus
+the sum of all 576 signed amounts lands on the closing balance 4969,70 to the cent, and the
+per-line `balance_after_transaction` agrees on all 576 rows. Had the indicator been read the
+GoCardless way, that sum would have been off by more than €11.000.
+
+The mapper is written against that quarter and the vendor sample. The network layer is not written
+yet: it needs Enable Banking's authentication documentation (how the RSA-signed JWT is built and
+sent), and this integration has already been bitten three times by guessing at a spec instead of
+reading it.
 
 ## 4. Two limits that shape everything
 
