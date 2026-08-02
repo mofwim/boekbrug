@@ -72,16 +72,41 @@ A transaction can enter through **three doors**: an uploaded MT940, an uploaded 
 feed. Sooner or later two of them carry the same transaction — the owner connects his bank in March
 and then uploads January–March for his accountant.
 
-Cross-upload dedup (`src/lib/bank-import.ts`) keys on
+If the same transaction lands twice, **every figure built on it doubles**: omzet, kosten, the
+btw-aangifte, the kwartaalpakket the accountant signs. That is a wrong tax return, not a display
+bug. Three layers stand against it, cheapest and most certain first, because each answers a
+question the next one cannot.
+
+| | Layer | Answers | Where |
+|---|---|---|---|
+| 1 | **The file's bytes** | "Is this the same statement I already imported?" | `bank-ingest.ts`, checked *before* parse and insert |
+| 2 | **The source's own id** | "Has this source already delivered this line?" | `sourceKey` + `UNIQUE (user_id, source, external_id)` |
+| 3 | **The content fingerprint** | "Did this payment already arrive through a *different* door?" | `contentKey` |
+
+**Layer 2 is what the bank gave us and we were throwing away.** Measured on one real ING quarter of
+576 transactions: the MT940 `:61:` bank reference is **576 present, 576 distinct**; CAMT `<NtryRef>`
+is **576 present, 576 distinct**. The parser had been reading it into `BankTransaction.transactionId`
+all along and `mapToRows` dropped it on the floor. It is the only layer that survives the parser
+changing its mind — re-uploading a statement imported before the MT940 reference fix below used to
+insert **every line again** (measured: 576 of 576); keyed on the bank's own id it inserts none.
+
+It is also the only layer Postgres can *enforce*. The other two are read-then-write, and two writers
+in that window — an upload while the daily cron sync runs — both read an empty result and both
+insert. A unique index does not have that window.
+
+**Layer 3 can never be retired, and layer 2 is why we know that.** The same 576 transactions carry a
+completely different id in each format: overlap between the MT940 ids and the CAMT ids is **zero**.
+ING does not name a payment the same way twice. So the bank's id says nothing whatsoever about the
+cross-door case, and the fingerprint
 
 ```
 contentKey = date | amount | dedupName(counterpartName) | norm(reference)
 ```
 
-If any door derives a counterpart name or a reference even slightly differently, the same
-transaction gets two keys, lands in the table twice, and **every figure built on it doubles**:
-omzet, kosten, the btw-aangifte, the kwartaalpakket the accountant signs. That is a wrong tax
-return, not a display bug.
+remains the only thing that bridges doors — which is exactly why the rest of this section exists.
+
+If any door derives a counterpart name or a reference even slightly differently, layer 3 fails and
+layer 2 cannot cover for it.
 
 So no door re-implements those rules. The feed mapper reshapes the JSON into what
 `parseCAMT053Entry` sees and calls the *same* helpers — `extractInvoiceReference`,
@@ -283,6 +308,11 @@ money leaves no trace to notice. The client follows the key to the end and refus
    panel. An unregistered one is refused upstream.
 5. Apply `supabase/migrations/bank_connections.sql` and run its CONTROLE block. Every column must
    come back `true`.
+5b. Apply `supabase/migrations/bank_tx_source_identity.sql` and run its CONTROLE block too. Both
+   halves matter and they fail differently: without the **columns** the import silently drops to
+   the fingerprint alone (layer 2 off, no error); with the columns but without the **unique index**
+   an insert would hit `42P10`, so the code falls back to a plain insert — money still lands, but
+   the race backstop is not there. The CONTROLE block checks for both.
 6. Confirm `CRON_SECRET` is set — without it the daily feed refuses to run (fail-closed) and says so
    loudly in the log.
 7. `vercel.json` already schedules `/api/cron/bank-sync` at 05:00 UTC daily.

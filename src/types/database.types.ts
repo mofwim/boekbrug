@@ -12,6 +12,8 @@
 //   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
 //   · bank_connections           — supabase/migrations/bank_connections.sql
 //   · bank_connection_accounts   — same migration
+//   · bank_transactions.source        — supabase/migrations/bank_tx_source_identity.sql (text, nullable)
+//   · bank_transactions.external_id   — same migration (text, nullable)
 //
 // WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
 // stays green while the request fails at runtime — exactly how `created_by` once broke invoice
@@ -310,6 +312,8 @@ export type Database = {
           id: string
           invoice_id: string | null
           reference: string | null
+          source: string | null
+          external_id: string | null
           status: string | null
           statement_document_id: string | null
           user_id: string | null
@@ -327,6 +331,8 @@ export type Database = {
           id?: string
           invoice_id?: string | null
           reference?: string | null
+          source?: string | null
+          external_id?: string | null
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null
@@ -344,6 +350,8 @@ export type Database = {
           id?: string
           invoice_id?: string | null
           reference?: string | null
+          source?: string | null
+          external_id?: string | null
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null

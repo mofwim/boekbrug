@@ -172,43 +172,75 @@ export function syncWindow(
 async function storeTransactions(args: {
   pipeline: PipelineClient;
   userId: string;
+  /** [BANK-TX-SOURCE-ID] The Enable Banking account uid. entry_reference is only promised unique
+   *  within ONE account, so it is stored and compared under this scope — two linked accounts must
+   *  never collapse into one row because the bank happened to reuse a number. */
+  accountId: string;
   transactions: ReturnType<typeof mapEnableBankingTransactions>["transactions"];
 }): Promise<{ inserted: number; skipped: number }> {
-  const { pipeline, userId, transactions } = args;
+  const { pipeline, userId, accountId, transactions } = args;
   if (transactions.length === 0) return { inserted: 0, skipped: 0 };
 
+  const source = `enablebanking:${accountId}`;
   const { min, max } = dateRange(transactions);
   let existing: ExistingTxKey[] = [];
   if (min && max) {
-    const rows = await fetchAllRows((from, to) =>
-      pipeline
-        .from("bank_transactions")
-        .select("date, amount, description, counterpart_name, reference")
-        .eq("user_id", userId)
-        .gte("date", min)
-        .lte("date", max)
-        .order("id", { ascending: true })
-        .range(from, to),
-    );
-    existing = rows as ExistingTxKey[];
+    const readExisting = (columns: string) =>
+      fetchAllRows((from, to) =>
+        pipeline
+          .from("bank_transactions")
+          .select(columns)
+          .eq("user_id", userId)
+          .gte("date", min)
+          .lte("date", max)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    const BASE_COLUMNS = "date, amount, description, counterpart_name, reference";
+    try {
+      existing = (await readExisting(`${BASE_COLUMNS}, source, external_id`)) as unknown as ExistingTxKey[];
+    } catch {
+      // [BANK-TX-SOURCE-ID] bank_tx_source_identity.sql not applied yet. fetchAllRows THROWS on a
+      // query error, and letting that escape would empty the dedup gate — every already-stored
+      // line would find no match and the daily sync would re-insert the whole window. Degrade to
+      // the fingerprint alone, which is what this door had before the column existed.
+      existing = (await readExisting(BASE_COLUMNS)) as unknown as ExistingTxKey[];
+    }
   }
 
-  const dd = dedupTransactions(transactions, existing);
+  const dd = dedupTransactions(transactions, existing, source);
   if (dd.toInsert.length === 0) return { inserted: 0, skipped: dd.skipped };
 
-  const rows = mapToRows(dd.toInsert, userId);
-  let { error } = await pipeline.from("bank_transactions").insert(rows);
-  // [BANK-IBAN] Resilient to a not-yet-applied migration, exactly as bank-ingest is: if
-  // counterpart_iban does not exist yet (42703), retry without it rather than lose the import.
-  if (error && (error as { code?: string }).code === "42703") {
-    const stripped = rows.map(({ counterpart_iban: _omit, ...r }) => r);
-    ({ error } = await pipeline.from("bank_transactions").insert(stripped));
+  const rows = mapToRows(dd.toInsert, userId, source);
+  // [BANK-TX-SOURCE-ID] upsert-ignore for the same reason as the upload door: this cron and a
+  // manual upload can run at the same moment, and the constraint is the only thing that holds
+  // when both read an empty "existing". 429 of one real quarter's 576 feed rows carry an
+  // entry_reference; the rest store NULL and stay on the fingerprint.
+  let { data: insData, error } = await pipeline
+    .from("bank_transactions")
+    .upsert(rows, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
+    .select("id");
+  // Resilient to a half-applied schema, exactly as bank-ingest is, and for the same reason: a
+  // failed insert here is not a missing hint, it is a day of the owner's money that never lands.
+  //   · 42703 — the columns do not exist. Strip them and plain-insert. [BANK-IBAN] rides along.
+  //   · 42P10 — the columns exist but uniq_bank_tx_source_identity does not, so there is no
+  //     constraint for ON CONFLICT to match. Keep the values, drop the conflict clause.
+  const failureCode = (error as { code?: string } | null)?.code;
+  if (failureCode === "42703") {
+    const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, ...r }) => r);
+    ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
+  } else if (failureCode === "42P10") {
+    ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id"));
   }
   if (error) {
     console.error("[ENABLEBANKING] inserting transactions failed", { userId, rows: rows.length, error });
     return { inserted: 0, skipped: dd.skipped };
   }
-  return { inserted: rows.length, skipped: dd.skipped };
+  // Rows the unique index refused are raced duplicates: written by the other writer, not by us.
+  // Counting them as inserted would report money that this run did not add.
+  const written = insData?.length ?? rows.length;
+  const racedAway = rows.length > 1000 ? 0 : rows.length - written;
+  return { inserted: rows.length - racedAway, skipped: dd.skipped + racedAway };
 }
 
 /** Sync ONE account. Never throws: the caller is a loop over accounts and one failure must not
@@ -268,6 +300,7 @@ async function syncOneAccount(args: {
   const { inserted, skipped } = await storeTransactions({
     pipeline,
     userId: connection.userId,
+    accountId: account.accountId,
     transactions,
   });
 
