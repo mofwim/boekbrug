@@ -255,6 +255,9 @@ export default function BankClient() {
   // fetched. A bank card carries only what a MATCH needs — number, gross total, date — so the
   // breakdown is fetched when the dialog opens rather than loaded onto every candidate in the list.
   const [correctFor, setCorrectFor] = useState<CorrectableInvoice | null>(null)
+  // [DECLARED-INVOICE] Busy while the missing invoice named in the payment is being read.
+  const [addingMissing, setAddingMissing] = useState(false)
+  const missingFileRef = useRef<HTMLInputElement | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
   // page refresh doesn't show an empty page. The transactions live in the DB
   // (bank_transactions, status 'pending'); /api/bank/match reads them and
@@ -961,6 +964,50 @@ export default function BankClient() {
       setCorrectFor(json.invoice as CorrectableInvoice)
     } catch {
       showToast('Deze factuur kon niet worden opgehaald — controleer je verbinding.')
+    }
+  }
+
+  // [DECLARED-INVOICE] Add the invoice the payment NAMES but the administration does not have,
+  // without leaving the screen.
+  //
+  // Deliberately NOT through /api/bank/attach-invoice, which is the other obvious choice and the
+  // wrong one here. That route exists for "this bank line IS this invoice": when the read total
+  // disagrees with the bank amount it trusts the bank, on the sound reasoning that the money which
+  // moved is the truth. On a line that pays TWO invoices that reasoning inverts — attaching an
+  // €800 invoice to a €2.265,41 line would create an €2.265,41 invoice and consume the whole line.
+  //
+  // The normal intake keeps the paper's own total, which is the only figure that can be right here.
+  // The invoice then lands where every other invoice lands, and the owner allocates afterwards.
+  async function addMissingInvoice(file: File) {
+    setAddingMissing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/intake', { method: 'POST', body: fd })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        showToast(typeof json?.error === 'string' ? json.error : 'Toevoegen mislukt — er is niets opgeslagen.')
+        return
+      }
+      const landedAsInvoice = json.destination === 'invoice' || json.destination === 'receipt'
+      if (!landedAsInvoice) {
+        // A statement, or a document we could not read as an invoice. Say what it became rather
+        // than implying the payment can now be split.
+        showToast('Bestand opgeslagen, maar het is niet als factuur herkend. Controleer het bij Mijn Bestanden.')
+        return
+      }
+      if (json.auto_verified) {
+        // Booked. Re-match so it becomes selectable on THIS line straight away.
+        await runMatch()
+        showToast('Factuur toegevoegd en geboekt — je kunt de betaling nu verdelen.')
+      } else {
+        // In the verify queue. Do NOT pretend it is ready: the split cannot reach it yet.
+        showToast('Factuur toegevoegd. Bevestig hem eerst in de controlewachtrij, daarna kun je de betaling verdelen.')
+      }
+    } catch {
+      showToast('Toevoegen mislukt — controleer je verbinding.')
+    } finally {
+      setAddingMissing(false)
     }
   }
 
@@ -1903,11 +1950,36 @@ export default function BankClient() {
             >
               Toch het hele bedrag op deze factuur
             </button>
+            {/* [DECLARED-INVOICE] The way out that actually solves it, without leaving the screen.
+                Once the named invoice is in the administration the existing money rule handles the
+                rest by itself: confirm the smaller invoice first, and the line stays open with the
+                remainder for the other one. */}
+            <input
+              ref={missingFileRef}
+              type="file"
+              accept=".pdf,image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) void addMissingInvoice(f)
+              }}
+            />
+            <button
+              onClick={() => missingFileRef.current?.click()}
+              disabled={addingMissing}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: '#fff', color: M3.primary, border: `1.5px solid ${M3.primary}`, fontWeight: 700, fontSize: 15, cursor: addingMissing ? 'default' : 'pointer', marginBottom: 8, fontFamily: FONT, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>upload_file</span>
+              {addingMissing
+                ? 'Bezig met inlezen…'
+                : `Voeg ${splitCtx.missingNumbers.length === 1 ? 'die factuur' : 'die facturen'} nu toe`}
+            </button>
             <button
               onClick={() => { setSplitCtx(null); setSplitAmount('') }}
               style={{ width: '100%', padding: '13px', borderRadius: 14, background: 'transparent', color: '#5F6368', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', fontFamily: FONT }}
             >
-              Annuleren — ik voeg de andere factuur eerst toe
+              Annuleren
             </button>
           </div>
         </div>
