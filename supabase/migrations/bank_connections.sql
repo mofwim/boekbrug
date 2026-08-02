@@ -16,6 +16,12 @@
 -- Never run that against tables that DO hold rows; check first with
 --     SELECT count(*) FROM public.bank_connections;
 --
+-- The same applies if you applied an EARLIER version of THIS file: bank_connection_accounts gained
+-- identification_hash and its unique key moved off account_id (see [EB-ACCOUNT-IDENTITY] below).
+-- There is no backfill, because the value can only come from the bank — a session must be
+-- re-authorised to learn it. Empty tables: drop and re-run. Tables with rows: re-link the account
+-- once, which is a click, and is honest about the fact that we never held that identity before.
+--
 -- Two tables:
 --   1. bank_connections          — one row per consent (an Enable Banking "session"). This is the
 --      CONSENT, not the account: PSD2 caps it at 90 days, after which the owner must re-authorise
@@ -101,7 +107,21 @@ CREATE TABLE IF NOT EXISTS public.bank_connection_accounts (
   -- Denormalised on purpose: every sync and every read filters by user_id, and carrying it here
   -- keeps the RLS policy a single-table predicate instead of a join the planner has to prove.
   user_id uuid NOT NULL,
-  -- The Enable Banking account uid (opaque) — what /accounts/{uid}/transactions is called with.
+  -- [EB-ACCOUNT-IDENTITY] The account's identity across sessions — NOT the uid.
+  --
+  -- The API reference is explicit about both fields, and they are not interchangeable:
+  --   uid                 optional; "valid only until the session … is in the AUTHORIZED status"
+  --   identification_hash required; "used for matching accounts between MULTIPLE sessions"
+  --
+  -- So the uid is a session-scoped handle, and keying an account row on it is wrong in the one
+  -- moment that matters: the owner reconnects after the consent expires, the bank mints a fresh
+  -- uid for the same account, and an upsert keyed on uid inserts a SECOND row. Two rows for one
+  -- account means two sync watermarks, both pulling the same window — and the dedup's exact layer
+  -- (bank_tx_source_identity.sql) is scoped by this same value, so it would silently stop
+  -- recognising anything at precisely the moment the re-sync pulls the most overlap.
+  identification_hash text NOT NULL,
+  -- The uid, refreshed on every reconnect. This is what /accounts/{uid}/transactions is called
+  -- with, and it is the ONLY thing here that legitimately changes when the session does.
   account_id text NOT NULL,
   iban text,
   owner_name text,
@@ -121,11 +141,10 @@ CREATE TABLE IF NOT EXISTS public.bank_connection_accounts (
     FOREIGN KEY (connection_id) REFERENCES public.bank_connections(id) ON DELETE CASCADE,
   CONSTRAINT bank_connection_accounts_user_id_fkey
     FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE,
-  -- The same bank account must never be held twice by one owner. Reconnecting after the 90-day
-  -- expiry can return the SAME account uid, and a second row would mean two watermarks for one
-  -- account: both would sync, both would pull the same window, and only the content dedup would
-  -- stand between that and doubled money.
-  CONSTRAINT bank_connection_accounts_user_account_unique UNIQUE (user_id, account_id)
+  -- The same bank account must never be held twice by one owner — keyed on the identity that
+  -- SURVIVES a reconnect, not on the session handle that does not. Keyed on account_id this
+  -- constraint was satisfied by two rows for one account and enforced nothing.
+  CONSTRAINT bank_connection_accounts_user_account_unique UNIQUE (user_id, identification_hash)
 );
 
 CREATE INDEX IF NOT EXISTS bank_connection_accounts_connection_idx

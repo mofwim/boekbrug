@@ -11,7 +11,7 @@
 //   · clients.created_by         — same migration
 //   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
 //   · bank_connections           — supabase/migrations/bank_connections.sql
-//   · bank_connection_accounts   — same migration
+//   · bank_connection_accounts   — same migration (incl. identification_hash, [EB-ACCOUNT-IDENTITY])
 //   · bank_transactions.source        — supabase/migrations/bank_tx_source_identity.sql (text, nullable)
 //   · bank_transactions.external_id   — same migration (text, nullable)
 //
@@ -238,6 +238,7 @@ export type Database = {
       bank_connection_accounts: {
         Row: {
           account_id: string
+          identification_hash: string
           connection_id: string
           created_at: string
           currency: string | null
@@ -253,6 +254,7 @@ export type Database = {
         }
         Insert: {
           account_id: string
+          identification_hash: string
           connection_id: string
           created_at?: string
           currency?: string | null
@@ -268,6 +270,7 @@ export type Database = {
         }
         Update: {
           account_id?: string
+          identification_hash?: string
           connection_id?: string
           created_at?: string
           currency?: string | null

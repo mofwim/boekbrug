@@ -23,6 +23,10 @@ export type BankConnectionStatus = "pending" | "linked" | "expired" | "error" | 
 export interface BankConnectionAccount {
   id: string;
   connectionId: string;
+  /** [EB-ACCOUNT-IDENTITY] Who the account IS — stable across every reconnect. Scope the dedup on
+   *  this, never on accountId. */
+  identificationHash: string;
+  /** The session-scoped handle /accounts/{uid}/transactions is called with. Changes on reconnect. */
   accountId: string;
   iban: string | null;
   ownerName: string | null;
@@ -57,7 +61,7 @@ const CONNECTION_SELECT =
   "id, user_id, session_id, aspsp_name, aspsp_country, institution_name, institution_bic, reference, status, access_valid_until, max_historical_days, connected_at, last_synced_at, last_error" as const;
 
 const ACCOUNT_SELECT =
-  "id, connection_id, account_id, iban, owner_name, currency, status, last_synced_at, last_synced_through, last_error" as const;
+  "id, connection_id, identification_hash, account_id, iban, owner_name, currency, status, last_synced_at, last_synced_through, last_error" as const;
 
 interface ConnectionRow {
   id: string;
@@ -79,6 +83,7 @@ interface ConnectionRow {
 interface AccountRow {
   id: string;
   connection_id: string;
+  identification_hash: string;
   account_id: string;
   iban: string | null;
   owner_name: string | null;
@@ -99,6 +104,7 @@ function toAccount(row: AccountRow): BankConnectionAccount {
   return {
     id: row.id,
     connectionId: row.connection_id,
+    identificationHash: row.identification_hash,
     accountId: row.account_id,
     iban: row.iban,
     ownerName: row.owner_name,
@@ -292,17 +298,24 @@ export async function attachSession(params: {
 /**
  * The consent came back linked: store the accounts it unlocked.
  *
- * Upsert on (user_id, account_id), so RECONNECTING after the 90-day expiry re-points the existing
- * account row at the new connection instead of creating a second one. That matters more than it
- * looks: two rows for one bank account would mean two sync watermarks, both pulling the same
- * window, with only the content dedup standing between that and doubled money. Re-pointing also
- * PRESERVES last_synced_through, so a reconnect resumes where the feed stopped instead of
- * re-reading months the owner already has.
+ * [EB-ACCOUNT-IDENTITY] Upsert on (user_id, identification_hash), so RECONNECTING after the consent
+ * expires re-points the existing account row at the new connection instead of creating a second
+ * one. That matters more than it looks: two rows for one bank account would mean two sync
+ * watermarks, both pulling the same window, with only the content dedup standing between that and
+ * doubled money. Re-pointing also PRESERVES last_synced_through, so a reconnect resumes where the
+ * feed stopped instead of re-reading months the owner already has.
+ *
+ * This used to key on account_id and therefore did none of that. The account uid is session-scoped
+ * — the reference: "valid only until the session … is in the AUTHORIZED status" — so a reconnect
+ * brought a fresh uid, matched nothing, and inserted the second row the comment above promised it
+ * would not. identification_hash exists for exactly this ("matching accounts between multiple
+ * sessions") and is the only value here that survives a reconnect.
  */
 export async function saveConnectionAccounts(params: {
   userId: string;
   connectionId: string;
   accounts: Array<{
+    identificationHash: string;
     accountId: string;
     iban: string | null;
     ownerName: string | null;
@@ -320,6 +333,7 @@ export async function saveConnectionAccounts(params: {
       params.accounts.map((a) => ({
         connection_id: params.connectionId,
         user_id: params.userId,
+        identification_hash: a.identificationHash,
         account_id: a.accountId,
         iban: a.iban,
         owner_name: a.ownerName,
@@ -328,7 +342,7 @@ export async function saveConnectionAccounts(params: {
         last_error: null,
         updated_at: now,
       })),
-      { onConflict: "user_id,account_id" },
+      { onConflict: "user_id,identification_hash" },
     )
     .select("id");
 

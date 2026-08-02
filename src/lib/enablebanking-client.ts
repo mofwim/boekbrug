@@ -286,13 +286,44 @@ export interface EnableBankingAspsp {
   maximum_consent_validity?: number | null;
 }
 
+/**
+ * One account a session unlocked, as AccountResource defines it.
+ *
+ * The two identifiers are NOT interchangeable, and the reference says so field by field:
+ *
+ *   uid                 Required FALSE. "Unique account identificator used for fetching account
+ *                       balances and transactions. It is valid only until the session to which the
+ *                       account belongs is in the AUTHORIZED status. It can be not set in case it
+ *                       is know that it is not possible to fetch balances and transactions for the
+ *                       account (for example, in case the account is blocked or closed."
+ *   identification_hash Required TRUE. "Primary account identification hash. It can be used for
+ *                       matching accounts between multiple sessions (even in case the sessions are
+ *                       authorized by different PSUs)."
+ *
+ * So: uid is the handle you CALL with and it dies with the session; identification_hash is who the
+ * account IS and it outlives every reconnect. Storing the uid as the account's identity is the bug
+ * this comment exists to prevent — see [EB-ACCOUNT-IDENTITY] in bank_connections.sql.
+ *
+ * `uid` is typed optional because the reference says it is, and an account without one genuinely
+ * cannot be read (blocked or closed at the bank). That is a different fact from "the owner picked
+ * no account", and the callback must not report it as the latter.
+ */
 export interface EnableBankingSessionAccount {
-  uid: string;
+  uid?: string | null;
   identification_hash?: string | null;
+  /** Every identification the bank offers. The primary one is included in identification_hash. */
+  identification_hashes?: string[] | null;
   account_id?: { iban?: string | null; other?: { identification?: string | null } | null } | null;
+  /** "Account holder(s) name" — a person or company, never a product label. */
   name?: string | null;
+  /** "Account description set by PSU or provided by ASPSP" — the human label, if the bank has one. */
+  details?: string | null;
   currency?: string | null;
   product?: string | null;
+  /** CACC (current), CARD (card account, has no IBAN), SVGS, … Required by the reference. */
+  cash_account_type?: string | null;
+  /** PRIV or ORGA. A bookkeeping app has a real interest in telling those apart. */
+  usage?: string | null;
 }
 
 export interface EnableBankingSession {

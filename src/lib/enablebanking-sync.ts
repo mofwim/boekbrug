@@ -172,16 +172,20 @@ export function syncWindow(
 async function storeTransactions(args: {
   pipeline: PipelineClient;
   userId: string;
-  /** [BANK-TX-SOURCE-ID] The Enable Banking account uid. entry_reference is only promised unique
-   *  within ONE account, so it is stored and compared under this scope — two linked accounts must
-   *  never collapse into one row because the bank happened to reuse a number. */
-  accountId: string;
+  /** [BANK-TX-SOURCE-ID] The account's STABLE identity (identification_hash), not its uid.
+   *
+   *  entry_reference is only promised unique within one account, so the dedup's exact layer is
+   *  scoped by the account — but scoping it by the uid would silently switch the scope every time
+   *  the owner reconnects, because the uid dies with the session. Every already-stored row would
+   *  then sit under the old scope, match nothing, and the layer would be doing nothing at the one
+   *  moment it is needed most: the post-reconnect re-sync, which deliberately re-reads history. */
+  accountKey: string;
   transactions: ReturnType<typeof mapEnableBankingTransactions>["transactions"];
 }): Promise<{ inserted: number; skipped: number }> {
-  const { pipeline, userId, accountId, transactions } = args;
+  const { pipeline, userId, accountKey, transactions } = args;
   if (transactions.length === 0) return { inserted: 0, skipped: 0 };
 
-  const source = `enablebanking:${accountId}`;
+  const source = `enablebanking:${accountKey}`;
   const { min, max } = dateRange(transactions);
   let existing: ExistingTxKey[] = [];
   if (min && max) {
@@ -300,7 +304,7 @@ async function syncOneAccount(args: {
   const { inserted, skipped } = await storeTransactions({
     pipeline,
     userId: connection.userId,
-    accountId: account.accountId,
+    accountKey: account.identificationHash,
     transactions,
   });
 

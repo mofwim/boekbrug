@@ -182,6 +182,47 @@ console.log("\n— [BANK-TX-SOURCE-ID] the source's own id, above the fingerprin
   check("same payment, different door → ids don't match but the fingerprint does → insert 0",
     r.toInsert.length === 0 && r.skipped === 1);
 }
+// [EB-ACCOUNT-IDENTITY] The scope must be the account's STABLE identity, not its session handle.
+// Enable Banking's AccountResource says uid is "valid only until the session … is in the
+// AUTHORIZED status", while identification_hash exists for "matching accounts between multiple
+// sessions". Scope the source on the uid and the whole layer quietly dies at every reconnect —
+// which is the moment the re-sync deliberately re-reads history and needs it most.
+//
+// Be precise about the consequence: on its own, a moved scope is survivable, because layer 3 still
+// recognises an UNCHANGED fingerprint. The damage needs both — a reconnect AND a fingerprint that
+// has drifted since — and that pair is not exotic, it is the ordinary case: the consent expires
+// every 180 days, and any parser improvement in between moves the fingerprint.
+{
+  const storedBeforeReconnect: ExistingTxKey = {
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpart_name: "Woningstichting Zuid",
+    reference: "Incasso Huur Periode: 01-04 tot 01-05",   // derived by the OLD parser
+    source: "enablebanking:HASH-A", external_id: "ENTRY-1",
+  };
+  const sameLineToday = tx({
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpartName: "Woningstichting Zuid",
+    reference: "TK10000001",                               // derived by the parser we ship now
+    transactionId: "ENTRY-1",
+  });
+
+  // An unchanged fingerprint survives a moved scope — layer 3 covers for layer 2.
+  const unchanged = tx({
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpartName: "Woningstichting Zuid",
+    reference: "Incasso Huur Periode: 01-04 tot 01-05", transactionId: "ENTRY-1",
+  });
+  check("a moved scope alone is survivable — the fingerprint still matches",
+    dedupTransactions([unchanged], [storedBeforeReconnect], "enablebanking:NEW-UID").skipped === 1);
+
+  // Both at once is where the money doubles.
+  const stable = dedupTransactions([sameLineToday], [storedBeforeReconnect], "enablebanking:HASH-A");
+  check("stable scope + drifted fingerprint → the bank's own id still recognises it",
+    stable.toInsert.length === 0 && stable.skipped === 1);
+  const byUid = dedupTransactions([sameLineToday], [storedBeforeReconnect], "enablebanking:NEW-UID");
+  check("uid scope + drifted fingerprint → NOTHING matches, and the rent imports twice",
+    byUid.toInsert.length === 1);
+}
 // Two linked accounts. A bank only promises its id is unique WITHIN one account, so the scope
 // must be part of the key — otherwise account B's transaction vanishes into account A's row.
 {

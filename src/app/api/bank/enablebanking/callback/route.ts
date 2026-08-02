@@ -108,23 +108,30 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const accounts = (session.accounts ?? []).filter((a) => typeof a?.uid === "string" && a.uid);
+  // [EB-ACCOUNT-IDENTITY] An account is usable only if it carries a uid — the reference says one
+  // is absent exactly when the bank already knows balances and transactions CANNOT be fetched
+  // (the account is blocked or closed). That is a different fact from "the owner picked nothing",
+  // and the two must not be reported with the same sentence: one is fixed by re-linking, the other
+  // by calling the bank.
+  const offered = session.accounts ?? [];
+  const accounts = offered.filter((a) => typeof a?.uid === "string" && a.uid);
   if (accounts.length === 0) {
-    // A session with no accounts is a consent that unlocked nothing — usually the owner ticked no
-    // account at his bank. Say that, rather than leaving a "linked" card that never syncs.
     await attachSession({
       connectionId: connection.id,
       sessionId: session.session_id,
       accessValidUntil: session.access?.valid_until ?? null,
     });
+    const blocked = offered.length > 0;
     await setConnectionStatus({
       connectionId: connection.id,
       status: "error",
-      lastError: "geen rekeningen geselecteerd",
+      lastError: blocked ? "rekeningen niet leesbaar" : "geen rekeningen geselecteerd",
     });
     return back(origin, {
       bank: "fout",
-      reden: "Er is geen rekening geselecteerd bij je bank. Probeer opnieuw te koppelen.",
+      reden: blocked
+        ? "Je bank heeft de rekening wel gedeeld, maar geeft er geen toegang toe — dat gebeurt bij een geblokkeerde of opgeheven rekening. Neem contact op met je bank."
+        : "Er is geen rekening geselecteerd bij je bank. Probeer opnieuw te koppelen.",
     });
   }
 
@@ -138,7 +145,13 @@ export async function GET(req: NextRequest) {
     userId: connection.userId,
     connectionId: connection.id,
     accounts: accounts.map((a) => ({
-      accountId: a.uid,
+      // [EB-ACCOUNT-IDENTITY] Who the account IS, across every future session. Required by the
+      // reference; the fallback exists so a bank that omits it still gets a working link instead
+      // of a dropped account — it degrades to the old per-session behaviour (a reconnect makes a
+      // new row) and the prefix keeps the two namespaces from ever colliding.
+      identificationHash: a.identification_hash?.trim() || `uid:${a.uid as string}`,
+      // The handle we CALL with. Refreshed here on every reconnect, by design.
+      accountId: a.uid as string,
       iban: a.account_id?.iban ?? null,
       ownerName: a.name ?? null,
       currency: a.currency ?? null,
