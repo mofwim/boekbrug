@@ -18,6 +18,8 @@ import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel }
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+// [OPEN-TOTAL] Eén definitie van openstaand, gedeeld met elk ander scherm.
+import { openAmount } from "@/lib/partial-payment"
 // [ENABLEBANKING] De bankkoppeling staat BOVEN de uploadkaart, niet in de plaats ervan: een
 // koppeling kan verlopen of geweigerd worden, en dan moet uploaden er gewoon nog staan.
 import BankConnectPanel from './BankConnectPanel'
@@ -1390,7 +1392,13 @@ export default function BankClient() {
                   </p>
                 ) : (
                   pm.targets.map(t => {
-                    const open = Math.max(0, Math.abs(Number(t.total_inc_btw ?? 0)) - Math.max(0, Number(t.amount_paid ?? 0)))
+                    // [OPEN-TOTAL] De zesde plek die openstaand zelf uitrekende. Dezelfde som,
+                    // maar openAmount rondt op centen af én laat de status beslissen — en dat
+                    // laatste is waarom deze regel de gedeelde functie moet gebruiken en niet
+                    // openBalanceFromAmounts: MoveTarget draagt vandaag geen status, dus beide
+                    // geven nu hetzelfde getal. Krijgt hij er ooit één, dan klopt deze regel
+                    // vanzelf mee, terwijl de losse som stil verkeerd zou blijven.
+                    const open = openAmount(t)
                     return (
                       <button
                         key={t.id}
