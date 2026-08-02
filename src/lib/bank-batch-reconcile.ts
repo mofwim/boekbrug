@@ -435,3 +435,94 @@ export function findSupplierSumMatch(args: {
     total: Math.round(members.reduce((t, m) => t + m.openCents, 0)) / 100,
   };
 }
+
+// ── [DECLARED-INVOICE] Numbers the payment CALLS invoices, whether or not we hold them ────────
+//
+// resolveBatchNumbers above answers "which of the invoices we KNOW does this payment reference?"
+// — it matches the payment text against numbers already in the administration, so a number for an
+// invoice that has not been imported yet is, by construction, invisible to it.
+//
+// That blind spot booked money wrongly. A real ATAPACK payment of €2.265,41 carried the description
+// "Tweede deel factuur 26302050 , factuur 26302362". Only the first invoice was in the books, so
+// exactly one number resolved, the multi-invoice slot view never appeared (it needs two), and the
+// card offered to book the WHOLE payment as a deelbetaling on invoice 26302050 — which had room for
+// it, being €4.662,80 open. The second invoice would then arrive with its money already spent: it
+// stays fully open, it is dunned, and the owner can pay it a second time.
+//
+// The card even contradicted itself while doing so: its "2 facturen" badge counts resolved numbers
+// PLUS unresolved leftovers, and it sat directly above a single-invoice chooser that only renders
+// when the payment is NOT considered multi-invoice.
+//
+// So this reads the other side of the evidence: not "do we have it?" but "does the payment SAY it
+// is an invoice?". The word in front of the number is what makes that a fact rather than a guess.
+//
+// ── CONSERVATIVE ON PURPOSE ──
+// A false negative costs nothing — the app behaves exactly as it does today. A false positive holds
+// up a legitimate booking. So this only recognises a number that a keyword introduces, and applies
+// the same 4-character floor referenceMatches uses. A bare number floating in a description is NOT
+// claimed: that is precisely the customer number / PSP hash / postcode that earlier work here went
+// to some trouble to stop trusting.
+
+/** Words a Dutch (or English) payment description uses to introduce an invoice number. */
+const INVOICE_WORD = /\b(?:factuur|facturen|factuurnr|factuurnummer|fact|inv|invoice|invoices|nota|nota's)\b\.?\s*(?:nr\.?|nummer|no\.?|#)?\s*/giu;
+
+/**
+ * Every number this payment text explicitly calls an invoice, in the order printed.
+ *
+ * Handles the plural list ("facturen 26302050, 26302362"), because one keyword can introduce
+ * several numbers and stopping at the first would silently drop the rest — the same class of miss
+ * this whole function exists to close.
+ */
+export function declaredInvoiceNumbers(tx: BatchPaymentText): string[] {
+  const text = `${tx.reference ?? ""} ${tx.description ?? ""}`;
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  INVOICE_WORD.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = INVOICE_WORD.exec(text)) !== null) {
+    // Walk the run of number-ish tokens that follows the keyword, across the separators a human
+    // uses in a list: comma, "en", "&", "+", "/", or plain whitespace.
+    let rest = text.slice(m.index + m[0].length);
+    for (;;) {
+      const token = /^([A-Za-z]{0,4}[0-9][0-9A-Za-z._/-]*)/u.exec(rest);
+      if (!token) break;
+      const printed = token[1].replace(/[.,;:]+$/u, "");
+      const key = normalizeRef(printed);
+      // Same floor as referenceMatches: shorter than four characters is not identity.
+      if (key.length >= 4 && !seen.has(key)) {
+        seen.add(key);
+        out.push(printed);
+      }
+      rest = rest.slice(token[1].length);
+      const sep = /^(?:\s*(?:,|&|\+|\/|\ben\b)\s*|\s+)/u.exec(rest);
+      // No separator, or the keyword appears again → this list has ended.
+      if (!sep || key.length < 4) break;
+      rest = rest.slice(sep[0].length);
+      if (/^(?:factuur|facturen|fact|inv|invoice|nota)/iu.test(rest)) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * The numbers this payment calls invoices that we do NOT hold.
+ *
+ * This is the set that must stop a booking from quietly consuming the whole bank line: the money
+ * for these invoices has already left the account, and spending it on the invoice we happen to
+ * have is how the other one ends up paid twice.
+ */
+export function undeclaredMissingInvoices(
+  tx: BatchPaymentText,
+  knownInvoiceNumbers: Array<string | null | undefined>,
+): string[] {
+  const held = new Set(
+    knownInvoiceNumbers.map((n) => normalizeRef(n ?? "")).filter((k) => k.length > 0),
+  );
+  return declaredInvoiceNumbers(tx).filter((n) => {
+    const key = normalizeRef(n);
+    // Held either exactly, or as the number a fragment was carved out of ("045" ⊂ "2026045") —
+    // the same containment rule the slot view uses, so the two cannot disagree about what is held.
+    return !held.has(key) && ![...held].some((h) => h.includes(key) || key.includes(h));
+  });
+}

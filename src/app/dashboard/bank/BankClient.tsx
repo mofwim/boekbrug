@@ -23,6 +23,9 @@ import { useToast } from '@/components/ui/Toast'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
+// [BANK-SPLIT] One parser for a typed amount, shared with every other money field in the app,
+// so "1.465,41" means the same thing here as on the pay screen.
+import { parseAmountInput } from '@/lib/partial-payment'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -238,6 +241,14 @@ export default function BankClient() {
     return () => clearTimeout(t)
   }, [findParam])
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
+  // [DECLARED-INVOICE] Open when a booking was refused because the payment names an invoice that is
+  // not in the administration yet. Nothing was written, so every way out is still available: add the
+  // missing invoice first, put only part of the payment on this one, or book it all anyway.
+  const [splitCtx, setSplitCtx] = useState<{
+    txId: string; invoiceId: string; invoiceNumber: string | null;
+    missingNumbers: string[]; detail: string;
+  } | null>(null)
+  const [splitAmount, setSplitAmount] = useState('')
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
   // page refresh doesn't show an empty page. The transactions live in the DB
   // (bank_transactions, status 'pending'); /api/bank/match reads them and
@@ -566,7 +577,16 @@ export default function BankClient() {
   // [SHADOW] Named confirmMatch, not confirm: a local function called `confirm`
   // shadows window.confirm for the whole module, so anyone later reaching for
   // the browser dialog here would silently have called this instead.
-  async function confirmMatch(txId: string, invoiceNumber: string | null, explicitInvoiceId?: string) {
+  // [BANK-SPLIT] `opts.amount` = how much of this bank line goes on THIS invoice, when the owner
+  // says so; absent means "everything it has left", which is what every call sent before.
+  // [DECLARED-INVOICE] `opts.force` = the owner saw the "this payment also names factuur X" warning
+  // and chose to book anyway.
+  async function confirmMatch(
+    txId: string,
+    invoiceNumber: string | null,
+    explicitInvoiceId?: string,
+    opts?: { amount?: number; force?: boolean },
+  ) {
     const invoiceId = explicitInvoiceId ?? selected[txId]
     if (!invoiceId) return
     setProcessingId(txId)
@@ -574,7 +594,12 @@ export default function BankClient() {
       const res = await fetch('/api/bank/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactionId: txId, invoiceId }),
+        body: JSON.stringify({
+          transactionId: txId,
+          invoiceId,
+          ...(opts?.amount != null ? { amount: opts.amount } : {}),
+          ...(opts?.force ? { force: true } : {}),
+        }),
       })
       const json = await res.json()
       if (res.ok) {
@@ -616,6 +641,19 @@ export default function BankClient() {
         // re-match, another pending line for the same invoice would still be scored (and
         // warned about) against the old, larger balance.
         if (!allCovered || isPartial) await runMatch()
+      } else if (json?.error === 'declared_invoice_missing') {
+        // [DECLARED-INVOICE] The payment names an invoice we do not have, and booking the whole
+        // line here would spend its money. Nothing was written — ask, do not guess.
+        setSplitCtx({
+          txId,
+          invoiceId,
+          invoiceNumber: invoiceNumber ?? null,
+          missingNumbers: (json.missingNumbers ?? []) as string[],
+          detail: String(json.detail ?? ''),
+        })
+      } else if (json?.error === 'bad_allocation') {
+        // [BANK-SPLIT] The stated amount does not fit. The server names which ceiling it hit.
+        showToast(String(json.detail ?? 'Dat bedrag past niet op deze betaling.'))
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && json?.error === 'payment_fully_applied') {
@@ -1767,6 +1805,72 @@ export default function BankClient() {
       )}
 
       {/* B.4 verwerkt dialog */}
+      {/* [DECLARED-INVOICE] The payment names an invoice we do not have. Booking the whole line
+          here spends its money, so the owner gets the three honest ways forward — and the default
+          is the safe one. Nothing was written when this opened. */}
+      {splitCtx && (
+        <div
+          role="dialog" aria-modal="true"
+          onClick={() => { setSplitCtx(null); setSplitAmount('') }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.42)', zIndex: 1400, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
+          >
+            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>
+              Deze betaling hoort bij meer dan één factuur
+            </p>
+            <p style={{ fontSize: 13, color: '#5F6368', margin: '8px 0 16px', lineHeight: 1.5 }}>{splitCtx.detail}</p>
+
+            <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 6 }}>
+              Welk deel hoort op {splitCtx.invoiceNumber ?? 'deze factuur'}?
+            </label>
+            <input
+              inputMode="decimal"
+              value={splitAmount}
+              onChange={(e) => setSplitAmount(e.target.value)}
+              placeholder="0,00"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '13px 14px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 16, fontFamily: FONT_NUM, marginBottom: 6 }}
+            />
+            <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 16px', lineHeight: 1.45 }}>
+              De rest blijft op deze betaling staan, zodat je hem koppelt zodra de andere factuur
+              binnen is.
+            </p>
+
+            <button
+              onClick={() => {
+                const amount = parseAmountInput(splitAmount)
+                if (amount == null || amount <= 0) { showToast('Vul een bedrag groter dan nul in.'); return }
+                const ctx = splitCtx
+                setSplitCtx(null); setSplitAmount('')
+                void confirmMatch(ctx.txId, ctx.invoiceNumber, ctx.invoiceId, { amount })
+              }}
+              style={{ width: '100%', padding: '15px', borderRadius: 14, background: M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: 'pointer', marginBottom: 8, fontFamily: FONT }}
+            >
+              Alleen dit deel boeken
+            </button>
+            {/* The escape hatch, and it is not the prominent one: booking everything here is what
+                leaves the other invoice with its money already spent. */}
+            <button
+              onClick={() => {
+                const ctx = splitCtx
+                setSplitCtx(null); setSplitAmount('')
+                void confirmMatch(ctx.txId, ctx.invoiceNumber, ctx.invoiceId, { force: true })
+              }}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', marginBottom: 8, fontFamily: FONT }}
+            >
+              Toch het hele bedrag op deze factuur
+            </button>
+            <button
+              onClick={() => { setSplitCtx(null); setSplitAmount('') }}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: 'transparent', color: '#5F6368', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren — ik voeg de andere factuur eerst toe
+            </button>
+          </div>
+        </div>
+      )}
       {verwerktCtx && (
         <div
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}

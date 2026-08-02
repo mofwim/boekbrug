@@ -1,5 +1,5 @@
 // [BANK-BATCH-RECONCILE] Pure node test — run: npx tsx src/lib/bank-batch-reconcile.test.ts
-import { reconcileBatch, resolveBatchNumbers, resolveBatchNumbersDetailed, planBatchAutoConfirm, findSupplierSumMatch, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+import { reconcileBatch, resolveBatchNumbers, resolveBatchNumbersDetailed, planBatchAutoConfirm, findSupplierSumMatch, declaredInvoiceNumbers, undeclaredMissingInvoices, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -379,6 +379,60 @@ console.log("\n— [BANK-SUM-SUGGEST] same-supplier sum without quoted numbers �
     amount: -1100, counterpartName: "ATAPACK Cash & Carry B.V.",
     invoices: Array.from({ length: 13 }, (_, i) => sInv(`x${i}`, 100 + i)),
   }) === null);
+}
+
+
+// ── [DECLARED-INVOICE] numbers the payment CALLS invoices ────────────────────────────────────
+// The real ATAPACK payment: €2.265,41 whose description names TWO invoices while only one is in
+// the books. resolveBatchNumbers cannot see the second (it matches against what we hold), so the
+// slot view never appeared and the whole payment was offered as a deelbetaling on the first —
+// leaving the second to arrive with its money already spent.
+console.log("\n— a payment that names invoices we do not have —");
+{
+  const atapack = {
+    reference: null,
+    description: "Tweede deel factuur 26302050 , factuur 26302362",
+  };
+  const declared = declaredInvoiceNumbers(atapack);
+  check("both numbers are read from the real description", declared.join(",") === "26302050,26302362");
+  check("only the one we do not hold is reported missing",
+    undeclaredMissingInvoices(atapack, ["26302050"]).join(",") === "26302362");
+  check("holding both reports nothing missing",
+    undeclaredMissingInvoices(atapack, ["26302050", "26302362"]).length === 0);
+
+  // One keyword can introduce a LIST. Stopping at the first number would drop the rest — the same
+  // class of silent miss this function exists to close.
+  check("a plural list is read whole",
+    declaredInvoiceNumbers({ reference: null, description: "betaling facturen 26302050, 26302362 en 26302999" }).length === 3);
+  check("'en' joins a list too",
+    declaredInvoiceNumbers({ reference: null, description: "factuur 12345 en 67890" }).join(",") === "12345,67890");
+
+  // CONSERVATIVE. A false negative costs nothing; a false positive holds up a legitimate booking.
+  check("a bare number is NOT claimed as an invoice",
+    declaredInvoiceNumbers({ reference: null, description: "SEPA incasso 987654321 Brabant Water" }).length === 0);
+  check("a customer number is not an invoice number",
+    declaredInvoiceNumbers({ reference: null, description: "Klantnummer 4455667 termijn juli" }).length === 0);
+  check("a PSP hash is not claimed", declaredInvoiceNumbers({ reference: null, description: "Mollie tr_8xKq2P order 1029" }).length === 0);
+  check("nothing in, nothing out", declaredInvoiceNumbers({ reference: null, description: "" }).length === 0);
+
+  // The 4-character floor referenceMatches already uses — shorter is not identity.
+  check("a 3-digit number after the keyword is below the floor",
+    declaredInvoiceNumbers({ reference: null, description: "factuur 123" }).length === 0);
+
+  // Spelling variants a bank line really carries.
+  check("factuurnr. is recognised", declaredInvoiceNumbers({ reference: null, description: "Factuurnr. 26302050" }).join(",") === "26302050");
+  check("invoice (English) is recognised", declaredInvoiceNumbers({ reference: null, description: "payment invoice 26302050" }).join(",") === "26302050");
+  check("a repeated number is one invoice",
+    declaredInvoiceNumbers({ reference: null, description: "factuur 26302050 herhaling factuur 26302050" }).length === 1);
+
+  // The reference field counts as payment text too.
+  check("the reference field is scanned as well",
+    declaredInvoiceNumbers({ reference: "factuur 26302050", description: "" }).join(",") === "26302050");
+
+  // A fragment the extractor carved out of a number we DO hold must not read as missing —
+  // same containment rule the slot view uses.
+  check("a carved fragment of a held number is not 'missing'",
+    undeclaredMissingInvoices({ reference: null, description: "factuur 2026045" }, ["2026-045"]).length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
