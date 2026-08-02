@@ -38,6 +38,11 @@ import {
   type PartialPayInvoice,
 } from "./partial-payment";
 import { openstaandOf } from "./invoice-reminders";
+// The case matrix below spans the matcher and the result, because that is where the claim
+// lives: a shape of money is only accounted for if BOTH agree on where it went.
+import { autoConfirmTier, matchTransactions, type InvoiceForMatching } from "./bank-matching";
+import { computeResult } from "./financial-result";
+import type { BankTransaction } from "./bank-parser";
 
 // ── the corpus ────────────────────────────────────────────────────────────────────────────────
 
@@ -246,6 +251,70 @@ test("[MONEY-INVARIANTS] no payment is ever declared to cover more than is open"
       `a rounding tick was treated as another invoice's money — ${label(inv)}`,
     );
   }
+});
+
+test("[MONEY-INVARIANTS] the case matrix: every shape of money ends up somewhere named", () => {
+  // The matrix, asserted rather than reasoned about. Each row is a shape a real bank statement
+  // produces, and the claim is not that the app books it — for most of these the RIGHT answer is
+  // to refuse — but that it never falls out of sight. A shape with no destination is money that
+  // disappears between two screens.
+  const tx = (o: Partial<BankTransaction> = {}): BankTransaction => ({
+    date: "2026-06-10", amount: -500, currency: "EUR", description: "Betaling",
+    counterpartName: "Jansen Bouw B.V.", counterpartIban: null, reference: "26100",
+    transactionId: "t1", rawLine: "", ...o,
+  });
+  const base = {
+    total_inc_btw: 500, client_name: "Jansen Bouw B.V.", direction: "incoming" as const,
+    accountant_status: null, invoice_number: "26100", invoice_date: "2026-06-08",
+    due_date: "2026-07-08", amount_paid: 0,
+  };
+  const route = (t: BankTransaction, invoices: InvoiceForMatching[]) => {
+    const m = matchTransactions([t], invoices).matches[0];
+    return { outcome: m.outcome, tier: autoConfirmTier(m) };
+  };
+
+  // Settles cleanly: the number is printed and the amount agrees to the cent.
+  assert.deepEqual(
+    route(tx(), [{ ...base, id: "a", status: "received" }]),
+    { outcome: "auto", tier: "certain" },
+  );
+
+  // A SECOND payment for an invoice already settled. It must not re-book the invoice, and it must
+  // not vanish — an unexplained debit is exactly what the vraagpost figure is for.
+  assert.deepEqual(
+    route(tx(), [{ ...base, id: "b", status: "paid" }]),
+    { outcome: "none", tier: null },
+    "a paid invoice is never a candidate again",
+  );
+
+  // A supplier refunds us with no creditnota to book it against. Refusing is right: there is no
+  // document, and inventing one would fabricate a BTW correction.
+  assert.deepEqual(
+    route(tx({ amount: 500 }), [{ ...base, id: "c", status: "received" }]),
+    { outcome: "none", tier: null },
+    "money back with no creditnota has nothing to settle",
+  );
+
+  // The same refund WITH a creditnota settles, because the document exists and its sign says so.
+  assert.deepEqual(
+    route(tx({ amount: 500 }), [{ ...base, id: "d", status: "received", total_inc_btw: -500 }]),
+    { outcome: "auto", tier: "certain" },
+    "a creditnota reverses the money direction of its own settlement",
+  );
+
+  // Money for an invoice that is not in the system at all.
+  assert.deepEqual(route(tx(), []), { outcome: "none", tier: null });
+
+  // …and every one of those refusals lands in the figure that names it. Split, not netted: a
+  // €500 refund and a €500 second payment are two facts, and a net of zero would report neither.
+  const r = computeResult([], [
+    { amount: -500, category: null, invoice_id: null },
+    { amount: 500, category: null, invoice_id: null },
+  ], []);
+  assert.equal(r.omzet, 0, "nothing unexplained reaches revenue");
+  assert.equal(r.kosten, 0, "nothing unexplained reaches costs");
+  assert.equal(r.ongecategoriseerdBankIn, 500);
+  assert.equal(r.ongecategoriseerdBankUit, 500);
 });
 
 test("[MONEY-INVARIANTS] the corpus actually exercises the branches it claims to", () => {
