@@ -55,18 +55,20 @@ cheaper than one owner losing an administratie.
 
 ## 2. What does NOT exist yet — fix these before the first paying customer
 
-**2.1 The shutdown clause covers almost nobody.**
-AV §5.7.6 reads *"ontvangt iedere **Bewaarkluis-klant** automatisch zijn volledige archief"*. Every
-other user — which today is literally every user — has no clause at all for "the service closes".
-§10.3 governs the end of an **account**; the end of the **company** is a different event and is
-unwritten. Generalise §5.7.6 to all users, paid or not.
+**2.1 ~~The shutdown clause covers almost nobody.~~ — CLOSED 2 Aug 2026.**
+§5.7.6 read *"ontvangt iedere **Bewaarkluis-klant** automatisch zijn volledige archief"* — a promise
+to nobody, since the Bewaarkluis is a paid add-on no one holds. The general clause now lives in
+**§10.4 "Als BoekBrug zelf stopt"**, inside §10 where the end of the *service* belongs next to the
+end of an *account*, and it applies to every user, paid or not. §5.7.6 hands off to it and keeps
+only what is Bewaarkluis-specific (the pro-rata refund of a multi-year prepayment).
 
-**2.2 There is no accountant-side exit.**
-AV §7.4 covers breaking one link. Nothing covers the platform closing while an office holds N
-administraties, and every export path is owner-scoped (`/api/account/export` and `/api/kluis/export`
-both key on the session user). On shutdown day an office with 25 clients has to chase 25 people to
-press a button each. Either add a bulk export for the accountant role, or commit in writing to
-producing those archives on request — the second is a sentence, the first is a feature.
+**2.2 ~~There is no accountant-side exit.~~ — CLOSED 2 Aug 2026.**
+Now **§7.5**. Every export path is still owner-scoped (`/api/account/export` and `/api/kluis/export`
+both key on the session user), so this was answered in writing rather than with a bulk-export
+feature: the office is told 14 days before its own clients are, and receives one archive per linked
+client within 30 days — bounded to what the coupling already made accessible under §7.2, because a
+closure is not a reason to widen anyone's access. If the office count ever makes hand-delivery
+impractical, *then* build the bulk export; the clause is what makes the sale, not the feature.
 
 **2.3 The prepaid Bewaarkluis is an unfundable promise.**
 AV §5.7.4 sells *"€ 19 per resterend bewaarjaar, in één keer vooruit voldaan"* — up to seven years
@@ -78,10 +80,17 @@ Fix before the first sale, while it is still one line: cap prepayment at one yea
 legal entity with a reserve, **or** hold the prepaid amount in a separate account and never spend
 it as operating cash.
 
-**2.4 There is still no legal entity.**
-`/voorwaarden` and `/privacy` are live with `[JOUW NAAM]` and `KVK-nummer [INVULLEN]`. Every promise
-in this document is made by a party that is not identified. This blocks the exit plan the same way
-it blocks everything else (`MARKTPOSITIE_2026.md` §8, stoppunt 0).
+**2.4 There is still no legal entity — but not the way it is usually described.**
+The often-repeated version of this ("`/voorwaarden` is live with `[JOUW NAAM]` and `KVK-nummer
+[INVULLEN]`", `MARKTPOSITIE_2026.md` §8 stoppunt 0) is out of date and worth correcting, because it
+points at the wrong fix. `src/content/legal/company.ts` now fills the identity from
+`NEXT_PUBLIC_COMPANY_*` at render, with deliberately provisional fallbacks, and `company.test.ts`
+fails the build if any raw placeholder survives into a rendered page. What `/voorwaarden` actually
+says today is *"geëxploiteerd door BoekBrug, gevestigd te Tilburg, KVK-nummer (volgt)"*.
+
+So the mechanism is right and no brackets reach a legal page. The blocker is the fact underneath:
+there is no KVK number to put in the variable. Every promise in this document is still made by a
+party that is not registered, and no kantoor signs a verwerkersovereenkomst with "(volgt)".
 
 **2.5 Two export limits that only bite on shutdown day.**
 - `/api/kluis/export` caps at `MAX_FILES = 500` and `MAX_TOTAL_BYTES = 150 MB` per year. The README
@@ -202,15 +211,19 @@ apology belongs in one sentence, near the end.
 
 ## 7. Checklist
 
-- [ ] KvK registered; `[JOUW NAAM]` / `[INVULLEN]` replaced everywhere in `src/content/legal/`
-- [ ] AV §5.7.6 generalised from Bewaarkluis customers to all users
-- [ ] Accountant exit written into the AV (bulk export, or a commitment to produce archives on request)
+- [ ] KvK registered, and `NEXT_PUBLIC_COMPANY_KVK` / `_LEGAL_NAME` / `_ADDRESS` set in Vercel
+- [x] Shutdown clause generalised from Bewaarkluis customers to all users — AV §10.4, 2 Aug 2026
+- [x] Accountant exit written into the AV — §7.5, 2 Aug 2026
 - [ ] Bewaarkluis prepayment capped at one year, or held separately from operating cash
 - [ ] Export load-tested against the largest real account
 - [ ] `RETENTION_PURGE_ENABLED` confirmed unset
 - [x] `btw_filings` in the account export — `[EXPORT-FILED]`, 2 Aug 2026
 
-The first four are text. Only the fifth costs engineering time.
+Everything still open is text or configuration, except the load test — that one costs engineering
+time, and it is the only item that can turn an announcement into a disaster if skipped.
+
+`src/content/legal/exit-commitments.test.ts` holds §10.4 and §7.5 in place: the scope assertion
+fails if the archive promise is ever narrowed back to paying customers.
 
 ---
 
