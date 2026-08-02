@@ -24,6 +24,20 @@ export type AangifteInput = Pick<
   // because no RATE distinguishes it: 0% is 0% until you look at who the customer is. Both
   // rubrieken carry €0 BTW, so stating it correctly can never move 5a, 5b or 5g.
   intraEuOmzet?: number;
+  // [VRIJGESTELD] Turnover exempt under art. 11 Wet OB. It reaches NO rubriek — not even 1e,
+  // which is for 0%-taxed and reverse-charged supplies, not for an exemption — so it arrives
+  // here only to be NAMED in the notes. Exactly the treatment cashOmzetZonderBtw gets: a figure
+  // the owner can see and reconcile against their own books, never a silent omission.
+  vrijgesteldeOmzet?: number;
+  // The pro-rata percentage applied to input BTW on costs serving both activities, or null when
+  // the regime is off or the ratio was undecidable.
+  proRataPercent?: number | null;
+  // Input BTW on mixed costs left OUT of 5b because no ratio could be determined. > 0 ⇒ 5b is
+  // deliberately too low, and the note says so.
+  voorbelastingUnresolved?: number;
+  // Input BTW on costs attributed wholly to exempt activity — never deductible. Shown so an
+  // owner who expected a refund can see what it went to.
+  voorbelastingGeblokkeerd?: number;
 };
 
 export interface AangifteCompleteness {
@@ -61,6 +75,9 @@ export interface ConceptAangifte {
   voorbelasting: number;         // 5b
   saldo: number;                 // 5g — te betalen (>0) of terug te ontvangen (<0)
   cashOmzetZonderBtw: number;    // omzet without a known rate — deliberately NOT in any rubriek
+  // [VRIJGESTELD] Exempt turnover — likewise NOT in any rubriek, and for a stronger reason: an
+  // exemption is not a rate, so there is no box on the form it belongs in. 0 off-regime.
+  vrijgesteldeOmzet: number;
   notes: string[];               // honest limits — what each figure depends on
   isConcept: true;
 }
@@ -168,6 +185,44 @@ export function buildAangifte(
       "Ken een tarief toe voor een compleet beeld.",
     );
   }
+  // [VRIJGESTELD] Exempt turnover, and what it costs on the deduction side. Four separate
+  // sentences because they are four separate facts, and an owner who reads only the first one
+  // must not be left with a wrong impression of the other three — the same discipline the KOR
+  // note follows, where "the afdracht lapses" without "and so does the aftrek" was the trap.
+  const vrijgesteld = euro(input.vrijgesteldeOmzet ?? 0);
+  if (vrijgesteld !== 0) {
+    notes.push(
+      `€${vrijgesteld.toLocaleString("nl-NL")} van je omzet is VRIJGESTELD (art. 11 Wet OB) en staat daarom in GEEN ` +
+      "enkele rubriek — ook niet in 1e, want dat vak is voor 0%-omzet en verlegde omzet, niet voor een " +
+      "vrijstelling. Die omzet telt wel gewoon mee in je resultaat en in je inkomstenbelasting.",
+    );
+    if (typeof input.proRataPercent === "number") {
+      notes.push(
+        `Omdat je zowel belaste als vrijgestelde omzet hebt, is de BTW op kosten die BEIDE dienen voor ` +
+        `${input.proRataPercent}% afgetrokken (pro rata: belaste omzet ÷ totale omzet, naar boven afgerond). ` +
+        "Kosten die je aan één kant hebt toegewezen volgen die toewijzing, niet dit percentage. " +
+        "Je boekhouder toetst of de omzetverhouding hier de juiste maatstaf is — bij een sterk afwijkend " +
+        "werkelijk gebruik mag of moet daarvan worden afgeweken, en voor investeringsgoederen geldt " +
+        "bovendien een herzieningstermijn die dit concept niet bijhoudt.",
+      );
+    }
+    const geblokkeerd = euro(input.voorbelastingGeblokkeerd ?? 0);
+    if (geblokkeerd > 0) {
+      notes.push(
+        `€${geblokkeerd.toLocaleString("nl-NL")} BTW op inkopen die je volledig aan je VRIJGESTELDE werk hebt ` +
+        "toegewezen is NIET in 5b meegeteld. Dat is geen fout: bij vrijgestelde omzet bestaat er geen recht op aftrek.",
+      );
+    }
+  }
+  const onopgelost = euro(input.voorbelastingUnresolved ?? 0);
+  if (onopgelost > 0) {
+    notes.push(
+      `LET OP: €${onopgelost.toLocaleString("nl-NL")} BTW op gemengde kosten kon NIET worden verdeeld, omdat er in dit ` +
+      "tijdvak geen bruikbare omzetverhouding is (geen omzet, of per saldo negatieve omzet). Die BTW staat " +
+      "NIET in 5b — de voorbelasting is dus bewust te LAAG en het te betalen bedrag te hoog. Je boekhouder " +
+      "bepaalt het percentage.",
+    );
+  }
   // [ICP] The EU-purchase note. When the caller supplies the LISTING (euPurchaseNote), that one
   // wins: it names the invoices instead of merely announcing that some exist, which is the
   // difference between a warning and something the accountant can act on. The bare sentence
@@ -211,6 +266,7 @@ export function buildAangifte(
     voorbelasting,
     saldo,
     cashOmzetZonderBtw: euro(input.cashOmzetZonderBtw),
+    vrijgesteldeOmzet: euro(input.vrijgesteldeOmzet ?? 0),
     notes,
     isConcept: true,
   };

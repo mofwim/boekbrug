@@ -9,6 +9,9 @@
 import { rateSharesFromLines, type RateShare } from "./btw-rate-split";
 import { fetchAllRowsForIds } from "./supabase-paginate";
 import type { PipelineClient } from "./supabase-pipeline";
+// [VRIJGESTELD] The exempt part of a sale is read from the SAME lines as the rate mix — one
+// query, one truth. See vat-exemption.ts for why exempt is not a rate.
+import { getVatTreatment } from "./vat-exemption";
 
 export interface RateSplitInvoice {
   id?: string | null;
@@ -16,24 +19,46 @@ export interface RateSplitInvoice {
   btw_amount: number | null;
 }
 
+export interface RateSplitResult {
+  /** Invoice id → its validated rate mix. Only genuinely multi-rate invoices appear. */
+  rateShares: Map<string, RateShare[]>;
+  /**
+   * [VRIJGESTELD] Invoice id → the ex-BTW amount on it that is exempt turnover (art. 11).
+   * Empty unless the caller asked for it AND the invoice actually has exempt lines.
+   */
+  exemptExByInvoice: Map<string, number>;
+}
+
 /**
- * The rate mix of every SALES invoice in `invoices` that genuinely has more than one rate.
+ * The rate mix of every SALES invoice in `invoices` that genuinely has more than one rate, plus
+ * the exempt portion of each.
  *
  * Only mixed-rate invoices end up in the map (rateSharesFromLines returns null otherwise), and
  * only when their lines add up to their own header — so a caller can use the result blindly: it
  * can move omzet between rubrieken, never change a total. An invoice with no stored lines (an
  * imported or legacy one) is simply absent, keeping the header-derived rate it always had.
  *
- * Best-effort: a failed read returns an empty map rather than breaking the aangifte, which then
+ * [VRIJGESTELD] When `exemptRegime` is on, exempt lines are taken OUT of the rate mix before it
+ * is built, and the remainder is validated against the header MINUS the exempt amount. Doing it
+ * here rather than in the engine is what keeps the two facts consistent: an exempt line carries
+ * btw_rate 0, so leaving it in would put it in the 0% bucket and straight into rubriek 1e — the
+ * precise bug this feature exists to fix — while removing it without adjusting the header would
+ * break the sum check and silently drop the split for the whole invoice.
+ *
+ * Best-effort: a failed read returns empty maps rather than breaking the aangifte, which then
  * computes exactly as it did before this existed.
  */
 export async function fetchRateShares(
   pipeline: PipelineClient,
   invoices: readonly RateSplitInvoice[],
-): Promise<Map<string, RateShare[]>> {
+  // Off (the default) → exemptExByInvoice stays empty and every line counts toward the rate mix,
+  // byte-identical to the behaviour before this parameter existed.
+  opts: { exemptRegime?: boolean } = {},
+): Promise<RateSplitResult> {
   const out = new Map<string, RateShare[]>();
+  const exemptExByInvoice = new Map<string, number>();
   const ids = invoices.map((i) => i.id).filter((id): id is string => !!id);
-  if (ids.length === 0) return out;
+  if (ids.length === 0) return { rateShares: out, exemptExByInvoice };
 
   try {
     // [IN-CHUNK] Chunked, because `ids` is EVERY sales invoice in the quarter. `.in()` has a second,
@@ -44,24 +69,66 @@ export async function fetchRateShares(
     // ENTIRELY: every mixed-rate invoice back to one blended, header-derived rate, and the whole
     // amount into a single rubriek — the exact failure this module was written to prevent. The row
     // cap was already handled; this is the other half.
+    // [VRIJGESTELD] vat_treatment only when it is asked for: on a deployment where the
+    // vat_exemption.sql migration has not run yet, naming a column that does not exist fails the
+    // WHOLE select — and this one feeds the rubriek split of every owner, not just exempt ones.
+    // Two literal selects rather than one interpolated string: supabase-js parses the column
+    // list at the TYPE level, and a `string` variable there collapses the row type to a parser
+    // error. The branch is the point anyway — see the note above.
     const lineRows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
-      pipeline
-        .from("invoice_lines")
-        .select("invoice_id, btw_rate, line_total")
-        .in("invoice_id", chunk)
-        .order("id", { ascending: true })
-        .range(from, to),
+      opts.exemptRegime
+        ? pipeline
+            .from("invoice_lines")
+            .select("invoice_id, btw_rate, line_total, vat_treatment")
+            .in("invoice_id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to)
+        : pipeline
+            .from("invoice_lines")
+            .select("invoice_id, btw_rate, line_total")
+            .in("invoice_id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to),
     );
-    const byInvoice = new Map<string, Array<{ btw_rate: number | null; line_total: number | null }>>();
-    for (const l of lineRows as Array<{ invoice_id: string | null; btw_rate: number | null; line_total: number | null }>) {
+    type LineRow = { btw_rate: number | null; line_total: number | null; vat_treatment?: string | null };
+    const byInvoice = new Map<string, LineRow[]>();
+    for (const l of lineRows as Array<LineRow & { invoice_id: string | null }>) {
       if (!l.invoice_id) continue;
       const list = byInvoice.get(l.invoice_id) ?? [];
-      list.push({ btw_rate: l.btw_rate, line_total: l.line_total });
+      list.push({ btw_rate: l.btw_rate, line_total: l.line_total, vat_treatment: l.vat_treatment });
       byInvoice.set(l.invoice_id, list);
     }
     for (const inv of invoices) {
       if (!inv.id) continue;
-      const shares = rateSharesFromLines(byInvoice.get(inv.id), inv.total_ex_btw ?? 0, inv.btw_amount ?? 0);
+      const lines = byInvoice.get(inv.id);
+      const headerEx = inv.total_ex_btw ?? 0;
+      const headerBtw = inv.btw_amount ?? 0;
+
+      if (!opts.exemptRegime || !lines) {
+        const shares = rateSharesFromLines(lines, headerEx, headerBtw);
+        if (shares) out.set(inv.id, shares);
+        continue;
+      }
+
+      // Split the lines in two. A line LABELLED exempt but carrying a real rate is a
+      // contradiction, and the label loses: BTW stated on an invoice is owed under art. 37 Wet
+      // OB whether or not it should have been charged, so such a line stays on the taxed side
+      // where its BTW is still declared. (The pure resolveSaleTreatment encodes the same rule
+      // at invoice level.)
+      let exemptEx = 0;
+      const taxedLines: LineRow[] = [];
+      for (const l of lines) {
+        const amount = Number(l.line_total);
+        const rate = Number(l.btw_rate ?? 0);
+        const labelledExempt = getVatTreatment(l.vat_treatment) === "exempt";
+        if (labelledExempt && Math.round(rate) === 0 && Number.isFinite(amount)) exemptEx += amount;
+        else taxedLines.push(l);
+      }
+      if (exemptEx !== 0) exemptExByInvoice.set(inv.id, exemptEx);
+
+      // The taxed remainder is validated against the header MINUS the exempt part — the same
+      // sum check as always, applied to the half of the invoice it now describes.
+      const shares = rateSharesFromLines(taxedLines, headerEx - exemptEx, headerBtw);
       if (shares) out.set(inv.id, shares);
     }
   } catch (e) {
@@ -74,6 +141,13 @@ export async function fetchRateShares(
       invoiceCount: ids.length,
       error: e instanceof Error ? e.message : String(e),
     });
+    // [VRIJGESTELD] Both maps are dropped TOGETHER. Today the only throw is the fetch itself,
+    // which happens before either map is written, so this clears nothing — it is here so that
+    // the invariant survives the next edit: a half-built picture (some invoices classified, the
+    // rest silently treated as fully taxed) would be a worse number than the pre-feature one,
+    // and the two maps must never be allowed to describe different subsets of the quarter.
+    out.clear();
+    exemptExByInvoice.clear();
   }
-  return out;
+  return { rateShares: out, exemptExByInvoice };
 }

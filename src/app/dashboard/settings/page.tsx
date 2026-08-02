@@ -46,6 +46,11 @@ export default function SettingsPage() {
   // never retroactively rewritten.
   const [vatScheme, setVatScheme] = useState<'factuur' | 'kas'>('factuur')
   const [vatSchemeSince, setVatSchemeSince] = useState<string | null>(null)
+  // [VRIJGESTELD] Declares (partly) BTW-exempt turnover (art. 11 Wet OB). Like vat_scheme it
+  // carries an effective date, and for the same reason: without it, turning this on today would
+  // re-apportion the deduction of a quarter that has already been filed.
+  const [vatExemptActivity, setVatExemptActivity] = useState(false)
+  const [vatExemptSince, setVatExemptSince] = useState<string | null>(null)
   // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
   // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
   const [remindersEnabled, setRemindersEnabled] = useState(false)
@@ -122,6 +127,8 @@ export default function SettingsPage() {
         setKorActive(!!data.kor_active)
         setVatScheme(data.vat_scheme === 'kas' ? 'kas' : 'factuur')
         setVatSchemeSince(data.vat_scheme_since ?? null)
+        setVatExemptActivity(!!data.vat_exempt_activity)
+        setVatExemptSince(data.vat_exempt_since ?? null)
         setRemindersEnabled(!!data.reminders_enabled)
         setReminderOffsetsText(
           (Array.isArray(data.reminder_offsets) && data.reminder_offsets.length > 0
@@ -186,6 +193,12 @@ export default function SettingsPage() {
     const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
     let since = vatSchemeSince
     if (vatScheme === 'kas' && (profile?.vat_scheme !== 'kas' || !since)) since = qStart
+    // [VRIJGESTELD] Same anchoring, same reason: a declaration takes effect from the START of
+    // the current quarter, never mid-quarter and never backwards over a filed one. Switching it
+    // OFF clears the date, so a later re-declaration anchors fresh instead of reviving an old one.
+    let exemptSince = vatExemptSince
+    if (vatExemptActivity && (!profile?.vat_exempt_activity || !exemptSince)) exemptSince = qStart
+    if (!vatExemptActivity) exemptSince = null
 
     // [REMINDERS] Parse the cadence text into positive ints (unique, ascending).
     // Empty/garbage falls back to the default {14,30} so the schedule is never blank.
@@ -236,11 +249,24 @@ export default function SettingsPage() {
         console.warn('[REMINDERS] reminder-preferences save skipped (migration applied?)', remErr.message)
       }
 
+      // [VRIJGESTELD] Separate + best-effort for exactly the reason spelled out above: before
+      // vat_exemption.sql is applied these two columns do not exist, and bundling them into the
+      // core save would fail the WHOLE profile update and brick Instellingen for every user —
+      // including the ones who have no exempt turnover at all.
+      const { error: exemptErr } = await supabase
+        .from('profiles')
+        .update({ vat_exempt_activity: vatExemptActivity, vat_exempt_since: exemptSince })
+        .eq('id', user.id)
+      if (exemptErr) {
+        console.warn('[VRIJGESTELD] exemption declaration save skipped (migration applied?)', exemptErr.message)
+      }
+
       // Reflect the normalized values back into the form fields
       setBtw(normalizeBtw(btw))
       setIban(normalizeIban(iban))
       setKvk(kvk.trim())
       setVatSchemeSince(since) // [KASSTELSEL] keep local since in sync with what we persisted
+      setVatExemptSince(exemptSince) // [VRIJGESTELD] idem — so a second save does not re-anchor
       setReminderOffsetsText(finalOffsets.join(', ')) // [REMINDERS] reflect the normalized cadence
       setSuccessProfile('Profiel opgeslagen ✓')
     }
@@ -514,6 +540,37 @@ export default function SettingsPage() {
                   duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de
                   BTW-afdracht vervalt.
                 </span>
+              </span>
+            </label>
+          </div>
+
+          {/* [VRIJGESTELD] Vrijgestelde omzet (art. 11 Wet OB). Verandert twee dingen tegelijk:
+              die omzet gaat in GEEN rubriek, en de voorbelasting op gemengde kosten wordt pro
+              rata. Uit tot je hem aanzet — voor de meeste ondernemers verandert er niets. */}
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vatExemptActivity}
+                onChange={e => setVatExemptActivity(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  Ik heb (deels) vrijgestelde omzet
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Voor werk dat is vrijgesteld van BTW (art. 11) — zoals zorg, onderwijs of
+                  verzekeringsbemiddeling. Je kunt dan per factuurregel &quot;Vrijgesteld&quot; kiezen.
+                  Let op: vrijgesteld is NIET hetzelfde als 0%. Bij 0% mag je de BTW op je inkopen
+                  gewoon terugvragen, bij een vrijstelling niet — heb je beide soorten omzet, dan
+                  wordt de BTW op kosten die allebei dienen naar verhouding afgetrokken.
+                </span>
+                {vatExemptActivity && vatExemptSince && (
+                  <span className="block text-xs text-gray-500 mt-1">
+                    Geldt vanaf {vatExemptSince} — eerdere kwartalen worden niet opnieuw berekend.
+                  </span>
+                )}
               </span>
             </label>
           </div>

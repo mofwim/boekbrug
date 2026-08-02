@@ -300,7 +300,30 @@ const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<st
   // A client PAGE rather than a client component — it reads its id from useParams, which the mock
   // at the top of this file supplies.
   { name: "invoice detail", path: "../../src/app/dashboard/invoice/[id]/page", props: {} },
+  // [VRIJGESTELD] The invoice form, which now builds its BTW-tarief dropdown from the owner's
+  // profile. Added for the reason at the top of this file: the other five gates compile this
+  // component without ever calling it. It renders in full here (~13k of markup, rate select
+  // included), so a throw anywhere in the form body is caught.
+  { name: "invoice form (nieuwe factuur)", path: "../../src/app/dashboard/invoice/new/page", props: {} },
 ];
+
+/**
+ * [VRIJGESTELD] Two limits of the line above, stated rather than left to be discovered:
+ *
+ *  1. The "Vrijgesteld" option itself is NOT exercised. It is gated on profile.vat_exempt_activity,
+ *     and the form loads its profile in an effect — effects never run under renderToStaticMarkup,
+ *     so `profile` is null here and the option is correctly absent. What this gate proves is that
+ *     the form still renders with the new branch in it, not that the branch renders.
+ *  2. /dashboard/settings is deliberately NOT on the list, even though the exemption declaration
+ *     lives there. Its entire body sits behind a `loading` flag that only an effect can clear, so
+ *     one render returns a 123-character "Laden..." and nothing else. Listing it would add a test
+ *     that passes without ever reaching the code it claims to cover — the precise false green this
+ *     file exists to prevent.
+ *
+ * Both are the same structural boundary: this gate calls components, it does not run their
+ * effects. The exemption logic that MATTERS is pure and is tested where it lives —
+ * vat-exemption.test.ts (26 cases) and financial-result.test.ts.
+ */
 
 /**
  * Not on the list, and stated rather than left to be noticed: /dashboard/resultaat and

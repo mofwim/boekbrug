@@ -21,6 +21,8 @@ import { fetchSettlementEvents, resolveOwnerSchemeSpan } from "./kas-payment-eve
 import type { VatScheme } from "./vat-scheme";
 // [RUBRIEK-SPLIT] Omzet per BTW rate, read from the invoice's own lines.
 import { fetchRateShares } from "./btw-rate-split-fetch";
+import { collectVatExemption } from "./vat-exemption-collect";
+import { exemptShareOf } from "./vat-exemption";
 
 // [FIN-4] Infer a NULL direction from ownership (the owner is the receiver of an incoming
 // invoice) — the SAME rule effectiveDirection / aangifte / readiness use — so a null-direction
@@ -118,10 +120,22 @@ export async function computeResultForRange(args: {
   // is derived as btw ÷ ex, exact for the single-rate invoices that are almost all of them and
   // wrong for the rest: €1.000 @ 21% + €1.000 @ 9% blends to 15%, snaps to 21%, and declares the
   // whole €2.000 in 1a. Same helper /api/aangifte uses, so the two can never disagree.
-  const rateSharesByInvoice = await fetchRateShares(
+  // [VRIJGESTELD] The exempt regime for this window, from the one shared collector — the same
+  // one /api/aangifte, /api/readiness and the closing package use, so the result screen, the
+  // truth lens and the concept can never show different money. `start` is the window's first day:
+  // a declaration that begins mid-window leaves the window on the old regime rather than
+  // retroactively re-apportioning a quarter inside it that was already filed.
+  const typedInvRows = invRows as Array<{ id?: string; direction: string | null; receiver_id: string | null; total_ex_btw: number | null; btw_amount: number | null }>;
+  const exemption = await collectVatExemption({
+    client: pipeline,
+    ownerId,
+    periodStart: start,
+    incomingInvoiceIds: typedInvRows.filter((i) => effDirOf(i, ownerId) === "incoming").map((i) => i.id).filter((id): id is string => !!id),
+  });
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
     pipeline,
-    (invRows as Array<{ id?: string; direction: string | null; receiver_id: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
-      .filter((i) => effDirOf(i, ownerId) === "outgoing"),
+    typedInvRows.filter((i) => effDirOf(i, ownerId) === "outgoing"),
+    { exemptRegime: exemption.active },
   );
 
   const invoices: ResultInvoice[] = invRows.map((i) => ({
@@ -132,6 +146,8 @@ export async function computeResultForRange(args: {
     // [RUBRIEK-SPLIT] Present only on a mixed-rate sales invoice; everything else keeps the
     // header-derived rate exactly as before.
     rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
+    exempt_ex: (i as { id?: string }).id ? exemptExByInvoice.get((i as { id: string }).id) ?? null : null,
+    vat_deduction: (i as { id?: string }).id ? exemption.deductionByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
 
   // [TURNOVER] Daily till Z-report, with a −5-day buffer: a sale on the last days BEFORE the
@@ -332,7 +348,15 @@ export async function computeResultForRange(args: {
   // auto-booking the triangle delta here would place it in the wrong period / double-count).
   let undatedPaidCount = 0;
   let estimatedPortionCount = 0;
-  let kasOpts: Parameters<typeof computeResult>[7] = {};
+  // [VRIJGESTELD] The regime and the cost attributions belong to BOTH bases — the kas branch
+  // below only adds the settlement-shaped inputs on top. Seeding them here is what stops the
+  // accrual path (the default, and almost every owner) from silently skipping the apportionment
+  // because the exempt inputs happened to live in a variable named after the other scheme.
+  let kasOpts: Parameters<typeof computeResult>[7] = {
+    exemptRegime: exemption.active,
+    deductionByInvoice: exemption.deductionByInvoice,
+    exemptShareByInvoice: exemptShareOf(typedInvRows, exemptExByInvoice),
+  };
   if (scheme === "kas") {
     const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
     undatedPaidCount = qs.undatedPaidCount;
@@ -351,11 +375,24 @@ export async function computeResultForRange(args: {
           .map((e) => [e.invoiceId, { id: e.invoiceId, total_ex_btw: e.headerEx, btw_amount: e.headerBtw }]),
       ).values(),
     ];
-    const settledShares = await fetchRateShares(pipeline, settledSales);
+    const { rateShares: settledShares, exemptExByInvoice: settledExempt } = await fetchRateShares(
+      pipeline, settledSales, { exemptRegime: exemption.active },
+    );
     kasOpts = {
+      // Spread, never replace: exemptRegime and deductionByInvoice were seeded above and belong
+      // to both bases. Assigning a fresh object here is how they would silently disappear for
+      // every kasstelsel owner — the accrual path apportioning correctly while the cash-basis
+      // one deducted everything, which is the harder bug to ever notice.
+      ...kasOpts,
       scheme: "kas",
       settlements: qs.events,
       priorByInvoice: qs.priorByInvoice,
+      // [VRIJGESTELD] Merged the same way the rate mix is: the settlements reach invoices from
+      // earlier windows that this window's own map knows nothing about.
+      exemptShareByInvoice: new Map([
+        ...exemptShareOf(settledSales, settledExempt),
+        ...exemptShareOf(typedInvRows, exemptExByInvoice),
+      ]),
       rateSharesByInvoice: new Map([...settledShares, ...rateSharesByInvoice]),
     };
   }

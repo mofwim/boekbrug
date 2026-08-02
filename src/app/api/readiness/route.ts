@@ -20,6 +20,8 @@ import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 // [RUBRIEK-SPLIT] One helper, three surfaces — see the call site for why readiness needs it too.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+import { collectVatExemption } from "@/lib/vat-exemption-collect";
+import { exemptShareOf } from "@/lib/vat-exemption";
 import { needsDocument } from "@/lib/bank-identity";
 import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
@@ -216,11 +218,26 @@ export async function GET(req: NextRequest) {
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
 
-  const rateSharesByInvoice = await fetchRateShares(pipeline, invRaw.filter((i) => effDir(i) === "outgoing"));
+  // [VRIJGESTELD] Same shared collector as /api/aangifte and the closing package — readiness
+  // judges whether the quarter can be filed, so it has to judge the SAME numbers the filing will
+  // contain. Off-regime this costs one profile read and changes nothing.
+  const exemption = await collectVatExemption({
+    client: pipeline,
+    ownerId,
+    periodStart: start,
+    incomingInvoiceIds: invRaw.filter((i) => effDir(i) === "incoming").map((i) => i.id).filter((id): id is string => !!id),
+  });
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
+    pipeline,
+    invRaw.filter((i) => effDir(i) === "outgoing"),
+    { exemptRegime: exemption.active },
+  );
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
     rate_lines: i.id ? rateSharesByInvoice.get(i.id as string) ?? null : null,
+    exempt_ex: i.id ? exemptExByInvoice.get(i.id as string) ?? null : null,
+    vat_deduction: i.id ? exemption.deductionByInvoice.get(i.id as string) ?? null : null,
   }));
   // [PACKAGE-READINESS] Imported bills dated in the quarter still in the verify queue
   // (status 'processing') must block "klaar" — they'd otherwise reach the accountant nowhere.
@@ -309,7 +326,9 @@ export async function GET(req: NextRequest) {
   // [KASSTELSEL] Resolve the VAT basis for THIS quarter and, under kas, the settlement inputs.
   // Default factuur → the accrual path is byte-identical. Under kas the readiness figures + the
   // klaar-gate reflect BTW on the paid date, and undated paid money blocks "klaar" (below).
-  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
+  // [VRIJGESTELD] The regime travels in: under kas the settled invoices are a different set
+  // from the dated ones, so their exempt parts have to be read there too.
+  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end, exemption.active);
 
   // [DATE-GAP] A verified invoice with NO invoice_date is dropped by the range filter above, so
   // it is in none of the figures — and readiness never said so, while /api/aangifte warns about
@@ -337,7 +356,12 @@ export async function GET(req: NextRequest) {
   // omzetZonderBtwNonCash, and the KOR turnover check); the commission is a cost with no BTW and
   // cannot move any of them. /api/result, which reports profit, books it. The triangle IS run
   // below — for the card-mismatch risk, not for a money figure.
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, {
+    ...sr.opts,
+    exemptRegime: exemption.active,
+    deductionByInvoice: exemption.deductionByInvoice,
+    exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+  });
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
   // terminal afrekening ≠ the till's PIN takings (a missing bon, a skim, a terminal fault) — is

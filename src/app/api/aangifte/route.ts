@@ -24,6 +24,9 @@ import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+// [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
+import { collectVatExemption } from "@/lib/vat-exemption-collect";
+import { exemptShareOf } from "@/lib/vat-exemption";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 // EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be intra-EU
@@ -77,11 +80,27 @@ export async function GET(req: NextRequest) {
   // half of it belongs in 1b. The invoice's own lines know the rates; this reads them, and uses
   // them only when they add up to the header — so the split can move omzet BETWEEN rubrieken and
   // never change a total. Same helper computeResultForRange uses, so screen and aangifte agree.
-  const rateSharesByInvoice = await fetchRateShares(pipeline, invRaw.filter((i) => effDir(i) === "outgoing"));
+  // [VRIJGESTELD] Resolve the exempt regime BEFORE reading the lines: it decides whether the
+  // line read asks for vat_treatment at all, and whether exempt turnover is withheld from the
+  // rubrieken. The shared collector is what keeps this route, readiness, the closing package and
+  // the result screen from each answering "is this owner exempt?" their own way.
+  const exemption = await collectVatExemption({
+    client: pipeline,
+    ownerId,
+    periodStart: start,
+    incomingInvoiceIds: invRaw.filter((i) => effDir(i) === "incoming").map((i) => i.id).filter((id): id is string => !!id),
+  });
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
+    pipeline,
+    invRaw.filter((i) => effDir(i) === "outgoing"),
+    { exemptRegime: exemption.active },
+  );
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
     rate_lines: i.id ? rateSharesByInvoice.get(i.id) ?? null : null,
+    exempt_ex: i.id ? exemptExByInvoice.get(i.id) ?? null : null,
+    vat_deduction: i.id ? exemption.deductionByInvoice.get(i.id) ?? null : null,
   }));
 
   // Bank + cash (same de-dup inputs as /api/result).
@@ -146,7 +165,9 @@ export async function GET(req: NextRequest) {
   // [KASSTELSEL] Resolve the VAT basis for THIS quarter (per-quarter, so a pre-switch quarter
   // stays factuur) and, under kas, gather the settlement inputs. Default factuur → accrual path
   // byte-identical. The concept aangifte then declares BTW on the PAID date, not the invoice date.
-  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
+  // [VRIJGESTELD] The regime travels in: under kas the settled invoices are a different set
+  // from the dated ones, so their exempt parts have to be read there too.
+  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end, exemption.active);
   // [RUBRIEK-SPLIT] MERGE, never overwrite. `rateSharesByInvoice` covers the invoices DATED in
   // this quarter (the accrual path needs those); sr.opts carries the ones its SETTLEMENTS point
   // at, which under kas includes invoices from earlier quarters that were paid in this one.
@@ -155,7 +176,17 @@ export async function GET(req: NextRequest) {
     ...(sr.opts.rateSharesByInvoice ?? new Map()),
     ...rateSharesByInvoice,
   ]);
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...sr.opts, rateSharesByInvoice: mergedRateShares });
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, {
+    ...sr.opts,
+    rateSharesByInvoice: mergedRateShares,
+    exemptRegime: exemption.active,
+    deductionByInvoice: exemption.deductionByInvoice,
+    // [VRIJGESTELD · KASSTELSEL] The accrual path reads exempt_ex off each invoice above; the
+    // cash-basis path books SETTLEMENTS, which carry only an invoice id, so it needs the exempt
+    // part as a fraction of that invoice's ex-BTW total. Same numbers, expressed the way each
+    // branch can use them.
+    exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+  });
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);

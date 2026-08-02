@@ -22,6 +22,14 @@ import { computeSettlementSlices, type SettlementEvent, type PriorSettled } from
 import type { VatScheme } from "./vat-scheme";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — see btw-rate-split.ts.
 import { splitSliceByShares, type RateShare } from "./btw-rate-split";
+// [VRIJGESTELD] Exempt turnover carries no BTW and no right to deduct — see vat-exemption.ts.
+import {
+  computeProRata,
+  deductibleVoorbelasting,
+  getVatDeduction,
+  clampExemptPortion,
+  type ProRata,
+} from "./vat-exemption";
 
 // [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
 // quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
@@ -35,6 +43,25 @@ export interface ComputeOpts {
   // header cannot express it. Under kasstelsel each payment then books a proportional share of
   // every rate instead of one blended one. Absent → the header-derived rate, as before.
   rateSharesByInvoice?: Map<string, RateShare[]>;
+  // [VRIJGESTELD] Does the exempt regime apply to THIS quarter? The caller resolves it with
+  // resolveExemptionForQuarter(profile.vat_exempt_activity, profile.vat_exempt_since, quarterStart)
+  // so a declaration made today never rewrites a quarter that was filed under the old regime.
+  //
+  // Absent/false — the default for every owner — is the untouched path: no turnover is withheld
+  // from the rubrieken, every cost's input BTW lands in one bucket and is deducted in full, and
+  // this whole feature costs exactly one boolean check.
+  exemptRegime?: boolean;
+  // [VRIJGESTELD · KASSTELSEL] Per invoice: the FRACTION (0–1) of its ex-BTW total that is
+  // exempt. Only the cash-basis branch needs it, because there an invoice is booked through its
+  // payments and never as a whole — each settlement slice carries the same proportion of exempt
+  // turnover as the invoice it settles. The accrual branch reads ResultInvoice.exempt_ex instead
+  // (an absolute amount), exactly as rate_lines / rateSharesByInvoice already split per rate.
+  exemptShareByInvoice?: Map<string, number>;
+  // [VRIJGESTELD · KASSTELSEL] Per PURCHASE invoice: its vat_deduction. Same reason as above —
+  // a settlement slice knows its invoice id but carries none of the invoice's own columns, so
+  // without this map every cash-basis cost would fall back to 'mixed' and an owner who
+  // carefully attributed their costs would see the ratio applied to all of them anyway.
+  deductionByInvoice?: Map<string, string | null>;
 }
 
 export interface ResultInvoice {
@@ -49,6 +76,15 @@ export interface ResultInvoice {
   // using them can only move omzet BETWEEN rubrieken, never change a total. Absent → the
   // header derivation below, unchanged, which is exact for a single-rate invoice.
   rate_lines?: RateShare[] | null;
+  // [VRIJGESTELD] SALES: how much of total_ex_btw is exempt turnover (art. 11), summed from the
+  // invoice's lines that carry vat_treatment='exempt'. It still counts as omzet — profit is
+  // profit — but it belongs in NO aangifte rubriek, so it is withheld from the rate buckets
+  // rather than landing in 1e as if it were a genuine 0%-sale. Absent/0 → nothing changes.
+  exempt_ex?: number | null;
+  // [VRIJGESTELD] PURCHASES: what this cost serves — 'direct_taxed' (deduct in full),
+  // 'direct_exempt' (deduct nothing) or 'mixed'/absent (the pro-rata share). Read ONLY when
+  // opts.exemptRegime is on; for everyone else every cost stays in the full-deduction bucket.
+  vat_deduction?: string | null;
 }
 export interface ResultBankTx {
   amount: number | null;       // signed: + credit, − debit
@@ -142,6 +178,22 @@ export interface FinancialResult {
   // 1e (0%) / 1c (other). Unrated cash sales are NOT bucketed here — see
   // cashOmzetZonderBtw — because we never guess a rate.
   salesByRate: SalesRateBucket[];
+  // [VRIJGESTELD] Turnover classified as exempt (art. 11 Wet OB). Counted in `omzet` and in the
+  // result, deliberately absent from salesByRate and therefore from every aangifte rubriek —
+  // the same treatment cashOmzetZonderBtw gets: named, never silently bucketed. 0 for every
+  // owner who has not declared exempt activity.
+  vrijgesteldeOmzet: number;
+  // The pro-rata deduction percentage applied to costs serving both activities, or null when
+  // the regime is off (nothing to apportion) OR the ratio was undecidable. Those two nulls are
+  // told apart by voorbelastingUnresolved: > 0 means undecidable and 5b is understated.
+  proRataPercent: number | null;
+  // Input BTW on mixed costs that was NOT deducted because the ratio could not be determined.
+  // > 0 ⇒ btwVoorbelasting is deliberately too LOW and the notes must say so.
+  voorbelastingUnresolved: number;
+  // Input BTW on costs attributed wholly to exempt activity — never deductible. Carried for
+  // transparency only: an owner who sees €0 where they expected a refund deserves the figure
+  // that explains it.
+  voorbelastingGeblokkeerd: number;
 }
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
@@ -257,6 +309,24 @@ export function computeResult(
   let turnoverBtw9 = 0;
   let turnoverBtw21 = 0;
 
+  // [VRIJGESTELD] Turnover that carries no BTW and no deduction right. Accumulated alongside
+  // `omzet` (it IS revenue) but never handed to addSale, so it cannot reach a rubriek.
+  let vrijgesteldeOmzet = 0;
+  // Input BTW split by what the cost serves. On the DEFAULT path (exemptRegime off) every cent
+  // goes to `direct` and comes back untouched at the bottom — that identity is what makes this
+  // feature invisible to the owners who don't need it.
+  const voorbelasting = { direct: 0, mixed: 0, blocked: 0 };
+  const exemptOn = opts.exemptRegime === true;
+  /** Which bucket a purchase's input BTW belongs in. Off-regime: always the full-deduction one. */
+  const bookVoorbelasting = (btw: number, deduction?: string | null): void => {
+    if (!exemptOn) { voorbelasting.direct += btw; return; }
+    switch (getVatDeduction(deduction)) {
+      case "direct_taxed": voorbelasting.direct += btw; break;
+      case "direct_exempt": voorbelasting.blocked += btw; break;
+      default: voorbelasting.mixed += btw; break;
+    }
+  };
+
   // [AANGIFTE] Sales BTW per rate, accumulated across every sales source. Kept unrounded
   // so the per-rate BTW sums back to btwVerschuldigd with no drift.
   const salesRate = new Map<number, { omzet: number; btw: number }>();
@@ -318,16 +388,25 @@ export function computeResult(
       if (s.direction === "outgoing") {
         omzet += s.ex;
         btwVerschuldigd += s.btw;
+        // [VRIJGESTELD] A settlement carries the same proportion of exempt turnover as the
+        // invoice it settles — the same proportional logic the rate split below uses. Withheld
+        // from the rate buckets so it reaches no rubriek; `taxedEx` is the exact complement, so
+        // the two halves re-sum to this slice with no drift.
+        const exemptEx = exemptOn
+          ? clampExemptPortion(s.ex * (opts.exemptShareByInvoice?.get(s.invoiceId) ?? 0), s.ex)
+          : 0;
+        vrijgesteldeOmzet += exemptEx;
+        const taxedEx = s.ex - exemptEx;
         // [RUBRIEK-SPLIT] A payment settles a FRACTION of the invoice, and that fraction carries
         // a proportional share of every rate on it — a €500 instalment on a mixed 21%/9% invoice
         // is not 21% money. Split it the same way the accrual branch does, so both schemes put
         // the omzet in the same rubriek. The pieces re-sum to this slice exactly.
-        const mix = splitSliceByShares(opts.rateSharesByInvoice?.get(s.invoiceId), s.ex, s.btw);
+        const mix = splitSliceByShares(opts.rateSharesByInvoice?.get(s.invoiceId), taxedEx, s.btw);
         if (mix) for (const part of mix) addSale(part.rate, part.ex, part.btw);
-        else addSale(s.rate, s.ex, s.btw);
+        else if (taxedEx !== 0 || s.btw !== 0) addSale(s.rate, taxedEx, s.btw);
       } else {
         kosten += s.ex;
-        btwVoorbelasting += s.btw;
+        bookVoorbelasting(s.btw, opts.deductionByInvoice?.get(s.invoiceId));
       }
     }
   } else {
@@ -338,13 +417,27 @@ export function computeResult(
       if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
         omzet += ex;
         btwVerschuldigd += btw;
+        // [VRIJGESTELD] Withhold the exempt part from the rubriek split. It stays in `omzet`
+        // above (it is turnover, and the result must show it), but an art. 11 exemption is not
+        // a rate — putting it in 1e would declare it as a 0%-taxed supply. `taxedEx` is the
+        // exact complement of the clamped exempt part, so the two always re-sum to the header.
+        const exemptEx = exemptOn ? clampExemptPortion(inv.exempt_ex ?? 0, ex) : 0;
+        vrijgesteldeOmzet += exemptEx;
+        const taxedEx = ex - exemptEx;
         // [RUBRIEK-SPLIT] When the invoice's own lines carry more than one rate, book each rate
         // where it belongs. The buckets were checked against this header before they arrived, so
         // the omzet and BTW added above are untouched — only their rubriek changes. Without this
         // a €1.000 @ 21% + €1.000 @ 9% invoice blends to 15%, snaps to 21%, and declares the
         // whole €2.000 in rubriek 1a.
         if (inv.rate_lines && inv.rate_lines.length > 1) {
+          // [VRIJGESTELD] The per-rate buckets were built from the SAME lines that carry the
+          // exempt flag, so an exempt line is already absent from them — subtracting again here
+          // would remove it twice. When nothing is exempt this is the untouched original path.
           for (const share of inv.rate_lines) addSale(share.rate, share.ex, share.btw);
+        } else if (taxedEx === 0 && exemptEx !== 0 && btw === 0) {
+          // Wholly exempt, single-rate invoice: there is nothing left to declare. Skipping
+          // addSale entirely keeps a €0/0% bucket out of salesByRate, which is what stops an
+          // empty "1e" row from appearing on the concept of a fully exempt practice.
         } else {
           // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
           // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
@@ -352,11 +445,18 @@ export function computeResult(
           // instead of falling to rate-0 and over-declaring BTW.
           // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
           // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
-          addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+          // [VRIJGESTELD] Derived from the TAXED remainder, not the header. All of the BTW on a
+          // part-exempt invoice belongs to its taxed half — the exempt half carries none by
+          // definition — so btw ÷ ex would divide the real BTW by a base that includes turnover
+          // it was never charged on. On €100 exempt care + €100 whitening @21% that reads
+          // 21/200 = 10,5%, snaps to 9%, and declares a 21% sale in rubriek 1b. Dividing by the
+          // taxed half restores the rate that was actually charged; with nothing exempt,
+          // taxedEx IS ex and this is the original derivation, unchanged.
+          addSale(taxedEx !== 0 ? nearestLegalRate(Math.round((btw / taxedEx) * 100)) : 0, taxedEx, btw);
         }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
         kosten += ex;
-        btwVoorbelasting += btw;
+        bookVoorbelasting(btw, inv.vat_deduction);
       }
     }
   }
@@ -475,7 +575,11 @@ export function computeResult(
       if (c.document_id && c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         kosten += net;
-        btwVoorbelasting += amt - net;
+        // [VRIJGESTELD] A cash cost carries no attribution of its own — the Kas screen has no
+        // such field in this round — so for an exempt owner it lands in the 'mixed' bucket and
+        // takes the pro-rata share. That is the legal default for a general cost, and the note
+        // in aangifte.ts names cash costs explicitly so the owner knows which ones to check.
+        bookVoorbelasting(amt - net, null);
       } else {
         kosten += amt; // no bon or no rate → full gross, no voorbelasting
       }
@@ -527,6 +631,20 @@ export function computeResult(
   //    gap. No BTW is claimed here (see the parameter note); a negative value is ignored.
   if (acquirerCommission > 0) kosten += acquirerCommission;
 
+  // 6) [VRIJGESTELD] Resolve the deduction LAST, because the ratio is made of the turnover the
+  //    loops above just finished counting. Every sales source has been seen, so `omzet` is the
+  //    full denominator and `vrijgesteldeOmzet` the exempt part of it; the taxed side is the
+  //    exact complement rather than a second sum, so the two can never disagree.
+  //
+  //    Off-regime this is arithmetic with a known answer: everything is in `direct`, the ratio
+  //    is ignored, and btwVoorbelasting comes out equal to the running total the old code kept.
+  const proRata: ProRata = computeProRata({
+    taxedOmzet: omzet - vrijgesteldeOmzet,
+    exemptOmzet: vrijgesteldeOmzet,
+  });
+  const deduction = deductibleVoorbelasting(voorbelasting, proRata);
+  btwVoorbelasting = deduction.amount;
+
   return {
     omzet,
     kosten,
@@ -541,5 +659,11 @@ export function computeResult(
     salesByRate: [...salesRate.entries()]
       .map(([rate, v]) => ({ rate, omzet: v.omzet, btw: v.btw }))
       .sort((a, b) => b.rate - a.rate),
+    vrijgesteldeOmzet,
+    // Null off-regime (there is nothing to apportion) and null when the ratio was undecidable.
+    // voorbelastingUnresolved tells those two apart — see the field's own note.
+    proRataPercent: exemptOn ? deduction.percent : null,
+    voorbelastingUnresolved: deduction.unresolved,
+    voorbelastingGeblokkeerd: voorbelasting.blocked,
   };
 }
