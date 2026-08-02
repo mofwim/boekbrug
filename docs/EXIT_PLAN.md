@@ -70,15 +70,37 @@ client within 30 days — bounded to what the coupling already made accessible u
 closure is not a reason to widen anyone's access. If the office count ever makes hand-delivery
 impractical, *then* build the bulk export; the clause is what makes the sale, not the feature.
 
-**2.3 The prepaid Bewaarkluis is an unfundable promise.**
+**2.3 The prepaid Bewaarkluis is deferred revenue, not income — OPEN, and not yet urgent.**
 AV §5.7.4 sells *"€ 19 per resterend bewaarjaar, in één keer vooruit voldaan"* — up to seven years
-collected today against an obligation running to 2033, and §5.7.6 promises a pro-rata refund if we
-stop. From a natural person with no BV and no reserve, that refund is not fundable; in a personal
+collected today against an obligation running to 2033, with a pro-rata refund promised in §5.7.6 if
+we stop. From a natural person with no BV and no reserve, that refund is not fundable; in a personal
 bankruptcy it is worth nothing.
 
-Fix before the first sale, while it is still one line: cap prepayment at one year until there is a
-legal entity with a reserve, **or** hold the prepaid amount in a separate account and never spend
-it as operating cash.
+**Exposure today is € 0, and the app is unaffected either way.** The purchase path exists and is
+reachable (`/dashboard/kluis` → `BewaarkluisCard.tsx` → `POST /api/kluis/offerte` →
+`createKluisCheckoutSession`, Stripe `mode: "payment"`, quantity = years), but
+`isKluisBillingConfigured()` gates it: without `STRIPE_SECRET_KEY` and
+`STRIPE_PRICE_ID_KLUIS_YEAR` the route answers a clean 503 — *"De Bewaarkluis is nog niet te
+bestellen"* — and nobody can prepay anything.
+
+**An earlier draft of this section prescribed the wrong fix** — "cap prepayment at one year" — and
+it is recorded here rather than quietly deleted, because the reasoning against it is the useful
+part. `billing.ts` argues in its own comment that prepayment is the ONLY construction in which we
+never promise storage that has not been paid for, *"en dus de enige waarin een belofte van zeven
+jaar geloofwaardig is uit de mond van een bedrijf dat zelf nog geen zeven jaar bestaat"* — and that
+someone who has just closed their business will not set up a fresh seven-year direct debit for it.
+Both are right. A one-year cap would convert a single payment into recurring billing, with failed
+debits and reminders, aimed at a customer who by definition has stopped trading. It would not remove
+the risk; it would spread it.
+
+The risk is not the prepayment. It is **spending prepaid storage revenue as operating cash**. So the
+fix is one sentence — the money for years 2 through 7 is held, not spent — and it does not need to
+be written until there is money to hold.
+
+**Trigger, not a date.** The exposure stops being zero the moment `STRIPE_PRICE_ID_KLUIS_YEAR` is
+set in Vercel. That is a config change: no deploy, no review, nothing that prompts a second thought.
+So the rule belongs to that switch — **decide where the prepaid money sits before you set that
+variable**, not on some later date that will pass unnoticed.
 
 **2.4 There is still no legal entity — but not the way it is usually described.**
 The often-repeated version of this ("`/voorwaarden` is live with `[JOUW NAAM]` and `KVK-nummer
@@ -214,7 +236,8 @@ apology belongs in one sentence, near the end.
 - [ ] KvK registered, and `NEXT_PUBLIC_COMPANY_KVK` / `_LEGAL_NAME` / `_ADDRESS` set in Vercel
 - [x] Shutdown clause generalised from Bewaarkluis customers to all users — AV §10.4, 2 Aug 2026
 - [x] Accountant exit written into the AV — §7.5, 2 Aug 2026
-- [ ] Bewaarkluis prepayment capped at one year, or held separately from operating cash
+- [ ] Decide where prepaid Bewaarkluis money sits — **before** `STRIPE_PRICE_ID_KLUIS_YEAR` is set,
+      which is the moment exposure stops being € 0 (§2.3)
 - [ ] Export load-tested against the largest real account
 - [ ] `RETENTION_PURGE_ENABLED` confirmed unset
 - [x] `btw_filings` in the account export — `[EXPORT-FILED]`, 2 Aug 2026
