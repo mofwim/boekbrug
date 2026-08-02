@@ -751,5 +751,37 @@ console.log("\n— [VRIJGESTELD] a creditnota on exempt turnover nets, never inf
   check("and reduces omzet with it", near(r.omzet, 600));
 }
 
+
+console.log("\n— [VRIJGESTELD] turnover the feature cannot classify is MEASURED, not assumed away —");
+{
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 40_000, btw_amount: 0, exempt_ex: 40_000 },
+  ];
+  const till: DailyTurnover[] = [{
+    turnover_date: "2026-08-01", base_0: 0, base_9: 0, base_21: 5_000, btw_9: 0, btw_21: 1_050,
+    total_incl: 6_050, pin_amount: null, cash_amount: null, other_amount: null,
+  }];
+  const cashSale: ResultCashEntry[] = [
+    { direction: "in", amount: 1_210, category: "omzet", btw_rate: 21, date: "2026-08-02" },
+  ];
+
+  const on = computeResult(inv, [], cashSale, till, undefined, 0, undefined, { exemptRegime: true });
+  check("the till day is counted as unclassifiable", on.onclassificeerbareOmzet >= 5_000);
+  check("and so is the rated cash sale", near(on.onclassificeerbareOmzet, 6_000));
+  check("exemptRegime is reported, distinct from the ratio being null", on.exemptRegime === true);
+  // It is still DECLARED — the limit is about the label, never about hiding money from 5a.
+  check("the till BTW still reaches verschuldigd", on.btwVerschuldigd > 1_000);
+
+  // Off-regime the figure is 0: for an owner with no exempt turnover it is simply true that this
+  // is taxed, and a warning about it would be noise.
+  const off = computeResult(inv, [], cashSale, till);
+  check("off-regime: nothing is called unclassifiable", off.onclassificeerbareOmzet === 0);
+  check("off-regime: exemptRegime is false", off.exemptRegime === false);
+
+  // An invoice-only exempt owner — the case this feature is actually aimed at — has none of it.
+  const invoiceOnly = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("invoice-only exempt owner has nothing unclassifiable", invoiceOnly.onclassificeerbareOmzet === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

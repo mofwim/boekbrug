@@ -38,6 +38,11 @@ export type AangifteInput = Pick<
   // Input BTW on costs attributed wholly to exempt activity — never deductible. Shown so an
   // owner who expected a refund can see what it went to.
   voorbelastingGeblokkeerd?: number;
+  // Turnover from sources this feature cannot classify (till Z-report, rated cash sales) and
+  // therefore booked as TAXED. Named in the notes rather than left for the owner to find.
+  onclassificeerbareOmzet?: number;
+  // Whether the exempt regime applied at all — see the field of the same name on FinancialResult.
+  exemptRegime?: boolean;
 };
 
 export interface AangifteCompleteness {
@@ -169,7 +174,11 @@ export function buildAangifte(
       "Ontbrekende dagen tellen NIET mee — controleer of alle Z-rapporten erin zitten.",
     );
   }
-  if (completeness.turnoverDays === 0 && input.salesByRate.length === 0) {
+  // [VRIJGESTELD] The exempt figure counts as turnover HERE too. Without it this sentence tells a
+  // fully exempt owner — a dentist with EUR 132.000 of care turnover, correctly in no rubriek —
+  // that they have "nog geen omzet ingevoerd", which is both false and the opposite of reassuring:
+  // it reads as "your quarter is empty" at the moment their data is complete.
+  if (completeness.turnoverDays === 0 && input.salesByRate.length === 0 && !(input.vrijgesteldeOmzet ?? 0)) {
     notes.push("Er is nog geen omzet ingevoerd — 5a is leeg tot je dagomzet of verkoopfacturen toevoegt.");
   }
   notes.push(
@@ -213,6 +222,21 @@ export function buildAangifte(
         "toegewezen is NIET in 5b meegeteld. Dat is geen fout: bij vrijgestelde omzet bestaat er geen recht op aftrek.",
       );
     }
+  }
+  // [VRIJGESTELD] The boundary of this feature, in the concept the owner actually reads — not
+  // only in a migration header they never will. A till Z-report has no exempt column and a cash
+  // sale carries no exempt flag, so for a declared exempt owner that turnover was booked as
+  // TAXED without anyone being asked. Saying nothing would let a physio with a cash book read a
+  // concept that looks complete and is not.
+  const onclassificeerbaar = euro(input.onclassificeerbareOmzet ?? 0);
+  if (input.exemptRegime && onclassificeerbaar > 0) {
+    notes.push(
+      `LET OP: €${onclassificeerbaar.toLocaleString("nl-NL")} omzet komt uit je dagomzet (kassa) of uit ` +
+      "contante verkopen. Die kunnen in BoekBrug nog NIET als vrijgesteld worden aangemerkt en zijn " +
+      "hier dus als BELASTE omzet meegeteld — inclusief de BTW erover. Is een deel daarvan " +
+      "vrijgesteld werk, dan klopt dit concept op dat punt niet en moet je boekhouder het corrigeren. " +
+      "Verkoopfacturen kun je wel per regel op 'vrijgesteld' zetten.",
+    );
   }
   const onopgelost = euro(input.voorbelastingUnresolved ?? 0);
   if (onopgelost > 0) {

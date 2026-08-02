@@ -194,6 +194,16 @@ export interface FinancialResult {
   // transparency only: an owner who sees €0 where they expected a refund deserves the figure
   // that explains it.
   voorbelastingGeblokkeerd: number;
+  // [VRIJGESTELD] Turnover this feature CANNOT classify: the till Z-report (daily_turnover) and
+  // rated cash sales carry no vat_treatment in this round. For an exempt owner it is therefore
+  // counted as TAXED, which may be wrong — so it is measured rather than assumed away, and the
+  // aangifte names the amount. 0 off-regime, and 0 for the invoice-only owner this feature is
+  // really aimed at.
+  onclassificeerbareOmzet: number;
+  // Whether the exempt regime applied to this computation at all. Distinct from
+  // proRataPercent !== null, which is also null when the regime IS on but the ratio was
+  // undecidable — the two must not be conflated by a caller deciding what to tell the owner.
+  exemptRegime: boolean;
 }
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
@@ -312,6 +322,8 @@ export function computeResult(
   // [VRIJGESTELD] Turnover that carries no BTW and no deduction right. Accumulated alongside
   // `omzet` (it IS revenue) but never handed to addSale, so it cannot reach a rubriek.
   let vrijgesteldeOmzet = 0;
+  // [VRIJGESTELD] Turnover from sources this round cannot classify — see the field's note.
+  let onclassificeerbareOmzet = 0;
   // Input BTW split by what the cost serves. On the DEFAULT path (exemptRegime off) every cent
   // goes to `direct` and comes back untouched at the bottom — that identity is what makes this
   // feature invisible to the owners who don't need it.
@@ -560,6 +572,11 @@ export function computeResult(
         omzet += net;
         btwVerschuldigd += amt - net;
         addSale(c.btw_rate, net, amt - net);
+        // [VRIJGESTELD] A cash sale carries a rate but no exempt flag in this round, so for a
+        // declared exempt owner this is turnover we booked as taxed WITHOUT being able to ask.
+        // Counted, so the concept names it. (An UNRATED cash sale is already surfaced by
+        // cashOmzetZonderBtw and reaches no rubriek, so it needs no second warning.)
+        if (exemptOn) onclassificeerbareOmzet += net;
       } else {
         omzet += amt;
         cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
@@ -604,6 +621,10 @@ export function computeResult(
     addSale(21, t.base_21 ?? 0, b.r21);
     addSale(9, t.base_9 ?? 0, b.r9);
     addSale(0, t.base_0 ?? 0, 0);
+    // [VRIJGESTELD] A Z-report has no exempt column, so a till day is booked as taxed in full.
+    // Measured here so the concept can say the amount out loud instead of the owner discovering
+    // it. Only for a declared exempt owner — for everyone else it is simply true that it is taxed.
+    if (exemptOn) onclassificeerbareOmzet += net;
 
     // [FIN-5] A day whose printed gross (total_incl) exceeds its rated net+BTW is turnover
     // whose BTW rate did NOT import (e.g. a Z-report the normalizer couldn't split per
@@ -660,6 +681,8 @@ export function computeResult(
       .map(([rate, v]) => ({ rate, omzet: v.omzet, btw: v.btw }))
       .sort((a, b) => b.rate - a.rate),
     vrijgesteldeOmzet,
+    onclassificeerbareOmzet,
+    exemptRegime: exemptOn,
     // Null off-regime (there is nothing to apportion) and null when the ratio was undecidable.
     // voorbelastingUnresolved tells those two apart — see the field's own note.
     proRataPercent: exemptOn ? deduction.percent : null,

@@ -498,8 +498,16 @@ export async function GET(req: NextRequest) {
     direction: effDir(i),
     label: (i.invoice_number as string | null) ?? null,
   }));
+  // [VRIJGESTELD] Exempt turnover is added back for this yardstick, so the KOR check sees exactly
+  // the total it always saw. It is no longer in salesByRate (it belongs in no rubriek), and
+  // dropping it here would silently make the KOR-limit flag fire LATER for an exempt owner —
+  // a change to an unrelated regime, caused by a feature that has no business touching it.
+  // Whether art. 11 turnover counts toward the EUR 20.000 limit is a legal question this app does
+  // not decide; the flag only ever says "let your accountant check".
   const omzetForKorCheck =
-    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0)
+    + (result.cashOmzetZonderBtw ?? 0)
+    + (result.vrijgesteldeOmzet ?? 0);
   const regimeFlags = await collectRegimeFlags({
     client: pipeline,
     korActive,
@@ -557,7 +565,10 @@ export async function GET(req: NextRequest) {
     usesTurnover: turnover.length > 0,
     turnoverDays: turnover.length,
     reconExceptions,
-    hasSales: result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0,
+    // [VRIJGESTELD] Exempt turnover IS a sales side. Without it a fully exempt owner reports
+    // hasSales:false, and readiness then skips its entire sales block as "not applicable" —
+    // the gate quietly stops checking the one thing that owner's quarter is made of.
+    hasSales: result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.vrijgesteldeOmzet > 0,
     cashOmzetZonderBtw: result.cashOmzetZonderBtw,
     omzetZonderBtwNonCash: result.omzetZonderBtwNonCash,
     quarterDays,

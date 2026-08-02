@@ -150,10 +150,15 @@ export interface ProRata {
  * The deductible share of input BTW on costs serving BOTH activities: taxed turnover over
  * total turnover, ROUNDED UP to a whole percent.
  *
- * The rounding is up, not nearest: the omzetverhouding basis in the Uitvoeringsbeschikking OB
- * rounds the percentage up in the taxpayer's favour, and it is also the direction that cannot
- * quietly cost someone money. VERIFY against the table in force before a filing leans on it —
- * this is the one line in this file where a rule changed by the legislator would move a number.
+ * The rounding is up, not nearest — art. 11 Uitvoeringsbeschikking omzetbelasting 1968, the
+ * omzetverhouding basis: the percentage is rounded UP to whole percents, in the taxpayer's favour.
+ * The canonical example is 21,1% -> 22%, which is pinned as a test. It is also the only direction
+ * that cannot quietly cost someone money.
+ *
+ * Checked against the rule rather than assumed, because it is the one line in this file where a
+ * change by the legislator moves a number. Same article, lid 2: an owner whose ACTUAL use differs
+ * demonstrably from the turnover ratio must use werkelijk gebruik instead — this app never makes
+ * that judgement, and the aangifte note says so in as many words.
  *
  * Three guards, because each of them is a wrong number that would look completely normal:
  *

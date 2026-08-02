@@ -268,8 +268,16 @@ export async function GET(req: NextRequest) {
     direction: effDir(i),
     label: (i.invoice_number as string | null) ?? null,
   }));
+  // [VRIJGESTELD] Exempt turnover is added back for this yardstick, so the KOR check sees exactly
+  // the total it always saw. It is no longer in salesByRate (it belongs in no rubriek), and
+  // dropping it here would silently make the KOR-limit flag fire LATER for an exempt owner —
+  // a change to an unrelated regime, caused by a feature that has no business touching it.
+  // Whether art. 11 turnover counts toward the EUR 20.000 limit is a legal question this app does
+  // not decide; the flag only ever says "let your accountant check".
   const omzetForKorCheck =
-    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0)
+    + (result.cashOmzetZonderBtw ?? 0)
+    + (result.vrijgesteldeOmzet ?? 0);
   // The blanket `.catch(() => [])` that stood here swallowed the one thing it could not fix: the
   // collector already handles its own line-read failure internally (best-effort by contract, and
   // now logged), so anything reaching this point is a genuine fault in a KOR/verlegd/marge flag —

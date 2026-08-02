@@ -101,6 +101,12 @@ test("the percentage rounds UP, never to nearest", () => {
   assert.equal(exact.percent, 25, "an exact 25% is not inflated to 26%");
 });
 
+test("the canonical example from the rule: 21,1% becomes 22%", () => {
+  // art. 11 Uitvoeringsbeschikking OB 1968 rounds the pro rata UP to whole percents. 211 against
+  // a total of 1000 is exactly 21,1%, the example the rule is usually stated with.
+  assert.equal(computeProRata({ taxedOmzet: 211, exemptOmzet: 789 }).percent, 22);
+});
+
 test("a third/third floating-point split does not climb a percent on dust", () => {
   // 1/3 = 33,333…% → 34. The epsilon only absorbs representation dust, never a real fraction.
   const p = computeProRata({ taxedOmzet: 1, exemptOmzet: 2 });
