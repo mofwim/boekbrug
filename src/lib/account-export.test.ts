@@ -8,8 +8,10 @@ import assert from "node:assert/strict";
 import JSZip from "jszip";
 import {
   assembleAccountExportZip,
+  btwFilingsToCsv,
   periodFromDate,
   zipPathForFile,
+  type BtwFilingRow,
   type ExportFile,
 } from "./account-export";
 import type { InvRow } from "./export";
@@ -109,4 +111,153 @@ test("assembleAccountExportZip handles an empty account", async () => {
   assert.ok(csv.includes("Factuurnummer")); // header-only CSV, no rows
   assert.ok(zip.file("profiel.json") !== null);
   assert.ok(zip.file("manifest.json") !== null);
+
+  // [EXPORT-FILED] An account that never filed still gets the file, header-only. A MISSING file
+  // and a dropped ledger look identical to whoever opens this ZIP in 2032.
+  const btw = await zip.file("btw-aangiftes.csv")!.async("string");
+  assert.ok(btw.includes("BTW saldo"));
+  assert.equal(btw.split("\r\n").length, 1); // header, no rows
+  assert.equal(summary.btwFilingCount, 0);
+});
+
+// ─── [EXPORT-FILED] the filed BTW-aangiftes ────────────────────────────────────
+
+const sampleFilings: BtwFilingRow[] = [
+  // Deliberately out of order: the CSV must not depend on the read order.
+  {
+    year: 2026,
+    quarter: 2,
+    filed_at: "2026-07-28T09:12:00.000Z",
+    omzet: 12500.5,
+    kosten: 3200,
+    btw_verschuldigd: 2625.11,
+    btw_voorbelasting: 672,
+    btw_saldo: 1953.11,
+  },
+  {
+    year: 2025,
+    quarter: 4,
+    filed_at: "2026-01-30T11:00:00.000Z",
+    omzet: 8000,
+    kosten: 1000,
+    btw_verschuldigd: 1680,
+    btw_voorbelasting: 210,
+    btw_saldo: 1470,
+  },
+];
+
+test("btwFilingsToCsv sorts by period and formats amounts the Dutch way", () => {
+  const csv = btwFilingsToCsv(sampleFilings);
+  const lines = csv.split("\r\n");
+
+  assert.equal(
+    lines[0],
+    "Jaar;Kwartaal;Ingediend op;Omzet;Kosten;BTW verschuldigd;BTW voorbelasting;BTW saldo",
+  );
+  // 2025-Q4 was passed second but must come first.
+  assert.ok(lines[1].startsWith("2025;Q4;"));
+  assert.ok(lines[2].startsWith("2026;Q2;"));
+  // Decimal comma, two decimals — what a Dutch Excel expects.
+  assert.ok(lines[2].includes("12500,50"));
+  assert.ok(lines[2].includes("1953,11"));
+  // A whole number still carries its decimals.
+  assert.ok(lines[1].includes("8000,00"));
+});
+
+test("btwFilingsToCsv leaves an unrecorded amount empty, never 0,00", () => {
+  // A null saldo means "not recorded". Printing 0,00 would read as "declared nothing",
+  // which is a different — and legally louder — statement.
+  const csv = btwFilingsToCsv([
+    { year: 2026, quarter: 1, filed_at: null, omzet: null, kosten: "", btw_verschuldigd: "n/a", btw_voorbelasting: 0, btw_saldo: null },
+  ]);
+  const cells = csv.split("\r\n")[1].split(";");
+  assert.equal(cells[2], ""); // filed_at
+  assert.equal(cells[3], ""); // omzet null
+  assert.equal(cells[4], ""); // kosten ""
+  assert.equal(cells[5], ""); // unparseable
+  assert.equal(cells[6], "0,00"); // a REAL zero survives as a zero
+  assert.equal(cells[7], ""); // saldo null
+});
+
+test("btwFilingsToCsv accepts numeric columns that arrive as strings", () => {
+  // PostgREST hands `numeric` back as a JSON number today; a driver change must not
+  // silently blank the money out of this file.
+  const csv = btwFilingsToCsv([
+    { year: 2026, quarter: 3, filed_at: "2026-10-20T00:00:00.000Z", omzet: "999.9", kosten: "0", btw_verschuldigd: "209.98", btw_voorbelasting: "0", btw_saldo: "209.98" },
+  ]);
+  assert.ok(csv.includes("999,90"));
+  assert.ok(csv.includes("209,98"));
+});
+
+test("btwFilingsToCsv does not mutate the caller's array", () => {
+  const input = [...sampleFilings];
+  btwFilingsToCsv(input);
+  assert.equal(input[0].year, 2026); // still the original order
+});
+
+test("assembleAccountExportZip ships the filed aangiftes as CSV and verbatim JSON", async () => {
+  // An extra column that BtwFilingRow does not know about: the JSON must still carry it,
+  // which is the whole point of shipping both files.
+  const withExtra = [
+    { ...sampleFilings[0], suppletie_van: "2026-Q1" },
+  ] as unknown as BtwFilingRow[];
+
+  const { zipBytes, summary } = await assembleAccountExportZip({
+    userId: "u3",
+    profile: { id: "u3" },
+    invoices: [],
+    files: [],
+    btwFilings: withExtra,
+  });
+
+  assert.equal(summary.btwFilingCount, 1);
+
+  const zip = await JSZip.loadAsync(zipBytes);
+
+  const csv = await zip.file("btw-aangiftes.csv")!.async("string");
+  assert.ok(csv.startsWith("﻿")); // UTF-8 BOM for Excel NL
+  assert.ok(csv.includes("2026;Q2;"));
+  assert.ok(csv.includes("1953,11"));
+
+  const json = JSON.parse(await zip.file("btw-aangiftes.json")!.async("string"));
+  assert.equal(json.length, 1);
+  assert.equal(json[0].btw_saldo, 1953.11);
+  assert.equal(json[0].suppletie_van, "2026-Q1"); // the unknown column survived
+
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.equal(manifest.aantal_btw_aangiftes, 1);
+  assert.equal(manifest.btw_aangiftes_gelezen, true);
+  // The export states the obligation it does not take over.
+  assert.ok(manifest.bewaarplicht.includes("7 jaar"));
+});
+
+test("an unreadable btw_filings ledger ships a note, never an empty overview", async () => {
+  // The failure this guards: a read that fell over produces a header-only CSV, the owner opens it
+  // in 2032 and concludes they never filed. "We could not look" and "you filed nothing" are
+  // different statements and only one of them is ours to make.
+  const { zipBytes, summary } = await assembleAccountExportZip({
+    userId: "u4",
+    profile: { id: "u4" },
+    invoices: [],
+    files: [],
+    btwFilings: [],
+    btwFilingsAvailable: false,
+  });
+
+  assert.equal(summary.btwFilingsAvailable, false);
+  assert.equal(summary.btwFilingCount, 0);
+
+  const zip = await JSZip.loadAsync(zipBytes);
+  assert.equal(zip.file("btw-aangiftes.csv"), null); // no misleading empty overview
+  assert.equal(zip.file("btw-aangiftes.json"), null);
+
+  const note = await zip.file("BTW-AANGIFTES-NIET-GELEZEN.txt")!.async("string");
+  assert.ok(note.includes("niet worden gelezen"));
+  assert.ok(note.includes("7 jaar"));
+
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  // The count is 0 here, so the flag is the ONLY thing that distinguishes this ZIP from an
+  // account that genuinely never filed. It has to be in the manifest, not just in the summary.
+  assert.equal(manifest.aantal_btw_aangiftes, 0);
+  assert.equal(manifest.btw_aangiftes_gelezen, false);
 });

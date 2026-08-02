@@ -2,10 +2,12 @@
 // [BOEK-032] Account data export (GDPR) — builds a ZIP of the user's own data.
 //
 // Server-only. Bundles:
-//   facturen.csv   → all invoices (user as sender or receiver), via export.ts
-//   bestanden/...  → the user's actual Storage files (bucket "documents")
-//   profiel.json   → the user's profile record (verbatim)
-//   manifest.json  → summary + any skipped files (transparency pillar)
+//   facturen.csv          → all invoices (user as sender or receiver), via export.ts
+//   btw-aangiftes.csv     → every FILED quarter, frozen as declared (see [EXPORT-FILED]); when
+//                           that ledger could not be read, a NIET-GELEZEN note replaces it
+//   bestanden/...         → the user's actual Storage files (bucket "documents")
+//   profiel.json          → the user's profile record (verbatim)
+//   manifest.json         → summary + any skipped files (transparency pillar)
 //
 // Ownership: this file is owned by [BOEK-032]. export.ts is owned by B.14/B.20 —
 // we CALL its helpers (toExportRowFull, invoicesToCsv); we never modify it.
@@ -17,7 +19,9 @@
 import JSZip from "jszip";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows } from "./supabase-paginate";
-import { toExportRowFull, invoicesToCsv, type InvRow } from "./export";
+import { toExportRowFull, invoicesToCsv, fmtAmountNL, type InvRow } from "./export";
+import { csvCell } from "./csv-safe";
+import { isMissingRelation } from "./pg-missing";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -28,8 +32,35 @@ export interface AccountExportSummary {
   cashCount: number;
   turnoverCount: number;
   messageCount: number;
+  btwFilingCount: number;
+  /**
+   * [EXPORT-FILED] FALSE when the filed BTW-aangiftes could not be read. Mirrors
+   * `pinLedgerAvailable` in compute-result-range: losing this ledger can only make the export
+   * look emptier than the account is, so the difference between "filed nothing" and "we could
+   * not look" has to travel with the result instead of collapsing into a count of 0.
+   */
+  btwFilingsAvailable: boolean;
   skipped: { name: string; reason: string }[];
   generatedAt: string; // ISO
+}
+
+/**
+ * [EXPORT-FILED] One filed BTW-aangifte, as frozen in `btw_filings` when the owner marked the
+ * quarter as sent. Field names mirror the database columns verbatim — those are Dutch because
+ * renaming a column is a migration, not a rename (AGENTS.md).
+ *
+ * A `numeric` column arrives from PostgREST as a JSON number, but a driver or a future column
+ * change can hand back a string; every amount is coerced at the edge rather than trusted.
+ */
+export interface BtwFilingRow {
+  year: number;
+  quarter: number;
+  filed_at: string | null;
+  omzet: number | string | null;
+  kosten: number | string | null;
+  btw_verschuldigd: number | string | null;
+  btw_voorbelasting: number | string | null;
+  btw_saldo: number | string | null;
 }
 
 export interface AccountExportResult {
@@ -55,8 +86,34 @@ interface AssembleInput {
   cashEntries?: unknown[];
   dailyTurnover?: unknown[];
   messages?: unknown[];
+  // [EXPORT-FILED] The filed BTW-aangiftes. Typed structurally, so a `select("*")` row keeps
+  // any extra column it carries: the CSV reads the known fields, the JSON dumps all of them.
+  btwFilings?: BtwFilingRow[];
+  /** Defaults to true. Pass false when the btw_filings read failed — see the summary field. */
+  btwFilingsAvailable?: boolean;
   skipped?: { name: string; reason: string }[];
 }
+
+/**
+ * [EXPORT-FILED] Shipped INSTEAD of the CSV when the filings could not be read.
+ *
+ * An empty btw-aangiftes.csv is not a neutral fallback: it states "this account filed nothing",
+ * which is a claim about someone's tax history that a failed read does not license us to make.
+ * Dutch, because whoever opens this ZIP in 2032 is the owner, their accountant or an inspector.
+ */
+const BTW_FILINGS_UNREADABLE_NOTE = [
+  "Je ingediende BTW-aangiftes konden bij het maken van deze export niet worden gelezen.",
+  "",
+  "Daarom staat er GEEN leeg overzicht in deze export. Een leeg bestand zou betekenen dat je",
+  "niets hebt ingediend, en dat is op dit moment niet vastgesteld.",
+  "",
+  "Wat je kunt doen: maak de export later opnieuw, of vraag je ingediende aangiftes op via",
+  "support@boekbrug.nl.",
+  "",
+  "Let op: je bewaarplicht van 7 jaar (art. 52 AWR) rust op jou als ondernemer en loopt door",
+  "nadat je stopt met BoekBrug.",
+  "",
+].join("\r\n");
 
 // ─── Helpers (pure) ─────────────────────────────────────────────────────────────
 
@@ -67,6 +124,68 @@ export function periodFromDate(iso: string | null): string {
   if (Number.isNaN(d.getTime())) return "";
   const q = Math.floor(d.getUTCMonth() / 3) + 1;
   return `${d.getUTCFullYear()}-Q${q}`;
+}
+
+/**
+ * [EXPORT-FILED] The filed BTW-aangiftes as a CSV a human can open.
+ *
+ * Why this file exists at all: `btw_filings` was in no export path. An owner could take their
+ * invoices, bank, kas and dagomzet with them but NOT the one artefact a Belastingdienst controle
+ * actually asks for — what they declared for a given quarter, and when. The live figures cannot
+ * stand in for it: a late invoice retroactively moves a past quarter, which is the entire reason
+ * the frozen snapshot exists (see btw_filings.sql). Recomputing it later answers a different
+ * question than "what did you send".
+ *
+ * CSV rather than a JSON dump because the reader here is the owner, their accountant or an
+ * inspector — the same audience and the same shape as facturen.csv. The verbatim JSON ships
+ * alongside it, so a column added to the table later cannot be lost by this mapper going stale.
+ *
+ * Dutch headers and Dutch amount formatting: this is content a Dutch entrepreneur reads, not
+ * code (AGENTS.md). Sorted by period so the file is deterministic whatever order it was read in.
+ */
+export function btwFilingsToCsv(rows: BtwFilingRow[]): string {
+  const headers = [
+    "Jaar",
+    "Kwartaal",
+    "Ingediend op",
+    "Omzet",
+    "Kosten",
+    "BTW verschuldigd",
+    "BTW voorbelasting",
+    "BTW saldo",
+  ];
+
+  // An amount that is null, or that does not parse as a number, becomes "" — never a silent 0,00,
+  // which would read as "declared nothing" instead of "not recorded".
+  const amount = (v: number | string | null): string => {
+    if (v == null || v === "") return "";
+    const n = Number(v);
+    return Number.isFinite(n) ? fmtAmountNL(n) : "";
+  };
+
+  const sorted = [...rows].sort(
+    (a, b) => a.year - b.year || a.quarter - b.quarter,
+  );
+
+  const lines = [
+    headers.map((h) => csvCell(h)).join(";"),
+    ...sorted.map((r) =>
+      [
+        r.year,
+        `Q${r.quarter}`,
+        r.filed_at ?? "",
+        amount(r.omzet),
+        amount(r.kosten),
+        amount(r.btw_verschuldigd),
+        amount(r.btw_voorbelasting),
+        amount(r.btw_saldo),
+      ]
+        .map((v) => csvCell(v))
+        .join(";"),
+    ),
+  ];
+
+  return lines.join("\r\n");
 }
 
 /** In-ZIP path for a storage file: strip "<userId>/" prefix, keep structure. */
@@ -91,6 +210,8 @@ export async function assembleAccountExportZip(
   const cashEntries = input.cashEntries ?? [];
   const dailyTurnover = input.dailyTurnover ?? [];
   const messages = input.messages ?? [];
+  const btwFilings = input.btwFilings ?? [];
+  const btwFilingsAvailable = input.btwFilingsAvailable ?? true;
   const skipped = [...(input.skipped ?? [])];
   const zip = new JSZip();
 
@@ -101,6 +222,18 @@ export async function assembleAccountExportZip(
     toExportRowFull(inv, periodFromDate(inv.invoice_date)),
   );
   zip.file("facturen.csv", "\uFEFF" + invoicesToCsv(rows));
+
+  // 1b. [EXPORT-FILED] btw-aangiftes.csv — the filed quarters, frozen as declared. Same BOM, for
+  //     the same reason: this is opened in a Dutch Excel. Written whenever the read SUCCEEDED,
+  //     including when it returned nothing: "filed nothing" is a real answer and belongs in the
+  //     export as a header-only file, because an absent file cannot be told apart from an export
+  //     that dropped it. A FAILED read is the one case that must NOT produce that file — it would
+  //     put a claim about someone's tax history on a fact we do not have.
+  if (btwFilingsAvailable) {
+    zip.file("btw-aangiftes.csv", "\uFEFF" + btwFilingsToCsv(btwFilings));
+  } else {
+    zip.file("BTW-AANGIFTES-NIET-GELEZEN.txt", BTW_FILINGS_UNREADABLE_NOTE);
+  }
 
   // 2. profiel.json — the user's profile record, verbatim.
   zip.file("profiel.json", JSON.stringify(profile ?? null, null, 2));
@@ -118,6 +251,12 @@ export async function assembleAccountExportZip(
   zip.file("kas.json", JSON.stringify(cashEntries, null, 2));
   zip.file("dagomzet.json", JSON.stringify(dailyTurnover, null, 2));
   zip.file("berichten.json", JSON.stringify(messages, null, 2));
+  // [EXPORT-FILED] Verbatim alongside the CSV: the CSV is what a human reads, this is the
+  // guarantee that a column added to btw_filings later still leaves the account with it. Same
+  // rule as the CSV — an unreadable ledger ships as no file, never as an empty one.
+  if (btwFilingsAvailable) {
+    zip.file("btw-aangiftes.json", JSON.stringify(btwFilings, null, 2));
+  }
 
   // 5. manifest.json — transparency: what's inside + what was skipped.
   const summary: AccountExportSummary = {
@@ -127,6 +266,8 @@ export async function assembleAccountExportZip(
     cashCount: cashEntries.length,
     turnoverCount: dailyTurnover.length,
     messageCount: messages.length,
+    btwFilingCount: btwFilingsAvailable ? btwFilings.length : 0,
+    btwFilingsAvailable,
     skipped,
     generatedAt: new Date().toISOString(),
   };
@@ -135,7 +276,9 @@ export async function assembleAccountExportZip(
     JSON.stringify(
       {
         beschrijving:
-          "Export van je BoekBrug-account: facturen, documenten, profiel, bank, kas, dagomzet en berichten.",
+          "Export van je BoekBrug-account: facturen, ingediende BTW-aangiftes, documenten, profiel, bank, kas, dagomzet en berichten.",
+        bewaarplicht:
+          "Je bewaarplicht van 7 jaar (art. 52 AWR) rust op jou als ondernemer en loopt door nadat je stopt met BoekBrug. Bewaar deze export.",
         gegenereerd_op: summary.generatedAt,
         aantal_facturen: summary.invoiceCount,
         aantal_bestanden: summary.fileCount,
@@ -143,6 +286,9 @@ export async function assembleAccountExportZip(
         aantal_kasboekingen: summary.cashCount,
         aantal_dagomzetdagen: summary.turnoverCount,
         aantal_berichten: summary.messageCount,
+        aantal_btw_aangiftes: summary.btwFilingCount,
+        // [EXPORT-FILED] false ⇒ het aantal hierboven is géén nul-meting maar een mislukte lezing.
+        btw_aangiftes_gelezen: summary.btwFilingsAvailable,
         overgeslagen_bestanden: summary.skipped,
       },
       null,
@@ -281,11 +427,47 @@ export async function buildAccountExportZip(args: {
       supabase.from("messages").select("*").or(`sender_id.eq.${userId},receiver_id.eq.${userId}`).order("id", { ascending: true }).range(from, to)),
   ]);
 
+  // [EXPORT-FILED] btw_filings, read apart from the four above because it answers a different
+  // question on failure. The other ledgers are recomputable from what is already in this ZIP; a
+  // FILED quarter is not recomputable from anything, because a later invoice moves the live
+  // figure and the snapshot is precisely the record of what was sent before it did.
+  //
+  // Two failures, two answers. The migration not having landed on this deployment (btw_filings.sql
+  // is applied by hand) is a complete answer — nobody filed anything here — but it is still not
+  // allowed to masquerade as "this owner filed nothing", so it degrades to available:false rather
+  // than to an empty list. Any OTHER read error throws, exactly like the ledgers above: an export
+  // that quietly ships without a ledger is the harm this whole file is written against.
+  //
+  // btw_filings is not in the generated types (added by btw_filings.sql) → relaxed client, the
+  // same escape hatch api/truth/route.ts uses for this table.
+  let btwFilingRows: BtwFilingRow[] = [];
+  let btwFilingsAvailable = true;
+  try {
+    btwFilingRows = await fetchAllRows<BtwFilingRow>((from, to) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("btw_filings")
+        .select("*")
+        .eq("user_id", userId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (!isMissingRelation(message)) {
+      throw new Error(`[BOEK-032] btw_filings query failed: ${message}`);
+    }
+    btwFilingsAvailable = false;
+    console.error("[EXPORT-FILED] btw_filings not readable — export ships without it, and says so", { userId, message });
+  }
+
   return assembleAccountExportZip({
     userId, profile, invoices, files, skipped,
     bankTransactions: bankRows,
     cashEntries: cashRows,
     dailyTurnover: turnoverRows,
     messages: msgRows,
+    btwFilings: btwFilingRows,
+    btwFilingsAvailable,
   });
 }
