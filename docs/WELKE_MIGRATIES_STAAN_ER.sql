@@ -163,7 +163,18 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
 
   (26, 'vat_exemption.sql',
        'Vrijgestelde omzet (art. 11 Wet OB) bestond niet in de data, alleen in de commentaren. Zonder deze migratie belandt zorg-/onderwijsomzet als "0%" in rubriek 1e én wordt de voorbelasting op ALLE inkoop voor 100% teruggevraagd, terwijl bij vrijstelling geen aftrekrecht bestaat — op één kwartaal gewone kosten duizenden euro''s die worden nageheven',
-       'column', 'profiles.vat_exempt_activity')
+       'column', 'profiles.vat_exempt_activity'),
+
+  -- ── De bankkoppeling (PSD2, Enable Banking) ─────────────────────────────────────────────
+  (31, 'bank_connections.sql',
+       'De twee tabellen achter de bankkoppeling. Zonder deze migratie verbergt de kaart zichzelf en antwoorden de routes 503 — zichtbaar, dus niet gevaarlijk. Let op de tweede helft: bank_connection_accounts moet identification_hash hebben, want dáárop staat de unieke sleutel. Keyed op de uid maakte een herkoppeling na het verlopen van de consent een TWEEDE rij voor dezelfde rekening',
+       'table', 'bank_connection_accounts'),
+  (32, 'bank_tx_source_identity.sql',
+       'DE FAIL-SOFT REGEL WAAR DIT BESTAND VOOR BESTAAT. bank_transactions.source + external_id, met een UNIQUE erop: de exacte laag van de ontdubbeling. De import vangt 42703 (kolommen ontbreken) en 42P10 (index ontbreekt) op en draait dan verder op alleen de vingerafdruk — geen foutmelding, geen logregel, alleen een beveiliging die er niet is. Precies het geval waarin de app zwijgt: draait deze migratie niet, dan importeert een afschrift dat na een parserwijziging opnieuw wordt geüpload zijn regels een TWEEDE keer',
+       'index', 'uniq_bank_tx_source_identity'),
+  (33, 'bank_connections_updated_at.sql',
+       'BEFORE UPDATE-trigger op beide banktabellen. Vandaag zet de applicatie updated_at bij elke schrijfactie zelf, dus er is niets stuk; dit is de vangnet-helft voor de zevende schrijver die dat vergeet (een routepatch, een reparatiescript, een psql-sessie tijdens een storing). Kost geen geld als hij ontbreekt — kost het antwoord op "wanneer wijzigde deze consent voor het laatst"',
+       'function', 'set_updated_at')
 )
 select
   nr                                                        as "#",

@@ -36,6 +36,10 @@ interface TruthData {
   ok: boolean
   toPay: Bucket
   toReceive: Bucket
+  // [BETALINGSVERSCHIL] Het deel van 'Te ontvangen' dat waarschijnlijk niet meer komt:
+  // restjes van een paar euro die al een maand stilstaan (bankkosten, een afronding).
+  // Optioneel getypt zodat een oudere API-respons dit scherm niet breekt.
+  paymentDifferences?: { count: number; total: number; note: string | null }
   bank: { lastDate: string | null; undocumented: number }
   kas?: { used: boolean; balance: number }
   attention: AttentionItem[]
@@ -178,6 +182,24 @@ export default function DailyTruth() {
             <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
               subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
+          {/* [BETALINGSVERSCHIL] Onder 'Te ontvangen', want dat is het getal dat het vertekent.
+              Een klant maakt EUR 995 over op een factuur van EUR 1.000 omdat zijn bank er EUR 5
+              afhaalt; die EUR 5 blijft staan en komt nooit. Zonder deze regel is 'Te ontvangen'
+              te hoog met geld dat geen vordering is — fout in de enige richting die niemand
+              controleert. Het meldt het en boekt niets af: afsluiten blijft de keuze van de
+              eigenaar, want of een tekort bankkosten is of een betwiste korting weet de app niet. */}
+          {data.paymentDifferences && data.paymentDifferences.count > 0 && data.paymentDifferences.note && (
+            <button
+              onClick={() => router.push('/dashboard/facturen')}
+              style={{
+                width: '100%', textAlign: 'left', marginTop: 10, padding: '12px 14px',
+                borderRadius: 14, border: '1px solid #ffd9a8', background: '#fff8ef',
+                color: '#7a4f00', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5, cursor: 'pointer',
+              }}
+            >
+              {data.paymentDifferences.note}
+            </button>
+          )}
         </>
       )}
 
