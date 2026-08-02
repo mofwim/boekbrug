@@ -33,6 +33,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 // [OPEN-TOTAL] One definition of openstaand, shared with every other surface.
 import { openAmountSigned } from "@/lib/partial-payment";
+// [BETALINGSVERSCHIL] Het restje dat geen vordering is — meldend, nooit boekend.
+import { detectPaymentDifferences, paymentDifferenceNote } from "@/lib/payment-difference";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -54,6 +56,7 @@ interface InvoiceRow {
   amount_paid?: number | null;
   due_date: string | null;
   status: string | null;
+  payment_date?: string | null;
 }
 
 export async function GET() {
@@ -69,7 +72,10 @@ export async function GET() {
   const todayIso = new Date().toISOString().split("T")[0];
   const todayNum = dayNumberFromIso(todayIso);
 
-  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, amount_paid, due_date, status";
+  // [BETALINGSVERSCHIL] payment_date rides along: it is the date of the money STILL on the
+  // invoice (recompute_invoice_amount_paid re-derives it), which is what tells a five-euro
+  // remainder that has stood still for two months from the first term of a live payment plan.
+  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, amount_paid, due_date, status, payment_date";
 
   // [PARTIAL-PAY] The openstaand (still-owed) amount: a fully-paid invoice is 0 (it also drops out
   // of these lists), a deelbetaling shows only the REMAINING balance, a fully-open invoice its total.
@@ -173,6 +179,29 @@ export async function GET() {
     total: recv.reduce((s, r) => s + openstaandOf(r), 0),
     overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
+
+  // [BETALINGSVERSCHIL] Hoeveel van dat bedrag gaat niet meer komen?
+  //
+  // Een klant maakt EUR 995 over op een factuur van EUR 1.000 omdat zijn bank er EUR 5 afhaalt.
+  // De EUR 5 blijft openstaan, voor altijd — niemand maakt hem alsnog over. Hij staat in de
+  // debiteurenlijst, de herinneringscron jaagt erop, en "Te ontvangen" hierboven is te hoog met
+  // geld dat geen vordering is. Dat is fout in de enige richting die een ondernemer nooit
+  // controleert.
+  //
+  // Dit MELDT het en boekt niets af — dezelfde grens die bad-debt.ts trekt bij artikel 29, en om
+  // dezelfde reden: of een tekort bankkosten is, een betwiste korting, of een klant in nood, is
+  // een oordeel over een relatie die de app niet ziet. Zie payment-difference.ts.
+  const differences = detectPaymentDifferences({
+    invoices: recv.map((r) => ({
+      id: r.id,
+      invoice_number: r.invoice_number,
+      status: r.status,
+      total_inc_btw: r.total_inc_btw,
+      amount_paid: r.amount_paid,
+      last_payment_date: r.payment_date ?? null,
+    })),
+    today: todayIso,
+  });
 
   // 3. Nog te documenteren — bank debits still pending with no linked document that
   //    we can't otherwise explain. [BANK-IDENTITY] needsDocument() excludes income,
@@ -288,6 +317,13 @@ export async function GET() {
     ok: true,
     toPay,
     toReceive,
+    // [BETALINGSVERSCHIL] Wat er van toReceive.total waarschijnlijk niet meer binnenkomt.
+    // Een suggestie met een bedrag, geen boeking: note is null zodra er niets te zeggen valt.
+    paymentDifferences: {
+      count: differences.differences.length,
+      total: differences.total,
+      note: paymentDifferenceNote(differences),
+    },
     bank: { lastDate: lastBankDate, undocumented },
     kas: { used: kasUsed, balance: kasBalance },
     attention: attentionAll.slice(0, 3),

@@ -360,6 +360,18 @@ const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<st
   { name: "invoice form (nieuwe factuur)", path: "../../src/app/dashboard/invoice/new/page", props: {} },
 ];
 
+// [BETALINGSVERSCHIL] dashboard/zzp/DailyTruth is deliberately NOT on the list above, for exactly
+// the reason /dashboard/settings is not (see limit 2 below). It was tried: its first render is
+// `if (loading) return <div style={{ height: 148 }} />` — a bare skeleton with no text at all, so
+// it fails the "rendered something" assertion outright rather than passing hollowly. Either way
+// the entry would say nothing about the screen.
+//
+// Its new branch — the payment-difference notice under "Te ontvangen" — is covered where the
+// decision actually lives: paymentDifferenceNote and detectPaymentDifferences in
+// payment-difference.test.ts, including that the sentence never claims to have written anything
+// off. That is the split this file's own header argues for: render gates catch a screen that
+// cannot start, and pure tests catch a screen that says the wrong thing.
+
 /**
  * [VRIJGESTELD] Two limits of the line above, stated rather than left to be discovered:
  *

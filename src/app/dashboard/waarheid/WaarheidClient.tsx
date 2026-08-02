@@ -46,6 +46,10 @@ interface TruthResult {
   // Of that total, the part from BANK revenue or an un-split till day — its rate comes from the
   // Z-report (Dagomzet), not from Kas. Lets the fix guidance point at ONE screen instead of both.
   omzetZonderBtwNonCash?: number;
+  // [VRAAGPOST] Bankmutaties zonder categorie: bewust NIET meegeteld hierboven, en daarom
+  // juist wél te noemen. Optioneel getypt zodat een oudere API-respons dit scherm niet breekt.
+  ongecategoriseerdBankIn?: number;
+  ongecategoriseerdBankUit?: number;
 }
 interface Divergence {
   changed: boolean;
@@ -346,6 +350,27 @@ export default function WaarheidClient() {
         text: `${data.undatedPaidCount} betaalde factu${data.undatedPaidCount === 1 ? "ur mist" : "ren missen"} een betaaldatum. Onder kasstelsel kan die BTW nog niet in de juiste periode worden geplaatst.`,
         href: "/dashboard/bank",
         cta: "Koppelen",
+      });
+    }
+    // [VRAAGPOST] Bankgeld dat nog geen categorie heeft telt NIET mee in de cijfers hierboven —
+    // terecht, want een geraden categorie is een verkeerd getal. Maar het werd ook niet genoemd,
+    // en dan leest een eigenaar met duizenden euro's ongecodeerde mutaties een resultaat dat niet
+    // fout is en ook zijn resultaat niet is. Dit is precies de lijst waar dat hoort: alles wat de
+    // cijfers hierboven onvolledig maakt, met een uitgang per regel.
+    //
+    // In en uit apart, nooit gesaldeerd: € 10.000 erin en € 10.000 eruit is niet "niets mist",
+    // dat zijn twee onverklaarde feiten.
+    const vraagIn = r.ongecategoriseerdBankIn ?? 0;
+    const vraagUit = r.ongecategoriseerdBankUit ?? 0;
+    if (vraagIn + vraagUit > 0) {
+      const delen = [
+        vraagIn > 0 ? `${eur.format(vraagIn)} erbij` : null,
+        vraagUit > 0 ? `${eur.format(vraagUit)} eraf` : null,
+      ].filter(Boolean).join(" en ");
+      todos.push({
+        text: `${delen} aan bankmutaties heeft nog geen categorie. Die tellen niet mee in de cijfers hierboven — pas als je ze codeert, kloppen omzet en kosten.`,
+        href: "/dashboard/bank",
+        cta: "Categoriseren",
       });
     }
   }

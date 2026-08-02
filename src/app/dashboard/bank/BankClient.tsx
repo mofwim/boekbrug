@@ -187,7 +187,7 @@ export default function BankClient() {
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
-  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number; autoBooked?: number; balanceWarning?: string | null; continuityWarning?: string | null } | null>(null)
+  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number; autoBooked?: number; balanceWarning?: string | null; continuityWarning?: string | null; balanceReconciliation?: { ok: boolean; checkable: boolean; opening: number | null; closing: number | null; txCount: number } | null } | null>(null)
   // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
@@ -509,7 +509,7 @@ export default function BankClient() {
       // [R2] parseWarnings = statement lines the parser could not read. Each one is a
       // transaction that is NOT in the overview (the raw file still reaches the accountant).
       // The UI dropped this field, so the owner was never told a line went missing.
-      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0, autoBooked: upJson.autoBooked ?? 0, balanceWarning: upJson.balanceWarning ?? null, continuityWarning: upJson.continuityWarning ?? null })
+      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0, autoBooked: upJson.autoBooked ?? 0, balanceWarning: upJson.balanceWarning ?? null, continuityWarning: upJson.continuityWarning ?? null, balanceReconciliation: upJson.balanceReconciliation ?? null })
       // [BANK-BALANCE §2.6] A statement that doesn't tie out to its own begin/eindsaldo is INCOMPLETE
       // — a bank line is missing/dropped. This is a money-truth gap; make it loud (toast now, banner
       // below), never buried, so the owner re-uploads the full afschrift before trusting the figures.
@@ -1503,6 +1503,18 @@ export default function BankClient() {
           {uploadInfo.balanceWarning && (
             <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: R.sm, background: '#FCE8E6', color: '#B3261E', fontSize: 12.5, fontWeight: 600 }}>
               ⚠ {uploadInfo.balanceWarning}
+            </div>
+          )}
+          {/* [BANK-BALANCE] En het omgekeerde, dat tot nu toe werd berekend en weggegooid.
+              De app bewees bij élke upload dat beginsaldo + alle mutaties precies op het
+              eindsaldo uitkomt — en zei het alleen als het NIET klopte. Zwijgen bij succes maakt
+              van het sterkste dat dit product kan zeggen ("je afschrift sluit, tot op de cent")
+              een non-gebeurtenis, en van de rode melding een schrikbericht zonder tegenhanger.
+              Een controle die je alleen hoort als hij faalt, voelt als een storing; een controle
+              die je ook hoort als hij slaagt, is een bewijs. */}
+          {!uploadInfo.balanceWarning && uploadInfo.balanceReconciliation?.checkable && uploadInfo.balanceReconciliation.ok && (
+            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: R.sm, background: '#E6F4EA', color: '#1E6C33', fontSize: 12.5, fontWeight: 600, lineHeight: 1.45 }}>
+              ✓ Dit afschrift sluit aan, tot op de cent: beginsaldo {eur.format(uploadInfo.balanceReconciliation.opening ?? 0)} plus {uploadInfo.balanceReconciliation.txCount} mutaties komt uit op eindsaldo {eur.format(uploadInfo.balanceReconciliation.closing ?? 0)}. Er ontbreekt geen regel.
             </div>
           )}
           {/* [STATEMENT-CONTINUITY] Het gat TUSSEN twee afschriften: een ontbrekende periode of
