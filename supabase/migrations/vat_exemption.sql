@@ -204,3 +204,52 @@ CREATE TRIGGER prevent_accountant_amount_changes
   FOR EACH ROW EXECUTE FUNCTION public.prevent_accountant_amount_changes();
 
 COMMIT;
+
+-- =====================================================================
+-- CONTROLE — draai dit blok NA de migratie.
+-- =====================================================================
+-- 1) Staan alle vier de kolommen er? Eén query, want ze horen bij elkaar: mist er één, dan
+--    werkt de helft van de keten en zwijgt de andere helft.
+--
+--    SELECT
+--      count(*) FILTER (WHERE table_name='profiles'      AND column_name='vat_exempt_activity') AS decl_flag,
+--      count(*) FILTER (WHERE table_name='profiles'      AND column_name='vat_exempt_since')    AS decl_since,
+--      count(*) FILTER (WHERE table_name='invoice_lines' AND column_name='vat_treatment')       AS regel,
+--      count(*) FILTER (WHERE table_name='invoices'      AND column_name='vat_deduction')       AS inkoop
+--    FROM information_schema.columns WHERE table_schema='public';
+--    Verwacht: 1, 1, 1, 1.
+--
+-- 2) Is er NIETS veranderd aan wat er al stond? Dit is de belangrijkste regel van dit blok.
+--    Elke bestaande factuurregel en elke bestaande inkoopfactuur hoort ongeclassificeerd te
+--    zijn, en elk profiel niet-vrijgesteld — anders verschuift er een aangifte van iemand die
+--    hier nooit om heeft gevraagd.
+--
+--    SELECT
+--      (SELECT count(*) FROM public.invoice_lines WHERE vat_treatment IS NOT NULL)       AS geclassificeerde_regels,
+--      (SELECT count(*) FROM public.invoices      WHERE vat_deduction  IS NOT NULL)      AS toegewezen_inkopen,
+--      (SELECT count(*) FROM public.profiles      WHERE vat_exempt_activity IS DISTINCT FROM false) AS vrijgestelde_profielen;
+--    Verwacht: 0, 0, 0 direct na de migratie. Daarna groeien ze alleen doordat een ondernemer
+--    het zelf aanzet.
+--
+-- 3) Doet de CHECK zijn werk? Een waarde buiten de gesloten lijst hoort te WEIGEREN — de
+--    engine leest 'exempt' letterlijk, dus een typefout mag geen omzet uit de aangifte halen.
+--
+--    -- Hoort te falen met 23514 (check constraint):
+--    -- UPDATE public.invoice_lines SET vat_treatment = 'vrijgesteld' WHERE id = <een id>;
+--    -- Hoort te falen met 23514:
+--    -- UPDATE public.invoices SET vat_deduction = 'gemengd' WHERE id = <een id>;
+--
+-- 4) Is de boekhoudersgrens ECHT herbouwd, en beschermt hij de nieuwe kolom? Zonder deze
+--    stap is vat_deduction voor een boekhouder vrij beschrijfbaar en is de belofte in de kop
+--    van die functie onwaar geworden.
+--
+--    SELECT pg_get_functiondef(p.oid) LIKE '%vat_deduction%' AS grens_dekt_vat_deduction
+--      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--     WHERE n.nspname = 'public' AND p.proname = 'prevent_accountant_amount_changes';
+--    Verwacht: true.
+--
+--    En dat de trigger nog hangt (de migratie doet DROP + CREATE):
+--    SELECT count(*) FROM pg_trigger
+--     WHERE tgname = 'prevent_accountant_amount_changes' AND NOT tgisinternal;
+--    Verwacht: 1. Staat hier 0, dan is de grens ER NIET MEER — dat is ernstiger dan de
+--    migratie niet gedraaid hebben. Draai dit bestand dan opnieuw.
