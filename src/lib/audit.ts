@@ -140,6 +140,15 @@ export type AuditAction =
   | 'snelstart.connected'             // ← [SNELSTART] maatwerksleutel gekoppeld (of vervangen)
   | 'snelstart.disconnected'          // ← [SNELSTART] koppeling verbroken, sleutel uit Vault
   | 'snelstart.pushed'                // ← [SNELSTART] facturen als boeking naar de administratie gestuurd
+  // [ENABLEBANKING] De PSD2-bankkoppeling. Alle drie worden vastgelegd omdat het hier om
+  // LEESTOEGANG TOT EEN BANKREKENING gaat: wie die heeft gegeven, wanneer, en wanneer hij weer
+  // is ingetrokken, is precies wat een auditor (of de eigenaar zelf) achteraf moet kunnen zien.
+  // 'connect_started' staat er apart naast 'connected' omdat een poging die BIJ DE BANK strandt
+  // anders geen enkel spoor achterlaat — en dat is nu juist de gebeurtenis die je wilt kunnen
+  // terugvinden als iemand vraagt waarom er een koppeling in de lucht hing.
+  | 'bank.connect_started'            // ← [ENABLEBANKING] eigenaar begon een bankkoppeling (requisitie aangemaakt)
+  | 'bank.connected'                  // ← [ENABLEBANKING] toestemming gegeven bij de bank; rekeningen gekoppeld
+  | 'bank.disconnected'               // ← [ENABLEBANKING] koppeling ingetrokken; de feed stopt
 
 export interface AuditParams {
   /** Profile ID للمستخدم الذي فعل الـ action */

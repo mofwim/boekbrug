@@ -31,6 +31,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 // [CREDITNOTA-NO-CHASE] the shared "is this still owed to me" rule — both sides of a credited
 // pair must leave the receivable list together (see src/lib/credited-invoices.ts)
 import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+// [OPEN-TOTAL] One definition of openstaand, shared with every other surface.
+import { openAmountSigned } from "@/lib/partial-payment";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -74,13 +76,11 @@ export async function GET() {
   // Sign preserved (a creditnota total is negative; amount_paid is a magnitude). This is the same
   // reconciled truth the bank matcher books — Te betalen / Te ontvangen must never overstate by a
   // settled instalment.
-  const openstaandOf = (r: { total_inc_btw: number | null; amount_paid?: number | null; status?: string | null }) => {
-    const total = r.total_inc_btw ?? 0;
-    if (r.status === "paid") return 0;
-    const paid = Math.max(0, r.amount_paid ?? 0);
-    if (paid <= 0.005) return total;
-    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid);
-  };
+  // [OPEN-TOTAL] This used to be re-implemented here, line for line, and that is exactly how the
+  // rule drifts: a fourth surface computing openstaand its own way, inside a route where no test
+  // can reach it. openAmountSigned is the same rule — status decides completion, the sign comes
+  // from the invoice — and it additionally rounds to cents, so float noise cannot reach the screen.
+  const openstaandOf = openAmountSigned;
 
   // 1. Te betalen — confirmed incoming invoices, not yet paid. 'processing'/'draft'
   //    are not yet confirmed by the owner, so excluded. Sum of stored totals = exact.

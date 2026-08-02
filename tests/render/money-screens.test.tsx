@@ -573,6 +573,65 @@ test("[READING-MEMORY] a supplier with no history renders the queue exactly as b
   assert.doesNotMatch(html, /Wat je hier vaker corrigeert/, "no heading without a hint under it");
 });
 
+test("[ENABLEBANKING] the bank-connection panel renders in each of its states", async () => {
+  // This panel is only ever reached behind a login, so the smoke test never opens it and the
+  // static gates never call it. It also branches on FOUR things at once — configured, connected,
+  // expiring, rate-limited — and three of those branches are the ones an owner meets on a bad
+  // day, i.e. exactly when a white screen is least affordable.
+  const { default: BankConnectPanel } = await import("../../src/app/dashboard/bank/BankConnectPanel");
+
+  const account = (over: Record<string, unknown> = {}) => ({
+    id: "acc-1", iban: "NL02ABNA0123456789", ownerName: "Jansen Bouw", currency: "EUR",
+    status: "READY", lastSyncedAt: "2026-07-31T05:00:00Z", lastSyncedThrough: "2026-07-31",
+    lastError: null, ...over,
+  });
+  const connection = (over: Record<string, unknown> = {}) => ({
+    id: "c1", institutionName: "ING", institutionBic: "INGBNL2A", status: "linked",
+    connectedAt: "2026-05-03T10:00:00Z", lastSyncedAt: "2026-07-31T05:00:00Z", lastError: null,
+    accessValidUntil: "2026-08-01", daysUntilExpiry: 60, canSyncNow: true,
+    accounts: [account()], ...over,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const render = (state: any) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    renderToStaticMarkup(React.createElement(BankConnectPanel as any, { initialState: state }));
+
+  // An unconfigured server hides the card entirely rather than offering a dead button.
+  assert.equal(render({ configured: false, connections: [] }), "");
+
+  const empty = render({ configured: true, connections: [] });
+  assert.match(empty, /Koppel je bank/);
+
+  const linked = render({ configured: true, connections: [connection()] });
+  assert.match(linked, /ING/);
+  assert.match(linked, /NL02ABNA0123456789/);
+  assert.match(linked, /Ververs/);
+
+  // The two states that MUST still render, because they are what the owner sees when the feed
+  // has stopped working — and a crash here would hide the very message telling him to reconnect.
+  const expiring = render({ configured: true, connections: [connection({ daysUntilExpiry: 3 })] });
+  assert.match(expiring, /verloopt over 3 dagen/);
+
+  const expired = render({
+    configured: true,
+    connections: [connection({ status: "expired", daysUntilExpiry: -2 })],
+  });
+  assert.match(expired, /Opnieuw koppelen/);
+
+  // Rate-limited: the refresh button has to be visibly disabled, not silently inert.
+  const spent = render({ configured: true, connections: [connection({ canSyncNow: false })] });
+  assert.match(spent, /disabled/);
+
+  // A connection with no accounts yet (consent given, details still processing) must not throw
+  // on the empty list — the branch a first-day owner hits.
+  const bare = render({
+    configured: true,
+    connections: [connection({ accounts: [], status: "pending", daysUntilExpiry: null })],
+  });
+  assert.ok(bare.length > 100, "a pending connection still renders");
+});
+
 test("[FULL-CORRECTION] the shared correction editor renders, and shows the supplier memory", async () => {
   // ONE editor, opened from the pay screen and from /bank. It is rendered here directly because on
   // both screens it lives behind a click, and a static render never clicks — the same reason

@@ -67,6 +67,14 @@ export const RATE_LIMITS = {
   // Ruim gekozen omdat de handeling idempotent is (upserts per dag): vaker klikken kán niets
   // toevoegen, dus 6 per uur remt alleen het herhaald hameren, nooit een eerlijke poging.
   DOCUMENTS_REPROCESS: { maxRequests: 6, windowMinutes: 60 },     // 6 boekrondes / uur
+  // [ENABLEBANKING] Een bank koppelen start een autorisatie bij Enable Banking. Elke
+  // poging laat daar een object achter, dus dit hek beschermt hun kant net zo goed als de onze.
+  // 10 per uur is ruim voor iemand die twee rekeningen koppelt en één keer misklikt.
+  BANK_CONNECT:        { maxRequests: 10, windowMinutes: 60 },    // 10 koppelpogingen / uur
+  // De "ververs"-knop. De echte begrenzing zit bij de bank zelf (een handvol opvragingen per dag
+  // per rekening, zie SYNC_MIN_INTERVAL_HOURS); dit hek voorkomt alleen dat iemand die limiet er
+  // in één minuut doorheen jaagt en zijn eigen feed voor de rest van de dag stilzet.
+  BANK_SYNC:           { maxRequests: 12, windowMinutes: 60 },    // 12 verversingen / uur
 } as const
 
 // ── Main function ─────────────────────────────────────

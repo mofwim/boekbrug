@@ -2,13 +2,26 @@
 // [BOEK-016] Pure import helpers: content fingerprint + cross-upload dedup + DB-row mapping.
 // No I/O — testable with `npx tsx`. The route (api/bank/upload) is a thin shell over these.
 //
-// Dedup design (Tech Lead point, phase 2):
-//   - bank_transactions has NO transaction_id / hash column (decision #4: no migration now),
-//     so dedup is CONTENT-based.
-//   - We must NOT collapse legitimate identical transactions inside a single statement
-//     (e.g. two €4 coffees, same day, same description = two real transactions).
-//   - Therefore: multiset diff. Insert only the COUNT of each fingerprint that exceeds
-//     what is already stored for this user in the same date range.
+// Dedup design — THREE layers, cheapest and most certain first. Each exists because the one
+// below it cannot answer the question the one above it answers.
+//
+//   1. The FILE (bank-ingest.ts). Identical bytes = a statement already imported. Checked before
+//      parsing, so a re-upload of the same file does no work and takes no risk.
+//   2. The SOURCE'S OWN ID (sourceKey / dedupTransactions layer 1). A bank names every
+//      transaction it exports and the name is unique within that export — measured on one real
+//      ING quarter: 576 transactions, 576 distinct MT940 `:61:` refs, 576 distinct CAMT
+//      <NtryRef>. Backed by a UNIQUE index (bank_tx_source_identity.sql), so it holds even when
+//      two writers race — an upload during the daily cron sync — which no application-level
+//      read-then-write can promise.
+//   3. The CONTENT FINGERPRINT (contentKey). The ONLY layer that recognises the same payment
+//      arriving through a DIFFERENT door, because the doors share no ids at all: between that
+//      quarter's MT940 and CAMT ids the overlap is ZERO. Necessarily a judgement call, which is
+//      why it is last and why bank-parity.test.ts pins it.
+//
+// Constant across all three: we must NOT collapse legitimate identical transactions inside a
+// single statement (two €4 coffees, same day, same description = two real transactions). Hence a
+// multiset diff, and hence an existing row may be consumed only ONCE, by whichever layer claims
+// it. Under-counting the owner's money is worse than the visible double it would prevent.
 //       first upload          → existing 0, file 2 coffees → insert 2
 //       re-upload same file    → existing 2, file 2 coffees → insert 0
 //       new period (new date)  → different key             → insert as new
@@ -34,6 +47,11 @@ export interface BankTransactionRow {
   // as kosten/omzet. Without this every line imported as null, so a retail store's card
   // settlements (AFREK. BETAALAUTOMAAT) never reached the result until manually tagged.
   category: string | null;
+  // [BANK-TX-SOURCE-ID] Which door+account delivered this row, and the id that door gave it.
+  // Both null when the caller names no source or the source named no id — the unique index
+  // treats NULLs as distinct, so those rows stay unconstrained and lean on the fingerprint.
+  source: string | null;
+  external_id: string | null;
 }
 
 /** Subset of an existing DB row needed for dedup (from a scoped SELECT).
@@ -46,6 +64,40 @@ export interface ExistingTxKey {
   description: string | null;
   counterpart_name: string | null;
   reference: string | null;
+  // [BANK-TX-SOURCE-ID] The identity the source gave this row, when it gave one. Optional so a
+  // caller whose SELECT predates the migration still type-checks and simply gets the old
+  // content-only behaviour.
+  source?: string | null;
+  external_id?: string | null;
+}
+
+/**
+ * [BANK-TX-SOURCE-ID] The exact key, above the fingerprint.
+ *
+ * A bank names every transaction it exports, and the name is unique within that export: one real
+ * ING quarter of 576 transactions carries 576 distinct MT940 `:61:` bank references and 576
+ * distinct CAMT `<NtryRef>` values. The parser has always read it (BankTransaction.transactionId);
+ * until now nothing stored it.
+ *
+ * That settles ONE question with certainty — "has this source already delivered this line?" — and
+ * it is the question content-matching answers worst, because the fingerprint moves whenever the
+ * parser improves. Re-uploading a statement imported before yesterday's MT940 reference fix would
+ * insert every line again; keyed on the bank's own id it cannot.
+ *
+ * It settles NOTHING about the cross-door case. The same 576 transactions have ZERO ids in common
+ * between the two formats — ING does not name a payment the same way twice — so `source` is part
+ * of the key and the fingerprint below remains the only thing that can bridge doors.
+ *
+ * Returns null when either half is missing, which is not an error: 147 of that quarter's 576 feed
+ * rows carry no `entry_reference` at all. Those simply fall through to the fingerprint.
+ */
+export function sourceKey(
+  source: string | null | undefined,
+  externalId: string | null | undefined,
+): string | null {
+  const s = source?.trim();
+  const e = externalId?.trim();
+  return s && e ? `${s}|${e}` : null;
 }
 
 function norm(s: string | null): string {
@@ -71,8 +123,31 @@ function dedupName(s: string | null): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, DEDUP_NAME_LENGTH);
 }
+
+/**
+ * [BANK-DEDUP-TRUNCATED-NAME] How much of a counterpart name the fingerprint looks at.
+ *
+ * A bank does not send the same name to every door. ING writes
+ * "Stichting Bedrijfstakpensioenfonds voor het Levensmiddelenbedrijf" in CAMT and cuts it to
+ * "Stichting Bedrijfstakpensioenfonds voor het Levens" in the MT940 :86: /CNTP/ field \u2014 the same
+ * payment, the same download page, two names. Comparing them whole made five lines of one real
+ * quarter fingerprint as ten, and it does so for every long name: pension funds, foundations,
+ * bedrijfstak schemes \u2014 exactly the counterparties whose names run long.
+ *
+ * 40 characters AFTER normalization, which is comfortably inside ING's cut (46 normalized) and
+ * still 40 distinguishing characters. It cannot silently merge two suppliers: contentKey also
+ * carries the date, the amount to the cent and the reference, so a collision needs two
+ * counterparties sharing 40 alphanumerics who were paid the identical amount on the identical day
+ * under the identical reference.
+ *
+ * This is safe to change without a migration, unlike the stored columns: both sides of the
+ * comparison are hashed at compare time, incoming and stored alike. A bank found truncating
+ * SHORTER than this would need the number lowered, and the parity test would be what tells us.
+ */
+const DEDUP_NAME_LENGTH = 40;
 
 /**
  * Stable content fingerprint for cross-upload dedup.
@@ -130,40 +205,86 @@ export function dateRange(transactions: BankTransaction[]): {
 }
 
 /**
- * Multiset diff: return the transactions to insert (those not already covered by existing
- * rows of the same fingerprint) plus how many were skipped as duplicates.
+ * Multiset diff: return the transactions to insert (those not already covered by an existing
+ * row) plus how many were skipped as duplicates.
+ *
+ * Two layers, tried in this order, and the order is the whole point:
+ *
+ *   1. [BANK-TX-SOURCE-ID] the source's own id, when both sides carry one. Exact, and immune to
+ *      the parser changing its mind about a name or a reference between two uploads.
+ *   2. [BANK-DEDUP-DOUBLE] the content fingerprint. The only layer that can recognise the same
+ *      payment arriving through a DIFFERENT door, because the doors share no ids.
+ *
+ * An existing row explains at most ONE incoming transaction, whichever layer claimed it. Without
+ * that bookkeeping a statement holding two genuinely identical lines (two €4 coffees, same day,
+ * no reference) could see both matched against the single stored row, and one real transaction
+ * would be dropped — under-counting the owner's money, which is worse than the double it prevents.
+ *
+ * `source` names the door and account the incoming batch came from; pass null when the caller has
+ * none and layer 1 simply does not run.
  */
 export function dedupTransactions(
   incoming: BankTransaction[],
-  existing: ExistingTxKey[]
+  existing: ExistingTxKey[],
+  source?: string | null,
 ): { toInsert: BankTransaction[]; skipped: number } {
-  const existingCount = new Map<string, number>();
-  for (const r of existing) {
-    const k = keyOfRow(r);
-    existingCount.set(k, (existingCount.get(k) ?? 0) + 1);
-  }
+  // A row may be consumed once. Indexes below hold positions into `existing`, not rows.
+  const consumed = new Array<boolean>(existing.length).fill(false);
+  const bySource = new Map<string, number[]>();
+  const byContent = new Map<string, number[]>();
+
+  const index = (map: Map<string, number[]>, k: string, i: number) => {
+    const list = map.get(k);
+    if (list) list.push(i);
+    else map.set(k, [i]);
+  };
+
+  existing.forEach((r, i) => {
+    const sk = sourceKey(r.source, r.external_id);
+    if (sk) index(bySource, sk, i);
+    index(byContent, keyOfRow(r), i);
+  });
+
+  /** Consume the first not-yet-consumed row under `k`, or report that there is none. */
+  const claim = (map: Map<string, number[]>, k: string | null): boolean => {
+    if (!k) return false;
+    const list = map.get(k);
+    if (!list) return false;
+    while (list.length > 0) {
+      const i = list.shift() as number;
+      if (!consumed[i]) {
+        consumed[i] = true;
+        return true;
+      }
+    }
+    return false;
+  };
 
   const toInsert: BankTransaction[] = [];
   let skipped = 0;
 
   for (const t of incoming) {
-    const k = keyOfTx(t);
-    const left = existingCount.get(k) ?? 0;
-    if (left > 0) {
-      existingCount.set(k, left - 1); // consume one existing → this one is a duplicate
+    if (claim(bySource, sourceKey(source, t.transactionId))) {
       skipped++;
-    } else {
-      toInsert.push(t);
+      continue;
     }
+    if (claim(byContent, keyOfTx(t))) {
+      skipped++;
+      continue;
+    }
+    toInsert.push(t);
   }
 
   return { toInsert, skipped };
 }
 
-/** Map parsed transactions → insertable rows (status 'pending', user_id pinned by caller). */
+/** Map parsed transactions → insertable rows (status 'pending', user_id pinned by caller).
+ *  [BANK-TX-SOURCE-ID] `source` names the door+account; it is stored alongside the id the source
+ *  gave each transaction so the next import can recognise these rows exactly. */
 export function mapToRows(
   transactions: BankTransaction[],
-  userId: string
+  userId: string,
+  source?: string | null,
 ): BankTransactionRow[] {
   return transactions.map((t) => {
     // Auto-classify the structural identities (card takings, fees, tax, transfers, privé).
@@ -179,6 +300,10 @@ export function mapToRows(
       reference: t.reference,
       status: "pending" as const,
       category: id === "unknown" ? null : id,
+      // Only ever both-or-neither: a source without an id constrains nothing, and an id without
+      // its source would claim uniqueness across doors that provably disagree.
+      source: sourceKey(source, t.transactionId) ? (source as string) : null,
+      external_id: sourceKey(source, t.transactionId) ? (t.transactionId as string) : null,
     };
   });
 }

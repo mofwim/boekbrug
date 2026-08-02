@@ -136,6 +136,144 @@ console.log("\n— mapToRows —");
 }
 
 
+console.log("\n— [BANK-TX-SOURCE-ID] the source's own id, above the fingerprint —");
+// The layer exists for ONE case the fingerprint provably cannot cover: the same file imported
+// again after the PARSER changed its mind. Measured reality behind it — one real ING quarter,
+// 576 transactions, 576 distinct MT940 :61: refs and 576 distinct CAMT <NtryRef>, and ZERO ids
+// in common between the two formats.
+{
+  const src = "MT940:NL02ABNA0123456789";
+  // Stored yesterday, when the parser still installed the remittance sentence as the reference.
+  const stored: ExistingTxKey = {
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpart_name: "Woningstichting Zuid", reference: "Incasso Huur Periode: 01-04 tot 01-05",
+    source: src, external_id: "26181327979582",
+  };
+  // The same line today: the MT940 reference fix means it now derives the mandate's EREF instead.
+  const today = tx({
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpartName: "Woningstichting Zuid", reference: "TK10000001",
+    transactionId: "26181327979582",
+  });
+  check("fingerprints genuinely differ after the parser improved",
+    contentKey(stored.date, stored.amount, stored.counterpart_name, stored.reference) !==
+    contentKey(today.date, today.amount, today.counterpartName, today.reference));
+  const withId = dedupTransactions([today], [stored], src);
+  check("…yet the bank's own id still recognises it → insert 0",
+    withId.toInsert.length === 0 && withId.skipped === 1);
+  // Same inputs with no source named: this is what the old code did, and it doubles the rent.
+  const withoutId = dedupTransactions([today], [stored]);
+  check("without the id layer the SAME pair doubles — the bug this closes",
+    withoutId.toInsert.length === 1);
+}
+// Cross-door: the ids disagree by design, so layer 1 must NOT fire and the fingerprint must catch it.
+{
+  const camtRow: ExistingTxKey = {
+    date: "2026-05-25", amount: -224.85, description: "26002148",
+    counterpart_name: "W. Ketels en Zoon Eierhandel", reference: "26002148",
+    source: "CAMT053:NL02ABNA0123456789", external_id: "032026091490606085000000001",
+  };
+  const samePaymentFromMt940 = tx({
+    date: "2026-05-25", amount: -224.85, description: "26002148",
+    counterpartName: "W. Ketels en Zoon Eierhandel", reference: "26002148",
+    transactionId: "26181327979582", // MT940 names it differently — zero overlap, as measured
+  });
+  const r = dedupTransactions([samePaymentFromMt940], [camtRow], "MT940:NL02ABNA0123456789");
+  check("same payment, different door → ids don't match but the fingerprint does → insert 0",
+    r.toInsert.length === 0 && r.skipped === 1);
+}
+// [EB-ACCOUNT-IDENTITY] The scope must be the account's STABLE identity, not its session handle.
+// Enable Banking's AccountResource says uid is "valid only until the session … is in the
+// AUTHORIZED status", while identification_hash exists for "matching accounts between multiple
+// sessions". Scope the source on the uid and the whole layer quietly dies at every reconnect —
+// which is the moment the re-sync deliberately re-reads history and needs it most.
+//
+// Be precise about the consequence: on its own, a moved scope is survivable, because layer 3 still
+// recognises an UNCHANGED fingerprint. The damage needs both — a reconnect AND a fingerprint that
+// has drifted since — and that pair is not exotic, it is the ordinary case: the consent expires
+// every 180 days, and any parser improvement in between moves the fingerprint.
+{
+  const storedBeforeReconnect: ExistingTxKey = {
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpart_name: "Woningstichting Zuid",
+    reference: "Incasso Huur Periode: 01-04 tot 01-05",   // derived by the OLD parser
+    source: "enablebanking:HASH-A", external_id: "ENTRY-1",
+  };
+  const sameLineToday = tx({
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpartName: "Woningstichting Zuid",
+    reference: "TK10000001",                               // derived by the parser we ship now
+    transactionId: "ENTRY-1",
+  });
+
+  // An unchanged fingerprint survives a moved scope — layer 3 covers for layer 2.
+  const unchanged = tx({
+    date: "2026-04-01", amount: -81.51, description: "Incasso Huur",
+    counterpartName: "Woningstichting Zuid",
+    reference: "Incasso Huur Periode: 01-04 tot 01-05", transactionId: "ENTRY-1",
+  });
+  check("a moved scope alone is survivable — the fingerprint still matches",
+    dedupTransactions([unchanged], [storedBeforeReconnect], "enablebanking:NEW-UID").skipped === 1);
+
+  // Both at once is where the money doubles.
+  const stable = dedupTransactions([sameLineToday], [storedBeforeReconnect], "enablebanking:HASH-A");
+  check("stable scope + drifted fingerprint → the bank's own id still recognises it",
+    stable.toInsert.length === 0 && stable.skipped === 1);
+  const byUid = dedupTransactions([sameLineToday], [storedBeforeReconnect], "enablebanking:NEW-UID");
+  check("uid scope + drifted fingerprint → NOTHING matches, and the rent imports twice",
+    byUid.toInsert.length === 1);
+}
+// Two linked accounts. A bank only promises its id is unique WITHIN one account, so the scope
+// must be part of the key — otherwise account B's transaction vanishes into account A's row.
+{
+  const onAccountA: ExistingTxKey = {
+    date: "2026-04-01", amount: -50, description: "Abonnement",
+    counterpart_name: "Leverancier", reference: "F-1",
+    source: "enablebanking:acct-A", external_id: "SHARED-ID-1",
+  };
+  const onAccountB = tx({
+    date: "2026-04-02", amount: -75, description: "Iets anders",
+    counterpartName: "Andere partij", reference: "F-2", transactionId: "SHARED-ID-1",
+  });
+  const r = dedupTransactions([onAccountB], [onAccountA], "enablebanking:acct-B");
+  check("same id on a DIFFERENT account is a different transaction → insert 1",
+    r.toInsert.length === 1);
+}
+// A row explains at most one incoming line, whichever layer claimed it. Without that, the id
+// layer and the fingerprint could both spend the same stored row and a real transaction is lost.
+{
+  const stored: ExistingTxKey = {
+    date: "2026-02-10", amount: 4, description: "Koffie", counterpart_name: "Cafe X",
+    reference: null, source: "MT940:NL1", external_id: "ID-1",
+  };
+  const byId = tx({ transactionId: "ID-1" });          // claims it via layer 1
+  const byContent = tx({ transactionId: "ID-2" });     // identical content, different id
+  const r = dedupTransactions([byId, byContent], [stored], "MT940:NL1");
+  check("one stored row is consumed once → the second coffee still imports",
+    r.toInsert.length === 1 && r.skipped === 1 && r.toInsert[0].transactionId === "ID-2");
+}
+// The degenerate halves. 147 of that quarter's 576 feed rows carry no entry_reference at all.
+{
+  const idless = tx({ transactionId: null });
+  const r = dedupTransactions([idless], [rowFromTx(idless)], "enablebanking:acct-A");
+  check("no id on either side → the fingerprint carries it alone",
+    r.toInsert.length === 0 && r.skipped === 1);
+  const preMigrationRow = rowFromTx(tx({})); // no source/external_id columns read
+  const r2 = dedupTransactions([tx({ transactionId: "ID-9" })], [preMigrationRow], "MT940:NL1");
+  check("rows stored before the migration still dedup by fingerprint",
+    r2.toInsert.length === 0 && r2.skipped === 1);
+}
+// Storage is both-or-neither: an id without its scope would claim uniqueness across doors that
+// provably disagree, and a scope without an id constrains nothing.
+{
+  const both = mapToRows([tx({ transactionId: "ID-1" })], "u", "MT940:NL1")[0];
+  check("source + id → both stored", both.source === "MT940:NL1" && both.external_id === "ID-1");
+  const noId = mapToRows([tx({ transactionId: null })], "u", "MT940:NL1")[0];
+  check("source but no id → both null", noId.source === null && noId.external_id === null);
+  const noSource = mapToRows([tx({ transactionId: "ID-1" })], "u")[0];
+  check("id but no source → both null", noSource.source === null && noSource.external_id === null);
+}
+
 console.log("\n— rowToTransaction —");
 {
   const t = rowToTransaction({ id: "tx-9", date: "2026-02-10", amount: -800, description: "Huur", counterpart_name: "Verhuur BV", reference: "HUUR-02" });

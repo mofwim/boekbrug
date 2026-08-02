@@ -204,6 +204,16 @@ export interface FinancialResult {
   // proRataPercent !== null, which is also null when the regime IS on but the ratio was
   // undecidable — the two must not be conflated by a caller deciding what to tell the owner.
   exemptRegime: boolean;
+  // [VRAAGPOST] Bank movement this result deliberately does NOT count: lines the owner has not
+  // coded and that pay no invoice. Excluding them is right — a guessed category is a wrong number
+  // — but excluding them SILENTLY leaves the owner reading a result that omits his money without
+  // saying so. These two are that omission, named. Both are magnitudes, split in/out rather than
+  // netted: €10.000 each way nets to zero and would read as "nothing missing".
+  //
+  // The professional shape of this is a vraagpost/tussenrekening, and its rule travels with it:
+  // a balance here is a to-do, never a resting place. 0 for an owner who has coded everything.
+  ongecategoriseerdBankIn: number;
+  ongecategoriseerdBankUit: number;
 }
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
@@ -316,6 +326,9 @@ export function computeResult(
   // rate split to know 9%/21% — so the fix guidance points to Dagomzet, not Kas. Pure cash
   // omzet's rate is assigned at Kas. Lets readiness route the "fix" link to the right screen.
   let omzetZonderBtwNonCash = 0;
+  // [VRAAGPOST] What this computation refuses to guess at, measured instead of dropped.
+  let ongecategoriseerdBankIn = 0;
+  let ongecategoriseerdBankUit = 0;
   let turnoverBtw9 = 0;
   let turnoverBtw21 = 0;
 
@@ -479,7 +492,24 @@ export function computeResult(
   //    so pos_income (card-terminal / PSP takings) lands on revenue like omzet.
   for (const t of bankTx) {
     if (t.invoice_id) continue;   // payment of an already-counted invoice
-    if (!t.category) continue;     // uncategorized → never guessed into a total
+    if (!t.category) {
+      // [VRAAGPOST] Not guessed into a total — and no longer dropped in silence either.
+      //
+      // Refusing to guess is only HALF of an honest figure. An owner with €12.000 of uncoded bank
+      // debits reads a resultaat that is not wrong and is not his result either, with nothing on
+      // the answer saying so. Professional practice books exactly this money to a vraagpost /
+      // tussenrekening: a named balance, visible, and one that must never stand at a period end.
+      // This file already measures five other kinds of money it cannot classify —
+      // cashOmzetZonderBtw, omzetZonderBtwNonCash, voorbelastingUnresolved,
+      // voorbelastingGeblokkeerd, onclassificeerbareOmzet — and this was the sixth, unnamed.
+      //
+      // Kept as two figures rather than a net balance on purpose: €10.000 in and €10.000 out net
+      // to zero and would read as "nothing missing" while being two unexplained facts.
+      const raw = t.amount ?? 0;
+      if (raw > 0) ongecategoriseerdBankIn += raw;
+      else ongecategoriseerdBankUit += -raw;
+      continue;
+    }
     // [SIGN] Keep the SIGN of the bank amount — do NOT Math.abs it. A card refund/chargeback
     // settles as a NEGATIVE pos_income and a supplier refund as a POSITIVE kosten credit;
     // abs would book money leaving the business as money arriving (and vice-versa). The stored
@@ -682,6 +712,9 @@ export function computeResult(
       .sort((a, b) => b.rate - a.rate),
     vrijgesteldeOmzet,
     onclassificeerbareOmzet,
+    // [VRAAGPOST] The money this result deliberately does not count, named.
+    ongecategoriseerdBankIn,
+    ongecategoriseerdBankUit,
     exemptRegime: exemptOn,
     // Null off-regime (there is nothing to apportion) and null when the ratio was undecidable.
     // voorbelastingUnresolved tells those two apart — see the field's own note.
