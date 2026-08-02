@@ -126,7 +126,20 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- wat Peppol BIS Billing 3.0 met UN/ECE Rec 20 nu juist wil voorkomen.
   (25, 'invoice_line_unit.sql',
        'De eenheid van een factuurregel (uur, m², km). De catalogus had hem al; op de factuur viel hij eraf — dus stond er op de PDF "2" waar "2 uur" hoort, en in de e-factuur "2 stuks"',
-       'column', 'invoice_lines.unit')
+       'column', 'invoice_lines.unit'),
+
+  -- ── Vrijgestelde omzet en het aftrekrecht ───────────────────────────────────────────────
+  -- Precies het geval waar de kop van dit bestand voor waarschuwt: ELKE lezing van deze vier
+  -- kolommen is fail-soft (een ontbrekende kolom degradeert naar "niet vrijgesteld", de select
+  -- in btw-rate-split-fetch.ts vraagt vat_treatment niet eens op). Dus zonder deze regel zwijgt
+  -- de app volledig: de tandarts zet het vinkje in Instellingen, het slaat niet op, en zijn
+  -- aangifte trekt gewoon alle voorbelasting af alsof er niets is verklaard.
+  --
+  -- Gecontroleerd op de kolom die de HELE keten aanzet. Staat die er, maar mist een van de
+  -- andere drie, dan faalt het opslaan van een factuurregel zichtbaar — niet stil.
+  (26, 'vat_exemption.sql',
+       'Vrijgestelde omzet (art. 11 Wet OB) bestond niet in de data, alleen in de commentaren. Zonder deze migratie belandt zorg-/onderwijsomzet als "0%" in rubriek 1e én wordt de voorbelasting op ALLE inkoop voor 100% teruggevraagd, terwijl bij vrijstelling geen aftrekrecht bestaat — op één kwartaal gewone kosten duizenden euro''s die worden nageheven',
+       'column', 'profiles.vat_exempt_activity')
 )
 select
   nr                                                        as "#",

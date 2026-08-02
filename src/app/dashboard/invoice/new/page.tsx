@@ -73,6 +73,10 @@ type Profile = {
   email: string
   // [BOEK-031] role needed for navigation parent — May 2026
   role?: string | null
+  // [VRIJGESTELD] The owner's own declaration (Instellingen). Optional, because the profile is
+  // read with select('*') and this column does not exist until vat_exemption.sql is applied —
+  // absent then, which correctly hides the "Vrijgesteld" option instead of breaking the form.
+  vat_exempt_activity?: boolean | null
 }
 
 type Client = {
@@ -86,11 +90,21 @@ type Client = {
   kvk_number: string
 }
 
+// [VRIJGESTELD] Sentinel for the BTW-tarief dropdown. "Vrijgesteld" is not a rate, but a
+// <select> can only carry one value per option — so a value that is not a legal NL rate stands
+// in for it, and is translated back into (0%, vat_treatment='exempt') the moment it is chosen.
+// Negative on purpose: no rate can ever collide with it.
+const EXEMPT_OPTION = -1
+
 type InvoiceLine = {
   description: string
   quantity: number
   unit_price: number
   btw_rate: number
+  // [VRIJGESTELD] 'exempt' = vrijgestelde prestatie (art. 11 Wet OB): geen BTW, en de omzet gaat
+  // in GEEN aangifterubriek. Alleen te kiezen als de ondernemer dat in Instellingen heeft
+  // verklaard; afwezig = gewoon belast, precies zoals elke regel van vóór dit veld.
+  vat_treatment?: 'exempt' | null
   // [UNIT] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
   // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
   // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
@@ -678,7 +692,17 @@ function NewInvoicePageContent() {
   //   · incl — "€ 50 all-in" blijft € 50 all-in; de marge beweegt, niet de prijs.
   function updateLineRate(i: number, newRate: number) {
     setLines(prev => prev.map((l, idx) => idx === i
-      ? { ...l, btw_rate: newRate, unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode) }
+      ? { ...l, btw_rate: newRate, vat_treatment: null, unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode) }
+      : l))
+  }
+
+  // [VRIJGESTELD] "Vrijgesteld" is geen tarief, dus het kan geen waarde in de tarief-select zijn:
+  // het is 0% BTW PLUS een vlag. Aparte functie zodat de twee altijd samen worden gezet — een
+  // regel met vat_treatment 'exempt' en een tarief van 21% is een tegenspraak, en die wordt
+  // verderop in de keten (resolveSaleTreatment) hoe dan ook in het nadeel van het label beslecht.
+  function markLineExempt(i: number) {
+    setLines(prev => prev.map((l, idx) => idx === i
+      ? { ...l, btw_rate: 0, vat_treatment: 'exempt', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
       : l))
   }
 
@@ -834,6 +858,7 @@ function NewInvoicePageContent() {
           unit_price: l.unit_price,
           btw_rate: l.btw_rate,
           unit: l.unit ?? null,
+          vat_treatment: l.vat_treatment ?? null,
         })),
       }),
     })
@@ -989,6 +1014,7 @@ function NewInvoicePageContent() {
           unit_price: l.unit_price,
           btw_rate: l.btw_rate,
           unit: l.unit ?? null,
+          vat_treatment: l.vat_treatment ?? null,
         })),
       }),
     })
@@ -1486,10 +1512,16 @@ function NewInvoicePageContent() {
                     <LineInput label={priceMode === 'incl' ? 'Prijs incl. (€)' : 'Prijs excl. (€)'} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
-                      <select value={line.btw_rate} onChange={e => updateLineRate(i, parseFloat(e.target.value))} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
+                      <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
                         <option value={21}>21%</option>
                         <option value={9}>9%</option>
                         <option value={0}>0%</option>
+                        {/* [VRIJGESTELD] Alleen zichtbaar als de ondernemer vrijgestelde omzet
+                            heeft verklaard (Instellingen). Voor iedereen anders is deze keuze
+                            geen optie maar een valkuil: vrijgesteld ziet eruit als 0%, en een
+                            gewone dienst die per ongeluk zo wordt geboekt verdwijnt uit de
+                            aangifte én kost de aftrek op de bijbehorende kosten. */}
+                        {profile?.vat_exempt_activity && <option value={EXEMPT_OPTION}>Vrijgesteld</option>}
                       </select>
                     </div>
                   </div>

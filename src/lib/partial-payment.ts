@@ -316,3 +316,54 @@ const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" 
 export function formatEur(value: number): string {
   return EUR.format(value);
 }
+
+// ── [BANK-SPLIT] How much of THIS bank line goes onto THIS invoice ───────────────────────────
+//
+// Every bookkeeping package solves one payment covering several invoices the same way: you pick an
+// invoice and you say how much of the line it takes. Xero calls it Split, Moneybird "koppel
+// openstaand bedrag" and then "koppel volgend bedrag", Odoo allocates during reconciliation. What
+// they share is that the AMOUNT is the owner's to state, and the line keeps a visible remainder.
+//
+// BoekBrug already had the whole mechanism: apply_bank_payment takes p_amount, bank_tx_invoices
+// records amount_applied per link, and /api/bank/confirm computes what the line has left after its
+// other links. Only one thing was missing — the amount was always DERIVED ("everything left")
+// instead of stated. That is fine while each invoice is settled in full, and wrong the moment a
+// payment covers part of one invoice and all of another: the first invoice is big enough to absorb
+// the entire line, so it does, and the second is left with its money already gone.
+//
+// Absent `requested`, this returns exactly what the route did before, so every existing caller and
+// the automatic booking path are unchanged.
+
+export type AllocationInput = {
+  /** What the owner typed, or null/undefined for "whatever this line has left". */
+  requested?: number | null;
+  /** What this bank line still has to give, after its other links. */
+  payAvailable: number;
+  /** What this invoice still owes (magnitude). */
+  invoiceOpen: number;
+};
+
+export type AllocationResult =
+  | { ok: true; amount: number }
+  /** The owner asked for nothing, or for a negative. */
+  | { ok: false; reason: "not_positive" }
+  /** More than the bank line has left — money that does not exist. */
+  | { ok: false; reason: "exceeds_payment"; available: number }
+  /** More than the invoice owes. Refused rather than clamped: a screen that says €500 and books
+   *  €300 has told the owner something untrue, and this is the screen the accountant inherits. */
+  | { ok: false; reason: "exceeds_invoice"; open: number };
+
+export function resolveAllocation(input: AllocationInput): AllocationResult {
+  const available = toCents(Math.max(0, input.payAvailable));
+  if (input.requested == null) return { ok: true, amount: available };
+
+  const want = Number(input.requested);
+  if (!Number.isFinite(want) || want <= 0) return { ok: false, reason: "not_positive" };
+  const amount = toCents(want);
+  // CENT_EPSILON on both bounds: a figure the screen derived by subtraction can land a hair over
+  // its own ceiling, and refusing the owner's own arithmetic would be absurd.
+  if (amount > available + CENT_EPSILON) return { ok: false, reason: "exceeds_payment", available };
+  const open = toCents(Math.max(0, input.invoiceOpen));
+  if (amount > open + CENT_EPSILON) return { ok: false, reason: "exceeds_invoice", open };
+  return { ok: true, amount };
+}

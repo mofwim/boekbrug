@@ -14,6 +14,9 @@
 //   · bank_connection_accounts   — same migration (incl. identification_hash, [EB-ACCOUNT-IDENTITY])
 //   · bank_transactions.source        — supabase/migrations/bank_tx_source_identity.sql (text, nullable)
 //   · bank_transactions.external_id   — same migration (text, nullable)
+//   · profiles.vat_exempt_activity / .vat_exempt_since,
+//     invoice_lines.vat_treatment, invoices.vat_deduction
+//                                 — supabase/migrations/vat_exemption.sql
 //
 // WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
 // stays green while the request fails at runtime — exactly how `created_by` once broke invoice
@@ -1374,6 +1377,7 @@ export type Database = {
           quantity: number | null
           unit: string | null
           unit_price: number | null
+          vat_treatment: string | null
         }
         Insert: {
           btw_rate?: number | null
@@ -1384,6 +1388,7 @@ export type Database = {
           quantity?: number | null
           unit?: string | null
           unit_price?: number | null
+          vat_treatment?: string | null
         }
         Update: {
           btw_rate?: number | null
@@ -1394,6 +1399,7 @@ export type Database = {
           quantity?: number | null
           unit?: string | null
           unit_price?: number | null
+          vat_treatment?: string | null
         }
         Relationships: [
           {
@@ -1455,6 +1461,7 @@ export type Database = {
           total_ex_btw: number | null
           total_inc_btw: number | null
           updated_at: string | null
+          vat_deduction: string | null
           vendor_iban: string | null
         }
         Insert: {
@@ -1505,6 +1512,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vat_deduction?: string | null
           vendor_iban?: string | null
         }
         Update: {
@@ -1555,6 +1563,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vat_deduction?: string | null
           vendor_iban?: string | null
         }
         Relationships: [
@@ -1820,6 +1829,8 @@ export type Database = {
           invoice_number_padding: number
           kas_opening_balance: number
           kor_active: boolean
+          vat_exempt_activity: boolean
+          vat_exempt_since: string | null
           vat_scheme: string
           vat_scheme_since: string | null
           invoice_number_template: string | null
@@ -1850,6 +1861,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_exempt_activity?: boolean
+          vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
           invoice_number_template?: string | null
@@ -1880,6 +1893,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_exempt_activity?: boolean
+          vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
           invoice_number_template?: string | null

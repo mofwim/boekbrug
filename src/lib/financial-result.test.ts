@@ -648,5 +648,140 @@ console.log("\n— [CASH-DIRECTION] a refund goes the other way, in every figure
     near(computeResult([], [], [cash({ direction: "out", amount: 121 })]).omzet, -100));
 }
 
+
+console.log("\n— [VRIJGESTELD] exempt turnover reaches no rubriek, and costs are apportioned —");
+{
+  // The dental shape: exempt care turnover beside a small taxable service.
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 132_000, btw_amount: 0, exempt_ex: 132_000 },
+    { direction: "outgoing", status: "paid", total_ex_btw: 12_396.69, btw_amount: 2_603.31 },
+    { direction: "incoming", status: "received", total_ex_btw: 20_000, btw_amount: 4_200, vat_deduction: "direct_exempt" },
+    { direction: "incoming", status: "received", total_ex_btw: 900, btw_amount: 189, vat_deduction: "direct_taxed" },
+    { direction: "incoming", status: "received", total_ex_btw: 8_000, btw_amount: 1_680, vat_deduction: "mixed" },
+  ];
+
+  // OFF-REGIME (every owner today): nothing is withheld and everything is deducted — the exact
+  // arithmetic this engine has always done. This is the regression guard for the other 99%.
+  const off = computeResult(inv, [], []);
+  check("off-regime: voorbelasting is the full 6.069", near(off.btwVoorbelasting, 6_069));
+  check("off-regime: no exempt turnover is recognised", off.vrijgesteldeOmzet === 0);
+  check("off-regime: proRataPercent is null", off.proRataPercent === null);
+  check("off-regime: the exempt sale still lands in a rate bucket",
+    off.salesByRate.some((b) => near(b.omzet, 132_000)));
+
+  // ON-REGIME: the same rows, declared.
+  const on = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("omzet still counts the exempt turnover in full", near(on.omzet, 144_396.69));
+  check("vrijgesteldeOmzet is named", near(on.vrijgesteldeOmzet, 132_000));
+  check("resultaat is unchanged by the regime", near(on.resultaat, off.resultaat));
+  check("BTW verschuldigd is untouched — an exemption is not a discount on what was charged",
+    near(on.btwVerschuldigd, 2_603.31));
+  // The whole point: €132.000 must not appear as 0%-taxed turnover in any bucket.
+  check("no rate bucket carries the exempt turnover",
+    !on.salesByRate.some((b) => Math.abs(b.omzet - 132_000) < 1));
+  check("the taxed sale is still bucketed at 21%",
+    on.salesByRate.some((b) => b.rate === 21 && near(b.omzet, 12_396.69)));
+  check("pro rata rounds 8,58% up to 9%", on.proRataPercent === 9);
+  check("voorbelasting = 189 direct + 9% of 1.680", near(on.btwVoorbelasting, 340.20));
+  check("the blocked BTW is reported, not hidden", near(on.voorbelastingGeblokkeerd, 4_200));
+  check("nothing was left unresolved", on.voorbelastingUnresolved === 0);
+  check("the correction against today's behaviour is thousands",
+    off.btwVoorbelasting - on.btwVoorbelasting > 5_000);
+}
+
+console.log("\n— [VRIJGESTELD] an unattributed cost gets the ratio, never the full deduction —");
+{
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 1_000, btw_amount: 0, exempt_ex: 1_000 },
+    { direction: "outgoing", status: "paid", total_ex_btw: 1_000, btw_amount: 210 },
+    // No vat_deduction at all — the ordinary case before anyone classifies anything.
+    { direction: "incoming", status: "received", total_ex_btw: 1_000, btw_amount: 210 },
+  ];
+  const r = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("half exempt ⇒ 50%", r.proRataPercent === 50);
+  check("an unclassified cost is apportioned, not fully deducted", near(r.btwVoorbelasting, 105));
+}
+
+console.log("\n— [VRIJGESTELD] a part-exempt invoice keeps the rate of its taxed half —");
+{
+  // €100 exempt care + €100 whitening @21%. Deriving the rate from the FULL header would give
+  // 21/200 = 10,5% → a rate that was never charged.
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 200, btw_amount: 21, exempt_ex: 100 },
+  ];
+  const r = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("the taxed half is declared at 21%", r.salesByRate.some((b) => b.rate === 21 && near(b.omzet, 100)));
+  check("and carries all of the BTW", near(r.btwVerschuldigd, 21));
+  check("the exempt half is out of the buckets", !r.salesByRate.some((b) => near(b.omzet, 200)));
+}
+
+console.log("\n— [VRIJGESTELD] an undecidable ratio understates 5b VISIBLY, never silently —");
+{
+  // Costs but no turnover at all — a quiet quarter in an exempt practice.
+  const inv: ResultInvoice[] = [
+    { direction: "incoming", status: "received", total_ex_btw: 1_000, btw_amount: 210, vat_deduction: "mixed" },
+    { direction: "incoming", status: "received", total_ex_btw: 500, btw_amount: 105, vat_deduction: "direct_taxed" },
+  ];
+  const r = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("only the directly attributable BTW is claimed", near(r.btwVoorbelasting, 105));
+  check("the rest is reported as unresolved", near(r.voorbelastingUnresolved, 210));
+  check("and the percentage is null, not zero", r.proRataPercent === null);
+}
+
+console.log("\n— [VRIJGESTELD] the exempt part can never exceed the invoice it sits on —");
+{
+  // Lines disagreeing with the header (edited after the fact) must not withhold more than exists,
+  // which would pull a rubriek negative.
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 100, btw_amount: 0, exempt_ex: 999 },
+  ];
+  const r = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("the exempt part is clamped to the header", near(r.vrijgesteldeOmzet, 100));
+  check("no negative omzet is invented", !r.salesByRate.some((b) => b.omzet < 0));
+}
+
+console.log("\n— [VRIJGESTELD] a creditnota on exempt turnover nets, never inflates —");
+{
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 1_000, btw_amount: 0, exempt_ex: 1_000 },
+    { direction: "outgoing", status: "paid", total_ex_btw: -400, btw_amount: 0, exempt_ex: -400 },
+  ];
+  const r = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("the credit reduces the exempt turnover", near(r.vrijgesteldeOmzet, 600));
+  check("and reduces omzet with it", near(r.omzet, 600));
+}
+
+
+console.log("\n— [VRIJGESTELD] turnover the feature cannot classify is MEASURED, not assumed away —");
+{
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 40_000, btw_amount: 0, exempt_ex: 40_000 },
+  ];
+  const till: DailyTurnover[] = [{
+    turnover_date: "2026-08-01", base_0: 0, base_9: 0, base_21: 5_000, btw_9: 0, btw_21: 1_050,
+    total_incl: 6_050, pin_amount: null, cash_amount: null, other_amount: null,
+  }];
+  const cashSale: ResultCashEntry[] = [
+    { direction: "in", amount: 1_210, category: "omzet", btw_rate: 21, date: "2026-08-02" },
+  ];
+
+  const on = computeResult(inv, [], cashSale, till, undefined, 0, undefined, { exemptRegime: true });
+  check("the till day is counted as unclassifiable", on.onclassificeerbareOmzet >= 5_000);
+  check("and so is the rated cash sale", near(on.onclassificeerbareOmzet, 6_000));
+  check("exemptRegime is reported, distinct from the ratio being null", on.exemptRegime === true);
+  // It is still DECLARED — the limit is about the label, never about hiding money from 5a.
+  check("the till BTW still reaches verschuldigd", on.btwVerschuldigd > 1_000);
+
+  // Off-regime the figure is 0: for an owner with no exempt turnover it is simply true that this
+  // is taxed, and a warning about it would be noise.
+  const off = computeResult(inv, [], cashSale, till);
+  check("off-regime: nothing is called unclassifiable", off.onclassificeerbareOmzet === 0);
+  check("off-regime: exemptRegime is false", off.exemptRegime === false);
+
+  // An invoice-only exempt owner — the case this feature is actually aimed at — has none of it.
+  const invoiceOnly = computeResult(inv, [], [], [], undefined, 0, undefined, { exemptRegime: true });
+  check("invoice-only exempt owner has nothing unclassifiable", invoiceOnly.onclassificeerbareOmzet === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

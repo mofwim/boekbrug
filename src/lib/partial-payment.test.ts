@@ -11,6 +11,7 @@ import {
   buildPaymentResult,
   paymentExceedsOpenBalance,
   openBalanceFromAmounts,
+  resolveAllocation,
 } from "./partial-payment";
 
 let passed = 0, failed = 0;
@@ -294,6 +295,40 @@ console.log("— …en de drie bedragen op het scherm tellen op —");
   const betaald = Math.round(rows.reduce((t, r) => t + settledAmountSigned(r), 0) * 100) / 100;
   const totaal = Math.round(rows.reduce((t, r) => t + (r.total_inc_btw ?? 0), 0) * 100) / 100;
   check("de lijstsom klopt ook", Math.round((open + betaald) * 100) / 100 === totaal);
+}
+
+// ── [BANK-SPLIT] the owner states how much of a bank line an invoice takes ───────────────────
+// Without this the amount was always "everything the line has left", which is right until one
+// payment covers part of one invoice and all of another: the first absorbs the whole line and the
+// second is left with its money already spent. The real case was an ATAPACK payment of €2.265,41
+// whose description named two invoices while the first still owed €4.662,80.
+console.log("\n— [BANK-SPLIT] resolveAllocation —");
+{
+  const ok = (r: ReturnType<typeof resolveAllocation>, amount: number) => r.ok === true && r.amount === amount;
+  const bad = (r: ReturnType<typeof resolveAllocation>, reason: string) => r.ok === false && r.reason === reason;
+
+  check("no requested amount behaves exactly as before",
+    ok(resolveAllocation({ payAvailable: 2265.41, invoiceOpen: 4662.8 }), 2265.41) &&
+    ok(resolveAllocation({ requested: null, payAvailable: 100, invoiceOpen: 50 }), 100));
+
+  check("a stated amount is taken as stated",
+    ok(resolveAllocation({ requested: 1465.41, payAvailable: 2265.41, invoiceOpen: 4662.8 }), 1465.41));
+
+  check("money the line does not have is refused, not clamped",
+    bad(resolveAllocation({ requested: 3000, payAvailable: 2265.41, invoiceOpen: 4662.8 }), "exceeds_payment"));
+
+  // Clamping would let the screen say €500 while the books take €300 — untrue on the screen the
+  // accountant inherits.
+  check("more than the invoice owes is refused, not clamped",
+    bad(resolveAllocation({ requested: 500, payAvailable: 1000, invoiceOpen: 300 }), "exceeds_invoice"));
+
+  check("zero, negative and NaN are refused",
+    [0, -1, Number.NaN].every((v) => resolveAllocation({ requested: v, payAvailable: 100, invoiceOpen: 100 }).ok === false));
+
+  // The screen derives "the rest" by subtraction; that can land a hair over its own ceiling.
+  check("a cent of float dust does not refuse the owner's own arithmetic",
+    resolveAllocation({ requested: 100.001, payAvailable: 100, invoiceOpen: 100 }).ok === true &&
+    resolveAllocation({ requested: 100.02, payAvailable: 100, invoiceOpen: 100 }).ok === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

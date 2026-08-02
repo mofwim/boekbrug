@@ -74,6 +74,8 @@ import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — the same helper the aangifte
 // and the result engine use, so the accountant's package cannot show different rubrieken.
 import { fetchRateShares } from "./btw-rate-split-fetch";
+import { collectVatExemption } from "./vat-exemption-collect";
+import { exemptShareOf } from "./vat-exemption";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1665,10 +1667,19 @@ export async function buildClosingPackageZip(args: {
   // [RUBRIEK-SPLIT] The accountant's package must show the same rubrieken as the aangifte the
   // owner files, so a mixed-rate sales invoice is split by its own lines here too. Only invoices
   // whose lines add up to their header are split; everything else keeps the header-derived rate.
-  const rateSharesByInvoice = await fetchRateShares(
+  // [VRIJGESTELD] And the same exempt regime, from the same shared collector, for the same
+  // reason: the package the accountant receives may not contradict the concept the owner saw.
+  const typedAll = all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>;
+  const exemption = await collectVatExemption({
+    client: supabase as unknown as Parameters<typeof collectVatExemption>[0]["client"],
+    ownerId,
+    periodStart: start,
+    incomingInvoiceIds: typedAll.filter((i) => i.direction === "incoming").map((i) => i.id).filter((id): id is string => !!id),
+  });
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
     supabase as unknown as Parameters<typeof fetchRateShares>[0],
-    (all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
-      .filter((i) => i.direction !== "incoming"),
+    typedAll.filter((i) => i.direction !== "incoming"),
+    { exemptRegime: exemption.active },
   );
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
@@ -1676,6 +1687,8 @@ export async function buildClosingPackageZip(args: {
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
     rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
+    exempt_ex: (i as { id?: string }).id ? exemptExByInvoice.get((i as { id: string }).id) ?? null : null,
+    vat_deduction: (i as { id?: string }).id ? exemption.deductionByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
   // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
   // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
@@ -1689,7 +1702,7 @@ export async function buildClosingPackageZip(args: {
   // on the PAID date. Resolve the scheme for this quarter and, under kas, feed the settlement
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
-  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end, exemption.active);
   // [TRIANGLE-ZERO] The 6th argument is the acquirer commission, and 0 here is deliberate.
   //
   // This call feeds ONLY the BTW side of the package: salesByRate, cashOmzetZonderBtw and
@@ -1701,7 +1714,13 @@ export async function buildClosingPackageZip(args: {
   // a few hundred lines up, so "the triangle is computed but not passed on" looks exactly like a
   // bug. It is not — but it WOULD become one the day this package starts reporting kosten or
   // winst. If that day comes, this argument has to change with it.
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, {
+    ...kasResolution.opts,
+    rateSharesByInvoice,
+    exemptRegime: exemption.active,
+    deductionByInvoice: exemption.deductionByInvoice,
+    exemptShareByInvoice: exemptShareOf(typedAll, exemptExByInvoice),
+  });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),

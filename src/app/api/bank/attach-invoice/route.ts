@@ -34,6 +34,8 @@ import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { readingPromptHint } from "@/lib/reading-memory";
+// [DECLARED-INVOICE] Invoice numbers the payment names, whether or not we hold them.
+import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
@@ -114,7 +116,7 @@ export async function POST(req: NextRequest) {
   //    (Same ownership/state discipline as api/bank/confirm.)
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, status, user_id, amount, date")
+    .select("id, status, user_id, amount, date, reference, description")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -209,6 +211,39 @@ export async function POST(req: NextRequest) {
   } catch (aiErr) {
     await gate.release();
     throw aiErr;
+  }
+
+  // [DECLARED-INVOICE] Does this payment name MORE invoices than the one being attached?
+  //
+  // Everything below assumes one bank line = one invoice, and on that assumption it is sound: when
+  // the read total disagrees with the bank amount it trusts the bank, because the money that moved
+  // is the truth. On a line that pays TWO invoices that reasoning inverts. Attaching an €800
+  // invoice to a €2.265,41 line would create an €2.265,41 invoice — a total nobody ever billed —
+  // mark it paid, and consume the line, leaving the other named invoice with its money gone.
+  //
+  // Same guard, same helper and same escape hatch as /api/bank/confirm, so the two doors onto this
+  // bank line cannot disagree about what the payment says.
+  if (!force) {
+    const named = undeclaredMissingInvoices(
+      { reference: tx.reference, description: tx.description },
+      [verification.invoice_number],
+    );
+    if (named.length > 0) {
+      await gate.release();
+      return NextResponse.json(
+        {
+          error: "declared_invoice_missing",
+          code: "declared_invoice_missing",
+          missingNumbers: named,
+          canForce: true,
+          detail:
+            `Deze betaling noemt ook ${named.length === 1 ? "factuur" : "facturen"} ${named.join(", ")}. ` +
+            `Als we deze factuur nu aan de hele betaling koppelen, gaat het bedrag van ${named.length === 1 ? "die andere" : "die andere facturen"} ` +
+            `mee op — voeg ${named.length === 1 ? "hem" : "ze"} eerst toe, en verdeel de betaling daarna.`,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // Money side: the BANK is the source of truth for the paid amount/date.

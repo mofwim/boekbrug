@@ -48,7 +48,8 @@ import { classifyImportHealth } from '@/lib/import-health'
 import { scanInvoices, scanFindingIds, type InvoiceScan } from '@/lib/invoice-scan'
 import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
-import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+// [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
+import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
 import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
@@ -90,6 +91,78 @@ const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
 // recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
 // unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
+// [VRIJGESTELD] The three ways a purchase can serve the business, for the right to deduct.
+// Dutch on screen, English in the data — the stored values are the ones the engine reads
+// (vat-exemption.ts), and renaming them would be a migration, not a rename.
+type VatDeduction = 'direct_taxed' | 'direct_exempt' | 'mixed'
+
+const DEDUCTION_CHOICES: ReadonlyArray<{ value: VatDeduction; label: string; hint: string }> = [
+  { value: 'direct_taxed',  label: 'Belast werk',   hint: 'Alleen voor je BTW-belaste werk — de BTW is volledig aftrekbaar.' },
+  { value: 'mixed',         label: 'Allebei',       hint: 'Dient je belaste én je vrijgestelde werk (huur, energie, boekhouder) — de BTW wordt naar verhouding afgetrokken.' },
+  { value: 'direct_exempt', label: 'Vrijgesteld werk', hint: 'Alleen voor je vrijgestelde werk — hierop bestaat geen recht op aftrek.' },
+]
+
+const DEDUCTION_TOAST: Record<VatDeduction, string> = {
+  direct_taxed:  'Toegewezen aan belast werk — BTW volledig aftrekbaar ✓',
+  mixed:         'Toegewezen aan allebei — BTW naar verhouding ✓',
+  direct_exempt: 'Toegewezen aan vrijgesteld werk — geen aftrek ✓',
+}
+
+/**
+ * [VRIJGESTELD] "What does this cost serve?" — the control that decides how much of a purchase's
+ * BTW is deductible.
+ *
+ * EXPORTED, and rendered by the caller only when the owner has declared exempt turnover. Split out
+ * of the row body for a reason the render gate makes concrete: inside the row it lives behind
+ * `expanded`, which only a click opens — so one static render of the screen can never reach it,
+ * and a test asserting it "renders" there would be asserting nothing. As its own component it is
+ * called directly, with each of its three states.
+ *
+ * `null` renders as 'mixed' rather than as unanswered, because null IS mixed as far as the engine
+ * is concerned (vat-exemption.ts): showing an empty control would ask the owner to decide
+ * something the aangifte has already decided, and hide which way.
+ */
+export function CostAttribution({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (value: VatDeduction) => void
+}) {
+  const current = DEDUCTION_CHOICES.some(c => c.value === value) ? (value as VatDeduction) : 'mixed'
+  return (
+    <div style={{ marginBottom: 16, padding: '12px 14px', background: 'white', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}` }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', marginBottom: 8, fontFamily: FONT }}>
+        Waarvoor is deze kost?
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {DEDUCTION_CHOICES.map(choice => {
+          const active = current === choice.value
+          return (
+            <button
+              key={choice.value}
+              onClick={() => onChange(choice.value)}
+              title={choice.hint}
+              style={{
+                padding: '7px 13px', borderRadius: R.full, cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                border: active ? 'none' : `1px solid ${M3.surfaceVariant}`,
+                background: active ? M3.primary : 'white',
+                color: active ? M3.onPrimary : '#3c4043',
+              }}
+            >
+              {choice.label}
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: '#5F6368', marginTop: 8, lineHeight: 1.45, fontFamily: FONT }}>
+        {DEDUCTION_CHOICES.find(c => c.value === current)?.hint}
+      </div>
+    </div>
+  )
+}
+
 const fmtDateSmart = (s: string | null, thisYear: string) => {
   if (!s) return '—'
   const d = new Date(s)
@@ -145,6 +218,11 @@ interface IncomingRow {
   // Null on legacy rows (forward-only extraction) or when the AI didn't find it.
   vendor_iban: string | null
   payment_reference: string | null
+  // [VRIJGESTELD] What this cost serves, for the right to deduct: 'direct_taxed' (fully
+  // deductible), 'direct_exempt' (not at all) or 'mixed'/null (the pro-rata share). Only read
+  // when the owner declared exempt turnover; absent for everyone else, and absent on every row
+  // until vat_exemption.sql is applied.
+  vat_deduction?: string | null
   // [PAY-SAFE-CONFIRM] UI marker: owner generated a payment QR/details.
   // NOT a financial state — persists across the async pay round-trip so the
   // "Ik heb betaald" confirm CTA survives prepare → leave → pay → return.
@@ -272,7 +350,10 @@ export default function IncomingManageClient({
   totalCount = null,
   readFailed = [], filedQuarters, bookScan = null, readingHints = {},
 }: {
-  profile: { id: string }
+  // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
+  // Optional, because the server reads the profile with select('*') and the column is simply not
+  // there until vat_exemption.sql is applied — absent then, which correctly hides the control.
+  profile: { id: string; vat_exempt_activity?: boolean | null }
   initialInvoices: IncomingRow[]
   // [INVOICE-COUNTER] How many confirmed inkoopfacturen the owner really has (server count).
   // Only used to disclose that this list is capped — never as the counter itself, because it
@@ -315,6 +396,8 @@ export default function IncomingManageClient({
   // an unknown value falls back to 'Alle', and the owner can switch freely after.
   const filterParam = searchParams.get('filter')
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
+  // [VRIJGESTELD] Read once: the control below is per invoice, the declaration is per owner.
+  const exemptOwner = !!profile.vat_exempt_activity
   const [filter, setFilter]             = useState<FilterTab>(
     FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
   )
@@ -665,53 +748,10 @@ export default function IncomingManageClient({
   // precondition anyway (see the route header). The triplet keeps ex + btw = total exact while
   // typing, so a correction cannot itself produce the contradiction it is meant to remove.
   const [correctFor, setCorrectFor] = useState<IncomingRow | null>(null)
-  const [correctAmounts, setCorrectAmounts] = useState({ ex: 0, btw: 0, incl: 0 })
-  const [correctCredit, setCorrectCredit] = useState(false)
-  const [correctSaving, setCorrectSaving] = useState(false)
 
-  const openCorrection = (inv: IncomingRow) => {
-    setCorrectFor(inv)
-    setCorrectAmounts({ ex: inv.total_ex_btw ?? 0, btw: inv.btw_amount ?? 0, incl: inv.total_inc_btw ?? 0 })
-    // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
-    setCorrectCredit(false)
-    setCorrectSaving(false)
-  }
-
-  const saveCorrection = async () => {
-    if (!correctFor || correctSaving) return
-    setCorrectSaving(true)
-    try {
-      const res = await fetch(`/api/invoice/${correctFor.id}/amounts`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          total_ex_btw: correctAmounts.ex,
-          btw_amount: correctAmounts.btw,
-          total_inc_btw: correctAmounts.incl,
-          ...(correctCredit ? { is_credit_note: true } : {}),
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.ok) {
-        // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
-        // named in them ("reverse the payment first", "ask your accountant") — a generic "try
-        // again" would send the owner at a button that cannot work.
-        showToast(typeof data.error === 'string' ? data.error : 'Corrigeren mislukt — er is niets gewijzigd')
-        return
-      }
-      // Only now the list follows. Writing it optimistically would show a corrected amount that
-      // the server may have refused — on the screen the owner pays from.
-      setInvoices(prev => prev.map(i => i.id === correctFor.id
-        ? { ...i, total_ex_btw: data.total_ex_btw, btw_amount: data.btw_amount, total_inc_btw: data.total_inc_btw, invoice_type: data.invoice_type }
-        : i))
-      setCorrectFor(null)
-      showToast('Bedragen gecorrigeerd')
-    } catch {
-      showToast('Corrigeren mislukt — controleer je verbinding')
-    } finally {
-      setCorrectSaving(false)
-    }
-  }
+  // [FULL-CORRECTION] Opening is all this screen does now — the editor and its save live in the
+  // shared component, so /bank cannot end up with a second one that drifts.
+  const openCorrection = (inv: IncomingRow) => setCorrectFor(inv)
 
   // [CREDITNOTA-SIGNAL] Every document number per supplier, from the FULL list and not from
   // `displayed`: the evidence that a supplier uses two kinds of number must not depend on whichever
@@ -1038,6 +1078,41 @@ export default function IncomingManageClient({
   // payment_prepared_at timestamp, never status/amounts. Session client (row
   // belongs to the receiver). Idempotent — re-preparing just refreshes the ts.
   // Skipped if the row is already paid (no marker needed) or already marked.
+  // [VRIJGESTELD] Where the pro-rata split is actually decided.
+  //
+  // Without this control every cost falls back to 'mixed' and gets the ratio — safe, because it
+  // under-claims rather than over-claims, but wrong for the two costs an owner CAN place exactly:
+  // the material bought only for the taxable work (fully deductible) and the one bought only for
+  // the exempt work (not at all). On the dental quarter that difference is €141 of deduction the
+  // owner is entitled to and would otherwise silently lose.
+  //
+  // Written straight through RLS, like markPrepared: this is the owner's own invoice. An
+  // ACCOUNTANT cannot reach it — vat_exemption.sql added this column to
+  // prevent_accountant_amount_changes, so the same trigger that stops them moving an amount stops
+  // them moving the deduction it drives.
+  async function setDeduction(inv: IncomingRow, value: VatDeduction) {
+    // Optimistic, then reverted on failure: the control is a 3-way toggle and a value that
+    // silently snaps back is worse than one that never moved.
+    const previous = inv.vat_deduction ?? null
+    setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: value } : r)))
+    const { error } = await supabase
+      .from('invoices')
+      .update({ vat_deduction: value })
+      .eq('id', inv.id)
+    if (error) {
+      setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: previous } : r)))
+      // [UI-HONESTY] Name the one cause that is actually likely and has a way out, instead of a
+      // generic retry: the column exists only after the migration.
+      showToast(
+        /vat_deduction/.test(error.message)
+          ? 'Toewijzen kan nog niet — de BTW-vrijstellingsmigratie staat nog niet op de database'
+          : 'Toewijzen mislukt — er is niets gewijzigd',
+      )
+      return
+    }
+    showToast(DEDUCTION_TOAST[value])
+  }
+
   async function markPrepared(inv: IncomingRow) {
     if (inv.status !== 'received' || inv.payment_prepared_at) return
     const now = new Date().toISOString()
@@ -2122,6 +2197,13 @@ export default function IncomingManageClient({
                         {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
                       </div>
 
+                      {exemptOwner && (
+                        <CostAttribution
+                          value={inv.vat_deduction ?? null}
+                          onChange={(v) => setDeduction(inv, v)}
+                        />
+                      )}
+
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
                             invoice whose amounts were misread could only be archived (which hides a
@@ -2586,93 +2668,29 @@ export default function IncomingManageClient({
           (amount-triplet.ts). The total leads: it is the clearest figure on any invoice and the one
           the bank statement has to match, so typing it over lets the ex amount — the figure the
           reader keeps getting wrong on wholesale invoices — follow by itself. */}
+      {/* [FULL-CORRECTION] One editor, shared with /dashboard/bank — see the component header for
+          why this is not a copy. It writes through the same route with the same guards. */}
       {correctFor && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000 }}
-          onClick={() => !correctSaving && setCorrectFor(null)}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
-          >
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Bedragen corrigeren</p>
-            <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>
-              {correctFor.client_name ?? 'Leverancier onbekend'}
-              {correctFor.invoice_number ? ` · ${correctFor.invoice_number}` : ''}
-              <br />
-              Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
-              exclusief rekent zichzelf uit.
-            </p>
-
-            {/* [READING-MEMORY] What the owner has repeatedly fixed at THIS supplier. The same
-                sentence the verify queue shows, in the other place the same decision is made —
-                "je hebt de btw hier al drie keer gecorrigeerd" is worth knowing while you type the
-                fourth. It names a field, never an amount: a remembered number belongs to a
-                different invoice, and pre-filling it here would be inventing money. */}
-            {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()] && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 13px', marginBottom: 16, background: '#eef4ff', border: '1px solid #cddcff', borderRadius: 12 }}>
-                <span style={{ fontSize: 14, lineHeight: 1.3 }}>🧠</span>
-                <p style={{ fontSize: 12.5, color: '#274690', margin: 0, lineHeight: 1.5 }}>
-                  {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
-                </p>
-              </div>
-            )}
-
-            {[
-              { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },
-              { key: 'btw' as const, label: 'BTW', apply: setBtw, strong: false },
-              { key: 'ex' as const, label: 'Bedrag excl. BTW', apply: setExcl, strong: false },
-            ].map(f => (
-              <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  value={correctAmounts[f.key]}
-                  onChange={e => setCorrectAmounts(f.apply(correctAmounts, parseFloat(e.target.value) || 0))}
-                  aria-label={f.label}
-                  style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'right', outline: 'none', color: '#202124' }}
-                />
-              </div>
-            ))}
-
-            {/* [KIND-CORRECTION] The one-way declaration. Without it a net-negative invoice cannot be
-                entered at all, and a credit note keeps counting as a debt. */}
-            {correctFor.invoice_type !== 'creditnota' && (
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '14px 0 4px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={correctCredit} onChange={e => setCorrectCredit(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: '#0B8043' }} />
-                <span style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.45 }}>
-                  <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
-                  “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
-                  dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
-                  wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
-                  staat er al een, dan blijft die staan.
-                </span>
-              </label>
-            )}
-
-            <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '12px 0 16px' }}>
-              Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag
-              exclusief mee te tellen, mét zijn teken.
-            </p>
-
-            <button
-              onClick={saveCorrection}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '15px', borderRadius: 14, background: correctSaving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: correctSaving ? 'default' : 'pointer', marginBottom: 8 }}
-            >
-              {correctSaving ? 'Opslaan…' : 'Bedragen opslaan'}
-            </button>
-            <button
-              onClick={() => setCorrectFor(null)}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}
-            >
-              Annuleren
-            </button>
-          </div>
-        </div>
+        <InvoiceCorrectionModal
+          invoice={correctFor}
+          readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
+          onClose={() => setCorrectFor(null)}
+          onMessage={showToast}
+          onSaved={(data) => setInvoices(prev => prev.map(i => i.id === correctFor.id
+            ? {
+                ...i,
+                total_ex_btw: data.total_ex_btw,
+                btw_amount: data.btw_amount,
+                total_inc_btw: data.total_inc_btw,
+                invoice_type: data.invoice_type,
+                // [FULL-CORRECTION] The metadata follows too, or the row would keep showing the
+                // misread supplier the owner just fixed until the next reload.
+                ...(data.invoice_number != null ? { invoice_number: data.invoice_number } : {}),
+                ...(data.client_name != null ? { client_name: data.client_name } : {}),
+                ...(data.invoice_date != null ? { invoice_date: data.invoice_date } : {}),
+              }
+            : i))}
+        />
       )}
 
       <style>{`

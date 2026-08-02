@@ -42,7 +42,9 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { isEligible, normalizeRef, isFullyCovered, bankLineFullyApplied, parseReferenceNumbers } from "@/lib/bank-matching";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
-import { openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
+import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
+// [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
+import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -57,11 +59,18 @@ export async function POST(req: NextRequest) {
 
   // 2. Body
   let transactionId: string | undefined;
+  let requestedAmount: number | null = null;
+  let force = false;
   let invoiceId: string | undefined;
   try {
     const body = await req.json();
     transactionId = body?.transactionId;
     invoiceId = body?.invoiceId;
+    // [BANK-SPLIT] How much of this line to put on this invoice. Absent = "everything it has left",
+    // which is what every caller sent before this existed.
+    requestedAmount = typeof body?.amount === "number" ? body.amount : null;
+    // [DECLARED-INVOICE] The owner looked at the warning and knows better.
+    force = body?.force === true;
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
@@ -76,7 +85,7 @@ export async function POST(req: NextRequest) {
   //    so we can decide allCovered after the payment.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, status, user_id, amount, reference, date")
+    .select("id, status, user_id, amount, reference, date, description")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -321,11 +330,68 @@ export async function POST(req: NextRequest) {
       // if a second confirm arrives anyway.)
       return NextResponse.json({ error: "payment_fully_applied" }, { status: 409 });
     }
+    // [BANK-SPLIT] How much of this line goes on THIS invoice. Without a stated amount this is
+    // payAvailable — byte-for-byte the behaviour every existing caller and the automatic booking
+    // path had. With one, it is the owner's figure, checked against both ceilings first: money the
+    // line does not have, and more than the invoice owes, are refused rather than clamped, because
+    // a screen that says €500 while the books take €300 has told the owner something untrue.
+    const alloc = resolveAllocation({ requested: requestedAmount, payAvailable, invoiceOpen: invOpen });
+    if (!alloc.ok) {
+      return NextResponse.json(
+        {
+          error: "bad_allocation",
+          code: alloc.reason,
+          detail:
+            alloc.reason === "not_positive"
+              ? "Vul een bedrag groter dan nul in."
+              : alloc.reason === "exceeds_payment"
+                ? `Van deze betaling is nog € ${alloc.available.toFixed(2)} te verdelen — meer kan er niet op.`
+                : `Op deze factuur staat nog € ${alloc.open.toFixed(2)} open — meer kan er niet op.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    // [DECLARED-INVOICE] Does this payment SAY it also pays an invoice we do not have?
+    //
+    // Booking now consumes the bank line. If the description names a second invoice that is not in
+    // the administration yet, the money for it is spent here — and when that invoice arrives it
+    // reads fully open, gets dunned, and can be paid a second time. That is the ATAPACK case:
+    // "Tweede deel factuur 26302050 , factuur 26302362", where only the first was imported and the
+    // first had room to absorb the entire €2.265,41.
+    //
+    // Refused rather than warned, and only when the booking would swallow the WHOLE line: waiting
+    // is reversible and a wrong booking is not. An owner who knows better passes `force`. Skipped
+    // entirely when an explicit amount was stated — stating one IS the owner allocating deliberately.
+    if (requestedAmount == null && !force && !moneyLeftOver) {
+      const missing = undeclaredMissingInvoices(
+        { reference: tx.reference, description: tx.description },
+        [...refNumbers, inv.invoice_number],
+      );
+      if (missing.length > 0) {
+        return NextResponse.json(
+          {
+            error: "declared_invoice_missing",
+            code: "declared_invoice_missing",
+            missingNumbers: missing,
+            canForce: true,
+            detail:
+              `Deze betaling noemt ook ${missing.length === 1 ? "factuur" : "facturen"} ${missing.join(", ")}, ` +
+              `${missing.length === 1 ? "die staat" : "die staan"} nog niet in je administratie. Als we het hele bedrag nu op ` +
+              `${inv.invoice_number ?? "deze factuur"} boeken, is het geld op zodra ${missing.length === 1 ? "die factuur" : "die facturen"} ` +
+              `binnenkomt — en dan lijkt ${missing.length === 1 ? "hij" : "die"} onbetaald. Voeg ${missing.length === 1 ? "hem" : "ze"} eerst toe, ` +
+              `of vul hieronder in welk deel van dit bedrag op deze factuur hoort.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const { data: applyRows, error: applyErr } = await supabase.rpc("apply_bank_payment", {
       p_user_id: user.id,
       p_tx_id: transactionId,
       p_invoice_id: invoiceId,
-      p_amount: payAvailable,
+      p_amount: alloc.amount,
       p_pay_date: tx.date ?? null,
     });
     if (applyErr) {

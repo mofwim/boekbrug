@@ -26,6 +26,11 @@ import BankConnectPanel from './BankConnectPanel'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
+// [BANK-SPLIT] One parser for a typed amount, shared with every other money field in the app,
+// so "1.465,41" means the same thing here as on the pay screen.
+import { parseAmountInput } from '@/lib/partial-payment'
+// [FULL-CORRECTION] The correction editor, shared with the pay screen.
+import InvoiceCorrectionModal, { type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -241,6 +246,21 @@ export default function BankClient() {
     return () => clearTimeout(t)
   }, [findParam])
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
+  // [DECLARED-INVOICE] Open when a booking was refused because the payment names an invoice that is
+  // not in the administration yet. Nothing was written, so every way out is still available: add the
+  // missing invoice first, put only part of the payment on this one, or book it all anyway.
+  const [splitCtx, setSplitCtx] = useState<{
+    txId: string; invoiceId: string; invoiceNumber: string | null;
+    missingNumbers: string[]; detail: string;
+  } | null>(null)
+  const [splitAmount, setSplitAmount] = useState('')
+  // [FULL-CORRECTION] The invoice being corrected from this screen, once its full record has been
+  // fetched. A bank card carries only what a MATCH needs — number, gross total, date — so the
+  // breakdown is fetched when the dialog opens rather than loaded onto every candidate in the list.
+  const [correctFor, setCorrectFor] = useState<CorrectableInvoice | null>(null)
+  // [DECLARED-INVOICE] Busy while the missing invoice named in the payment is being read.
+  const [addingMissing, setAddingMissing] = useState(false)
+  const missingFileRef = useRef<HTMLInputElement | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
   // page refresh doesn't show an empty page. The transactions live in the DB
   // (bank_transactions, status 'pending'); /api/bank/match reads them and
@@ -569,7 +589,16 @@ export default function BankClient() {
   // [SHADOW] Named confirmMatch, not confirm: a local function called `confirm`
   // shadows window.confirm for the whole module, so anyone later reaching for
   // the browser dialog here would silently have called this instead.
-  async function confirmMatch(txId: string, invoiceNumber: string | null, explicitInvoiceId?: string) {
+  // [BANK-SPLIT] `opts.amount` = how much of this bank line goes on THIS invoice, when the owner
+  // says so; absent means "everything it has left", which is what every call sent before.
+  // [DECLARED-INVOICE] `opts.force` = the owner saw the "this payment also names factuur X" warning
+  // and chose to book anyway.
+  async function confirmMatch(
+    txId: string,
+    invoiceNumber: string | null,
+    explicitInvoiceId?: string,
+    opts?: { amount?: number; force?: boolean },
+  ) {
     const invoiceId = explicitInvoiceId ?? selected[txId]
     if (!invoiceId) return
     setProcessingId(txId)
@@ -577,7 +606,12 @@ export default function BankClient() {
       const res = await fetch('/api/bank/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactionId: txId, invoiceId }),
+        body: JSON.stringify({
+          transactionId: txId,
+          invoiceId,
+          ...(opts?.amount != null ? { amount: opts.amount } : {}),
+          ...(opts?.force ? { force: true } : {}),
+        }),
       })
       const json = await res.json()
       if (res.ok) {
@@ -619,6 +653,19 @@ export default function BankClient() {
         // re-match, another pending line for the same invoice would still be scored (and
         // warned about) against the old, larger balance.
         if (!allCovered || isPartial) await runMatch()
+      } else if (json?.error === 'declared_invoice_missing') {
+        // [DECLARED-INVOICE] The payment names an invoice we do not have, and booking the whole
+        // line here would spend its money. Nothing was written — ask, do not guess.
+        setSplitCtx({
+          txId,
+          invoiceId,
+          invoiceNumber: invoiceNumber ?? null,
+          missingNumbers: (json.missingNumbers ?? []) as string[],
+          detail: String(json.detail ?? ''),
+        })
+      } else if (json?.error === 'bad_allocation') {
+        // [BANK-SPLIT] The stated amount does not fit. The server names which ceiling it hit.
+        showToast(String(json.detail ?? 'Dat bedrag past niet op deze betaling.'))
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && json?.error === 'payment_fully_applied') {
@@ -898,6 +945,72 @@ export default function BankClient() {
     } catch {
       if (tab) tab.close()
       showToast('Kon de factuur niet openen.')
+    }
+  }
+
+  // [FULL-CORRECTION] Open the SAME editor the pay screen uses. Fetching first means the dialog
+  // can refuse to open on an invoice the server would reject anyway — an owner who types a
+  // correction into a form that then rejects it was misled by the screen, not by the server.
+  async function openCorrection(invoiceId: string) {
+    try {
+      const res = await fetch(`/api/invoice/${invoiceId}/amounts`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.ok) {
+        showToast(typeof json.error === 'string' ? json.error : 'Deze factuur kon niet worden opgehaald.')
+        return
+      }
+      if (!json.editable) {
+        // The server already phrased the way out; repeating it verbatim keeps one explanation.
+        showToast(String(json.reason ?? 'Deze factuur kan nu niet worden gecorrigeerd.'))
+        return
+      }
+      setCorrectFor(json.invoice as CorrectableInvoice)
+    } catch {
+      showToast('Deze factuur kon niet worden opgehaald — controleer je verbinding.')
+    }
+  }
+
+  // [DECLARED-INVOICE] Add the invoice the payment NAMES but the administration does not have,
+  // without leaving the screen.
+  //
+  // Deliberately NOT through /api/bank/attach-invoice, which is the other obvious choice and the
+  // wrong one here. That route exists for "this bank line IS this invoice": when the read total
+  // disagrees with the bank amount it trusts the bank, on the sound reasoning that the money which
+  // moved is the truth. On a line that pays TWO invoices that reasoning inverts — attaching an
+  // €800 invoice to a €2.265,41 line would create an €2.265,41 invoice and consume the whole line.
+  //
+  // The normal intake keeps the paper's own total, which is the only figure that can be right here.
+  // The invoice then lands where every other invoice lands, and the owner allocates afterwards.
+  async function addMissingInvoice(file: File) {
+    setAddingMissing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/intake', { method: 'POST', body: fd })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        showToast(typeof json?.error === 'string' ? json.error : 'Toevoegen mislukt — er is niets opgeslagen.')
+        return
+      }
+      const landedAsInvoice = json.destination === 'invoice' || json.destination === 'receipt'
+      if (!landedAsInvoice) {
+        // A statement, or a document we could not read as an invoice. Say what it became rather
+        // than implying the payment can now be split.
+        showToast('Bestand opgeslagen, maar het is niet als factuur herkend. Controleer het bij Mijn Bestanden.')
+        return
+      }
+      if (json.auto_verified) {
+        // Booked. Re-match so it becomes selectable on THIS line straight away.
+        await runMatch()
+        showToast('Factuur toegevoegd en geboekt — je kunt de betaling nu verdelen.')
+      } else {
+        // In the verify queue. Do NOT pretend it is ready: the split cannot reach it yet.
+        showToast('Factuur toegevoegd. Bevestig hem eerst in de controlewachtrij, daarna kun je de betaling verdelen.')
+      }
+    } catch {
+      showToast('Toevoegen mislukt — controleer je verbinding.')
+    } finally {
+      setAddingMissing(false)
     }
   }
 
@@ -1804,6 +1917,7 @@ export default function BankClient() {
                 onIgnore={(reason) => ignoreTx(s.transactionId, reason)}
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
+                onCorrect={openCorrection}
                 isDoneTab={bankTab === 'done'}
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
@@ -1828,6 +1942,109 @@ export default function BankClient() {
       )}
 
       {/* B.4 verwerkt dialog */}
+      {/* [DECLARED-INVOICE] The payment names an invoice we do not have. Booking the whole line
+          here spends its money, so the owner gets the three honest ways forward — and the default
+          is the safe one. Nothing was written when this opened. */}
+      {/* [FULL-CORRECTION] One editor, shared with /dashboard/incoming/manage. */}
+      {correctFor && (
+        <InvoiceCorrectionModal
+          invoice={correctFor}
+          onClose={() => setCorrectFor(null)}
+          onMessage={showToast}
+          // The corrected amounts change what this payment can settle, so the match is recomputed
+          // rather than patched in place — scorePair targets the REMAINING balance, and a stale
+          // candidate list would keep scoring against the figure the owner just replaced.
+          onSaved={() => { void runMatch() }}
+        />
+      )}
+      {splitCtx && (
+        <div
+          role="dialog" aria-modal="true"
+          onClick={() => { setSplitCtx(null); setSplitAmount('') }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.42)', zIndex: 1400, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
+          >
+            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>
+              Deze betaling hoort bij meer dan één factuur
+            </p>
+            <p style={{ fontSize: 13, color: '#5F6368', margin: '8px 0 16px', lineHeight: 1.5 }}>{splitCtx.detail}</p>
+
+            <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 6 }}>
+              Welk deel hoort op {splitCtx.invoiceNumber ?? 'deze factuur'}?
+            </label>
+            <input
+              inputMode="decimal"
+              value={splitAmount}
+              onChange={(e) => setSplitAmount(e.target.value)}
+              placeholder="0,00"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '13px 14px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 16, fontFamily: FONT_NUM, marginBottom: 6 }}
+            />
+            <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 16px', lineHeight: 1.45 }}>
+              De rest blijft op deze betaling staan, zodat je hem koppelt zodra de andere factuur
+              binnen is.
+            </p>
+
+            <button
+              onClick={() => {
+                const amount = parseAmountInput(splitAmount)
+                if (amount == null || amount <= 0) { showToast('Vul een bedrag groter dan nul in.'); return }
+                const ctx = splitCtx
+                setSplitCtx(null); setSplitAmount('')
+                void confirmMatch(ctx.txId, ctx.invoiceNumber, ctx.invoiceId, { amount })
+              }}
+              style={{ width: '100%', padding: '15px', borderRadius: 14, background: M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: 'pointer', marginBottom: 8, fontFamily: FONT }}
+            >
+              Alleen dit deel boeken
+            </button>
+            {/* The escape hatch, and it is not the prominent one: booking everything here is what
+                leaves the other invoice with its money already spent. */}
+            <button
+              onClick={() => {
+                const ctx = splitCtx
+                setSplitCtx(null); setSplitAmount('')
+                void confirmMatch(ctx.txId, ctx.invoiceNumber, ctx.invoiceId, { force: true })
+              }}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', marginBottom: 8, fontFamily: FONT }}
+            >
+              Toch het hele bedrag op deze factuur
+            </button>
+            {/* [DECLARED-INVOICE] The way out that actually solves it, without leaving the screen.
+                Once the named invoice is in the administration the existing money rule handles the
+                rest by itself: confirm the smaller invoice first, and the line stays open with the
+                remainder for the other one. */}
+            <input
+              ref={missingFileRef}
+              type="file"
+              accept=".pdf,image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) void addMissingInvoice(f)
+              }}
+            />
+            <button
+              onClick={() => missingFileRef.current?.click()}
+              disabled={addingMissing}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: '#fff', color: M3.primary, border: `1.5px solid ${M3.primary}`, fontWeight: 700, fontSize: 15, cursor: addingMissing ? 'default' : 'pointer', marginBottom: 8, fontFamily: FONT, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>upload_file</span>
+              {addingMissing
+                ? 'Bezig met inlezen…'
+                : `Voeg ${splitCtx.missingNumbers.length === 1 ? 'die factuur' : 'die facturen'} nu toe`}
+            </button>
+            <button
+              onClick={() => { setSplitCtx(null); setSplitAmount('') }}
+              style={{ width: '100%', padding: '13px', borderRadius: 14, background: 'transparent', color: '#5F6368', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
+      )}
       {verwerktCtx && (
         <div
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
@@ -1954,7 +2171,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink, onMove,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -1972,6 +2189,8 @@ function TxCard({
   onIgnore: (reason: string | null) => void
   onRestore: () => void
   onOpenFile: (invoiceId: string) => void
+  // [FULL-CORRECTION] Opens the shared correction editor for a matched invoice.
+  onCorrect: (invoiceId: string) => void
   isDoneTab?: boolean
   onUnlink?: () => void
   /** [MOVE-PAYMENT] Move this line's booked payment to another invoice. */
@@ -2724,7 +2943,7 @@ function TxCard({
       )}
 
       {!wasMulti && s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} />
+        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} />
       )}
 
       {!wasMulti && s.outcome === 'choice' && (
@@ -2846,7 +3065,7 @@ const WHY_LABEL: Record<string, string> = {
   reference: 'nummer in omschrijving',
 }
 
-function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void }) {
+function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void }) {
   // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
   // invoice's total equals the bank amount — the strongest hint, so highlight it.
   const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
@@ -2893,6 +3112,24 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
             >
               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
               Bekijk factuur
+            </button>
+          )}
+          {/* [FULL-CORRECTION] The moment a wrong figure is most likely to be SEEN: the owner is
+              looking at the payment with the paper next to it. Same editor as the pay screen, same
+              route, same guards — see InvoiceCorrectionModal. */}
+          {onCorrect && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCorrect(cand.invoiceId) }}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                marginLeft: onOpenFile ? 0 : 'auto',
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+              Gegevens corrigeren
             </button>
           )}
         </div>
