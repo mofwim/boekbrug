@@ -572,3 +572,57 @@ test("[READING-MEMORY] a supplier with no history renders the queue exactly as b
   assert.ok(html.length > 1000, "the queue still renders without the prop");
   assert.doesNotMatch(html, /Wat je hier vaker corrigeert/, "no heading without a hint under it");
 });
+
+test("[FULL-CORRECTION] the shared correction editor renders, and shows the supplier memory", async () => {
+  // ONE editor, opened from the pay screen and from /bank. It is rendered here directly because on
+  // both screens it lives behind a click, and a static render never clicks — the same reason
+  // InvoiceCard is exported. What matters is that every field the accountant reads is on it.
+  const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceCorrectionModal as any, {
+      invoice: {
+        id: "inv-1", invoice_number: "26302050", client_name: "ATAPACK Cash & Carry B.V.",
+        invoice_date: "2026-03-27", invoice_type: "factuur",
+        total_ex_btw: 6112.66, btw_amount: 550.14, total_inc_btw: 6662.8,
+      },
+      readingHint: "Bij deze leverancier heb je 3 eerdere facturen zelf gecorrigeerd — meestal het btw-bedrag. Controleer dat hier extra.",
+      onClose() {}, onSaved() {}, onMessage() {},
+    }),
+  );
+
+  // The money fields, and the ones that carry no money and still decide where the invoice lands.
+  assert.match(html, /Totaal \(incl\. BTW\)/);
+  assert.match(html, /Factuurnummer/, "the number the duplicate gate and bank matcher key on");
+  assert.match(html, /Leverancier/, "the name the supplier memory groups by");
+  assert.match(html, /Factuurdatum/, "the date that picks the BTW quarter");
+  // It opens on the invoice's CURRENT values — an editor that opens empty invites a retype, and a
+  // retyped correct figure is how a correct figure becomes a typo.
+  assert.match(html, /26302050/);
+  assert.match(html, /ATAPACK Cash &amp; Carry B\.V\./);
+  assert.match(html, /6662\.8/);
+  // [READING-MEMORY] travels with the editor, so it reaches /bank too.
+  assert.match(html, /meestal het btw-bedrag/);
+  // [KIND-CORRECTION] the one-way declaration, with the sentence that now describes what it does.
+  assert.match(html, /Dit is een creditnota/);
+  assert.match(html, /als minbedrag opgeslagen/);
+});
+
+test("[FULL-CORRECTION] a credit note is not offered the creditnota tick again", async () => {
+  // The declaration is one-way ('factuur' → 'creditnota'). Offering it on a row that already IS one
+  // would suggest a reverse that must never exist: it would quietly turn a credit into a debt.
+  const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceCorrectionModal as any, {
+      invoice: {
+        id: "cn-1", invoice_number: "CN9", client_name: "Sweets", invoice_date: "2026-02-17",
+        invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109,
+      },
+      onClose() {}, onSaved() {}, onMessage() {},
+    }),
+  );
+  assert.doesNotMatch(html, /Dit is een creditnota/);
+  assert.match(html, /-109/, "and it still opens on the stored negative amounts");
+});

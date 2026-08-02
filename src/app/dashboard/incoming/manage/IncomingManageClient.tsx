@@ -48,7 +48,8 @@ import { classifyImportHealth } from '@/lib/import-health'
 import { scanInvoices, scanFindingIds, type InvoiceScan } from '@/lib/invoice-scan'
 import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
-import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+// [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
+import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
 import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
@@ -747,53 +748,10 @@ export default function IncomingManageClient({
   // precondition anyway (see the route header). The triplet keeps ex + btw = total exact while
   // typing, so a correction cannot itself produce the contradiction it is meant to remove.
   const [correctFor, setCorrectFor] = useState<IncomingRow | null>(null)
-  const [correctAmounts, setCorrectAmounts] = useState({ ex: 0, btw: 0, incl: 0 })
-  const [correctCredit, setCorrectCredit] = useState(false)
-  const [correctSaving, setCorrectSaving] = useState(false)
 
-  const openCorrection = (inv: IncomingRow) => {
-    setCorrectFor(inv)
-    setCorrectAmounts({ ex: inv.total_ex_btw ?? 0, btw: inv.btw_amount ?? 0, incl: inv.total_inc_btw ?? 0 })
-    // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
-    setCorrectCredit(false)
-    setCorrectSaving(false)
-  }
-
-  const saveCorrection = async () => {
-    if (!correctFor || correctSaving) return
-    setCorrectSaving(true)
-    try {
-      const res = await fetch(`/api/invoice/${correctFor.id}/amounts`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          total_ex_btw: correctAmounts.ex,
-          btw_amount: correctAmounts.btw,
-          total_inc_btw: correctAmounts.incl,
-          ...(correctCredit ? { is_credit_note: true } : {}),
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.ok) {
-        // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
-        // named in them ("reverse the payment first", "ask your accountant") — a generic "try
-        // again" would send the owner at a button that cannot work.
-        showToast(typeof data.error === 'string' ? data.error : 'Corrigeren mislukt — er is niets gewijzigd')
-        return
-      }
-      // Only now the list follows. Writing it optimistically would show a corrected amount that
-      // the server may have refused — on the screen the owner pays from.
-      setInvoices(prev => prev.map(i => i.id === correctFor.id
-        ? { ...i, total_ex_btw: data.total_ex_btw, btw_amount: data.btw_amount, total_inc_btw: data.total_inc_btw, invoice_type: data.invoice_type }
-        : i))
-      setCorrectFor(null)
-      showToast('Bedragen gecorrigeerd')
-    } catch {
-      showToast('Corrigeren mislukt — controleer je verbinding')
-    } finally {
-      setCorrectSaving(false)
-    }
-  }
+  // [FULL-CORRECTION] Opening is all this screen does now — the editor and its save live in the
+  // shared component, so /bank cannot end up with a second one that drifts.
+  const openCorrection = (inv: IncomingRow) => setCorrectFor(inv)
 
   // [CREDITNOTA-SIGNAL] Every document number per supplier, from the FULL list and not from
   // `displayed`: the evidence that a supplier uses two kinds of number must not depend on whichever
@@ -2710,93 +2668,29 @@ export default function IncomingManageClient({
           (amount-triplet.ts). The total leads: it is the clearest figure on any invoice and the one
           the bank statement has to match, so typing it over lets the ex amount — the figure the
           reader keeps getting wrong on wholesale invoices — follow by itself. */}
+      {/* [FULL-CORRECTION] One editor, shared with /dashboard/bank — see the component header for
+          why this is not a copy. It writes through the same route with the same guards. */}
       {correctFor && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000 }}
-          onClick={() => !correctSaving && setCorrectFor(null)}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
-          >
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Bedragen corrigeren</p>
-            <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>
-              {correctFor.client_name ?? 'Leverancier onbekend'}
-              {correctFor.invoice_number ? ` · ${correctFor.invoice_number}` : ''}
-              <br />
-              Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
-              exclusief rekent zichzelf uit.
-            </p>
-
-            {/* [READING-MEMORY] What the owner has repeatedly fixed at THIS supplier. The same
-                sentence the verify queue shows, in the other place the same decision is made —
-                "je hebt de btw hier al drie keer gecorrigeerd" is worth knowing while you type the
-                fourth. It names a field, never an amount: a remembered number belongs to a
-                different invoice, and pre-filling it here would be inventing money. */}
-            {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()] && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 13px', marginBottom: 16, background: '#eef4ff', border: '1px solid #cddcff', borderRadius: 12 }}>
-                <span style={{ fontSize: 14, lineHeight: 1.3 }}>🧠</span>
-                <p style={{ fontSize: 12.5, color: '#274690', margin: 0, lineHeight: 1.5 }}>
-                  {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
-                </p>
-              </div>
-            )}
-
-            {[
-              { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },
-              { key: 'btw' as const, label: 'BTW', apply: setBtw, strong: false },
-              { key: 'ex' as const, label: 'Bedrag excl. BTW', apply: setExcl, strong: false },
-            ].map(f => (
-              <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  value={correctAmounts[f.key]}
-                  onChange={e => setCorrectAmounts(f.apply(correctAmounts, parseFloat(e.target.value) || 0))}
-                  aria-label={f.label}
-                  style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'right', outline: 'none', color: '#202124' }}
-                />
-              </div>
-            ))}
-
-            {/* [KIND-CORRECTION] The one-way declaration. Without it a net-negative invoice cannot be
-                entered at all, and a credit note keeps counting as a debt. */}
-            {correctFor.invoice_type !== 'creditnota' && (
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '14px 0 4px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={correctCredit} onChange={e => setCorrectCredit(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: '#0B8043' }} />
-                <span style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.45 }}>
-                  <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
-                  “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
-                  dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
-                  wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
-                  staat er al een, dan blijft die staan.
-                </span>
-              </label>
-            )}
-
-            <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '12px 0 16px' }}>
-              Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag
-              exclusief mee te tellen, mét zijn teken.
-            </p>
-
-            <button
-              onClick={saveCorrection}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '15px', borderRadius: 14, background: correctSaving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: correctSaving ? 'default' : 'pointer', marginBottom: 8 }}
-            >
-              {correctSaving ? 'Opslaan…' : 'Bedragen opslaan'}
-            </button>
-            <button
-              onClick={() => setCorrectFor(null)}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}
-            >
-              Annuleren
-            </button>
-          </div>
-        </div>
+        <InvoiceCorrectionModal
+          invoice={correctFor}
+          readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
+          onClose={() => setCorrectFor(null)}
+          onMessage={showToast}
+          onSaved={(data) => setInvoices(prev => prev.map(i => i.id === correctFor.id
+            ? {
+                ...i,
+                total_ex_btw: data.total_ex_btw,
+                btw_amount: data.btw_amount,
+                total_inc_btw: data.total_inc_btw,
+                invoice_type: data.invoice_type,
+                // [FULL-CORRECTION] The metadata follows too, or the row would keep showing the
+                // misread supplier the owner just fixed until the next reload.
+                ...(data.invoice_number != null ? { invoice_number: data.invoice_number } : {}),
+                ...(data.client_name != null ? { client_name: data.client_name } : {}),
+                ...(data.invoice_date != null ? { invoice_date: data.invoice_date } : {}),
+              }
+            : i))}
+        />
       )}
 
       <style>{`

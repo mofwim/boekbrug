@@ -26,6 +26,8 @@ import { M3, R, COLUMN } from '@/lib/design/tokens'
 // [BANK-SPLIT] One parser for a typed amount, shared with every other money field in the app,
 // so "1.465,41" means the same thing here as on the pay screen.
 import { parseAmountInput } from '@/lib/partial-payment'
+// [FULL-CORRECTION] The correction editor, shared with the pay screen.
+import InvoiceCorrectionModal, { type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -249,6 +251,10 @@ export default function BankClient() {
     missingNumbers: string[]; detail: string;
   } | null>(null)
   const [splitAmount, setSplitAmount] = useState('')
+  // [FULL-CORRECTION] The invoice being corrected from this screen, once its full record has been
+  // fetched. A bank card carries only what a MATCH needs — number, gross total, date — so the
+  // breakdown is fetched when the dialog opens rather than loaded onto every candidate in the list.
+  const [correctFor, setCorrectFor] = useState<CorrectableInvoice | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
   // page refresh doesn't show an empty page. The transactions live in the DB
   // (bank_transactions, status 'pending'); /api/bank/match reads them and
@@ -933,6 +939,28 @@ export default function BankClient() {
     } catch {
       if (tab) tab.close()
       showToast('Kon de factuur niet openen.')
+    }
+  }
+
+  // [FULL-CORRECTION] Open the SAME editor the pay screen uses. Fetching first means the dialog
+  // can refuse to open on an invoice the server would reject anyway — an owner who types a
+  // correction into a form that then rejects it was misled by the screen, not by the server.
+  async function openCorrection(invoiceId: string) {
+    try {
+      const res = await fetch(`/api/invoice/${invoiceId}/amounts`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.ok) {
+        showToast(typeof json.error === 'string' ? json.error : 'Deze factuur kon niet worden opgehaald.')
+        return
+      }
+      if (!json.editable) {
+        // The server already phrased the way out; repeating it verbatim keeps one explanation.
+        showToast(String(json.reason ?? 'Deze factuur kan nu niet worden gecorrigeerd.'))
+        return
+      }
+      setCorrectFor(json.invoice as CorrectableInvoice)
+    } catch {
+      showToast('Deze factuur kon niet worden opgehaald — controleer je verbinding.')
     }
   }
 
@@ -1781,6 +1809,7 @@ export default function BankClient() {
                 onIgnore={(reason) => ignoreTx(s.transactionId, reason)}
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
+                onCorrect={openCorrection}
                 isDoneTab={bankTab === 'done'}
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
@@ -1808,6 +1837,18 @@ export default function BankClient() {
       {/* [DECLARED-INVOICE] The payment names an invoice we do not have. Booking the whole line
           here spends its money, so the owner gets the three honest ways forward — and the default
           is the safe one. Nothing was written when this opened. */}
+      {/* [FULL-CORRECTION] One editor, shared with /dashboard/incoming/manage. */}
+      {correctFor && (
+        <InvoiceCorrectionModal
+          invoice={correctFor}
+          onClose={() => setCorrectFor(null)}
+          onMessage={showToast}
+          // The corrected amounts change what this payment can settle, so the match is recomputed
+          // rather than patched in place — scorePair targets the REMAINING balance, and a stale
+          // candidate list would keep scoring against the figure the owner just replaced.
+          onSaved={() => { void runMatch() }}
+        />
+      )}
       {splitCtx && (
         <div
           role="dialog" aria-modal="true"
@@ -1997,7 +2038,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink, onMove,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -2015,6 +2056,8 @@ function TxCard({
   onIgnore: (reason: string | null) => void
   onRestore: () => void
   onOpenFile: (invoiceId: string) => void
+  // [FULL-CORRECTION] Opens the shared correction editor for a matched invoice.
+  onCorrect: (invoiceId: string) => void
   isDoneTab?: boolean
   onUnlink?: () => void
   /** [MOVE-PAYMENT] Move this line's booked payment to another invoice. */
@@ -2767,7 +2810,7 @@ function TxCard({
       )}
 
       {!wasMulti && s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} />
+        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} />
       )}
 
       {!wasMulti && s.outcome === 'choice' && (
@@ -2889,7 +2932,7 @@ const WHY_LABEL: Record<string, string> = {
   reference: 'nummer in omschrijving',
 }
 
-function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void }) {
+function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void }) {
   // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
   // invoice's total equals the bank amount — the strongest hint, so highlight it.
   const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
@@ -2936,6 +2979,24 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
             >
               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
               Bekijk factuur
+            </button>
+          )}
+          {/* [FULL-CORRECTION] The moment a wrong figure is most likely to be SEEN: the owner is
+              looking at the payment with the paper next to it. Same editor as the pay screen, same
+              route, same guards — see InvoiceCorrectionModal. */}
+          {onCorrect && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCorrect(cand.invoiceId) }}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                marginLeft: onOpenFile ? 0 : 'auto',
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+              Gegevens corrigeren
             </button>
           )}
         </div>

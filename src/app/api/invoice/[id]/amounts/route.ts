@@ -68,6 +68,69 @@ function finite(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+/**
+ * [FULL-CORRECTION] The correctable fields of one booked purchase invoice.
+ *
+ * /dashboard/bank opens the same editor as the pay screen, but a bank card only carries what a
+ * match needs — the invoice number, the gross total, the date. It has no ex/btw breakdown, and
+ * putting one on every candidate in a long list would be waste for a modal that opens rarely.
+ *
+ * GET /api/invoice/[id] cannot serve this: it is scoped to sender_id, so it answers for SALES
+ * invoices only. Rather than widen a route that guards outgoing invoices, the route that WRITES
+ * these fields also reads them, under exactly the same ownership rule.
+ */
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const supabase = await createServerSupabaseClient();
+
+  { const w = await requireOwner('De gegevens van een geboekte inkoopfactuur bekijken om ze te corrigeren'); if (w.response) return w.response }
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+
+  // [NO-SILENT-EMPTY] A failed read is not "no such invoice". Telling the owner their invoice does
+  // not exist, while it sits on the screen behind the dialog, is the wrong answer to a hiccup.
+  const { data: invoice, error } = await supabase
+    .from("invoices")
+    .select("id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid")
+    .eq("id", id)
+    .eq("receiver_id", user.id)
+    .eq("direction", "incoming")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[FULL-CORRECTION] read failed", { invoiceId: id, userId: user.id, error: error.message });
+    return NextResponse.json(
+      { error: "We konden deze factuur nu niet ophalen — probeer het zo meteen opnieuw." },
+      { status: 503 },
+    );
+  }
+  if (!invoice) return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+
+  // Whether the editor can save at all, decided by the SAME predicates PATCH uses, so the dialog
+  // never opens on an invoice it will refuse — an owner who types a correction into a form that
+  // then rejects it has been misled by the screen, not by the server.
+  const editable =
+    invoice.status === "received" &&
+    !hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid });
+
+  return NextResponse.json({
+    ok: true,
+    invoice,
+    editable,
+    reason: editable
+      ? null
+      : invoice.status === "paid"
+        ? "Deze factuur staat op betaald. Draai eerst de betaling terug; daarna kun je hem corrigeren."
+        : invoice.status !== "received"
+          ? "Deze factuur staat nog in de controlewachtrij — corrigeer hem daar."
+          : "Er is al een bedrag afgeboekt op deze factuur — ontkoppel die betaling eerst op de Bank-pagina.",
+  });
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
