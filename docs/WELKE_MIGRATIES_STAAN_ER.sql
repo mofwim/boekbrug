@@ -21,8 +21,14 @@
 -- Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de hand in. Een migratie die
 -- via een andere tak in main belandt, staat dus niet vanzelf in de lijst hieronder — en een
 -- migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen. Dat is precies wat er
--- met #23 gebeurde. Voeg daarom een regel toe zodra je een migratie schrijft waar code op leunt,
--- en zeker als die code fail-soft is: juist dán zwijgt de app als de tabel ontbreekt.
+-- met #23 gebeurde, en in augustus 2026 opnieuw: de lijst gaf een schoon "alles toegepast" terug
+-- terwijl hij over 17 van de 71 migraties op schijf ging, en de vier waar de hele betaalkant op
+-- leunt — apply_bank_payment, bank_tx_invoices, daily_turnover, btw_filings — er niet eens in
+-- stonden. Ze staan er nu in (#27 t/m #30). Vier van de 71 erbij is geen volledigheid: een schone
+-- tabel hieronder betekent "de gestelde vragen zijn beantwoord", nooit "de database is compleet".
+--
+-- Voeg daarom een regel toe zodra je een migratie schrijft waar code op leunt, en zeker als die
+-- code fail-soft is: juist dán zwijgt de app als de tabel ontbreekt.
 -- Tegen elkaar leggen: `ls supabase/migrations/` naast de lijst hieronder.
 -- =====================================================================
 
@@ -137,6 +143,24 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   --
   -- Gecontroleerd op de kolom die de HELE keten aanzet. Staat die er, maar mist een van de
   -- andere drie, dan faalt het opslaan van een factuurregel zichtbaar — niet stil.
+  -- ── De geldmotor zelf ───────────────────────────────────────────────────────────────────
+  -- Deze vier stonden er niet in, en dat is precies het gat dat dit bestand over zichzelf
+  -- toegeeft: "een migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen".
+  -- Het antwoord "alles toegepast" ging dus over 17 van de 71 migraties op schijf, terwijl de
+  -- vier waar de betaalkant écht op leunt niet eens werden gevraagd.
+  (27, 'invoice_partial_payments.sql',
+       'apply_bank_payment() en recompute_invoice_amount_paid(): de deelbetaling zelf. Zonder deze functies kan één bankregel niet over meerdere facturen worden verdeeld — de tweede factuur blijft openstaan terwijl haar geld al weg is. Gecontroleerd op de FUNCTIE, niet op een kolom: de kolommen zetten de bak neer, de functie IS de regel (rijslot, clamp op het openstaande bedrag, weigering om een betaalde factuur nog eens te betalen)',
+       'function', 'apply_bank_payment'),
+  (28, 'bank_tx_invoices.sql',
+       'De koppeltabel tussen een bankregel en de facturen die hij betaalt, met amount_applied per koppeling. Dit is waar amount_paid uit wordt herleid; zonder deze tabel is er geen enkele plek die weet welk deel van een betaling waar naartoe ging',
+       'table', 'bank_tx_invoices'),
+  (29, 'daily_turnover.sql',
+       'De kassa-omzet per dag. Deze tabel is BTW-bepalend: /api/aangifte leest btw_9 en btw_21 er rechtstreeks uit naar rubriek 1a/1b als verschuldigde belasting',
+       'table', 'daily_turnover'),
+  (30, 'btw_filings.sql',
+       'Welke kwartalen zijn INGEDIEND. Zonder deze tabel kan de app het verschil niet zien tussen een correctie en een correctie op een al ingediende aangifte — de schermen degraderen netjes (ze zeggen dat ze het niet konden nagaan), maar de vraag blijft onbeantwoord',
+       'table', 'btw_filings'),
+
   (26, 'vat_exemption.sql',
        'Vrijgestelde omzet (art. 11 Wet OB) bestond niet in de data, alleen in de commentaren. Zonder deze migratie belandt zorg-/onderwijsomzet als "0%" in rubriek 1e én wordt de voorbelasting op ALLE inkoop voor 100% teruggevraagd, terwijl bij vrijstelling geen aftrekrecht bestaat — op één kwartaal gewone kosten duizenden euro''s die worden nageheven',
        'column', 'profiles.vat_exempt_activity')
@@ -171,6 +195,15 @@ from (
       when 'bucket_private' then exists (
                           select 1 from storage.buckets
                            where id = v.object and public = false)
+      -- Een FUNCTIE, niet een tabel. Voor de geldregels is dat het verschil dat telt: bij
+      -- invoice_partial_payments.sql zetten de kolommen alleen de bak neer, terwijl
+      -- apply_bank_payment() de regels IS — het slot op de rij, de clamp op het openstaande
+      -- bedrag, de weigering om een betaalde factuur nog eens te betalen. Dezelfde tweedeling
+      -- die #5 hieronder apart moet controleren, hier meteen goed.
+      when 'function' then exists (
+                          select 1 from pg_proc p
+                            join pg_namespace n on n.oid = p.pronamespace
+                           where n.nspname = 'public' and p.proname = v.object)
     end as aanwezig
   from verwacht v
 ) t
