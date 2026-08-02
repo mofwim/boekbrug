@@ -1,6 +1,11 @@
 // src/app/api/invoice/[id]/amounts/route.ts
-// [AMOUNT-CORRECTION] Correct the amounts — and if needed the KIND — of a CONFIRMED incoming
-// invoice.
+// [AMOUNT-CORRECTION] Correct a CONFIRMED incoming invoice: its amounts, its KIND, and — since
+// [FULL-CORRECTION] — its invoice number, supplier name and invoice date.
+//
+// The path still reads /amounts, which now under-describes it. Renaming a live money route while
+// other sessions are working in the same repo is churn with a real conflict risk and no functional
+// gain, so the name stays and this line says what it actually covers. Everything below applies to
+// every field it accepts.
 //
 // ── WHY THIS ROUTE EXISTS ──
 // The verify queue has always let the reviewer fix a misread invoice before confirming it. After
@@ -13,7 +18,7 @@
 // now SEE those (creditnota-signal.ts, btw-reconcile.ts) — this route is what lets the owner
 // actually fix them.
 //
-// ── FIVE GUARDS, ALL FAIL-CLOSED ──
+// ── SIX GUARDS, ALL FAIL-CLOSED ──
 // Correcting an amount on a CONFIRMED invoice moves money in the books, so every one of these
 // refuses rather than guesses:
 //
@@ -27,6 +32,13 @@
 //      a server that trusts the client's arithmetic is not a guard.
 //   5. The write re-asserts status and ownership in its WHERE, so a stale tab loses the race
 //      honestly instead of overwriting a newer state.
+//   6. A corrected invoice NUMBER may not collide with another purchase invoice. The number is the
+//      key the duplicate gate, the bank matcher and the accountant all work from, so two invoices
+//      sharing one is how a cost gets counted twice — arriving through the edit box this time.
+//
+// Every field is OPTIONAL and each is written only where it really differs, so a screen that posts
+// the whole form cannot manufacture a correction out of a field nobody touched — which matters
+// twice over, because [READING-MEMORY] learns from exactly this trail.
 //
 // The 'verwerkt' freeze is enforced by the database trigger prevent_verwerkt_invoice_changes; we
 // recognise its message and translate it, rather than duplicating the rule here.
@@ -74,20 +86,48 @@ export async function PATCH(
   const incBtw = body.total_inc_btw;
   const declaredCredit = body.is_credit_note === true;
 
-  if (!finite(exBtw) || !finite(btw) || !finite(incBtw)) {
+  // [FULL-CORRECTION] The amounts are now OPTIONAL, and the identity is only asserted when they
+  // are present. An owner fixing a misread invoice NUMBER should not have to retype three amounts
+  // that were already right — being made to retype a correct figure is how a correct figure
+  // becomes a typo. A request that changes nothing at all is still refused, below.
+  const hasAmounts = finite(exBtw) || finite(btw) || finite(incBtw);
+  if (hasAmounts && !(finite(exBtw) && finite(btw) && finite(incBtw))) {
     return NextResponse.json(
-      { error: "Vul alle drie de bedragen in — bedrag excl. BTW, BTW en totaal." },
+      { error: "Vul alle drie de bedragen in — bedrag excl. BTW, BTW en totaal — of laat ze alle drie leeg." },
       { status: 400 },
     );
   }
 
   // GUARD 4 — the identity. The screen cannot break it, but a hand-made request can, and a stored
   // set of amounts that contradicts itself is exactly what this whole round is about removing.
-  if (Math.abs(exBtw + btw - incBtw) > SUM_TOLERANCE) {
+  if (hasAmounts && Math.abs(exBtw + btw - incBtw) > SUM_TOLERANCE) {
     return NextResponse.json(
       { error: "Bedrag excl. BTW plus BTW moet gelijk zijn aan het totaal.", code: "sum_mismatch" },
       { status: 400 },
     );
+  }
+
+  // [FULL-CORRECTION] The fields the ACCOUNTANT reads. A misread supplier name or invoice number
+  // moves no money and still makes the books wrong where it counts: the number is what the
+  // duplicate gate, the bank matcher and the accountant's own cross-check all key on, and the date
+  // decides which BTW quarter the invoice lands in.
+  const nextNumber = typeof body.invoice_number === "string" ? body.invoice_number.trim() : null;
+  const nextVendor = typeof body.client_name === "string" ? body.client_name.trim() : null;
+  const nextDate = typeof body.invoice_date === "string" ? body.invoice_date.trim() : null;
+
+  if (nextNumber !== null && nextNumber.length === 0) {
+    return NextResponse.json({ error: "Een factuurnummer mag niet leeg zijn." }, { status: 400 });
+  }
+  if (nextVendor !== null && nextVendor.length === 0) {
+    return NextResponse.json({ error: "Een leveranciersnaam mag niet leeg zijn." }, { status: 400 });
+  }
+  // The shape <input type="date"> produces, and the one the queue's confirm route already accepts.
+  if (nextDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+    return NextResponse.json({ error: "Vul een geldige factuurdatum in (jjjj-mm-dd)." }, { status: 400 });
+  }
+
+  if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit) {
+    return NextResponse.json({ error: "Er is niets gewijzigd." }, { status: 400 });
   }
 
   // [NO-SILENT-EMPTY] Read the row BEFORE deciding anything, and treat a failed read as a refusal.
@@ -98,7 +138,7 @@ export async function PATCH(
     .from("invoices")
     // client_name is read for the audit trail only — [READING-MEMORY] keys a correction to the
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, total_ex_btw, btw_amount, total_inc_btw, amount_paid")
+    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid")
     .eq("id", id)
     .maybeSingle();
 
@@ -138,21 +178,85 @@ export async function PATCH(
     );
   }
 
+  // The number we would actually write — null when it is unchanged, so an owner re-saving the same
+  // invoice is never told it collides with itself.
+  const patchNumberCandidate =
+    nextNumber !== null && nextNumber !== (invoice.invoice_number ?? "").trim() ? nextNumber : null;
+
+  // [FULL-CORRECTION] GUARD 6 — a corrected invoice number may not collide with another invoice.
+  //
+  // The number is the key the duplicate gate, the bank matcher and the accountant's cross-check all
+  // work from, so two purchase invoices carrying one number is precisely how a cost gets counted
+  // twice — the failure this whole line has been closing all week, arriving through the edit box
+  // instead of through an import.
+  //
+  // [NO-SILENT-EMPTY] A failed check refuses. "We could not look" must not read as "no collision",
+  // because that is the one answer that lets the collision through.
+  if (patchNumberCandidate !== null) {
+    const { data: clash, error: clashErr } = await supabase
+      .from("invoices")
+      .select("id, invoice_number")
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .ilike("invoice_number", patchNumberCandidate)
+      .neq("id", id)
+      .limit(1);
+    if (clashErr) {
+      console.error("[FULL-CORRECTION] duplicate-number check failed — refusing to write", { invoiceId: id, userId: user.id, error: clashErr.message });
+      return NextResponse.json(
+        { error: "We konden niet nakijken of dit factuurnummer al bestaat. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+        { status: 503 },
+      );
+    }
+    if (clash && clash.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Je hebt al een inkoopfactuur met nummer ${patchNumberCandidate}. Twee facturen met hetzelfde nummer tellen de kosten dubbel — controleer welk nummer klopt.`,
+          code: "duplicate_number",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   // [CREDIT-SIGN] A credit note is stored NEGATIVE, or it is not a credit note in any way that
   // counts. openAmountSigned reads `total_inc_btw < 0`, and /api/aangifte sums btw_amount without
   // ever selecting invoice_type — so a row typed +51,80 and marked 'creditnota' keeps standing as a
   // debt and keeps ADDING input tax that belongs subtracted. Same rule, same helper as the queue's
   // confirm route, so the two doors cannot store the same document two different ways.
+  //
+  // [FULL-CORRECTION] Now that a correction can carry no amounts at all, this starts from what is
+  // STORED when none were sent. Reading the posted values unconditionally put `undefined` into the
+  // audit trail and the response for a metadata-only fix — the patch itself was safe (it is gated
+  // on hasAmounts), but the trail an accountant reads a year later would have shown a booked
+  // invoice with no amounts on the day someone corrected its supplier name.
+  //
+  // It also means ticking "dit is een creditnota" WITHOUT retyping anything still flips the stored
+  // amounts, which is exactly the case the credit-sign fix exists for.
+  const baseEx = hasAmounts ? exBtw : (invoice.total_ex_btw ?? 0);
+  const baseBtw = hasAmounts ? btw : (invoice.btw_amount ?? 0);
+  const baseIncl = hasAmounts ? incBtw : (invoice.total_inc_btw ?? 0);
   const signed = (declaredCredit || invoice.invoice_type === "creditnota")
-    ? asCreditAmounts({ totalExBtw: exBtw, btwAmount: btw, totalIncBtw: incBtw })
-    : { totalExBtw: exBtw, btwAmount: btw, totalIncBtw: incBtw, flipped: false };
+    ? asCreditAmounts({ totalExBtw: baseEx, btwAmount: baseBtw, totalIncBtw: baseIncl })
+    : { totalExBtw: baseEx, btwAmount: baseBtw, totalIncBtw: baseIncl, flipped: false };
 
-  const patch: InvoiceUpdate = {
-    total_ex_btw: signed.totalExBtw,
-    btw_amount: signed.btwAmount,
-    total_inc_btw: signed.totalIncBtw,
-    updated_at: new Date().toISOString(),
-  };
+  const patch: InvoiceUpdate = { updated_at: new Date().toISOString() };
+  // Only when amounts were actually sent — see [FULL-CORRECTION] above. Writing them back
+  // unchanged would be harmless for the money and dishonest in the audit trail.
+  // Written when the owner sent amounts, AND when the credit-sign rule turned the stored ones
+  // negative — a tick with no retyping is still a change to the money, and the whole point of
+  // [CREDIT-SIGN] is that the tick must move it.
+  if (hasAmounts || signed.flipped) {
+    patch.total_ex_btw = signed.totalExBtw;
+    patch.btw_amount = signed.btwAmount;
+    patch.total_inc_btw = signed.totalIncBtw;
+  }
+  // [FULL-CORRECTION] Applied only where the value really differs, so a form that posts every
+  // field cannot manufacture a change out of one the owner never touched. Trimmed comparison, the
+  // same rule correctedFields uses, so the patch and the memory agree about what "changed" means.
+  if (nextNumber !== null && nextNumber !== (invoice.invoice_number ?? "").trim()) patch.invoice_number = nextNumber;
+  if (nextVendor !== null && nextVendor !== (invoice.client_name ?? "").trim()) patch.client_name = nextVendor;
+  if (nextDate !== null && nextDate !== (invoice.invoice_date ?? "")) patch.invoice_date = nextDate;
   // [KIND-CORRECTION] Same one-way rule as the queue's confirm route: 'factuur' → 'creditnota'
   // only. That is the direction the reader structurally under-sees (a positively printed credit
   // note is never recognised, see HUNT-F2 in ai.ts) and the direction that takes money OFF the
@@ -194,14 +298,31 @@ export async function PATCH(
   // [READING-MEMORY] Which of the reader's fields the owner actually moved. Computed against the
   // row as it was read, not against what the form posted — the modal sends all three amounts every
   // time, and recording those would teach the memory that everything is always wrong.
+  // [FULL-CORRECTION] The metadata fields are in here too. reading-memory.ts already listed
+  // client_name, invoice_number and invoice_date among CORRECTABLE_FIELDS — the memory was built
+  // for them from the start; this route simply never had them to give.
   const correctedNow = correctedFields(
     {
       total_ex_btw: invoice.total_ex_btw,
       btw_amount: invoice.btw_amount,
       total_inc_btw: invoice.total_inc_btw,
       invoice_type: invoice.invoice_type,
+      invoice_number: invoice.invoice_number,
+      client_name: invoice.client_name,
+      invoice_date: invoice.invoice_date,
     },
-    { total_ex_btw: signed.totalExBtw, btw_amount: signed.btwAmount, total_inc_btw: signed.totalIncBtw, invoice_type: patch.invoice_type },
+    {
+      // Only what was actually sent — an absent field is unchanged, never "corrected to itself".
+      total_ex_btw: hasAmounts ? signed.totalExBtw : undefined,
+      btw_amount: hasAmounts ? signed.btwAmount : undefined,
+      total_inc_btw: hasAmounts ? signed.totalIncBtw : undefined,
+      // A server-applied sign flip is not a human correction — the same rule the confirm route's
+      // [ORDER] test locks. What the human did was tick the box, and invoice_type records that.
+      invoice_type: patch.invoice_type,
+      invoice_number: patch.invoice_number,
+      client_name: patch.client_name,
+      invoice_date: patch.invoice_date,
+    },
   );
 
   // The trail carries BOTH sides. Correcting a booked amount is exactly the kind of change an
