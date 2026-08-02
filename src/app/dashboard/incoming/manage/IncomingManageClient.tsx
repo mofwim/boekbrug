@@ -90,6 +90,78 @@ const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
 // recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
 // unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
+// [VRIJGESTELD] The three ways a purchase can serve the business, for the right to deduct.
+// Dutch on screen, English in the data — the stored values are the ones the engine reads
+// (vat-exemption.ts), and renaming them would be a migration, not a rename.
+type VatDeduction = 'direct_taxed' | 'direct_exempt' | 'mixed'
+
+const DEDUCTION_CHOICES: ReadonlyArray<{ value: VatDeduction; label: string; hint: string }> = [
+  { value: 'direct_taxed',  label: 'Belast werk',   hint: 'Alleen voor je BTW-belaste werk — de BTW is volledig aftrekbaar.' },
+  { value: 'mixed',         label: 'Allebei',       hint: 'Dient je belaste én je vrijgestelde werk (huur, energie, boekhouder) — de BTW wordt naar verhouding afgetrokken.' },
+  { value: 'direct_exempt', label: 'Vrijgesteld werk', hint: 'Alleen voor je vrijgestelde werk — hierop bestaat geen recht op aftrek.' },
+]
+
+const DEDUCTION_TOAST: Record<VatDeduction, string> = {
+  direct_taxed:  'Toegewezen aan belast werk — BTW volledig aftrekbaar ✓',
+  mixed:         'Toegewezen aan allebei — BTW naar verhouding ✓',
+  direct_exempt: 'Toegewezen aan vrijgesteld werk — geen aftrek ✓',
+}
+
+/**
+ * [VRIJGESTELD] "What does this cost serve?" — the control that decides how much of a purchase's
+ * BTW is deductible.
+ *
+ * EXPORTED, and rendered by the caller only when the owner has declared exempt turnover. Split out
+ * of the row body for a reason the render gate makes concrete: inside the row it lives behind
+ * `expanded`, which only a click opens — so one static render of the screen can never reach it,
+ * and a test asserting it "renders" there would be asserting nothing. As its own component it is
+ * called directly, with each of its three states.
+ *
+ * `null` renders as 'mixed' rather than as unanswered, because null IS mixed as far as the engine
+ * is concerned (vat-exemption.ts): showing an empty control would ask the owner to decide
+ * something the aangifte has already decided, and hide which way.
+ */
+export function CostAttribution({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (value: VatDeduction) => void
+}) {
+  const current = DEDUCTION_CHOICES.some(c => c.value === value) ? (value as VatDeduction) : 'mixed'
+  return (
+    <div style={{ marginBottom: 16, padding: '12px 14px', background: 'white', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}` }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', marginBottom: 8, fontFamily: FONT }}>
+        Waarvoor is deze kost?
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {DEDUCTION_CHOICES.map(choice => {
+          const active = current === choice.value
+          return (
+            <button
+              key={choice.value}
+              onClick={() => onChange(choice.value)}
+              title={choice.hint}
+              style={{
+                padding: '7px 13px', borderRadius: R.full, cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                border: active ? 'none' : `1px solid ${M3.surfaceVariant}`,
+                background: active ? M3.primary : 'white',
+                color: active ? M3.onPrimary : '#3c4043',
+              }}
+            >
+              {choice.label}
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: '#5F6368', marginTop: 8, lineHeight: 1.45, fontFamily: FONT }}>
+        {DEDUCTION_CHOICES.find(c => c.value === current)?.hint}
+      </div>
+    </div>
+  )
+}
+
 const fmtDateSmart = (s: string | null, thisYear: string) => {
   if (!s) return '—'
   const d = new Date(s)
@@ -145,6 +217,11 @@ interface IncomingRow {
   // Null on legacy rows (forward-only extraction) or when the AI didn't find it.
   vendor_iban: string | null
   payment_reference: string | null
+  // [VRIJGESTELD] What this cost serves, for the right to deduct: 'direct_taxed' (fully
+  // deductible), 'direct_exempt' (not at all) or 'mixed'/null (the pro-rata share). Only read
+  // when the owner declared exempt turnover; absent for everyone else, and absent on every row
+  // until vat_exemption.sql is applied.
+  vat_deduction?: string | null
   // [PAY-SAFE-CONFIRM] UI marker: owner generated a payment QR/details.
   // NOT a financial state — persists across the async pay round-trip so the
   // "Ik heb betaald" confirm CTA survives prepare → leave → pay → return.
@@ -272,7 +349,10 @@ export default function IncomingManageClient({
   totalCount = null,
   readFailed = [], filedQuarters, bookScan = null, readingHints = {},
 }: {
-  profile: { id: string }
+  // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
+  // Optional, because the server reads the profile with select('*') and the column is simply not
+  // there until vat_exemption.sql is applied — absent then, which correctly hides the control.
+  profile: { id: string; vat_exempt_activity?: boolean | null }
   initialInvoices: IncomingRow[]
   // [INVOICE-COUNTER] How many confirmed inkoopfacturen the owner really has (server count).
   // Only used to disclose that this list is capped — never as the counter itself, because it
@@ -315,6 +395,8 @@ export default function IncomingManageClient({
   // an unknown value falls back to 'Alle', and the owner can switch freely after.
   const filterParam = searchParams.get('filter')
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
+  // [VRIJGESTELD] Read once: the control below is per invoice, the declaration is per owner.
+  const exemptOwner = !!profile.vat_exempt_activity
   const [filter, setFilter]             = useState<FilterTab>(
     FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
   )
@@ -1038,6 +1120,41 @@ export default function IncomingManageClient({
   // payment_prepared_at timestamp, never status/amounts. Session client (row
   // belongs to the receiver). Idempotent — re-preparing just refreshes the ts.
   // Skipped if the row is already paid (no marker needed) or already marked.
+  // [VRIJGESTELD] Where the pro-rata split is actually decided.
+  //
+  // Without this control every cost falls back to 'mixed' and gets the ratio — safe, because it
+  // under-claims rather than over-claims, but wrong for the two costs an owner CAN place exactly:
+  // the material bought only for the taxable work (fully deductible) and the one bought only for
+  // the exempt work (not at all). On the dental quarter that difference is €141 of deduction the
+  // owner is entitled to and would otherwise silently lose.
+  //
+  // Written straight through RLS, like markPrepared: this is the owner's own invoice. An
+  // ACCOUNTANT cannot reach it — vat_exemption.sql added this column to
+  // prevent_accountant_amount_changes, so the same trigger that stops them moving an amount stops
+  // them moving the deduction it drives.
+  async function setDeduction(inv: IncomingRow, value: VatDeduction) {
+    // Optimistic, then reverted on failure: the control is a 3-way toggle and a value that
+    // silently snaps back is worse than one that never moved.
+    const previous = inv.vat_deduction ?? null
+    setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: value } : r)))
+    const { error } = await supabase
+      .from('invoices')
+      .update({ vat_deduction: value })
+      .eq('id', inv.id)
+    if (error) {
+      setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: previous } : r)))
+      // [UI-HONESTY] Name the one cause that is actually likely and has a way out, instead of a
+      // generic retry: the column exists only after the migration.
+      showToast(
+        /vat_deduction/.test(error.message)
+          ? 'Toewijzen kan nog niet — de BTW-vrijstellingsmigratie staat nog niet op de database'
+          : 'Toewijzen mislukt — er is niets gewijzigd',
+      )
+      return
+    }
+    showToast(DEDUCTION_TOAST[value])
+  }
+
   async function markPrepared(inv: IncomingRow) {
     if (inv.status !== 'received' || inv.payment_prepared_at) return
     const now = new Date().toISOString()
@@ -2121,6 +2238,13 @@ export default function IncomingManageClient({
                         {inv.payment_date && <InfoLine label="Betaaldatum" value={fmtDate(inv.payment_date)} />}
                         {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
                       </div>
+
+                      {exemptOwner && (
+                        <CostAttribution
+                          value={inv.vat_deduction ?? null}
+                          onChange={(v) => setDeduction(inv, v)}
+                        />
+                      )}
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed

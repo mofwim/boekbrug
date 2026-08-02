@@ -35,6 +35,15 @@ type IncomingRow = ComponentProps<typeof IncomingManageClient>['initialInvoices'
 const COLS =
   'id, invoice_number, client_name, status, accountant_status, direction, invoice_type, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
 
+// [VRIJGESTELD] The cost-attribution column, asked for ONLY by an owner who declared exempt
+// turnover. Two reasons it is not simply appended to COLS above:
+//
+//  · deploy safety — before vat_exemption.sql is applied the column does not exist, and naming a
+//    missing column fails the WHOLE select. That would not be a missing field on this screen, it
+//    would be an empty Crediteuren for everyone, including the owners this feature never touches.
+//  · it is dead weight for them anyway: with no exempt turnover there is nothing to apportion.
+const COLS_VRIJGESTELD = COLS + ', vat_deduction'
+
 export default async function Page({
   searchParams,
 }: {
@@ -51,6 +60,12 @@ export default async function Page({
     .single()
 
   if (!profile) redirect('/login')
+
+  // [VRIJGESTELD] Which column list this render uses — see COLS_VRIJGESTELD. Read off the profile
+  // that was just fetched with select('*'), so a deployment where the migration has not run yet
+  // simply has no such property and lands on the plain COLS.
+  const exemptOwner = !!(profile as { vat_exempt_activity?: boolean | null }).vat_exempt_activity
+  const cols = exemptOwner ? COLS_VRIJGESTELD : COLS
 
   // Confirmed incoming invoices where the current user is the RECEIVER.
   // RLS already scopes to the user; the explicit receiver_id + direction keep
@@ -96,7 +111,7 @@ export default async function Page({
     // itself on every render (sortRows, default 'added_desc'), so the read order costs nothing.
     readOrFlag('openstaande facturen', () => fetchAllRows((from, to) => supabase
       .from('invoices')
-      .select(COLS)
+      .select(cols)
       .eq('receiver_id', user.id)
       .eq('direction', 'incoming')
       .eq('status', 'received')
@@ -108,7 +123,7 @@ export default async function Page({
     readOrFlag('betaalde facturen', async () => {
       const { data, error } = await supabase
         .from('invoices')
-        .select(COLS)
+        .select(cols)
         .eq('receiver_id', user.id)
         .eq('direction', 'incoming')
         .eq('status', 'paid')
@@ -215,7 +230,7 @@ export default async function Page({
   if (focus && !rows.some((r) => r.id === focus)) {
     const { data: focused, error: focusErr } = await supabase
       .from('invoices')
-      .select(COLS)
+      .select(cols)
       .eq('id', focus)
       .eq('receiver_id', user.id)
       .eq('direction', 'incoming')

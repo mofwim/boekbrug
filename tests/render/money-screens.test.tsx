@@ -124,6 +124,59 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
 });
 
+test("[VRIJGESTELD] the cost-attribution control renders each of its three states", async () => {
+  const { CostAttribution } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+
+  // Rendered directly, not through the screen. Inside the row it lives behind `expanded`, which
+  // only a click opens — a static render of the screen never reaches it, so asserting on the
+  // screen would have been a test that passes without touching the code it names.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const render = (value: string | null) =>
+    renderToStaticMarkup(React.createElement(CostAttribution as any, { value, onChange: () => {} }));
+
+  for (const value of ["direct_taxed", "mixed", "direct_exempt", null]) {
+    const html = render(value);
+    assert.match(html, /Waarvoor is deze kost/, `${value ?? "null"}: the question is asked`);
+    // All three choices are always offered — the control is how you CHANGE the answer, so hiding
+    // the others would leave an owner who mis-tapped with no way back.
+    assert.match(html, /Belast werk/, `${value ?? "null"}: the taxed choice is offered`);
+    assert.match(html, /Allebei/, `${value ?? "null"}: the mixed choice is offered`);
+    assert.match(html, /Vrijgesteld werk/, `${value ?? "null"}: the exempt choice is offered`);
+  }
+
+  // The case that matters most: null is what EVERY existing invoice looks like the day the
+  // migration runs, and it must show the default the aangifte is already applying to it — not an
+  // empty control that reads as an unanswered question.
+  assert.match(render(null), /naar verhouding/, "an unclassified cost explains the pro-rata default");
+  assert.equal(render(null), render("mixed"), "null and 'mixed' are the same state, shown the same");
+  // A value from a future migration must not blank the control or drop the explanation.
+  assert.match(render("something_else"), /naar verhouding/, "an unknown value falls back to mixed");
+
+  assert.match(render("direct_taxed"), /volledig aftrekbaar/, "the taxed state says the BTW is fully deductible");
+  assert.match(render("direct_exempt"), /geen recht op aftrek/, "the exempt state says there is no deduction");
+});
+
+test("[VRIJGESTELD] the pay screen is unchanged for an owner without exempt turnover", async () => {
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  const rows = [manageRow({ id: "energie", client_name: "Energie", invoice_number: "E-9" })];
+  const render = (profile: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingManageClient as any, {
+          profile, initialInvoices: rows, totalCount: rows.length, readFailed: [], filedQuarters: [],
+        })),
+    );
+
+  // The 99%: the screen still renders with the new branch compiled into it, and nothing about the
+  // exemption reaches them — not when the column is absent, and not when they answered no.
+  assert.ok(render({ id: "u1" }).length > 1000, "the ordinary screen is still substantial");
+  assert.doesNotMatch(render({ id: "u1" }), /Waarvoor is deze kost/, "an ordinary owner is never asked");
+  assert.doesNotMatch(render({ id: "u1", vat_exempt_activity: false }), /Waarvoor is deze kost/);
+});
+
 test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out of reach", async () => {
   // The failure this guards is a bounded read presented as a complete answer. The pay screen loads
   // every OPEN invoice but only the 200 most recent PAID ones — and a wrongly booked invoice that
