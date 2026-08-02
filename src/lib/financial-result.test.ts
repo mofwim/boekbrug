@@ -783,5 +783,53 @@ console.log("\n— [VRIJGESTELD] turnover the feature cannot classify is MEASURE
   check("invoice-only exempt owner has nothing unclassifiable", invoiceOnly.onclassificeerbareOmzet === 0);
 }
 
+console.log("\n— [VRAAGPOST] the money the result refuses to guess at is NAMED, not dropped —");
+{
+  // Refusing to guess is only half of an honest figure. An owner with uncoded bank debits reads a
+  // resultaat that is not wrong and is not his result either — unless the answer says so.
+  const bank: ResultBankTx[] = [
+    { amount: -1000, category: "kosten", invoice_id: null },   // coded → counted
+    { amount: -3000, category: null, invoice_id: null },        // uncoded debit → named, not counted
+    { amount: 2500, category: null, invoice_id: null },         // uncoded credit → named, not counted
+    { amount: -800, category: null, invoice_id: "inv-1" },      // pays a counted invoice → explained
+  ];
+  const r = computeResult([], bank, []);
+  check("the coded line is the only one in the result", r.kosten === 1000);
+  check("uncoded money OUT is reported", near(r.ongecategoriseerdBankUit, 3000));
+  check("uncoded money IN is reported", near(r.ongecategoriseerdBankIn, 2500));
+  check("an invoice payment is explained, never a vraagpost", near(r.ongecategoriseerdBankUit, 3000));
+
+  // Split, not netted. €2.500 in and €2.500 out is not "nothing missing" — it is two facts.
+  const symmetric = computeResult([], [
+    { amount: 2500, category: null, invoice_id: null },
+    { amount: -2500, category: null, invoice_id: null },
+  ], []);
+  check("equal-and-opposite unexplained money does not cancel to silence",
+    near(symmetric.ongecategoriseerdBankIn, 2500) && near(symmetric.ongecategoriseerdBankUit, 2500));
+
+  // The completeness property: every bank line is either counted, an invoice payment, or named
+  // here. Nothing may fall between the three — that gap is precisely money that vanishes.
+  const mixed: ResultBankTx[] = [
+    { amount: -100, category: "kosten", invoice_id: null },
+    { amount: 250, category: "omzet", invoice_id: null },
+    { amount: -75, category: null, invoice_id: null },
+    { amount: 400, category: null, invoice_id: null },
+    { amount: -900, category: null, invoice_id: "inv-9" },
+    { amount: -50, category: "prive", invoice_id: null },   // counted as neither omzet nor kosten
+  ];
+  const m = computeResult([], mixed, []);
+  const explained = mixed.filter((t) => t.invoice_id).reduce((s, t) => s + Math.abs(t.amount ?? 0), 0);
+  const coded = mixed.filter((t) => !t.invoice_id && t.category).reduce((s, t) => s + Math.abs(t.amount ?? 0), 0);
+  const named = m.ongecategoriseerdBankIn + m.ongecategoriseerdBankUit;
+  const everything = mixed.reduce((s, t) => s + Math.abs(t.amount ?? 0), 0);
+  check("every bank line is counted, explained, or named — none falls between",
+    near(explained + coded + named, everything));
+
+  // And an owner who has coded everything sees zeroes, so the figure is a to-do and not decoration.
+  const tidy = computeResult([], [{ amount: -100, category: "kosten", invoice_id: null }], []);
+  check("a fully coded administration reports no vraagpost",
+    tidy.ongecategoriseerdBankIn === 0 && tidy.ongecategoriseerdBankUit === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
