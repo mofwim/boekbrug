@@ -23,7 +23,7 @@ import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import { PLUS, KLUIS } from '@/lib/plan'
 import { FAIR_USE_LIMITS, formatLimit, fairUseLimit } from '@/lib/fair-use'
-import { BEWAARPLICHT_YEARS, KLUIS_GRACE_MONTHS, eur, KLUIS_PREPAY_YEAR_PRICE_EUR } from '@/lib/bewaarkluis'
+import { BEWAARPLICHT_YEARS, KLUIS_GRACE_MONTHS, eur, KLUIS_PREPAY_YEAR_PRICE_EUR, KLUIS_YEAR_PRICE_EUR, KLUIS_SHUTDOWN_NOTICE_DAYS } from '@/lib/bewaarkluis'
 import { BELOFTE_KOP, BELOFTE_KOP_2, BELOFTE_UITLEG } from '@/lib/belofte'
 import SubscribeButton from './SubscribeButton'
 
@@ -222,13 +222,36 @@ export default async function PrijzenPage({
             knop per jaar te exporteren als ZIP met index. Dat kost{' '}
             <strong>{eur(KLUIS_PREPAY_YEAR_PRICE_EUR)} per resterend bewaarjaar</strong>, in één keer
             vooruit. Sluit je vandaag je zaak, dan is dat {eur(BEWAARPLICHT_YEARS * KLUIS_PREPAY_YEAR_PRICE_EUR)}{' '}
-            voor de hele termijn.
+            voor de hele termijn — is je jongste boekjaar ouder, dan zijn het minder jaren en dus
+            minder geld. Liever niet alles in één keer? Dan kan het ook{' '}
+            <strong>{eur(KLUIS_YEAR_PRICE_EUR)} per jaar</strong>.
+          </p>
+          {/* [KLUIS-UITGANG] Voorwaarden §5.7.6, hier op de verkooppagina.
+              De vraag die iedereen stelt bij zeven jaar vooruitbetalen aan een jong bedrijf is
+              "en als jullie ermee stoppen?". Het antwoord stond alleen in de voorwaarden, waar
+              een twijfelaar het nooit leest — terwijl het het sterkste argument is dat wij hebben.
+              Alle getallen komen uit bewaarkluis.ts, zodat pagina en voorwaarden niet uit elkaar
+              kunnen lopen. */}
+          <p style={{ fontSize: 15.5, color: '#3c4043', margin: '0 0 14px', lineHeight: 1.65, maxWidth: 660 }}>
+            <strong>En als wij ermee stoppen?</strong> Zeven jaar vooruit betalen is alleen eerlijk
+            met een uitgang die vooraf vastligt. Stoppen wij met de Bewaarkluis, dan kondigen wij
+            dat <strong>minstens {KLUIS_SHUTDOWN_NOTICE_DAYS} dagen vooraf</strong> aan, krijgt
+            iedere klant <strong>automatisch zijn volledige archief</strong>, en betalen wij het
+            niet-verbruikte deel naar rato terug. Dat staat zo in de voorwaarden, niet alleen hier.
           </p>
           <p style={{ fontSize: 14, color: '#5f6368', margin: 0, lineHeight: 1.65, maxWidth: 660 }}>
             <strong>Wat wij niet verkopen:</strong> wij nemen je bewaarplicht niet over — die blijft
             wettelijk van jou. Wij zijn je tweede exemplaar, nooit je enige; download je eigen kopie
             ook. En de eerste <strong>{KLUIS_GRACE_MONTHS} maanden na je opzegging bewaren wij alles
             gratis</strong>, met een waarschuwing per e-mail ruim vóór er ooit iets weggaat.{' '}
+            {/* [KLUIS-10-JAAR] Voorwaarden §5.7.3. De kluis rekent met 7 jaar, maar voor onroerend
+                goed is de wettelijke termijn 10. Een dienst die op naleving wordt verkocht mag die
+                uitzondering niet weglaten: wie een pand in zijn administratie heeft en op onze
+                7 afgaat, staat in jaar 8 met lege handen — precies het scenario dat wij beloven
+                te voorkomen. */}
+            Eén uitzondering: heb je <strong>onroerend goed</strong> in je administratie, dan geldt
+            wettelijk <strong>10 jaar</strong> in plaats van {BEWAARPLICHT_YEARS}. De kluis rekent
+            met {BEWAARPLICHT_YEARS}; houd die langere termijn dan zelf aan.{' '}
             <Link href="/voorwaarden" style={{ color: '#1A73E8' }}>Voorwaarden §5.7</Link>.
           </p>
         </section>
