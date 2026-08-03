@@ -149,9 +149,13 @@ export default async function PrijzenPage({
             </div>
             <SubscribeButton />
             <p style={{ fontSize: 13.5, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
+              {/* [LIMIET-ZIN] `ai.free`, niet formatLimit(): die geeft "50 per maand" terug, en in
+                  een zin die zelf al "per maand" zegt las dat als "meer dan 50 per maand documenten
+                  per maand". formatLimit hoort thuis waar een grens LOS staat (de tabel hieronder,
+                  het verbruiksscherm), niet middenin een lopende zin. */}
               Alleen nodig als je structureel boven het eerlijk gebruik uitkomt — meer dan{' '}
-              {formatLimit(ai, 'free')} documenten per maand door de AI laten lezen, bijvoorbeeld.
-              Plus verruimt elke grens naar {formatLimit(ai, 'plus')}.
+              {ai.free} documenten per maand door de AI laten lezen, bijvoorbeeld. Plus verruimt
+              elke grens naar {formatLimit(ai, 'plus')}.
             </p>
           </section>
 
@@ -266,7 +270,7 @@ export default async function PrijzenPage({
             <Faq q="Is het echt gratis, of is dit een proefperiode?">
               Echt gratis. Er is <strong>geen proefperiode</strong> en er loopt geen klok. Je laat
               geen betaalgegevens achter, dus er kan ook nooit iets worden afgeschreven. Wat er is,
-              is een eerlijk gebruik: {formatLimit(ai, 'free')} documenten per maand door de AI laten
+              is een eerlijk gebruik: {ai.free} documenten per maand door de AI laten
               lezen, en {FAIR_USE_LIMITS.length - 1} andere grenzen die op{' '}
               <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>één pagina</Link> staan.
             </Faq>
