@@ -172,6 +172,29 @@ export function normalizeRef(s: string): string {
  * Does the invoice number appear in the transaction's reference/description?
  * Guards against trivially short numbers (e.g. "1") matching everything.
  */
+/**
+ * [CREDIT-NETTING] Is this pairing a credit note being NETTED against a payment, rather than
+ * refunded by one?
+ *
+ * A purchase credit note refunded in cash arrives as money IN; deducted from a payment run it
+ * rides along on money OUT. This names the second shape — the one the direction guard in
+ * isPlausibleMatch would otherwise reject, and the one Dutch wholesale actually uses.
+ *
+ * It is deliberately separate from the referenceMatches test that accompanies it. This says WHAT
+ * the pairing is; the reference says whether the bank vouched for it. Only both together let a
+ * credit note through, and this half alone decides something else: a netted credit note is by
+ * definition ONE PART of a settlement that has at least one invoice in it too, so it must never
+ * become the single 'auto' answer for a payment. Booking € 819,95 onto a −€ 24,25 credit note
+ * unattended would be worse than the bug this whole rule exists to remove.
+ */
+export function isNettedCreditNote(
+  tx: Pick<BankTransaction, "amount">,
+  inv: Pick<InvoiceForMatching, "total_inc_btw" | "direction">,
+): boolean {
+  if (!((inv.total_inc_btw ?? 0) < 0)) return false;
+  return inv.direction === (tx.amount > 0 ? "outgoing" : "incoming");
+}
+
 export function referenceMatches(
   tx: Pick<BankTransaction, "reference" | "description">,
   invoiceNumber: string | null
@@ -410,7 +433,30 @@ export function isEligible(
     tx.amount > 0
       ? (isCreditNote ? "incoming" : "outgoing")
       : (isCreditNote ? "outgoing" : "incoming");
-  if (inv.direction !== requiredDirection) return false;
+  // [CREDIT-NETTING] …but a credit note is settled two ways, and the rule above only knows one.
+  //
+  // It knows the REFUND: the supplier sends the money back, so an incoming creditnota is matched
+  // by a credit (money in). True, and rare. What Dutch wholesale actually does is NET it — the
+  // credit is deducted from the next payment run and never travels on its own. Dutch Sweets billed
+  // RE0801378 at € 871,40, issued three credit notes of −24,25, −20,39 and −6,81, and one debit of
+  // € 819,95 left the account with all four numbers printed in its omschrijving. 871,40 − 51,45 =
+  // 819,95, to the cent.
+  //
+  // Against that debit every credit note failed the guard above — it demands 'outgoing' for them
+  // and they are purchase documents. So one slot was built instead of four, the netting in
+  // reconcileBatch had nothing to net, and the card offered a DEELBETALING of € 819,95 with
+  // "€ 51,45 blijft open" — the € 51,45 being, exactly, the three credit notes it had just refused
+  // to look at. Confirming it leaves a debt that will never be paid because it was already
+  // settled, beside three credits that will never be applied.
+  //
+  // The relaxation is bounded by evidence, not by a guess: the payment's own text must NAME this
+  // document. referenceMatches is the identity rule this file already trusts everywhere, with its
+  // boundary guards intact ("MF26" must not match "MF260"), so a credit note can never drift onto
+  // an unrelated debit — the bank has to have printed its number. Where nothing is named, nothing
+  // changes.
+  if (inv.direction !== requiredDirection) {
+    if (!(isNettedCreditNote(tx, inv) && referenceMatches(tx, inv.invoice_number))) return false;
+  }
 
   // [BANK-MATCH-STRICT] Date sanity: a payment cannot happen meaningfully BEFORE
   // the invoice was issued. A €323,68 monthly fee invoice dated 15-06 must NOT
@@ -765,12 +811,23 @@ export function matchTransactions(
 ): MatchResult {
   const opts: MatchOptions = { ...DEFAULT_OPTIONS, ...options };
   const matches: TransactionMatch[] = [];
+  // [CREDIT-NETTING] Aligned with `matches`: the netted-creditnota ids of each transaction. It is
+  // kept as a parallel array rather than as a field because the greedy assignment pass below
+  // RE-DERIVES every outcome from scratch, and a guard that lives only in the first pass is a
+  // guard that does not exist — which is exactly how the first version of this let a lone
+  // creditnota through to 'auto' with 0.97 confidence.
+  const nettedPerTx: Array<Set<string>> = [];
 
   for (const tx of transactions) {
     const candidates: MatchCandidate[] = [];
+    // [CREDIT-NETTING] Which of this line's candidates are credit notes riding along on a payment
+    // rather than being refunded by one. Collected here because this is the only place that holds
+    // both the transaction and the invoice row; the auto-decision below has candidates only.
+    const nettedIds = new Set<string>();
 
     for (const inv of invoices) {
       if (!isEligible(tx, inv)) continue;
+      if (isNettedCreditNote(tx, inv)) nettedIds.add(inv.id);
       const { confidence, signals, reason, nameSim } = scorePair(tx, inv, opts);
       if (confidence < opts.choiceThreshold) continue;
       // [PARTIAL-PAY] Export what's already settled and what's left, so the confirm UI can
@@ -802,7 +859,12 @@ export function matchTransactions(
     let best: MatchCandidate | null = null;
 
     if (trimmed.length > 0) {
-      if (topReachesAuto(trimmed, opts)) {
+      // [CREDIT-NETTING] A netted credit note is one PART of a settlement — the payment it rides
+      // on also carries at least one invoice. It can therefore never be the whole answer, so it
+      // never becomes an unattended booking however well it scores. It stays a listed candidate
+      // and the owner confirms the set. (A credit note genuinely REFUNDED by its own transaction
+      // is not netted, is not in this set, and reaches 'auto' exactly as before.)
+      if (topReachesAuto(trimmed, opts) && !nettedIds.has(trimmed[0].invoiceId)) {
         outcome = "auto";
         best = trimmed[0];
       } else {
@@ -811,6 +873,7 @@ export function matchTransactions(
     }
 
     matches.push({ transaction: tx, outcome, best, candidates: trimmed });
+    nettedPerTx.push(nettedIds);
   }
 
   // [BANK-MATCH-STRICT] One-to-one guard: a single invoice must not be suggested
@@ -848,7 +911,9 @@ export function matchTransactions(
     // Re-derive outcome from the remaining free candidates.
     const top = free[0];
 
-    if (topReachesAuto(free, opts, claimedAway)) {
+    // [CREDIT-NETTING] Same rule as the first pass: a creditnota riding along on a payment is a
+    // PART, never the whole answer, so it stays a human choice however well it scores.
+    if (topReachesAuto(free, opts, claimedAway) && !(nettedPerTx[i]?.has(top.invoiceId) ?? false)) {
       m.outcome = "auto";
       m.best = top;
       claimed.add(top.invoiceId); // auto → this invoice is taken

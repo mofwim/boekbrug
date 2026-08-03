@@ -7,6 +7,7 @@ import {
   amountMatches,
   dateProximityScore,
   isEligible,
+  isNettedCreditNote,
   isFullyCovered,
   bankLineFullyApplied,
   isStrongNameIdentity,
@@ -863,6 +864,87 @@ console.log("\n— [BANK-CENTS-EXACT] the one-cent tolerance is deterministic, n
   check("two cents off is still NOT a match", !amountMatches(-242, 241.98, 0.01));
   check("exact stays exact", amountMatches(-242, 242, 0.01));
   check("a wider epsilon still means what it says (0.02 → 2 cents)", amountMatches(-242, 241.98, 0.02));
+}
+
+console.log("\n— [CREDIT-NETTING] a creditnota deducted from a payment run, not refunded —");
+{
+  // The real line. Dutch Sweets billed RE0801378 at € 871,40, issued three credit notes, and one
+  // debit of € 819,95 left the account with all four numbers in its omschrijving:
+  //   871,40 − 24,25 − 20,39 − 6,81 = 819,95, to the cent.
+  // Before this rule the direction guard rejected every credit note against a debit, so ONE slot
+  // was built, reconcileBatch had nothing to net, and the card offered a deelbetaling of € 819,95
+  // with "€ 51,45 blijft open" — € 51,45 being exactly the three credit notes it had refused.
+  const desc = "RE0801378 , CR0300510 , CR0300781 , CR0300797";
+  const tx: BankTransaction = {
+    date: "2026-06-17", amount: -819.95, currency: "EUR", description: desc,
+    counterpartName: "Dutch Sweets Company B.V.", counterpartIban: "NL65RABO0171136276",
+    reference: null, transactionId: "t-sweets", rawLine: "",
+  };
+  const doc = (n: string, total: number, d: string): InvoiceForMatching => ({
+    id: n, invoice_number: n, total_inc_btw: total, amount_paid: 0, invoice_date: d, due_date: d,
+    client_name: "Dutch Sweets Company B.V.", direction: "incoming", status: "received",
+    accountant_status: null, vendor_iban: "NL65RABO0171136276",
+  });
+  const boeken = [
+    doc("RE0801378", 871.4, "2026-03-12"), doc("CR0300510", -24.25, "2026-03-12"),
+    doc("CR0300781", -20.39, "2026-04-23"), doc("CR0300797", -6.81, "2026-04-24"),
+  ];
+  const got = matchTransactions([tx], boeken).matches[0];
+  const numbers = got.candidates.map((c) => c.invoiceNumber).sort();
+  check("all four documents are candidates for the one debit",
+    numbers.join(",") === "CR0300510,CR0300781,CR0300797,RE0801378");
+  // The whole point: their SIGNED sum is the payment. If a future change silently drops one, this
+  // is the assertion that notices — a count alone would not.
+  const som = got.candidates.reduce((t, c) => t + (c.amount ?? 0), 0);
+  check("and their signed sum is the bank amount to the cent", Math.abs(som - 819.95) < 0.005);
+
+  // The bank must have VOUCHED for it. An identical credit note the payment does not name stays
+  // out — otherwise a credit note would drift onto any debit from that supplier.
+  const ongenoemd = matchTransactions(
+    [{ ...tx, description: "RE0801378", transactionId: "t-quiet" }],
+    boeken,
+  ).matches[0];
+  check("a creditnota the payment does not name is NOT a candidate",
+    ongenoemd.candidates.every((c) => (c.amount ?? 0) > 0));
+
+  // A netted creditnota is one PART of a settlement, so it must never be booked unattended —
+  // however well it scores. Its own amount quoted and matched exactly is the strongest case there
+  // is, and it still has to stay a human choice.
+  const alleen = matchTransactions(
+    [{ ...tx, amount: -24.25, description: "CR0300510", transactionId: "t-solo" }],
+    [boeken[1]],
+  ).matches[0];
+  check("a netted creditnota never reaches 'auto' on its own",
+    alleen.outcome !== "auto" && alleen.candidates.length === 1);
+
+  // And the REFUND path is untouched: money actually coming back for a credit note still matches,
+  // and still auto-books. That is the case the original guard was written for.
+  const terugbetaling = matchTransactions(
+    [{ ...tx, amount: 24.25, description: "Creditnota CR0300510", transactionId: "t-refund" }],
+    [boeken[1]],
+  ).matches[0];
+  check("a genuine refund of a creditnota still matches", terugbetaling.candidates.length === 1);
+  check("and is still allowed to auto-book", terugbetaling.outcome === "auto");
+}
+
+console.log("\n— [CREDIT-NETTING] the predicate names the shape, nothing more —");
+{
+  const debet = { amount: -100 };
+  const credit = { amount: 100 };
+  const inkoopCredit = { total_inc_btw: -25, direction: "incoming" as const };
+  const inkoopFactuur = { total_inc_btw: 250, direction: "incoming" as const };
+  const verkoopCredit = { total_inc_btw: -25, direction: "outgoing" as const };
+
+  check("purchase creditnota on a debit → netted", isNettedCreditNote(debet, inkoopCredit));
+  check("purchase creditnota on a credit → a refund, not netted", !isNettedCreditNote(credit, inkoopCredit));
+  check("sales creditnota on a credit → netted", isNettedCreditNote(credit, verkoopCredit));
+  check("sales creditnota on a debit → a refund, not netted", !isNettedCreditNote(debet, verkoopCredit));
+  // An ordinary invoice is never "netted" whichever way the money went — the rule must not become
+  // a second, looser direction guard for normal bills.
+  check("an ordinary invoice is never netted, on a debit", !isNettedCreditNote(debet, inkoopFactuur));
+  check("an ordinary invoice is never netted, on a credit", !isNettedCreditNote(credit, inkoopFactuur));
+  check("a zero total is not a creditnota", !isNettedCreditNote(debet, { total_inc_btw: 0, direction: "incoming" }));
+  check("a null total is not a creditnota", !isNettedCreditNote(debet, { total_inc_btw: null, direction: "incoming" }));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
