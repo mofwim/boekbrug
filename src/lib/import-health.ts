@@ -31,6 +31,10 @@
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 // [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
 import { ibanChangeReason } from '@/lib/iban-change'
+// [CREDIT-PREFIX-GATE] One shared list of credit prefixes. A second copy here would drift from the
+// one the payment screen reads, and two screens disagreeing about what a credit note is is how the
+// same money goes the wrong way twice.
+import { looksLikeCreditnotaByNumber, numberPrefix } from '@/lib/creditnota-signal'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
@@ -64,6 +68,10 @@ export interface ImportHealth {
     // [MULTI-INVOICE] The uploaded file looks like it holds SEVERAL different invoices. Only one
     // of them was read; the others exist nowhere. Never auto-book such a row, and tell the owner.
     multipleInvoices: boolean
+    // [CREDIT-PREFIX-GATE] The document NUMBER carries a credit marker (CR…, CN…) while the row is
+    // booked as a debt. Not a verdict — a refusal to let it skip the human. See the function's
+    // header in creditnota-signal.ts for why this bar is lower than the sign-flip bar.
+    creditPrefix: boolean
   }
 }
 
@@ -194,6 +202,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     possibleDuplicate: false,
     ibanChanged: false,
     multipleInvoices: false,
+    creditPrefix: false,
   }
 
   const fc = inv.field_confidence
@@ -392,8 +401,29 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     }
   }
 
+  // ── [CREDIT-PREFIX-GATE] Credit-note axis ────────────────────────────────
+  // The ONE deterministic credit check available at import time. Every other one in this codebase
+  // asks the model (is_credit_note, document_kind) — and CREDITFACTUUR CR0301267, which prints its
+  // total as € -33,87, came back is_credit_note=false with a breakdown that reconciles to the cent.
+  // It was 'clean' on every axis above, so it auto-advanced: booked as a € 33,87 debt, its btw
+  // added to the reclaim instead of subtracted, with no human in the loop to notice.
+  //
+  // This does not decide that it IS a credit note — the number is evidence, not proof, and the sign
+  // stays the owner's to declare. It decides that nobody may be skipped while the question is open.
+  if (looksLikeCreditnotaByNumber({
+    invoiceNumber: inv.invoice_number,
+    totalIncBtw: inv.total_inc_btw,
+    invoiceType: inv.invoice_type,
+  })) {
+    flags.creditPrefix = true
+    reasons.push(
+      `het nummer begint met ${numberPrefix(inv.invoice_number)} — controleer of dit een creditnota is; ` +
+      'die hoort met een minbedrag in de boeken'
+    )
+  }
+
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate || flags.ibanChanged || flags.multipleInvoices
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate || flags.ibanChanged || flags.multipleInvoices || flags.creditPrefix
       ? 'needs-review'
       : 'clean'
 

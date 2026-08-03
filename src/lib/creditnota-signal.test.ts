@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict, asCreditAmounts,
-  creditStance, payableAsDebt,
+  creditStance, payableAsDebt, looksLikeCreditnotaByNumber,
 } from "./creditnota-signal";
 
 /** The real case: this wholesaler sends CR credit notes alongside RE invoices. */
@@ -280,4 +280,51 @@ test("[CREDIT-SAFE] answering 'ja' makes the row payable-free and quiet in one s
     [-31.07, -2.8, -33.87],
     "the paper's own -33,87",
   );
+});
+
+// ─── [CREDIT-PREFIX-GATE] The number alone, and only to hold the human in the loop ────────────
+// A weaker test than looksLikeCreditnota on purpose: it feeds the auto-advance gate, where the
+// question is "may nobody look at this?", not "shall we flip the sign?".
+
+test("[CREDIT-PREFIX-GATE] a credit-numbered row booked as a debt is held, with no contrast needed", () => {
+  // No sibling RE… number anywhere: requirement 2 of looksLikeCreditnota is not met and it stays
+  // silent — correctly, it would flip a sign. This one still holds the row for a glance.
+  assert.equal(
+    looksLikeCreditnotaByNumber({ invoiceNumber: "CR0301267", totalIncBtw: 33.87, invoiceType: "factuur" }),
+    true,
+  );
+  assert.equal(
+    looksLikeCreditnota({ invoiceNumber: "CR0301267", totalIncBtw: 33.87, invoiceType: "factuur", vendorNumbers: ["CR0301267"] }).suspected,
+    false,
+    "the sign-flip signal stays silent — the two bars are deliberately different",
+  );
+});
+
+test("[CREDIT-PREFIX-GATE] silent once the question is settled", () => {
+  // Already typed as a credit note, or already stored negative: the row behaves as a credit and
+  // has nothing left to ask. Without this it would wear a permanent amber badge for being correct.
+  for (const settled of [
+    { invoiceNumber: "CR0301267", totalIncBtw: 33.87, invoiceType: "creditnota" },
+    { invoiceNumber: "CR0301267", totalIncBtw: -33.87, invoiceType: "factuur" },
+  ]) {
+    assert.equal(looksLikeCreditnotaByNumber(settled), false, JSON.stringify(settled));
+  }
+});
+
+test("[CREDIT-PREFIX-GATE] quiet on everything that merely starts with letters", () => {
+  // The false-positive side, and the one that costs the owner attention rather than money. The
+  // prefix list is short on purpose (no bare "C", no "KR"); these must all pass straight through.
+  for (const n of [
+    "RE0803119", "2033161", "CAMERA-1784373759249", "F-2026-0042",
+    "CREM-2024-001",   // the leading ALPHA run is "CREM", not "CRE"
+    "C-9931",          // a bare C is not on the list, and must not become one
+    "KR-2026-14",      // "krediet"… or an article range. Too ambiguous to cost a tap.
+    "", "   ",
+  ]) {
+    assert.equal(
+      looksLikeCreditnotaByNumber({ invoiceNumber: n, totalIncBtw: 121, invoiceType: "factuur" }),
+      false,
+      `${JSON.stringify(n)} must not be read as a credit number`,
+    );
+  }
 });

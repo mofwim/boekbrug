@@ -53,6 +53,44 @@ export function numberPrefix(raw: string | null | undefined): string {
  */
 const CREDIT_PREFIXES = new Set(["CR", "CN", "CRN", "CRED", "CREDIT", "CRE"]);
 
+/**
+ * Does this document's NUMBER carry a credit marker, while the row is still booked as a debt?
+ *
+ * ── WHY THE WEAKER TEST EXISTS BESIDE THE STRONGER ONE ──
+ * looksLikeCreditnota below demands a second thing — the same supplier demonstrably using another
+ * prefix for its ordinary invoices — and it is right to, because it feeds a screen that offers to
+ * FLIP A SIGN. A wrong flip turns a real debt into a credit, you underpay, and you find out at the
+ * dunning letter.
+ *
+ * This one feeds a different decision, and the difference is the whole point: whether a human is
+ * allowed to be SKIPPED. Nothing here books, flips or decides anything about money; it only refuses
+ * to let a document numbered CR… pass straight into the books with nobody looking at it.
+ *
+ * That decision has no symmetric risk. Auto-booking a credit note as a debt is silent and lands in
+ * the aangifte — the amount counts as money owed and its btw is ADDED to what you reclaim instead
+ * of subtracted, and no screen ever asked. Holding one ordinary CR-numbered invoice for a glance
+ * costs a tap. So the bar to SKIP the human is lower than the bar to flip a sign, deliberately.
+ *
+ * It is also the only deterministic handle there is at import time. Every other credit-note defence
+ * in this codebase rests on the model's own is_credit_note — and CREDITFACTUUR CR0301267, printed
+ * "Totaal bedrag (EUR) : € -33,87", came back with is_credit_note false, a clean breakdown and a
+ * confident read. It cleared every gate and auto-booked as a € 33,87 debt.
+ *
+ * Silent once the question is settled: a row already typed 'creditnota', or already stored negative,
+ * behaves as a credit and has nothing left to ask. Without that it would wear a permanent amber
+ * badge for being correct.
+ */
+export function looksLikeCreditnotaByNumber(input: {
+  invoiceNumber: string | null | undefined;
+  totalIncBtw: number | null | undefined;
+  invoiceType: string | null | undefined;
+}): boolean {
+  if (input.invoiceType === "creditnota") return false;
+  const total = Number(input.totalIncBtw ?? 0);
+  if (Number.isFinite(total) && total < 0) return false;
+  return CREDIT_PREFIXES.has(numberPrefix(input.invoiceNumber));
+}
+
 export type CreditnotaSignal = {
   /** Certain enough to have the owner look; never certain enough to book it ourselves. */
   suspected: boolean;
