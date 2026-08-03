@@ -1,0 +1,75 @@
+// [ALARM] Pure node test — run: npx tsx --test src/lib/alarm-gates.test.ts
+//
+// WHY THIS TEST EXISTS
+//
+// Sentry is installed and correctly wired: instrumentation.ts exports onRequestError, so a route
+// that CRASHES is seen. This product is built not to crash. Its whole design is gates that refuse
+// politely — a read that could not run, a duplicate check that did not happen, a booking held back,
+// an invariant left bent. Each one catches the failure, tells the owner in Dutch, and logs a line.
+//
+// No exception is thrown, so Sentry sees nothing, and the line goes to a runtime log nobody opens.
+// That is the same shape this codebase spends its comments on: a problem noticed and told to no one.
+//
+// A handful of those states are ones the code itself calls impossible — "the exact state this
+// design promises never exists", "amount_paid drift", "reminders are DISABLED". Those must reach a
+// person. This gate holds that wiring, because nothing else can: a console.error that should have
+// been an alarm looks exactly like a console.error that is correctly just a log.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+/** The failures whose own words say the state must not exist. Each must go through the channel. */
+const MUST_ALARM: Array<{ file: string; needle: string }> = [
+  { file: "src/lib/bank-auto-confirm.ts", needle: "pay rollback FAILED" },
+  { file: "src/app/api/bank/delete-statement/route.ts", needle: "unhealed amount_paid drift" },
+  { file: "src/app/api/cron/reminders/route.ts", needle: "reminders are DISABLED" },
+  { file: "src/lib/iban-change.ts", needle: "supplier lookup failed" },
+  { file: "src/lib/invoice-numbering.ts", needle: "numbering template read failed" },
+];
+
+test("[ALARM] the failures the code calls impossible are reported, not just logged", () => {
+  const missing: string[] = [];
+  for (const { file, needle } of MUST_ALARM) {
+    const src = readFileSync(file, "utf8");
+    const at = src.indexOf(needle);
+    assert.notEqual(at, -1, `${file} no longer contains "${needle}" — this gate has lost its subject`);
+    // Look BACKWARDS from the message: the call it belongs to must be the reporting one, not a bare
+    // console.error. 600 chars covers the helper's argument object comfortably.
+    const around = src.slice(Math.max(0, at - 600), at + 200);
+    if (!around.includes("reportHandledFailure")) missing.push(`${file} → "${needle}"`);
+  }
+  assert.deepEqual(
+    missing, [],
+    `these failures still only reach a log file:\n` +
+      missing.map((m) => `  · ${m}`).join("\n") +
+      `\n\nUse reportHandledFailure() from @/lib/report-handled. A caught error that nobody is told ` +
+      `about is the same silence the gate was written to remove, one layer further out.`,
+  );
+});
+
+test("[ALARM] the channel still logs as well as reports", () => {
+  // The console line is not redundant: it is what a runtime log and a local debug session show. If
+  // reporting ever replaced logging, every existing way of reading these would go dark at once.
+  const helper = readFileSync("src/lib/report-handled.ts", "utf8");
+  assert.match(helper, /console\.error\(/, "the helper must keep writing the log line");
+  assert.match(helper, /captureMessage\(/, "…and must actually send it to Sentry");
+});
+
+test("[ALARM] reporting can never become the second failure", () => {
+  // These call sites are all inside a recovery path that has just handled something correctly. If
+  // Sentry itself is unreachable, that must not turn a correct refusal into a crash.
+  const helper = readFileSync("src/lib/report-handled.ts", "utf8");
+  const at = helper.indexOf("captureMessage");
+  assert.notEqual(at, -1);
+  assert.match(helper.slice(Math.max(0, at - 200), at + 400), /catch\s*\{/, "the send must be wrapped");
+});
+
+test("[ALARM] Sentry is wired for the runtimes these run in", () => {
+  // The reporting channel assumes an initialised Sentry. Server code runs through instrumentation.ts;
+  // if onRequestError or the server config went away, every alarm above would be a silent no-op.
+  const instr = readFileSync("src/instrumentation.ts", "utf8");
+  assert.match(instr, /onRequestError/, "route-handler errors must still be captured");
+  const server = readFileSync("sentry.server.config.ts", "utf8");
+  assert.match(server, /dsn:/, "the server runtime must still be initialised");
+});

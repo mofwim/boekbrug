@@ -30,6 +30,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk } from '@/lib/supplier-registry'
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = SupabaseClient<any>
 
@@ -185,9 +187,14 @@ export async function detectIbanChange(
     // which on THIS check means the owner pays whatever account the paper prints, without ever
     // being told the app could not verify it. The import still proceeds (a supplier-registry
     // outage may not stop the books), but it proceeds SAYING so.
-    console.error('[IBAN-CHECK-HONEST] supplier lookup failed — invoice flagged as unverified', {
-      userId,
-      error: e instanceof Error ? e.message : String(e),
+    // [ALARM] The one check standing between the owner and a redirected payment did not run. The
+    // invoice is flagged on screen, which is right — and a flag the owner may click past is not the
+    // same as us knowing our fraud check is down.
+    reportHandledFailure({
+      tag: 'IBAN-CHECK-HONEST',
+      message: 'supplier lookup failed — invoice flagged as unverified',
+      severity: 'gate-unavailable',
+      context: { userId, error: e instanceof Error ? e.message : String(e) },
     })
     return { status: 'unavailable' }
   }

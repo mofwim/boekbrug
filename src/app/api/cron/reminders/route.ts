@@ -44,6 +44,8 @@ import { sendInvoiceReminder } from "@/lib/email";
 import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled"
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -94,7 +96,14 @@ export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
-    console.error("[CRON-REMINDERS] CRON_SECRET is not configured — reminders are DISABLED.");
+    // [ALARM] Not an error in a run — a whole feature standing still. Every night it answers 401,
+    // every night nothing is dunned, and the only trace is a log line in a job nobody opens. An
+    // owner discovers it when a customer has not paid for three months.
+    reportHandledFailure({
+      tag: "CRON-REMINDERS",
+      message: "CRON_SECRET is not configured — reminders are DISABLED",
+      severity: "feature-off",
+    });
     return NextResponse.json({ error: "cron_secret_not_configured" }, { status: 401 });
   }
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {

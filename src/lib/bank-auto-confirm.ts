@@ -33,6 +33,8 @@ import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-r
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
 import { getVatScheme } from "./vat-scheme";
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled"
 
 export interface AutoConfirmed {
   transactionId: string;
@@ -337,8 +339,13 @@ export async function runBankAutoConfirm(args: {
         .eq("id", invoiceId)
         .eq("status", "paid");
       if (rbErr) {
-        console.error("[BANK-AUTO-CONFIRM] pay rollback FAILED — invoice may be paid with no bank link", {
-          userId, invoiceId, txId, error: rbErr.message,
+        // [ALARM] The code above calls this "the exact state this design promises never exists".
+        // A promise nobody is told has been broken is not a promise — this one wakes someone.
+        reportHandledFailure({
+          tag: "BANK-AUTO-CONFIRM",
+          message: "pay rollback FAILED — invoice may be paid with no bank link",
+          severity: "data-integrity",
+          context: { userId, invoiceId, txId, error: rbErr.message },
         });
       }
       continue;

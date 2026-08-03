@@ -29,6 +29,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { formatInvoiceNumber } from './invoice-template'
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 
 export type InvoiceNumberType = 'factuur' | 'creditnota' | 'pro_forma'
 
@@ -76,7 +78,14 @@ async function resolveFormat(
       .maybeSingle()
 
     if (profErr) {
-      console.error('[NUMBER-READ-HONEST] numbering template read failed — refusing to number', { userId, type, error: profErr.message })
+      // [ALARM] The owner cannot invoice at all while this lasts, and the app answers with a 500
+      // that says nothing about why. Article 35 makes refusing right; it does not make it quiet.
+      reportHandledFailure({
+        tag: 'NUMBER-READ-HONEST',
+        message: 'numbering template read failed — refusing to number',
+        severity: 'gate-unavailable',
+        context: { userId, type, error: profErr.message },
+      })
       return null
     }
 
