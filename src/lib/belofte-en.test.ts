@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { BELOFTE_STAPPEN, BELOFTE_GERUST } from "./belofte";
+import { BELOFTE_STAPPEN, BELOFTE_GERUST, PROBLEEM_KOP, PROBLEEM_1, PROBLEEM_2 } from "./belofte";
 import {
   PROMISE_STEPS,
   PROMISE_REASSURE,
@@ -16,6 +16,9 @@ import {
   PROMISE_HEAD_2,
   PROMISE_EXPLAIN,
   PROMISE_OTHER_LANGUAGES,
+  PROBLEM_HEAD,
+  PROBLEM_1,
+  PROBLEM_2,
 } from "./belofte-en";
 
 test("the same number of steps — a step added in one language must land in both", () => {
@@ -50,4 +53,24 @@ test("readers of neither language are pointed at the browser, not at a half-made
   // We do not publish machine-translated Arabic or Turkish and present it as ours. Saying "use
   // your browser" is honest: the reader knows whose translation they are reading.
   assert.match(PROMISE_OTHER_LANGUAGES, /browser/i);
+});
+
+test("[PROBLEEM] the problem block exists in BOTH languages", () => {
+  // It first went onto the English page only, which broke the rule this file exists for: the
+  // English may never say more than the Dutch. Both now come from a constant, and both pages
+  // render it — so the next person cannot quietly add a section to one side.
+  for (const [lang, head, p1, p2] of [
+    ["nl", PROBLEEM_KOP, PROBLEEM_1, PROBLEEM_2],
+    ["en", PROBLEM_HEAD, PROBLEM_1, PROBLEM_2],
+  ] as const) {
+    assert.ok(head.length > 3, `${lang}: no heading`);
+    assert.ok(p1.length > 80, `${lang}: the problem is not described`);
+    assert.ok(p2.length > 80, `${lang}: the answer to it is missing`);
+  }
+  // The two facts that make it the DUTCH problem and not a generic one: the quarterly return
+  // and the seven-year retention. Drop either and it stops being about this reader.
+  assert.match(PROBLEEM_1, /BTW-aangifte/);
+  assert.match(PROBLEEM_1, /zeven jaar/);
+  assert.match(PROBLEM_1, /BTW return/);
+  assert.match(PROBLEM_1, /seven years/);
 });

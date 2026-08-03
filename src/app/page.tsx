@@ -14,6 +14,10 @@ import {
   BELOFTE_UITLEG,
   BELOFTE_GERUST,
   BELOFTE_STAPPEN,
+  PROBLEEM_KOP,
+  PROBLEEM_1,
+  PROBLEEM_2_VET,
+  PROBLEEM_2,
 } from '@/lib/belofte'
 import { redirect, unstable_rethrow } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
@@ -121,6 +125,19 @@ export default async function Home() {
           <Link href="/factuur-maken" style={btnGhost}>Direct een factuur maken</Link>
         </div>
         <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>{BELOFTE_GERUST}</div>
+      </section>
+
+      {/* [PROBLEEM] Het probleem, vóór de stappen. De kop zegt wat je NIET meer hoeft; zonder
+          het probleem ernaast hangt die belofte in de lucht. Bron: src/lib/belofte.ts, gedeeld
+          met de Engelse pagina zodat die nooit meer zegt dan deze. */}
+      <section style={{ ...wrap, paddingBottom: 44 }}>
+        <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: '28px 26px', maxWidth: 720, margin: '0 auto' }}>
+          <h2 style={{ fontSize: 21, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>{PROBLEEM_KOP}</h2>
+          <p style={{ fontSize: 16, lineHeight: 1.65, color: '#3c4043', margin: '0 0 14px' }}>{PROBLEEM_1}</p>
+          <p style={{ fontSize: 16, lineHeight: 1.65, color: '#3c4043', margin: 0 }}>
+            <strong>{PROBLEEM_2_VET}</strong>{PROBLEEM_2}
+          </p>
+        </div>
       </section>
 
       {/* [BELOFTE] De enige taak die de gebruiker overhoudt, in drie stappen. Staat BOVEN de
