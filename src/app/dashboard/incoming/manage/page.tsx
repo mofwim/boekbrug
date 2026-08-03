@@ -222,6 +222,34 @@ export default async function Page({
     filedQuarters = null
   }
 
+  // [AUTO-INCASSO] Which suppliers collect their own invoices. The screen needs it to do the one
+  // thing that matters most here: NOT offer "Betalen" on an invoice the bank already took. Sent as
+  // normalized name keys, the same key the registry stores, so a row imported before the supplier
+  // registry existed (with only a client_name) is recognised too.
+  //
+  // [NO-SILENT-EMPTY] `null` on a failed read, never an empty set. An empty set means "no supplier
+  // is on incasso", and this screen acts on that by showing the Betalen button again — on invoices
+  // that were already collected. A read that could not run must not be able to say that, so the
+  // client keeps every incasso row in its incasso state and only the switch goes quiet.
+  let incassoKeys: string[] | null = []
+  try {
+    // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('suppliers')
+      .select('name_key')
+      .eq('user_id', user.id)
+      .eq('auto_incasso', true)
+    if (error) throw new Error(error.message)
+    incassoKeys = (data ?? []).map((s: { name_key: string | null }) => s.name_key).filter(Boolean) as string[]
+  } catch (e) {
+    // A missing column (the migration has not been applied yet) is the ordinary case on a fresh
+    // deploy and means exactly "nobody is on incasso" — but so does a failed read, and those two
+    // must not arrive as the same answer on the screen the owner pays from.
+    console.error('[AUTO-INCASSO] supplier read failed — the screen keeps its incasso rows guarded', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    incassoKeys = null
+  }
+
   // [INBOX-CROWD-OUT] Deep-link guarantee: Vandaag routes here with ?focus={id}
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
@@ -252,6 +280,7 @@ export default async function Page({
       filedQuarters={filedQuarters}
       bookScan={bookScan}
       readingHints={readingHints}
+      incassoKeys={incassoKeys}
     />
   )
 }

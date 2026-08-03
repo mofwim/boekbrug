@@ -124,6 +124,68 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
 });
 
+test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost money", async () => {
+  // The screen this feature was reported from. Two WonenBreburg rent invoices, both past their
+  // vervaldatum, both wearing "2 dagen te laat" and offering a Betalen button — for money the bank
+  // had already taken. The badge is the annoyance; the button is a second payment.
+  //
+  // Rendered against the LIST, not an opened card, because that is where both of them stood.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { supplierNameKey } = await import("../../src/lib/supplier-registry");
+
+  const rows = [
+    // Two invoices from one supplier, DIFFERENT amounts — the pair that proves an amount rule
+    // would have covered one and left the other behind.
+    manageRow({ id: "h1", client_name: "WonenBreburg", invoice_number: "VHF0001107004", total_ex_btw: 83.70, btw_amount: 0, total_inc_btw: 83.70, invoice_date: "2026-07-15", due_date: "2026-08-01" }),
+    manageRow({ id: "h2", client_name: "WonenBreburg", invoice_number: "VHF0001107657", total_ex_btw: 74.96, btw_amount: 0, total_inc_btw: 74.96, invoice_date: "2026-07-15", due_date: "2026-08-01" }),
+    // A supplier NOT on incasso, equally overdue — the control. Everything this test asserts is
+    // missing for the two above must still be present for this one, or the assertions would pass
+    // just as well on a screen that lost its pay buttons entirely.
+    manageRow({ id: "g1", client_name: "Groothandel", invoice_number: "263548", due_date: "2026-07-14" }),
+  ];
+
+  const render = (keys: string[] | null) => renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IncomingManageClient as any, {
+        profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
+        readFailed: [], filedQuarters: [], incassoKeys: keys,
+      })),
+  );
+
+  const on = render([supplierNameKey("WonenBreburg")]);
+  assert.ok(on.length > 1000, "the screen rendered something substantial");
+  assert.match(on, /Automatisch afgeschreven/, "the incasso rows say who pays them");
+  // The control is still late, so the badge itself has not been removed from the screen — only
+  // from the rows the bank collects.
+  assert.match(on, /dagen te laat/, "the ordinary overdue invoice is still marked late");
+  // The em-dash form appears in the badge's title attribute, once per late row — the visible text
+  // repeats the same words, so a bare /dagen te laat/ counts each row twice.
+  assert.equal(
+    (on.match(/— \d+ dagen? te laat/g) ?? []).length, 1,
+    "only the non-incasso invoice may be late — the owner is not late for a collection that runs itself",
+  );
+  // The pay CTA: one, for the one invoice the owner actually has to pay.
+  assert.equal(
+    (on.match(/Heb je betaald\?/g) ?? []).length, 1,
+    "an incasso invoice still offering to be marked paid is one tap away from a double payment",
+  );
+
+  // Switch the mandate off and the same three rows behave as they always did. Without this, a
+  // component that simply never renders those elements would pass everything above.
+  const off = render([]);
+  assert.equal((off.match(/— \d+ dagen? te laat/g) ?? []).length, 3, "with no mandate, all three are late again");
+  assert.equal((off.match(/Heb je betaald\?/g) ?? []).length, 3, "and all three can be paid by hand");
+  assert.doesNotMatch(off, /Automatisch afgeschreven/);
+
+  // And the read that could not run is its own state: it must not read as "nobody is on incasso"
+  // in silence, because that silence is what puts the Betalen button back.
+  const unknown = render(null);
+  assert.match(unknown, /niet ophalen/, "a failed incasso read is said out loud");
+  assert.match(unknown, /Betaal ze niet nog een keer/, "…and it names the actual risk");
+});
+
 test("[VRIJGESTELD] the cost-attribution control renders each of its three states", async () => {
   const { CostAttribution } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
 

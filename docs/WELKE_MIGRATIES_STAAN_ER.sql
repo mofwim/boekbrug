@@ -174,7 +174,12 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
        'index', 'uniq_bank_tx_source_identity'),
   (33, 'bank_connections_updated_at.sql',
        'BEFORE UPDATE-trigger op beide banktabellen. Vandaag zet de applicatie updated_at bij elke schrijfactie zelf, dus er is niets stuk; dit is de vangnet-helft voor de zevende schrijver die dat vergeet (een routepatch, een reparatiescript, een psql-sessie tijdens een storing). Kost geen geld als hij ontbreekt — kost het antwoord op "wanneer wijzigde deze consent voor het laatst"',
-       'function', 'set_updated_at')
+       'function', 'set_updated_at'),
+
+  -- ── Automatische incasso ────────────────────────────────────────────────────────────────
+  (34, 'auto_incasso.sql',
+       'Welke leveranciers zelf afschrijven (huur, energie, verzekering). Ontbreekt hij, dan is de functie eerlijk UIT: elke lezer behandelt de ontbrekende kolom als "niemand staat op incasso" en de route antwoordt 503 in het Nederlands — precies het gedrag van vóór deze migratie. Wat hij kost zolang hij open staat: de facturen die je bank al heeft afgeschreven blijven "te laat" heten en houden hun betaalknop, en die knop is bij een al geïncasseerde factuur een TWEEDE betaling',
+       'column', 'suppliers.auto_incasso')
 )
 select
   nr                                                        as "#",

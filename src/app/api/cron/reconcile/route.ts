@@ -25,6 +25,9 @@ import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 import { createNotification } from "@/lib/notifications";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+// [AUTO-INCASSO] Book the invoices the bank collects on its own — see src/lib/incasso-settle.ts.
+import { incassoSupported, settleIncassoForUser } from "@/lib/incasso-settle";
+import { amsterdamToday, formatEuroNL } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -87,10 +90,36 @@ export async function GET(req: NextRequest) {
   for (const r of kasInv) { if (r.receiver_id) userIds.add(r.receiver_id); if (r.sender_id) userIds.add(r.sender_id); }
   for (const r of betaling) if (r.user_id) userIds.add(r.user_id);
 
+  // [AUTO-INCASSO] A fourth reason to visit an owner, and one the three above cannot produce: an
+  // owner whose invoices are all collected automatically has no pending bank lines, no cash-paid
+  // invoices and no drawer entries. Discovered from the mandate itself — the suppliers they marked.
+  //
+  // Deliberately NOT inside the Promise.all above. That block aborts the whole run when it fails,
+  // which is right for the three reads that decide who gets reconciled at all; this one is allowed
+  // to be absent (the column arrives with a migration) and a run that skips the incasso pass is a
+  // reduced run, not a broken one. Failing the reconcile for every user over it would be the
+  // reporting causing a bigger outage than the thing reported.
+  let incassoUsers = 0;
+  try {
+    if (await incassoSupported(pipeline)) {
+      const rows = await fetchAllRows<{ user_id: string | null }>((from, to) =>
+        // auto_incasso is added by auto_incasso.sql and not yet in the generated types;
+        // incassoSupported() above is what makes the read safe.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (pipeline.from("suppliers").select("user_id") as any).eq("auto_incasso", true)
+          .order("id", { ascending: true }).range(from, to));
+      for (const r of rows) if (r.user_id) { userIds.add(r.user_id); incassoUsers += 1; }
+    }
+  } catch (e) {
+    console.error("[AUTO-INCASSO] mandate discovery failed — this run books no collections", { error: e instanceof Error ? e.message : String(e) });
+    Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "reconcile", phase: "incasso-discovery" } });
+  }
+
   let usersProcessed = 0;
   let bookedTotal = 0;
   let failed = 0;
   let truncated = 0;
+  let incassoBooked = 0;
 
   // [CRON-FAIRNESS] Rotate the start each run so, if the full list can't finish within maxDuration,
   // a FIXED tail never permanently starves. On Vercel Pro this cron now fires HOURLY, so key the
@@ -136,6 +165,32 @@ export async function GET(req: NextRequest) {
           link: "/dashboard/bank/categoriseren?scope=review",
         }).catch((ne) => console.error("[CRON-RECONCILE] autocat notify failed", { uid, error: ne instanceof Error ? ne.message : String(ne) }));
       }
+      // [AUTO-INCASSO] Book what the bank collected on its own. It runs AFTER the bank pass on
+      // purpose: a real bank line is evidence and this is an assumption, so wherever both could
+      // settle the same invoice, the evidence gets there first and the assumption finds it paid.
+      //
+      // Never fatal to the user's reconcile — a failed pass leaves the invoices open, which is the
+      // state they are in today, and the next hour tries again.
+      try {
+        const incasso = await settleIncassoForUser(pipeline, pipeline, uid, amsterdamToday());
+        if (incasso.booked.length > 0) {
+          incassoBooked += incasso.booked.length;
+          const sum = incasso.booked.reduce((s, b) => s + b.amount, 0);
+          // The owner is TOLD. This is the one pass in the reconcile that books a payment nobody
+          // observed, so it may never be the quiet one — "we marked five invoices paid" has to
+          // reach the person whose books they are, with the amount, so a wrong one is catchable.
+          await createNotification({
+            userId: uid,
+            type: "payment",
+            title: `${incasso.booked.length} factu(u)r(en) automatisch afgeschreven`,
+            body: `${formatEuroNL(sum)} is bij je incasso-leveranciers afgeschreven. We hebben ze op betaald gezet — kloppen ze niet? Zet ze terug op openstaand.`,
+            link: "/dashboard/incoming/manage?filter=paid",
+          }).catch((ne) => console.error("[AUTO-INCASSO] notify failed", { uid, error: ne instanceof Error ? ne.message : String(ne) }));
+        }
+      } catch (ie) {
+        console.error("[AUTO-INCASSO] settle failed (non-fatal)", { uid, error: ie instanceof Error ? ie.message : String(ie) });
+        Sentry.captureException(ie instanceof Error ? ie : new Error(String(ie)), { tags: { cron: "reconcile", phase: "auto-incasso" }, extra: { uid } });
+      }
       usersProcessed += 1;
       // [JET-GAP0] The "automatisch gekoppeld" bell now lives INSIDE runBankAutoConfirm, so every
       // entry point (incl. this cron) notifies from one place — no duplicate insert here.
@@ -152,7 +207,7 @@ export async function GET(req: NextRequest) {
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked } });
 
-  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
+  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked });
 }

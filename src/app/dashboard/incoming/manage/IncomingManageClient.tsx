@@ -23,7 +23,7 @@
 
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
-import { amsterdamToday } from '@/lib/format-nl'
+import { amsterdamToday, formatEuroNL } from '@/lib/format-nl'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
@@ -62,6 +62,10 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import { INVOICE_PERIODS, resolveInvoicePeriod, isInPeriod, type InvoicePeriod } from '@/lib/invoice-period'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
+// [AUTO-INCASSO] A supplier the BANK pays. The badge, the missing "te laat" and above all the
+// missing Betalen button all come from here — see src/lib/auto-incasso.ts.
+import { incassoDisplayState, incassoLabel } from '@/lib/auto-incasso'
+import { supplierNameKey } from '@/lib/supplier-registry'
 import { rowMatchesQuery } from '@/lib/search'
 import { useToast } from '@/components/ui/Toast'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
@@ -353,7 +357,7 @@ export default function IncomingManageClient({
   profile,
   initialInvoices,
   totalCount = null,
-  readFailed = [], filedQuarters, bookScan = null, readingHints = {},
+  readFailed = [], filedQuarters, bookScan = null, readingHints = {}, incassoKeys = [],
 }: {
   // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
   // Optional, because the server reads the profile with select('*') and the column is simply not
@@ -379,6 +383,11 @@ export default function IncomingManageClient({
   // [READING-MEMORY] Per supplier (trimmed + lowercased name), what the owner keeps correcting.
   // Same map and same key as the verify queue — one memory, shown at both doors.
   readingHints?: Record<string, string>
+  // [AUTO-INCASSO] The normalized name keys (supplierNameKey) of the suppliers that collect their
+  // own invoices. null = that read failed, and the screen says so rather than acting on an empty
+  // set — an empty set means "nobody is on incasso", and this screen answers that by putting the
+  // Betalen button back on invoices the bank has already taken the money for.
+  incassoKeys?: string[] | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -439,6 +448,24 @@ export default function IncomingManageClient({
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
   const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
+
+  // ── [AUTO-INCASSO] Which suppliers collect their own invoices ──
+  // Local state, not the prop straight through: flipping the switch has to change the screen
+  // immediately — the badge, the missing Betalen button, the vanished "te laat" — or the owner
+  // cannot see that it did anything. The server is still the authority; this mirrors it.
+  const [incassoSet, setIncassoSet] = useState<Set<string>>(() => new Set(incassoKeys ?? []))
+  // null from the server means the read failed. Kept as its own fact, never folded into "empty".
+  const incassoUnknown = incassoKeys === null
+  const [incassoBusy, setIncassoBusy] = useState<string | null>(null)
+  // What the last switch actually did, so the owner sees the invoices it settled rather than a
+  // number they have to go and verify themselves.
+  const [incassoResult, setIncassoResult] = useState<{
+    supplier: string
+    on: boolean
+    booked: { invoiceNumber: string | null; amount: number; paidOn: string }[]
+    held: { invoiceNumber: string | null; reason: string }[]
+    warning?: string
+  } | null>(null)
 
   // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
   // same leverancier in ONE transfer. Selection is a set of ids; the rows are
@@ -771,6 +798,59 @@ export default function IncomingManageClient({
   function payGuarded(inv: IncomingRow, stance: CreditStance, proceed: () => void) {
     if (payableAsDebt(stance)) { proceed(); return }
     setCreditAsk({ inv, stance, proceed })
+  }
+
+  // ── [AUTO-INCASSO] Does the bank pay this one by itself? ──────────────────────
+  /** The registry's own key, so a row imported before the supplier registry existed matches too. */
+  function isIncassoRow(inv: IncomingRow): boolean {
+    const key = supplierNameKey(inv.client_name)
+    return key.length > 0 && incassoSet.has(key)
+  }
+
+  /**
+   * Turn the mandate on or off for this supplier.
+   *
+   * Switching ON also settles what has already been collected, server-side, and the answer says
+   * exactly which invoices — see the route. The rows are patched from that answer rather than
+   * optimistically: this changes `status` to 'paid' on real invoices, and the openstaand total,
+   * the aangifte and the accountant's package all read that.
+   */
+  async function toggleIncasso(inv: IncomingRow, on: boolean) {
+    const name = (inv.client_name ?? '').trim()
+    const key = supplierNameKey(name)
+    if (!key || incassoBusy) return
+    setIncassoBusy(inv.id)
+    try {
+      const res = await fetch('/api/supplier/incasso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplierName: name, on }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        showToast(typeof data.error === 'string' ? data.error : 'Instellen mislukt — er is niets gewijzigd')
+        return
+      }
+      setIncassoSet(prev => {
+        const next = new Set(prev)
+        if (on) next.add(key); else next.delete(key)
+        return next
+      })
+      const booked: { invoiceId: string }[] = Array.isArray(data.booked) ? data.booked : []
+      for (const b of booked) patchLocal(b.invoiceId, { status: 'paid' })
+      setIncassoResult({
+        supplier: typeof data.supplier === 'string' ? data.supplier : name,
+        on,
+        booked: Array.isArray(data.booked) ? data.booked : [],
+        held: Array.isArray(data.held) ? data.held : [],
+        warning: typeof data.warning === 'string' ? data.warning : undefined,
+      })
+      if (!on) showToast(`${name} staat niet meer op automatische incasso`)
+    } catch {
+      showToast('Instellen mislukt — controleer je verbinding')
+    } finally {
+      setIncassoBusy(null)
+    }
   }
 
   // [CREDIT-SAFE] "Ja, dit is een creditnota" — the same one-way declaration the correction modal's
@@ -1628,6 +1708,30 @@ export default function IncomingManageClient({
             </div>
           </div>
         )}
+
+        {/* [AUTO-INCASSO] Its own notice, not folded into the one above: that banner says "deze
+            lijst is niet compleet", and this failure does not make the list incomplete. It makes
+            the list WRONG in one specific, expensive way — the invoices your bank already collected
+            are standing here with a Betalen button, and paying one sends the money twice. */}
+        {incassoUnknown && (
+          <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F7DFA5', background: M3.warningContainer, fontFamily: FONT }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#7C5800', flexShrink: 0, marginTop: 1 }}>sync_problem</span>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
+                We konden je automatische incasso&apos;s niet ophalen
+              </p>
+              <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.45 }}>
+                Facturen die je bank zelf afschrijft staan hieronder daarom gewoon als &quot;te betalen&quot;. Betaal ze niet nog een keer.
+              </p>
+              <button
+                onClick={() => router.refresh()}
+                style={{ marginTop: 8, padding: '7px 14px', borderRadius: R.full, border: 'none', background: '#7C5800', color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+              >
+                Opnieuw proberen
+              </button>
+            </div>
+          </div>
+        )}
         {/* [INVOICE-SCAN] How much is standing wrong, and where.
             Before this, every warning lived on a single card: useful once you were already looking
             at that card, useless for the question the owner has after seeing two of them — how many
@@ -1885,7 +1989,12 @@ export default function IncomingManageClient({
               // which covers a credit note that is ALREADY booked right — the exact case that no
               // longer needs telling. What it missed is the one that does: CR0301267 sat at +33,87
               // wearing "2 dagen te laat" for money the supplier owed the owner.
-              const daysLate = isPaid || !payable ? null : overdueDays(inv.due_date, todayIso)
+              // [AUTO-INCASSO] Does the bank take this one by itself? Computed HERE, above every
+              // reader, for the same reason `stance` is: all of them run during render.
+              const incasso = incassoDisplayState(inv, isIncassoRow(inv), todayIso)
+              // [AUTO-INCASSO] …and an incasso invoice is never late. The owner is not the one who
+              // pays it, so "2 dagen te laat" blames them for a bank run that has not happened yet.
+              const daysLate = isPaid || !payable || incasso ? null : overdueDays(inv.due_date, todayIso)
               // [ARITHMETIC-VISIBLE] The same verdict the verify queue shows, computed here for the
               // first time. Until now this screen displayed a broken breakdown as if nothing were
               // wrong: an invoice whose excl + BTW does not equal its total still counted for its
@@ -1907,12 +2016,15 @@ export default function IncomingManageClient({
               // [DATE-LINE] The other half of the same timeline: how long is still LEFT. Same rule
               // — null when paid (a settled bill has no deadline left to count), and null when the
               // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
-              const daysLeft = isPaid ? null : daysUntilDue(inv.due_date, todayIso)
+              // [AUTO-INCASSO] …and neither does a countdown. "nog 5 dagen" is a nudge to go and
+              // pay; on an invoice the bank collects, the answer to that nudge is a double payment.
+              // The incasso line below says the same thing without asking for anything.
+              const daysLeft = isPaid || incasso ? null : daysUntilDue(inv.due_date, todayIso)
               // [ROW-HEAD] Does this row have ANY status chip? The chip row sits between the
               // header and the dates, so rendering it empty would push every plain row 5px taller
               // for nothing — across a list this long that reads as sloppy spacing.
               const hasChips = !!CHIP[inv.status] || !!recon[inv.id] || !!xq
-                || isAutoVerified(inv) || isVerwerkt || isPrepared
+                || isAutoVerified(inv) || isVerwerkt || isPrepared || !!incasso
 
               return (
                 // [ROW-UNIT] De kaart en zijn prullenbak zijn nu buren, geen ouder en kind. De
@@ -2138,6 +2250,19 @@ export default function IncomingManageClient({
                             ⚠ Bedragen kloppen niet
                           </span>
                         )}
+                        {/* [AUTO-INCASSO] The bank takes this one. It stands where "te laat" would
+                            have stood, because it answers the same question — "do I have to do
+                            something about this?" — and the answer is no. Calm on purpose: an
+                            incasso is the one invoice on the screen that needs nothing. */}
+                        {incasso && (
+                          <span
+                            title={inv.due_date ? `Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)} — automatische incasso` : 'Automatische incasso'}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.surfaceVariant, color: '#5F6368', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sync_alt</span>
+                            {incassoLabel(incasso, inv.due_date ? fmtDateSmart(inv.due_date, thisYear) : null)}
+                          </span>
+                        )}
                         {/* Past the date — the loud half. Unpaid bills only; a settled invoice
                             cannot be late. */}
                         {daysLate !== null && (
@@ -2220,7 +2345,10 @@ export default function IncomingManageClient({
                           that PERSISTS — catching the owner on return from their
                           bank. Both variants route through the SAME requestPay
                           (check → Bank/Contant + date → paid). */}
-                      {inv.status === 'received' && (
+                      {/* [AUTO-INCASSO] `!incasso`: the bank pays this one, so there is nothing to
+                          confirm. The button is not merely redundant here — it is the door to a
+                          second payment of money that has already left. */}
+                      {inv.status === 'received' && !incasso && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
@@ -2328,8 +2456,12 @@ export default function IncomingManageClient({
                           </button>
                         )}
                         {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
-                            the QR + copy sheet. No DB write; pure preparation. */}
-                        {inv.status === 'received' && (
+                            the QR + copy sheet. No DB write; pure preparation.
+                            [AUTO-INCASSO] …and never on an invoice the bank collects. This button
+                            pre-fills the supplier's IBAN and amount in the owner's banking app,
+                            which on an already-collected invoice is a second payment with one tap
+                            and no warning anywhere. */}
+                        {inv.status === 'received' && !incasso && (
                           <button
                             // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
                             // pre-fills the supplier's IBAN and the amount in the owner's bank app.
@@ -2351,6 +2483,43 @@ export default function IncomingManageClient({
                           </button>
                         )}
                       </div>
+
+                      {/* ── [AUTO-INCASSO] "Deze leverancier schrijft zelf af" ──────────────────
+                          It lives in the OPENED card, not on the row: it is a statement about the
+                          supplier, not about this invoice, and it changes how every future invoice
+                          from them is treated. That deserves the deliberate tap of opening a card
+                          rather than sitting one thumb-slip away in a long list.
+
+                          Hidden while the setting could not be read: a switch that shows "uit"
+                          because a query failed is worse than no switch — the owner would turn it
+                          on again and be told they already had. */}
+                      {!incassoUnknown && inv.direction === 'incoming' && (inv.client_name ?? '').trim() !== '' && (
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${M3.surfaceVariant}` }}>
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleIncasso(inv, !isIncassoRow(inv)) }}
+                            disabled={incassoBusy === inv.id}
+                            style={{
+                              display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left',
+                              background: 'transparent', border: 'none', padding: 0, fontFamily: FONT,
+                              cursor: incassoBusy === inv.id ? 'default' : 'pointer',
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 20, color: isIncassoRow(inv) ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                              {incassoBusy === inv.id ? 'hourglass_empty' : isIncassoRow(inv) ? 'toggle_on' : 'toggle_off'}
+                            </span>
+                            <span style={{ minWidth: 0 }}>
+                              <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: M3.onSurface }}>
+                                {inv.client_name} schrijft automatisch af
+                              </span>
+                              <span style={{ display: 'block', fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 2, lineHeight: 1.45 }}>
+                                {isIncassoRow(inv)
+                                  ? 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.'
+                                  : 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.'}
+                              </span>
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2838,6 +3007,91 @@ export default function IncomingManageClient({
           onClose={() => setMatchResult(null)}
           onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
         />
+      )}
+
+      {/* ── [AUTO-INCASSO] What that switch just did ────────────────────────────────────────────
+          Turning the mandate on can settle a year of rent invoices in one request. A toast saying
+          "gelukt" over a change of that size is the quiet money movement this codebase keeps
+          finding and closing: the owner would have no idea which invoices moved, for how much, or
+          that four were deliberately left alone.
+
+          So it lists them, both sides. The held ones matter most — they are the invoices that will
+          still be standing open tomorrow, and without their reason the feature looks broken on
+          exactly the rows where it was being careful. */}
+      {incassoResult && (
+        <div
+          role="dialog" aria-modal="true" aria-label="Automatische incasso ingesteld"
+          onClick={() => setIncassoResult(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.32)', zIndex: 300, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),
+              borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: '20px 20px',
+              paddingBottom: sheetPaddingBottom(20), fontFamily: FONT, maxHeight: '80vh', overflowY: 'auto',
+            }}
+          >
+            <p style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>
+              {incassoResult.on
+                ? `${incassoResult.supplier} schrijft voortaan zelf af`
+                : `${incassoResult.supplier} staat niet meer op automatische incasso`}
+            </p>
+            <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.5 }}>
+              {incassoResult.on
+                ? 'Je krijgt geen betaalknop meer bij deze leverancier. Nieuwe facturen zetten we na de vervaldatum vanzelf op betaald.'
+                : 'Facturen van deze leverancier krijgen weer een betaalknop. Wat al op betaald staat, blijft staan.'}
+            </p>
+
+            {incassoResult.warning && (
+              <p style={{ fontSize: 12.5, color: '#7C5800', background: M3.warningContainer, borderRadius: R.md, padding: '10px 12px', margin: '0 0 14px', lineHeight: 1.45 }}>
+                {incassoResult.warning}
+              </p>
+            )}
+
+            {incassoResult.booked.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: '0 0 6px' }}>
+                  {incassoResult.booked.length === 1 ? '1 factuur' : `${incassoResult.booked.length} facturen`} op betaald gezet
+                </p>
+                {incassoResult.booked.map((b, i) => (
+                  <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
+                    {b.invoiceNumber ?? 'zonder nummer'} · {formatEuroNL(b.amount)} · afgeschreven {fmtDateSmart(b.paidOn, thisYear)}
+                  </p>
+                ))}
+                <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '6px 0 0', lineHeight: 1.45 }}>
+                  Klopt er eentje niet? Open hem en tik op &quot;Betaald&quot; om hem terug te zetten.
+                </p>
+              </div>
+            )}
+
+            {incassoResult.held.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: '0 0 6px' }}>
+                  {incassoResult.held.length === 1 ? '1 factuur' : `${incassoResult.held.length} facturen`} met opzet niet aangeraakt
+                </p>
+                {incassoResult.held.map((h, i) => (
+                  <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
+                    {h.invoiceNumber ?? 'zonder nummer'} — {h.reason}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {incassoResult.on && incassoResult.booked.length === 0 && incassoResult.held.length === 0 && !incassoResult.warning && (
+              <p style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.45 }}>
+                Er stond nog niets open dat al afgeschreven was.
+              </p>
+            )}
+
+            <button
+              onClick={() => setIncassoResult(null)}
+              style={{ width: '100%', padding: '12px 16px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+            >
+              Duidelijk
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── [AMOUNT-CORRECTION] Correct the amounts of a confirmed invoice ──

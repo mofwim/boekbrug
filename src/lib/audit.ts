@@ -115,6 +115,14 @@ export type AuditAction =
   // plus het kwartaal, en sanitizeForAudit strijkt sowieso alles wat er niet in hoort.
   | 'accountant.package_downloaded'   // ← het kwartaalpakket (ZIP) opgehaald
   | 'accountant.export_downloaded'    // ← een CSV/UBL-export opgehaald
+  // [AUTO-INCASSO] The owner declaring that a supplier collects its own invoices. It belongs at
+  // this level because of what follows from it: from that moment the app books that supplier's
+  // invoices as PAID once their vervaldatum has passed, without anyone having watched the money
+  // leave. The individual bookings are audited as 'invoice.status_changed' like every other
+  // payment; this row is the MANDATE they all rest on, and the only place that answers "since when
+  // was the app allowed to assume this, and who said so".
+  | 'supplier.auto_incasso_on'
+  | 'supplier.auto_incasso_off'
   // Level 3 — Files
   | 'document.uploaded'
   | 'document.duplicate_blocked'      // ← [BRIDGE-EXTRACT] byte-hash dedup: re-upload of identical file refused
