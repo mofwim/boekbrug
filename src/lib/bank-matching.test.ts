@@ -947,5 +947,47 @@ console.log("\n— [CREDIT-NETTING] the predicate names the shape, nothing more 
   check("a null total is not a creditnota", !isNettedCreditNote(debet, { total_inc_btw: null, direction: "incoming" }));
 }
 
+console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is an identity too —");
+{
+  // Coroama Stefan Daniel, FAC/2026/00296, € 40,00. The paper says "Communication de paiement:
+  // +++000/0000/60321+++" — a Belgian gestructureerde mededeling — so the bank line carries that,
+  // never the invoice number. The matcher only ever tried the number, so the reference signal could
+  // not fire on this invoice in principle, and it sat under an amber "Mogelijke betaling" while
+  // being one of the most identifiable payments in the book.
+  const inv: InvoiceForMatching = {
+    id: "be-1", invoice_number: "FAC/2026/00296", payment_reference: "+++000/0000/60321+++",
+    total_inc_btw: 40, amount_paid: 0, invoice_date: "2026-07-30", due_date: "2026-08-01",
+    client_name: "Coroama Stefan Daniel", direction: "incoming", status: "received",
+    accountant_status: null, vendor_iban: "BE57 3631 5240 5935",
+  };
+  const tx: BankTransaction = {
+    date: "2026-08-01", amount: -40, currency: "EUR",
+    description: "Overschrijving", counterpartName: "Coroama Stefan Daniel",
+    counterpartIban: null, reference: "000/0000/60321", transactionId: "be-tx", rawLine: "",
+  };
+  const m = matchTransactions([tx], [inv]).matches[0];
+  check("the structured communication is recognised as a reference",
+    m.candidates[0]?.signals.includes("reference") === true);
+  check("and the printed form (+++…+++) matches the bank's plain form",
+    referenceMatches({ reference: "000/0000/60321", description: "" }, "+++000/0000/60321+++"));
+
+  // The other direction must be untouched: an invoice with no separate kenmerk still matches on its
+  // number, and an unrelated reference still does not match at all.
+  const gewoon: InvoiceForMatching = { ...inv, invoice_number: "2033161", payment_reference: null };
+  const gewoonTx: BankTransaction = { ...tx, reference: "2033161" };
+  check("an invoice without a kenmerk still matches on its number",
+    matchTransactions([gewoonTx], [gewoon]).matches[0].candidates[0]?.signals.includes("reference") === true);
+
+  const vreemd = matchTransactions([{ ...tx, reference: "999/9999/99999" }], [inv]).matches[0];
+  check("an unrelated reference is still no reference match",
+    (vreemd.candidates[0]?.signals ?? []).includes("reference") === false);
+
+  // And every guard referenceMatches carries still applies to the new needle — a bare year must
+  // never become an identity just because it arrived through payment_reference.
+  check("a bare year in the kenmerk is refused, exactly as in the number",
+    !referenceMatches({ reference: "Huur juli 2026", description: "" }, "2026"));
+  check("a too-short kenmerk is refused", !referenceMatches({ reference: "12 ", description: "" }, "12"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

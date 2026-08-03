@@ -40,6 +40,12 @@ export interface InvoiceForMatching {
   // counterpart IBAN equals this, it is a STRONG, supplier-specific identity signal (a bare
   // amount can collide across suppliers; a full IBAN cannot). Null when unknown → simply not used.
   vendor_iban?: string | null;
+  // [PAY-REFERENCE] The betalingskenmerk the invoice asks the payer to quote, when it differs from
+  // the invoice number. A Belgian gestructureerde mededeling is the everyday case — the paper says
+  // "Communication de paiement: +++000/0000/60321+++" while the invoice is numbered
+  // FAC/2026/00296 — but a Dutch betalingskenmerk works the same way. Null when the invoice quotes
+  // its own number, which is the majority; then this changes nothing.
+  payment_reference?: string | null;
 }
 
 /** Which signal(s) fired for a candidate. */
@@ -493,7 +499,21 @@ export function scorePair(
   const signals: MatchSignal[] = [];
   const reasons: string[] = [];
 
-  const refOk = referenceMatches(tx, inv.invoice_number);
+  // [PAY-REFERENCE] Either identity the paper offers. The matcher only ever tried the invoice
+  // NUMBER, and an invoice that asks to be paid under a different reference can therefore never
+  // produce a reference match — the bank line carries what the payer was told to quote, which is
+  // exactly the string this test never looked at.
+  //
+  // The app itself is what tells them to quote it: the pay sheet builds its QR from
+  // `payment_reference ?? invoice_number`. So it asked for a reference and then could not recognise
+  // it coming back, and every such payment landed as an amber "Mogelijke betaling" that the owner
+  // had to reconcile by hand — on the invoices where the bank line is in fact the most identifiable.
+  //
+  // Same referenceMatches, so every guard it carries still applies: the four-character floor, the
+  // bare-year refusal, and the digit-boundary rule that stops one number matching as a fragment of
+  // a longer one.
+  const refOk =
+    referenceMatches(tx, inv.invoice_number) || referenceMatches(tx, inv.payment_reference ?? null);
   // [PARTIAL-PAY] When earlier instalments already settled part of the invoice, the payment we're
   // scoring should match the REMAINING balance, not the full total — so the €600 second instalment
   // of a €1000 invoice (€400 paid) scores an exact 'amount' hit against the €600 that's left. Sign
