@@ -85,6 +85,27 @@ export const BELOFTE_STAPPEN: readonly { kop: string; tekst: string }[] = [
 ] as const;
 
 /**
+ * [PROBLEEM] Het probleem, in de woorden van wie het heeft.
+ *
+ * Stond eerst alleen op de Engelse pagina, met als reden dat de Nederlandse lezer de schoenendoos
+ * wel kent. Dat was de verkeerde afweging: de belofte bovenaan zegt wat je NIET meer hoeft, en
+ * zonder het probleem ernaast hangt die in de lucht. Iemand die niet weet welk probleem wordt
+ * opgelost, herkent de oplossing niet als de zijne.
+ *
+ * En het brak de regel uit belofte-en.ts: de Engelse pagina mag nooit MEER zeggen dan de
+ * Nederlandse. Nu staat het op één plek, in beide talen, en verhuist het samen.
+ */
+export const PROBLEEM_KOP = "Het probleem" as const;
+export const PROBLEEM_1 =
+  "Bonnetjes in een jaszak, facturen in je mail, een bankafschrift ergens op een laptop. " +
+  "Elke drie maanden moet daar een BTW-aangifte uit komen — en de Belastingdienst verwacht " +
+  "dat je het zeven jaar kunt laten zien.";
+export const PROBLEEM_2_VET = "De oplossing is niet dat jij leert boekhouden.";
+export const PROBLEEM_2 =
+  " Het is dat er niets verdwijnt tussen het moment dat je een papiertje krijgt en het moment " +
+  "dat je boekhouder het nodig heeft. Dat is het enige werk dat deze app doet.";
+
+/**
  * De belofte richting de BOEKHOUDER. Een ander mens met een ander probleem: hij wil geen
  * software leren, hij wil geen schoenendoos meer krijgen. Zijn pijn is de klant die niets
  * aanlevert — en dat is precies de klant die de zin hierboven aanspreekt.
