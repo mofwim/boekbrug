@@ -58,11 +58,24 @@ export async function POST(
   }
 
   // Verify ownership + load current amounts (TRAIL needs unchanged fields too)
-  const { data: invoice } = await supabase
+  // [NO-SILENT-EMPTY] supabase-js answers a failed read with { data: null, error }, so without
+  // checking `error` a database problem arrived here as "Factuur niet gevonden" — the owner is told
+  // their invoice does not exist while they are looking at it, on the one screen where confirming is
+  // the whole point. The same rule and the same 503 as /api/invoice/[id]/amounts, so the two doors
+  // into the books cannot answer the same outage two different ways.
+  const { data: invoice, error: readErr } = await supabase
     .from("invoices")
     .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date, invoice_type")
     .eq("id", id)
-    .single();
+    .maybeSingle();
+
+  if (readErr) {
+    console.error("[NO-SILENT-EMPTY] confirm read failed — refusing to write", { invoiceId: id, userId: user.id, error: readErr.message });
+    return NextResponse.json(
+      { error: "We konden deze factuur nu niet ophalen. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+      { status: 503 },
+    );
+  }
 
   if (!invoice || invoice.receiver_id !== user.id) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
