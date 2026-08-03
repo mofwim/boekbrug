@@ -64,7 +64,7 @@ import {
   buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
   type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
 } from "./icp";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 // [PACKAGE-ART29] Both sides of art. 29 Wet OB — see the call site for why they belong here.
 import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
 import { BAD_DEBT_MIN_EUR } from "./bad-debt";
@@ -275,18 +275,49 @@ async function stampPaymentDate(
 async function resolvePaymentDates(
   supabase: PipelineClient,
   paidInvoices: PackageInvoice[]
-): Promise<Map<string, PaymentDateInfo>> {
+): Promise<{ dates: Map<string, PaymentDateInfo>; complete: boolean }> {
   const result = new Map<string, PaymentDateInfo>();
   const ids = paidInvoices.map((i) => i.id);
-  if (ids.length === 0) return result;
+  if (ids.length === 0) return { dates: result, complete: true };
 
-  const { data: txRows } = await supabase
-    .from("bank_transactions")
-    .select("invoice_id, date")
-    .in("invoice_id", ids);
+  // [PAYDATE-READ-HONEST] This was `.in("invoice_id", ids)` in one unchunked, unpaged query with
+  // its error discarded — the exact shape supabase-paginate.ts was written to replace, and it says
+  // why: an id list travels in the URL at ~39 bytes per uuid, so a few hundred paid invoices
+  // outgrow the proxy's header buffer and the call dies with a 414; and the response is capped at
+  // ~1000 rows regardless. supabase-js reports both as an ordinary `error`, never an exception, so
+  // a caller reading only `data` sees "no transactions" and carries on.
+  //
+  // What that silence did here is the opposite of this function's own promise. Every paid invoice
+  // fell back to marked_paid_at — an ESTIMATE — or to nothing, across the whole package, and the
+  // accountant received estimated payment dates where real bank dates existed. On kasstelsel the
+  // payment date decides the quarter, so that is not a cosmetic downgrade.
+  //
+  // fetchAllRowsForIds chunks the list AND pages each chunk AND throws, so this is now all rows or
+  // a stated failure. The failure still does not sink the package — the dates degrade exactly as
+  // before — but it stops being invisible: `complete: false` becomes a warning in overzicht.csv.
+  let txRows: Array<{ invoice_id: string | null; date: string | null }> = [];
+  let complete = true;
+  try {
+    txRows = await fetchAllRowsForIds<{ invoice_id: string | null; date: string | null }, string>(
+      ids,
+      (chunk, from, to) =>
+        supabase
+          .from("bank_transactions")
+          .select("invoice_id, date")
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+  } catch (e) {
+    console.error("[PAYDATE-READ-HONEST] bank payment-date read failed — dates degrade to estimates, and the package says so", {
+      invoiceCount: ids.length,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    complete = false;
+  }
 
   const bankDateByInvoice = new Map<string, string>();
-  for (const row of (txRows ?? []) as Array<{ invoice_id: string | null; date: string | null }>) {
+  for (const row of txRows) {
     if (!row.invoice_id || !row.date) continue;
     const prev = bankDateByInvoice.get(row.invoice_id);
     // Keep the latest linked transaction date if an invoice has more than one.
@@ -303,7 +334,7 @@ async function resolvePaymentDates(
       result.set(inv.id, { date: null, estimated: true });
     }
   }
-  return result;
+  return { dates: result, complete };
 }
 
 /** CSV cell escaper (semicolon-separated, Excel NL). Delegates to the shared csvCell so a
@@ -1507,19 +1538,41 @@ export async function buildClosingPackageZip(args: {
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
-  const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
+  const paymentDatesResult = await resolvePaymentDates(supabase, paidInvoices);
+  const paymentDates = paymentDatesResult.dates;
+  // [PAYDATE-READ-HONEST] The dates still degrade to marked_paid_at, exactly as they always did on
+  // a missing link — but the accountant is told that these are estimates because a read failed,
+  // not because no bank line exists. Those are different facts and only one of them is her problem.
+  if (!paymentDatesResult.complete) {
+    warnings.push({
+      code: "paydate_read_failed",
+      message:
+        "De betaaldatums uit je bankafschrift konden niet volledig worden gelezen. De datums in dit pakket kunnen daardoor schattingen zijn (de datum waarop de factuur op betaald is gezet) in plaats van de echte bankdatum — controleer ze voordat je ze gebruikt.",
+    });
+  }
 
   // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
   // [COVERED-BUFFER] Fetch a 5-day PRE-quarter buffer too, so the covered-day de-dup below
   // matches /api/aangifte exactly: a card payout booked early this quarter that settles a
   // PREVIOUS-quarter till day (settleExact) must be suppressed here — without the buffer the
   // ZIP counted it AGAIN as omzet-zonder-tarief, disagreeing with the in-app concept.
-  const { data: turnoverRows } = await supabase
+  // [NO-SILENT-EMPTY] A failed read here answered "this shop had no till turnover this quarter",
+  // which for a retailer is the single largest number in the package. Zero omzet is a conclusion
+  // and must never be the shape of an outage; the package says so instead.
+  const { data: turnoverRows, error: turnoverErr } = await supabase
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
     .gte("turnover_date", shiftDays(start, -5))
     .lte("turnover_date", end);
+  if (turnoverErr) {
+    console.error("[NO-SILENT-EMPTY] daily_turnover read failed — the package says so instead of reporting zero omzet", { ownerId, error: turnoverErr.message });
+    warnings.push({
+      code: "turnover_read_failed",
+      message:
+        "De dagomzet kon niet worden gelezen. Staat er kasomzet in dit kwartaal, dan ontbreekt die in dit pakket — bouw het opnieuw op voordat je het naar je boekhouder stuurt.",
+    });
+  }
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,

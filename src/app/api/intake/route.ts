@@ -430,6 +430,15 @@ export async function POST(req: NextRequest) {
     // [PEN-MARK] carry the handwritten/stamped payment hints into the routing decision.
     paid_method: v.paid_method ?? null,
     paid_date: v.paid_date ?? null,
+    // [BON-BETAALWIJZE] The tender line the till printed, VERBATIM, and the card digits beside it.
+    // These two were extracted (ai.ts asks for them by name), typed on IntakeClassification, parsed
+    // by gokBetaalwijze and covered by its own tests — and then not passed here, at the only call
+    // site there is. So gokBetaalwijze read `undefined` on every upload this app has handled: the
+    // paper could never win over the model because the paper never arrived, paidMethodZeker was
+    // structurally false, and _intake_paid_evidence / _intake_paid_card4 were written on no row at
+    // all. A feature can be built, tested and shipped and still be switched off by two absent lines.
+    paid_evidence: v.paid_evidence ?? null,
+    paid_card_last4: v.paid_card_last4 ?? null,
     confidence: v.confidence,
   })
 

@@ -140,6 +140,7 @@ export type AuditAction =
   | 'snelstart.connected'             // ← [SNELSTART] maatwerksleutel gekoppeld (of vervangen)
   | 'snelstart.disconnected'          // ← [SNELSTART] koppeling verbroken, sleutel uit Vault
   | 'snelstart.pushed'                // ← [SNELSTART] facturen als boeking naar de administratie gestuurd
+  | 'snelstart.hold_acknowledged'     // ← [PUSH-ACK] eigenaar tikte een voorbehoud af: "ik weet het, stuur toch door"
   // [ENABLEBANKING] De PSD2-bankkoppeling. Alle drie worden vastgelegd omdat het hier om
   // LEESTOEGANG TOT EEN BANKREKENING gaat: wie die heeft gegeven, wanneer, en wanneer hij weer
   // is ingetrokken, is precies wat een auditor (of de eigenaar zelf) achteraf moet kunnen zien.

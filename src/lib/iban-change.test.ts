@@ -4,7 +4,7 @@
 //   · ZWIJGEN bij een echte wissel → de eigenaar tikt het nummer van een fraudeur over.
 //   · SCHREEUWEN bij een niet-wissel → de waarschuwing wordt ruis en dan negeert hij ook de echte.
 // Vandaar dat "eerste IBAN voor een bekende leverancier" expliciet GEEN wissel is.
-import { assessIbanChange, formatIban, ibanChangeReason } from './iban-change'
+import { assessIbanChange, formatIban, ibanChangeReason, detectIbanChange, knownIbanForVendor } from './iban-change'
 import { classifyImportHealth } from './import-health'
 
 let passed = 0, failed = 0
@@ -66,5 +66,51 @@ const noNumbers = classifyImportHealth({ ...base, field_confidence: { _safecore:
 check('wissel zonder bewaarde nummers → nog steeds needs-review met bruikbare tekst',
   noNumbers.level === 'needs-review' && noNumbers.reasons.some((r) => /rekeningnummer/.test(r) && /zelf opzoekt/.test(r)))
 
-console.log(`\n${passed} passed, ${failed} failed\n`)
-process.exit(failed === 0 ? 0 : 1)
+console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag nooit als schoon lezen —')
+{
+  // Dit is de enige controle die tussen de eigenaar en een omgeleide betaling staat: bij
+  // factuurfraude klopt al het andere op het papier, en het gewijzigde rekeningnummer is het enige
+  // signaal dat er is. Een stil overgeslagen controle IS dus de hele blootstelling.
+  //
+  // De twee `if (error) throw` regels in knownIbanForVendor stonden er al — en een
+  // `catch { return null }` om de hele body ving ze drie regels verderop weer op en gaf precies de
+  // null terug die ze moesten voorkomen. Geen enkele test keek naar een MISLUKTE lees, dus alles
+  // bleef groen. Deze stub kijkt er wel naar.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = (res: any) => { const o: any = { select: () => o, eq: () => o, not: () => o, order: () => o, limit: () => o, maybeSingle: async () => res }; return o }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stub = (res: any): any => ({ from: () => q(res) })
+  const kapot = stub({ data: null, error: { message: 'connection reset' } })
+  const leeg = stub({ data: null, error: null })
+  const bekend = stub({ data: { iban: 'NL91ABNA0417164300' }, error: null })
+  const vendor = { name: 'Dutch Sweets Company B.V.', kvk: '76895009', iban: 'NL02RABO0123456789' }
+
+  // Geen top-level await in dit bestand (cjs-uitvoer), dus de samenvatting hangt aan deze keten.
+  void (async () => {
+    const mislukt = await detectIbanChange(kapot, 'u1', vendor)
+    check('mislukte lees → status unavailable, niet "geen wissel"', mislukt.status === 'unavailable')
+
+    // De andere kant: null moet nog steeds ÉÉN ding betekenen — we hebben gekeken en er staat niets.
+    const eerste = await detectIbanChange(leeg, 'u1', vendor)
+    check('geen nummer bekend → een uitgevoerde controle zonder melding',
+      eerste.status === 'ok' && eerste.change === null)
+
+    const wissel = await detectIbanChange(bekend, 'u1', vendor)
+    check('een echte wissel wordt nog steeds gemeld met beide nummers',
+      wissel.status === 'ok' && wissel.change?.from === 'NL91ABNA0417164300' && wissel.change?.to === 'NL02RABO0123456789')
+
+    // Geen IBAN op het papier is een volledig uitgevoerde controle met een lege uitkomst — geen
+    // mislukking. Anders zou elke factuur zonder rekeningnummer een fraudevlag krijgen.
+    const geenNummer = await detectIbanChange(kapot, 'u1', { ...vendor, iban: null })
+    check('geen IBAN op de factuur → niets te vergelijken, geen vlag',
+      geenNummer.status === 'ok' && geenNummer.change === null)
+
+    // En de bron van de waarheid: de lookup zelf moet GOOIEN, want dat is wat detectIbanChange
+    // vertaalt. Vangt iemand hem ooit weer af, dan valt deze om.
+    let gooide = false
+    try { await knownIbanForVendor(kapot, 'u1', vendor) } catch { gooide = true }
+    check('knownIbanForVendor gooit bij een mislukte lees (geen catch die hem opslokt)', gooide)
+    console.log(`\n${passed} passed, ${failed} failed\n`)
+    process.exit(failed === 0 ? 0 : 1)
+  })()
+}

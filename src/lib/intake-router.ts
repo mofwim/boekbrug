@@ -122,6 +122,98 @@ export function decidePreAi(
   return null
 }
 
+// ─── The payment question, answered in ONE place for every door ───────────────
+
+/**
+ * Was this document already paid, how, when, and on what evidence?
+ *
+ * ── WHY IT IS ITS OWN FUNCTION ──
+ * Two doors bring documents in — the camera/upload (/api/intake) and the e-mail sync — and only
+ * the first one ever asked this question. The sync mapped the reader's answer into its own
+ * classification object and dropped is_paid, paid_method, paid_date, paid_evidence and
+ * paid_card_last4 on the way, so a kassabon that arrived by e-mail was booked as a bill still to
+ * pay. Money already out of the till, sitting in "nog te betalen".
+ *
+ * The answer must be identical whichever door the paper came through, so it lives here and both
+ * doors call it. decideFromAi below is one of the two callers.
+ *
+ * ── THE KIND IS ITSELF THE PROOF ──
+ * ai.ts states the contract in its own words: "A 'receipt'/kassabon is a PAID proof; an 'invoice'
+ * is a payment request (usually unpaid)." The router did not act on that. It required a SECOND
+ * signal — the model separately setting is_paid, or a printed tender line — so a receipt that was
+ * unmistakably a receipt still landed as a debt whenever both happened to be silent.
+ *
+ * A receipt exists because the counter was paid; that is what makes it a receipt rather than a
+ * bill. So the kind alone now carries the suggestion. Nothing is booked by it either way: this is
+ * a SUGGESTION, the human confirms, and the two mistakes are not the same size — a wrong
+ * suggestion costs one tap to decline, a missing one leaves money already spent standing as a
+ * debt, dunned, and payable a second time.
+ *
+ * ── ABSENCE IS NOT DENIAL ──
+ * An is_paid the model never set is silence, and silence does not outrank the kind. An explicit
+ * is_paid === false is a statement — the reader saw something — and it is respected, unless the
+ * PAPER contradicts it: a printed "Wisselgeld" or "Bankpas" outranks any interpretation of it,
+ * which is the rule bon-betaalwijze.ts is built on.
+ *
+ * ── AND IT STILL ASKS HOW ──
+ * Suggesting paid from the kind says nothing about the method. paidMethodZeker stays false and the
+ * method stays null unless the paper named one, so the screen asks instead of asserting. Guess
+ * cleverly, ask only when we do not know.
+ */
+export interface PaymentSuggestion {
+  suggestPaid: boolean
+  paidMethod: "bank" | "kas" | null
+  paidMethodZeker: boolean
+  paidEvidence: string | null
+  paidCardLast4: string | null
+  paidDate: string | null
+  /** Short tag naming which signal decided it, for the audit trail. */
+  reason: string
+}
+
+const NOT_PAID: PaymentSuggestion = {
+  suggestPaid: false, paidMethod: null, paidMethodZeker: false,
+  paidEvidence: null, paidCardLast4: null, paidDate: null, reason: "ai_unpaid",
+}
+
+export function paymentSuggestion(ai: IntakeClassification): PaymentSuggestion {
+  if (ai.document_kind === "receipt") {
+    const gok = gokBetaalwijze(ai.paid_evidence, ai.paid_method)
+    // The paper first, then the kind. Only an explicit denial with a silent paper holds it back.
+    const betaald = gok.zeker || ai.is_paid !== false
+    return {
+      suggestPaid: betaald,
+      paidMethod: betaald ? gok.method : null,
+      paidMethodZeker: betaald ? gok.zeker : false,
+      paidEvidence: gok.bewijs ?? ai.paid_evidence ?? null,
+      paidCardLast4: gok.kaartLaatste4 ?? ai.paid_card_last4 ?? null,
+      paidDate: betaald ? (ai.paid_date ?? null) : null,
+      reason: ai.is_paid === true
+        ? "ai_receipt_paid"
+        : gok.zeker
+          ? "bon_tender_paid"
+          : betaald
+            ? "bon_kind_is_proof"
+            : "ai_receipt_unpaid",
+    }
+  }
+
+  // [PEN-MARK] An INVOICE the owner marked paid by hand or a stamp ("betaald · kas · 16-2"). Here
+  // the kind proves nothing — an invoice is a request for payment — so it takes the model's word,
+  // and a handwritten mark is never "zeker": it is a reading of someone's pen, not of a till line.
+  if (ai.is_paid === true) {
+    return {
+      ...NOT_PAID,
+      suggestPaid: true,
+      paidMethod: normaliseerBetaalwijze(ai.paid_method),
+      paidDate: ai.paid_date ?? null,
+      reason: "ai_invoice_pen_paid",
+    }
+  }
+
+  return NOT_PAID
+}
+
 // ─── Stage 2: post-AI decision (image/PDF that wasn't a bank file) ────────────
 
 export function decideFromAi(ai: IntakeClassification): IntakeDecision {
@@ -130,40 +222,21 @@ export function decideFromAi(ai: IntakeClassification): IntakeDecision {
     return { destination: "document", suggestPaid: false, reason: "ai_other" }
   }
 
-  // Paid receipt/kassabon → verify queue, pre-suggest paid (human confirms).
-  // [BON-BETAALWIJZE] De betaalwijze komt van het PAPIER, niet van de interpretatie: de
-  // afgedrukte tenderregel wint van ai.paid_method (zie bon-betaalwijze.ts). Staat er niets,
-  // dan valt hij terug op het model — maar dan met zeker=false, zodat het scherm het vraagt
-  // in plaats van het te beweren.
+  // Every payment question is answered in ONE place — see paymentSuggestion above. This function
+  // decides only WHERE the document goes; it no longer has its own opinion about whether it was
+  // paid, which is what let the two doors drift apart in the first place.
+  const pay = paymentSuggestion(ai)
+
+  // A receipt/kassabon → verify queue, pre-suggested as paid (the human confirms).
   if (ai.document_kind === "receipt") {
-    const gok = gokBetaalwijze(ai.paid_evidence, ai.paid_method)
-    return {
-      destination: "receipt",
-      suggestPaid: ai.is_paid === true,
-      paidMethod: ai.is_paid ? gok.method : null,
-      paidMethodZeker: ai.is_paid ? gok.zeker : false,
-      paidEvidence: gok.bewijs ?? ai.paid_evidence ?? null,
-      paidCardLast4: gok.kaartLaatste4 ?? ai.paid_card_last4 ?? null,
-      paidDate: ai.is_paid ? (ai.paid_date ?? null) : null,
-      reason: ai.is_paid ? "ai_receipt_paid" : "ai_receipt_unpaid",
-    }
+    return { destination: "receipt", ...pay }
   }
 
-  // [PEN-MARK] An INVOICE the owner marked paid by hand or a stamp ("betaald · kas · 16-2") →
-  // still the verify queue, but pre-suggest paid + how + when so a snapped-and-thrown paper
-  // invoice is one confirming tap, not manual entry. Never auto-booked — the human confirms.
-  if (ai.is_paid === true) {
-    return {
-      destination: "invoice",
-      suggestPaid: true,
-      // [BON-BETAALWIJZE] Ook hier genormaliseerd: een pen-streep "pin" is een bankbetaling.
-      // Een handgeschreven merk is nooit "zeker" in de zin van deze vlag — het is een lezing
-      // van iemands pen, niet van een kassaregel.
-      paidMethod: normaliseerBetaalwijze(ai.paid_method),
-      paidMethodZeker: false,
-      paidDate: ai.paid_date ?? null,
-      reason: "ai_invoice_pen_paid",
-    }
+  // [PEN-MARK] An INVOICE the owner marked paid by hand or a stamp → still the verify queue, but
+  // pre-suggest paid + how + when so a snapped-and-thrown paper invoice is one confirming tap
+  // rather than manual entry. Never auto-booked — the human confirms.
+  if (pay.suggestPaid) {
+    return { destination: "invoice", ...pay }
   }
 
   // Default: an invoice (or anything unclear that the AI still called an

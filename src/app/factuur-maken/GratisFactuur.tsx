@@ -21,7 +21,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { InvoicePDF } from '@/lib/invoice-pdf'
 import { formatEuroNL } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
@@ -31,12 +30,16 @@ import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
 import { vakOpties, vakBySlug, vakRegelsVoorFormulier } from '@/lib/vak-sjablonen'
 
-// react-pdf touches browser APIs — load the link client-side only (same
-// pattern as dashboard/invoice/[id]).
-const PDFDownloadLink = dynamic(
-  () => import('@react-pdf/renderer').then((mod) => mod.PDFDownloadLink),
-  { ssr: false }
-)
+// [PDF-LAZY] react-pdf touches browser APIs AND weighs 1,4 MB, dus hij hoort pas geladen te worden
+// wanneer er echt gedownload wordt. Dat stond hier al — en werkte niet: twaalf regels hoger stond
+// `import { InvoicePDF } from '@/lib/invoice-pdf'`, en dát bestand importeert @react-pdf gewoon
+// statisch. Eén import verderop in de keten haalt de hele bundel alsnog binnen, dus deze dynamic()
+// stelde niets voor: de pagina woog 2,5 MB, op twaalf publieke pagina's die een vreemde op een
+// telefoon moeten overtuigen.
+//
+// Nu zit de renderer MET zijn document in één apart bestand (PdfDownloadButton), zodat de grens om
+// allebei heen ligt en een latere import hem niet ongemerkt weer kan doorbreken.
+const PdfDownloadButton = dynamic(() => import('./PdfDownloadButton'), { ssr: false })
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // The free tool stays deliberately simple: only a factuur and its creditnota.
@@ -857,17 +860,15 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
         {/* ── Download ── */}
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: 24 }}>
           {hydrated && canDownload ? (
-            <PDFDownloadLink
-              document={<InvoicePDF invoice={invoice} lines={numericLines} profile={sender} />}
+            <PdfDownloadButton
+              invoice={invoice}
+              lines={numericLines}
+              profile={sender}
               fileName={fileName}
               style={s.btnPrimary}
               onClick={handleDownload}
-            >
-              {({ loading }: { loading: boolean }) => {
-                pdfLoadingRef.current = loading
-                return loading ? 'PDF wordt gemaakt…' : '↓ Download PDF'
-              }}
-            </PDFDownloadLink>
+              onLoadingChange={(loading) => { pdfLoadingRef.current = loading }}
+            />
           ) : (
             <button style={{ ...s.btnPrimary, opacity: 0.4, cursor: 'not-allowed' }} disabled>
               ↓ Download PDF

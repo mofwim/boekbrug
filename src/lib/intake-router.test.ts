@@ -43,5 +43,59 @@ console.log("\n— a plain UNPAID invoice stays unpaid (no false paid) —");
   check("no method/date on an unpaid invoice", (d.paidMethod ?? null) === null && (d.paidDate ?? null) === null);
 }
 
+console.log("\n— [BON-BETAALD] the printed tender line is the payment, even when is_paid is unset —");
+{
+  // The Lidl Eemnes receipt: "Contant 24,00 / Wisselgeld -0,35". Change came back, so cash went
+  // over the counter — there is no reading of that line in which the bon is still to be paid.
+  const contant = decideFromAi({
+    is_invoice: true, document_kind: "receipt",
+    paid_evidence: "TOTAAL 24,35 Contant 24,00 Wisselgeld -0,35",
+  });
+  check("wisselgeld/contant → suggestPaid, without ai.is_paid", contant.suggestPaid === true);
+  check("and it is 'kas', stated with certainty", contant.paidMethod === "kas" && contant.paidMethodZeker === true);
+  check("reason names the paper, not the model", contant.reason === "bon_tender_paid");
+
+  const pas = decideFromAi({
+    is_invoice: true, document_kind: "receipt",
+    paid_evidence: "Bankpas  46,22  Kaart xxxxxxxxxxxx6596",
+  });
+  check("bankpas → suggestPaid + bank", pas.suggestPaid === true && pas.paidMethod === "bank");
+  check("the card digits survive for the later bank match", pas.paidCardLast4 === "6596");
+
+  // A bon whose paper says nothing about settlement is STILL a bon, and ai.ts defines that kind as
+  // "a PAID proof" — you hold it because the counter was paid. So the suggestion stands on the kind
+  // alone. What it must NOT do is invent a method: nothing said how, so the screen asks.
+  const stil = decideFromAi({ is_invoice: true, document_kind: "receipt", paid_evidence: "Aantal artikelen 7" });
+  check("no tender line → still suggested paid (the kind is the proof)", stil.suggestPaid === true);
+  check("…but no method is claimed, so the screen asks",
+    (stil.paidMethod ?? null) === null && stil.paidMethodZeker === false && stil.reason === "bon_kind_is_proof");
+
+  // Contradictory paper (card AND cash words) is the "ask the owner" branch of gokBetaalwijze. The
+  // contradiction is about HOW, never about WHETHER — both readings agree the counter was paid —
+  // so the suggestion holds and the method stays empty rather than being picked at random.
+  const strijdig = decideFromAi({ is_invoice: true, document_kind: "receipt", paid_evidence: "Bankpas ... Wisselgeld 0,05" });
+  check("contradictory tender words → still paid, but no method claimed",
+    strijdig.suggestPaid === true && (strijdig.paidMethod ?? null) === null && strijdig.paidMethodZeker === false);
+
+  // The one thing that DOES hold it back: the reader positively saying it was not paid. Absence is
+  // silence and silence does not outrank the kind; an explicit false is a statement about the paper.
+  const ontkend = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: false });
+  check("an explicit is_paid=false on a silent paper holds the suggestion back", ontkend.suggestPaid === false);
+
+  // …unless the PAPER contradicts the denial. A printed "Wisselgeld" outranks any interpretation
+  // of it — that is the rule bon-betaalwijze.ts exists for.
+  const papierWint = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: false, paid_evidence: "Contant 24,00 Wisselgeld -0,35" });
+  check("a printed tender line outranks the model's denial", papierWint.suggestPaid === true && papierWint.paidMethod === "kas");
+
+  // And an INVOICE is untouched by all of it: an invoice is a request for payment, so its kind
+  // proves nothing and it still needs the model or a pen mark to say otherwise.
+  const factuur = decideFromAi({ is_invoice: true, document_kind: "invoice", paid_evidence: "IBAN NL65RABO0171136276" });
+  check("an invoice is never paid by virtue of its kind", factuur.suggestPaid === false);
+
+  // And the model's own opinion alone is still not 'zeker' — unchanged.
+  const model = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: true, paid_method: "kas" });
+  check("model-only paid receipt still asks about the method", model.suggestPaid === true && model.paidMethodZeker === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
