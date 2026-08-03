@@ -42,6 +42,8 @@ import { invoiceOwnerId, invoiceCreatedBy, isActingForOther, canAccessInvoice } 
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder terugval faalt de creditnota, en dat
 // is de enige wettelijke weg terug bij een fout in een verstuurde factuur.
 import { writeWithTrail } from '@/lib/created-by'
+// [ALARM] Een poort die niet kon draaien moet iemand bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -121,13 +123,36 @@ export async function POST(request: NextRequest) {
     // [FACTUUR-A] Duplicate guard — one creditnota per invoice, enforced via
     // original_invoice_id (column + FK exist on invoices). Replaces the dead
     // invoice_number='CN-…' check that could never match CR- numbering.
-    const { data: existingCreditnota } = await supabase
+    // [NO-SILENT-EMPTY] The error was dropped, and null here means "no creditnota exists yet" — so
+    // a failed read let a SECOND one be created for the same invoice. That is money out twice: the
+    // customer's balance is credited again, two credit notes point at one invoice, and the
+    // `credited` set that the public pay page and the reminder cron both derive from
+    // original_invoice_id stops meaning one thing.
+    //
+    // It is also unrecoverable in the one way this codebase cares most about. Ten lines below, the
+    // route mints a creditnota number — Art. 35, forward-only, "once committed, no rollback". A
+    // duplicate created here does not just double the credit, it burns a number in the legal
+    // sequence to do it. So the refusal has to come BEFORE the number, which is where it now is.
+    const { data: existingCreditnota, error: existingErr } = await supabase
       .from('invoices')
       .select('id, invoice_number')
       .eq('sender_id', ownerId)
       .eq('invoice_type', 'creditnota')
       .eq('original_invoice_id', original_invoice_id)
       .maybeSingle()
+
+    if (existingErr) {
+      reportHandledFailure({
+        tag: 'CREDITNOTA-GUARD',
+        message: 'duplicate-creditnota check failed — refusing to create',
+        severity: 'gate-unavailable',
+        context: { ownerId, originalInvoiceId: original_invoice_id, error: existingErr.message },
+      })
+      return NextResponse.json(
+        { error: 'We konden niet nakijken of er al een creditnota voor deze factuur bestaat. Er is niets aangemaakt — probeer het zo meteen opnieuw.' },
+        { status: 503 },
+      )
+    }
 
     if (existingCreditnota) {
       return NextResponse.json(

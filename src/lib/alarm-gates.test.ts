@@ -32,6 +32,10 @@ const MUST_ALARM: Array<{ file: string; needle: string }> = [
   // A ceiling that has stopped existing. Failing open is the right call on a payment page; not
   // knowing it happened is not.
   { file: "src/lib/rate-limit.ts", needle: "rate limit unavailable" },
+  // Sales side. A failed duplicate check here credits a customer twice AND burns an Art. 35 number
+  // doing it — the refusal happens before the number is minted, and it must be heard.
+  { file: "src/app/api/invoice/creditnota/route.ts", needle: "duplicate-creditnota check failed" },
+  { file: "src/app/api/invoice/[id]/betaalverzoek/route.ts", needle: "creditnota check failed" },
 ];
 
 test("[ALARM] the failures the code calls impossible are reported, not just logged", () => {

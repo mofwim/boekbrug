@@ -756,3 +756,47 @@ test("[CREDIT-SAFE] the same overdue row IS dunned once it stops looking like a 
   assert.doesNotMatch(html, /Lijkt een creditnota/, "no credit prefix, no signal");
   assert.match(html, /te laat/, "an ordinary overdue invoice must still say so");
 });
+
+// ─── [INTAKE-QUEUE] The button that is on nearly every screen ─────────────────
+// This component gained state in the queue change — a counter, a ref, and a new summary sheet — and
+// it renders on almost every dashboard surface. A bad hook order or a reference before declaration
+// would not break one screen, it would white-page most of them, and the source-level gates in
+// bundle-weight-gates.test.ts cannot see that: they read imports and shapes, never a render.
+//
+// This does not test the queue. Behaviour under three concurrent uploads needs a real device, and
+// that is stated rather than pretended: renderToStaticMarkup never runs an effect and never fires a
+// click. What it proves is the thing the other gates structurally cannot — that the component still
+// RUNS, in each of its placements.
+
+test("[RENDER-GATE] the intake button renders in every placement it is used in", async () => {
+  const { default: IntakeButton } = await import("../../src/components/intake/IntakeButton");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  // The placements the app actually mounts it in. An unknown one is included on purpose: the prop
+  // is a union today, and a component that throws on an unexpected value would take the page with
+  // it rather than degrade.
+  for (const placement of ["fab", "card", "inline", undefined]) {
+    const html = renderToStaticMarkup(
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IntakeButton as any, { placement })),
+    );
+    assert.ok(html.length > 0, `placement ${String(placement)} rendered nothing at all`);
+  }
+});
+
+test("[INTAKE-QUEUE] the idle button invites a capture and claims no work in progress", async () => {
+  // The counter starts at zero, so the resting copy must be the invitation — not "1 wordt gelezen".
+  // If inFlight ever initialised wrong, every screen carrying this button would greet the owner
+  // with a progress line about an upload that does not exist.
+  const { default: IntakeButton } = await import("../../src/components/intake/IntakeButton");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IntakeButton as any, { placement: "card" })),
+  );
+  assert.match(html, /Maak een foto of upload/, "the resting state must invite a capture");
+  assert.doesNotMatch(html, /wordt gelezen/, "an idle button must not claim something is processing");
+});
