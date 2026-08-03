@@ -22,6 +22,9 @@
 import type { SnelStartBtwTarief, BoekingType } from "@/lib/snelstart-client";
 // [BON-NUMMER] Eén definitie van "dit nummer is verzonnen" — gedeeld met de verify-queue.
 import { isPlaceholderInvoiceNumber } from "@/lib/safecore";
+// [CREDIT-SIGN-PUSH] Eén definitie van "dit nummer zegt credit" — gedeeld met de wachtrij, de
+// betaalpagina en de auto-advance-poort. Een tweede lijst hier zou onvermijdelijk gaan afwijken.
+import { looksLikeCreditnotaByNumber } from "@/lib/creditnota-signal";
 
 // ─── Invoer (ruwe DB-vormen, losgekoppeld van database.types voor testbaarheid) ────
 
@@ -50,6 +53,7 @@ export interface SnelStartInvoiceLine {
 // ─── Fouten ───────────────────────────────────────────────────────────────────────
 
 export type MappingErrorCode =
+  | "CREDIT_SIGN_UNRESOLVED"
   | "NOT_EXPORTABLE"
   | "MISSING_NUMBER"
   | "MISSING_DATE"
@@ -69,6 +73,10 @@ export class SnelStartMappingError extends Error {
 
 export function dutchMappingError(code: MappingErrorCode): string {
   switch (code) {
+    case "CREDIT_SIGN_UNRESOLVED":
+      // Names the evidence, the consequence and the one tap out — a refusal the owner cannot act on
+      // is just a wall, and this one sits between them and their boekhouder.
+      return "Dit nummer begint met een creditnota-kenmerk terwijl het bedrag positief in de boeken staat. Zo geboekt telt het als schuld mee en wordt de btw opgeteld in plaats van afgetrokken — en na verwerking door je boekhouder kunnen wij dat niet meer corrigeren. Open de factuur en kies \u201cJa, dit is een creditnota\u201d (of corrigeer de bedragen) en stuur hem daarna opnieuw door.";
     case "NOT_EXPORTABLE":
       return "Deze factuur kan niet naar SnelStart: alleen gecontroleerde facturen en creditnota's worden geboekt.";
     case "MISSING_NUMBER":
@@ -126,6 +134,37 @@ export function isPushable(invoice: SnelStartInvoice): PushableCheck {
   if (typeof inc !== "number" || !Number.isFinite(inc) || Math.abs(inc) < 0.005) {
     return { ok: false, code: "NO_AMOUNTS" };
   }
+
+  // [CREDIT-SIGN-PUSH] A document whose own number says credit, booked as a debt, does not leave
+  // this building.
+  //
+  // Everything else this gate refuses is a document that is INCOMPLETE — no date, no number, no
+  // relation, no amount. This one is complete and wrong, which is worse, because nothing further
+  // down will notice: the mapping's sum check passes (31,07 + 2,80 = 33,87 reconciles perfectly),
+  // and SnelStart has no opinion about whether a supplier's CR-numbered document was a credit.
+  //
+  // CREDITFACTUUR CR0301267 was exactly this, sat in status 'received' — which is BOOKABLE_INCOMING
+  // — and would have gone across as an inkoopboeking of +€ 33,87 in the legal purchase ledger, with
+  // its btw ADDED to the reclaim instead of subtracted. And that is where it would have stayed:
+  // once the accountant marks a row 'verwerkt', prevent_verwerkt_invoice_changes freezes it and
+  // this app can no longer correct what it sent.
+  //
+  // That asymmetry is the whole reason this check lives HERE and not only on the screen. A screen
+  // warning is reversible by tapping it; a booking in someone else's administration is not ours to
+  // take back. The push is the last door, so it is the one that has to be shut.
+  //
+  // It is the same deterministic rule the verify queue and auto-advance use — the supplier's own
+  // numbering, not our guess — and it has an exit that takes one tap: "Ja, dit is een creditnota"
+  // flips the sign, and the row then pushes correctly AS a creditnota. Refusing is therefore never
+  // a dead end, which is what makes it safe to refuse at all.
+  if (looksLikeCreditnotaByNumber({
+    invoiceNumber: invoice.invoice_number,
+    totalIncBtw: inc,
+    invoiceType: invoice.invoice_type,
+  })) {
+    return { ok: false, code: "CREDIT_SIGN_UNRESOLVED" };
+  }
+
   return { ok: true };
 }
 

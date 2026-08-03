@@ -361,3 +361,46 @@ test("kwartaalvenster dekt de hele periode, ook in een schrikkeljaar", () => {
   assert.deepEqual(quarterRange(2026, 4), { from: "2026-10-01", to: "2026-12-31" });
   assert.deepEqual(quarterRange(2024, 1), { from: "2024-01-01", to: "2024-03-31" });
 });
+
+
+// ─── [CREDIT-SIGN-PUSH] The last door ─────────────────────────────────────────
+// Every other refusal in isPushable is about a document that is INCOMPLETE. This one is complete
+// and wrong, which is worse: the sum reconciles to the cent, so nothing downstream objects, and
+// SnelStart has no opinion about whether a supplier's CR-numbered document was a credit.
+
+const sweets = (over: Partial<SnelStartInvoice> = {}): SnelStartInvoice => ({
+  id: "cr", invoice_number: "CR0301267", invoice_date: "2026-07-02", due_date: "2026-08-01",
+  direction: "incoming", invoice_type: "factuur", status: "received",
+  total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+  client_name: "Dutch Sweets Company B.V.", ...over,
+});
+
+test("[CREDIT-SIGN-PUSH] a credit-numbered document booked as a debt does not leave the building", () => {
+  const check = isPushable(sweets());
+  assert.equal(check.ok, false);
+  assert.equal(check.ok === false && check.code, "CREDIT_SIGN_UNRESOLVED");
+  // Its amounts are perfect — 31,07 + 2,80 = 33,87 — so no other gate would ever have stopped it.
+  assert.ok(Math.abs(31.07 + 2.8 - 33.87) < 0.005, "the fixture reconciles exactly");
+});
+
+test("[CREDIT-SIGN-PUSH] the refusal names the way out, because it stands between the owner and their boekhouder", () => {
+  const dutch = dutchMappingError("CREDIT_SIGN_UNRESOLVED");
+  assert.match(dutch, /creditnota/i, "it must name what it thinks this is");
+  assert.match(dutch, /btw/i, "and why it matters — the btw goes the wrong way");
+  assert.match(dutch, /opnieuw/i, "and that the push can be retried after the fix");
+});
+
+test("[CREDIT-SIGN-PUSH] and it pushes the moment the sign is resolved", () => {
+  // The exit that makes refusing safe. One tap flips the triplet and sets the type; the row is then
+  // a creditnota with the sign of one, which the mapping already books as the mirror of an invoice.
+  const fixed = sweets({ invoice_type: "creditnota", total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87 });
+  assert.equal(isPushable(fixed).ok, true, "a correctly booked creditnota is pushable");
+});
+
+test("[CREDIT-SIGN-PUSH] it stays out of the way of everything else", () => {
+  // The false-positive side. An ordinary invoice from the same supplier, a credit note already
+  // stored negative, and a number with no credit prefix must all pass exactly as before.
+  assert.equal(isPushable(sweets({ invoice_number: "RE0802039", total_ex_btw: 679.33, btw_amount: 61.14, total_inc_btw: 740.47 })).ok, true);
+  assert.equal(isPushable(sweets({ total_inc_btw: -33.87, total_ex_btw: -31.07, btw_amount: -2.8 })).ok, true);
+  assert.equal(isPushable(sweets({ invoice_number: "2033161" })).ok, true);
+});
