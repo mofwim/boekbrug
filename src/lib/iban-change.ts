@@ -30,6 +30,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk } from '@/lib/supplier-registry'
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = SupabaseClient<any>
 
@@ -99,14 +101,30 @@ export function ibanChangeReason(change: IbanChange): string {
  * Bewust NIET op IBAN zelf — dat is juist het veld dat verdacht is; erop zoeken zou de vraag
  * beantwoorden met zichzelf.
  *
- * Best-effort: geeft null bij twijfel, nooit een exception.
+ * THROWS when a lookup could not RUN. `null` means one thing only: we looked and this supplier has
+ * no account number on record yet. detectIbanChange turns the throw into a stated 'unavailable'.
+ *
+ * ── WHY THIS FUNCTION NO LONGER CATCHES ──
+ * It used to. The two `if (error) throw` lines below were added precisely so a failed read could
+ * not read as "no IBAN on record" — and a `catch { return null }` around the whole body caught
+ * them, three lines further down, and returned exactly the null they were written to prevent. The
+ * comments said the throw reached detectIbanChange; it never did once.
+ *
+ * Verified, not assumed: with a stub whose read answers { data: null, error }, detectIbanChange
+ * returned { status: 'ok', change: null } — a completed check with nothing to report. On THIS check
+ * that sentence means the owner pays whatever account the paper prints. Invoice fraud is the case
+ * where everything else on the paper is correct; the changed account number is the only signal
+ * there is, so a silently skipped check is the whole of the exposure.
+ *
+ * So there is no catch. Any failure to complete the lookup — a read error, or anything unforeseen —
+ * leaves as a throw and is stated. detectIbanChange is the only caller, and it already handles it.
  */
 export async function knownIbanForVendor(
   supabase: Client,
   userId: string,
   vendor: { name?: string | null; kvk?: string | null },
 ): Promise<string | null> {
-  try {
+  {
     const kvk = normalizeKvk(vendor.kvk)
     if (kvk) {
       // [IBAN-CHECK-HONEST] A dropped error here is the difference between "this supplier has no
@@ -145,8 +163,6 @@ export async function knownIbanForVendor(
       .maybeSingle()
     if (error) throw new Error(error.message)
     return normalizeIban((data as { iban: string | null } | null)?.iban)
-  } catch {
-    return null
   }
 }
 
@@ -171,9 +187,14 @@ export async function detectIbanChange(
     // which on THIS check means the owner pays whatever account the paper prints, without ever
     // being told the app could not verify it. The import still proceeds (a supplier-registry
     // outage may not stop the books), but it proceeds SAYING so.
-    console.error('[IBAN-CHECK-HONEST] supplier lookup failed — invoice flagged as unverified', {
-      userId,
-      error: e instanceof Error ? e.message : String(e),
+    // [ALARM] The one check standing between the owner and a redirected payment did not run. The
+    // invoice is flagged on screen, which is right — and a flag the owner may click past is not the
+    // same as us knowing our fraud check is down.
+    reportHandledFailure({
+      tag: 'IBAN-CHECK-HONEST',
+      message: 'supplier lookup failed — invoice flagged as unverified',
+      severity: 'gate-unavailable',
+      context: { userId, error: e instanceof Error ? e.message : String(e) },
     })
     return { status: 'unavailable' }
   }

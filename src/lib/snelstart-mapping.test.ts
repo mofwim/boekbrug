@@ -14,6 +14,10 @@ import {
   deriveHeaderRate,
   dutchMappingError,
   isPushable,
+  pushHoldFlagsOf,
+  pushHoldReason,
+  acknowledgedFlags,
+  PUSH_BLOCKING_FLAGS,
   mapInvoiceToBoeking,
   relatieSoortFor,
   resolveBtwSoort,
@@ -360,4 +364,113 @@ test("kwartaalvenster dekt de hele periode, ook in een schrikkeljaar", () => {
   assert.deepEqual(quarterRange(2026, 2), { from: "2026-04-01", to: "2026-06-30" });
   assert.deepEqual(quarterRange(2026, 4), { from: "2026-10-01", to: "2026-12-31" });
   assert.deepEqual(quarterRange(2024, 1), { from: "2024-01-01", to: "2024-03-31" });
+});
+
+
+// ─── [CREDIT-SIGN-PUSH] The last door ─────────────────────────────────────────
+// Every other refusal in isPushable is about a document that is INCOMPLETE. This one is complete
+// and wrong, which is worse: the sum reconciles to the cent, so nothing downstream objects, and
+// SnelStart has no opinion about whether a supplier's CR-numbered document was a credit.
+
+const sweets = (over: Partial<SnelStartInvoice> = {}): SnelStartInvoice => ({
+  id: "cr", invoice_number: "CR0301267", invoice_date: "2026-07-02", due_date: "2026-08-01",
+  direction: "incoming", invoice_type: "factuur", status: "received",
+  total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+  client_name: "Dutch Sweets Company B.V.", ...over,
+});
+
+test("[CREDIT-SIGN-PUSH] a credit-numbered document booked as a debt does not leave the building", () => {
+  const check = isPushable(sweets());
+  assert.equal(check.ok, false);
+  assert.equal(check.ok === false && check.code, "CREDIT_SIGN_UNRESOLVED");
+  // Its amounts are perfect — 31,07 + 2,80 = 33,87 — so no other gate would ever have stopped it.
+  assert.ok(Math.abs(31.07 + 2.8 - 33.87) < 0.005, "the fixture reconciles exactly");
+});
+
+test("[CREDIT-SIGN-PUSH] the refusal names the way out, because it stands between the owner and their boekhouder", () => {
+  const dutch = dutchMappingError("CREDIT_SIGN_UNRESOLVED");
+  assert.match(dutch, /creditnota/i, "it must name what it thinks this is");
+  assert.match(dutch, /btw/i, "and why it matters — the btw goes the wrong way");
+  assert.match(dutch, /opnieuw/i, "and that the push can be retried after the fix");
+});
+
+test("[CREDIT-SIGN-PUSH] and it pushes the moment the sign is resolved", () => {
+  // The exit that makes refusing safe. One tap flips the triplet and sets the type; the row is then
+  // a creditnota with the sign of one, which the mapping already books as the mirror of an invoice.
+  const fixed = sweets({ invoice_type: "creditnota", total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87 });
+  assert.equal(isPushable(fixed).ok, true, "a correctly booked creditnota is pushable");
+});
+
+test("[CREDIT-SIGN-PUSH] it stays out of the way of everything else", () => {
+  // The false-positive side. An ordinary invoice from the same supplier, a credit note already
+  // stored negative, and a number with no credit prefix must all pass exactly as before.
+  assert.equal(isPushable(sweets({ invoice_number: "RE0802039", total_ex_btw: 679.33, btw_amount: 61.14, total_inc_btw: 740.47 })).ok, true);
+  assert.equal(isPushable(sweets({ total_inc_btw: -33.87, total_ex_btw: -31.07, btw_amount: -2.8 })).ok, true);
+  assert.equal(isPushable(sweets({ invoice_number: "2033161" })).ok, true);
+});
+
+// ─── [PUSH-ACK] Voorbehouden houden de boeking tegen; het akkoord van de eigenaar heft ze op ──
+
+const ack = (flags: string[]) => ({ _push_ack: { at: "2026-08-03T10:00:00Z", by: "u1", flags } });
+const dubbel = { _safecore: { possible_duplicate: true, possible_duplicate_of: "F-2001" } };
+
+const held = (fc: unknown, over: Partial<SnelStartInvoice> = {}): SnelStartInvoice => ({
+  id: "h", invoice_number: "2033161", invoice_date: "2026-05-10", due_date: "2026-06-10",
+  direction: "incoming", invoice_type: "factuur", status: "received",
+  total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, client_name: "Groothandel",
+  field_confidence: fc, ...over,
+});
+
+test("[PUSH-ACK] a flagged invoice does not reach the accountant's ledger by itself", () => {
+  const check = isPushable(held(dubbel));
+  assert.equal(check.ok, false);
+  assert.equal(check.ok === false && check.code, "NEEDS_REVIEW");
+  assert.deepEqual(pushHoldFlagsOf(held(dubbel)), ["possibleDuplicate"]);
+});
+
+test("[PUSH-ACK] the owner's acknowledgement releases exactly what it acknowledged", () => {
+  const cleared = held({ ...dubbel, ...ack(["possibleDuplicate"]) });
+  assert.equal(isPushable(cleared).ok, true, "ticked off → it books");
+  assert.deepEqual(pushHoldFlagsOf(cleared), []);
+});
+
+test("[PUSH-ACK] …and NOT a warning that appeared afterwards", () => {
+  // The reason the acknowledgement lists its flags instead of releasing the invoice wholesale. A
+  // changed bank account is the signature of invoice fraud and is often discovered on a LATER
+  // import — one tap on last week's duplicate warning must not disarm it.
+  const later = held({
+    _safecore: { possible_duplicate: true, iban_changed: true, iban_changed_from: "NL91ABNA0417164300", iban_changed_to: "NL02RABO0123456789" },
+    ...ack(["possibleDuplicate"]),
+  });
+  assert.deepEqual(pushHoldFlagsOf(later), ["ibanChanged"]);
+  assert.equal(isPushable(later).ok, false, "the new warning still holds the booking");
+});
+
+test("[PUSH-ACK] every blocking flag has a sentence, and every sentence says what to check", () => {
+  // A refusal the owner cannot picture is one they cannot act on, and this one stands between them
+  // and their boekhouder. An empty or generic reason would make the button the only thing to read.
+  for (const flag of PUSH_BLOCKING_FLAGS) {
+    const reason = pushHoldReason(flag);
+    assert.ok(reason.length > 25, `${flag} has no usable sentence`);
+    assert.match(reason, /controleer|kloppen|bevat|rekeningnummer/i, `${flag}'s reason names nothing to check`);
+  }
+});
+
+test("[PUSH-ACK] a clean invoice is untouched, and a missing field_confidence changes nothing", () => {
+  // The quiet side. Adding a gate that holds everything would be worse than the gap it closes.
+  assert.equal(isPushable(held(null)).ok, true, "no signals → nothing to hold");
+  assert.equal(isPushable(held({ vendor: 0.99, invoice_number: 0.98, invoice_date: 0.99 })).ok, true);
+  // A call site that never passes the column keeps its old behaviour rather than being blocked by
+  // a field it does not know about.
+  const legacy = { ...held(null) };
+  delete (legacy as { field_confidence?: unknown }).field_confidence;
+  assert.equal(isPushable(legacy).ok, true, "an older call site is not silently blocked");
+});
+
+test("[PUSH-ACK] a malformed acknowledgement grants nothing", () => {
+  // Fail closed on junk: a hand-made row, or an older shape, must not read as blanket permission.
+  for (const junk of [{ _push_ack: true }, { _push_ack: { flags: "possibleDuplicate" } }, { _push_ack: {} }, { _push_ack: null }]) {
+    assert.deepEqual(acknowledgedFlags(junk), new Set(), JSON.stringify(junk));
+    assert.equal(isPushable(held({ ...dubbel, ...junk })).ok, false);
+  }
 });

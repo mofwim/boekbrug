@@ -26,7 +26,7 @@ import Link from 'next/link'
 import { amsterdamToday } from '@/lib/format-nl'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
-import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
@@ -48,8 +48,14 @@ import { classifyImportHealth } from '@/lib/import-health'
 import { scanInvoices, scanFindingIds, type InvoiceScan } from '@/lib/invoice-scan'
 import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
-import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
-import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
+// [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
+import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
+import {
+  looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict,
+  // [CREDIT-SAFE] One stance, read by every widget that would treat a row as a debt — the dunning
+  // badge, the QR sheet and the one-tap "Heb je betaald?". See the header in creditnota-signal.ts.
+  creditStance, payableAsDebt, type CreditStance,
+} from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
 // getest, zodat de randen (januari → december, Q1 → Q4 vorig jaar, schrikkeljaar) vaststaan.
@@ -90,6 +96,78 @@ const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
 // recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
 // unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
+// [VRIJGESTELD] The three ways a purchase can serve the business, for the right to deduct.
+// Dutch on screen, English in the data — the stored values are the ones the engine reads
+// (vat-exemption.ts), and renaming them would be a migration, not a rename.
+type VatDeduction = 'direct_taxed' | 'direct_exempt' | 'mixed'
+
+const DEDUCTION_CHOICES: ReadonlyArray<{ value: VatDeduction; label: string; hint: string }> = [
+  { value: 'direct_taxed',  label: 'Belast werk',   hint: 'Alleen voor je BTW-belaste werk — de BTW is volledig aftrekbaar.' },
+  { value: 'mixed',         label: 'Allebei',       hint: 'Dient je belaste én je vrijgestelde werk (huur, energie, boekhouder) — de BTW wordt naar verhouding afgetrokken.' },
+  { value: 'direct_exempt', label: 'Vrijgesteld werk', hint: 'Alleen voor je vrijgestelde werk — hierop bestaat geen recht op aftrek.' },
+]
+
+const DEDUCTION_TOAST: Record<VatDeduction, string> = {
+  direct_taxed:  'Toegewezen aan belast werk — BTW volledig aftrekbaar ✓',
+  mixed:         'Toegewezen aan allebei — BTW naar verhouding ✓',
+  direct_exempt: 'Toegewezen aan vrijgesteld werk — geen aftrek ✓',
+}
+
+/**
+ * [VRIJGESTELD] "What does this cost serve?" — the control that decides how much of a purchase's
+ * BTW is deductible.
+ *
+ * EXPORTED, and rendered by the caller only when the owner has declared exempt turnover. Split out
+ * of the row body for a reason the render gate makes concrete: inside the row it lives behind
+ * `expanded`, which only a click opens — so one static render of the screen can never reach it,
+ * and a test asserting it "renders" there would be asserting nothing. As its own component it is
+ * called directly, with each of its three states.
+ *
+ * `null` renders as 'mixed' rather than as unanswered, because null IS mixed as far as the engine
+ * is concerned (vat-exemption.ts): showing an empty control would ask the owner to decide
+ * something the aangifte has already decided, and hide which way.
+ */
+export function CostAttribution({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (value: VatDeduction) => void
+}) {
+  const current = DEDUCTION_CHOICES.some(c => c.value === value) ? (value as VatDeduction) : 'mixed'
+  return (
+    <div style={{ marginBottom: 16, padding: '12px 14px', background: 'white', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}` }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', marginBottom: 8, fontFamily: FONT }}>
+        Waarvoor is deze kost?
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {DEDUCTION_CHOICES.map(choice => {
+          const active = current === choice.value
+          return (
+            <button
+              key={choice.value}
+              onClick={() => onChange(choice.value)}
+              title={choice.hint}
+              style={{
+                padding: '7px 13px', borderRadius: R.full, cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                border: active ? 'none' : `1px solid ${M3.surfaceVariant}`,
+                background: active ? M3.primary : 'white',
+                color: active ? M3.onPrimary : '#3c4043',
+              }}
+            >
+              {choice.label}
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: '#5F6368', marginTop: 8, lineHeight: 1.45, fontFamily: FONT }}>
+        {DEDUCTION_CHOICES.find(c => c.value === current)?.hint}
+      </div>
+    </div>
+  )
+}
+
 const fmtDateSmart = (s: string | null, thisYear: string) => {
   if (!s) return '—'
   const d = new Date(s)
@@ -145,6 +223,11 @@ interface IncomingRow {
   // Null on legacy rows (forward-only extraction) or when the AI didn't find it.
   vendor_iban: string | null
   payment_reference: string | null
+  // [VRIJGESTELD] What this cost serves, for the right to deduct: 'direct_taxed' (fully
+  // deductible), 'direct_exempt' (not at all) or 'mixed'/null (the pro-rata share). Only read
+  // when the owner declared exempt turnover; absent for everyone else, and absent on every row
+  // until vat_exemption.sql is applied.
+  vat_deduction?: string | null
   // [PAY-SAFE-CONFIRM] UI marker: owner generated a payment QR/details.
   // NOT a financial state — persists across the async pay round-trip so the
   // "Ik heb betaald" confirm CTA survives prepare → leave → pay → return.
@@ -272,7 +355,10 @@ export default function IncomingManageClient({
   totalCount = null,
   readFailed = [], filedQuarters, bookScan = null, readingHints = {},
 }: {
-  profile: { id: string }
+  // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
+  // Optional, because the server reads the profile with select('*') and the column is simply not
+  // there until vat_exemption.sql is applied — absent then, which correctly hides the control.
+  profile: { id: string; vat_exempt_activity?: boolean | null }
   initialInvoices: IncomingRow[]
   // [INVOICE-COUNTER] How many confirmed inkoopfacturen the owner really has (server count).
   // Only used to disclose that this list is capped — never as the counter itself, because it
@@ -315,6 +401,8 @@ export default function IncomingManageClient({
   // an unknown value falls back to 'Alle', and the owner can switch freely after.
   const filterParam = searchParams.get('filter')
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
+  // [VRIJGESTELD] Read once: the control below is per invoice, the declaration is per owner.
+  const exemptOwner = !!profile.vat_exempt_activity
   const [filter, setFilter]             = useState<FilterTab>(
     FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
   )
@@ -665,51 +753,61 @@ export default function IncomingManageClient({
   // precondition anyway (see the route header). The triplet keeps ex + btw = total exact while
   // typing, so a correction cannot itself produce the contradiction it is meant to remove.
   const [correctFor, setCorrectFor] = useState<IncomingRow | null>(null)
-  const [correctAmounts, setCorrectAmounts] = useState({ ex: 0, btw: 0, incl: 0 })
-  const [correctCredit, setCorrectCredit] = useState(false)
-  const [correctSaving, setCorrectSaving] = useState(false)
 
-  const openCorrection = (inv: IncomingRow) => {
-    setCorrectFor(inv)
-    setCorrectAmounts({ ex: inv.total_ex_btw ?? 0, btw: inv.btw_amount ?? 0, incl: inv.total_inc_btw ?? 0 })
-    // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
-    setCorrectCredit(false)
-    setCorrectSaving(false)
+  // [FULL-CORRECTION] Opening is all this screen does now — the editor and its save live in the
+  // shared component, so /bank cannot end up with a second one that drifts.
+  const openCorrection = (inv: IncomingRow) => setCorrectFor(inv)
+
+  // ── [CREDIT-SAFE] The question that stands in front of a payment ──────────────
+  // A row whose stance is not 'none' does not go straight to the pay flow: it asks first. The
+  // pending action travels with the question so that answering "nee" continues exactly where the
+  // tap was going — the guard adds a step, it never takes the road away.
+  const [creditAsk, setCreditAsk] = useState<
+    { inv: IncomingRow; stance: CreditStance; proceed: (() => void) | null } | null
+  >(null)
+  const [creditBusy, setCreditBusy] = useState(false)
+
+  /** Every one-tap payment path on this screen runs through here. Payable rows notice nothing. */
+  function payGuarded(inv: IncomingRow, stance: CreditStance, proceed: () => void) {
+    if (payableAsDebt(stance)) { proceed(); return }
+    setCreditAsk({ inv, stance, proceed })
   }
 
-  const saveCorrection = async () => {
-    if (!correctFor || correctSaving) return
-    setCorrectSaving(true)
+  // [CREDIT-SAFE] "Ja, dit is een creditnota" — the same one-way declaration the correction modal's
+  // tick makes, through the SAME route, with the same six guards, the same credit-sign rule and the
+  // same audit trail. It is offered here because this is where the owner is standing when they
+  // realise it: in front of the pay button, with the paper in hand. Two taps instead of five.
+  async function bookAsCreditnota(inv: IncomingRow) {
+    if (creditBusy) return
+    setCreditBusy(true)
     try {
-      const res = await fetch(`/api/invoice/${correctFor.id}/amounts`, {
+      const res = await fetch(`/api/invoice/${inv.id}/amounts`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          total_ex_btw: correctAmounts.ex,
-          btw_amount: correctAmounts.btw,
-          total_inc_btw: correctAmounts.incl,
-          ...(correctCredit ? { is_credit_note: true } : {}),
-        }),
+        body: JSON.stringify({ is_credit_note: true }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.ok) {
-        // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
-        // named in them ("reverse the payment first", "ask your accountant") — a generic "try
-        // again" would send the owner at a button that cannot work.
-        showToast(typeof data.error === 'string' ? data.error : 'Corrigeren mislukt — er is niets gewijzigd')
+        // [UI-HONESTY] The route's refusals are states with a way out named in them ("draai eerst
+        // de betaling terug", "je boekhouder heeft deze factuur al verwerkt"). A generic retry
+        // message would send the owner at a button that cannot work.
+        showToast(typeof data.error === 'string' ? data.error : 'Omboeken mislukt — er is niets gewijzigd')
         return
       }
-      // Only now the list follows. Writing it optimistically would show a corrected amount that
-      // the server may have refused — on the screen the owner pays from.
-      setInvoices(prev => prev.map(i => i.id === correctFor.id
-        ? { ...i, total_ex_btw: data.total_ex_btw, btw_amount: data.btw_amount, total_inc_btw: data.total_inc_btw, invoice_type: data.invoice_type }
-        : i))
-      setCorrectFor(null)
-      showToast('Bedragen gecorrigeerd')
+      // From the SERVER's answer, never optimistically: this row's sign is what the payment screens,
+      // the openstaand total and the aangifte all read.
+      patchLocal(inv.id, {
+        total_ex_btw: data.total_ex_btw,
+        btw_amount: data.btw_amount,
+        total_inc_btw: data.total_inc_btw,
+        invoice_type: data.invoice_type,
+      })
+      setCreditAsk(null)
+      showToast('Geboekt als creditnota — gaat van je openstaande saldo af')
     } catch {
-      showToast('Corrigeren mislukt — controleer je verbinding')
+      showToast('Geen verbinding — er is niets gewijzigd')
     } finally {
-      setCorrectSaving(false)
+      setCreditBusy(false)
     }
   }
 
@@ -1038,6 +1136,41 @@ export default function IncomingManageClient({
   // payment_prepared_at timestamp, never status/amounts. Session client (row
   // belongs to the receiver). Idempotent — re-preparing just refreshes the ts.
   // Skipped if the row is already paid (no marker needed) or already marked.
+  // [VRIJGESTELD] Where the pro-rata split is actually decided.
+  //
+  // Without this control every cost falls back to 'mixed' and gets the ratio — safe, because it
+  // under-claims rather than over-claims, but wrong for the two costs an owner CAN place exactly:
+  // the material bought only for the taxable work (fully deductible) and the one bought only for
+  // the exempt work (not at all). On the dental quarter that difference is €141 of deduction the
+  // owner is entitled to and would otherwise silently lose.
+  //
+  // Written straight through RLS, like markPrepared: this is the owner's own invoice. An
+  // ACCOUNTANT cannot reach it — vat_exemption.sql added this column to
+  // prevent_accountant_amount_changes, so the same trigger that stops them moving an amount stops
+  // them moving the deduction it drives.
+  async function setDeduction(inv: IncomingRow, value: VatDeduction) {
+    // Optimistic, then reverted on failure: the control is a 3-way toggle and a value that
+    // silently snaps back is worse than one that never moved.
+    const previous = inv.vat_deduction ?? null
+    setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: value } : r)))
+    const { error } = await supabase
+      .from('invoices')
+      .update({ vat_deduction: value })
+      .eq('id', inv.id)
+    if (error) {
+      setInvoices(prev => prev.map(r => (r.id === inv.id ? { ...r, vat_deduction: previous } : r)))
+      // [UI-HONESTY] Name the one cause that is actually likely and has a way out, instead of a
+      // generic retry: the column exists only after the migration.
+      showToast(
+        /vat_deduction/.test(error.message)
+          ? 'Toewijzen kan nog niet — de BTW-vrijstellingsmigratie staat nog niet op de database'
+          : 'Toewijzen mislukt — er is niets gewijzigd',
+      )
+      return
+    }
+    showToast(DEDUCTION_TOAST[value])
+  }
+
   async function markPrepared(inv: IncomingRow) {
     if (inv.status !== 'received' || inv.payment_prepared_at) return
     const now = new Date().toISOString()
@@ -1728,9 +1861,31 @@ export default function IncomingManageClient({
               // booked kind and an already-negative amount count here: both behave as a credit,
               // whichever of the two the supplier put on paper.
               const isCreditnota = inv.invoice_type === 'creditnota' || (inv.total_inc_btw ?? 0) < 0
-              const daysLate = isPaid || isCreditnota ? null : overdueDays(inv.due_date, todayIso)
               // What THIS supplier's numbering gives away. See creditnota-signal.ts: only when the
               // same supplier demonstrably uses two kinds of prefix does "CR" mean anything.
+              const creditSignal = looksLikeCreditnota({
+                invoiceNumber: inv.invoice_number,
+                totalIncBtw: inv.total_inc_btw,
+                invoiceType: inv.invoice_type,
+                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+              })
+              const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
+              // [CREDIT-SAFE] The single answer the payable-widgets below read. It stands HERE, above
+              // its first reader, because every one of them runs during render — and this file has
+              // already paid once for a const read before its declaration inside a render-time
+              // closure (the /manage white screen). Order is not style on this page.
+              const stance = creditStance({
+                invoiceNumber: inv.invoice_number,
+                totalIncBtw: inv.total_inc_btw,
+                invoiceType: inv.invoice_type,
+                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+              })
+              const payable = payableAsDebt(stance)
+              // [CREDIT-SAFE] …and the dunning badge is one of them. It used to ask isCreditnota,
+              // which covers a credit note that is ALREADY booked right — the exact case that no
+              // longer needs telling. What it missed is the one that does: CR0301267 sat at +33,87
+              // wearing "2 dagen te laat" for money the supplier owed the owner.
+              const daysLate = isPaid || !payable ? null : overdueDays(inv.due_date, todayIso)
               // [ARITHMETIC-VISIBLE] The same verdict the verify queue shows, computed here for the
               // first time. Until now this screen displayed a broken breakdown as if nothing were
               // wrong: an invoice whose excl + BTW does not equal its total still counted for its
@@ -1749,13 +1904,6 @@ export default function IncomingManageClient({
               // to intake and were already answered when the owner confirmed this invoice; repeating
               // them here would turn a payment list into a second inbox.
               const mathProblem = health.flags.arithmetic
-              const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
-              const creditSignal = looksLikeCreditnota({
-                invoiceNumber: inv.invoice_number,
-                totalIncBtw: inv.total_inc_btw,
-                invoiceType: inv.invoice_type,
-                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
-              })
               // [DATE-LINE] The other half of the same timeline: how long is still LEFT. Same rule
               // — null when paid (a settled bill has no deadline left to count), and null when the
               // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
@@ -1954,21 +2102,28 @@ export default function IncomingManageClient({
                             decides. */}
                         {/* [CREDITNOTA-SIGNAL] The contradiction: the app itself calls it a credit
                             note and booked it as a debt. Not a suspicion — an error. */}
+                        {/* [CREDIT-SAFE] Both badges are BUTTONS now. A tooltip is not an answer on
+                            a phone — there is no hover — so the sentence explaining the warning was
+                            unreachable on the device this app is used on, and the only thing the
+                            owner could actually tap was the pay button beside it. Tapping the badge
+                            now opens the same question the pay button asks, with the repair in it. */}
                         {signConflict && (
-                          <span
+                          <button
+                            onClick={e => { e.stopPropagation(); setCreditAsk({ inv, stance, proceed: null }) }}
                             title="Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in 'nog te betalen' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken."
-                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.errorContainer, color: M3.error, border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
                             ⚠ Creditnota staat positief
-                          </span>
+                          </button>
                         )}
                         {creditSignal.suspected && (
-                          <span
+                          <button
+                            onClick={e => { e.stopPropagation(); setCreditAsk({ inv, stance, proceed: null }) }}
                             title={creditnotaSignalText(creditSignal) ?? ''}
-                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.warningContainer, color: '#7C5800', border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
                             ⚠ Lijkt een creditnota
-                          </span>
+                          </button>
                         )}
                         {/* [ARITHMETIC-VISIBLE] The breakdown does not add up. The full reason —
                             which of the three amounts is the odd one out, and what the total
@@ -2069,7 +2224,9 @@ export default function IncomingManageClient({
                           onClick={e => {
                             e.stopPropagation()
                             if (processingId === inv.id || checkingId === inv.id) return
-                            requestPay(inv)
+                            // [CREDIT-SAFE] A row that looks like a credit note asks its question
+                            // first; a payable row goes straight through, exactly as before.
+                            payGuarded(inv, stance, () => requestPay(inv))
                           }}
                           style={{
                             fontSize: 12, fontWeight: isPrepared ? 600 : 500, borderRadius: R.full,
@@ -2122,6 +2279,13 @@ export default function IncomingManageClient({
                         {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
                       </div>
 
+                      {exemptOwner && (
+                        <CostAttribution
+                          value={inv.vat_deduction ?? null}
+                          onChange={(v) => setDeduction(inv, v)}
+                        />
+                      )}
+
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
                             invoice whose amounts were misread could only be archived (which hides a
@@ -2166,7 +2330,10 @@ export default function IncomingManageClient({
                             the QR + copy sheet. No DB write; pure preparation. */}
                         {inv.status === 'received' && (
                           <button
-                            onClick={e => { e.stopPropagation(); setPrepareCtx(inv) }}
+                            // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
+                            // pre-fills the supplier's IBAN and the amount in the owner's bank app.
+                            // On CR0301267 it offered € 33,87 to a supplier who owed it back.
+                            onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
                             style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
                             Betalen
@@ -2306,7 +2473,7 @@ export default function IncomingManageClient({
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
+            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, paddingBottom: sheetPaddingBottom(24), width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
               Betaling verplaatsen
@@ -2572,6 +2739,97 @@ export default function IncomingManageClient({
         </div>
       )}
 
+      {/* ── [CREDIT-SAFE] The question in front of the payment ──────────────────
+          Reached two ways: by tapping a payment action on a row that looks like a credit note, and
+          by tapping the warning badge itself. Both land here because both are the same question,
+          and the owner is the only one who can answer it — the app may not flip a sign on the
+          strength of two letters in a document number (creditnota-signal.ts says why).
+          What it MAY do is refuse to hand over a filled-in payment QR while the question is open. */}
+      {creditAsk && (() => {
+        const { inv, stance, proceed } = creditAsk
+        const signal = looksLikeCreditnota({
+          invoiceNumber: inv.invoice_number,
+          totalIncBtw: inv.total_inc_btw,
+          invoiceType: inv.invoice_type,
+          vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+        })
+        // Already booked as a credit and carrying the right sign: nothing to ask, nothing to repair.
+        // The owner tapped a pay button, so answer the question they actually have.
+        const settled = stance === 'credit'
+        const uitleg = settled
+          ? 'Dit is een creditnota: geld dat jóu toekomt. Je hoeft hem niet te betalen — hij staat met een minbedrag in de boeken en gaat vanzelf van je openstaande saldo af.'
+          : stance === 'conflict'
+            ? 'Deze factuur staat als creditnota geboekt, maar met een POSITIEF bedrag. Daardoor telt hij mee in "nog te betalen" terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken.'
+            : creditnotaSignalText(signal) ??
+              'Deze factuur lijkt een creditnota — geld dat jou toekomt in plaats van geld dat je moet betalen.'
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+            onClick={() => !creditBusy && setCreditAsk(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={settled ? 'Creditnota' : 'Is dit een creditnota?'}
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 24, color: settled ? '#0B8043' : M3.warning }}>
+                  {settled ? 'check_circle' : 'warning'}
+                </span>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>
+                  {settled ? 'Dit is een creditnota' : 'Is dit een creditnota?'}
+                </h3>
+              </div>
+              <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.55, margin: '0 0 12px' }}>{uitleg}</p>
+              <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#202124' }}>
+                <div style={{ fontWeight: 600 }}>{inv.client_name ?? '—'}</div>
+                <div style={{ color: '#5F6368', marginTop: 2 }}>
+                  {inv.invoice_number ? `${inv.invoice_number} · ` : ''}{fmtEur(inv.total_inc_btw)}
+                </div>
+              </div>
+              {!settled && (
+                // Says exactly what the tap does, because it moves money on three screens at once.
+                <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.5, margin: '0 0 16px' }}>
+                  Kies je “ja”, dan worden de bedragen als minbedrag opgeslagen: hij gaat van je
+                  openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Kijk op
+                  de factuur — staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag
+                  onderaan, dan is het er een.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+                {!settled && (
+                  <button
+                    onClick={() => bookAsCreditnota(inv)}
+                    disabled={creditBusy}
+                    style={{ width: '100%', padding: '12px', borderRadius: R.full, background: creditBusy ? '#9AA0A6' : M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                    {creditBusy ? 'Bezig…' : 'Ja, boek als creditnota'}
+                  </button>
+                )}
+                {/* The way on. Present only when a tap was actually held here — opened from the
+                    badge there is nothing to continue to, and a button promising movement that
+                    only closes a sheet is a lie the owner pays for the second time they trust it. */}
+                {proceed && (
+                  <button
+                    onClick={() => { setCreditAsk(null); proceed() }}
+                    disabled={creditBusy}
+                    style={{ width: '100%', padding: '12px', borderRadius: R.full, background: settled ? M3.surfaceVariant : 'transparent', color: settled ? '#3c4043' : M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                    {settled ? 'Toch afhandelen' : 'Nee, gewone factuur — doorgaan'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setCreditAsk(null)}
+                  disabled={creditBusy}
+                  style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                  {proceed ? 'Annuleren' : 'Sluiten'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
       {matchResult && (
         <MatchResultSheet
@@ -2586,93 +2844,29 @@ export default function IncomingManageClient({
           (amount-triplet.ts). The total leads: it is the clearest figure on any invoice and the one
           the bank statement has to match, so typing it over lets the ex amount — the figure the
           reader keeps getting wrong on wholesale invoices — follow by itself. */}
+      {/* [FULL-CORRECTION] One editor, shared with /dashboard/bank — see the component header for
+          why this is not a copy. It writes through the same route with the same guards. */}
       {correctFor && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000 }}
-          onClick={() => !correctSaving && setCorrectFor(null)}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
-          >
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Bedragen corrigeren</p>
-            <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>
-              {correctFor.client_name ?? 'Leverancier onbekend'}
-              {correctFor.invoice_number ? ` · ${correctFor.invoice_number}` : ''}
-              <br />
-              Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
-              exclusief rekent zichzelf uit.
-            </p>
-
-            {/* [READING-MEMORY] What the owner has repeatedly fixed at THIS supplier. The same
-                sentence the verify queue shows, in the other place the same decision is made —
-                "je hebt de btw hier al drie keer gecorrigeerd" is worth knowing while you type the
-                fourth. It names a field, never an amount: a remembered number belongs to a
-                different invoice, and pre-filling it here would be inventing money. */}
-            {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()] && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 13px', marginBottom: 16, background: '#eef4ff', border: '1px solid #cddcff', borderRadius: 12 }}>
-                <span style={{ fontSize: 14, lineHeight: 1.3 }}>🧠</span>
-                <p style={{ fontSize: 12.5, color: '#274690', margin: 0, lineHeight: 1.5 }}>
-                  {readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
-                </p>
-              </div>
-            )}
-
-            {[
-              { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },
-              { key: 'btw' as const, label: 'BTW', apply: setBtw, strong: false },
-              { key: 'ex' as const, label: 'Bedrag excl. BTW', apply: setExcl, strong: false },
-            ].map(f => (
-              <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  value={correctAmounts[f.key]}
-                  onChange={e => setCorrectAmounts(f.apply(correctAmounts, parseFloat(e.target.value) || 0))}
-                  aria-label={f.label}
-                  style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'right', outline: 'none', color: '#202124' }}
-                />
-              </div>
-            ))}
-
-            {/* [KIND-CORRECTION] The one-way declaration. Without it a net-negative invoice cannot be
-                entered at all, and a credit note keeps counting as a debt. */}
-            {correctFor.invoice_type !== 'creditnota' && (
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '14px 0 4px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={correctCredit} onChange={e => setCorrectCredit(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: '#0B8043' }} />
-                <span style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.45 }}>
-                  <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
-                  “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
-                  dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
-                  wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
-                  staat er al een, dan blijft die staan.
-                </span>
-              </label>
-            )}
-
-            <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '12px 0 16px' }}>
-              Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag
-              exclusief mee te tellen, mét zijn teken.
-            </p>
-
-            <button
-              onClick={saveCorrection}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '15px', borderRadius: 14, background: correctSaving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: correctSaving ? 'default' : 'pointer', marginBottom: 8 }}
-            >
-              {correctSaving ? 'Opslaan…' : 'Bedragen opslaan'}
-            </button>
-            <button
-              onClick={() => setCorrectFor(null)}
-              disabled={correctSaving}
-              style={{ width: '100%', padding: '13px', borderRadius: 14, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}
-            >
-              Annuleren
-            </button>
-          </div>
-        </div>
+        <InvoiceCorrectionModal
+          invoice={correctFor}
+          readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
+          onClose={() => setCorrectFor(null)}
+          onMessage={showToast}
+          onSaved={(data) => setInvoices(prev => prev.map(i => i.id === correctFor.id
+            ? {
+                ...i,
+                total_ex_btw: data.total_ex_btw,
+                btw_amount: data.btw_amount,
+                total_inc_btw: data.total_inc_btw,
+                invoice_type: data.invoice_type,
+                // [FULL-CORRECTION] The metadata follows too, or the row would keep showing the
+                // misread supplier the owner just fixed until the next reload.
+                ...(data.invoice_number != null ? { invoice_number: data.invoice_number } : {}),
+                ...(data.client_name != null ? { client_name: data.client_name } : {}),
+                ...(data.invoice_date != null ? { invoice_date: data.invoice_date } : {}),
+              }
+            : i))}
+        />
       )}
 
       <style>{`
@@ -3116,7 +3310,7 @@ function PreparePaymentSheet({
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
@@ -3223,7 +3417,7 @@ function BundelBetalenSheet({
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>
           {rows.length} facturen betalen

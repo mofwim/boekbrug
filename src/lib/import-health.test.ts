@@ -189,5 +189,37 @@ console.log('\n— [BON-NUMMER] een kassabon wordt niet beschuldigd van een ontb
   check('a real change wins over "could not check"', /NL91|veranderd/.test(bothWhy) && !/niet vergelijken/.test(bothWhy))
 }
 
+console.log('\n— [CREDIT-PREFIX-GATE] a credit-numbered document is held, and told why —')
+{
+  // The sentence matters as much as the flag. This axis exists to put a human in front of the
+  // document, and a human who is stopped without being told why goes looking for a defect in the
+  // amounts — which are perfect on CR0301267, and always will be on a well-printed credit note.
+  const cr = classifyImportHealth(inv({
+    invoice_number: 'CR0301267', invoice_type: 'factuur',
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+  }))
+  check('CR… on a debt row → needs-review', cr.level === 'needs-review' && cr.flags.creditPrefix === true)
+  check('and the reason names the prefix and what to check',
+    /CR/.test(cr.reasons.join(' · ')) && /creditnota/i.test(cr.reasons.join(' · ')))
+
+  // The arithmetic is flawless — so nothing else on the card can be what stopped it, and if this
+  // axis ever silently stopped firing the row would go straight through as 'clean'.
+  check('nothing else objects to this invoice', cr.flags.arithmetic === false)
+
+  // Same amounts, ordinary number → clean. Proves the prefix is the cause.
+  const re = classifyImportHealth(inv({
+    invoice_number: 'RE0803119', invoice_type: 'factuur',
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+  }))
+  check('the same invoice under an ordinary number is clean', re.level === 'clean')
+
+  // Already booked as a creditnota with the right sign: correct, and it must not be nagged forever.
+  const booked = classifyImportHealth(inv({
+    invoice_number: 'CR0301267', invoice_type: 'creditnota',
+    total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87,
+  }))
+  check('a correctly booked creditnota is clean on this axis', booked.flags.creditPrefix === false)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

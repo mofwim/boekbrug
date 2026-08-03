@@ -157,5 +157,56 @@ console.log("\n— [DEDUP-SOFT] a POSSIBLE duplicate can NEVER auto-book (held f
   check("same invoice without the flag → advances (flag is the cause)", same.advance === true);
 }
 
+console.log("\n— [CREDIT-PREFIX-GATE] a credit-numbered document never books itself —");
+{
+  // CREDITFACTUUR CR0301267, exactly as the reader delivered it: is_credit_note FALSE (the model
+  // missed it), document_kind "invoice", a breakdown that reconciles to the cent (31,07 + 2,80 =
+  // 33,87) and a confident read. Every gate above it says fine. Before this axis existed it
+  // auto-booked as a € 33,87 debt — money the supplier owed the owner, entered as money owed to
+  // the supplier, with its btw ADDED to the reclaim and no human ever asked.
+  const cr = shouldAutoAdvanceInvoice(clean({
+    totalIncBtw: 33.87,
+    health: {
+      total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+      invoice_date: "2026-07-02", invoice_number: "CR0301267", invoice_type: "factuur",
+      field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96 },
+    },
+  }));
+  check("CR0301267 → held for a human", cr.advance === false && cr.reason === "needs_review");
+
+  // The same invoice under an ordinary number DOES advance — so the number is provably the cause,
+  // and this test cannot pass on a gate that has simply stopped advancing anything.
+  const re = shouldAutoAdvanceInvoice(clean({
+    totalIncBtw: 33.87,
+    health: {
+      total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+      invoice_date: "2026-07-02", invoice_number: "RE0803119", invoice_type: "factuur",
+      field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96 },
+    },
+  }));
+  check("same amounts, ordinary number → advances (the prefix is the cause)", re.advance === true);
+
+  // A credit note that is ALREADY booked right must not wear a permanent amber badge for being
+  // correct. It is held by the is_credit_note / invoice_type rule above, not by this axis.
+  const booked = shouldAutoAdvanceInvoice(clean({
+    is_credit_note: true, invoice_type: "creditnota", totalIncBtw: -33.87,
+    health: {
+      total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87,
+      invoice_date: "2026-07-02", invoice_number: "CR0301267", invoice_type: "creditnota",
+      field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96 },
+    },
+  }));
+  check("an already-booked creditnota is held as 'creditnota', not as a defect", booked.reason === "creditnota");
+
+  // The kassabon placeholder the camera path writes is held by the PLACEHOLDER rule that was
+  // already there — not by this axis. Locked as "still held, for the older reason", because a new
+  // gate that quietly takes credit for an existing one hides the day the older one breaks.
+  // That "CAMERA" is not read as a credit prefix is asserted directly in creditnota-signal.test.ts.
+  const bon = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, invoice_number: "CAMERA-1784373759249" },
+  }));
+  check("a CAMERA-… bon placeholder is still held (placeholder rule)", bon.advance === false && bon.reason === "needs_review");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

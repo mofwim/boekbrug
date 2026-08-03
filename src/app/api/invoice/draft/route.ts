@@ -186,11 +186,20 @@ export async function POST(request: NextRequest) {
           line_total: sign * l.quantity * l.unit_price,
           // De eenheid hoort bij de regel, dus per regel — niet één keer voor de hele factuur.
           ...(Object.keys(spoor).length
-            ? { unit: schoonEenheid(bron[i]?.unit) }
+            ? {
+                unit: schoonEenheid(bron[i]?.unit),
+                // [VRIJGESTELD] Alleen de letterlijke waarde 'exempt' telt; al het andere is
+                // NULL = gewoon belast. Zo kan een oude of vreemde client deze kolom niet
+                // gebruiken om omzet uit de aangifte te laten verdwijnen.
+                vat_treatment: bron[i]?.vat_treatment === 'exempt' ? 'exempt' : null,
+              }
             : {}),
         })),
       ),
-      // De sleutel is een vlag: is hij aanwezig, dan wordt `unit` per regel meegeschreven.
+      // De sleutel is een vlag: is hij aanwezig, dan worden `unit` en `vat_treatment` per regel
+      // meegeschreven. Ze reizen samen omdat writeWithTrail één terugval kent: mist één van de
+      // twee kolommen, dan worden de regels zonder allebei geschreven — een factuur zonder
+      // eenheid of zonder vrijstellingsvlag, nooit helemaal geen factuur.
       { unit: true },
     )
     if (lineErr) {

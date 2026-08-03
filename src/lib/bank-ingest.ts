@@ -95,6 +95,53 @@ export async function importBankStatement(args: {
   const transactions = parsed?.transactions ?? [];
   const { min } = dateRange(transactions);
 
+  // [BANK-TX-SOURCE-ID] Which door and which account this batch came from. The bank's per-line id
+  // is only promised unique inside one export of one account, so it is stored under this scope and
+  // never compared across it. An account-less file (a format that carries no IBAN) degrades to the
+  // format alone — still scoped per user, just coarser.
+  const source = parsed ? `${parsed.format}:${parsed.accountIban ?? ""}` : null;
+
+  // ── LAYER 1: the file itself ──────────────────────────────────────────────────────────────
+  // Identical bytes are the same statement, and this is the ONLY layer that can say so about a
+  // line the bank gave no id and whose fingerprint has since moved — which is exactly what
+  // happens when the parser improves between two uploads of one file (the MT940 reference fix did
+  // precisely that). Checked BEFORE the dedup/insert below, where it can still prevent work.
+  //
+  // Deliberately NOT a blind skip. The hash proves the FILE was seen, not that its transactions
+  // landed: the insert below is best-effort, so a previous run could have stored the passthrough
+  // copy and lost the rows. So we short-circuit only with evidence that they landed — at least one
+  // stored transaction pointing at that document. With no evidence we fall through and let layers
+  // 2 and 3 repair the gap instead of freezing it in place.
+  const contentHash = computeContentHash(buffer);
+  let priorDocId: string | null = null;
+  let alreadyImported = false;
+  try {
+    const { data: existingDoc } = await pipeline
+      .from("documents")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("content_hash", contentHash)
+      .limit(1)
+      .maybeSingle();
+    if (existingDoc) {
+      priorDocId = existingDoc.id as string;
+      const { count } = await pipeline
+        .from("bank_transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("statement_document_id", priorDocId);
+      // EVERY line, not merely some. "Some" would also be true after a previous import failed
+      // half-way, or after the owner deleted individual transactions and re-uploaded the file to
+      // get them back — and in both cases short-circuiting would freeze the gap permanently
+      // instead of repairing it. Equality is the only count that proves nothing is missing;
+      // anything less falls through to layers 2 and 3, which insert exactly what is absent.
+      alreadyImported = transactions.length > 0 && (count ?? 0) === transactions.length;
+    }
+  } catch {
+    // Best-effort: an unreadable documents table must never block an import. Layers 2 and 3 still
+    // stand, so the worst case is the work we hoped to skip.
+  }
+
   // [BANK-BALANCE §2.6] Prove the FILE is internally complete: opening + Σ(every parsed line) must
   // equal the statement's declared closing balance. Runs on the full parse (NOT the deduped/inserted
   // subset) so it validates the file itself — and because a line the parser DROPPED (parseErrors) is
@@ -114,7 +161,10 @@ export async function importBankStatement(args: {
   let inserted = 0;
   let skipped = 0;
   let insertedIds: string[] = [];      // [BANK-TX-STATEMENT-LINK] the rows THIS import created
-  if (transactions.length > 0) {
+  if (alreadyImported) {
+    // The same bytes, and its rows are provably in the table. Nothing to decide.
+    skipped = transactions.length;
+  } else if (transactions.length > 0) {
     let existing: ExistingTxKey[] = [];
     const { max } = dateRange(transactions);
     if (min && max) {
@@ -124,42 +174,81 @@ export async function importBankStatement(args: {
       // no fingerprint and were inserted a SECOND time — double-counting omzet/kosten everywhere
       // downstream while the import honestly reported "N skipped". Every other consumer of this
       // table already paginates (supabase-paginate.ts documents this exact trap); now the gate does.
-      const rows = await fetchAllRows((from, to) =>
-        pipeline
-          .from("bank_transactions")
-          .select("date, amount, description, counterpart_name, reference")
-          .eq("user_id", userId)
-          .gte("date", min)
-          .lte("date", max)
-          .order("id", { ascending: true })
-          .range(from, to),
-      );
-      existing = rows as ExistingTxKey[];
+      const readExisting = (columns: string) =>
+        fetchAllRows((from, to) =>
+          pipeline
+            .from("bank_transactions")
+            .select(columns)
+            .eq("user_id", userId)
+            .gte("date", min)
+            .lte("date", max)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+      // A runtime-chosen column list defeats supabase-js's literal-type inference, so the cast is
+      // unavoidable here; the shapes are asserted by bank-import.test.ts instead.
+      const BASE_COLUMNS = "date, amount, description, counterpart_name, reference";
+      try {
+        existing = (await readExisting(`${BASE_COLUMNS}, source, external_id`)) as unknown as ExistingTxKey[];
+      } catch {
+        // [BANK-TX-SOURCE-ID] bank_tx_source_identity.sql not applied yet. fetchAllRows THROWS on a
+        // query error, and an unhandled throw here would empty the dedup gate — every stored line
+        // would find no match and import a second time. So the identity layer degrades to nothing
+        // and the fingerprint carries the import alone, exactly as it did before this column.
+        existing = (await readExisting(BASE_COLUMNS)) as unknown as ExistingTxKey[];
+      }
     }
-    const dd = dedupTransactions(transactions, existing);
+    const dd = dedupTransactions(transactions, existing, source);
     skipped = dd.skipped;
     if (dd.toInsert.length > 0) {
-      const rows = mapToRows(dd.toInsert, userId);
-      let { data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id");
-      // [BANK-IBAN] Resilient to a not-yet-applied migration: if counterpart_iban doesn't exist yet
-      // (42703 undefined_column), retry WITHOUT it so bank import never breaks — the IBAN is a
-      // matching hint, never money-truth. Once bank_tx_counterpart_iban.sql is applied it stores.
-      if (error && (error as { code?: string }).code === "42703") {
-        const stripped = rows.map(({ counterpart_iban: _omit, ...r }) => r);
+      const rows = mapToRows(dd.toInsert, userId, source);
+      // [BANK-TX-SOURCE-ID] upsert-ignore, not insert: uniq_bank_tx_source_identity is the backstop
+      // for the race the dedup above cannot cover (an upload while the cron sync writes). A plain
+      // insert would lose the WHOLE batch to one raced line; this drops the raced line and keeps
+      // the rest. Rows whose source gave no id carry NULLs, which Postgres treats as distinct, so
+      // they are unconstrained and reach the table exactly as before.
+      let { data: insData, error } = await pipeline
+        .from("bank_transactions")
+        .upsert(rows, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
+        .select("id");
+      // Resilient to a HALF-applied schema, in both directions it can be half-applied. Getting
+      // this wrong does not degrade a hint — it fails the insert, and a failed insert is money
+      // that silently never arrives.
+      //   · 42703 undefined_column — the columns are not there at all. Strip them and plain-insert.
+      //     [BANK-IBAN] counterpart_iban rides the same path; it is a matching hint, never truth.
+      //   · 42P10 — the columns exist but uniq_bank_tx_source_identity does not, so Postgres has
+      //     no constraint to match ON CONFLICT against. Keep the values (they are still worth
+      //     storing for the NEXT import) and plain-insert without the conflict clause.
+      const failureCode = (error as { code?: string } | null)?.code;
+      if (failureCode === "42703") {
+        const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, ...r }) => r);
         ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
+      } else if (failureCode === "42P10") {
+        ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id"));
       }
       if (!error) {
-        inserted = rows.length;
         insertedIds = (insData ?? []).map((r) => r.id as string);
-        // [BANK-TX-STATEMENT-LINK] The returned representation is subject to the same row cap as
-        // any other read, so a statement of >1000 new lines can hand back fewer ids than it
-        // inserted. Those rows would then never be stamped with their statement, and deleting it
-        // would silently leave their bookings behind. We cannot recover the missing ids here —
-        // but a gap this consequential must not pass unrecorded.
+        inserted = rows.length;
+        // [BANK-TX-STATEMENT-LINK] Fewer ids back than rows sent has two possible causes now, and
+        // they want opposite responses:
+        //   · uniq_bank_tx_source_identity rejected a raced duplicate (ON CONFLICT DO NOTHING
+        //     returns nothing for it). That row was NOT written and must not be counted as
+        //     inserted — the constraint did its job and the count should say so.
+        //   · the returned representation hit the same ~1000-row cap as any other read, so rows
+        //     that WERE written handed back no id. Those never get stamped with their statement,
+        //     and deleting it would leave their bookings behind.
+        // A short page tells them apart: only the cap can truncate at exactly the page size.
         if (insertedIds.length !== rows.length) {
-          console.error("[BANK-TX-STATEMENT-LINK] insert returned fewer ids than rows — those transactions will not carry their statement", {
-            userId, inserted: rows.length, returned: insertedIds.length,
-          });
+          const cappedByRead = rows.length > 1000;
+          if (cappedByRead) {
+            console.error("[BANK-TX-STATEMENT-LINK] insert returned fewer ids than rows — those transactions will not carry their statement", {
+              userId, inserted: rows.length, returned: insertedIds.length,
+            });
+          } else {
+            // Raced duplicates. Count only what was actually written.
+            inserted = insertedIds.length;
+            skipped += rows.length - insertedIds.length;
+          }
         }
       }
     }
@@ -195,17 +284,12 @@ export async function importBankStatement(args: {
   let statementStored = false;
   let statementDocId: string | null = null; // [BANK-TX-STATEMENT-LINK] the statement this import created/reused
   try {
-    const contentHash = computeContentHash(buffer);
-    const { data: existingDoc } = await pipeline
-      .from("documents")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("content_hash", contentHash)
-      .limit(1)
-      .maybeSingle();
-    if (existingDoc) {
+    // [BANK-TX-SOURCE-ID] The hash and the lookup already happened above, where they could still
+    // prevent work. Reusing them here keeps ONE answer to "have we seen this file?" — two lookups
+    // could disagree, and the one that decided the import is the one that must decide the storage.
+    if (priorDocId) {
       statementStored = true;
-      statementDocId = existingDoc.id as string;
+      statementDocId = priorDocId;
     } else {
       const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `${userId}/bank/${Date.now()}-${safeName}`;

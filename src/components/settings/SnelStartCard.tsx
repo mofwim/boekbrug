@@ -28,7 +28,17 @@ interface Status {
   verkoopGrootboekId?: string | null;
   lastPushAt?: string | null;
   lastError?: string | null;
-  counts: { klaar: number; doorgestuurd: number; onbekend?: number; mislukt: number };
+  counts: { klaar: number; doorgestuurd: number; onbekend?: number; mislukt: number; tegengehouden?: number };
+  // [PUSH-ACK] De facturen die een boeking zouden zijn, maar waar nog een voorbehoud op staat.
+  // Met de reden erbij: een aantal zonder namen is geen actie, alleen een verontrusting.
+  held?: Array<{
+    id: string;
+    invoiceNumber: string | null;
+    clientName: string | null;
+    totalIncBtw: number | null;
+    invoiceDate: string | null;
+    reasons: string[];
+  }>;
 }
 
 interface PushResult {
@@ -74,6 +84,9 @@ export function SnelStartCard() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [results, setResults] = useState<PushResult[] | null>(null);
+  // [PUSH-ACK] Welke factuur er op dit moment wordt afgetikt — per rij, zodat de andere knoppen
+  // bruikbaar blijven en de eigenaar ziet welke er bezig is.
+  const [ackBusy, setAckBusy] = useState<string | null>(null);
 
   const loadStatus = useCallback(async () => {
     const data = await fetchStatus();
@@ -157,6 +170,42 @@ export function SnelStartCard() {
       await loadStatus();
     } finally {
       setBusy(null);
+    }
+  }
+
+  // [PUSH-ACK] "Ik weet het, stuur toch door" — één factuur, één voorbehoud-set, één spoorregel.
+  // Het akkoord wordt op de SERVER vastgelegd, want de poort die het opheft staat daar; een vinkje
+  // dat alleen in deze browser leeft is een knop die niets doet.
+  async function acknowledge(invoiceId: string) {
+    if (ackBusy) return;
+    setAckBusy(invoiceId);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/snelstart/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        // De server kent redenen die permanent zijn ("je boekhouder heeft deze al verwerkt") — dan
+        // is "probeer opnieuw" een leugen. Zeg wat hij zegt.
+        setError(typeof data.error === "string" ? data.error : "Akkoord opslaan mislukt");
+        return;
+      }
+      setNotice(
+        Array.isArray(data.acknowledged) && data.acknowledged.length > 0
+          ? "Akkoord vastgelegd — deze factuur gaat mee met de volgende keer doorsturen."
+          : (data.message ?? "Er stond geen voorbehoud meer open."),
+      );
+      // Uit de SERVER opnieuw laden, nooit lokaal wegstrepen: de rij verdwijnt pas als de poort
+      // hem werkelijk doorlaat, anders belooft het scherm iets wat de push niet doet.
+      await loadStatus();
+    } catch {
+      setError("Geen verbinding — er is niets vastgelegd.");
+    } finally {
+      setAckBusy(null);
     }
   }
 
@@ -285,7 +334,64 @@ export function SnelStartCard() {
             {status.counts.mislukt > 0 && (
               <span className="text-amber-600">{status.counts.mislukt} mislukt</span>
             )}
+            {(status.counts.tegengehouden ?? 0) > 0 && (
+              <span className="text-amber-700">
+                {status.counts.tegengehouden} wacht op je akkoord
+              </span>
+            )}
           </div>
+
+          {/* [PUSH-ACK] De facturen die een boeking zouden zijn en door een voorbehoud worden
+              tegengehouden. Ze staan HIER met naam en reden, niet alleen als aantal: een teller
+              zonder namen vertelt de ondernemer dat er iets mis is en niet wat, en dan is de enige
+              beschikbare handeling zich zorgen maken.
+
+              Waarom ze überhaupt worden tegengehouden staat in snelstart-mapping.ts. Kort: een
+              boeking in de administratie van de boekhouder is niet van ons om terug te nemen — na
+              'verwerkt' bevriest de trigger de factuur — dus een voorbehoud dat de wachtrij wél
+              kende mag niet ongezien meereizen. En waarom er een knop bij hoort: de eigenaar kan
+              naar het papier hebben gekeken en weten dat die "mogelijke dubbele" een tweede echte
+              levering is. Een slot zonder sleutel houdt die factuur voorgoed buiten de boeken, en
+              dat is data die verdwijnt, geen voorzichtigheid. */}
+          {(status.held?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-semibold text-amber-900">
+                Wacht op je akkoord
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                Deze facturen zouden een boeking worden, maar er staat nog een voorbehoud op. Kijk
+                op het papier en stuur ze door als het klopt — daarna kan je boekhouder ze niet meer
+                terugdraaien, dus dit is het moment.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {status.held!.map((h) => (
+                  <li key={h.id} className="rounded-md border border-amber-200 bg-white p-2.5">
+                    <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                      <span className="font-mono text-xs text-gray-500">{h.invoiceNumber ?? "—"}</span>
+                      <span className="font-semibold text-gray-900">{h.clientName ?? "—"}</span>
+                      {typeof h.totalIncBtw === "number" && (
+                        <span className="ml-auto font-mono text-sm text-gray-900">
+                          {h.totalIncBtw.toLocaleString("nl-NL", { style: "currency", currency: "EUR" })}
+                        </span>
+                      )}
+                    </div>
+                    <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-amber-900">
+                      {h.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={() => acknowledge(h.id)}
+                      disabled={ackBusy !== null}
+                      className="mt-2 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      {ackBusy === h.id ? "Bezig…" : "Ik weet het, stuur toch door"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {!status.grootboekenIngesteld && (
             <p className="text-sm text-amber-600">

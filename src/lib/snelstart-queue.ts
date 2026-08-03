@@ -12,7 +12,10 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database.types";
-import { isPushable, type SnelStartInvoice, type SnelStartInvoiceLine } from "@/lib/snelstart-mapping";
+import {
+  isPushable, pushHoldFlagsOf,
+  type SnelStartInvoice, type SnelStartInvoiceLine, type PushBlockingFlag,
+} from "@/lib/snelstart-mapping";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [SNELSTART-CLAIM] pushed | unknown — beide claimen de factuur; zie snelstart-claim.ts.
 import { CLAIMING_STATUSES } from "./snelstart-claim";
@@ -20,7 +23,11 @@ import { CLAIMING_STATUSES } from "./snelstart-claim";
 type Client = SupabaseClient<Database>;
 
 export const SNELSTART_INVOICE_SELECT =
-  "id, invoice_number, invoice_date, due_date, direction, invoice_type, status, total_ex_btw, btw_amount, total_inc_btw, client_name" as const;
+  // [PUSH-ACK] field_confidence hoort er nu bij: daarin staan de voorbehouden van de wachtrij
+  // (mogelijk dubbel, herinnering, meerdere facturen, gewijzigd rekeningnummer) én het akkoord van
+  // de eigenaar. Zonder dit veld ziet isPushable geen enkel voorbehoud — en dat was precies het
+  // gat: elk voorbehoud reisde ongezien mee de administratie van de boekhouder in.
+  "id, invoice_number, invoice_date, due_date, direction, invoice_type, status, total_ex_btw, btw_amount, total_inc_btw, client_name, field_confidence" as const;
 
 /** Statussen die een boeking kunnen worden — moet gelijk lopen met isPushable(). Ze staan
  *  hier óók als DB-filter, zodat we niet duizenden concepten ophalen om ze daarna weg te
@@ -59,7 +66,18 @@ export async function loadPushCandidates(
   userId: string,
   filter: CandidateFilter = {},
 ): Promise<SnelStartInvoice[]> {
-  const rows = await fetchAllRows<SnelStartInvoice>((from, to) => {
+  const rows = await loadRawCandidates(supabase, userId, filter);
+  return rows.filter((row) => isPushable(row).ok);
+}
+
+/** De ruwe kandidatenset — één query, gedeeld door "klaar" en "tegengehouden", zodat die twee
+ *  nooit over verschillende rijen kunnen praten. */
+async function loadRawCandidates(
+  supabase: Client,
+  userId: string,
+  filter: CandidateFilter,
+): Promise<SnelStartInvoice[]> {
+  return await fetchAllRows<SnelStartInvoice>((from, to) => {
     let q = supabase
       .from("invoices")
       .select(SNELSTART_INVOICE_SELECT)
@@ -80,8 +98,26 @@ export async function loadPushCandidates(
       .order("id", { ascending: true })
       .range(from, to);
   });
+}
 
-  return rows.filter((row) => isPushable(row).ok);
+/**
+ * De keerzijde van loadPushCandidates: de facturen die WEL een boeking zouden zijn, maar door een
+ * openstaand voorbehoud worden tegengehouden — met de reden erbij.
+ *
+ * Dit bestaat omdat een teller die alleen "klaar" telt de rest onzichtbaar maakt. Een factuur die
+ * nergens meer opduikt is, voor de ondernemer, een factuur die niet bestaat; hij zoekt hem pas als
+ * de boekhouder erom vraagt. Dezelfde rijen, dezelfde poort, dezelfde volgorde — alleen de andere
+ * kant van het filter, zodat "klaar + tegengehouden" altijd het geheel is.
+ */
+export async function loadHeldCandidates(
+  supabase: Client,
+  userId: string,
+  filter: CandidateFilter = {},
+): Promise<Array<{ invoice: SnelStartInvoice; flags: PushBlockingFlag[] }>> {
+  const rows = await loadRawCandidates(supabase, userId, filter);
+  return rows
+    .map((invoice) => ({ invoice, flags: pushHoldFlagsOf(invoice) }))
+    .filter((r) => r.flags.length > 0);
 }
 
 /** Factuurregels van een set facturen, gegroepeerd per factuur. */

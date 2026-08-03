@@ -16,6 +16,9 @@ import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect";
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
+import { readingPromptHint } from "@/lib/reading-memory";
+import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [DUP-ARCHIVED] Dezelfde eerlijke melding als /api/intake — deze route blijft bereikbaar
 // (back-compat), dus hij mag niet iets anders beweren over dezelfde situatie.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate";
@@ -185,6 +188,8 @@ export async function POST(req: NextRequest) {
   let verification: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>;
   try {
     verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
+      // [READING-MEMORY] See the intake route — fields only, never amounts.
+      readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
       receiverKvk: me?.kvk_number || null,
       receiverBtw: me?.btw_number || null,
       receiverIban: me?.iban || null,

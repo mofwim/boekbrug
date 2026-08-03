@@ -53,6 +53,44 @@ export function numberPrefix(raw: string | null | undefined): string {
  */
 const CREDIT_PREFIXES = new Set(["CR", "CN", "CRN", "CRED", "CREDIT", "CRE"]);
 
+/**
+ * Does this document's NUMBER carry a credit marker, while the row is still booked as a debt?
+ *
+ * ── WHY THE WEAKER TEST EXISTS BESIDE THE STRONGER ONE ──
+ * looksLikeCreditnota below demands a second thing — the same supplier demonstrably using another
+ * prefix for its ordinary invoices — and it is right to, because it feeds a screen that offers to
+ * FLIP A SIGN. A wrong flip turns a real debt into a credit, you underpay, and you find out at the
+ * dunning letter.
+ *
+ * This one feeds a different decision, and the difference is the whole point: whether a human is
+ * allowed to be SKIPPED. Nothing here books, flips or decides anything about money; it only refuses
+ * to let a document numbered CR… pass straight into the books with nobody looking at it.
+ *
+ * That decision has no symmetric risk. Auto-booking a credit note as a debt is silent and lands in
+ * the aangifte — the amount counts as money owed and its btw is ADDED to what you reclaim instead
+ * of subtracted, and no screen ever asked. Holding one ordinary CR-numbered invoice for a glance
+ * costs a tap. So the bar to SKIP the human is lower than the bar to flip a sign, deliberately.
+ *
+ * It is also the only deterministic handle there is at import time. Every other credit-note defence
+ * in this codebase rests on the model's own is_credit_note — and CREDITFACTUUR CR0301267, printed
+ * "Totaal bedrag (EUR) : € -33,87", came back with is_credit_note false, a clean breakdown and a
+ * confident read. It cleared every gate and auto-booked as a € 33,87 debt.
+ *
+ * Silent once the question is settled: a row already typed 'creditnota', or already stored negative,
+ * behaves as a credit and has nothing left to ask. Without that it would wear a permanent amber
+ * badge for being correct.
+ */
+export function looksLikeCreditnotaByNumber(input: {
+  invoiceNumber: string | null | undefined;
+  totalIncBtw: number | null | undefined;
+  invoiceType: string | null | undefined;
+}): boolean {
+  if (input.invoiceType === "creditnota") return false;
+  const total = Number(input.totalIncBtw ?? 0);
+  if (Number.isFinite(total) && total < 0) return false;
+  return CREDIT_PREFIXES.has(numberPrefix(input.invoiceNumber));
+}
+
 export type CreditnotaSignal = {
   /** Certain enough to have the owner look; never certain enough to book it ourselves. */
   suspected: boolean;
@@ -119,6 +157,74 @@ export function creditnotaSignConflict(input: {
   if (input.invoiceType !== "creditnota") return false;
   const total = Number(input.totalIncBtw ?? 0);
   return Number.isFinite(total) && total > 0;
+}
+
+/**
+ * Where a row stands on the credit question — ONE answer, read by every widget that would treat it
+ * as a debt.
+ *
+ * ── WHY THIS EXISTS ──
+ * All three facts above were already computed on the payment screen, and the screen still offered a
+ * payment QR of € 33,87 on a document it had badged "⚠ Lijkt een creditnota" one line earlier. The
+ * paper was the supplier's own CREDITFACTUUR CR0301267, printed "Totaal bedrag (EUR) : € -33,87";
+ * it is stored positive because the reader took its figures from the btw-berekening table, which
+ * prints them positive. The row also carried "2 dagen te laat", and the QR was filled in and ready
+ * to scan.
+ *
+ * Every widget asked a different question. The dunning badge asked `invoice_type === 'creditnota'
+ * || total < 0`. The "Betalen" button and the one-tap "Heb je betaald?" asked only
+ * `status === 'received'` — so they never saw the warning standing right next to them. A warning
+ * that does not disarm the action it warns about is decoration beside a button that sends money.
+ *
+ * So the states live here, and the screen reads one of them.
+ *
+ * ── WHY 'suspected' HOLDS THE PAYMENT, THOUGH IT IS ONLY A SUSPICION ──
+ * Nothing here books anything: looksLikeCreditnota still refuses to flip a sign, for the reason its
+ * own header gives. Holding the PAYMENT is a different decision, and its two ways of being wrong
+ * are not each other's mirror image:
+ *
+ *   · suspicion right, payment offered → the owner transfers money to a supplier who owes it to
+ *     THEM. Real money, gone, and getting it back means asking for it.
+ *   · suspicion wrong, payment held behind one question → one tap ("Nee, gewone factuur") and the
+ *     payment continues. The vervaldatum stays on the row; nothing is hidden.
+ *
+ * One costs a tap, the other costs the invoice twice. So the question comes first.
+ */
+export type CreditStance =
+  /** Nothing points at a credit note. The only state in which a row may be treated as a debt. */
+  | "none"
+  /** A credit note carrying the sign of one — correct, and not something you pay. */
+  | "credit"
+  /** Typed 'creditnota' while the money sits positive: the app contradicting itself. */
+  | "conflict"
+  /** The supplier's own numbering says credit, and nobody has confirmed it yet. */
+  | "suspected";
+
+export function creditStance(input: {
+  invoiceNumber: string | null | undefined;
+  totalIncBtw: number | null | undefined;
+  invoiceType: string | null | undefined;
+  vendorNumbers: readonly (string | null | undefined)[];
+}): CreditStance {
+  // The contradiction first: it is the only state where the kind and the money disagree, and
+  // reporting it as either half alone would lose exactly what makes it worth reporting.
+  if (creditnotaSignConflict({ invoiceType: input.invoiceType, totalIncBtw: input.totalIncBtw })) {
+    return "conflict";
+  }
+  // Either half is enough. A row stored negative behaves as a credit on every screen that reads a
+  // sign, whatever its type says — and a row typed 'creditnota' is one by the owner's own hand.
+  // A total that is not a finite number falls through: unread is not the same as negative.
+  const total = Number(input.totalIncBtw ?? 0);
+  if (input.invoiceType === "creditnota" || (Number.isFinite(total) && total < 0)) return "credit";
+  return looksLikeCreditnota(input).suspected ? "suspected" : "none";
+}
+
+/**
+ * May this row be offered as a debt — the payment QR, the one-tap "Heb je betaald?", the dunning
+ * badge? Only when nothing at all points at a credit note.
+ */
+export function payableAsDebt(stance: CreditStance): boolean {
+  return stance === "none";
 }
 
 /**

@@ -29,6 +29,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { formatInvoiceNumber } from './invoice-template'
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 
 export type InvoiceNumberType = 'factuur' | 'creditnota' | 'pro_forma'
 
@@ -43,7 +45,7 @@ async function resolveFormat(
   supabase: SupabaseClient<any>,
   userId: string,
   type: InvoiceNumberType
-): Promise<{ template: string; padding: number }> {
+): Promise<{ template: string; padding: number } | null> {
   const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
   // System default for every type (the factuur prefix is empty).
   // [FACTUUR-UNIFY] YEAR+sequence, padding 4 — one format across the whole
@@ -53,11 +55,39 @@ async function resolveFormat(
 
   // Customization applies to factuur only (decision: factuur-only).
   if (type === 'factuur') {
-    const { data: prof } = await supabase
+    // [NUMBER-READ-HONEST] This read's error was dropped, and the fallback was not "no data" — it
+    // was a DIFFERENT NUMBERING SCHEME. Two things follow from a template, and both change:
+    //
+    //   · the printed shape. An owner numbering "045-2026" would get "20260046" instead — a number
+    //     that does not belong to his series, on a document Article 35 requires to be sequential.
+    //   · which COUNTER it is drawn from. counterYear below is derived from the template: a custom
+    //     template WITHOUT {year} numbers continuously and draws from the year=0 row, while the
+    //     default template contains {year} and draws from the 2026 row. So a failed read does not
+    //     merely mis-format the number, it allocates from the wrong sequence entirely — and
+    //     next_invoice_seq INCREMENTS that other counter, so the two series diverge permanently
+    //     from one transient database hiccup.
+    //
+    // This file already knows the right answer; it just never applied it here. Its own contract for
+    // the allocation step reads: "We NEVER fabricate a number on error (that would risk a duplicate
+    // or a gap)." A number from the wrong counter is exactly a duplicate or a gap. Same rule, same
+    // refusal, same clean 500 at the caller — which both callers already guard for.
+    const { data: prof, error: profErr } = await supabase
       .from('profiles')
       .select('invoice_number_template, invoice_number_padding')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
+
+    if (profErr) {
+      // [ALARM] The owner cannot invoice at all while this lasts, and the app answers with a 500
+      // that says nothing about why. Article 35 makes refusing right; it does not make it quiet.
+      reportHandledFailure({
+        tag: 'NUMBER-READ-HONEST',
+        message: 'numbering template read failed — refusing to number',
+        severity: 'gate-unavailable',
+        context: { userId, type, error: profErr.message },
+      })
+      return null
+    }
 
     const custom = prof?.invoice_number_template
     if (typeof custom === 'string' && custom.trim() !== '') {
@@ -96,7 +126,9 @@ export async function generateInvoiceNumber(
   // Server year — matches the prior implementation's behavior exactly.
   const year = new Date().getFullYear()
 
-  const { template, padding } = await resolveFormat(supabase, userId, type)
+  const format = await resolveFormat(supabase, userId, type)
+  if (!format) return '' // see [NUMBER-READ-HONEST] — never number from an unknown scheme
+  const { template, padding } = format
 
   // {year} in the template => yearly reset (key by the calendar year);
   // {year} absent          => continuous numbering (key by the 0 sentinel).

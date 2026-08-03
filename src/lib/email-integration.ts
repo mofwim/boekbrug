@@ -28,7 +28,14 @@ import {
   type PossibleDuplicate,
 } from '@/lib/safecore'
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from '@/lib/possible-duplicate-collect'
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
+import { readingPromptHint } from '@/lib/reading-memory'
+import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+// [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
+// one must never disagree about whether a bon was paid — a second copy of that reasoning here is
+// how they drifted apart the first time.
+import { paymentSuggestion } from '@/lib/intake-router'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
 // van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
@@ -1427,6 +1434,14 @@ export interface AttachmentClassification {
   // as the intake gate — a statement/other-kind read as an invoice must never auto-book.
   isStatement?: boolean
   documentKind?: string | null
+  // [BON-EMAIL] The payment signals. The reader has always produced them — ai.ts asks for them by
+  // name — and this mapper dropped all five, so the sync could not tell a kassabon from a bill and
+  // booked money already spent as money still owed. paymentSuggestion() reads them; see its header.
+  isPaid?: boolean
+  paidMethod?: 'bank' | 'kas' | 'pin' | null
+  paidDate?: string | null
+  paidEvidence?: string | null
+  paidCardLast4?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1460,6 +1475,8 @@ export async function classifyAttachment(
   opts?: {
     model?: string; preferRawPdf?: boolean
     receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+    // [READING-MEMORY] Rendered once by the caller — see the sync run and the re-read route.
+    readingHint?: string | null
   }
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
@@ -1475,6 +1492,7 @@ export async function classifyAttachment(
     receiverKvk: opts?.receiverKvk,
     receiverBtw: opts?.receiverBtw,
     receiverIban: opts?.receiverIban,
+    readingHint: opts?.readingHint,
   })
 
   return {
@@ -1508,6 +1526,13 @@ export async function classifyAttachment(
     // [AUTO-ADVANCE] statement / kind — defense-in-depth for the auto-advance gate.
     isStatement: result.is_statement,
     documentKind: result.document_kind ?? null,
+    // [BON-EMAIL] Verbatim from the same Claude call the camera path uses — including the printed
+    // tender line, which outranks the model's own opinion about whether it was settled.
+    isPaid: result.is_paid,
+    paidMethod: result.paid_method ?? null,
+    paidDate: result.paid_date ?? null,
+    paidEvidence: result.paid_evidence ?? null,
+    paidCardLast4: result.paid_card_last4 ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -2384,6 +2409,20 @@ export async function syncUserEmails(
     remainingForNextSync: remainingAfterBatch,
   })
 
+  // [READING-MEMORY] Loaded here, and only here.
+  //
+  // ONCE per run, not per attachment: PHASE 1 classifies in parallel below, so a per-file load would
+  // fire the same query for every attachment in the batch. And only when there IS something to
+  // classify — most syncs find no new mail, and this cron runs for every connected owner all day,
+  // so a load next to the profile read (where it started) was a query per owner per sync forever,
+  // for a value nothing would use.
+  //
+  // Fields only, never amounts — see readingPromptHint. Null for almost every owner, and null when
+  // the audit read fails, in which case the reader behaves exactly as it did before this existed.
+  const readingHint = freshAttachments.length > 0
+    ? readingPromptHint(await loadReadingMemory(supabase, userId))
+    : null
+
   // PHASE 1 — classify only NEW attachments in parallel (AI_CONCURRENCY in flight)
   const classified: Classified[] = await mapConcurrent(
     freshAttachments,
@@ -2395,7 +2434,7 @@ export async function syncUserEmails(
           attachment.mimeType,
           attachment.filename,
           receiverName,
-          { receiverKvk, receiverBtw, receiverIban }
+          { receiverKvk, receiverBtw, receiverIban, readingHint }
         )
         return { attachment, classification, classifyFailed: false }
       } catch (err) {
@@ -2571,13 +2610,38 @@ export async function syncUserEmails(
       const fileBuffer = Buffer.from(attachment.data, 'base64')
       const contentHash = computeContentHash(fileBuffer)
 
-      const { data: existingByHash } = await supabase
+      // [DEDUP-READ-HONEST] Declared HERE, above the first gate that can fail, not halfway down
+      // beside the semantic probes. It used to sit below them, so the two HARD gates — the ones
+      // that run first and catch the most — had no way to report a failed read even in principle.
+      let dedupCheckFailed = false
+      // [EVIDENCE-KEEP] The byte-hash unique index refused this document because the same bytes are
+      // already stored. Carried to the safecore block so the row says so on the card.
+      let hashCollision = false
+
+      // [DEDUP-READ-HONEST] supabase-js answers a failed read with { data: null, error }, and this
+      // gate reads its answer as "this file is new". On the manual doors a human is standing there;
+      // on the SYNC nobody is, and this is the door most invoices actually arrive through. A read
+      // that could not run therefore imported the identical file a second time — same cost, same
+      // voorbelasting, counted twice — with nothing anywhere saying so.
+      //
+      // It does not refuse the attachment: refusing would lose an invoice, and on an unattended
+      // path a lost invoice is the more expensive mistake (the [DUP-TRASHED] note above weighs the
+      // same way). It flags instead, with the marker a real look-alike gets — needs-review, held
+      // out of "Selecteer klaar" and out of auto-advance — so nothing is booked as a second cost
+      // without a human having looked.
+      const { data: existingByHash, error: hashErr } = await supabase
         .from('documents')
         .select('id, trashed')
         .eq('user_id', userId)
         .eq('content_hash', contentHash)
         .limit(1)
         .maybeSingle()
+      if (hashErr) {
+        console.error('[DEDUP-READ-HONEST] email sync byte-hash probe failed — importing flagged', {
+          userId, filename: attachment.filename, error: hashErr.message,
+        })
+        dedupCheckFailed = true
+      }
 
       // [DUP-TRASHED] Hier weegt de uitzondering het zwaarst van alle vier de poorten. Op de andere
       // drie STAAT er iemand: hij ziet "dit bestand staat al in …", snapt er niets van en meldt het.
@@ -2612,13 +2676,22 @@ export async function syncUserEmails(
       // have sender_id = null since the architectural fix.
       const dedupKey = `${attachment.messageId}:${attachment.filename}`
 
-      const { data: existingByMessage } = await supabase
+      // [DEDUP-READ-HONEST] Same rule as Check 0. A failed read here is softened by the
+      // (receiver_id, source_message_id) uniqueness index — the insert would be refused — but it is
+      // still an unrun check, and the row that reaches the queue must say so rather than look clean.
+      const { data: existingByMessage, error: messageErr } = await supabase
         .from('invoices')
         .select('id')
         .eq('receiver_id', userId)
         .eq('source', 'email')
         .eq('source_message_id', dedupKey)
         .limit(1)
+      if (messageErr) {
+        console.error('[DEDUP-READ-HONEST] email sync message-key probe failed — importing flagged', {
+          userId, filename: attachment.filename, error: messageErr.message,
+        })
+        dedupCheckFailed = true
+      }
 
       if (existingByMessage && existingByMessage.length > 0) {
         // [SAMENAME-VISIBLE] Reaching here means: same messageId:filename as an
@@ -2713,7 +2786,6 @@ export async function syncUserEmails(
       // The invoice still imports (a database hiccup may not stop the mail sync), but it arrives
       // carrying the same soft flag a real look-alike gets: needs-review, held out of auto-advance
       // and out of "Selecteer klaar", reason on the card.
-      let dedupCheckFailed = false
 
       // [SUPPLIER-DEDUP] Resolve the canonical supplier BEFORE the duplicate check, so Check B
       // can key on supplier IDENTITY (supplier_id) rather than the STORED name string. Since the
@@ -3044,7 +3116,43 @@ export async function syncUserEmails(
             .select('id')
             .single()
 
-          if (docErr || !doc) {
+          // [EVIDENCE-KEEP] A 23505 here is not a failure at all — it is the (user_id, content_hash)
+          // unique index saying THESE EXACT BYTES ARE ALREADY STORED. It is reachable when Check 0's
+          // read could not run, and when two syncs overlap on the same attachment.
+          //
+          // The generic branch below then did the one thing that must not happen: it deleted the
+          // storage object, set documentId/pdfUrl to null, and saved the invoice anyway. That is an
+          // invoice in the books with NO REACHABLE PAPER — the closing package resolves the PDF via
+          // invoices.document_id, so the accountant receives a cost with no document behind it, and
+          // /api/intake calls exactly this state unacceptable in its own [R1] note while this door
+          // produced it. Two doors, opposite decisions, same failure.
+          //
+          // The file is not missing; it is stored under the row that already holds the hash. So
+          // point at that row instead. Removing the copy we just uploaded is right — it is
+          // byte-identical to the one the existing document already references.
+          const isHashCollision =
+            !!docErr && ((docErr as { code?: string }).code === '23505' ||
+              /duplicate key value violates unique constraint/i.test(docErr.message))
+          let recovered: { id: string; file_url: string | null } | null = null
+          if (isHashCollision) {
+            const { data: held, error: heldErr } = await supabase
+              .from('documents')
+              .select('id, file_url')
+              .eq('user_id', userId)
+              .eq('content_hash', contentHash)
+              .limit(1)
+              .maybeSingle()
+            if (!heldErr && held) recovered = held as { id: string; file_url: string | null }
+            // The collision itself is evidence that this bill may already be in the books — a
+            // stronger statement than "we could not check". It must reach a human either way.
+            hashCollision = true
+          }
+
+          if (recovered) {
+            await supabase.storage.from('documents').remove([storagePath])
+            documentId = recovered.id
+            pdfUrl = recovered.file_url
+          } else if (docErr || !doc) {
             // [R7] The documents insert failed. Don't leave an orphan storage object nor an
             // invoice claiming a pdf_url whose documents row doesn't exist (unreachable in
             // the closing package). Remove the file; the invoice still saves (the sync
@@ -3147,6 +3255,23 @@ export async function syncUserEmails(
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
       const aiConfidence = classification.fieldConfidence ?? null
       let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
+      // [BON-EMAIL] One call, one answer, shared with /api/intake. It stands HERE, outside the
+      // _safecore block below, because that block only runs for PROBLEM rows — a clean kassabon
+      // would have skipped it and gone back to being booked as a bill, which is the bug.
+      // `bonKind` is kept separate from pay.suggestPaid because they say different things: the KIND
+      // decides whether the invoice-number axis applies (a bon carries no factuurnummer), and the
+      // SUGGESTION decides what the pay button offers. A bon the reader called unpaid is still a bon.
+      const bonKind = classification.documentKind ?? null
+      const pay = paymentSuggestion({
+        is_invoice: classification.isInvoice,
+        document_kind: bonKind === 'receipt' || bonKind === 'other' ? bonKind : 'invoice',
+        is_paid: classification.isPaid,
+        paid_method: classification.paidMethod ?? null,
+        paid_date: classification.paidDate ?? null,
+        paid_evidence: classification.paidEvidence ?? null,
+        paid_card_last4: classification.paidCardLast4 ?? null,
+        confidence: classification.confidence,
+      })
       // [REMINDER] A payment reminder is a real single invoice but the original was very
       // likely already booked — flag it so the verify queue warns "controleer of de factuur
       // al geboekt is" and it is never bulk-confirmed as a second cost.
@@ -3191,6 +3316,15 @@ export async function syncUserEmails(
         if (dedupCheckFailed) {
           Object.assign(safecore, (markDuplicateCheckUnavailable({ _safecore: safecore }) as { _safecore: Record<string, unknown> })._safecore)
         }
+        // [EVIDENCE-KEEP] Stronger than "we could not check": the database refused a second copy of
+        // these exact bytes, so this bill is very likely already booked. Written last and only over
+        // an unnamed reason, so a probe that DID name a look-alike keeps the more useful sentence.
+        if (hashCollision && !safecore.possible_duplicate_of) {
+          safecore.possible_duplicate = true
+          // Dutch: printed on the card. See the language rule in AGENTS.md.
+          safecore.possible_duplicate_reason =
+            'ditzelfde bestand staat al in je administratie — controleer of deze factuur niet dubbel geboekt is'
+        }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.
         if (ibanChange.status === 'unavailable') {
@@ -3210,6 +3344,30 @@ export async function syncUserEmails(
         }
       }
 
+      // [BON-EMAIL] The same markers /api/intake writes, from the same shared decision, so a bon
+      // that arrives by e-mail behaves on screen exactly like one photographed at the counter:
+      // "Markeer als betaald" offered up front, the method pre-filled when the paper named one,
+      // and the invoice-number axis relaxed (a kassabon carries no factuurnummer and does not need
+      // one — see isKassabon in import-health.ts). Outside the block above on purpose: a clean bon
+      // has no _safecore to write and must still be recognisable as a bon.
+      //
+      // Still only a SUGGESTION. Nothing here writes status='paid' — the human confirms, exactly as
+      // on the camera path.
+      if (bonKind === 'receipt' || pay.suggestPaid) {
+        const fc: Record<string, unknown> = { ...(fieldConfidenceValue ?? {}) }
+        if (bonKind === 'receipt') fc._intake_kind = 'receipt'
+        if (pay.suggestPaid) {
+          fc._intake_suggest = 'paid'
+          if (pay.paidMethod) fc._intake_paid_method = pay.paidMethod
+          if (pay.paidDate) fc._intake_paid_date = pay.paidDate
+          if (pay.paidEvidence) fc._intake_paid_evidence = pay.paidEvidence
+          if (pay.paidCardLast4) fc._intake_paid_card4 = pay.paidCardLast4
+          // Only when the PAPER said how. Otherwise the screen asks instead of asserting.
+          if (pay.paidMethodZeker) fc._intake_paid_method_zeker = true
+        }
+        fieldConfidenceValue = fc
+      }
+
       // [BOEK-011] ALL email imports enter the verify queue ('processing') —
       // the user reviews and confirms in /dashboard/incoming, and only then
       // does the invoice become a Crediteur ('received' → /incoming/manage).
@@ -3226,7 +3384,11 @@ export async function syncUserEmails(
       // 'uncertain'; statements are already filtered out above (is_invoice=false); _safecore
       // (arithmetic / reminder / dedup) flows into the health check and holds anything doubtful.
       // The near-certain bank/cash links are closed by the hourly reconcile cron.
-      const autoAdv = !classification.uncertain
+      // [BON-EMAIL] A paid suggestion is never auto-booked. Auto-advance lands an invoice as
+      // 'received' — booked and UNPAID — which is the one status a settled bon must not get: it
+      // would stand in "nog te betalen" for money already gone, be dunned for it, and be payable a
+      // second time. Same gate, same reason, as /api/intake's `!decision.suggestPaid`.
+      const autoAdv = !classification.uncertain && !pay.suggestPaid
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,

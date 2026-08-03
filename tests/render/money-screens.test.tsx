@@ -59,6 +59,13 @@ mock.module("next/navigation", {
     useRouter: () => ({ push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} }),
     useSearchParams: () => new URLSearchParams(),
     usePathname: () => "/dashboard",
+    // A client PAGE reads its own route parameter. Stubbing it lets /dashboard/invoice/[id] be
+    // rendered like any other component.
+    useParams: () => ({ id: "inv-1" }),
+    // These throw in real Next too — a render that reaches them is a redirect, not a crash, and a
+    // test asserting "it renders" should say so out loud rather than pass on a silent no-op.
+    notFound: () => { throw new Error("[RENDER-GATE] the component called notFound()"); },
+    redirect: (to: string) => { throw new Error(`[RENDER-GATE] the component redirected to ${to}`); },
   },
 });
 
@@ -115,6 +122,59 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
   // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.
   assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
+});
+
+test("[VRIJGESTELD] the cost-attribution control renders each of its three states", async () => {
+  const { CostAttribution } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+
+  // Rendered directly, not through the screen. Inside the row it lives behind `expanded`, which
+  // only a click opens — a static render of the screen never reaches it, so asserting on the
+  // screen would have been a test that passes without touching the code it names.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const render = (value: string | null) =>
+    renderToStaticMarkup(React.createElement(CostAttribution as any, { value, onChange: () => {} }));
+
+  for (const value of ["direct_taxed", "mixed", "direct_exempt", null]) {
+    const html = render(value);
+    assert.match(html, /Waarvoor is deze kost/, `${value ?? "null"}: the question is asked`);
+    // All three choices are always offered — the control is how you CHANGE the answer, so hiding
+    // the others would leave an owner who mis-tapped with no way back.
+    assert.match(html, /Belast werk/, `${value ?? "null"}: the taxed choice is offered`);
+    assert.match(html, /Allebei/, `${value ?? "null"}: the mixed choice is offered`);
+    assert.match(html, /Vrijgesteld werk/, `${value ?? "null"}: the exempt choice is offered`);
+  }
+
+  // The case that matters most: null is what EVERY existing invoice looks like the day the
+  // migration runs, and it must show the default the aangifte is already applying to it — not an
+  // empty control that reads as an unanswered question.
+  assert.match(render(null), /naar verhouding/, "an unclassified cost explains the pro-rata default");
+  assert.equal(render(null), render("mixed"), "null and 'mixed' are the same state, shown the same");
+  // A value from a future migration must not blank the control or drop the explanation.
+  assert.match(render("something_else"), /naar verhouding/, "an unknown value falls back to mixed");
+
+  assert.match(render("direct_taxed"), /volledig aftrekbaar/, "the taxed state says the BTW is fully deductible");
+  assert.match(render("direct_exempt"), /geen recht op aftrek/, "the exempt state says there is no deduction");
+});
+
+test("[VRIJGESTELD] the pay screen is unchanged for an owner without exempt turnover", async () => {
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+
+  const rows = [manageRow({ id: "energie", client_name: "Energie", invoice_number: "E-9" })];
+  const render = (profile: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingManageClient as any, {
+          profile, initialInvoices: rows, totalCount: rows.length, readFailed: [], filedQuarters: [],
+        })),
+    );
+
+  // The 99%: the screen still renders with the new branch compiled into it, and nothing about the
+  // exemption reaches them — not when the column is absent, and not when they answered no.
+  assert.ok(render({ id: "u1" }).length > 1000, "the ordinary screen is still substantial");
+  assert.doesNotMatch(render({ id: "u1" }), /Waarvoor is deze kost/, "an ordinary owner is never asked");
+  assert.doesNotMatch(render({ id: "u1", vat_exempt_activity: false }), /Waarvoor is deze kost/);
 });
 
 test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out of reach", async () => {
@@ -284,7 +344,59 @@ const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<st
   { name: "bank", path: "../../src/app/dashboard/bank/BankClient", props: {} },
   { name: "kas", path: "../../src/app/dashboard/kas/KasClient", props: {} },
   { name: "aangifte", path: "../../src/app/dashboard/aangifte/AangifteClient", props: {} },
+  // The second wave. Same reasoning, same shallow-but-real coverage — every one of these was
+  // probed before it was wired, and none of them was broken. This buys protection against the next
+  // change; it did not repair anything outstanding.
+  { name: "dagomzet (kassa-omzet)", path: "../../src/app/dashboard/dagomzet/DagomzetImportClient", props: {} },
+  { name: "waarheid", path: "../../src/app/dashboard/waarheid/WaarheidClient", props: {} },
+  { name: "klaar (kwartaal-gereedheid)", path: "../../src/app/dashboard/klaar/KlaarClient", props: {} },
+  // A client PAGE rather than a client component — it reads its id from useParams, which the mock
+  // at the top of this file supplies.
+  { name: "invoice detail", path: "../../src/app/dashboard/invoice/[id]/page", props: {} },
+  // [VRIJGESTELD] The invoice form, which now builds its BTW-tarief dropdown from the owner's
+  // profile. Added for the reason at the top of this file: the other five gates compile this
+  // component without ever calling it. It renders in full here (~13k of markup, rate select
+  // included), so a throw anywhere in the form body is caught.
+  { name: "invoice form (nieuwe factuur)", path: "../../src/app/dashboard/invoice/new/page", props: {} },
 ];
+
+// [BETALINGSVERSCHIL] dashboard/zzp/DailyTruth is deliberately NOT on the list above, for exactly
+// the reason /dashboard/settings is not (see limit 2 below). It was tried: its first render is
+// `if (loading) return <div style={{ height: 148 }} />` — a bare skeleton with no text at all, so
+// it fails the "rendered something" assertion outright rather than passing hollowly. Either way
+// the entry would say nothing about the screen.
+//
+// Its new branch — the payment-difference notice under "Te ontvangen" — is covered where the
+// decision actually lives: paymentDifferenceNote and detectPaymentDifferences in
+// payment-difference.test.ts, including that the sentence never claims to have written anything
+// off. That is the split this file's own header argues for: render gates catch a screen that
+// cannot start, and pure tests catch a screen that says the wrong thing.
+
+/**
+ * [VRIJGESTELD] Two limits of the line above, stated rather than left to be discovered:
+ *
+ *  1. The "Vrijgesteld" option itself is NOT exercised. It is gated on profile.vat_exempt_activity,
+ *     and the form loads its profile in an effect — effects never run under renderToStaticMarkup,
+ *     so `profile` is null here and the option is correctly absent. What this gate proves is that
+ *     the form still renders with the new branch in it, not that the branch renders.
+ *  2. /dashboard/settings is deliberately NOT on the list, even though the exemption declaration
+ *     lives there. Its entire body sits behind a `loading` flag that only an effect can clear, so
+ *     one render returns a 123-character "Laden..." and nothing else. Listing it would add a test
+ *     that passes without ever reaching the code it claims to cover — the precise false green this
+ *     file exists to prevent.
+ *
+ * Both are the same structural boundary: this gate calls components, it does not run their
+ * effects. The exemption logic that MATTERS is pure and is tested where it lives —
+ * vat-exemption.test.ts (26 cases) and financial-result.test.ts.
+ */
+
+/**
+ * Not on the list, and stated rather than left to be noticed: /dashboard/resultaat and
+ * /dashboard/quarterly are async SERVER components. They await a Supabase client and a session
+ * before they render anything, so renderToStaticMarkup cannot call them without a database and a
+ * logged-in user — which is the thing this gate exists to avoid needing. quarterly's actual
+ * content is the client component QuarterlyOverview, and that one IS covered below.
+ */
 
 for (const screen of SELF_LOADING_SCREENS) {
   test(`[RENDER-GATE] ${screen.name} renders`, async () => {
@@ -300,6 +412,76 @@ for (const screen of SELF_LOADING_SCREENS) {
     assert.ok(html.length > 200, `${screen.name} rendered something`);
   });
 }
+
+test("[RENDER-GATE] the quarter overview renders, for both roles", async () => {
+  // The screen that says whether a quarter is ready to file. Its page wrapper is a server component,
+  // so the client component is the reachable half — and it branches hard on the role: an accountant
+  // sees a client list, a zzp'er sees their own quarter. Two renders, because a crash in one branch
+  // is invisible from the other.
+  const { QuarterlyOverview } = await import("../../src/components/quarterly/QuarterlyOverview");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  for (const isAccountant of [false, true]) {
+    const html = renderToStaticMarkup(
+      React.createElement(DialogProvider, null,
+        React.createElement(ToastProvider, null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          React.createElement(QuarterlyOverview as any, { isAccountant, role: isAccountant ? "accountant" : "zzper" }))),
+    );
+    assert.ok(html.length > 200, `the ${isAccountant ? "accountant" : "zzp"} branch rendered`);
+  }
+});
+
+test("[RENDER-GATE] the accountant bridge renders a tree with money on it", async () => {
+  // Takes its data as props, so unlike the self-loading screens above this one gets real nodes —
+  // and the lesson from the bug that started this file applies directly: an empty array never calls
+  // the callbacks that do the work, so the branches would go unvisited.
+  const { default: BrugClient } = await import("../../src/app/dashboard/brug/BrugClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const node = (over: Record<string, unknown> = {}) => ({
+    source: "invoice", id: "n1", displayName: "RE0801378", path: ["2026", "Q1", "Voldaan"],
+    date: "2026-03-12", amount: 871.4, badges: [], pdfUrl: null, hidden: false, clientId: null,
+    ownerId: "u1", partyName: "Groothandel", direction: "incoming", hasLocation: true,
+    folderId: null, docId: null, ...over,
+  });
+
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(BrugClient as any, {
+          nodes: [
+            node(),
+            // A credit note: negative, and badged as such.
+            node({ id: "n2", displayName: "CN9", amount: -109, badges: [{ label: "Creditnota", tone: "info" }] }),
+            // An outgoing invoice, a hidden (archived) row, and a document with no amount at all.
+            node({ id: "n3", displayName: "2026-001", direction: "outgoing", amount: 1210 }),
+            node({ id: "n4", displayName: "Oud", hidden: true }),
+            node({ id: "n5", source: "document", displayName: "bankafschrift.pdf", amount: null, partyName: null, direction: null, docId: "d1" }),
+          ],
+          role: "zzper",
+          docStatus: { d1: { status: "verwerkt", vraag_text: null } },
+          readFailed: [],
+        }))),
+  );
+  assert.ok(html.length > 500, "the bridge rendered its tree");
+});
+
+test("[RENDER-GATE] the accountant bridge says when a read failed", async () => {
+  // [NO-SILENT-EMPTY] An empty tree plus a failed read must never render as "there is nothing here".
+  const { default: BrugClient } = await import("../../src/app/dashboard/brug/BrugClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(BrugClient as any, { nodes: [], role: "zzper", docStatus: {}, readFailed: ["facturen"] }))),
+  );
+  assert.ok(html.length > 200, "it still renders when the read failed");
+});
 
 test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", async () => {
   // The money dashboard: what is due, what is overdue, what is partly paid. It takes its rows as
@@ -401,4 +583,176 @@ test("[READING-MEMORY] a supplier with no history renders the queue exactly as b
 
   assert.ok(html.length > 1000, "the queue still renders without the prop");
   assert.doesNotMatch(html, /Wat je hier vaker corrigeert/, "no heading without a hint under it");
+});
+
+test("[ENABLEBANKING] the bank-connection panel renders in each of its states", async () => {
+  // This panel is only ever reached behind a login, so the smoke test never opens it and the
+  // static gates never call it. It also branches on FOUR things at once — configured, connected,
+  // expiring, rate-limited — and three of those branches are the ones an owner meets on a bad
+  // day, i.e. exactly when a white screen is least affordable.
+  const { default: BankConnectPanel } = await import("../../src/app/dashboard/bank/BankConnectPanel");
+
+  const account = (over: Record<string, unknown> = {}) => ({
+    id: "acc-1", iban: "NL02ABNA0123456789", ownerName: "Jansen Bouw", currency: "EUR",
+    status: "READY", lastSyncedAt: "2026-07-31T05:00:00Z", lastSyncedThrough: "2026-07-31",
+    lastError: null, ...over,
+  });
+  const connection = (over: Record<string, unknown> = {}) => ({
+    id: "c1", institutionName: "ING", institutionBic: "INGBNL2A", status: "linked",
+    connectedAt: "2026-05-03T10:00:00Z", lastSyncedAt: "2026-07-31T05:00:00Z", lastError: null,
+    accessValidUntil: "2026-08-01", daysUntilExpiry: 60, canSyncNow: true,
+    accounts: [account()], ...over,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const render = (state: any) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    renderToStaticMarkup(React.createElement(BankConnectPanel as any, { initialState: state }));
+
+  // An unconfigured server hides the card entirely rather than offering a dead button.
+  assert.equal(render({ configured: false, connections: [] }), "");
+
+  const empty = render({ configured: true, connections: [] });
+  assert.match(empty, /Koppel je bank/);
+
+  const linked = render({ configured: true, connections: [connection()] });
+  assert.match(linked, /ING/);
+  assert.match(linked, /NL02ABNA0123456789/);
+  assert.match(linked, /Ververs/);
+
+  // The two states that MUST still render, because they are what the owner sees when the feed
+  // has stopped working — and a crash here would hide the very message telling him to reconnect.
+  const expiring = render({ configured: true, connections: [connection({ daysUntilExpiry: 3 })] });
+  assert.match(expiring, /verloopt over 3 dagen/);
+
+  const expired = render({
+    configured: true,
+    connections: [connection({ status: "expired", daysUntilExpiry: -2 })],
+  });
+  assert.match(expired, /Opnieuw koppelen/);
+
+  // Rate-limited: the refresh button has to be visibly disabled, not silently inert.
+  const spent = render({ configured: true, connections: [connection({ canSyncNow: false })] });
+  assert.match(spent, /disabled/);
+
+  // A connection with no accounts yet (consent given, details still processing) must not throw
+  // on the empty list — the branch a first-day owner hits.
+  const bare = render({
+    configured: true,
+    connections: [connection({ accounts: [], status: "pending", daysUntilExpiry: null })],
+  });
+  assert.ok(bare.length > 100, "a pending connection still renders");
+});
+
+test("[FULL-CORRECTION] the shared correction editor renders, and shows the supplier memory", async () => {
+  // ONE editor, opened from the pay screen and from /bank. It is rendered here directly because on
+  // both screens it lives behind a click, and a static render never clicks — the same reason
+  // InvoiceCard is exported. What matters is that every field the accountant reads is on it.
+  const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceCorrectionModal as any, {
+      invoice: {
+        id: "inv-1", invoice_number: "26302050", client_name: "ATAPACK Cash & Carry B.V.",
+        invoice_date: "2026-03-27", invoice_type: "factuur",
+        total_ex_btw: 6112.66, btw_amount: 550.14, total_inc_btw: 6662.8,
+      },
+      readingHint: "Bij deze leverancier heb je 3 eerdere facturen zelf gecorrigeerd — meestal het btw-bedrag. Controleer dat hier extra.",
+      onClose() {}, onSaved() {}, onMessage() {},
+    }),
+  );
+
+  // The money fields, and the ones that carry no money and still decide where the invoice lands.
+  assert.match(html, /Totaal \(incl\. BTW\)/);
+  assert.match(html, /Factuurnummer/, "the number the duplicate gate and bank matcher key on");
+  assert.match(html, /Leverancier/, "the name the supplier memory groups by");
+  assert.match(html, /Factuurdatum/, "the date that picks the BTW quarter");
+  // It opens on the invoice's CURRENT values — an editor that opens empty invites a retype, and a
+  // retyped correct figure is how a correct figure becomes a typo.
+  assert.match(html, /26302050/);
+  assert.match(html, /ATAPACK Cash &amp; Carry B\.V\./);
+  assert.match(html, /6662\.8/);
+  // [READING-MEMORY] travels with the editor, so it reaches /bank too.
+  assert.match(html, /meestal het btw-bedrag/);
+  // [KIND-CORRECTION] the one-way declaration, with the sentence that now describes what it does.
+  assert.match(html, /Dit is een creditnota/);
+  assert.match(html, /als minbedrag opgeslagen/);
+});
+
+test("[FULL-CORRECTION] a credit note is not offered the creditnota tick again", async () => {
+  // The declaration is one-way ('factuur' → 'creditnota'). Offering it on a row that already IS one
+  // would suggest a reverse that must never exist: it would quietly turn a credit into a debt.
+  const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceCorrectionModal as any, {
+      invoice: {
+        id: "cn-1", invoice_number: "CN9", client_name: "Sweets", invoice_date: "2026-02-17",
+        invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109,
+      },
+      onClose() {}, onSaved() {}, onMessage() {},
+    }),
+  );
+  assert.doesNotMatch(html, /Dit is een creditnota/);
+  assert.match(html, /-109/, "and it still opens on the stored negative amounts");
+});
+
+// ─── [CREDIT-SAFE] A suspected credit note is not dunned, and its badge is reachable ──────────
+// CREDITFACTUUR CR0301267 from Dutch Sweets: printed "Totaal bedrag (EUR) : € -33,87", stored
+// +33,87, badged "⚠ Lijkt een creditnota" — and beside that badge sat "2 dagen te laat", a
+// "Heb je betaald?" button and a filled-in payment QR for € 33,87 to the supplier's IBAN.
+//
+// Two renders, because one proves nothing. The first shows the dunning is gone; the second shows
+// it is gone BECAUSE of the credit signal and not because the fixture stopped being overdue.
+
+const sweetsRows = (creditNumber: string) => [
+  // Overdue by any clock: due 2026-04-11, and these tests run later than that.
+  manageRow({
+    id: "cr", client_name: "Dutch Sweets", invoice_number: creditNumber,
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+    invoice_date: "2026-07-02", due_date: "2026-08-01",
+  }),
+  // The contrast the signal needs — paid, so it cannot contribute a dunning badge of its own.
+  manageRow({
+    id: "re", client_name: "Dutch Sweets", invoice_number: "RE0802039",
+    status: "paid", amount_paid: 740.47, total_ex_btw: 679.33, btw_amount: 61.14,
+    total_inc_btw: 740.47, payment_date: "2026-05-01",
+  }),
+];
+
+const renderManage = async (rows: unknown[]) => {
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  return renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IncomingManageClient as any, {
+        profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
+        readFailed: [], filedQuarters: [],
+      })),
+  );
+};
+
+test("[CREDIT-SAFE] a suspected credit note loses its dunning badge and gains a tappable one", async () => {
+  const html = await renderManage(sweetsRows("CR0301267"));
+
+  assert.match(html, /Lijkt een creditnota/, "the signal still fires on the real case");
+  assert.doesNotMatch(html, /te laat/, "money the supplier owes you is never late");
+  // On a phone there is no hover, so a title attribute was the whole explanation and none of it was
+  // reachable. The badge has to be something you can press.
+  assert.match(
+    html, /<button[^>]*>⚠ Lijkt een creditnota<\/button>/,
+    "the warning badge is a button, not a tooltip nobody can open",
+  );
+});
+
+test("[CREDIT-SAFE] the same overdue row IS dunned once it stops looking like a credit note", async () => {
+  // Same fixture, same dates, only the number changes: RE… carries no credit prefix, so the signal
+  // stays quiet and the row is an ordinary late bill again. Without this second render the first
+  // one would also pass on a screen that had simply stopped dunning anything.
+  const html = await renderManage(sweetsRows("RE0803119"));
+
+  assert.doesNotMatch(html, /Lijkt een creditnota/, "no credit prefix, no signal");
+  assert.match(html, /te laat/, "an ordinary overdue invoice must still say so");
 });

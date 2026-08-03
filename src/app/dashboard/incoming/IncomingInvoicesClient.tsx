@@ -76,6 +76,8 @@ import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { M3, COLUMN } from '@/lib/design/tokens'
+// [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
+import { reconcileBtw } from '@/lib/btw-reconcile'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -119,6 +121,15 @@ interface IncomingInvoice {
     // A SUGGESTION only — the human confirms via "Markeer als betaald".
     _intake_kind?: string;     // 'receipt' when it came from the camera as a bon
     _intake_suggest?: string;  // 'paid' → surface "Markeer als betaald" prominently
+    // [BON-BETAALWIJZE] What the PAPER printed about the settlement. Written by both intake doors
+    // and, until now, read by nothing at all — bon-betaalwijze.ts said so in its own header: "een
+    // jsonb die geen enkele voorwaarde in de app leest". So the app read "Bankpas 70,29" off the
+    // till slip, parsed it, stored it, and then asked the owner Bank or Contant anyway.
+    _intake_paid_method?: string;        // 'bank' | 'kas', normalised
+    _intake_paid_method_zeker?: boolean; // true ONLY when the paper itself named it
+    _intake_paid_evidence?: string;      // the printed words the reading rests on
+    _intake_paid_card4?: string;         // last 4 of the card, when printed
+    _intake_paid_date?: string;          // the settlement date the paper printed
   } | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
@@ -774,8 +785,15 @@ function ConfirmPaidModal({
   const [payStep, setPayStep] = useState(false);
   // [BRIDGE-QUARTER] real payment date (defaults to today) + confirmation amount.
   // confirmAmount is UI-only for now (NOT stored) — explicit defer per brief §2.
+  // [BON-BETAALWIJZE] A bon states WHEN it was settled — that is the date the money actually moved,
+  // and it decides the BTW quarter. Defaulting to today put a bon from last quarter in this one.
+  // Only a real ISO date is accepted; anything else falls back to today, as before.
+  const paperPaidDate = (() => {
+    const d = (invoice.field_confidence as { _intake_paid_date?: string } | null)?._intake_paid_date;
+    return typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  })();
   const [paymentDate, setPaymentDate] = useState(
-    amsterdamToday()
+    paperPaidDate ?? amsterdamToday()
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
@@ -790,7 +808,28 @@ function ConfirmPaidModal({
   // amount-triplet.ts (pure, 7 tests), not by hope. Touch the total and the EX amount follows; btw
   // stays put unless you type it yourself, because that is the figure that enters the return as
   // deductible input tax and so should jump around least.
-  const [totalIncBtw, setTotalIncBtw] = useState((invoice.total_ex_btw || 0) + (invoice.btw_amount || 0));
+  //
+  // [PRINTED-TOTAL] Seeded from the STORED total, not from ex + btw.
+  //
+  // Deriving it was safe only while the stored triplet already added up — and the invoices this
+  // editor exists for are exactly the ones where it does not. CAN Vleesgroothandel 2034382 is the
+  // case: the reader took the 9% base (973,15) and dropped the invoice's 0% line (−3,86), so
+  // ex + btw = 1.060,73 while the paper, and the card above this editor, both say 1.056,87.
+  //
+  // The editor then opened on a total that matched neither, and — because the confirm sends all
+  // three amounts — pressing Verifiëren without touching anything REPLACED the printed total with
+  // the derived one. That is the wrong direction of trust: the total is what the owner actually
+  // paid and the figure the supplier is most careful with, and this editor's own design treats it
+  // as the anchor ("touch the total and the EX amount follows").
+  //
+  // The fallback stays for a row that genuinely has no stored total (a legacy import), where
+  // ex + btw is the only figure available.
+  const storedIncl = Number(invoice.total_inc_btw ?? 0);
+  const [totalIncBtw, setTotalIncBtw] = useState(
+    Number.isFinite(storedIncl) && Math.abs(storedIncl) > 0.005
+      ? storedIncl
+      : (invoice.total_ex_btw || 0) + (invoice.btw_amount || 0),
+  );
   const applyTriplet = (t: { ex: number; btw: number; incl: number }) => {
     setExBtw(t.ex); setBtwAmount(t.btw); setTotalIncBtw(t.incl);
   };
@@ -932,12 +971,70 @@ function ConfirmPaidModal({
                   }}
                 >
                   <span style={{ fontSize: 15, lineHeight: 1.3 }}>⚠️</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
                     {invoice.health.reasons
                       .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
                       .join(" · ")}
                     . Controleer en pas de bedragen aan.
                   </span>
+                  {/* [ONE-TAP-REPAIR] The gate already computed the answer — offer it as an action.
+                      A warning that names a figure ("dan hoort excl. BTW € 969,29 te zijn") and then
+                      makes the owner retype it is asking them to copy a number the app is holding.
+                      And on the invoice that prompted this the app was RIGHT: CAN Vleesgroothandel
+                      2034382 prints 9% over 973,15 plus a 0% line of −3,86, so the true ex is 969,29
+                      — exactly what the warning said.
+
+                      BOTH readings are offered, never one. Arithmetic cannot tell WHICH figure is
+                      the wrong one: repairing the ex and repairing the btw both satisfy
+                      ex + btw = totaal at a legal rate. Picking for the owner would be a guess
+                      wearing the app's authority, and this is the screen where a wrong amount
+                      enters the books. The paper decides; these buttons only spare the typing.
+
+                      Nothing is saved by tapping — the fields fill and the owner still confirms. */}
+                  {(() => {
+                    const rec = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
+                    if (rec.ok) return null
+                    const stored = invoice.total_inc_btw
+                    const options: Array<{ label: string; t: { ex: number; btw: number; incl: number } }> = []
+                    if (rec.exclRepairPossible) {
+                      options.push({
+                        label: `Excl. BTW = ${NL_CURRENCY.format(rec.impliedExcl)}`,
+                        t: { ex: rec.impliedExcl, btw: invoice.btw_amount, incl: stored },
+                      })
+                    }
+                    if (rec.btwRepairPossible) {
+                      options.push({
+                        label: `BTW = ${NL_CURRENCY.format(rec.impliedBtw)}`,
+                        t: { ex: invoice.total_ex_btw, btw: rec.impliedBtw, incl: stored },
+                      })
+                    }
+                    if (options.length === 0) return null
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          Welke klopt volgens de factuur? Het totaal ({NL_CURRENCY.format(stored)}) blijft staan.
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {options.map((o) => (
+                            <button
+                              key={o.label}
+                              type="button"
+                              onClick={() => { applyTriplet(o.t); setEditing(true) }}
+                              style={{
+                                padding: "7px 12px", borderRadius: 9, background: "#fff",
+                                border: "1px solid #e0a94f", color: "#9a5b00",
+                                fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                              }}
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                  </div>
                 </div>
               )}
 
@@ -1329,32 +1426,70 @@ function ConfirmPaidModal({
               }}
             />
 
-            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
-              <button
-                onClick={() => handlePay("bank")}
-                disabled={submitting}
-                style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
-                  background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-                  cursor: submitting ? "not-allowed" : "pointer",
-                }}
-              >
-                🏛️ Bank
-              </button>
-              <button
-                onClick={() => handlePay("kas")}
-                disabled={submitting}
-                style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
-                  background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-                  cursor: submitting ? "not-allowed" : "pointer",
-                }}
-              >
-                💳 Contant
-              </button>
-            </div>
+            {/* [BON-BETAALWIJZE] A till slip says how it was settled — "Bankpas 70,29", "KONTANT
+                120,00 Wisselgeld 7,10", often with the last four digits of the card. bon-betaalwijze.ts
+                has read that line, and only that line, since it was written: the printed word beats
+                any interpretation of it. It was stored in field_confidence and read by NOTHING, so
+                the app knew the answer and asked the question anyway — two identical green buttons,
+                every bon, forever.
+                Now the paper's answer leads. It is PRE-SELECTED, never auto-booked: the owner still
+                taps, and the other route stays one tap away for when the paper is wrong (a private
+                card, a colleague's pass). Where the paper said nothing, both stay equal and the
+                question is asked honestly — gok slim, vraag alleen als we het niet weten. */}
+            {(() => {
+              const zeker = fc?._intake_paid_method_zeker === true;
+              const uitPapier = zeker && (fc?._intake_paid_method === "bank" || fc?._intake_paid_method === "kas")
+                ? fc._intake_paid_method
+                : null;
+              const knop = (method: "bank" | "kas", label: string) => {
+                const geraden = uitPapier === method;
+                const anders = uitPapier !== null && !geraden;
+                return (
+                  <button
+                    key={method}
+                    onClick={() => handlePay(method)}
+                    disabled={submitting}
+                    style={{
+                      flex: 1, padding: "16px", borderRadius: 14, fontSize: 16,
+                      fontWeight: anders ? 600 : 700,
+                      background: submitting ? "#dadce0" : anders ? "#fff" : "#34a853",
+                      color: anders ? "#3c4043" : "#fff",
+                      border: anders ? "1.5px solid #dadce0" : "none",
+                      cursor: submitting ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              };
+              return (
+                <>
+                  {uitPapier && (
+                    <div style={{
+                      display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10,
+                      padding: "10px 12px", borderRadius: 10, background: "#e8f0fe", color: "#174ea6",
+                      fontSize: 12.5, lineHeight: 1.5,
+                    }}>
+                      <span style={{ fontSize: 14, lineHeight: 1.2 }}>🧾</span>
+                      <span>
+                        De bon vermeldt <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? "contant" : "bankpas")}</strong>
+                        {fc?._intake_paid_card4 ? ` (pas ••••${fc._intake_paid_card4})` : ""} —
+                        {uitPapier === "kas"
+                          ? " dit is contant betaald en gaat naar je kasboek."
+                          : " dit is met de bank betaald en wordt tegen je bankregel gelegd."}
+                        {" Klopt dat niet? Kies dan het andere."}
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+                    {/* The paper's reading first, so the confirming tap is the nearest one. */}
+                    {uitPapier === "kas"
+                      ? [knop("kas", "💶 Contant"), knop("bank", "🏛️ Bank")]
+                      : [knop("bank", "🏛️ Bank"), knop("kas", "💶 Contant")]}
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Back to the review step */}
             <button

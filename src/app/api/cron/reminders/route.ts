@@ -29,7 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import {
   reminderTierDue,
@@ -44,6 +44,8 @@ import { sendInvoiceReminder } from "@/lib/email";
 import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled"
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -94,7 +96,14 @@ export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
-    console.error("[CRON-REMINDERS] CRON_SECRET is not configured — reminders are DISABLED.");
+    // [ALARM] Not an error in a run — a whole feature standing still. Every night it answers 401,
+    // every night nothing is dunned, and the only trace is a log line in a job nobody opens. An
+    // owner discovers it when a customer has not paid for three months.
+    reportHandledFailure({
+      tag: "CRON-REMINDERS",
+      message: "CRON_SECRET is not configured — reminders are DISABLED",
+      severity: "feature-off",
+    });
     return NextResponse.json({ error: "cron_secret_not_configured" }, { status: 401 });
   }
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
@@ -136,7 +145,13 @@ export async function GET(req: NextRequest) {
   const ownerIds = [...ownerById.keys()];
 
   // ── 2) Their outgoing, still-open invoices (paginated, bounded to opted-in owners). ──
-  const invoices = await fetchAllRows<CandidateInvoice>((from, to) =>
+  // [ID-CHUNK] Keyed on the owner list, which travels in the URL at ~39 bytes per uuid. Paging
+  // alone does not help with that: it is the REQUEST that outgrows the proxy's header buffer, not
+  // the response. Today's opted-in owners fit; a few thousand would not, and the failure mode is a
+  // 414 that supabase-js reports as an ordinary error — so fetchAllRows would throw and this cron
+  // would simply stop sending, every night, with nobody looking. Chunking removes the cliff instead
+  // of waiting for it. Same rows, same order, one bounded request per chunk.
+  const invoices = await fetchAllRowsForIds<CandidateInvoice, string>(ownerIds, (chunk, from, to) =>
     pipeline
       .from("invoices")
       .select(
@@ -144,7 +159,7 @@ export async function GET(req: NextRequest) {
         // reminder must be the statutory fourteen-day aanmaning.
         "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status, client_btw_number",
       )
-      .in("sender_id", ownerIds)
+      .in("sender_id", chunk)
       .eq("direction", "outgoing")
       .in("status", ["sent", "overdue"])
       .eq("reminders_paused", false)
@@ -187,11 +202,15 @@ export async function GET(req: NextRequest) {
   // Keyed on the OWNERS (the same bounded list the candidate query uses), not on the candidate
   // ids: an .in() over thousands of uuids would blow the URL length long before it broke
   // anything visible. A creditnota per owner is rare, so this stays a small read.
-  const creditNoteRows = await fetchAllRows<{ original_invoice_id: string | null }>((from, to) =>
+  // [ID-CHUNK] Same reason as the candidate query above — and it matters more here, because this
+  // read is what stops a credited invoice being dunned. It already fails CLOSED on an error (see
+  // below), so a URL that grew too long would silently halt every reminder rather than send a wrong
+  // one; correct, and still a nightly outage nobody would notice.
+  const creditNoteRows = await fetchAllRowsForIds<{ original_invoice_id: string | null }, string>(ownerIds, (chunk, from, to) =>
     pipeline
       .from("invoices")
       .select("original_invoice_id")
-      .in("sender_id", ownerIds)
+      .in("sender_id", chunk)
       .eq("invoice_type", "creditnota")
       .not("original_invoice_id", "is", null)
       .order("id", { ascending: true })

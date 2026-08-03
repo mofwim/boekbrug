@@ -9,7 +9,7 @@
 // never doubles. That idempotency is what makes a bulk reprocess safe to run repeatedly.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DailyTurnover } from "./turnover";
+import { checkTurnoverArithmetic, type DailyTurnover } from "./turnover";
 import type { LedgerKind } from "./ledger-import";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,6 +20,12 @@ export interface TurnoverBookResult {
   days: number;
   span: string;
   total_incl: number;
+  /**
+   * [TURNOVER-ARITHMETIC] Days refused because their figures cannot be true, each with the reason
+   * in Dutch. Empty on success AND on a database failure — so a caller can tell the two apart, and
+   * never tells the owner "opslaan mislukt" when what really happened is that the numbers are wrong.
+   */
+  rejected: string[];
 }
 
 /**
@@ -35,6 +41,37 @@ export async function bookTurnoverRows(
   source: string,
   opts?: { preserveSplit?: boolean },
 ): Promise<TurnoverBookResult> {
+  // [TURNOVER-ARITHMETIC] The gate, before anything is written.
+  //
+  // This is the door the AI comes through: /api/intake books a PHOTOGRAPHED Z-report here, and
+  // /api/documents/reprocess re-books stored ones. daily_turnover feeds rubriek 1a/1b of the
+  // aangifte directly, so a misread rate lands in tax owed with nobody looking — there is no verify
+  // queue on this path the way there is for purchase invoices.
+  //
+  // All or nothing, and the days are named. A half-booked Z-report is worse than an unbooked one:
+  // the owner cannot tell which half is in, and the aangifte reads whatever is there.
+  const rejected: string[] = [];
+  for (const r of rows) {
+    const breaks = checkTurnoverArithmetic({
+      turnover_date: r.turnover_date,
+      base_0: r.base_0 ?? 0, base_9: r.base_9 ?? 0, base_21: r.base_21 ?? 0,
+      btw_9: r.btw_9 ?? 0, btw_21: r.btw_21 ?? 0,
+      total_incl: r.total_incl ?? null,
+      pin_amount: r.pin_amount ?? null, cash_amount: r.cash_amount ?? null, other_amount: r.other_amount ?? null,
+    });
+    if (breaks.length > 0) rejected.push(`${r.turnover_date}: ${breaks[0].note}`);
+  }
+  if (rejected.length > 0) {
+    const dates = rows.map((r) => r.turnover_date).sort();
+    return {
+      ok: false,
+      days: 0,
+      span: dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : "",
+      total_incl: 0,
+      rejected,
+    };
+  }
+
   const records = rows.map((r) => {
     const base = {
       user_id: userId,
@@ -51,7 +88,7 @@ export async function bookTurnoverRows(
   const dates = rows.map((r) => r.turnover_date).sort();
   const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : "";
   const total_incl = Math.round(records.reduce((s, r) => s + (r.total_incl ?? 0), 0) * 100) / 100;
-  return { ok: !error, days: records.length, span, total_incl };
+  return { ok: !error, days: records.length, span, total_incl, rejected: [] };
 }
 
 export interface LedgerBookResult {

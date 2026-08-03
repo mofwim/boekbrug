@@ -25,11 +25,16 @@ import {
   type InvoiceForMatching,
   type TransactionMatch,
 } from "./bank-matching";
+// [MATCH-CONFIDENCE] The Business Central-shaped second opinion. One-directional: it may
+// refuse an automatic booking, never authorise one — see bank-match-confidence.ts.
+import { applyConfidenceVeto } from "./bank-match-confidence";
 import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
 import { getVatScheme } from "./vat-scheme";
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled"
 
 export interface AutoConfirmed {
   transactionId: string;
@@ -84,7 +89,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, amount_paid")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, amount_paid")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })
@@ -200,9 +205,37 @@ export async function runBankAutoConfirm(args: {
   // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
   // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
   // "controleer". Both use the identical money discipline below and both are one-tap reversible.
-  const autoMatches = result.matches
-    .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
-    .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
+  // [MATCH-CONFIDENCE] A second, independent opinion on every pairing the tiers would book, in the
+  // shape Business Central publishes it: related party × document number × how many open invoices
+  // fall within the amount tolerance → High / Medium / Low. It is wired here rather than inside
+  // autoConfirmTier because the amount column needs the whole candidate pool, which lives at this
+  // level — and because keeping it out of bank-matching avoids an import cycle.
+  //
+  // The contract is ONE-DIRECTIONAL: it may turn an automatic booking into a human one, never the
+  // reverse. bank-matching's guards (a contradicting printed number, phantomSecond, the identity
+  // caps) were each earned from a real wrong booking, and a table imported from another product
+  // does not get to overrule them. So this filter can only ever remove.
+  //
+  // Today it removes nothing — verified by probing the ambiguous cases, and pinned by
+  // bank-match-confidence.test.ts. That is the point: the agreement is now asserted rather than
+  // believed, so a future change that makes a Low pairing bookable stops here instead of in
+  // someone's quarter.
+  const autoMatches = applyConfidenceVeto({
+    matches: result.matches.map((m) => ({ m, tier: autoConfirmTier(m) })),
+    invoiceById: invById,
+    // The same eligibility the matcher used, so the amount count cannot disagree with the
+    // candidate list it is judging.
+    eligibleFor: (tx) => soloInvoices.filter((i) => isEligible(tx, i)),
+    onVeto: ({ match, tier, classification }) => {
+      console.warn("[MATCH-CONFIDENCE] refused an automatic booking the tiers allowed", {
+        userId,
+        transactionId: match.transaction.transactionId,
+        invoiceId: match.best?.invoiceId,
+        tier,
+        classification: classification.reason,
+      });
+    },
+  }).filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
   for (const { m, tier } of autoMatches) {
     const txId = m.transaction.transactionId;
@@ -306,8 +339,13 @@ export async function runBankAutoConfirm(args: {
         .eq("id", invoiceId)
         .eq("status", "paid");
       if (rbErr) {
-        console.error("[BANK-AUTO-CONFIRM] pay rollback FAILED — invoice may be paid with no bank link", {
-          userId, invoiceId, txId, error: rbErr.message,
+        // [ALARM] The code above calls this "the exact state this design promises never exists".
+        // A promise nobody is told has been broken is not a promise — this one wakes someone.
+        reportHandledFailure({
+          tag: "BANK-AUTO-CONFIRM",
+          message: "pay rollback FAILED — invoice may be paid with no bank link",
+          severity: "data-integrity",
+          context: { userId, invoiceId, txId, error: rbErr.message },
         });
       }
       continue;

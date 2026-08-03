@@ -9,6 +9,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/bank-sync",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/quarter-close",
       "schedule": "0 8 5 1,4,7,10 *"
     },

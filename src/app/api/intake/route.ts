@@ -74,6 +74,9 @@ import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDup
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
 import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup"
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
+// [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
+import { readingPromptHint } from "@/lib/reading-memory"
+import { loadReadingMemory } from "@/lib/reading-memory-source"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
@@ -400,6 +403,10 @@ export async function POST(req: NextRequest) {
     // later feeds the IBAN+amount bank auto-match tier.
     v = await verifyInvoiceFromPdf(base64, effectiveType, file.name, receiverName, {
       throwOnTransient: true,
+      // [READING-MEMORY] Which suppliers this owner keeps having to correct, and in which field.
+      // Fields only, never amounts. Null when the memory is empty or could not be loaded — the
+      // reader then behaves exactly as it did before this existed.
+      readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
       receiverKvk: me?.kvk_number || null,
       receiverBtw: me?.btw_number || null,
       receiverIban: me?.iban || null,
@@ -423,6 +430,15 @@ export async function POST(req: NextRequest) {
     // [PEN-MARK] carry the handwritten/stamped payment hints into the routing decision.
     paid_method: v.paid_method ?? null,
     paid_date: v.paid_date ?? null,
+    // [BON-BETAALWIJZE] The tender line the till printed, VERBATIM, and the card digits beside it.
+    // These two were extracted (ai.ts asks for them by name), typed on IntakeClassification, parsed
+    // by gokBetaalwijze and covered by its own tests — and then not passed here, at the only call
+    // site there is. So gokBetaalwijze read `undefined` on every upload this app has handled: the
+    // paper could never win over the model because the paper never arrived, paidMethodZeker was
+    // structurally false, and _intake_paid_evidence / _intake_paid_card4 were written on no row at
+    // all. A feature can be built, tested and shipped and still be switched off by two absent lines.
+    paid_evidence: v.paid_evidence ?? null,
+    paid_card_last4: v.paid_card_last4 ?? null,
     confidence: v.confidence,
   })
 
@@ -1540,7 +1556,11 @@ async function handleDailySalesPdf(
   if (!booked.ok) {
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
-      message: "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+      // [TURNOVER-ARITHMETIC] Two different failures, two different sentences. "Opslaan is mislukt"
+      // sends the owner to retry an import that will fail again in exactly the same way.
+      message: booked.rejected.length
+        ? `De bedragen van deze dag kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en voer de dag zelf in.`
+        : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
     })
   }
   await logAuditAction({
@@ -1611,7 +1631,11 @@ async function handleSpreadsheet(
       // Never claim a booking that didn't happen. Store stays; tell the owner to retry via Dagomzet.
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
-        message: "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+        // [TURNOVER-ARITHMETIC] As above: refused figures are not a failed save, and telling the
+        // owner to retry would send them into the same refusal.
+        message: booked.rejected.length
+          ? `De bedragen van ${booked.rejected.length === 1 ? "één dag" : `${booked.rejected.length} dagen`} kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en importeer opnieuw.`
+          : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
       })
     }
     await logAuditAction({

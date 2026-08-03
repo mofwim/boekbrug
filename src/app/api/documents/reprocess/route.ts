@@ -128,7 +128,8 @@ export async function POST(req: NextRequest) {
           review++; continue;
         }
         const b = await bookTurnoverRows(supabase, user.id, plan.turnover.rows, "z_report");
-        if (!b.ok) { results.push({ file: label, status: "error", message: "opslaan van kassa-omzet mislukt" }); failed++; continue; }
+        // [TURNOVER-ARITHMETIC] Refused figures are not a failed save — say which it was.
+        if (!b.ok) { results.push({ file: label, status: "error", message: b.rejected.length ? `bedragen kloppen niet (${b.rejected[0]}) — niets geboekt` : "opslaan van kassa-omzet mislukt" }); failed++; continue; }
         turnoverDays += b.days; booked++;
         results.push({ file: label, status: "booked", type: "turnover", message: `${b.days} dagen kassa-omzet (${b.span})` });
         await logAuditAction({ userId: user.id, action: "turnover.auto_imported", entityType: "daily_turnover", entityId: doc.id,
@@ -164,7 +165,8 @@ export async function POST(req: NextRequest) {
       }
       // source 'z_report' (an allowed daily_turnover.source; 'z_report_pdf' violates the DB CHECK).
       const b = await bookTurnoverRows(supabase, user.id, [row], "z_report", { preserveSplit: true });
-      if (!b.ok) { results.push({ file: label, status: "error", message: "opslaan van dagomzet mislukt" }); failed++; continue; }
+      // [TURNOVER-ARITHMETIC] Same distinction as the multi-day path above.
+      if (!b.ok) { results.push({ file: label, status: "error", message: b.rejected.length ? `bedragen kloppen niet (${b.rejected[0]}) — niets geboekt` : "opslaan van dagomzet mislukt" }); failed++; continue; }
       turnoverDays += b.days; booked++;
       results.push({ file: label, status: "booked", type: "turnover", message: `dagomzet ${row.turnover_date} (€${b.total_incl.toFixed(2)})` });
       await logAuditAction({ userId: user.id, action: "turnover.auto_imported", entityType: "daily_turnover", entityId: doc.id,

@@ -268,5 +268,111 @@ console.log("\n— [PRIVEGEBRUIK] rubriek 1d: de correctie die deze app niet kan
   check("every quarter gets a note — the rubriek exists all year", allPresent);
 }
 
+
+console.log("\n— [VRIJGESTELD] exempt turnover: named, in no rubriek, and never called 'no turnover' —");
+{
+  // A fully exempt practice: EUR 132.000 of care turnover, nothing taxed, no till days.
+  const input: AangifteInput = {
+    salesByRate: [],
+    btwVoorbelasting: 0,
+    cashOmzetZonderBtw: 0,
+    vrijgesteldeOmzet: 132000,
+    proRataPercent: 0,
+    voorbelastingGeblokkeerd: 4200,
+  };
+  const a = buildAangifte(input, compl({ turnoverDays: 0 }), "Q3 2026");
+  const notes = a.notes.join(" | ");
+
+  check("the figure is carried out, not dropped", a.vrijgesteldeOmzet === 132000);
+  check("it reaches NO rubriek — not even 1e", !a.rows.some((r) => r.omzet === 132000));
+  check("5a stays empty (an exemption charges no BTW)", a.verschuldigd === 0);
+  // The defect this pins: the sentence is keyed on salesByRate being empty, and for a fully
+  // exempt owner it always is. Told "je hebt nog geen omzet ingevoerd" at the moment their
+  // quarter is complete, an owner reasonably concludes the app lost their invoices.
+  check("it does NOT claim the quarter is empty", !/nog geen omzet ingevoerd/.test(notes));
+  check("the exempt turnover is named in the notes", /VRIJGESTELD/.test(notes) && /132\.000/.test(notes));
+  check("and the note says why it is in no box", /geen[\s\S]*rubriek/.test(notes));
+  check("blocked input BTW is disclosed", /4\.200/.test(notes) && /geen recht op aftrek/.test(notes));
+}
+
+console.log("\n— [VRIJGESTELD] a genuinely empty quarter still says so —");
+{
+  const a = buildAangifte(
+    { salesByRate: [], btwVoorbelasting: 0, cashOmzetZonderBtw: 0, vrijgesteldeOmzet: 0 },
+    compl({ turnoverDays: 0 }),
+    "Q3 2026",
+  );
+  check("no exempt turnover ⇒ the empty-quarter sentence is back", /nog geen omzet ingevoerd/.test(a.notes.join(" | ")));
+  check("and no exemption note is invented", !/VRIJGESTELD/.test(a.notes.join(" | ")));
+}
+
+console.log("\n— [VRIJGESTELD] an undecidable ratio says 5b is deliberately too LOW —");
+{
+  const a = buildAangifte(
+    {
+      salesByRate: [], btwVoorbelasting: 105, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 0, proRataPercent: null, voorbelastingUnresolved: 210,
+    },
+    compl({ turnoverDays: 0 }),
+    "Q3 2026",
+  );
+  const notes = a.notes.join(" | ");
+  check("the unresolved BTW is named", /210/.test(notes));
+  check("and the direction of the error is stated, not implied", /te LAAG/.test(notes));
+  check("5b carries only what was actually claimable", a.voorbelasting === 105);
+}
+
+
+console.log("\n— [VRIJGESTELD] the boundary of the feature is stated in the concept, not only in a migration —");
+{
+  // A physio: EUR 40.000 exempt care invoiced, plus EUR 9.000 through the till and the cash book
+  // that this round cannot classify and therefore booked as TAXED.
+  const a = buildAangifte(
+    {
+      salesByRate: [{ rate: 21, omzet: 9000, btw: 1890 }],
+      btwVoorbelasting: 0, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 40000, proRataPercent: 19,
+      onclassificeerbareOmzet: 9000, exemptRegime: true,
+    },
+    compl({ turnoverDays: 90 }),
+    "Q3 2026",
+  );
+  const notes = a.notes.join(" | ");
+  check("the unclassifiable turnover is named with its amount", /9\.000/.test(notes));
+  check("and it says which way the error runs (counted as TAXED)", /BELASTE omzet/.test(notes));
+  check("and where the owner CAN classify instead", /per regel/.test(notes));
+  // The figure itself is still declared — the limit is about the LABEL, not about hiding money.
+  check("the taxed bucket keeps its BTW", a.rows.find((r) => r.code === "1a")!.btw === 1890);
+}
+
+console.log("\n— [VRIJGESTELD] an invoice-only exempt owner is not warned about a till they don't have —");
+{
+  const a = buildAangifte(
+    {
+      salesByRate: [], btwVoorbelasting: 0, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 132000, proRataPercent: 0,
+      onclassificeerbareOmzet: 0, exemptRegime: true,
+    },
+    compl({ turnoverDays: 0 }),
+    "Q3 2026",
+  );
+  check("no till/cash warning when there is no till or cash", !/dagomzet \(kassa\)/.test(a.notes.join(" | ")));
+}
+
+console.log("\n— [VRIJGESTELD] and an ordinary owner with a till is never warned at all —");
+{
+  const a = buildAangifte(
+    {
+      salesByRate: [{ rate: 21, omzet: 9000, btw: 1890 }],
+      btwVoorbelasting: 0, cashOmzetZonderBtw: 0,
+      onclassificeerbareOmzet: 0, exemptRegime: false,
+    },
+    compl({ turnoverDays: 90 }),
+    "Q3 2026",
+  );
+  const notes = a.notes.join(" | ");
+  check("off-regime: no exemption sentence of any kind", !/vrijgesteld/i.test(notes));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

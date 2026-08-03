@@ -10,6 +10,13 @@
 //   · invoices.created_by        — same migration (uuid, nullable, FK → profiles.id)
 //   · clients.created_by         — same migration
 //   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
+//   · bank_connections           — supabase/migrations/bank_connections.sql
+//   · bank_connection_accounts   — same migration (incl. identification_hash, [EB-ACCOUNT-IDENTITY])
+//   · bank_transactions.source        — supabase/migrations/bank_tx_source_identity.sql (text, nullable)
+//   · bank_transactions.external_id   — same migration (text, nullable)
+//   · profiles.vat_exempt_activity / .vat_exempt_since,
+//     invoice_lines.vat_treatment, invoices.vat_deduction
+//                                 — supabase/migrations/vat_exemption.sql
 //
 // WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
 // stays green while the request fails at runtime — exactly how `created_by` once broke invoice
@@ -17,7 +24,7 @@
 //
 //   supabase gen types typescript --project-id <ref> > src/types/database.types.ts
 //
-// check that the five entries above survive. If the generator drops one, the migration is not
+// check that the entries above survive. If the generator drops one, the migration is not
 // applied on the database you generated from — fix that, do not re-add the type by hand.
 //
 // NOTE: src/lib/database.types.ts is an older, unused copy. Nothing imports it. Do not edit it
@@ -163,6 +170,140 @@ export type Database = {
           },
         ]
       }
+      bank_connections: {
+        Row: {
+          access_valid_until: string | null
+          aspsp_country: string
+          aspsp_name: string
+          connected_at: string | null
+          created_at: string
+          id: string
+          institution_bic: string | null
+          institution_name: string | null
+          last_error: string | null
+          last_synced_at: string | null
+          max_historical_days: number | null
+          provider: string
+          reference: string
+          session_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_valid_until?: string | null
+          aspsp_country: string
+          aspsp_name: string
+          connected_at?: string | null
+          created_at?: string
+          id?: string
+          institution_bic?: string | null
+          institution_name?: string | null
+          last_error?: string | null
+          last_synced_at?: string | null
+          max_historical_days?: number | null
+          provider?: string
+          reference: string
+          session_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_valid_until?: string | null
+          aspsp_country?: string
+          aspsp_name?: string
+          connected_at?: string | null
+          created_at?: string
+          id?: string
+          institution_bic?: string | null
+          institution_name?: string | null
+          last_error?: string | null
+          last_synced_at?: string | null
+          max_historical_days?: number | null
+          provider?: string
+          reference?: string
+          session_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_connections_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_connection_accounts: {
+        Row: {
+          account_id: string
+          identification_hash: string
+          connection_id: string
+          created_at: string
+          currency: string | null
+          iban: string | null
+          id: string
+          last_error: string | null
+          last_synced_at: string | null
+          last_synced_through: string | null
+          owner_name: string | null
+          status: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          identification_hash: string
+          connection_id: string
+          created_at?: string
+          currency?: string | null
+          iban?: string | null
+          id?: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          last_synced_through?: string | null
+          owner_name?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          identification_hash?: string
+          connection_id?: string
+          created_at?: string
+          currency?: string | null
+          iban?: string | null
+          id?: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          last_synced_through?: string | null
+          owner_name?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_connection_accounts_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_connection_accounts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transactions: {
         Row: {
           amount: number | null
@@ -177,6 +318,8 @@ export type Database = {
           id: string
           invoice_id: string | null
           reference: string | null
+          source: string | null
+          external_id: string | null
           status: string | null
           statement_document_id: string | null
           user_id: string | null
@@ -194,6 +337,8 @@ export type Database = {
           id?: string
           invoice_id?: string | null
           reference?: string | null
+          source?: string | null
+          external_id?: string | null
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null
@@ -211,6 +356,8 @@ export type Database = {
           id?: string
           invoice_id?: string | null
           reference?: string | null
+          source?: string | null
+          external_id?: string | null
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null
@@ -1230,6 +1377,7 @@ export type Database = {
           quantity: number | null
           unit: string | null
           unit_price: number | null
+          vat_treatment: string | null
         }
         Insert: {
           btw_rate?: number | null
@@ -1240,6 +1388,7 @@ export type Database = {
           quantity?: number | null
           unit?: string | null
           unit_price?: number | null
+          vat_treatment?: string | null
         }
         Update: {
           btw_rate?: number | null
@@ -1250,6 +1399,7 @@ export type Database = {
           quantity?: number | null
           unit?: string | null
           unit_price?: number | null
+          vat_treatment?: string | null
         }
         Relationships: [
           {
@@ -1311,6 +1461,7 @@ export type Database = {
           total_ex_btw: number | null
           total_inc_btw: number | null
           updated_at: string | null
+          vat_deduction: string | null
           vendor_iban: string | null
         }
         Insert: {
@@ -1361,6 +1512,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vat_deduction?: string | null
           vendor_iban?: string | null
         }
         Update: {
@@ -1411,6 +1563,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vat_deduction?: string | null
           vendor_iban?: string | null
         }
         Relationships: [
@@ -1676,6 +1829,8 @@ export type Database = {
           invoice_number_padding: number
           kas_opening_balance: number
           kor_active: boolean
+          vat_exempt_activity: boolean
+          vat_exempt_since: string | null
           vat_scheme: string
           vat_scheme_since: string | null
           invoice_number_template: string | null
@@ -1706,6 +1861,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_exempt_activity?: boolean
+          vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
           invoice_number_template?: string | null
@@ -1736,6 +1893,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_exempt_activity?: boolean
+          vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
           invoice_number_template?: string | null

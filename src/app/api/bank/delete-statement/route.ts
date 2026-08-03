@@ -36,6 +36,8 @@ import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled"
 
 export async function POST(req: NextRequest) {
   // 1. Auth — the owner acting on their own data.
@@ -344,8 +346,14 @@ export async function POST(req: NextRequest) {
     if (driftUnhealed > 0) {
       // The statement is gone and cannot come back, so this is not a rollback situation — but the
       // owner must not be told everything is in order while an invoice still claims paid money.
-      console.error("[PARTIAL-PAY] statement deleted with unhealed amount_paid drift", {
-        documentId, unhealed: driftUnhealed, affected: affected.size,
+      // [ALARM] amount_paid = Σ amount_applied is the invariant the whole instalment system rests
+      // on, and it is now broken on rows nobody can name from the screen. The statement is gone and
+      // cannot come back, so this cannot be rolled back either — it can only be told.
+      reportHandledFailure({
+        tag: "PARTIAL-PAY",
+        message: "statement deleted with unhealed amount_paid drift",
+        severity: "data-integrity",
+        context: { documentId, unhealed: driftUnhealed, affected: affected.size },
       });
     }
   }

@@ -28,6 +28,7 @@ import { isMissingColumn } from "./pg-missing";
 import type { ComputeOpts } from "./financial-result";
 // [RUBRIEK-SPLIT] Same helper the accrual surfaces use — one definition of an invoice rate mix.
 import { fetchRateShares } from "./btw-rate-split-fetch";
+import { exemptShareOf } from "./vat-exemption";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -281,6 +282,11 @@ export async function resolveSchemeSettlements(
   quarterStart: string,
   start: string,
   end: string,
+  // [VRIJGESTELD] Whether the exempt regime applies to this quarter, already resolved by the
+  // caller's shared collector. Under kas the settled invoices are a DIFFERENT set from the
+  // invoices dated in the window (payment lags the invoice), so their exempt parts have to be
+  // read here too — the caller's own map covers only the dated ones. Absent → the untouched path.
+  exemptRegime = false,
 ): Promise<SchemeResolution> {
   // [SCHEME-READ-HONEST] One reader for all three resolvers — see readSchemeElection. This is the
   // call site where a swallowed error did the most damage: it decides the BASIS of the concept
@@ -305,10 +311,19 @@ export async function resolveSchemeSettlements(
         .map((e) => [e.invoiceId, { id: e.invoiceId, total_ex_btw: e.headerEx, btw_amount: e.headerBtw }]),
     ).values(),
   ];
-  const rateSharesByInvoice = await fetchRateShares(pipeline, settledSales);
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
+    pipeline, settledSales, { exemptRegime },
+  );
   return {
     scheme: "kas",
-    opts: { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice, rateSharesByInvoice },
+    opts: {
+      scheme: "kas",
+      settlements: qs.events,
+      priorByInvoice: qs.priorByInvoice,
+      rateSharesByInvoice,
+      // Fractions, because a settlement settles a PART of its invoice — see exemptShareOf.
+      exemptShareByInvoice: exemptShareOf(settledSales, exemptExByInvoice),
+    },
     undatedPaidCount: qs.undatedPaidCount,
     estimatedPortionCount: qs.estimatedCount,
   };

@@ -5,6 +5,10 @@
 // owner is never silently short a transaction.
 import { parseBankFile, parseMT940, parseCAMT053 } from "./bank-parser";
 import { referenceMatches } from "./bank-matching";
+// [AFSCHRIFT-SLUIT] The chain the PUBLIC converter runs, in the browser, on a visitor's
+// own file — no session, no upload. It is the one sentence on that page that proves
+// anything, so the chain behind it is asserted here rather than assumed.
+import { reconcileStatementBalance } from "./bank-statement-balance";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -339,6 +343,47 @@ console.log("\n— [BANK-FORMAT-HONEST] an unrecognised text file warns instead 
   check("0 transactions + an explicit warning", tab.transactions.length === 0 && tab.parseErrors.length > 0);
   const emptyMt = parseBankFile(":20:REF\n:25:NL91INGB0001234567\n:60F:C260601EUR0,00\n:62F:C260601EUR0,00\n", "leeg.940");
   check("a genuinely empty-but-real MT940 stays warning-free", emptyMt.parseErrors.length === 0);
+}
+
+console.log("\n— [AFSCHRIFT-SLUIT] the public converter's claim, end to end —");
+{
+  // /bankafschrift-naar-excel tells a logged-out visitor whether his OWN statement ties out. That
+  // claim rests on three things holding together: parseBankFile must surface statementBalance,
+  // the transactions must carry their signs, and reconcileStatementBalance must agree. Each is
+  // tested on its own; nothing tested them as the chain the page actually runs.
+  const mt940 = [
+    "{1:F01INGBNL2AXXXX0000000000}{2:I940INGBNL2AXXXXN}{4:",
+    ":20:P260101",
+    ":25:NL02ABNA0123456789EUR",
+    ":28C:1/1",
+    ":60F:C260401EUR2500,00",
+    ":61:2604020402C1200,00NTRFNONREF//26000000000001",
+    ":86:/CNTP/NL91ABNA0417164300/ABNANL2A/Een Klant///REMI/USTD//26001/",
+    ":61:2604050405D300,50NTRFNONREF//26000000000002",
+    ":86:/CNTP/NL91ABNA0417164300/ABNANL2A/Een Leverancier///REMI/USTD//Inkoop/",
+    ":62F:C260430EUR3399,50",
+    "-}",
+  ].join("\n");
+
+  const r = parseBankFile(mt940, "afschrift.940");
+  const sb = r.statementBalance ?? null;
+  check("the converter can reach a statement balance at all", sb !== null);
+  const rec = sb ? reconcileStatementBalance(sb.opening, sb.closing, r.transactions.map((t) => t.amount)) : null;
+  check("it is checkable — both saldi present", rec?.checkable === true);
+  check("2500 + 1200 − 300,50 = 3399,50 → it ties out", rec?.ok === true);
+  check("and the gap it would print is exactly zero", rec?.gap === 0);
+  check("the count in the sentence is the count on screen", rec?.txCount === 2);
+
+  // The other half of the page's honesty: a CSV carries no saldi, and the page must then say it
+  // could not check rather than imply everything is fine. Absent statementBalance is what drives
+  // that branch, so its absence is the assertion.
+  const csv = [
+    "Datum,Naam,Rekening,Tegenrekening,Code,Af Bij,Bedrag,Mutatiesoort,Mededelingen",
+    '20260402,"Een Klant","NL02ABNA0123456789","NL91ABNA0417164300","GT","Bij","1200,00","Overboeking","26001"',
+  ].join("\n");
+  const c = parseBankFile(csv, "afschrift.csv");
+  check("a CSV yields transactions but no saldi → 'niet te controleren', never a false pass",
+    c.transactions.length > 0 && (c.statementBalance ?? null) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

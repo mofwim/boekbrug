@@ -15,6 +15,8 @@ import { parseBankFile, type ParseResult } from '@/lib/bank-parser'
 import { toExportMatrix, toNormalizedCsv } from '@/lib/bank-csv'
 import { matrixToXlsxBytes } from '@/lib/xlsx-adapter'
 import { looksLikeSpreadsheetBinary } from '@/lib/detect-file'
+// [AFSCHRIFT-SLUIT] Dezelfde controle die de app op elk geüpload afschrift draait.
+import { reconcileStatementBalance } from '@/lib/bank-statement-balance'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const dateNL = (iso: string) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('nl-NL', { day: '2-digit', month: 'short', year: 'numeric' }) : '—')
@@ -97,6 +99,13 @@ export default function BankConverter() {
   const txs = parsed?.result.transactions ?? []
   const totalIn = txs.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)
   const totalOut = txs.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
+  // [AFSCHRIFT-SLUIT] Het sterkste dat over een afschrift te zeggen valt: beginsaldo + alle
+  // mutaties = eindsaldo, tot op de cent. MT940 en CAMT.053 dragen die saldi zelf (:60F:/:62F:,
+  // OPBD/CLBD); een CSV niet, en dan zegt dit blok eerlijk dat het niet te controleren was in
+  // plaats van een gerustheid te verzinnen. Draait hier, in de browser, op het bestand van de
+  // bezoeker — er is geen upload om het op te doen.
+  const sb = parsed?.result.statementBalance ?? null
+  const recon = sb ? reconcileStatementBalance(sb.opening, sb.closing, txs.map((t) => t.amount)) : null
   const dates = txs.map((t) => t.date).filter(Boolean).sort()
 
   return (
@@ -172,6 +181,43 @@ export default function BankConverter() {
               <Stat label="Bij (ontvangen)" value={eur.format(totalIn)} color="#137333" />
               <Stat label="Af (betaald)" value={eur.format(totalOut)} color="#b3261e" />
             </div>
+
+            {/* [AFSCHRIFT-SLUIT] De controle die niemand anders op deze pagina doet: klopt dit
+                afschrift met zichzelf? Een bezoeker kan het antwoord meteen naast zijn eigen
+                bankapp leggen — het is zijn bestand, niet een demo. Slaagt hij, dan is dat de
+                enige zin op deze pagina die iets bewijst; faalt hij, dan weet hij nu iets wat
+                zijn boekhouding raakt en wat geen enkele converter hem zou hebben verteld. */}
+            {recon?.checkable && (
+              <div style={{
+                marginBottom: 18, padding: '12px 14px', borderRadius: 12, fontSize: 13.5, lineHeight: 1.55,
+                background: recon.ok ? '#e6f4ea' : '#fce8e6',
+                color: recon.ok ? '#137333' : '#b3261e',
+                border: `1px solid ${recon.ok ? '#b7e1c1' : '#f5c6c2'}`,
+              }}>
+                {recon.ok ? (
+                  <>
+                    <strong>✓ Dit afschrift sluit aan, tot op de cent.</strong>{' '}
+                    Beginsaldo {eur.format(recon.opening ?? 0)} plus deze {recon.txCount} mutaties komt precies
+                    uit op eindsaldo {eur.format(recon.closing ?? 0)}. Er ontbreekt geen regel.
+                  </>
+                ) : (
+                  <>
+                    <strong>⚠ Dit afschrift sluit niet aan.</strong>{' '}
+                    Beginsaldo {eur.format(recon.opening ?? 0)} plus deze {recon.txCount} mutaties komt uit
+                    op {eur.format(recon.expectedClosing ?? 0)}, terwijl het afschrift {eur.format(recon.closing ?? 0)} als
+                    eindsaldo noemt — een verschil van {eur.format(Math.abs(recon.gap))}. Waarschijnlijk is het
+                    bestand niet compleet: download de hele periode opnieuw bij je bank.
+                  </>
+                )}
+              </div>
+            )}
+            {parsed.result.statementBalance == null && (
+              <div style={{ marginBottom: 18, padding: '12px 14px', borderRadius: 12, fontSize: 13.5, lineHeight: 1.55, background: '#f8f9fa', color: '#5f6368', border: '1px solid #e8eaed' }}>
+                Dit bestand draagt geen begin- en eindsaldo, dus of het compleet is valt er niet aan af te
+                lezen. Een MT940- of CAMT.053-bestand van dezelfde periode wél — die controle doen we dan
+                meteen voor je.
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <button onClick={downloadXlsx} style={{ background: '#1a73e8', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 22px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>

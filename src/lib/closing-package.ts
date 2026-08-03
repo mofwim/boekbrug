@@ -64,7 +64,7 @@ import {
   buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
   type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
 } from "./icp";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 // [PACKAGE-ART29] Both sides of art. 29 Wet OB — see the call site for why they belong here.
 import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
 import { BAD_DEBT_MIN_EUR } from "./bad-debt";
@@ -74,6 +74,8 @@ import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — the same helper the aangifte
 // and the result engine use, so the accountant's package cannot show different rubrieken.
 import { fetchRateShares } from "./btw-rate-split-fetch";
+import { collectVatExemption } from "./vat-exemption-collect";
+import { exemptShareOf } from "./vat-exemption";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -273,18 +275,49 @@ async function stampPaymentDate(
 async function resolvePaymentDates(
   supabase: PipelineClient,
   paidInvoices: PackageInvoice[]
-): Promise<Map<string, PaymentDateInfo>> {
+): Promise<{ dates: Map<string, PaymentDateInfo>; complete: boolean }> {
   const result = new Map<string, PaymentDateInfo>();
   const ids = paidInvoices.map((i) => i.id);
-  if (ids.length === 0) return result;
+  if (ids.length === 0) return { dates: result, complete: true };
 
-  const { data: txRows } = await supabase
-    .from("bank_transactions")
-    .select("invoice_id, date")
-    .in("invoice_id", ids);
+  // [PAYDATE-READ-HONEST] This was `.in("invoice_id", ids)` in one unchunked, unpaged query with
+  // its error discarded — the exact shape supabase-paginate.ts was written to replace, and it says
+  // why: an id list travels in the URL at ~39 bytes per uuid, so a few hundred paid invoices
+  // outgrow the proxy's header buffer and the call dies with a 414; and the response is capped at
+  // ~1000 rows regardless. supabase-js reports both as an ordinary `error`, never an exception, so
+  // a caller reading only `data` sees "no transactions" and carries on.
+  //
+  // What that silence did here is the opposite of this function's own promise. Every paid invoice
+  // fell back to marked_paid_at — an ESTIMATE — or to nothing, across the whole package, and the
+  // accountant received estimated payment dates where real bank dates existed. On kasstelsel the
+  // payment date decides the quarter, so that is not a cosmetic downgrade.
+  //
+  // fetchAllRowsForIds chunks the list AND pages each chunk AND throws, so this is now all rows or
+  // a stated failure. The failure still does not sink the package — the dates degrade exactly as
+  // before — but it stops being invisible: `complete: false` becomes a warning in overzicht.csv.
+  let txRows: Array<{ invoice_id: string | null; date: string | null }> = [];
+  let complete = true;
+  try {
+    txRows = await fetchAllRowsForIds<{ invoice_id: string | null; date: string | null }, string>(
+      ids,
+      (chunk, from, to) =>
+        supabase
+          .from("bank_transactions")
+          .select("invoice_id, date")
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+  } catch (e) {
+    console.error("[PAYDATE-READ-HONEST] bank payment-date read failed — dates degrade to estimates, and the package says so", {
+      invoiceCount: ids.length,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    complete = false;
+  }
 
   const bankDateByInvoice = new Map<string, string>();
-  for (const row of (txRows ?? []) as Array<{ invoice_id: string | null; date: string | null }>) {
+  for (const row of txRows) {
     if (!row.invoice_id || !row.date) continue;
     const prev = bankDateByInvoice.get(row.invoice_id);
     // Keep the latest linked transaction date if an invoice has more than one.
@@ -301,7 +334,7 @@ async function resolvePaymentDates(
       result.set(inv.id, { date: null, estimated: true });
     }
   }
-  return result;
+  return { dates: result, complete };
 }
 
 /** CSV cell escaper (semicolon-separated, Excel NL). Delegates to the shared csvCell so a
@@ -925,15 +958,22 @@ async function sharedDocsForQuarter(
   ownerId: string,
   year: number,
   quarter: Quarter,
-): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number; checked: boolean }> {
   const sharedPeriod = `${year}-Q${quarter}`;
-  const { data } = await supabase
+  // [NO-SILENT-EMPTY] Same rule as datelessVerifiedInvoices above. This read decides BOTH what goes
+  // into the package and what the package warns about, so a dropped error shipped an accountant a
+  // quarter with its shared documents missing and nothing saying they were ever expected.
+  const { data, error } = await supabase
     .from("documents")
     .select("file_url, file_name, doc_type, invoice_id, period")
     .eq("user_id", ownerId)
     .eq("shared", true)
     .eq("trashed", false)
     .is("invoice_id", null);
+  if (error) {
+    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", { ownerId, error: error.message });
+    return { paths: [], outsideCount: 0, checked: false };
+  }
   const rows = (data ?? []) as Array<{
     file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
   }>;
@@ -944,7 +984,7 @@ async function sharedDocsForQuarter(
     if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
     else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
   }
-  return { paths, outsideCount };
+  return { paths, outsideCount, checked: true };
 }
 
 // [PACKAGE-VOORBELASTING] A bank payment CODED as a business cost with no purchase invoice
@@ -1052,7 +1092,16 @@ export function costWithoutInvoiceWarning(count: number, total: number): Closing
 
 /** A warning for shared files that fall outside this quarter's package, or null. Shared by
  *  the ZIP builder and the preview summary so both tell the SAME truth. */
-function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+// Exported for its test — "we could not look" and "there are none" must not read the same.
+export function sharedOutsideWarning(outsideCount: number, checked = true): ClosingPackageWarning | null {
+  if (!checked) {
+    return {
+      code: "shared_doc_other_quarter",
+      message:
+        "We konden de gedeelde bestanden nu niet ophalen. Er zitten daardoor mogelijk documenten " +
+        "niet in dit pakket die er wel bij horen — controleer dit vóór je het naar je boekhouder stuurt.",
+    };
+  }
   if (outsideCount <= 0) return null;
   return {
     code: "shared_outside_quarter",
@@ -1268,7 +1317,7 @@ export async function summarizeClosingPackage(args: {
   if (costNoInvoiceWarning) warnings.push(costNoInvoiceWarning);
 
   // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   return {
@@ -1484,24 +1533,46 @@ export async function buildClosingPackageZip(args: {
   const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
   const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
-  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount, shared.checked);
   if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
-  const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
+  const paymentDatesResult = await resolvePaymentDates(supabase, paidInvoices);
+  const paymentDates = paymentDatesResult.dates;
+  // [PAYDATE-READ-HONEST] The dates still degrade to marked_paid_at, exactly as they always did on
+  // a missing link — but the accountant is told that these are estimates because a read failed,
+  // not because no bank line exists. Those are different facts and only one of them is her problem.
+  if (!paymentDatesResult.complete) {
+    warnings.push({
+      code: "paydate_read_failed",
+      message:
+        "De betaaldatums uit je bankafschrift konden niet volledig worden gelezen. De datums in dit pakket kunnen daardoor schattingen zijn (de datum waarop de factuur op betaald is gezet) in plaats van de echte bankdatum — controleer ze voordat je ze gebruikt.",
+    });
+  }
 
   // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
   // [COVERED-BUFFER] Fetch a 5-day PRE-quarter buffer too, so the covered-day de-dup below
   // matches /api/aangifte exactly: a card payout booked early this quarter that settles a
   // PREVIOUS-quarter till day (settleExact) must be suppressed here — without the buffer the
   // ZIP counted it AGAIN as omzet-zonder-tarief, disagreeing with the in-app concept.
-  const { data: turnoverRows } = await supabase
+  // [NO-SILENT-EMPTY] A failed read here answered "this shop had no till turnover this quarter",
+  // which for a retailer is the single largest number in the package. Zero omzet is a conclusion
+  // and must never be the shape of an outage; the package says so instead.
+  const { data: turnoverRows, error: turnoverErr } = await supabase
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
     .gte("turnover_date", shiftDays(start, -5))
     .lte("turnover_date", end);
+  if (turnoverErr) {
+    console.error("[NO-SILENT-EMPTY] daily_turnover read failed — the package says so instead of reporting zero omzet", { ownerId, error: turnoverErr.message });
+    warnings.push({
+      code: "turnover_read_failed",
+      message:
+        "De dagomzet kon niet worden gelezen. Staat er kasomzet in dit kwartaal, dan ontbreekt die in dit pakket — bouw het opnieuw op voordat je het naar je boekhouder stuurt.",
+    });
+  }
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
@@ -1649,10 +1720,19 @@ export async function buildClosingPackageZip(args: {
   // [RUBRIEK-SPLIT] The accountant's package must show the same rubrieken as the aangifte the
   // owner files, so a mixed-rate sales invoice is split by its own lines here too. Only invoices
   // whose lines add up to their header are split; everything else keeps the header-derived rate.
-  const rateSharesByInvoice = await fetchRateShares(
+  // [VRIJGESTELD] And the same exempt regime, from the same shared collector, for the same
+  // reason: the package the accountant receives may not contradict the concept the owner saw.
+  const typedAll = all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>;
+  const exemption = await collectVatExemption({
+    client: supabase as unknown as Parameters<typeof collectVatExemption>[0]["client"],
+    ownerId,
+    periodStart: start,
+    incomingInvoiceIds: typedAll.filter((i) => i.direction === "incoming").map((i) => i.id).filter((id): id is string => !!id),
+  });
+  const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
     supabase as unknown as Parameters<typeof fetchRateShares>[0],
-    (all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
-      .filter((i) => i.direction !== "incoming"),
+    typedAll.filter((i) => i.direction !== "incoming"),
+    { exemptRegime: exemption.active },
   );
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
@@ -1660,6 +1740,8 @@ export async function buildClosingPackageZip(args: {
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
     rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
+    exempt_ex: (i as { id?: string }).id ? exemptExByInvoice.get((i as { id: string }).id) ?? null : null,
+    vat_deduction: (i as { id?: string }).id ? exemption.deductionByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
   // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
   // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
@@ -1673,7 +1755,7 @@ export async function buildClosingPackageZip(args: {
   // on the PAID date. Resolve the scheme for this quarter and, under kas, feed the settlement
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
-  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end, exemption.active);
   // [TRIANGLE-ZERO] The 6th argument is the acquirer commission, and 0 here is deliberate.
   //
   // This call feeds ONLY the BTW side of the package: salesByRate, cashOmzetZonderBtw and
@@ -1685,7 +1767,13 @@ export async function buildClosingPackageZip(args: {
   // a few hundred lines up, so "the triangle is computed but not passed on" looks exactly like a
   // bug. It is not — but it WOULD become one the day this package starts reporting kosten or
   // winst. If that day comes, this argument has to change with it.
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, {
+    ...kasResolution.opts,
+    rateSharesByInvoice,
+    exemptRegime: exemption.active,
+    deductionByInvoice: exemption.deductionByInvoice,
+    exemptShareByInvoice: exemptShareOf(typedAll, exemptExByInvoice),
+  });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),
