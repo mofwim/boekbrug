@@ -6,6 +6,8 @@
 // =====================================================
 
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [ALARM] Een beveiliging die niet draait moet iemand bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 
 // ── Types ─────────────────────────────────────────────
 
@@ -241,10 +243,16 @@ export async function checkRateLimitByKey({
     })
 
     if (error || !data || data.length === 0) {
-      console.error(
-        `[COST-GUARD] anonymous rate limit unavailable — ${failOpen ? 'allowing' : 'REFUSING'}`,
-        { endpoint, error: error?.message ?? 'no rows' }
-      )
+      // [ALARM] When the store is down and failOpen is set, the ceiling is simply GONE — every
+      // public request is served. That is the right trade-off on a payment page (turning a real
+      // customer away is worse), but it is a protection that has stopped running, and a protection
+      // nobody knows is off is indistinguishable from one that was never there.
+      reportHandledFailure({
+        tag: 'COST-GUARD',
+        message: `anonymous rate limit unavailable — ${failOpen ? 'allowing (ceiling is off)' : 'refusing'}`,
+        severity: 'gate-unavailable',
+        context: { endpoint, failOpen, error: error?.message ?? 'no rows' },
+      })
       return onStoreFailure
     }
 
@@ -255,10 +263,12 @@ export async function checkRateLimitByKey({
       resetAt:   new Date(row.reset_at ?? Date.now() + windowMinutes * 60 * 1000),
     }
   } catch (err) {
-    console.error(
-      `[COST-GUARD] anonymous rate limit threw — ${failOpen ? 'allowing' : 'REFUSING'}`,
-      { endpoint, err }
-    )
+    reportHandledFailure({
+      tag: 'COST-GUARD',
+      message: `anonymous rate limit threw — ${failOpen ? 'allowing (ceiling is off)' : 'refusing'}`,
+      severity: 'gate-unavailable',
+      context: { endpoint, failOpen, error: err instanceof Error ? err.message : String(err) },
+    })
     return onStoreFailure
   }
 }
