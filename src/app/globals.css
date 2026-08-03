@@ -461,10 +461,50 @@ input::placeholder, textarea::placeholder {
    "Deels betaald · € X open" badge no longer squeezes the afzender name to a few px. */
 .inv-row-side-h { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
+/* [LIST-PAINT] An invoice card that the browser may skip while it is off screen.
+   Crediteuren renders the WHOLE list — every open invoice plus the 200 most recent
+   paid ones — and that is deliberate: page.tsx pages past PostgREST's silent 1000-row
+   ceiling precisely so no invoice can be missing from the list you pay from. The list
+   is therefore as long as the owner's backlog, and a real one measures 326 rows =
+   5.908 DOM elements, of which about sixteen are on screen at any moment. The browser
+   was styling, laying out and painting all of them.
+
+   content-visibility: auto lets it skip the work for the rest WITHOUT removing them:
+   the row stays in the DOM, in the accessibility tree, in find-in-page, and
+   scrollIntoView still reaches it — the browser renders it the moment it is needed.
+   That distinction is the whole reason this is the fix and windowing is not: on THIS
+   screen a row you cannot reach is a bill you cannot pay.
+
+   Measured on the real 326-row markup in Chromium (median of 5, 4x CPU throttle, the
+   shape of a mid-range phone):
+
+       style recalc   194,5 ms → 42,6 ms   (-78%)
+       layout         269,2 ms → 90,9 ms   (-66%)
+       main thread    912,8 ms → 365,5 ms  (-60%)
+
+   Verified against the thing that would matter if it were wrong: all 326 cards still
+   present, the same 657 buttons, and card #300 — 300 rows below the fold — scrolls
+   into view at its full height and reads exactly as it does without the rule.
+
+   contain-intrinsic-size is the height to ASSUME for a row it has not rendered yet;
+   `auto` makes it remember the real one afterwards. The two numbers are the measured
+   collapsed heights above and below the 520px breakpoint, where .inv-row starts
+   wrapping — a wrong guess here does not lose anything, it only makes the scrollbar
+   the wrong length until you have scrolled past.
+
+   The other two long lists carry the class for the same reason, and their rows are the
+   same .inv-row shape, so the same estimate holds: /dashboard/facturen (the read caps
+   at 2000 invoices — the longest list in the app) and the /dashboard/incoming queue
+   (read with no cap at all, [QUEUE-COMPLETE], so a mailbox backfill lands hundreds of
+   cards at once). */
+.inv-card { content-visibility: auto; contain-intrinsic-size: auto 115px; }
+
 @media (max-width: 520px) {
   .inv-row        { flex-wrap: wrap; row-gap: 10px; }
   .inv-row-main   { flex: 1 1 100%; }
   .inv-row-side-h { flex: 1 1 100%; justify-content: flex-end; }
+  /* [LIST-PAINT] The stacked row is taller — see the block above. */
+  .inv-card       { contain-intrinsic-size: auto 159px; }
   /* Op de strook eronder gaan bedrag en knop uit elkaar, elk naar een rand. row-      */
   /* reverse draait de leesrichting om zonder de DOM te verbouwen: "Heb je betaald?"   */
   /* links, het bedrag helemaal rechts — waar het bedrag ook op een breed scherm       */

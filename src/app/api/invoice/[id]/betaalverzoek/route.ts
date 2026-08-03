@@ -16,6 +16,8 @@ import { SITE_URL } from '@/lib/site'
 import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [ALARM] Een poort die niet kon draaien moet iemand bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 
 export async function POST(
   _req: NextRequest,
@@ -68,7 +70,24 @@ export async function POST(
     .eq('original_invoice_id', id)
     .eq('invoice_type', 'creditnota')
     .limit(1)
-  if (creditErr || (creditRows ?? []).length > 0) {
+  // [NO-SILENT-EMPTY] Failing CLOSED is right — an unminted link costs a moment, a link to a
+  // withdrawn invoice sends a customer to a page that 404s. But the two reasons are not the same
+  // sentence: "there is a creditnota for this invoice" sends the owner looking for one, and when
+  // the truth was "we could not check" there is nothing to find. Its sibling route
+  // (betaalverzoek-bundel) already separates them; this one did not.
+  if (creditErr) {
+    reportHandledFailure({
+      tag: 'CREDITNOTA-NO-CHASE',
+      message: 'creditnota check failed — refusing to mint a payment link',
+      severity: 'gate-unavailable',
+      context: { invoiceId: id, userId: user.id, error: creditErr.message },
+    })
+    return NextResponse.json(
+      { error: 'We konden niet nakijken of er een creditnota voor deze factuur bestaat. Er is geen betaalverzoek gemaakt — probeer het zo meteen opnieuw.' },
+      { status: 503 },
+    )
+  }
+  if ((creditRows ?? []).length > 0) {
     return NextResponse.json(
       { error: 'Voor deze factuur is een creditnota gemaakt — er kan geen betaalverzoek meer voor worden gedeeld.' },
       { status: 400 }

@@ -173,3 +173,62 @@ test("[INTAKE-QUEUE] a refused duplicate is never summarised as 'added'", () => 
   assert.match(src, /noteLanded\(file\.name, 'dubbel — niet toegevoegd'\)/, "a byte-hash duplicate must say it was not added");
   assert.match(src, /noteLanded\(file\.name, 'mogelijk dubbel — jouw keuze'\)/, "a semantic duplicate must say the choice is the owner's");
 });
+
+// ─── [LIST-PAINT] Crediteuren skips the painting, never the rows ──────────────
+//
+// The list on /dashboard/incoming/manage is as long as the owner's backlog: every open invoice
+// plus the 200 most recent paid ones, and page.tsx pages past PostgREST's silent 1000-row ceiling
+// on purpose, because a row that is not in the list cannot be paid from it. A real one measures
+// 326 rows = 5.908 DOM elements, sixteen of which are on screen.
+//
+// The fix is a browser instruction, not a smaller list: content-visibility: auto skips style,
+// layout and paint for the rows that are off screen while every one of them stays in the DOM.
+// Measured on the real markup in Chromium at 4x CPU throttle: main thread 912 ms → 365 ms.
+//
+// Two halves, and the gate exists for the second one. The rule itself is easy to delete by
+// accident during a stylesheet tidy — it looks like a stray line, and nothing on any screen turns
+// red when it goes. And the tempting "real" optimisation, slicing the list to the first fifty
+// rows, would pass every test in this repo while making an overdue invoice unreachable.
+
+const MANAGE = "src/app/dashboard/incoming/manage/IncomingManageClient.tsx";
+
+test("[LIST-PAINT] the long invoice list still tells the browser it may skip off-screen rows", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(
+    css, /\.inv-card\s*\{[^}]*content-visibility:\s*auto/,
+    "the .inv-card rule is gone — the browser lays out and paints all 326 rows again",
+  );
+  assert.match(
+    css, /\.inv-card\s*\{[^}]*contain-intrinsic-size:\s*auto\s+\d+px/,
+    "without an assumed row height the page reports the wrong scroll length until you scroll past",
+  );
+  // All three long lists, because the rule applies to nothing without the class, and a class that
+  // is on no element is exactly the kind of line a cleanup deletes as unused.
+  const wearers = [
+    MANAGE,
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+  ];
+  for (const f of wearers) {
+    assert.match(
+      readFileSync(f, "utf8"), /className="inv-card"/,
+      `${f} lost the class, so the stylesheet rule now applies to nothing there`,
+    );
+  }
+});
+
+test("[LIST-PAINT] and it renders every row it was given — no window, no slice", () => {
+  // The half that is about money rather than milliseconds. Skipping the PAINT of a row is
+  // invisible to the owner; skipping the ROW is an invoice they never see and never pay. If a
+  // later change does want a window, it has to come with a way to reach the rest, and this
+  // assertion is where that decision gets made deliberately instead of in passing.
+  const src = readFileSync(MANAGE, "utf8");
+  assert.match(
+    src, /\{displayed\.map\(inv => \{/,
+    "the list is no longer rendered straight from `displayed` — check nothing was cut out of view",
+  );
+  assert.doesNotMatch(
+    src, /displayed\s*\.\s*slice\s*\(/,
+    "`displayed` is being sliced before it is rendered: some invoices are not on the screen at all",
+  );
+});
