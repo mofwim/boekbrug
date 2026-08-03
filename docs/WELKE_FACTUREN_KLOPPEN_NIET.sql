@@ -36,6 +36,25 @@
 -- and 21 is MAX_NL_RATE (invoice-scan.ts). If those ever change, change them here too —
 -- a report that disagrees with the screen is worse than no report.
 --
+-- SCOPED BY AN EXPLICIT ID, AND IT FAILS LOUDLY IF YOU FORGET
+--
+-- The first version of this file scoped with auth.uid(). It returned "Success. No rows
+-- returned" on an administration that provably had a broken invoice in it, because the
+-- Supabase SQL editor connects as `postgres`: there is no JWT, auth.uid() is NULL, and
+-- `sender_id = NULL` is NULL for every row. Zero rows. Which reads exactly like a clean
+-- bill of health.
+--
+-- That is the failure this whole codebase spends its comments on — a read that could not
+-- run, presented as an answer — and it arrived here, in the file built to find it. So:
+--
+--   · the id is a PLACEHOLDER that is not a valid uuid. Leave it unedited and Postgres
+--     refuses the cast and says so. An error you cannot miss beats an empty result you can.
+--   · the report ALWAYS returns a row. The first line is a CONTROLE line saying how many
+--     invoices were actually examined, so "no findings" can never look like "no answer".
+--     Same reason src/lib/invoice-scan.ts carries `scanned` beside `total`.
+--
+-- Find your id with:  select id, email from auth.users order by created_at;
+--
 -- WHAT IT DOES NOT DO
 --
 -- It names no culprit. Where the sum is broken, BOTH repairs are shown: arithmetic cannot
@@ -56,7 +75,8 @@ with kandidaat as (
     coalesce(i.btw_amount, 0)::numeric    as btw,
     coalesce(i.total_inc_btw, 0)::numeric as incl
   from public.invoices i
-  where (i.sender_id = auth.uid() or i.receiver_id = auth.uid())
+  -- ↓↓ VUL HIER JE EIGEN USER-ID IN ↓↓  (select id, email from auth.users;)
+  where (i.sender_id = '<JOUW-USER-ID>'::uuid or i.receiver_id = '<JOUW-USER-ID>'::uuid)
     -- An archived row is out of the books on purpose; it is not a figure to repair.
     and coalesce(i.status, '') <> 'archived'
     -- A row carrying ONLY a total is not a contradiction — it is an unread breakdown, which
@@ -78,6 +98,37 @@ beoordeeld as (
     end                                                                as tarief
   from kandidaat k
 )
+-- The CONTROLE line first, always. Without it an empty result is ambiguous, and the one
+-- reading it invites is the wrong one. `sorteer` and `ernst` only order the report; the
+-- outer select drops them again so they never reach the reader.
+select
+  soort, factuurnummer, leverancier, factuurdatum, kwartaal, kant, status,
+  opgeslagen_excl, opgeslagen_btw, opgeslagen_totaal, verschil,
+  of_excl_wordt, of_btw_wordt, gevonden_tarief
+from (
+select
+  'CONTROLE'                                                 as soort,
+  'gecontroleerd: ' || count(*)::text || ' facturen'         as factuurnummer,
+  'gevonden: ' || count(*) filter (
+      where abs(verschil) > 0.02 or (tarief is not null and tarief > 21)
+  )::text                                                    as leverancier,
+  null::date                                                 as factuurdatum,
+  null::text                                                 as kwartaal,
+  null::text                                                 as kant,
+  null::text                                                 as status,
+  null::numeric                                              as opgeslagen_excl,
+  null::numeric                                              as opgeslagen_btw,
+  null::numeric                                              as opgeslagen_totaal,
+  null::numeric                                              as verschil,
+  null::numeric                                              as of_excl_wordt,
+  null::numeric                                              as of_btw_wordt,
+  null::numeric                                              as gevonden_tarief,
+  0                                                          as sorteer,
+  0::numeric                                                 as ernst
+from beoordeeld
+
+union all
+
 select
   case
     when abs(b.verschil) > 0.02 then '① excl + btw ≠ totaal'
@@ -104,12 +155,16 @@ select
         and b.ex <> 0
         and round(abs(b.btw_zou_zijn / b.ex) * 100) <= 21
        then b.btw_zou_zijn end                               as of_btw_wordt,
-  b.tarief                                                   as gevonden_tarief
+  b.tarief                                                   as gevonden_tarief,
+  1                                                          as sorteer,
+  greatest(abs(b.verschil), abs(b.incl) / 1000000)           as ernst
 from beoordeeld b
 where abs(b.verschil) > 0.02                     -- ① the sum does not hold
    or (b.tarief is not null and b.tarief > 21)   -- ② the rate cannot exist
--- Biggest money first: that is the order in which they are worth an evening.
-order by abs(b.verschil) desc, abs(b.incl) desc;
+) r
+-- The CONTROLE line first, then the biggest money: that is the order in which they are
+-- worth an evening.
+order by r.sorteer, r.ernst desc;
 
 -- =====================================================================
 -- HOE JE DIT LEEST
@@ -130,7 +185,12 @@ order by abs(b.verschil) desc, abs(b.incl) desc;
 -- controles en hetzelfde audit-spoor — en ze voeden de leveranciersgeheugen, zodat de lezer
 -- dezelfde fout bij dezelfde leverancier minder vaak maakt.
 --
--- GEEN RIJEN is een echt antwoord: dan klopt op dit moment elke uitsplitsing in je
--- administratie. Het is niet hetzelfde als "er is niets gecontroleerd" — deze query kijkt
--- naar élke niet-gearchiveerde factuur met een uitsplitsing, inkoop én verkoop.
+-- DE CONTROLE-REGEL leest je altijd eerst. Staat er "gecontroleerd: 0 facturen", dan heeft
+-- de query niets kunnen zien — bijna altijd een user-id dat niet klopt — en niet dat je
+-- administratie schoon is. Staat er een aantal en "gevonden: 0", dán klopt op dit moment
+-- élke uitsplitsing in je administratie, inkoop én verkoop.
+--
+-- Dat onderscheid staat hier omdat het één keer misging: de eerste versie van dit bestand
+-- gebruikte auth.uid(), dat in de SQL-editor NULL is, en gaf "Success. No rows returned"
+-- op een administratie met een aantoonbaar kapotte factuur erin.
 -- =====================================================================
