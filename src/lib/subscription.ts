@@ -101,8 +101,9 @@ export function decidePlan(input: PlanInput): PlanDecision {
   const { role, subscriptionStatus, nowMs } = input;
   const periodEnd = parseTimestamp(input.currentPeriodEnd);
 
-  // 1. De boekhouder betaalt nooit. Zijn portaal is gratis, ook met honderd klanten, en er
-  //    bestaat geen betaald boekhoudersplan. Dit staat als toezegging in de voorwaarden §5
+  // 1. Het boekhoudersportaal is gratis tot ACCOUNTANT_FREE_CLIENTS gekoppelde klanten; het
+  //    tarief daarboven is nog niet vastgesteld en niet geactiveerd (voorwaarden §5.8). Zolang
+  //    dat zo is betaalt geen enkele boekhouder. Dit staat als toezegging in de voorwaarden §5
   //    en wordt afgedwongen door een test in fair-use.test.ts.
   //
   //    Anders dan bij een betaalmuur heeft deze vrijstelling GEEN bewijs nodig. Op de

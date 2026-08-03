@@ -92,4 +92,4 @@ export const BELOFTE_STAPPEN: readonly { kop: string; tekst: string }[] = [
 export const BELOFTE_BOEKHOUDER =
   "Je klant levert een afgesloten kwartaal aan in plaats van een schoenendoos. " +
   "Je ziet alleen wat hij zelf heeft gecontroleerd, je haalt het per klant op, " +
-  "en het portaal is gratis — ook met honderd klanten.";
+  "en het portaal is gratis tot en met tien gekoppelde klanten.";

@@ -9,7 +9,9 @@
 // eruit.
 //
 // Het model, in gewone taal:
-//   • De boekhouder betaalt NOOIT. Zijn portaal is gratis, ook met honderd klanten.
+//   • Het boekhoudersportaal is gratis tot ACCOUNTANT_FREE_CLIENTS gekoppelde klanten; het
+//     tarief daarboven is nog niet vastgesteld (voorwaarden §5.8). Een grens over KLANTEN,
+//     nooit over tijd — en een bestaande koppeling wordt er nooit door geraakt.
 //   • De ondernemer betaalt niets zolang hij binnen het eerlijk gebruik blijft.
 //   • Wie er structureel overheen gaat, kiest zelf: wachten tot de volgende maand of
 //     upgraden naar Plus.
@@ -24,6 +26,32 @@
 //   3. Alleen de KOSTBARE handelingen pauzeren (een nieuw document door de AI laten lezen,
 //      een nieuwe factuur versturen). Nooit het inzien van wat er al staat.
 //   4. Waarschuwen vóórdat het gebeurt, niet erna.
+
+/**
+ * [BOEKHOUDER-GRENS] Hoeveel gekoppelde klanten een boekhouder gratis mag hebben.
+ *
+ * WAAROM ER EEN GRENS KOMT WAAR ER EERST GEEN WAS
+ * Het portaal was "altijd gratis, ongeacht het aantal klanten". Dat is genereus, maar het geeft
+ * het product weg aan precies de partij die er het meeste aan verdient: een kantoor met tachtig
+ * klanten dat per klant een kwartier per kwartaal bespaart, bespaart meer dan honderd uur per
+ * jaar. De ondernemer is de gebruiker; de boekhouder is de klant.
+ *
+ * WAAROM 10, EN NIET 3 OF 20
+ * De grens hoort BOVEN "ik probeer het" en ONDER "ik heb mijn kantoor verhuisd" te liggen. Bij 3
+ * of 5 loopt iemand ertegenaan vóórdat de gewoonte is ontstaan — en een boekhouder is niet één
+ * gebruiker maar een distributiekanaal: één kantoor brengt vijftig ondernemers mee. Bij 20 bindt
+ * hij niemand en is hij decoratie. Bij 10 blijft de kleine boekhouder permanent gratis (echte
+ * goodwill, en zij zouden toch nooit veel betalen) en betaalt alleen wie het product tot zijn
+ * werkwijze heeft gemaakt.
+ *
+ * WAAROM HIER GEEN PRIJS STAAT
+ * Er is nog geen enkele boekhouder. Een tarief dat nooit is getoetst is een gok, en een
+ * gepubliceerd tarief omhoog bijstellen is precies het afpakken waar dit product niet aan doet.
+ * De GRENS staat daarom nu al vast — dat kost niets zolang er niemand is, en voorkomt dat hij
+ * later van bestaande kantoren wordt afgenomen. Het TARIEF volgt de weg van §5.6: aangekondigd
+ * vóór activering, minstens 30 dagen van tevoren, nooit met terugwerkende kracht.
+ */
+export const ACCOUNTANT_FREE_CLIENTS = 10;
 
 /** De prijs van het betaalde klantplan, in euro per maand, inclusief btw. */
 export const PLUS_PRICE_EUR = 12.99;
@@ -120,7 +148,11 @@ export const ALWAYS_FREE: readonly string[] = [
   "Je eigen gegevens inzien, zoeken en doorlopen — ongeacht hoeveel het er zijn",
   "Alles exporteren (CSV, UBL, PDF, volledige accountexport)",
   "Je boekhouder toegang geven en het kwartaal met hem delen",
-  "Het volledige boekhoudersportaal, ook met honderd gekoppelde klanten",
+  // [BOEKHOUDER-GRENS] Het PORTAAL kent sinds §5.8 een grens (ACCOUNTANT_FREE_CLIENTS). Wat
+  // hier onbegrensd blijft is het delen zelf: een bestaande koppeling wordt nooit geraakt, en
+  // boven de grens pauzeert alleen het KOPPELEN van een nieuwe klant — nooit de toegang tot
+  // wie er al is. Dat is dezelfde regel als toezegging 3 hierboven.
+  "Toegang tot klanten die al aan je gekoppeld zijn — ongeacht hoeveel het er zijn",
   "Betalingen registreren, bankafschriften afletteren en je BTW-overzicht berekenen",
   "Beveiliging: inloggen, wachtwoord herstellen, account verwijderen",
 ];

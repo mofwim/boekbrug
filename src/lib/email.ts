@@ -701,8 +701,8 @@ export async function sendQuarterReadyToAccountant({
 
         <p style="color:#5f6368; font-size:13.5px; line-height:1.6; margin-top:22px;">
           Je ziet alleen wat je klant zelf heeft verstuurd, ontvangen of als betaald heeft
-          gemarkeerd — zijn concepten blijven van hem. BoekBrug is voor jou gratis, ook met
-          honderd klanten.
+          gemarkeerd — zijn concepten blijven van hem. BoekBrug is voor jou gratis tot en met
+          tien gekoppelde klanten.
         </p>
         <p style="color:#aaa; font-size:12px; margin-top:28px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>

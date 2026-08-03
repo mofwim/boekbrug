@@ -22,7 +22,7 @@ import Link from 'next/link'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import { PLUS, KLUIS } from '@/lib/plan'
-import { FAIR_USE_LIMITS, formatLimit, fairUseLimit } from '@/lib/fair-use'
+import { FAIR_USE_LIMITS, formatLimit, fairUseLimit, ACCOUNTANT_FREE_CLIENTS } from '@/lib/fair-use'
 import { BEWAARPLICHT_YEARS, KLUIS_GRACE_MONTHS, eur, KLUIS_PREPAY_YEAR_PRICE_EUR, KLUIS_YEAR_PRICE_EUR, KLUIS_SHUTDOWN_NOTICE_DAYS } from '@/lib/bewaarkluis'
 import { BELOFTE_KOP, BELOFTE_KOP_2, BELOFTE_UITLEG } from '@/lib/belofte'
 import SubscribeButton from './SubscribeButton'
@@ -91,8 +91,9 @@ export default async function PrijzenPage({
           {BELOFTE_UITLEG}
         </p>
         <p style={{ fontSize: 17, color: '#5f6368', margin: '0 0 28px', lineHeight: 1.6, maxWidth: 620 }}>
-          En dat is <strong>gratis</strong> — voor jou én voor je boekhouder. Geen proefperiode die
-          stilletjes afloopt, geen creditcard vooraf, en geen slot op je eigen administratie.
+          En dat is <strong>gratis</strong> — voor jou, en voor je boekhouder tot en met{' '}
+          {ACCOUNTANT_FREE_CLIENTS} gekoppelde klanten. Geen proefperiode die stilletjes afloopt,
+          geen creditcard vooraf, en geen slot op je eigen administratie.
         </p>
 
         {cancelled && (
@@ -167,7 +168,7 @@ export default async function PrijzenPage({
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '10px 0 4px' }}>
               <span style={{ fontSize: 40, fontWeight: 700, color: '#202124' }}>€ 0</span>
             </div>
-            <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>altijd, ongeacht het aantal klanten</div>
+            <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>tot en met {ACCOUNTANT_FREE_CLIENTS} gekoppelde klanten</div>
             <Link
               href="/register"
               style={{
@@ -180,7 +181,11 @@ export default async function PrijzenPage({
             </Link>
             <p style={{ fontSize: 13.5, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
               Het volledige portaal, het werkbord en het per klant ophalen van een afgesloten
-              kwartaal. Er bestaat geen betaald boekhoudersplan en er komt er geen.
+              kwartaal. Geen proefperiode en geen klok — blijf je onder de{' '}
+              {ACCOUNTANT_FREE_CLIENTS}, dan blijft het gratis, ook over vijf jaar. Daarboven een
+              tarief per gekoppelde klant; dat is nog niet vastgesteld en gaat pas gelden nadat wij
+              het minstens 30 dagen vooraf hebben aangekondigd.{' '}
+              <Link href="/voorwaarden" style={{ color: '#1A73E8' }}>Voorwaarden §5.8</Link>.
             </p>
           </section>
         </div>
@@ -284,8 +289,11 @@ export default async function PrijzenPage({
             </Faq>
 
             <Faq q="Betaalt mijn boekhouder ook?">
-              Nee, en dat verandert niet. Het boekhoudersportaal is gratis, ook met honderd
-              gekoppelde klanten. Er bestaat geen betaald boekhoudersplan.
+              Tot en met {ACCOUNTANT_FREE_CLIENTS} gekoppelde klanten niet — dan is het portaal
+              gratis, zonder klok en zonder proefperiode. Heeft hij er meer, dan komt daar een
+              tarief per klant bij. Dat staat nog niet vast, en zolang wij het niet minstens 30
+              dagen vooraf hebben aangekondigd is het portaal volledig kosteloos. Wat hij betaalt
+              verandert nooit iets aan wat jij betaalt.
             </Faq>
 
             <Faq q="Kan ik maandelijks opzeggen?">

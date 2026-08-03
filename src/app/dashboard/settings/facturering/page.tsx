@@ -140,8 +140,9 @@ export default async function FactureringPage({
         <p style={{ fontSize: 13.5, color: '#5f6368', margin: '18px 0 0', lineHeight: 1.6 }}>
           {decision.plan === 'boekhouder' ? (
             <>
-              Het boekhoudersportaal is gratis, ook met honderd gekoppelde klanten. Er bestaat
-              geen betaald boekhoudersplan en er komt er geen.
+              Het boekhoudersportaal is gratis tot en met tien gekoppelde klanten. Daarboven
+              komt een tarief per klant, dat pas gaat gelden nadat het minstens 30 dagen vooraf
+              is aangekondigd — zie voorwaarden §5.8.
             </>
           ) : (
             <>
