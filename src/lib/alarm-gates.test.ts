@@ -26,6 +26,12 @@ const MUST_ALARM: Array<{ file: string; needle: string }> = [
   { file: "src/app/api/cron/reminders/route.ts", needle: "reminders are DISABLED" },
   { file: "src/lib/iban-change.ts", needle: "supplier lookup failed" },
   { file: "src/lib/invoice-numbering.ts", needle: "numbering template read failed" },
+  // The only wrong answer in this codebase that is delivered to somebody OUTSIDE the company: a
+  // customer on the public payment page, told their real invoice's link does not exist.
+  { file: "src/app/api/pay/[token]/route.ts", needle: "customer told to retry" },
+  // A ceiling that has stopped existing. Failing open is the right call on a payment page; not
+  // knowing it happened is not.
+  { file: "src/lib/rate-limit.ts", needle: "rate limit unavailable" },
 ];
 
 test("[ALARM] the failures the code calls impossible are reported, not just logged", () => {
@@ -72,4 +78,33 @@ test("[ALARM] Sentry is wired for the runtimes these run in", () => {
   assert.match(instr, /onRequestError/, "route-handler errors must still be captured");
   const server = readFileSync("sentry.server.config.ts", "utf8");
   assert.match(server, /dsn:/, "the server runtime must still be initialised");
+});
+
+test("[PAY-READ-HONEST] the public payment page never answers a failed read with 'unknown link'", () => {
+  // The customer's next move depends entirely on which of the two they are told. "Unknown link"
+  // means give up — and they are holding a real invoice. Every read on this page must therefore
+  // separate the two, and there are four of them: the single-invoice lookup and three in the
+  // bundle view.
+  const src = readFileSync("src/app/api/pay/[token]/route.ts", "utf8");
+  const reads = [...src.matchAll(/const \{ data: (\w+), error: (\w+) \}/g)].map((m) => m[1]);
+  assert.ok(reads.length >= 4, `only ${reads.length} reads capture their error — one of them still cannot`);
+
+  // …and every captured error must reach the 503, not fall through to notFound.
+  for (const [, , errVar] of src.matchAll(/const \{ data: (\w+), error: (\w+) \}/g)) {
+    const at = src.indexOf(`if (${errVar})`);
+    assert.notEqual(at, -1, `${errVar} is destructured and then dropped — that is the same silence`);
+    assert.match(src.slice(at, at + 160), /payUnavailable/, `${errVar} must answer 503, never notFound`);
+  }
+});
+
+test("[PAY-READ-HONEST] a working payment link is never carried into an error tracker", () => {
+  // The token IS the credential: anyone holding it can see the invoice. Reporting the failure must
+  // not put a live one into Sentry, so only a tail fragment travels.
+  const src = readFileSync("src/app/api/pay/[token]/route.ts", "utf8");
+  assert.match(src, /token\.slice\(-6\)/, "only a fragment of the token may be reported");
+  const calls = [...src.matchAll(/payUnavailable\([^)]*\)/g)].map((m) => m[0]);
+  assert.ok(calls.length >= 4, `expected a call per read, found ${calls.length}`);
+  for (const c of calls) {
+    assert.doesNotMatch(c, /token:\s*token\b/, `a full token is being reported: ${c}`);
+  }
 });
