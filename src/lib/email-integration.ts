@@ -32,6 +32,10 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 import { readingPromptHint } from '@/lib/reading-memory'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+// [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
+// one must never disagree about whether a bon was paid — a second copy of that reasoning here is
+// how they drifted apart the first time.
+import { paymentSuggestion } from '@/lib/intake-router'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
 // van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
@@ -1430,6 +1434,14 @@ export interface AttachmentClassification {
   // as the intake gate — a statement/other-kind read as an invoice must never auto-book.
   isStatement?: boolean
   documentKind?: string | null
+  // [BON-EMAIL] The payment signals. The reader has always produced them — ai.ts asks for them by
+  // name — and this mapper dropped all five, so the sync could not tell a kassabon from a bill and
+  // booked money already spent as money still owed. paymentSuggestion() reads them; see its header.
+  isPaid?: boolean
+  paidMethod?: 'bank' | 'kas' | 'pin' | null
+  paidDate?: string | null
+  paidEvidence?: string | null
+  paidCardLast4?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1514,6 +1526,13 @@ export async function classifyAttachment(
     // [AUTO-ADVANCE] statement / kind — defense-in-depth for the auto-advance gate.
     isStatement: result.is_statement,
     documentKind: result.document_kind ?? null,
+    // [BON-EMAIL] Verbatim from the same Claude call the camera path uses — including the printed
+    // tender line, which outranks the model's own opinion about whether it was settled.
+    isPaid: result.is_paid,
+    paidMethod: result.paid_method ?? null,
+    paidDate: result.paid_date ?? null,
+    paidEvidence: result.paid_evidence ?? null,
+    paidCardLast4: result.paid_card_last4 ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -3236,6 +3255,23 @@ export async function syncUserEmails(
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
       const aiConfidence = classification.fieldConfidence ?? null
       let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
+      // [BON-EMAIL] One call, one answer, shared with /api/intake. It stands HERE, outside the
+      // _safecore block below, because that block only runs for PROBLEM rows — a clean kassabon
+      // would have skipped it and gone back to being booked as a bill, which is the bug.
+      // `bonKind` is kept separate from pay.suggestPaid because they say different things: the KIND
+      // decides whether the invoice-number axis applies (a bon carries no factuurnummer), and the
+      // SUGGESTION decides what the pay button offers. A bon the reader called unpaid is still a bon.
+      const bonKind = classification.documentKind ?? null
+      const pay = paymentSuggestion({
+        is_invoice: classification.isInvoice,
+        document_kind: bonKind === 'receipt' || bonKind === 'other' ? bonKind : 'invoice',
+        is_paid: classification.isPaid,
+        paid_method: classification.paidMethod ?? null,
+        paid_date: classification.paidDate ?? null,
+        paid_evidence: classification.paidEvidence ?? null,
+        paid_card_last4: classification.paidCardLast4 ?? null,
+        confidence: classification.confidence,
+      })
       // [REMINDER] A payment reminder is a real single invoice but the original was very
       // likely already booked — flag it so the verify queue warns "controleer of de factuur
       // al geboekt is" and it is never bulk-confirmed as a second cost.
@@ -3308,6 +3344,30 @@ export async function syncUserEmails(
         }
       }
 
+      // [BON-EMAIL] The same markers /api/intake writes, from the same shared decision, so a bon
+      // that arrives by e-mail behaves on screen exactly like one photographed at the counter:
+      // "Markeer als betaald" offered up front, the method pre-filled when the paper named one,
+      // and the invoice-number axis relaxed (a kassabon carries no factuurnummer and does not need
+      // one — see isKassabon in import-health.ts). Outside the block above on purpose: a clean bon
+      // has no _safecore to write and must still be recognisable as a bon.
+      //
+      // Still only a SUGGESTION. Nothing here writes status='paid' — the human confirms, exactly as
+      // on the camera path.
+      if (bonKind === 'receipt' || pay.suggestPaid) {
+        const fc: Record<string, unknown> = { ...(fieldConfidenceValue ?? {}) }
+        if (bonKind === 'receipt') fc._intake_kind = 'receipt'
+        if (pay.suggestPaid) {
+          fc._intake_suggest = 'paid'
+          if (pay.paidMethod) fc._intake_paid_method = pay.paidMethod
+          if (pay.paidDate) fc._intake_paid_date = pay.paidDate
+          if (pay.paidEvidence) fc._intake_paid_evidence = pay.paidEvidence
+          if (pay.paidCardLast4) fc._intake_paid_card4 = pay.paidCardLast4
+          // Only when the PAPER said how. Otherwise the screen asks instead of asserting.
+          if (pay.paidMethodZeker) fc._intake_paid_method_zeker = true
+        }
+        fieldConfidenceValue = fc
+      }
+
       // [BOEK-011] ALL email imports enter the verify queue ('processing') —
       // the user reviews and confirms in /dashboard/incoming, and only then
       // does the invoice become a Crediteur ('received' → /incoming/manage).
@@ -3324,7 +3384,11 @@ export async function syncUserEmails(
       // 'uncertain'; statements are already filtered out above (is_invoice=false); _safecore
       // (arithmetic / reminder / dedup) flows into the health check and holds anything doubtful.
       // The near-certain bank/cash links are closed by the hourly reconcile cron.
-      const autoAdv = !classification.uncertain
+      // [BON-EMAIL] A paid suggestion is never auto-booked. Auto-advance lands an invoice as
+      // 'received' — booked and UNPAID — which is the one status a settled bon must not get: it
+      // would stand in "nog te betalen" for money already gone, be dunned for it, and be payable a
+      // second time. Same gate, same reason, as /api/intake's `!decision.suggestPaid`.
+      const autoAdv = !classification.uncertain && !pay.suggestPaid
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,

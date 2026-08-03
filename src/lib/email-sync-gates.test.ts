@@ -110,3 +110,91 @@ test("[IBAN-CHECK-HONEST] the fraud lookup still has no catch to swallow its own
       "and a catch here silently restores the bug where a skipped fraud check reads as a clean one",
   );
 });
+
+// ─── [BON-EMAIL] The two doors must agree about a receipt ─────────────────────
+// A kassabon photographed at the counter and the same bon forwarded by e-mail are the same piece
+// of paper, and the app has to treat them the same way. It did not: AttachmentClassification
+// mapped the reader's answer into the sync's own shape and dropped is_paid, paid_method, paid_date,
+// paid_evidence and paid_card_last4 on the way, so the sync could not tell a receipt from a bill.
+// Money already out of the till stood in "nog te betalen", was dunned, and could be paid twice.
+//
+// The fix is not "add five lines to the mapper" — that is the instance. The fix is that ONE
+// function answers the payment question and both doors call it. These gates hold that shape.
+
+const INTAKE = readFileSync("src/app/api/intake/route.ts", "utf8");
+
+/** The _intake_* markers a file actually WRITES (assignments, not mentions in prose). */
+function writtenMarkers(src: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of src.matchAll(/[.\[]"?(_intake_[a-z0-9_]+)"?\]?\s*=/g)) out.add(m[1]);
+  for (const m of src.matchAll(/\b(_intake_[a-z0-9_]+)\s*:/g)) out.add(m[1]);
+  return out;
+}
+
+test("[BON-EMAIL] the e-mail sync writes every intake marker the camera path writes", () => {
+  const fromIntake = writtenMarkers(INTAKE);
+  // A floor: an empty set would make the subset check below vacuously true.
+  assert.ok(fromIntake.size >= 5, `parsed ${fromIntake.size} markers from intake — the scan broke`);
+  assert.ok(fromIntake.has("_intake_kind") && fromIntake.has("_intake_suggest"), "the two that decide the screen must be among them");
+
+  const fromSync = writtenMarkers(SYNC);
+  const missing = [...fromIntake].filter((k) => !fromSync.has(k)).sort();
+  assert.deepEqual(
+    missing, [],
+    `the e-mail sync does not write: ${missing.join(", ")}.\n` +
+      `The verify queue reads these to offer "Markeer als betaald", to pre-fill the method, and to ` +
+      `relax the invoice-number axis for a bon. A marker written on one door and not the other means ` +
+      `the same receipt behaves differently depending on how it arrived.`,
+  );
+});
+
+test("[BON-EMAIL] both doors ask the SAME function whether it was paid", () => {
+  for (const [name, src] of [["intake", INTAKE], ["email sync", SYNC]] as const) {
+    assert.match(
+      src, /paymentSuggestion|decideFromAi/,
+      `${name} must reach the shared payment decision in intake-router.ts, not carry its own copy — ` +
+        `two copies of that reasoning is exactly how these doors drifted apart`,
+    );
+  }
+  // And the sync must pass the reader's payment fields into it. Passing the object without them is
+  // the [BON-BETAALWIJZE] failure again: a call that satisfies the types and delivers nothing.
+  const call = /paymentSuggestion\(\{([\s\S]*?)\n\s*\}\)/.exec(SYNC);
+  assert.ok(call, "the sync must call paymentSuggestion with an object literal");
+  for (const field of ["document_kind", "is_paid", "paid_method", "paid_date", "paid_evidence", "paid_card_last4"]) {
+    assert.match(call[1], new RegExp(`${field}\\s*:`), `the sync's paymentSuggestion call omits ${field}`);
+  }
+});
+
+test("[BON-EMAIL] the reader's payment fields survive the classification mapper", () => {
+  // The five that were dropped. They are read from `result` — the same Claude call the camera path
+  // uses — so their absence here was the whole of the gap.
+  for (const field of ["is_paid", "paid_method", "paid_date", "paid_evidence", "paid_card_last4"]) {
+    assert.match(
+      SYNC, new RegExp(`result\\.${field}`),
+      `AttachmentClassification drops result.${field} — the sync cannot act on what it never copied`,
+    );
+  }
+});
+
+test("[BON-EMAIL] a paid suggestion is never auto-booked as an unpaid debt", () => {
+  // Auto-advance lands an invoice as 'received' — booked and UNPAID — which is the one status a
+  // settled bon must not get. /api/intake gates on !decision.suggestPaid; the sync must too.
+  assert.match(
+    SYNC, /const autoAdv[\s\S]{0,120}?!pay\.suggestPaid/,
+    "the sync's auto-advance must be held back by a paid suggestion, as the camera path is",
+  );
+});
+
+test("[BON-EMAIL] the markers are written for EVERY row, not only flagged ones", () => {
+  // The subtle half. The sync's _safecore block runs only when something is wrong (`if (!verdict.ok
+  // || dedupNote || isReminder || …)`), so markers written inside it would reach problem rows only
+  // — and a clean kassabon, the common case, would go back to being booked as a bill.
+  //
+  // This file indents one level per block, so the marker write living at the loop's own level (six
+  // spaces) is the checkable form of "outside that block". Crude, and it is precisely the mistake
+  // that was made here once already.
+  assert.match(
+    SYNC, /^ {6}if \(bonKind === 'receipt' \|\| pay\.suggestPaid\) \{/m,
+    "the marker block must sit at the loop's own level — nested one deeper it only reaches flagged rows",
+  );
+});

@@ -121,6 +121,15 @@ interface IncomingInvoice {
     // A SUGGESTION only — the human confirms via "Markeer als betaald".
     _intake_kind?: string;     // 'receipt' when it came from the camera as a bon
     _intake_suggest?: string;  // 'paid' → surface "Markeer als betaald" prominently
+    // [BON-BETAALWIJZE] What the PAPER printed about the settlement. Written by both intake doors
+    // and, until now, read by nothing at all — bon-betaalwijze.ts said so in its own header: "een
+    // jsonb die geen enkele voorwaarde in de app leest". So the app read "Bankpas 70,29" off the
+    // till slip, parsed it, stored it, and then asked the owner Bank or Contant anyway.
+    _intake_paid_method?: string;        // 'bank' | 'kas', normalised
+    _intake_paid_method_zeker?: boolean; // true ONLY when the paper itself named it
+    _intake_paid_evidence?: string;      // the printed words the reading rests on
+    _intake_paid_card4?: string;         // last 4 of the card, when printed
+    _intake_paid_date?: string;          // the settlement date the paper printed
   } | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
@@ -776,8 +785,15 @@ function ConfirmPaidModal({
   const [payStep, setPayStep] = useState(false);
   // [BRIDGE-QUARTER] real payment date (defaults to today) + confirmation amount.
   // confirmAmount is UI-only for now (NOT stored) — explicit defer per brief §2.
+  // [BON-BETAALWIJZE] A bon states WHEN it was settled — that is the date the money actually moved,
+  // and it decides the BTW quarter. Defaulting to today put a bon from last quarter in this one.
+  // Only a real ISO date is accepted; anything else falls back to today, as before.
+  const paperPaidDate = (() => {
+    const d = (invoice.field_confidence as { _intake_paid_date?: string } | null)?._intake_paid_date;
+    return typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  })();
   const [paymentDate, setPaymentDate] = useState(
-    amsterdamToday()
+    paperPaidDate ?? amsterdamToday()
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
@@ -1410,32 +1426,70 @@ function ConfirmPaidModal({
               }}
             />
 
-            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
-              <button
-                onClick={() => handlePay("bank")}
-                disabled={submitting}
-                style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
-                  background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-                  cursor: submitting ? "not-allowed" : "pointer",
-                }}
-              >
-                🏛️ Bank
-              </button>
-              <button
-                onClick={() => handlePay("kas")}
-                disabled={submitting}
-                style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
-                  background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-                  cursor: submitting ? "not-allowed" : "pointer",
-                }}
-              >
-                💳 Contant
-              </button>
-            </div>
+            {/* [BON-BETAALWIJZE] A till slip says how it was settled — "Bankpas 70,29", "KONTANT
+                120,00 Wisselgeld 7,10", often with the last four digits of the card. bon-betaalwijze.ts
+                has read that line, and only that line, since it was written: the printed word beats
+                any interpretation of it. It was stored in field_confidence and read by NOTHING, so
+                the app knew the answer and asked the question anyway — two identical green buttons,
+                every bon, forever.
+                Now the paper's answer leads. It is PRE-SELECTED, never auto-booked: the owner still
+                taps, and the other route stays one tap away for when the paper is wrong (a private
+                card, a colleague's pass). Where the paper said nothing, both stay equal and the
+                question is asked honestly — gok slim, vraag alleen als we het niet weten. */}
+            {(() => {
+              const zeker = fc?._intake_paid_method_zeker === true;
+              const uitPapier = zeker && (fc?._intake_paid_method === "bank" || fc?._intake_paid_method === "kas")
+                ? fc._intake_paid_method
+                : null;
+              const knop = (method: "bank" | "kas", label: string) => {
+                const geraden = uitPapier === method;
+                const anders = uitPapier !== null && !geraden;
+                return (
+                  <button
+                    key={method}
+                    onClick={() => handlePay(method)}
+                    disabled={submitting}
+                    style={{
+                      flex: 1, padding: "16px", borderRadius: 14, fontSize: 16,
+                      fontWeight: anders ? 600 : 700,
+                      background: submitting ? "#dadce0" : anders ? "#fff" : "#34a853",
+                      color: anders ? "#3c4043" : "#fff",
+                      border: anders ? "1.5px solid #dadce0" : "none",
+                      cursor: submitting ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              };
+              return (
+                <>
+                  {uitPapier && (
+                    <div style={{
+                      display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10,
+                      padding: "10px 12px", borderRadius: 10, background: "#e8f0fe", color: "#174ea6",
+                      fontSize: 12.5, lineHeight: 1.5,
+                    }}>
+                      <span style={{ fontSize: 14, lineHeight: 1.2 }}>🧾</span>
+                      <span>
+                        De bon vermeldt <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? "contant" : "bankpas")}</strong>
+                        {fc?._intake_paid_card4 ? ` (pas ••••${fc._intake_paid_card4})` : ""} —
+                        {uitPapier === "kas"
+                          ? " dit is contant betaald en gaat naar je kasboek."
+                          : " dit is met de bank betaald en wordt tegen je bankregel gelegd."}
+                        {" Klopt dat niet? Kies dan het andere."}
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+                    {/* The paper's reading first, so the confirming tap is the nearest one. */}
+                    {uitPapier === "kas"
+                      ? [knop("kas", "💶 Contant"), knop("bank", "🏛️ Bank")]
+                      : [knop("bank", "🏛️ Bank"), knop("kas", "💶 Contant")]}
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Back to the review step */}
             <button

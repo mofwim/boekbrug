@@ -28,7 +28,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join as joinPath } from "node:path";
 
 const ROUTER = readFileSync("src/lib/intake-router.ts", "utf8");
 const ROUTE = readFileSync("src/app/api/intake/route.ts", "utf8");
@@ -75,4 +76,67 @@ test("[BON-BETAALWIJZE] the tender line is read from the paper, not re-derived h
       `${f} is passed as a literal null — that is the same silence, spelled differently`,
     );
   }
+});
+
+// ─── [MARKER-READ] A marker nobody reads is a feature that does not exist ─────
+//
+// bon-betaalwijze.ts reads the tender line a till PRINTS — "Bankpas 70,29", "KONTANT 120,00
+// Wisselgeld 7,10" — and both intake doors stored the result in field_confidence as
+// _intake_paid_method / _intake_paid_method_zeker / _intake_paid_evidence / _intake_paid_card4 /
+// _intake_paid_date. Nothing anywhere read any of them back. The file's own header said so in
+// passing — "een jsonb die geen enkele voorwaarde in de app leest" — and it stayed true.
+//
+// So the app read the answer off the paper, parsed it with a tested module, wrote it to the row,
+// and then showed the owner two identical green buttons asking Bank or Contant. Every bon. The
+// work was all there; the last wire was missing, and no gate could see it, because a write with no
+// reader breaks nothing, types fine and passes every test.
+//
+// This is the same shape as the dropped decideFromAi fields above, one step further down the pipe:
+// there a field was written and never PASSED, here it is passed and never READ. So it gets the
+// same answer — a gate on the wiring itself.
+
+const WRITERS = ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"];
+
+/** Source with comments removed, so a marker merely NAMED in prose never counts as a reader. */
+function code(path: string): string {
+  return readFileSync(path, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+function tsxAndTs(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = joinPath(dir, entry);
+    if (statSync(p).isDirectory()) tsxAndTs(p, out);
+    else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+  }
+  return out;
+}
+
+test("[MARKER-READ] every _intake_ marker the doors write is read by something", () => {
+  const written = new Set<string>();
+  for (const w of WRITERS) {
+    const src = code(w);
+    for (const m of src.matchAll(/[.\[]"?(_intake_[a-z0-9_]+)"?\]?\s*=/g)) written.add(m[1]);
+    for (const m of src.matchAll(/\b(_intake_[a-z0-9_]+)\s*:/g)) written.add(m[1]);
+  }
+  // The floor. An empty set would make the loop below pass while proving nothing.
+  assert.ok(written.size >= 5, `found ${written.size} written markers — the scan broke`);
+
+  const readers = tsxAndTs("src").filter((f) => !WRITERS.includes(f));
+  const corpus = readers.map(code).join("\n");
+
+  // Whole-key match, not a substring: `_intake_paid_method` occurs inside
+  // `_intake_paid_method_zeker`, so `includes` would call the shorter one "read" on the strength of
+  // the longer one appearing somewhere. That is the gate lying in exactly the direction it exists
+  // to prevent, and it is why this is a regexp with a trailing boundary.
+  const dead = [...written]
+    .filter((k) => !new RegExp(`${k}(?![A-Za-z0-9_])`).test(corpus))
+    .sort();
+  assert.deepEqual(
+    dead, [],
+    `these markers are written and read by nothing: ${dead.join(", ")}.\n` +
+      `A jsonb key with no reader is not a feature — it is the appearance of one. Either wire it ` +
+      `into the screen or the gate that should act on it, or stop writing it.`,
+  );
 });
