@@ -27,7 +27,7 @@ import BankConnectPanel from './BankConnectPanel'
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
-import { M3, R, COLUMN } from '@/lib/design/tokens'
+import { M3, R, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [BANK-SPLIT] One parser for a typed amount, shared with every other money field in the app,
 // so "1.465,41" means the same thing here as on the pay screen.
 import { parseAmountInput } from '@/lib/partial-payment'
@@ -1363,7 +1363,7 @@ export default function BankClient() {
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
+            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, paddingBottom: sheetPaddingBottom(24), width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
               Betaling verplaatsen
@@ -1985,7 +1985,7 @@ export default function BankClient() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: sheetPaddingBottom(22), width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
           >
             <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>
               Deze betaling hoort bij meer dan één factuur

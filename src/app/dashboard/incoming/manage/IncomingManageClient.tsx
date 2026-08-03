@@ -26,7 +26,7 @@ import Link from 'next/link'
 import { amsterdamToday } from '@/lib/format-nl'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
-import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
@@ -2473,7 +2473,7 @@ export default function IncomingManageClient({
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
+            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, paddingBottom: sheetPaddingBottom(24), width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
               Betaling verplaatsen
@@ -3310,7 +3310,7 @@ function PreparePaymentSheet({
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
@@ -3417,7 +3417,7 @@ function BundelBetalenSheet({
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>
           {rows.length} facturen betalen

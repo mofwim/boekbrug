@@ -24,7 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
-import { M3, columnInner, COLUMN } from '@/lib/design/tokens'
+import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
 import {
@@ -1666,7 +1666,7 @@ function NewInvoicePageContent() {
 
       {/* [DS] Offerte → Factuur convert dialog */}
       {showConvertDialog && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', paddingBottom: sheetPaddingBottom(24), backgroundColor: 'rgba(0,0,0,0.4)' }}>
           <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Omzetten naar factuur</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>

@@ -261,3 +261,23 @@ export const COLUMN = {
  * See docs/HEADER_SYSTEM.md, "Where things sit in the bar".
  */
 export const columnInner = (column: number) => column - 2 * PAGE_GUTTER
+
+/**
+ * [SHEET-BOTTOM] The bottom padding every panel pinned to the bottom EDGE of the screen needs.
+ *
+ * A bottom sheet renders at `inset: 0` with `alignItems: 'flex-end'`, so its last row sits exactly
+ * where the fixed bottom navigation is — and the nav wins, because it is painted over the sheet.
+ * On a phone that hides 64px plus the home-indicator inset: enough to swallow a whole button.
+ *
+ * It did. The "Betalen" sheet on Inkoopfacturen ended in two buttons, "Ja, ik heb betaald" and
+ * "Nog niet"; only the first was reachable. The second was behind the bar with no way to scroll to
+ * it, because the sheet had already reached the bottom of its own scroll box. The owner's only exit
+ * from a payment sheet was to confirm a payment they had not made, or to tap the backdrop and hope.
+ *
+ * --bottom-nav-h is 0 above the breakpoint, where no bar is rendered, so this is unconditionally
+ * correct at both sizes and needs no media query of its own (globals.css says the same).
+ *
+ * @param base the padding the panel would have had on its own, in px.
+ */
+export const sheetPaddingBottom = (base: number): string =>
+  `calc(${base}px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`
