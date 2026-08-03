@@ -1071,6 +1071,11 @@ export default function FacturenClient({
               return (
                 <div
                   key={inv.id}
+                  // [LIST-PAINT] Off-screen rows may skip style/layout/paint — see globals.css.
+                  // This list is the longest one in the app: the read caps at 2000 invoices, and
+                  // a sole trader who invoices weekly reaches four figures in a few years. The row
+                  // stays in the DOM either way; only the painting is skipped.
+                  className="inv-card"
                   ref={el => { rowRefs.current[inv.id] = el }}
                   style={{
                     borderRadius: R.lg,

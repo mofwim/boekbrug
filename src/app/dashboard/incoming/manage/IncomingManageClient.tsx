@@ -1923,6 +1923,7 @@ export default function IncomingManageClient({
                 // kopregel, ook wanneer de kaart uitklapt en meters hoog wordt.
                 <div
                   key={inv.id}
+                  className="inv-card"
                   ref={el => { rowRefs.current[inv.id] = el }}
                   style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}
                 >

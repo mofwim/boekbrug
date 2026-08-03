@@ -1879,6 +1879,11 @@ export function InvoiceCard({
   return (
     <div
       id={domId}
+      // [LIST-PAINT] Off-screen cards may skip style/layout/paint — see globals.css. The pending
+      // queue is read with fetchAllRows and no cap on purpose ([QUEUE-COMPLETE]), so a mailbox
+      // backfill puts hundreds of cards on this screen at once. The card stays in the DOM, so the
+      // deep-link focus below (id + scrollMarginTop) still finds it.
+      className="inv-card"
       style={{
         background: "#fff", borderRadius: 16, marginBottom: 12,
         overflow: "hidden",
