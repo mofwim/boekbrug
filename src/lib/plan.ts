@@ -24,7 +24,10 @@
 //     binnen het eerlijk gebruik. Een proefklok die stil begint te lopen bij registratie is
 //     precies het gedrag waar dit product zich van wil onderscheiden.
 //   • Geen betaalmuur. Overschrijding pauzeert alleen de handeling die geld kost.
-//   • Geen boekhoudersplan. Het portaal is gratis, ook met honderd klanten.
+//   • Het boekhoudersportaal is gratis tot en met ACCOUNTANT_FREE_CLIENTS gekoppelde klanten
+//     (fair-use.ts), en daarboven geldt een tarief per klant dat NOG NIET is vastgesteld —
+//     zolang het niet is aangekondigd is het portaal in zijn geheel kosteloos (voorwaarden
+//     §5.8). Geen klok, geen proefperiode: de grens loopt over KLANTEN, niet over tijd.
 
 import { PLUS_PRICE_EUR, fairUseLimit, formatLimit } from "@/lib/fair-use";
 import {

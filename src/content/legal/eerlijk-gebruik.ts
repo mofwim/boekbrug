@@ -54,7 +54,7 @@ tegenaan loopt, en duidelijk genoeg dat je het van tevoren kunt narekenen.**
 
 | | Kosten |
 |---|---|
-| **Boekhouder / administratiekantoor** | **Altijd gratis.** Ook met tien, vijftig of honderd gekoppelde klanten. Het volledige portaal, het werkbord en het ophalen van het kwartaal per klant zitten erbij. Er is geen betaald boekhoudersplan |
+| **Boekhouder / administratiekantoor** | **Gratis tot en met 10 gekoppelde klanten** — het volledige portaal, het werkbord en het ophalen van het kwartaal per klant. Geen proefperiode en geen klok: blijf je onder de tien, dan blijft het gratis. Daarboven een tarief per gekoppelde klant per maand, dat pas gaat gelden nadat wij het minstens 30 dagen vooraf hebben aangekondigd — zie voorwaarden §5.8 |
 | **Ondernemer — Gratis** | **€ 0.** Alle functies, binnen het eerlijk gebruik hieronder |
 | **Ondernemer — Plus** | **€ ${prijs} per maand**, inclusief btw. Alleen nodig als je structureel boven het eerlijk gebruik uitkomt. Maandelijks opzegbaar |
 
