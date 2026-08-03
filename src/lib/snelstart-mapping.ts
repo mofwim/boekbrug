@@ -25,6 +25,9 @@ import { isPlaceholderInvoiceNumber } from "@/lib/safecore";
 // [CREDIT-SIGN-PUSH] Eén definitie van "dit nummer zegt credit" — gedeeld met de wachtrij, de
 // betaalpagina en de auto-advance-poort. Een tweede lijst hier zou onvermijdelijk gaan afwijken.
 import { looksLikeCreditnotaByNumber } from "@/lib/creditnota-signal";
+// [PUSH-ACK] Dezelfde classifier als de wachtrij. Puur (geen netwerk, geen DB), dus dit bestand
+// blijft testbaar zonder API-sleutel.
+import { classifyImportHealth } from "@/lib/import-health";
 
 // ─── Invoer (ruwe DB-vormen, losgekoppeld van database.types voor testbaarheid) ────
 
@@ -40,6 +43,10 @@ export interface SnelStartInvoice {
   btw_amount: number | null;
   total_inc_btw: number | null;
   client_name: string | null; // klant (outgoing) of leverancier (incoming)
+  // [PUSH-ACK] De opgeslagen signalen: _safecore (dubbel, herinnering, meerdere facturen,
+  // rekeningnummer gewijzigd), de AI-zekerheden, en _push_ack — waar de eigenaar heeft gezegd
+  // "ik weet het, stuur toch door". Zonder dit veld ziet deze poort geen enkel voorbehoud.
+  field_confidence?: unknown;
 }
 
 export interface SnelStartInvoiceLine {
@@ -53,6 +60,7 @@ export interface SnelStartInvoiceLine {
 // ─── Fouten ───────────────────────────────────────────────────────────────────────
 
 export type MappingErrorCode =
+  | "NEEDS_REVIEW"
   | "CREDIT_SIGN_UNRESOLVED"
   | "NOT_EXPORTABLE"
   | "MISSING_NUMBER"
@@ -73,6 +81,11 @@ export class SnelStartMappingError extends Error {
 
 export function dutchMappingError(code: MappingErrorCode): string {
   switch (code) {
+    case "NEEDS_REVIEW":
+      // The generic half; the caller adds the specific reasons from pushHoldReason(). Kept apart so
+      // the sentence never becomes "er is iets mis" — a refusal the owner cannot picture is one
+      // they cannot act on, and this one stands between them and their boekhouder.
+      return "Deze factuur heeft nog een openstaand voorbehoud. Bekijk het en kies \u201cIk weet het, stuur toch door\u201d als het klopt.";
     case "CREDIT_SIGN_UNRESOLVED":
       // Names the evidence, the consequence and the one tap out — a refusal the owner cannot act on
       // is just a wall, and this one sits between them and their boekhouder.
@@ -133,6 +146,16 @@ export function isPushable(invoice: SnelStartInvoice): PushableCheck {
   const inc = invoice.total_inc_btw;
   if (typeof inc !== "number" || !Number.isFinite(inc) || Math.abs(inc) < 0.005) {
     return { ok: false, code: "NO_AMOUNTS" };
+  }
+
+  // [PUSH-ACK] Any voorbehoud the verify queue raised and the owner has not ticked off holds the
+  // booking here. See the block at the foot of this file for why it is an acknowledgement and not
+  // a lock. It reads the SAME classifier the queue badge reads — a second opinion about what
+  // "needs review" means would let the screen and the ledger disagree about one document.
+  // Skipped entirely when the caller did not supply field_confidence, so an older call site keeps
+  // its previous behaviour instead of being silently blocked by a field it never passed.
+  if (invoice.field_confidence !== undefined && pushHoldFlagsOf(invoice).length > 0) {
+    return { ok: false, code: "NEEDS_REVIEW" };
   }
 
   // [CREDIT-SIGN-PUSH] A document whose own number says credit, booked as a debt, does not leave
@@ -443,4 +466,99 @@ export function mapInvoiceToBoeking(params: {
 /** Welke relatiesoort hoort bij een richting. */
 export function relatieSoortFor(direction: string | null): "Klant" | "Leverancier" {
   return direction === "incoming" ? "Leverancier" : "Klant";
+}
+
+// ─── [PUSH-ACK] Voorbehouden die een boeking tegenhouden, en het akkoord dat ze opheft ──────
+//
+// isPushable weigerde tot nu toe alleen ONVOLLEDIGE documenten: geen datum, geen nummer, geen
+// naam, geen bedrag. Elk voorbehoud dat de wachtrij wél kent — "mogelijk dubbel", "dit lijkt een
+// betalingsherinnering", "meerdere facturen in één bestand", "ander rekeningnummer" — reisde
+// ongezien mee naar de administratie van de boekhouder. En juist die drie eerste zijn precies de
+// gevallen die daar een DUBBELE of een ONVOLLEDIGE boeking worden.
+//
+// ── WAAROM DIT EEN AKKOORD NODIG HEEFT EN NIET ALLEEN EEN SLOT ──
+// Een factuur kan met een vlag én terecht doorgestuurd worden: de eigenaar heeft naar het papier
+// gekeken, weet dat die "mogelijke dubbele" een tweede echte levering is, en wil hem geboekt
+// hebben. Een slot zonder sleutel zou die factuur voorgoed buiten de administratie houden — en dat
+// is geen voorzichtigheid meer, dat is data die verdwijnt. Vandaar: tegenhouden tot de eigenaar het
+// ZELF zegt, en dat zeggen vastleggen.
+//
+// ── WAAROM HET AKKOORD DE VLAGGEN OPSOMT ──
+// Het akkoord geldt voor de voorbehouden die er OP DAT MOMENT waren. Zou het de factuur in het
+// algemeen vrijgeven, dan zou één tik ook elke LATERE waarschuwing ontwapenen — een gewijzigd
+// rekeningnummer dat pas bij de volgende import wordt ontdekt, bijvoorbeeld. Dat is het verschil
+// tussen "ik heb hiernaar gekeken" en "kijk hier nooit meer naar", en alleen het eerste is wat
+// iemand bedoelt als hij op die knop drukt.
+
+/** De vlaggen die een boeking tegenhouden. Volgorde = de volgorde waarin ze op het scherm komen. */
+export const PUSH_BLOCKING_FLAGS = [
+  "possibleDuplicate",
+  "reminder",
+  "multipleInvoices",
+  "ibanChanged",
+  "arithmetic",
+] as const;
+
+export type PushBlockingFlag = (typeof PUSH_BLOCKING_FLAGS)[number];
+
+/** Nederlands, want dit staat op het scherm van de ondernemer. */
+const HOLD_REASON: Record<PushBlockingFlag, string> = {
+  possibleDuplicate: "lijkt op een factuur die je al hebt — controleer of dit geen dubbele boeking wordt",
+  reminder: "lijkt een betalingsherinnering — controleer of de originele factuur al is doorgestuurd",
+  multipleInvoices: "dit bestand lijkt meerdere facturen te bevatten; er is er één ingelezen",
+  ibanChanged: "deze leverancier stond bij ons onder een ander rekeningnummer",
+  arithmetic: "de bedragen kloppen onderling niet",
+};
+
+export function pushHoldReason(flag: PushBlockingFlag): string {
+  return HOLD_REASON[flag];
+}
+
+type AckShape = { flags?: unknown };
+
+/** Welke voorbehouden heeft de eigenaar al afgetikt? Onbekende vormen tellen als "geen". */
+export function acknowledgedFlags(fieldConfidence: unknown): Set<string> {
+  const fc = fieldConfidence as { _push_ack?: AckShape } | null | undefined;
+  const raw = fc?._push_ack?.flags;
+  return new Set(Array.isArray(raw) ? raw.filter((f): f is string => typeof f === "string") : []);
+}
+
+/**
+ * De voorbehouden die deze factuur NU nog tegenhouden: de vlaggen die aanstaan, min de vlaggen
+ * waarvoor de eigenaar al akkoord heeft gegeven. Leeg = niets houdt hem tegen.
+ *
+ * Puur, zodat het scherm en de push-route dezelfde lijst tonen en versturen — een teller die iets
+ * anders zegt dan de poort is precies waar snelstart-queue.ts al voor waarschuwt.
+ */
+export function pushHoldFlags(
+  flags: Partial<Record<PushBlockingFlag, boolean>>,
+  fieldConfidence: unknown,
+): PushBlockingFlag[] {
+  const acked = acknowledgedFlags(fieldConfidence);
+  return PUSH_BLOCKING_FLAGS.filter((f) => flags[f] === true && !acked.has(f));
+}
+
+/**
+ * De openstaande voorbehouden van één factuur, voor het scherm én voor de poort.
+ *
+ * Dezelfde bron als het amberen "Aandacht nodig" in de wachtrij, zodat er nooit een factuur is die
+ * op het ene scherm een waarschuwing draagt en op het andere zonder slag of stoot de administratie
+ * van de boekhouder in gaat.
+ */
+/** De kolommen die pushHoldFlagsOf nodig heeft. Als constante, zodat een route die dit leest niet
+ *  per ongeluk field_confidence vergeet — precies de manier waarop deze poort blind was. */
+export const SNELSTART_ACK_SELECT =
+  "id, invoice_number, invoice_date, due_date, direction, invoice_type, status, total_ex_btw, btw_amount, total_inc_btw, client_name, field_confidence" as const;
+
+export function pushHoldFlagsOf(invoice: SnelStartInvoice): PushBlockingFlag[] {
+  const health = classifyImportHealth({
+    total_ex_btw: invoice.total_ex_btw,
+    btw_amount: invoice.btw_amount,
+    total_inc_btw: invoice.total_inc_btw,
+    invoice_date: invoice.invoice_date,
+    invoice_number: invoice.invoice_number,
+    invoice_type: invoice.invoice_type,
+    field_confidence: invoice.field_confidence as never,
+  });
+  return pushHoldFlags(health.flags, invoice.field_confidence);
 }
