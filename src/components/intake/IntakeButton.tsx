@@ -13,6 +13,10 @@
 // suggestion, never auto-paid.
 
 import { useRef, useState } from 'react'
+
+// [INTAKE-QUEUE] Hoeveel foto's er tegelijk verwerkt mogen worden. Drie: genoeg om door te
+// fotograferen zonder te wachten, laag genoeg om een mobiele upload niet te laten kruipen.
+const MAX_PARALLEL_INTAKE = 3
 import { useRouter } from 'next/navigation'
 import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
@@ -46,7 +50,22 @@ export default function IntakeButton({
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
   const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
+  // [INTAKE-QUEUE] Hoeveel uploads er OP DIT MOMENT lopen — geen boolean meer.
+  //
+  // `busy` was één slot: `if (busy) return 'error'` wees een tweede foto ronduit AF, en elke knop
+  // stond disabled tot de server klaar was. De trage stap is de AI-lezing, seconden lang, dus wie
+  // een stapel bonnen fotografeert stond na elke bon te wachten — en zijn tweede tik verdween
+  // zonder melding. De server heeft daar nooit om gevraagd: elk verzoek staat op zichzelf en de
+  // dubbelpoort is al race-veilig ([DEDUP-ATOMIC]). De rem zat alleen hier.
+  //
+  // Een teller in plaats van een slot: de camera komt meteen vrij, de uploads lopen naast elkaar,
+  // en het scherm weet nog steeds of er iets loopt (inFlight > 0) voor de knoptekst.
+  const [inFlight, setInFlight] = useState(0)
+  const busy = inFlight > 0
+  // Hoeveel er in deze reeks al binnen zijn — bepaalt of de UITKOMST navigeert of alleen meldt.
+  // Zie handleFile: bij één foto verandert er niets aan wat de eigenaar gewend is.
+  const batchRef = useRef<{ started: number; done: Array<{ name: string; where: string }> }>({ started: 0, done: [] })
+  const [batchSummary, setBatchSummary] = useState<Array<{ name: string; where: string }> | null>(null)
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
@@ -150,11 +169,37 @@ export default function IntakeButton({
     }
   }
 
+  // [INTAKE-QUEUE] Mag DEZE uitkomst het scherm verplaatsen?
+  //
+  // Het antwoord hangt niet aan de uitkomst maar aan de reeks. Bij één foto — verreweg het meeste —
+  // verandert er niets: de eigenaar wordt gebracht waar zijn factuur landde, precies zoals altijd.
+  // Loopt er nog iets, dan zou navigeren de andere uploads achterlaten op een pagina die de
+  // gebruiker net verlaten heeft; dan is een melding het eerlijke maximum en komt de samenvatting
+  // aan het eind.
+  //
+  // `inFlight` is hier al met deze upload verlaagd door de finally in handleFile? Nee — deze functie
+  // wordt AANGEROEPEN vóór die finally, dus 1 betekent "alleen ik loop nog".
+  function mayNavigate(): boolean {
+    return inFlight <= 1 && batchRef.current.started <= 1
+  }
+
+  /** Onthoud waar dit bestand landde, voor de samenvatting van een reeks. */
+  function noteLanded(name: string, where: string) {
+    batchRef.current.done.push({ name, where })
+  }
+
   // Returns the outcome so the multi-page flow knows whether to KEEP the collected pages
   // (a transient 'error') or clear them ('ok' | 'duplicate' — no point retrying the same pages).
   async function handleFile(file: File, force = false, source: 'camera' | 'upload' = 'camera'): Promise<'ok' | 'duplicate' | 'error'> {
-    if (busy) return 'error'
-    setBusy(true)
+    // [INTAKE-QUEUE] Alleen een plafond, geen slot. Drie tegelijk: genoeg om te blijven
+    // fotograferen, weinig genoeg om een mobiele verbinding niet dicht te trekken — vier grote
+    // foto's tegelijk over 4G maken élke upload trager in plaats van sneller.
+    if (inFlight >= MAX_PARALLEL_INTAKE) {
+      showToast('Even wachten — er worden er al drie verwerkt.')
+      return 'error'
+    }
+    setInFlight((n) => n + 1)
+    batchRef.current.started += 1
     setOpen(false)
     try {
       // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
@@ -204,11 +249,20 @@ export default function IntakeButton({
           // carries `existing` (the original's document), and routing on that first sent it
           // to the file-location modal — hiding the "Toch toevoegen" override and
           // mislabelling a genuinely different file as "al toegevoegd".
+          // [INTAKE-QUEUE] Deze modal ONDERBREEKT met opzet, ook tijdens een reeks: hij draagt een
+          // beslissing ("Toch toevoegen") die alleen de eigenaar kan nemen, en hem wegstoppen in een
+          // samenvatting zou betekenen dat een factuur stil buiten de boeken blijft.
+          noteLanded(file.name, 'mogelijk dubbel — jouw keuze')
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
-          setDestModal({
+          // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen. Tijdens een reeks
+          // wordt hij daarom een melding — maar de regel in de samenvatting moet zeggen dat dit
+          // bestand NIET is toegevoegd. Een afwijzing die alleen als "verwerkt" in het lijstje
+          // staat, is precies de stille verdwijning waar deze app tegen is gebouwd.
+          noteLanded(file.name, 'dubbel — niet toegevoegd')
+          if (mayNavigate()) setDestModal({
             fileName: file.name,
             message: data.error || 'Dit bestand is al toegevoegd',
             folderName: data.existing.folder_name ?? null,
@@ -216,6 +270,7 @@ export default function IntakeButton({
             documentId: data.existing.id,
             isDuplicate: true,
           })
+          else showToast(data.message || 'Toegevoegd ✓')
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
@@ -246,22 +301,28 @@ export default function IntakeButton({
         const target = data.auto_verified && data.invoice_id
           ? `/dashboard/incoming/manage?focus=${data.invoice_id}`
           : '/dashboard/incoming'
-        setTimeout(() => router.push(target), 600)
+        noteLanded(file.name, data.destination === 'receipt' ? 'bon → Inkoopfacturen' : 'factuur → Inkoopfacturen')
+        if (mayNavigate()) setTimeout(() => router.push(target), 600)
       } else if (data.destination === 'bank') {
         showToast(data.message || 'Toegevoegd ✓')
-        setTimeout(() => router.push('/dashboard/bank'), 600)
+        noteLanded(file.name, 'bankafschrift → Bank')
+        if (mayNavigate()) setTimeout(() => router.push('/dashboard/bank'), 600)
       } else if (data.destination === 'statement') {
         // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt maar vergeleken:
         // de uitkomst ("2 van de 9 facturen heb je niet") is het hele punt en mag niet in een
         // toast van drie seconden verdwijnen. Zelfde blijvende modal als een gewoon bestand —
         // die toont de boodschap én de link naar het bestand in Mijn bestanden.
-        setDestModal({
+        // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen; tijdens een reeks komt
+        // de zin in de samenvatting te staan.
+        noteLanded(file.name, 'rekeningoverzicht → gecontroleerd')
+        if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || 'Rekeningoverzicht gecontroleerd',
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
         })
+        else showToast(data.message || 'Toegevoegd ✓')
       } else if (data.destination === 'turnover') {
         // [INTAKE-DEST-OMZET] Een kassabestand is GEBOEKTE OMZET — /api/intake schrijft de dagen
         // meteen in daily_turnover en zegt in zijn eigen boodschap "Controleer in Dagomzet".
@@ -271,26 +332,33 @@ export default function IntakeButton({
         // pagina die hij net gevraagd werd te controleren. Elke andere bestemming brengt hem
         // wél naar waar zijn bestand landde; deze hoort dat als eerste te doen.
         showToast(data.message || 'Dagomzet geboekt ✓')
-        setTimeout(() => router.push('/dashboard/dagomzet'), 600)
+        noteLanded(file.name, 'dagomzet → Dagomzet')
+        if (mayNavigate()) setTimeout(() => router.push('/dashboard/dagomzet'), 600)
       } else if (data.destination === 'ledger') {
         // [INTAKE-DEST-CHECK] Een grootboek-/controlebestand is NADRUKKELIJK GEEN geld: het telt
         // niet mee in de omzet en heeft daarom geen eigen scherm — het werkt door in de
         // reconciliatie en op het klaar-scherm. De uitkomst is dus een ZIN ("14 dagen als
         // controle-check"), geen plaats. Precies zoals bij een leveranciersoverzicht mag die zin
         // niet in een toast verdwijnen: dezelfde blijvende modal, met de link naar het bestand.
-        setDestModal({
+        // [INTAKE-QUEUE] Zie hierboven: tijdens een reeks een melding, met de zin in de samenvatting.
+        noteLanded(file.name, 'controle-check → ingelezen')
+        if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || 'Ingelezen als controle-check',
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
         })
+        else showToast(data.message || 'Toegevoegd ✓')
       } else if (data.destination === 'document') {
         // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
         // went. Show a persistent modal with the destination + a deep-link that
         // highlights the file in Mijn bestanden. No auto-redirect: the owner
         // decides whether to open it (tap the link) or stay (tap "Klaar").
-        setDestModal({
+        // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen. Alleen tonen als
+        // deze upload de enige was; anders melden en in de samenvatting opnemen.
+        noteLanded(file.name, 'bestand → Mijn bestanden')
+        if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || 'Opgeslagen in je bestanden',
           folderName: data.folder_name ?? null,
@@ -301,6 +369,7 @@ export default function IntakeButton({
           // welke van de twee het is; dit scherm las dat veld niet.
           couldNotRead: data.could_not_read === true,
         })
+        else showToast(data.message || 'Toegevoegd ✓')
       } else {
         // Restbak. Sinds hierboven alle zeven bestemmingen van /api/intake een eigen tak hebben,
         // komt hier alleen nog een antwoord ZONDER destination — een oudere of onvolledige
@@ -313,7 +382,20 @@ export default function IntakeButton({
       showToast('Toevoegen mislukt — probeer opnieuw')
       return 'error'
     } finally {
-      setBusy(false)
+      // [INTAKE-QUEUE] De teller zakt hier, en NIET eerder: pas als hij nul is, is de reeks klaar
+      // en mag de uitkomst het scherm verplaatsen.
+      setInFlight((n) => {
+        const left = Math.max(0, n - 1)
+        // Laatste van een REEKS (meer dan één foto) → één samenvatting, want de losse uitkomsten
+        // zijn onderweg alleen als melding langsgekomen. Bij één foto gebeurt hier niets: die heeft
+        // zijn eigen modal of navigatie al gehad, precies zoals altijd.
+        if (left === 0 && batchRef.current.started > 1) {
+          setBatchSummary([...batchRef.current.done])
+          router.refresh()
+        }
+        if (left === 0) batchRef.current = { started: 0, done: [] }
+        return left
+      })
     }
   }
 
@@ -322,7 +404,7 @@ export default function IntakeButton({
     variant === 'fab' ? (
       <button
         onClick={() => setOpen(true)}
-        disabled={busy}
+        disabled={inFlight >= MAX_PARALLEL_INTAKE}
         aria-label="Toevoegen"
         style={{
           position: 'fixed',
@@ -331,7 +413,7 @@ export default function IntakeButton({
           background: M3.primary, color: M3.onPrimary,
           borderRadius: 16, padding: '16px 20px',
           fontSize: 15, fontWeight: 600, border: 'none',
-          cursor: busy ? 'not-allowed' : 'pointer',
+          cursor: inFlight >= MAX_PARALLEL_INTAKE ? 'not-allowed' : 'pointer',
           boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
           display: 'flex', alignItems: 'center', gap: 8,
           fontFamily: FONT, zIndex: 49,
@@ -345,12 +427,12 @@ export default function IntakeButton({
     ) : variant === 'compact' ? (
       <button
         onClick={() => setOpen(true)}
-        disabled={busy}
+        disabled={inFlight >= MAX_PARALLEL_INTAKE}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           background: M3.primaryContainer, color: M3.onPrimaryContainer,
           borderRadius: R.full, padding: '10px 18px',
-          border: 'none', cursor: busy ? 'not-allowed' : 'pointer',
+          border: 'none', cursor: inFlight >= MAX_PARALLEL_INTAKE ? 'not-allowed' : 'pointer',
           fontFamily: FONT, fontSize: 14, fontWeight: 600,
         }}
       >
@@ -363,12 +445,12 @@ export default function IntakeButton({
       // 'card' — matches the Dashboard ActionCard look
       <button
         onClick={() => setOpen(true)}
-        disabled={busy}
+        disabled={inFlight >= MAX_PARALLEL_INTAKE}
         style={{
           display: 'flex', alignItems: 'center', gap: 16,
           background: '#fff', borderRadius: R.lg, padding: '18px 16px',
           border: 'none', boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
-          cursor: busy ? 'not-allowed' : 'pointer', textAlign: 'left', width: '100%',
+          cursor: inFlight >= MAX_PARALLEL_INTAKE ? 'not-allowed' : 'pointer', textAlign: 'left', width: '100%',
           fontFamily: FONT,
         }}
       >
@@ -379,7 +461,13 @@ export default function IntakeButton({
         </div>
         <div style={{ flex: 1 }}>
           <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>Bon of factuur toevoegen</p>
-          <p style={{ fontSize: 13, color: '#5F6368' }}>Maak een foto of upload — AI sorteert het</p>
+          {/* [INTAKE-QUEUE] Tijdens het verwerken blijft de knop BRUIKBAAR — dat is het hele punt.
+              De regel zegt daarom wat er loopt in plaats van dat je moet wachten. */}
+          <p style={{ fontSize: 13, color: '#5F6368' }}>
+            {busy
+              ? `${inFlight} wordt gelezen — je kunt gewoon doorgaan`
+              : 'Maak een foto of upload — AI sorteert het'}
+          </p>
         </div>
         <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
       </button>
@@ -598,6 +686,48 @@ export default function IntakeButton({
       {/* [INTAKE-DEST-MODAL] Non-invoice file → persistent modal telling the
           owner WHERE it landed, with a deep-link that highlights it in Mijn
           bestanden. iOS-styled to match the /incoming results modal. */}
+      {/* [INTAKE-QUEUE] De samenvatting van een REEKS. Verschijnt alleen wanneer er meer dan één
+          foto is gemaakt en alles binnen is — bij één foto blijft alles zoals het was.
+
+          Waarom een lijst en geen "3 toegevoegd ✓": omdat ze niet allemaal hetzelfde zijn
+          afgelopen. Een bon kan geboekt zijn, een tweede als dubbel geweigerd, een derde in
+          Mijn bestanden beland. Een aantal verbergt precies de regel die aandacht vraagt. */}
+      {batchSummary && batchSummary.length > 0 && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+          onClick={() => setBatchSummary(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Wat is er toegevoegd"
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: sheetPaddingBottom(22), width: '100%', maxWidth: 460, maxHeight: '80vh', overflowY: 'auto' }}
+          >
+            <p style={{ fontSize: 17, fontWeight: 700, color: '#202124', margin: 0 }}>
+              {batchSummary.length} verwerkt
+            </p>
+            <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 14px', lineHeight: 1.45 }}>
+              Je kon doorgaan met fotograferen terwijl deze werden gelezen. Dit is waar ze terecht zijn gekomen.
+            </p>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {batchSummary.map((r, i) => (
+                <li key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 11px', borderRadius: 10, background: '#F8F9FA' }}>
+                  <span style={{ fontSize: 12.5, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: '#202124', whiteSpace: 'nowrap' }}>{r.where}</span>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={() => setBatchSummary(null)}
+              style={{ width: '100%', marginTop: 16, padding: '14px', borderRadius: 14, background: M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
+            >
+              Klaar
+            </button>
+          </div>
+        </div>
+      )}
+
       {destModal && (
         <div
           onClick={() => setDestModal(null)}

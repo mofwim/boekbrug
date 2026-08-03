@@ -103,3 +103,73 @@ test("[PDF-LAZY] the lazy leaf really does hold both halves", () => {
     "the page must reach the leaf through next/dynamic, or nothing is deferred at all",
   );
 });
+
+// ─── [INTAKE-QUEUE] The camera must not lock while the reader works ───────────
+//
+// Photographing a receipt took seconds, and the cause was not the processing — it was a lock.
+// `if (busy) return 'error'` REFUSED a second photo outright, and every trigger carried
+// disabled={busy}, so the owner stood still after each bon and their second tap vanished with no
+// message at all. The server never asked for that: each request stands alone and the duplicate gate
+// is already race-safe ([DEDUP-ATOMIC]). The brake was entirely in this component.
+//
+// These assertions hold the shape of the fix, because the regression is a one-word edit — `busy`
+// reads so naturally in a disabled= that putting it back would pass every review.
+
+/** Source with comments stripped — this file explains the old lock in prose, and a gate that
+ *  matched its own explanation would fail forever while the code was correct. */
+function intakeCode(): string {
+  return readFileSync("src/components/intake/IntakeButton.tsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+/** Just the body of handleFile — the upload outcome path. Navigations elsewhere (a "Terugzetten"
+ *  tap, for instance) are deliberate user actions and must NOT wait for a queue. */
+function handleFileBody(): string {
+  const src = intakeCode();
+  const at = src.indexOf("async function handleFile(");
+  assert.notEqual(at, -1, "handleFile must still exist");
+  const end = src.indexOf("\n  // ─── Trigger button", at);
+  return src.slice(at, end === -1 ? src.length : end);
+}
+
+test("[INTAKE-QUEUE] a second photo is never refused outright", () => {
+  const src = intakeCode();
+  assert.doesNotMatch(
+    src, /if \(busy\) return 'error'/,
+    "the hard lock is back: a second capture is being rejected instead of queued",
+  );
+  assert.match(src, /const \[inFlight, setInFlight\]/, "the counter must still exist");
+  assert.match(src, /inFlight >= MAX_PARALLEL_INTAKE/, "only the concurrency cap may refuse");
+});
+
+test("[INTAKE-QUEUE] no trigger is disabled merely because something is processing", () => {
+  const src = intakeCode();
+  assert.doesNotMatch(
+    src, /disabled=\{busy\}/,
+    "a trigger is locked on `busy` again — that is the wait this change removed",
+  );
+});
+
+test("[INTAKE-QUEUE] the single-capture experience is unchanged", () => {
+  // The conservative half, and the one worth protecting: one photo must still take the owner to
+  // where it landed. mayNavigate() is what keeps that true, so every navigation must go through it.
+  const src = handleFileBody();
+  const pushes = [...src.matchAll(/setTimeout\(\(\) => router\.push\([^)]*\), 600\)/g)];
+  assert.ok(pushes.length >= 3, `expected the destination navigations, found ${pushes.length}`);
+  for (const p of pushes) {
+    const before = src.slice(Math.max(0, p.index! - 120), p.index!);
+    assert.match(
+      before, /mayNavigate\(\)/,
+      `a navigation runs unconditionally — during a batch it would abandon the other uploads: ${p[0]}`,
+    );
+  }
+});
+
+test("[INTAKE-QUEUE] a refused duplicate is never summarised as 'added'", () => {
+  // The one way a batch could lose something quietly: a photo rejected as a duplicate, listed in
+  // the summary as if it had been filed. The owner would count three and have two.
+  const src = intakeCode();
+  assert.match(src, /noteLanded\(file\.name, 'dubbel — niet toegevoegd'\)/, "a byte-hash duplicate must say it was not added");
+  assert.match(src, /noteLanded\(file\.name, 'mogelijk dubbel — jouw keuze'\)/, "a semantic duplicate must say the choice is the owner's");
+});
