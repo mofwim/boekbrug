@@ -76,6 +76,8 @@ import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { M3, COLUMN } from '@/lib/design/tokens'
+// [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
+import { reconcileBtw } from '@/lib/btw-reconcile'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -790,7 +792,28 @@ function ConfirmPaidModal({
   // amount-triplet.ts (pure, 7 tests), not by hope. Touch the total and the EX amount follows; btw
   // stays put unless you type it yourself, because that is the figure that enters the return as
   // deductible input tax and so should jump around least.
-  const [totalIncBtw, setTotalIncBtw] = useState((invoice.total_ex_btw || 0) + (invoice.btw_amount || 0));
+  //
+  // [PRINTED-TOTAL] Seeded from the STORED total, not from ex + btw.
+  //
+  // Deriving it was safe only while the stored triplet already added up — and the invoices this
+  // editor exists for are exactly the ones where it does not. CAN Vleesgroothandel 2034382 is the
+  // case: the reader took the 9% base (973,15) and dropped the invoice's 0% line (−3,86), so
+  // ex + btw = 1.060,73 while the paper, and the card above this editor, both say 1.056,87.
+  //
+  // The editor then opened on a total that matched neither, and — because the confirm sends all
+  // three amounts — pressing Verifiëren without touching anything REPLACED the printed total with
+  // the derived one. That is the wrong direction of trust: the total is what the owner actually
+  // paid and the figure the supplier is most careful with, and this editor's own design treats it
+  // as the anchor ("touch the total and the EX amount follows").
+  //
+  // The fallback stays for a row that genuinely has no stored total (a legacy import), where
+  // ex + btw is the only figure available.
+  const storedIncl = Number(invoice.total_inc_btw ?? 0);
+  const [totalIncBtw, setTotalIncBtw] = useState(
+    Number.isFinite(storedIncl) && Math.abs(storedIncl) > 0.005
+      ? storedIncl
+      : (invoice.total_ex_btw || 0) + (invoice.btw_amount || 0),
+  );
   const applyTriplet = (t: { ex: number; btw: number; incl: number }) => {
     setExBtw(t.ex); setBtwAmount(t.btw); setTotalIncBtw(t.incl);
   };
@@ -932,12 +955,70 @@ function ConfirmPaidModal({
                   }}
                 >
                   <span style={{ fontSize: 15, lineHeight: 1.3 }}>⚠️</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
                     {invoice.health.reasons
                       .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
                       .join(" · ")}
                     . Controleer en pas de bedragen aan.
                   </span>
+                  {/* [ONE-TAP-REPAIR] The gate already computed the answer — offer it as an action.
+                      A warning that names a figure ("dan hoort excl. BTW € 969,29 te zijn") and then
+                      makes the owner retype it is asking them to copy a number the app is holding.
+                      And on the invoice that prompted this the app was RIGHT: CAN Vleesgroothandel
+                      2034382 prints 9% over 973,15 plus a 0% line of −3,86, so the true ex is 969,29
+                      — exactly what the warning said.
+
+                      BOTH readings are offered, never one. Arithmetic cannot tell WHICH figure is
+                      the wrong one: repairing the ex and repairing the btw both satisfy
+                      ex + btw = totaal at a legal rate. Picking for the owner would be a guess
+                      wearing the app's authority, and this is the screen where a wrong amount
+                      enters the books. The paper decides; these buttons only spare the typing.
+
+                      Nothing is saved by tapping — the fields fill and the owner still confirms. */}
+                  {(() => {
+                    const rec = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
+                    if (rec.ok) return null
+                    const stored = invoice.total_inc_btw
+                    const options: Array<{ label: string; t: { ex: number; btw: number; incl: number } }> = []
+                    if (rec.exclRepairPossible) {
+                      options.push({
+                        label: `Excl. BTW = ${NL_CURRENCY.format(rec.impliedExcl)}`,
+                        t: { ex: rec.impliedExcl, btw: invoice.btw_amount, incl: stored },
+                      })
+                    }
+                    if (rec.btwRepairPossible) {
+                      options.push({
+                        label: `BTW = ${NL_CURRENCY.format(rec.impliedBtw)}`,
+                        t: { ex: invoice.total_ex_btw, btw: rec.impliedBtw, incl: stored },
+                      })
+                    }
+                    if (options.length === 0) return null
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          Welke klopt volgens de factuur? Het totaal ({NL_CURRENCY.format(stored)}) blijft staan.
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {options.map((o) => (
+                            <button
+                              key={o.label}
+                              type="button"
+                              onClick={() => { applyTriplet(o.t); setEditing(true) }}
+                              style={{
+                                padding: "7px 12px", borderRadius: 9, background: "#fff",
+                                border: "1px solid #e0a94f", color: "#9a5b00",
+                                fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                              }}
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                  </div>
                 </div>
               )}
 
