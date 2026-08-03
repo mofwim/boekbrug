@@ -137,15 +137,37 @@ export function decideFromAi(ai: IntakeClassification): IntakeDecision {
   // in plaats van het te beweren.
   if (ai.document_kind === "receipt") {
     const gok = gokBetaalwijze(ai.paid_evidence, ai.paid_method)
+    // [BON-BETAALD] The printed tender line IS the payment, and it outranks ai.is_paid.
+    //
+    // gok.zeker is only true when the paper itself named how it was settled — "Bankpas",
+    // "Kontant", "Wisselgeld", "Afronding", "PIN". Those words do not exist on an unsettled
+    // document: a till prints "Wisselgeld -0,35" because cash was handed over and change came
+    // back, and a terminal prints "Bankpas" because a card was accepted. That is the same
+    // principle this whole branch already followed for the METHOD — the paper wins over the
+    // interpretation — applied to the question one step earlier: was it paid at all.
+    //
+    // It had to be read twice before, and the second read was the model's opinion. So a kassabon
+    // that printed its tender line perfectly still landed as an unpaid debt whenever the model
+    // left is_paid unset, and the owner got a bill to pay for money already out of the till.
+    //
+    // Still only a SUGGESTION — nothing here writes status='paid'; the human confirms (see the
+    // header). That is also what bounds the one way this can be wrong: a declined terminal slip
+    // prints "Bankpas" too. The cost of that is a pre-filled suggestion the owner declines; the
+    // cost of the old default was a receipt for money already spent sitting in "nog te betalen".
+    const betaald = ai.is_paid === true || gok.zeker
     return {
       destination: "receipt",
-      suggestPaid: ai.is_paid === true,
-      paidMethod: ai.is_paid ? gok.method : null,
-      paidMethodZeker: ai.is_paid ? gok.zeker : false,
+      suggestPaid: betaald,
+      paidMethod: betaald ? gok.method : null,
+      paidMethodZeker: betaald ? gok.zeker : false,
       paidEvidence: gok.bewijs ?? ai.paid_evidence ?? null,
       paidCardLast4: gok.kaartLaatste4 ?? ai.paid_card_last4 ?? null,
-      paidDate: ai.is_paid ? (ai.paid_date ?? null) : null,
-      reason: ai.is_paid ? "ai_receipt_paid" : "ai_receipt_unpaid",
+      paidDate: betaald ? (ai.paid_date ?? null) : null,
+      reason: ai.is_paid === true
+        ? "ai_receipt_paid"
+        : gok.zeker
+          ? "bon_tender_paid"
+          : "ai_receipt_unpaid",
     }
   }
 

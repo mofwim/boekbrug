@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict, asCreditAmounts,
+  creditStance, payableAsDebt,
 } from "./creditnota-signal";
 
 /** The real case: this wholesaler sends CR credit notes alongside RE invoices. */
@@ -175,4 +176,108 @@ test("[CREDIT-SIGN] flipping resolves the sign conflict the app warns about", ()
   assert.equal(creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: before.totalIncBtw }), true);
   const after = asCreditAmounts(before);
   assert.equal(creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: after.totalIncBtw }), false);
+});
+
+// ─── [CREDIT-SAFE] The stance every payable-widget reads ──────────────────────
+// The case that prompted it: CREDITFACTUUR CR0301267 from Dutch Sweets Company, printed
+// "Totaal bedrag (EUR) : € -33,87", stored +33,87 because the reader took the figures from the
+// btw-berekening table (which prints them positive). The screen badged it "⚠ Lijkt een creditnota"
+// AND offered a filled-in payment QR of € 33,87 AND dunned it "2 dagen te laat".
+
+/** Dutch Sweets sends CR credit notes beside RE invoices — the contrast requirement 2 needs. */
+const SWEETS = ["CR0301267", "RE0802039", "RE0802533", "RE0803119"];
+
+test("[CREDIT-SAFE] the real case: a positively stored CR credit note is not payable", () => {
+  const stance = creditStance({
+    invoiceNumber: "CR0301267",
+    totalIncBtw: 33.87,
+    invoiceType: "factuur",
+    vendorNumbers: SWEETS,
+  });
+  assert.equal(stance, "suspected");
+  assert.equal(payableAsDebt(stance), false, "this is the QR that must not be offered");
+});
+
+test("[CREDIT-SAFE] an ordinary invoice from the same supplier stays payable", () => {
+  // The other half of the guarantee. If RE0802039 also stopped being payable, the screen would have
+  // traded one wrong answer for a worse one: an owner who cannot pay their bills.
+  const stance = creditStance({
+    invoiceNumber: "RE0802039",
+    totalIncBtw: 740.47,
+    invoiceType: "factuur",
+    vendorNumbers: SWEETS,
+  });
+  assert.equal(stance, "none");
+  assert.equal(payableAsDebt(stance), true);
+});
+
+test("[CREDIT-SAFE] a correctly booked credit note is 'credit', not 'suspected'", () => {
+  // Booked right and stored negative: there is nothing to ask and nothing to repair. It must not
+  // be payable either — the EPC builder already refuses a negative amount, and this says the same
+  // thing one layer earlier, where the button lives.
+  for (const inv of [
+    { invoiceType: "creditnota", totalIncBtw: -33.87 },
+    { invoiceType: "factuur", totalIncBtw: -33.87 }, // the money decides even when the type lags
+  ]) {
+    const stance = creditStance({ invoiceNumber: "CR0301267", vendorNumbers: SWEETS, ...inv });
+    assert.equal(stance, "credit", JSON.stringify(inv));
+    assert.equal(payableAsDebt(stance), false);
+  }
+});
+
+test("[CREDIT-SAFE] type says creditnota, money says debt → 'conflict', and not payable", () => {
+  const stance = creditStance({
+    invoiceNumber: "2033161",
+    totalIncBtw: 51.8,
+    invoiceType: "creditnota",
+    vendorNumbers: ["2033161"],
+  });
+  assert.equal(stance, "conflict");
+  assert.equal(payableAsDebt(stance), false);
+});
+
+test("[CREDIT-SAFE] a CR number with no contrasting prefix is still payable", () => {
+  // Requirement 2 of looksLikeCreditnota carries straight through: without a counterpart from the
+  // same supplier, "CR" is our guess about two letters. Guesses do not block payments.
+  const stance = creditStance({
+    invoiceNumber: "CR0301267",
+    totalIncBtw: 33.87,
+    invoiceType: "factuur",
+    vendorNumbers: ["CR0301267", "CR0300510"],
+  });
+  assert.equal(stance, "none");
+  assert.equal(payableAsDebt(stance), true);
+});
+
+test("[CREDIT-SAFE] an unreadable total is not a credit note — it is unread", () => {
+  // NaN is not negative. Answering 'credit' here would silently pull a row whose amount we failed
+  // to read out of the payable list, which hides a real bill instead of protecting one.
+  const stance = creditStance({
+    invoiceNumber: "2033161",
+    totalIncBtw: Number.NaN,
+    invoiceType: "factuur",
+    vendorNumbers: ["2033161"],
+  });
+  assert.equal(stance, "none");
+});
+
+test("[CREDIT-SAFE] answering 'ja' makes the row payable-free and quiet in one step", () => {
+  // What the "Ja, dit is een creditnota" button does, end to end: the route flips the triplet with
+  // asCreditAmounts and sets the type. Both signals must then be satisfied — no lingering warning
+  // on a row that was just repaired, and no re-offer of the payment.
+  const before = { totalExBtw: 31.07, btwAmount: 2.8, totalIncBtw: 33.87 };
+  const after = asCreditAmounts(before);
+  const stance = creditStance({
+    invoiceNumber: "CR0301267",
+    totalIncBtw: after.totalIncBtw,
+    invoiceType: "creditnota",
+    vendorNumbers: SWEETS,
+  });
+  assert.equal(stance, "credit");
+  assert.equal(payableAsDebt(stance), false);
+  assert.deepEqual(
+    [after.totalExBtw, after.btwAmount, after.totalIncBtw],
+    [-31.07, -2.8, -33.87],
+    "the paper's own -33,87",
+  );
 });

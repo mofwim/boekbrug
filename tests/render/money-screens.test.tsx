@@ -697,3 +697,62 @@ test("[FULL-CORRECTION] a credit note is not offered the creditnota tick again",
   assert.doesNotMatch(html, /Dit is een creditnota/);
   assert.match(html, /-109/, "and it still opens on the stored negative amounts");
 });
+
+// ─── [CREDIT-SAFE] A suspected credit note is not dunned, and its badge is reachable ──────────
+// CREDITFACTUUR CR0301267 from Dutch Sweets: printed "Totaal bedrag (EUR) : € -33,87", stored
+// +33,87, badged "⚠ Lijkt een creditnota" — and beside that badge sat "2 dagen te laat", a
+// "Heb je betaald?" button and a filled-in payment QR for € 33,87 to the supplier's IBAN.
+//
+// Two renders, because one proves nothing. The first shows the dunning is gone; the second shows
+// it is gone BECAUSE of the credit signal and not because the fixture stopped being overdue.
+
+const sweetsRows = (creditNumber: string) => [
+  // Overdue by any clock: due 2026-04-11, and these tests run later than that.
+  manageRow({
+    id: "cr", client_name: "Dutch Sweets", invoice_number: creditNumber,
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+    invoice_date: "2026-07-02", due_date: "2026-08-01",
+  }),
+  // The contrast the signal needs — paid, so it cannot contribute a dunning badge of its own.
+  manageRow({
+    id: "re", client_name: "Dutch Sweets", invoice_number: "RE0802039",
+    status: "paid", amount_paid: 740.47, total_ex_btw: 679.33, btw_amount: 61.14,
+    total_inc_btw: 740.47, payment_date: "2026-05-01",
+  }),
+];
+
+const renderManage = async (rows: unknown[]) => {
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  return renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IncomingManageClient as any, {
+        profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
+        readFailed: [], filedQuarters: [],
+      })),
+  );
+};
+
+test("[CREDIT-SAFE] a suspected credit note loses its dunning badge and gains a tappable one", async () => {
+  const html = await renderManage(sweetsRows("CR0301267"));
+
+  assert.match(html, /Lijkt een creditnota/, "the signal still fires on the real case");
+  assert.doesNotMatch(html, /te laat/, "money the supplier owes you is never late");
+  // On a phone there is no hover, so a title attribute was the whole explanation and none of it was
+  // reachable. The badge has to be something you can press.
+  assert.match(
+    html, /<button[^>]*>⚠ Lijkt een creditnota<\/button>/,
+    "the warning badge is a button, not a tooltip nobody can open",
+  );
+});
+
+test("[CREDIT-SAFE] the same overdue row IS dunned once it stops looking like a credit note", async () => {
+  // Same fixture, same dates, only the number changes: RE… carries no credit prefix, so the signal
+  // stays quiet and the row is an ordinary late bill again. Without this second render the first
+  // one would also pass on a screen that had simply stopped dunning anything.
+  const html = await renderManage(sweetsRows("RE0803119"));
+
+  assert.doesNotMatch(html, /Lijkt een creditnota/, "no credit prefix, no signal");
+  assert.match(html, /te laat/, "an ordinary overdue invoice must still say so");
+});

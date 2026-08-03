@@ -50,7 +50,12 @@ import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 // [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
 import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
-import { looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict } from '@/lib/creditnota-signal'
+import {
+  looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict,
+  // [CREDIT-SAFE] One stance, read by every widget that would treat a row as a debt — the dunning
+  // badge, the QR sheet and the one-tap "Heb je betaald?". See the header in creditnota-signal.ts.
+  creditStance, payableAsDebt, type CreditStance,
+} from '@/lib/creditnota-signal'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [PERIODE] Welke [start, eind] "deze maand" / "vorig kwartaal" / "dit jaar" betekent — puur en
 // getest, zodat de randen (januari → december, Q1 → Q4 vorig jaar, schrikkeljaar) vaststaan.
@@ -752,6 +757,59 @@ export default function IncomingManageClient({
   // [FULL-CORRECTION] Opening is all this screen does now — the editor and its save live in the
   // shared component, so /bank cannot end up with a second one that drifts.
   const openCorrection = (inv: IncomingRow) => setCorrectFor(inv)
+
+  // ── [CREDIT-SAFE] The question that stands in front of a payment ──────────────
+  // A row whose stance is not 'none' does not go straight to the pay flow: it asks first. The
+  // pending action travels with the question so that answering "nee" continues exactly where the
+  // tap was going — the guard adds a step, it never takes the road away.
+  const [creditAsk, setCreditAsk] = useState<
+    { inv: IncomingRow; stance: CreditStance; proceed: (() => void) | null } | null
+  >(null)
+  const [creditBusy, setCreditBusy] = useState(false)
+
+  /** Every one-tap payment path on this screen runs through here. Payable rows notice nothing. */
+  function payGuarded(inv: IncomingRow, stance: CreditStance, proceed: () => void) {
+    if (payableAsDebt(stance)) { proceed(); return }
+    setCreditAsk({ inv, stance, proceed })
+  }
+
+  // [CREDIT-SAFE] "Ja, dit is een creditnota" — the same one-way declaration the correction modal's
+  // tick makes, through the SAME route, with the same six guards, the same credit-sign rule and the
+  // same audit trail. It is offered here because this is where the owner is standing when they
+  // realise it: in front of the pay button, with the paper in hand. Two taps instead of five.
+  async function bookAsCreditnota(inv: IncomingRow) {
+    if (creditBusy) return
+    setCreditBusy(true)
+    try {
+      const res = await fetch(`/api/invoice/${inv.id}/amounts`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_credit_note: true }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        // [UI-HONESTY] The route's refusals are states with a way out named in them ("draai eerst
+        // de betaling terug", "je boekhouder heeft deze factuur al verwerkt"). A generic retry
+        // message would send the owner at a button that cannot work.
+        showToast(typeof data.error === 'string' ? data.error : 'Omboeken mislukt — er is niets gewijzigd')
+        return
+      }
+      // From the SERVER's answer, never optimistically: this row's sign is what the payment screens,
+      // the openstaand total and the aangifte all read.
+      patchLocal(inv.id, {
+        total_ex_btw: data.total_ex_btw,
+        btw_amount: data.btw_amount,
+        total_inc_btw: data.total_inc_btw,
+        invoice_type: data.invoice_type,
+      })
+      setCreditAsk(null)
+      showToast('Geboekt als creditnota — gaat van je openstaande saldo af')
+    } catch {
+      showToast('Geen verbinding — er is niets gewijzigd')
+    } finally {
+      setCreditBusy(false)
+    }
+  }
 
   // [CREDITNOTA-SIGNAL] Every document number per supplier, from the FULL list and not from
   // `displayed`: the evidence that a supplier uses two kinds of number must not depend on whichever
@@ -1803,9 +1861,31 @@ export default function IncomingManageClient({
               // booked kind and an already-negative amount count here: both behave as a credit,
               // whichever of the two the supplier put on paper.
               const isCreditnota = inv.invoice_type === 'creditnota' || (inv.total_inc_btw ?? 0) < 0
-              const daysLate = isPaid || isCreditnota ? null : overdueDays(inv.due_date, todayIso)
               // What THIS supplier's numbering gives away. See creditnota-signal.ts: only when the
               // same supplier demonstrably uses two kinds of prefix does "CR" mean anything.
+              const creditSignal = looksLikeCreditnota({
+                invoiceNumber: inv.invoice_number,
+                totalIncBtw: inv.total_inc_btw,
+                invoiceType: inv.invoice_type,
+                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+              })
+              const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
+              // [CREDIT-SAFE] The single answer the payable-widgets below read. It stands HERE, above
+              // its first reader, because every one of them runs during render — and this file has
+              // already paid once for a const read before its declaration inside a render-time
+              // closure (the /manage white screen). Order is not style on this page.
+              const stance = creditStance({
+                invoiceNumber: inv.invoice_number,
+                totalIncBtw: inv.total_inc_btw,
+                invoiceType: inv.invoice_type,
+                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+              })
+              const payable = payableAsDebt(stance)
+              // [CREDIT-SAFE] …and the dunning badge is one of them. It used to ask isCreditnota,
+              // which covers a credit note that is ALREADY booked right — the exact case that no
+              // longer needs telling. What it missed is the one that does: CR0301267 sat at +33,87
+              // wearing "2 dagen te laat" for money the supplier owed the owner.
+              const daysLate = isPaid || !payable ? null : overdueDays(inv.due_date, todayIso)
               // [ARITHMETIC-VISIBLE] The same verdict the verify queue shows, computed here for the
               // first time. Until now this screen displayed a broken breakdown as if nothing were
               // wrong: an invoice whose excl + BTW does not equal its total still counted for its
@@ -1824,13 +1904,6 @@ export default function IncomingManageClient({
               // to intake and were already answered when the owner confirmed this invoice; repeating
               // them here would turn a payment list into a second inbox.
               const mathProblem = health.flags.arithmetic
-              const signConflict = creditnotaSignConflict({ invoiceType: inv.invoice_type, totalIncBtw: inv.total_inc_btw })
-              const creditSignal = looksLikeCreditnota({
-                invoiceNumber: inv.invoice_number,
-                totalIncBtw: inv.total_inc_btw,
-                invoiceType: inv.invoice_type,
-                vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
-              })
               // [DATE-LINE] The other half of the same timeline: how long is still LEFT. Same rule
               // — null when paid (a settled bill has no deadline left to count), and null when the
               // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
@@ -2029,21 +2102,28 @@ export default function IncomingManageClient({
                             decides. */}
                         {/* [CREDITNOTA-SIGNAL] The contradiction: the app itself calls it a credit
                             note and booked it as a debt. Not a suspicion — an error. */}
+                        {/* [CREDIT-SAFE] Both badges are BUTTONS now. A tooltip is not an answer on
+                            a phone — there is no hover — so the sentence explaining the warning was
+                            unreachable on the device this app is used on, and the only thing the
+                            owner could actually tap was the pay button beside it. Tapping the badge
+                            now opens the same question the pay button asks, with the repair in it. */}
                         {signConflict && (
-                          <span
+                          <button
+                            onClick={e => { e.stopPropagation(); setCreditAsk({ inv, stance, proceed: null }) }}
                             title="Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in 'nog te betalen' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken."
-                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.errorContainer, color: M3.error, border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
                             ⚠ Creditnota staat positief
-                          </span>
+                          </button>
                         )}
                         {creditSignal.suspected && (
-                          <span
+                          <button
+                            onClick={e => { e.stopPropagation(); setCreditAsk({ inv, stance, proceed: null }) }}
                             title={creditnotaSignalText(creditSignal) ?? ''}
-                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.warningContainer, color: '#7C5800', border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
                             ⚠ Lijkt een creditnota
-                          </span>
+                          </button>
                         )}
                         {/* [ARITHMETIC-VISIBLE] The breakdown does not add up. The full reason —
                             which of the three amounts is the odd one out, and what the total
@@ -2144,7 +2224,9 @@ export default function IncomingManageClient({
                           onClick={e => {
                             e.stopPropagation()
                             if (processingId === inv.id || checkingId === inv.id) return
-                            requestPay(inv)
+                            // [CREDIT-SAFE] A row that looks like a credit note asks its question
+                            // first; a payable row goes straight through, exactly as before.
+                            payGuarded(inv, stance, () => requestPay(inv))
                           }}
                           style={{
                             fontSize: 12, fontWeight: isPrepared ? 600 : 500, borderRadius: R.full,
@@ -2248,7 +2330,10 @@ export default function IncomingManageClient({
                             the QR + copy sheet. No DB write; pure preparation. */}
                         {inv.status === 'received' && (
                           <button
-                            onClick={e => { e.stopPropagation(); setPrepareCtx(inv) }}
+                            // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
+                            // pre-fills the supplier's IBAN and the amount in the owner's bank app.
+                            // On CR0301267 it offered € 33,87 to a supplier who owed it back.
+                            onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
                             style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
                             Betalen
@@ -2653,6 +2738,97 @@ export default function IncomingManageClient({
           </div>
         </div>
       )}
+
+      {/* ── [CREDIT-SAFE] The question in front of the payment ──────────────────
+          Reached two ways: by tapping a payment action on a row that looks like a credit note, and
+          by tapping the warning badge itself. Both land here because both are the same question,
+          and the owner is the only one who can answer it — the app may not flip a sign on the
+          strength of two letters in a document number (creditnota-signal.ts says why).
+          What it MAY do is refuse to hand over a filled-in payment QR while the question is open. */}
+      {creditAsk && (() => {
+        const { inv, stance, proceed } = creditAsk
+        const signal = looksLikeCreditnota({
+          invoiceNumber: inv.invoice_number,
+          totalIncBtw: inv.total_inc_btw,
+          invoiceType: inv.invoice_type,
+          vendorNumbers: vendorNumbersByName.get((inv.client_name ?? '').trim().toLowerCase()) ?? [],
+        })
+        // Already booked as a credit and carrying the right sign: nothing to ask, nothing to repair.
+        // The owner tapped a pay button, so answer the question they actually have.
+        const settled = stance === 'credit'
+        const uitleg = settled
+          ? 'Dit is een creditnota: geld dat jóu toekomt. Je hoeft hem niet te betalen — hij staat met een minbedrag in de boeken en gaat vanzelf van je openstaande saldo af.'
+          : stance === 'conflict'
+            ? 'Deze factuur staat als creditnota geboekt, maar met een POSITIEF bedrag. Daardoor telt hij mee in "nog te betalen" terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken.'
+            : creditnotaSignalText(signal) ??
+              'Deze factuur lijkt een creditnota — geld dat jou toekomt in plaats van geld dat je moet betalen.'
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+            onClick={() => !creditBusy && setCreditAsk(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={settled ? 'Creditnota' : 'Is dit een creditnota?'}
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 24, color: settled ? '#0B8043' : M3.warning }}>
+                  {settled ? 'check_circle' : 'warning'}
+                </span>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>
+                  {settled ? 'Dit is een creditnota' : 'Is dit een creditnota?'}
+                </h3>
+              </div>
+              <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.55, margin: '0 0 12px' }}>{uitleg}</p>
+              <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#202124' }}>
+                <div style={{ fontWeight: 600 }}>{inv.client_name ?? '—'}</div>
+                <div style={{ color: '#5F6368', marginTop: 2 }}>
+                  {inv.invoice_number ? `${inv.invoice_number} · ` : ''}{fmtEur(inv.total_inc_btw)}
+                </div>
+              </div>
+              {!settled && (
+                // Says exactly what the tap does, because it moves money on three screens at once.
+                <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.5, margin: '0 0 16px' }}>
+                  Kies je “ja”, dan worden de bedragen als minbedrag opgeslagen: hij gaat van je
+                  openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Kijk op
+                  de factuur — staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag
+                  onderaan, dan is het er een.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+                {!settled && (
+                  <button
+                    onClick={() => bookAsCreditnota(inv)}
+                    disabled={creditBusy}
+                    style={{ width: '100%', padding: '12px', borderRadius: R.full, background: creditBusy ? '#9AA0A6' : M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                    {creditBusy ? 'Bezig…' : 'Ja, boek als creditnota'}
+                  </button>
+                )}
+                {/* The way on. Present only when a tap was actually held here — opened from the
+                    badge there is nothing to continue to, and a button promising movement that
+                    only closes a sheet is a lie the owner pays for the second time they trust it. */}
+                {proceed && (
+                  <button
+                    onClick={() => { setCreditAsk(null); proceed() }}
+                    disabled={creditBusy}
+                    style={{ width: '100%', padding: '12px', borderRadius: R.full, background: settled ? M3.surfaceVariant : 'transparent', color: settled ? '#3c4043' : M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                    {settled ? 'Toch afhandelen' : 'Nee, gewone factuur — doorgaan'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setCreditAsk(null)}
+                  disabled={creditBusy}
+                  style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
+                  {proceed ? 'Annuleren' : 'Sluiten'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
       {matchResult && (
