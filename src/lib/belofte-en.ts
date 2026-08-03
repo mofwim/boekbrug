@@ -62,6 +62,17 @@ export const PROMISE_STEPS: readonly { head: string; text: string }[] = [
   },
 ] as const;
 
+/** [PROBLEEM] The problem — the twin of PROBLEEM_* in belofte.ts. Both pages carry it. */
+export const PROBLEM_HEAD = "The problem" as const;
+export const PROBLEM_1 =
+  "Receipts in a pocket, invoices in an inbox, a bank statement somewhere on a laptop. " +
+  "Every three months you have to turn that into a BTW return — and the Belastingdienst " +
+  "expects you to keep all of it for seven years.";
+export const PROBLEM_2_BOLD = "The solution is not that you learn bookkeeping.";
+export const PROBLEM_2 =
+  " It is that nothing gets lost between the moment you receive a paper and the moment your " +
+  "bookkeeper needs it. That is the only job this app has.";
+
 /** For the bookkeeper — a different person with a different problem. */
 export const PROMISE_BOOKKEEPER =
   "Your client hands over a closed quarter instead of a shoebox. " +

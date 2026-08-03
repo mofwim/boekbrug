@@ -31,6 +31,10 @@ import {
   PROMISE_STEPS,
   PROMISE_BOOKKEEPER,
   PROMISE_OTHER_LANGUAGES,
+  PROBLEM_HEAD,
+  PROBLEM_1,
+  PROBLEM_2_BOLD,
+  PROBLEM_2,
 } from '@/lib/belofte-en'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
@@ -102,21 +106,14 @@ export default function EnglishHome() {
         <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>{PROMISE_REASSURE}</div>
       </section>
 
-      {/* The problem, in the words of the person who has it. The Dutch page can leave this
-          implicit — its reader knows the shoebox. Someone reading this in their second or third
-          language deserves it spelled out once. */}
+      {/* [PROBLEEM] The problem, in the words of the person who has it. Now on BOTH pages —
+          see belofte.ts for why leaving it off the Dutch one was the wrong call. */}
       <section style={{ ...wrap, paddingBottom: 44 }}>
         <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: '28px 26px', maxWidth: 720, margin: '0 auto' }}>
-          <h2 style={{ fontSize: 21, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>The problem</h2>
-          <p style={{ fontSize: 16, lineHeight: 1.65, color: '#3c4043', margin: '0 0 14px' }}>
-            Receipts in a pocket, invoices in an inbox, a bank statement somewhere on a laptop.
-            Every three months you have to turn that into a BTW return — and the Belastingdienst
-            expects you to keep all of it for seven years.
-          </p>
+          <h2 style={{ fontSize: 21, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>{PROBLEM_HEAD}</h2>
+          <p style={{ fontSize: 16, lineHeight: 1.65, color: '#3c4043', margin: '0 0 14px' }}>{PROBLEM_1}</p>
           <p style={{ fontSize: 16, lineHeight: 1.65, color: '#3c4043', margin: 0 }}>
-            <strong>The solution is not that you learn bookkeeping.</strong> It is that nothing
-            gets lost between the moment you receive a paper and the moment your bookkeeper needs
-            it. That is the only job this app has.
+            <strong>{PROBLEM_2_BOLD}</strong>{PROBLEM_2}
           </p>
         </div>
       </section>
