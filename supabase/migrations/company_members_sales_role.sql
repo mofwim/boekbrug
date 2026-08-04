@@ -207,6 +207,14 @@ CREATE POLICY clients_member_update ON public.clients
 --
 -- DIT IS HET SCHARNIER VAN DE HELE MIGRATIE.
 --
+-- ⚠ LET OP — DEZE FUNCTIE IS LATER NOG EEN KEER VERBREED.
+-- accountant_invoice_mandate.sql voegt een DERDE uitzondering toe (een boekhouder met een levend
+-- factuurmandaat van de klant). Die migratie doet dat met CREATE OR REPLACE op dezelfde functie.
+-- Draai je DIT bestand daarna opnieuw, dan wint de versie hieronder en verdwijnt het mandaat
+-- geruisloos: de boekhouder krijgt vanaf dat moment 42501 op elke factuur die hij namens een klant
+-- probeert uit te geven, zonder dat er iets stuk lijkt. Draai in dat geval accountant_invoice_-
+-- mandate.sql er nog een keer achteraan — hij is idempotent.
+--
 -- next_invoice_seq() (uit factuur_b_numbering.sql) heeft een harde wacht:
 --
 --     IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN RAISE ... 42501

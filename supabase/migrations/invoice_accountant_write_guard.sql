@@ -26,6 +26,15 @@
 -- (auth.uid() IS NULL) bypass both guards — pipeline paths re-assert their own
 -- preconditions (e.g. bank-auto-confirm's verwerkt WHERE clause).
 
+-- ⚠ LET OP — DEZE TRIGGERFUNCTIE IS LATER NOG EEN KEER AANGEPAST.
+-- accountant_invoice_mandate.sql voegt uitzondering 4 toe (een gemachtigde boekhouder die een
+-- concept uitgeeft dat hij ZELF heeft gemaakt, voor deze klant, met sender_id/receiver_id/direction
+-- onveranderd). Die migratie doet dat met CREATE OR REPLACE op dezelfde functie. Draai je DIT
+-- bestand daarna opnieuw, dan wint de versie hieronder en verdwijnt die uitzondering geruisloos:
+-- het concept wordt dan wel aangemaakt maar het versturen breekt af op "Permission denied", nadat
+-- het factuurnummer al is verbruikt. Draai in dat geval accountant_invoice_mandate.sql er nog een
+-- keer achteraan — hij is idempotent.
+
 -- ── A. Accountant write guard — extended column list ─────────────────────────
 CREATE OR REPLACE FUNCTION public.prevent_accountant_amount_changes()
 RETURNS trigger
