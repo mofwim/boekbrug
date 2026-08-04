@@ -252,3 +252,80 @@ CREATE TRIGGER prevent_accountant_amount_changes
 -- 4) Revoking lands immediately:
 --    UPDATE public.accountant_invoice_mandates SET revoked_at = now() WHERE ...;
 --    SELECT public.has_active_invoice_mandate('<A>', '<C>');   -- expected: f
+
+-- ── NAGEKOMEN: de rijen die de boekhouder MOET kunnen zien om te kunnen versturen ─────────────
+-- [MANDAAT-RLS] Dit ontbrak, en zonder dit werkte de hele functie niet.
+--
+-- De drie bewakers hierboven regelen wat de boekhouder MAG. Ze zeggen niets over wat hij ZIET, en
+-- dat is een aparte vraag met een eigen antwoord: RLS. De bestaande boekhouderspolicies hangen
+-- allemaal aan de gegenereerde kolom `shared`:
+--
+--     shared boolean GENERATED ALWAYS AS (status = ANY (ARRAY['sent','received','paid'])) STORED
+--
+-- Een CONCEPT is dus per definitie niet `shared`. Gevolg, en het is precies de volgorde waarin het
+-- misging: /api/invoice/draft schrijft de factuur met service_role (dat lukt), waarna
+-- /api/invoice/send hem met de SESSIE-client terugleest — en nul rijen krijgt. De route antwoordt
+-- "Factuur niet gevonden", het concept blijft achter in de administratie van de klant, en elke
+-- nieuwe poging maakt er nog één. Ook als de leesregel er wél was geweest, had de UPDATE die het
+-- nummer vastlegt niets geraakt: invoices_accountant_update_v2 eist óók `shared = true`.
+--
+-- Waarom dit RLS wordt en geen service_role. Het zou makkelijker zijn om die twee queries op de
+-- pipeline-client te zetten, en dat is elders in dit product ook het patroon (accountant-access.ts).
+-- Maar service_role zet `auth.uid()` op NULL, en dan slaat prevent_accountant_amount_changes()
+-- over — inclusief de nauwe uitzondering 4 die hierboven met zoveel zorg is opgeschreven. De
+-- factuur uitgeven is het moment waarop die bewaker er het meest toe doet. Dus krijgt de sessie
+-- precies genoeg rechten om dat ene ding te doen, en blijft de trigger eroverheen staan.
+--
+-- Elke voorwaarde hieronder is dezelfde als in uitzondering 4, met opzet: een leesrecht dat ruimer
+-- is dan het schrijfrecht laat een boekhouder rondkijken in concepten die hij nooit mag aanraken.
+
+DROP POLICY IF EXISTS invoices_mandate_draft_read ON public.invoices;
+CREATE POLICY invoices_mandate_draft_read ON public.invoices
+  FOR SELECT TO authenticated
+  USING (
+    status = 'draft'
+    AND created_by = auth.uid()
+    AND public.has_active_invoice_mandate(auth.uid(), sender_id)
+  );
+
+-- De UPDATE die het nummer vastlegt en de status op 'sent' zet.
+--   USING     kijkt naar de OUDE rij: nog een concept, en van hem.
+--   WITH CHECK kijkt naar de NIEUWE rij, en mag daarom NIET op status = 'draft' staan — na deze
+--              update is hij 'sent'. Wat er wél moet blijven gelden: hij is nog steeds van deze
+--              boekhouder, en het mandaat leeft nog. Alles wat verder niet mag bewegen
+--              (bedragen, sender_id, richting) staat in de trigger, die hier gewoon overheen loopt.
+DROP POLICY IF EXISTS invoices_mandate_draft_issue ON public.invoices;
+CREATE POLICY invoices_mandate_draft_issue ON public.invoices
+  FOR UPDATE TO authenticated
+  USING (
+    status = 'draft'
+    AND created_by = auth.uid()
+    AND public.has_active_invoice_mandate(auth.uid(), sender_id)
+  )
+  WITH CHECK (
+    created_by = auth.uid()
+    AND public.has_active_invoice_mandate(auth.uid(), sender_id)
+  );
+
+-- De regels, want de PDF wordt uit de regels gerenderd.
+-- invoice_lines_select_accountant bestaat al, maar eist `i.status = 'paid'` — bedoeld voor het
+-- nakijken van een afgeronde factuur, niet voor het maken van er een. Zonder deze policy rendert
+-- de PDF met een lege regeltabel: een factuur zonder inhoud, met een verbruikt nummer.
+-- Niet beperkt tot 'draft': een herverzending na een mislukte mail leest ze opnieuw.
+DROP POLICY IF EXISTS invoice_lines_mandate_read ON public.invoice_lines;
+CREATE POLICY invoice_lines_mandate_read ON public.invoice_lines
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.invoices i
+    WHERE i.id = invoice_lines.invoice_id
+      AND i.created_by = auth.uid()
+      AND public.has_active_invoice_mandate(auth.uid(), i.sender_id)
+  ));
+
+-- =====================================================================
+-- CONTROLE 5 — de policies die hierboven ontbraken.
+--   SELECT policyname FROM pg_policies
+--    WHERE schemaname='public'
+--      AND policyname IN ('invoices_mandate_draft_read','invoices_mandate_draft_issue',
+--                         'invoice_lines_mandate_read');
+--   Verwacht: drie rijen. Ontbreken ze, dan geeft ELKE factuur namens een klant een 404.

@@ -138,3 +138,24 @@ test("the ceilings on reminding are published, including the one the client cont
     "a formal aanmaning is never sent by a mandated third party",
   );
 });
+
+test("[WAARSCHUWING] §5.7.5 describes a mechanism, not an intention", () => {
+  // This clause promised 30 days' notice before deletion and NOTHING implemented it: decidePurge()
+  // returned true the instant the seven years were up. It is now a precondition — no provable
+  // letter, no deletion — and the clause says so, because a client cannot verify code.
+  assert.match(
+    voorwaarden,
+    /minstens 30 dagen vooraf per e-mail/,
+    "the notice period itself",
+  );
+  assert.match(
+    voorwaarden,
+    /geen voornemen maar een voorwaarde/,
+    "…and that it gates the deletion rather than merely preceding it",
+  );
+  assert.match(
+    voorwaarden,
+    /blijft je administratie staan/,
+    "…including which way it fails when the mail does not go out",
+  );
+});

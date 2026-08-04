@@ -151,6 +151,15 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 4. Fetch invoice (ownership via RLS + sender_id) ───────
+    // [MANDAAT-RLS] Voor een boekhouder werkt dit ALLEEN met de policies uit
+    // accountant_invoice_mandate.sql (invoices_mandate_draft_read / _issue en
+    // invoice_lines_mandate_read). Zonder die drie geeft deze lees-query nul rijen — een concept is
+    // niet `shared`, en `shared` is de kolom waar alle bestaande boekhouderspolicies aan hangen —
+    // en antwoordt de route 404 op een factuur die hij zojuist zelf heeft laten aanmaken.
+    //
+    // De sessie-client blijft hier bewust staan, ook al zou service_role het probleem 'oplossen':
+    // service_role zet auth.uid() op NULL, en dan slaat prevent_accountant_amount_changes() over.
+    // Juist bij het uitgeven van een factuur onder andermans BTW-nummer wil je die trigger erbij.
     // [FACTUUR-A] select('*') — the PDF needs every field (address block,
     // delivery_date, type). delivery_date lands after the FACTUUR-A migration;
     // select('*') keeps this resilient either way.

@@ -19,6 +19,7 @@ import {
   storagePrefixForUser,
   type DeletionRequestRow,
 } from "./retention-purge";
+import { type WarnableRow } from "./retention-warning";
 
 let passed = 0;
 let failed = 0;
@@ -37,13 +38,22 @@ const USER = "11111111-2222-3333-4444-555555555555";
  *  Its STORED eligible date is the old day-exact one a legacy row would carry —
  *  kept deliberately, so these tests also prove that such a row is governed by the
  *  stricter recomputation and not by the too-early number on disk. */
-function base(overrides: Partial<DeletionRequestRow> = {}): DeletionRequestRow {
+function base(overrides: Partial<WarnableRow> = {}): WarnableRow {
   return {
     id: "req-1",
     user_id: USER,
     deleted_at: "2026-07-01T00:00:00.000Z",
     data_eligible_for_deletion_at: "2033-07-01T00:00:00.000Z",
     purged_at: null,
+    // [WAARSCHUWING] De brief van §5.7.5. Hij hoort in de BASIS en niet in één losse test: sinds
+    // decidePurge() hem als voorwaarde eist, is "de klant is gewaarschuwd" onderdeel van de enige
+    // vorm die MAG wissen. Een basisrij zonder brief zou iedere test hieronder om de verkeerde
+    // reden laten slagen.
+    //
+    // De datum staat ruim vóór de vroegste klok waarmee hieronder wordt getest (1 jan 2034), niet
+    // vlak vóór NOW. Anders zou de klokgrens-test falen op een brief die op dát moment nog niet
+    // verstuurd wás — een terechte weigering, maar niet waar die test over gaat.
+    purge_warning_sent_at: "2033-11-15T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -178,6 +188,60 @@ check(
 );
 
 check("an empty page purges nothing", partitionPurgeCandidates([], NOW).purge.length === 0);
+
+console.log("\n[WAARSCHUWING] geen aantoonbare brief van 30 dagen oud = geen verwijdering");
+
+check(
+  "a row that was never warned is refused, however expired it is",
+  // Voorwaarden 5.7.5 belooft 30 dagen bericht vooraf. Die belofte stond er zonder mechaniek: tot
+  // deze regel gaf decidePurge groen licht op het moment dat de zeven jaar om waren, en er was
+  // nooit een mail verstuurd.
+  (() => {
+    const v = decidePurge(base({ purge_warning_sent_at: null }), NOW);
+    return v.purge === false && v.reason === "no_warning_sent";
+  })()
+);
+
+check(
+  "a MISSING column is refused too — an old row proves nothing",
+  (() => {
+    const row = base();
+    delete (row as { purge_warning_sent_at?: string | null }).purge_warning_sent_at;
+    const v = decidePurge(row, NOW);
+    return v.purge === false && v.reason === "no_warning_sent";
+  })()
+);
+
+check(
+  "29 days is not 30 — 'minstens 30 dagen' is a floor, not a target",
+  decidePurge(base({ purge_warning_sent_at: "2034-07-03T00:00:00.000Z" }), NOW).purge === false
+);
+
+check(
+  "exactly 30 days is enough",
+  decidePurge(base({ purge_warning_sent_at: "2034-07-02T00:00:00.000Z" }), NOW).purge === true
+);
+
+check(
+  "an unreadable warning date is refused, never assumed sent",
+  decidePurge(base({ purge_warning_sent_at: "gisteren" }), NOW).purge === false
+);
+
+check(
+  "a warning stamped in the FUTURE proves nothing",
+  // Een klokprobleem of een handmatige aanpassing. Beide betekenen: niemand is iets verteld.
+  decidePurge(base({ purge_warning_sent_at: "2035-01-01T00:00:00.000Z" }), NOW).purge === false
+);
+
+check(
+  "the vault still wins over a sent warning",
+  // Volgorde: de kluis weigert eerder dan de brief. Wie vooruit betaald heeft, hoort ook geen
+  // aankondiging te krijgen dat zijn spullen weggaan.
+  (() => {
+    const v = decidePurge(base({ kluis_keep_through_year: 2040 }), NOW);
+    return v.purge === false && v.reason === "bewaarkluis_actief";
+  })()
+);
 
 console.log("\n[A1] the storage prefix is the ONLY thing bounding the blast radius");
 

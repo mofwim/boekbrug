@@ -31,6 +31,11 @@ export interface SalesInvoice {
   total_inc_btw: number | null;
   amount_paid: number | null;
   status: string | null;
+  /**
+   * [CREDITNOTA-NO-CHASE] 'factuur' | 'creditnota' | 'pro_forma'. Absent reads as 'factuur', so a
+   * caller that does not select the column keeps the behaviour it always had.
+   */
+  invoice_type?: string | null;
   /** ISO time of the last reminder sent, or null. */
   last_reminder_at?: string | null;
   /** How many reminders already went out — the cron tiers included. */
@@ -117,6 +122,19 @@ export type ReminderVerdict =
  * sales member can read, rather than a button that does nothing.
  */
 export function canRemind(f: SalesInvoice, nowMs: number): ReminderVerdict {
+  // [CREDITNOTA-NO-CHASE] Eerst, en vóór alle andere regels: een creditnota is geen vordering maar
+  // het tegendeel ervan. Hij wordt geschreven met status 'sent', een vervaldatum van vandaag en een
+  // NEGATIEF totaal — en outstandingAmount() neemt daar de absolute waarde van. Zonder deze regel
+  // ziet elke lijst hem dus als een te late factuur van datzelfde bedrag, met een levende
+  // herinnerknop eronder. Wie daarop drukt, maant de klant van de ondernemer aan om geld te betalen
+  // dat hij juist terugkrijgt.
+  //
+  // De nachtelijke cron weigert dit al twee keer (invoice-reminders.ts: hasCreditnota, en
+  // invoiceType !== 'factuur'). Die twee weigeringen zaten in de cron en niet in deze module, dus
+  // elke knop die later langs canRemind ging, erfde ze niet. Nu staat de regel waar hij hoort.
+  if ((f.invoice_type ?? "factuur") !== "factuur") {
+    return { allowed: false, reason: "Een creditnota is geen openstaande vordering." };
+  }
   const state = stateOf(f, nowMs);
   if (state === "concept") return { allowed: false, reason: "Deze factuur is nog niet verstuurd." };
   if (state === "betaald") return { allowed: false, reason: "Deze factuur is betaald." };

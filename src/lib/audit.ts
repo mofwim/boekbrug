@@ -102,6 +102,9 @@ export type AuditAction =
   // spoor omdat het antwoord op "waarom is dit kwartaal zo laat ingediend" vaak precies hier ligt:
   // wanneer is er gevraagd, en hoe vaak.
   | 'accountant.documents_requested'
+  // [WAARSCHUWING] De 30-dagenbrief van voorwaarden art. 5.7.5 is verstuurd. Dit is het enige
+  // spoor dat later kan aantonen DAT er is gewaarschuwd voordat er iets werd gewist — de kolom
+  // purge_warning_sent_at kan worden overschreven, een auditregel niet.
   // [ACTING-FOR] Een herinnering die MET DE HAND is verstuurd (de cron logt in invoice_reminders,
   // niet hier). Aan de andere kant zit een klant van de ondernemer; wie op die knop drukte hoort
   // dus terug te vinden te zijn — zeker als dat een medewerker was en niet de eigenaar zelf.
@@ -124,6 +127,7 @@ export type AuditAction =
   //
   // Alleen de OPHAALHANDELING wordt vastgelegd, nooit de inhoud: entity_id is de eigenaar
   // plus het kwartaal, en sanitizeForAudit strijkt sowieso alles wat er niet in hoort.
+  | 'retention.warning_sent'
   | 'accountant.package_downloaded'   // ← het kwartaalpakket (ZIP) opgehaald
   | 'accountant.export_downloaded'    // ← een CSV/UBL-export opgehaald
   // [AUTO-INCASSO] The owner declaring that a supplier collects its own invoices. It belongs at

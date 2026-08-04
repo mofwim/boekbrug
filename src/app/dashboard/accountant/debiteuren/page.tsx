@@ -19,6 +19,9 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { buildDebtorBoard, type DebtorInput } from '@/lib/accountant-debtors'
+// [CREDITNOTA-NO-CHASE] De gedeelde regel "is dit nog geld dat ik krijg" — beide helften van een
+// gecrediteerd paar moeten samen uit de vorderingenlijst (src/lib/credited-invoices.ts).
+import { creditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
 import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteuren'
 
 export const dynamic = 'force-dynamic'
@@ -83,7 +86,7 @@ export default async function AccountantDebiteurenPage() {
   const [{ data: facturen }, { data: profielen }] = await Promise.all([
     pipeline
       .from('invoices')
-      .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused')
+      .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused, invoice_type, original_invoice_id')
       .in('sender_id', klantIds)
       .eq('direction', 'outgoing')
       // Alleen wat nog geld kan opleveren. 'draft' is geen schuld, 'paid' en 'archived' evenmin —
@@ -98,7 +101,18 @@ export default async function AccountantDebiteurenPage() {
     namen[p.id] = p.company_name || p.full_name || 'Klant'
   }
 
-  const rijen = (facturen ?? []) as unknown as Array<DebtorInput & { sender_id: string; reminders_paused: boolean | null }>
+  // [CREDITNOTA-NO-CHASE] Een creditnota komt hier als PAAR binnen: de creditnota zelf (negatief
+  // totaal, status 'sent', vervaldatum vandaag) én de oorspronkelijke factuur, waarvan de status
+  // nergens in dit product op 'credited' wordt gezet. Zonder deze filter telt de eerste als een te
+  // late vordering van hetzelfde bedrag — outstandingAmount() neemt de absolute waarde — en blijft
+  // de tweede staan als geld dat allang is teruggedraaid. Twee keer fout, in dezelfde richting.
+  //
+  // filterOpenReceivables haalt ze allebei weg; ze horen samen te vertrekken, want alleen het
+  // origineel verwijderen maakt het totaal juist negatief.
+  const alle = (facturen ?? []) as unknown as Array<
+    DebtorInput & { sender_id: string; reminders_paused: boolean | null; invoice_type?: string | null; original_invoice_id?: string | null }
+  >
+  const rijen = filterOpenReceivables(alle, creditedIdsFrom(alle.filter((r) => r.invoice_type === 'creditnota')))
 
   // Het herinneringsspoor. invoice_reminders is per RLS alleen voor de eigenaar leesbaar, dus ook
   // dit gaat via service_role — beperkt tot de facturen die we net zelf hebben opgehaald.

@@ -42,6 +42,14 @@ import {
   storagePrefixForUser,
   type DeletionRequestRow,
 } from "@/lib/retention-purge";
+// [WAARSCHUWING] De 30-dagenbrief van §5.7.5 — zie sendRetentionWarnings() hieronder.
+import {
+  partitionWarningCandidates,
+  WARNING_LEAD_DAYS,
+  type WarnableRow,
+} from "@/lib/retention-warning";
+import { sendRetentionWarning } from "@/lib/email";
+import { appUrl } from "@/lib/app-origin";
 import { logAuditAction } from "@/lib/audit";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
@@ -63,7 +71,139 @@ type PurgeReport = {
   purged: number;
   skipped: Record<string, number>;
   failures: string[];
+  /** [WAARSCHUWING] De 30-dagenbrief van §5.7.5 — wie er een kreeg, en wie niet. */
+  warned: { scanned: number; sent: number; skipped: Record<string, number>; failures: string[] };
 };
+
+/**
+ * [WAARSCHUWING] De 30-dagenbrief versturen — vóór er ook maar iets wordt gewist.
+ *
+ * DE EIGENSCHAP DIE DIT OPLEVERT, EN DIE IS HET HELE PUNT:
+ * decidePurge() eist een brief van minstens 30 dagen oud. Deze pas verstuurt hem. Gevolg: op het
+ * moment dat iemand RETENTION_PURGE_ENABLED voor het eerst aanzet, kan er dertig dagen lang
+ * NIETS worden gewist — hoe oud de rijen ook zijn. Die vertraging is geen bijwerking maar de
+ * bedoeling: de knop is niet gevaarlijk meer, want hij begint met brieven schrijven.
+ *
+ * WAAROM DE BRIEF AAN DEZELFDE SCHAKELAAR HANGT
+ * Staat de purge uit, dan wordt er niets gewist, en dan is er ook niets aan te kondigen.
+ * "Wij verwijderen je administratie over 30 dagen" mailen en het vervolgens niet doen, is
+ * alarmerend én onwaar. Een droge run telt dus wel wie er een brief zou krijgen, en stuurt niets.
+ *
+ * HET STEMPEL STAAT NA DE MAIL, NOOIT ERVOOR. Mislukt de verzending, dan blijft
+ * purge_warning_sent_at leeg en weigert de purge deze rij — precies de goede kant op. Andersom
+ * zou een mislukte mail een verwijdering vrijgeven waarvan niemand ooit is verteld.
+ */
+async function sendRetentionWarnings(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: any,
+  now: Date,
+  dryRun: boolean,
+  origin: string,
+): Promise<PurgeReport["warned"]> {
+  const uit: PurgeReport["warned"] = { scanned: 0, sent: 0, skipped: {}, failures: [] };
+
+  const horizon = new Date(now.getTime() + WARNING_LEAD_DAYS * 86_400_000).toISOString();
+  let rows: WarnableRow[];
+  try {
+    rows = await fetchAllRows<WarnableRow>((from, to) =>
+      pipeline
+        .from("deletion_requests")
+        .select("id, user_id, deleted_at, data_eligible_for_deletion_at, purged_at, purge_warning_sent_at")
+        .is("purged_at", null)
+        .is("purge_warning_sent_at", null)
+        .not("deleted_at", "is", null)
+        .lte("data_eligible_for_deletion_at", horizon)
+        .order("data_eligible_for_deletion_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (err) {
+    // Ontbrekende kolom = migratie nog niet toegepast. Dan is er niets gewaarschuwd, en dus wist
+    // de purge hieronder ook niets — de veilige kant, zonder 500.
+    console.error("[CRON-RETENTION] waarschuwingsquery mislukt (migratie toegepast?):", err);
+    uit.failures.push("query_failed");
+    return uit;
+  }
+
+  uit.scanned = rows.length;
+  if (rows.length === 0) return uit;
+
+  // [KLUIS] Wie vooruit heeft betaald krijgt geen brief — er gaat niets weg. Faalt de query, dan
+  // waarschuwen wij NIEMAND: een mail "wij verwijderen je administratie" naar iemand die voor
+  // bewaring betaald heeft, is de meest alarmerende fout die dit bestand kan maken.
+  const userIds = [...new Set(rows.map((r) => r.user_id).filter((x): x is string => !!x))];
+  if (userIds.length > 0) {
+    try {
+      const { data: kluizen, error: kluisErr } = await pipeline
+        .from("kluis_subscriptions")
+        .select("user_id, keep_through_year")
+        .in("user_id", userIds)
+        .is("cancelled_at", null);
+      if (kluisErr) throw new Error(kluisErr.message);
+      const langste = new Map<string, number>();
+      for (const k of (kluizen ?? []) as Array<{ user_id: string; keep_through_year: number }>) {
+        if (k.keep_through_year > (langste.get(k.user_id) ?? 0)) langste.set(k.user_id, k.keep_through_year);
+      }
+      for (const r of rows) if (r.user_id) r.kluis_keep_through_year = langste.get(r.user_id) ?? null;
+    } catch (err) {
+      console.error("[CRON-RETENTION] kluis-check mislukt — NIEMAND gewaarschuwd:", err);
+      uit.failures.push("kluis_check_unavailable");
+      return uit;
+    }
+  }
+
+  const { warn, skip } = partitionWarningCandidates(rows, now);
+  for (const s of skip) uit.skipped[s.reason] = (uit.skipped[s.reason] ?? 0) + 1;
+
+  if (warn.length === 0) return uit;
+  console.warn(
+    `[CRON-RETENTION] ${warn.length} account(s) krijgen de 30-dagenbrief (§5.7.5)` +
+      (dryRun ? " — DROGE RUN, er wordt niets verstuurd." : " — VERSTUREN NU."),
+  );
+  if (dryRun) return uit;
+
+  for (const { row, daysLeft } of warn) {
+    try {
+      const { data: profiel } = await pipeline
+        .from("profiles")
+        .select("email, full_name, company_name")
+        .eq("id", row.user_id)
+        .maybeSingle();
+      const email = profiel?.email as string | undefined;
+      if (!email) {
+        // Geen adres = geen brief die aankomt. Niet stempelen: zonder stempel weigert de purge,
+        // en dat is beter dan wissen na een brief die nergens heen ging.
+        uit.skipped["no_email"] = (uit.skipped["no_email"] ?? 0) + 1;
+        continue;
+      }
+      await sendRetentionWarning({
+        toEmail: email,
+        name: profiel?.company_name || profiel?.full_name || null,
+        daysLeft,
+        eligibleDate: row.data_eligible_for_deletion_at as string,
+        loginUrl: appUrl(process.env, "/login", origin),
+      });
+      // Pas NU stempelen. Zie de kop.
+      await pipeline
+        .from("deletion_requests")
+        .update({ purge_warning_sent_at: new Date().toISOString() })
+        .eq("id", row.id);
+      uit.sent += 1;
+      await logAuditAction({
+        // row.user_id is hier gegarandeerd gevuld: decideWarning() weigert een rij zonder.
+        userId: row.user_id as string,
+        action: "retention.warning_sent",
+        entityType: "deletion_request",
+        entityId: row.id,
+        newValue: { days_left: daysLeft, eligible_at: row.data_eligible_for_deletion_at },
+      }).catch(() => {});
+    } catch (err) {
+      console.error("[CRON-RETENTION] waarschuwing mislukt", { id: row.id, err });
+      uit.failures.push(row.id);
+    }
+  }
+  return uit;
+}
 
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
@@ -97,7 +237,13 @@ export async function GET(req: NextRequest) {
     purged: 0,
     skipped: {},
     failures: [],
+    warned: { scanned: 0, sent: 0, skipped: {}, failures: [] },
   };
+
+  // [WAARSCHUWING] EERST de brieven, dan pas het wissen — en in deze volgorde, altijd.
+  // Wie vandaag zijn brief krijgt, kan pas over dertig dagen worden gewist (decidePurge eist dat),
+  // dus de twee passen kunnen elkaar niet in dezelfde run inhalen.
+  report.warned = await sendRetentionWarnings(pipeline, now, dryRun, new URL(req.url).origin);
 
   // ── Find rows whose timer has run out ──────────────────────────────
   // Filtered in SQL to the plausible set, then judged by the pure decision —
