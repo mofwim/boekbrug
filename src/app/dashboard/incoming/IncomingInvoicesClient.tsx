@@ -39,6 +39,8 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-no
 import { describeUploadFailure } from "@/lib/upload-failure";
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
+// [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
+import InvoiceDocumentSheet from "@/components/invoice/InvoiceDocumentSheet";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,6 +133,12 @@ interface IncomingInvoice {
     _intake_paid_card4?: string;         // last 4 of the card, when printed
     _intake_paid_date?: string;          // the settlement date the paper printed
   } | null;
+  // [CHECKLIST] The supplier's account number as printed. Selected so the "rekeningnummer
+  // ongewijzigd" row can be ANSWERED — without it the checklist would say "er staat geen
+  // rekeningnummer op deze factuur" about every queued invoice, which is not a missing number on
+  // the paper, it is a column we did not ask for. Stating that as a finding would be the exact
+  // overstatement invoice-checks.ts exists to prevent.
+  vendor_iban?: string | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
   // [INCOMING-BEVESTIGD] 'received' (verified, te betalen) or 'paid' (settled) on the Bevestigd
@@ -1663,7 +1671,6 @@ export function InvoiceCard({
   const dialog = useDialog();
   const toast = useToast();
   const router = useRouter();
-  const [loadingPdf, setLoadingPdf] = useState(false);
 
   // [SUPERSEDE] The invoice this one was flagged against, when the flag names one we can act on
   // EXACTLY. `possible_duplicate_of` next to it is a display string that falls back to a vendor
@@ -1859,22 +1866,15 @@ export function InvoiceCard({
     }
   };
 
-  const handleOpenPdf = async () => {
-    setLoadingPdf(true);
-    try {
-      const res = await fetch(`/api/email/file/${invoice.id}`);
-      const data = await res.json();
-      if (data.url) {
-        window.open(data.url, "_blank", "noopener,noreferrer");
-      } else {
-        toast(data.error || "Kon bestand niet openen", { tone: "error" });
-      }
-    } catch {
-      toast("Kon bestand niet openen", { tone: "error" });
-    } finally {
-      setLoadingPdf(false);
-    }
-  };
+  // [DOC-INLINE] Open the document INSIDE the app, with our reading and the checks beside it.
+  //
+  // This is the SAME window.open the pay screen had, and this is the more important of the two
+  // places: the pay screen is where an invoice is settled, but THIS is where it is put into the
+  // books. The owner standing here is deciding whether to confirm — which is precisely the moment
+  // "what did we check, and what could we not check" is worth anything.
+  //
+  // The fetch moved into the sheet, so this is a state change and nothing else.
+  const [showDoc, setShowDoc] = useState(false);
 
   return (
     <div
@@ -1896,6 +1896,34 @@ export function InvoiceCard({
         scrollMarginTop: 96,
       }}
     >
+      {/* [DOC-INLINE] The paper, our reading of it, and the seven checks — see the component's
+          header. Rendered from the card so it carries THIS invoice; the sheet fetches its own
+          signed url and closes over nothing. */}
+      {showDoc && (
+        <InvoiceDocumentSheet
+          invoice={{
+            id: invoice.id,
+            client_name: invoice.client_name,
+            invoice_number: invoice.invoice_number,
+            invoice_date: invoice.invoice_date,
+            invoice_type: invoice.invoice_type,
+            total_ex_btw: invoice.total_ex_btw,
+            btw_amount: invoice.btw_amount,
+            total_inc_btw: invoice.total_inc_btw,
+            vendor_iban: invoice.vendor_iban ?? null,
+            field_confidence: invoice.field_confidence as never,
+            // [CHECKLIST] The queue holds no per-supplier number history, and passing none is the
+            // SAFE direction rather than a shortcut: looksLikeCreditnota needs demonstrable
+            // contrast between two kinds of number from one supplier, so fewer numbers can only
+            // make the credit-note signal quieter — never make it fire on an invoice it should not.
+            vendorNumbers: [],
+          }}
+          onClose={() => setShowDoc(false)}
+          // The queue's own correction door is the verify modal, which is what onEdit opens.
+          onCorrect={() => { setShowDoc(false); onEdit(); }}
+        />
+      )}
+
       {/* Header — always visible, tappable */}
       <button
         className="inv-row"
@@ -2296,18 +2324,17 @@ export function InvoiceCard({
           {/* View PDF button */}
           {invoice.pdf_url && (
             <button
-              onClick={handleOpenPdf}
-              disabled={loadingPdf}
+              onClick={() => setShowDoc(true)}
               style={{
                 width: "100%", padding: "12px", borderRadius: 12,
                 background: "#e8f0fe", border: "1.5px solid #1a73e8",
                 color: "#1a73e8", fontWeight: 600, fontSize: 14,
-                cursor: loadingPdf ? "wait" : "pointer", marginBottom: 10,
+                cursor: "pointer", marginBottom: 10,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}
             >
               <span style={{ fontSize: 16 }}>📄</span>
-              {loadingPdf ? "Openen…" : "Bekijk factuur"}
+              Bekijk factuur en controles
             </button>
           )}
 

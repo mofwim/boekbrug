@@ -954,6 +954,44 @@ test("[ARTIKELEN-WIPE] the empty-the-catalogue action exists, and only when ther
   );
 });
 
+test("[CHECKLIST] the verify queue shows the checks too — it is where the invoice enters the books", async () => {
+  // The pay screen got this first, and it is the SECOND-most important place for it. The queue is
+  // where the owner decides to confirm an invoice INTO the books, which is the moment "what did we
+  // check, and what could we not check" is worth anything at all.
+  const { InvoiceCard } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  const base = {
+    id: "q9", client_name: "Oz&er food", client_email: null, invoice_type: "factuur",
+    total_ex_btw: 257.85, btw_amount: 23.21, total_inc_btw: 281.06, amount_paid: 0,
+    invoice_date: "2026-06-24", invoice_number: "26035350", source: "upload",
+    pdf_url: "u1/x.pdf", document_id: null, created_at: "2026-06-24T10:00:00Z",
+    folder_id: null, folder_name: null, field_confidence: null,
+    vendor_iban: "NL65RABO0171136276",
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invoice = { ...base, health: classifyImportHealth(base as any) };
+
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(InvoiceCard as any, {
+          invoice, mode: "pending", expanded: true,
+          onToggle() {}, onConfirmPaid() {}, onEdit() {}, onIgnore() {}, onRestore() {},
+        }))),
+  );
+
+  // The entry point. Its label has to promise both halves, because the checks are the reason to
+  // open it — the document alone is what the old window.open already gave.
+  assert.match(html, /Bekijk factuur en controles/, "the queue offers the document AND the checks");
+  // And the old behaviour must be gone: handing the file to the operating system loses the queue
+  // position, which on this screen means losing your place in the verification you were doing.
+  assert.doesNotMatch(html, /Bekijk factuur<\/button>/, "the OS hand-off label is gone");
+});
+
 test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
   const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
   const { buildDebtorBoard } = await import("../../src/lib/accountant-debtors");

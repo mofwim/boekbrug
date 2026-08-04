@@ -63,7 +63,11 @@ interface IncomingInvoiceRow {
 // Plain column list — no join. The join broke the query and emptied the page.
 // [BRIDGE-CREDITNOTA-SIGN] + invoice_type (badge + sign-inverted health gate).
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
+  // [CHECKLIST] vendor_iban rides along so the "rekeningnummer ongewijzigd" row can be ANSWERED.
+  // Without it every queued invoice would report "er staat geen rekeningnummer op deze factuur" —
+  // which is not a missing number on the paper, it is a column we did not ask for, and saying it
+  // is the overstatement invoice-checks.ts exists to prevent.
+  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence, vendor_iban";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
