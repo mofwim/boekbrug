@@ -47,6 +47,14 @@ export interface BankTransactionRow {
   // as kosten/omzet. Without this every line imported as null, so a retail store's card
   // settlements (AFREK. BETAALAUTOMAAT) never reached the result until manually tagged.
   category: string | null;
+  // [DD-SIGNAL] What the statement said the instrument WAS — the bank's own type code, the
+  // machtigingskenmerk and the incassant-ID. Raw, never a verdict: readDirectDebit() owns the rule,
+  // because the same three markers appear on a STORNO, where the money came back and the invoice
+  // is not paid. Null for a format that carries none, which is an honest "this line does not show
+  // it" and never "this was not a direct debit".
+  type_code: string | null;
+  mandate_id: string | null;
+  creditor_id: string | null;
   // [BANK-TX-SOURCE-ID] Which door+account delivered this row, and the id that door gave it.
   // Both null when the caller names no source or the source named no id — the unique index
   // treats NULLs as distinct, so those rows stay unconstrained and lean on the fingerprint.
@@ -304,6 +312,13 @@ export function mapToRows(
       // its source would claim uniqueness across doors that provably disagree.
       source: sourceKey(source, t.transactionId) ? (source as string) : null,
       external_id: sourceKey(source, t.transactionId) ? (t.transactionId as string) : null,
+      // [DD-SIGNAL] What the statement said about the instrument, kept raw — the verdict is
+      // derived by readDirectDebit(), never stored, so a row cannot drift from the rule. Rides the
+      // same 42703 strip as counterpart_iban/source/external_id: before bank_tx_direct_debit.sql
+      // is applied these three simply do not travel, and the import behaves exactly as it did.
+      type_code: t.typeCode ?? null,
+      mandate_id: t.mandateId ?? null,
+      creditor_id: t.creditorId ?? null,
     };
   });
 }

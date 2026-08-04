@@ -26,6 +26,20 @@ export interface BankTransaction {
   reference: string | null;          // betalingskenmerk
   transactionId: string | null;      // bank-eigen ID
   rawLine: string;        // original line(s) for debugging
+  // [DD-SIGNAL] What the STATEMENT says about the instrument, kept raw. The verdict is not stored
+  // here on purpose — readDirectDebit() derives it (direct-debit.ts), so the rule lives in one
+  // place and a stored verdict cannot go stale against it.
+  //
+  // Every one of these three was already in front of the parser and thrown away: MT940 captures
+  // the type code as group 6 of its :61: regex and skips it with a bare comma, CAMT never asked
+  // for <BkTxCd>/<MndtId>/<CdtrSchmeId>, and the CSV column mapper had no role for ING's `Code`
+  // or Rabobank's own `Machtigingskenmerk` / `Incassant ID` columns.
+  /** The bank's own classification: MT940 :61: type code, CAMT family/subfamily, CSV Code cell. */
+  typeCode?: string | null;
+  /** Machtigingskenmerk — a SEPA direct debit cannot exist without one. */
+  mandateId?: string | null;
+  /** Incassant-ID of the collecting party (NL..ZZZ..). */
+  creditorId?: string | null;
 }
 
 /**
@@ -303,7 +317,10 @@ function parseMT940Transaction(
     return null;
   }
 
-  const [, dateStr, , creditDebit, , amountStr, , ownerRef, bankRef] = txMatch;
+  // [DD-SIGNAL] Group 6 — `(N[A-Z0-9]{3})?` — is the SWIFT transaction type code, and NDDT is
+  // Direct Debit. It was captured and then skipped by the bare comma that used to stand here, so
+  // the one field in an MT940 file that states the instrument never left this function.
+  const [, dateStr, , creditDebit, , amountStr, typeCode, ownerRef, bankRef] = txMatch;
 
   // Parse date YYMMDD → ISO
   const year = 2000 + parseInt(dateStr.slice(0, 2));
@@ -356,6 +373,9 @@ function parseMT940Transaction(
     reference,
     transactionId: bankRef ?? null,
     rawLine: line61 + (line86 ? "\n" + line86 : ""),
+    // [DD-SIGNAL] The bank's own word for what this was. readDirectDebit() reads the mandate and
+    // the incassant-ID out of the :86: text, which is where MT940 puts them when it has them.
+    typeCode: typeCode ?? null,
   };
 }
 
@@ -952,6 +972,27 @@ function parseCAMT053Entry(
     counterpartName = deriveReadableName(description);
   }
 
+  // [DD-SIGNAL] What CAMT says about the INSTRUMENT, which is more than any other format carries.
+  //
+  //   · <BkTxCd> is the ISO 20022 bank transaction code. Its family is RDDT for a direct debit
+  //     received against this account and IDDT for one issued by it; the sub-family narrows it
+  //     (ESDD = SEPA direct debit). Read family-then-subfamily so the more specific one wins.
+  //   · <MndtId> is the machtigingskenmerk. It is the STRONGEST signal in any format: a SEPA
+  //     direct debit cannot exist without a mandate, and a credit transfer never carries one.
+  //   · <CdtrSchmeId> holds the incassant-ID of the collecting party.
+  //
+  // Searched over the whole entry rather than the first <TxDtls>: on a batch entry the codes sit
+  // at entry level while the mandate sits per sub-transaction, and both spellings occur.
+  const bkTxCd =
+    block.match(/<Fmly>[\s\S]*?<SubFmlyCd>([^<]+)<\/SubFmlyCd>/)?.[1] ??
+    block.match(/<Fmly>\s*<Cd>([^<]+)<\/Cd>/)?.[1] ??
+    null;
+  const mandateId = block.match(/<MndtId>([^<]+)<\/MndtId>/)?.[1] ?? null;
+  const creditorId =
+    block.match(/<CdtrSchmeId>[\s\S]*?<Id>([^<]+)<\/Id>/)?.[1] ??
+    block.match(/<CdtrSchmeId>([^<]+)<\/CdtrSchmeId>/)?.[1] ??
+    null;
+
   return {
     date,
     amount,
@@ -961,6 +1002,9 @@ function parseCAMT053Entry(
     counterpartIban,
     reference,
     transactionId,
+    typeCode: bkTxCd ? decodeXmlEntities(bkTxCd.trim()) : null,
+    mandateId: mandateId ? decodeXmlEntities(mandateId.trim()) : null,
+    creditorId: creditorId ? decodeXmlEntities(creditorId.trim()) : null,
     rawLine: block.trim(),
   };
 }

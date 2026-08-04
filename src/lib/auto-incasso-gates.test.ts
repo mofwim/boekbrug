@@ -116,3 +116,56 @@ test("[AUTO-INCASSO] the hourly reconcile keeps booking after the day you switch
       "observed, so it may never be the quiet one",
   );
 });
+
+// ─── [DD-SIGNAL] The statement's own word for it must not be dropped again ────
+//
+// All three of these were captured-and-discarded before, in three different ways, and every one of
+// them is a one-character edit away from being discarded again. None of it shows up at runtime: the
+// import succeeds, the screen renders, and the app simply stops noticing incasso's.
+
+test("[DD-SIGNAL] the MT940 type code leaves the function it is captured in", () => {
+  const src = code("src/lib/bank-parser.ts");
+  // The original bug in one line: `const [, dateStr, , creditDebit, , amountStr, , ownerRef, …]`.
+  // Group 6 is the SWIFT transaction type code (NDDT = Direct Debit) and that bare comma threw it
+  // away — the parser read the one field an MT940 file has for this question and dropped it.
+  assert.match(
+    src, /const \[, dateStr, , creditDebit, , amountStr, typeCode, ownerRef/,
+    "the :61: type code is being skipped in the destructure again — NDDT never leaves the parser",
+  );
+  assert.match(src, /typeCode: typeCode \?\? null/, "…and it must actually reach the transaction");
+});
+
+test("[DD-SIGNAL] CAMT still asks for the three fields only it carries", () => {
+  const src = code("src/lib/bank-parser.ts");
+  for (const [tag, why] of [
+    ["MndtId", "the machtigingskenmerk — the strongest signal any format has"],
+    ["CdtrSchmeId", "the incassant-ID of the collecting party"],
+    ["SubFmlyCd", "the ISO bank transaction code that classifies the entry"],
+  ] as const) {
+    assert.match(src, new RegExp(`<${tag}>`), `CAMT no longer reads <${tag}> — ${why}`);
+  }
+});
+
+test("[DD-SIGNAL] the CSV mapper still has a role for the incasso columns", () => {
+  const src = code("src/lib/bank-csv.ts");
+  assert.match(src, /mutatiesoort/, "ING's Mutatiesoort column is unmapped again");
+  assert.match(src, /machtigingskenmerk/, "Rabobank's Machtigingskenmerk column is unmapped again");
+  assert.match(src, /incassant/, "Rabobank's Incassant ID column is unmapped again");
+  assert.match(
+    src, /return \{ date, amount, sign, name, iban, ownIban, descCols, typeCode, mandate, creditor \}/,
+    "the mapper found the columns but stopped returning them",
+  );
+});
+
+test("[DD-SIGNAL] a proposal is a question, never a decision", () => {
+  const src = code("src/app/api/cron/reconcile/route.ts");
+  assert.match(src, /proposeIncassoMandates\([^)]*uid/, "the cron no longer looks for mandates in the statement");
+  assert.match(src, /markIncassoSuggested/, "without the stamp the same question is asked every hour");
+  // The line that would turn this from a question into a silent policy change. Turning the mandate
+  // on decides how a supplier's invoices are booked from then on; this app's own rule for that
+  // (bank-matching.ts, first paragraph) is that the system prepares and the human confirms.
+  assert.doesNotMatch(
+    src, /auto_incasso:\s*true/,
+    "the cron is switching the mandate on by itself — a proposal became a decision the owner never made",
+  );
+});

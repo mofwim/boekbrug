@@ -209,7 +209,10 @@ export async function importBankStatement(args: {
       // they are unconstrained and reach the table exactly as before.
       let { data: insData, error } = await pipeline
         .from("bank_transactions")
-        .upsert(rows, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
+        // [DD-SIGNAL] type_code/mandate_id/creditor_id arrive with bank_tx_direct_debit.sql and are
+        // not yet in the generated types — the 42703 branch below is what makes the write safe.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .upsert(rows as any, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
         .select("id");
       // Resilient to a HALF-applied schema, in both directions it can be half-applied. Getting
       // this wrong does not degrade a hint — it fails the insert, and a failed insert is money
@@ -221,10 +224,11 @@ export async function importBankStatement(args: {
       //     storing for the NEXT import) and plain-insert without the conflict clause.
       const failureCode = (error as { code?: string } | null)?.code;
       if (failureCode === "42703") {
-        const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, ...r }) => r);
+        const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, type_code: _tc, mandate_id: _mid, creditor_id: _cid, ...r }) => r);
         ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
       } else if (failureCode === "42P10") {
-        ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id"));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows as any).select("id"));
       }
       if (!error) {
         insertedIds = (insData ?? []).map((r) => r.id as string);

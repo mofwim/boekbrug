@@ -31,6 +31,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import { supplierNameKey } from '@/lib/supplier-registry'
 import { reportHandledFailure } from '@/lib/report-handled'
+import { summariseMandates } from '@/lib/direct-debit'
 import {
   incassoDecision,
   withIncassoMark,
@@ -269,5 +270,137 @@ export async function settleIncassoForUser(
     // look" are different answers, and only one of them means the owner can stop watching.
     console.error('[AUTO-INCASSO] settle pass bailed', { userId, error: e instanceof Error ? e.message : String(e) })
     return BAILED
+  }
+}
+
+// ─── [DD-SIGNAL] The app noticing on its own ──────────────────────────────────
+//
+// Everything above starts with the owner knowing that a supplier collects automatically. The bank
+// statement already knows — every Dutch export format names a SEPA incasso — so the owner should
+// be TOLD, not asked to remember.
+//
+// It proposes and never decides. Turning the mandate on changes how that supplier's invoices are
+// booked from then on, and this app's stated rule for exactly this kind of step is Pillar ⑤: the
+// system prepares, the human confirms. One tap is a small price; a mandate the owner never agreed
+// to is not something to discover months later in an accountant's export.
+
+/** A supplier the statement shows collecting, ready to be offered to the owner. */
+export interface IncassoProposal {
+  name: string
+  collections: number
+  lastDate: string | null
+  hadReversal: boolean
+  /** The existing supplier row, when there is one. Absent = the switch will create it. */
+  supplierId: string | null
+}
+
+/**
+ * Which suppliers does this owner's bank statement show collecting — that they have not already
+ * been asked about?
+ *
+ * Two exclusions, both to keep this a question that is asked once:
+ *   · a supplier already on incasso needs no proposal;
+ *   · a supplier already offered (incasso_suggested_at) is not offered again. An hourly cron that
+ *     re-asks the same question is a notification the owner turns off, and it takes the ones that
+ *     matter with it.
+ *
+ * Throws on a failed read rather than returning `[]`, for the reason this whole file repeats: an
+ * empty list here means "the bank shows nothing", and a caller acts on that by staying silent.
+ */
+export async function proposeIncassoMandates(
+  supabase: Client,
+  userId: string,
+  opts: { minCollections?: number; sinceDate?: string } = {},
+): Promise<IncassoProposal[]> {
+  if (!(await incassoSupported(supabase))) return []
+
+  // Only lines that carry a marker at all — the partial index on bank_transactions is built for
+  // exactly this predicate. A `.or()` rather than three reads so one round trip answers it.
+  let q = supabase
+    .from('bank_transactions')
+    .select('counterpart_name, type_code, mandate_id, creditor_id, description, amount, date')
+    .eq('user_id', userId)
+    .or('mandate_id.not.is.null,creditor_id.not.is.null,type_code.not.is.null')
+  if (opts.sinceDate) q = q.gte('date', opts.sinceDate)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (q as any).limit(2000)
+  if (error) {
+    // A missing column (bank_tx_direct_debit.sql not applied) is not a failure to read — it is a
+    // database that cannot answer this question yet, and the honest response is to ask nothing.
+    if ((error as { code?: string }).code === '42703') return []
+    throw new Error(error.message)
+  }
+
+  const rows = (data ?? []) as {
+    counterpart_name: string | null; type_code: string | null; mandate_id: string | null;
+    creditor_id: string | null; description: string | null; amount: number | null; date: string | null
+  }[]
+  const evidence = summariseMandates(
+    rows.map((r) => ({
+      counterpartName: r.counterpart_name, typeCode: r.type_code, mandateId: r.mandate_id,
+      creditorId: r.creditor_id, description: r.description, amount: r.amount, date: r.date,
+    })),
+    { minCollections: opts.minCollections ?? 2 },
+  )
+  if (evidence.length === 0) return []
+
+  // What the owner has already said or already been asked. Read once, matched on the same
+  // normalized key the mandate itself uses.
+  const { data: sup, error: supErr } = await supabase
+    .from('suppliers')
+    .select('id, name_key, auto_incasso, incasso_suggested_at')
+    .eq('user_id', userId)
+  if (supErr) throw new Error(supErr.message)
+  const known = new Map(
+    ((sup ?? []) as { id: string; name_key: string | null; auto_incasso: boolean | null; incasso_suggested_at: string | null }[])
+      .filter((s) => s.name_key)
+      .map((s) => [s.name_key as string, s]),
+  )
+
+  const out: IncassoProposal[] = []
+  for (const e of evidence) {
+    const key = supplierNameKey(e.name)
+    if (!key) continue
+    const row = known.get(key)
+    if (row?.auto_incasso) continue          // already answered, and answered yes
+    if (row?.incasso_suggested_at) continue  // already asked — ask once, not hourly
+    out.push({
+      name: e.name, collections: e.collections, lastDate: e.lastDate,
+      hadReversal: e.hadReversal, supplierId: row?.id ?? null,
+    })
+  }
+  return out
+}
+
+/**
+ * Record that the question has been put, so it is not put again.
+ *
+ * Best-effort by contract: the notification has already been sent when this runs, and failing to
+ * stamp it costs one repeated question next hour — annoying, never wrong. Failing the whole pass
+ * over it would cost the proposal entirely.
+ */
+export async function markIncassoSuggested(
+  supabase: Client,
+  userId: string,
+  proposals: IncassoProposal[],
+  at: string,
+): Promise<void> {
+  for (const p of proposals) {
+    try {
+      if (p.supplierId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await supabase.from('suppliers').update({ incasso_suggested_at: at } as any)
+          .eq('id', p.supplierId).eq('user_id', userId)
+        continue
+      }
+      const key = supplierNameKey(p.name)
+      if (!key) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await supabase.from('suppliers').insert({ user_id: userId, name: p.name, name_key: key, incasso_suggested_at: at } as any)
+    } catch (e) {
+      console.error('[DD-SIGNAL] could not record that the incasso question was asked', {
+        userId, supplier: p.name, error: e instanceof Error ? e.message : String(e),
+      })
+    }
   }
 }

@@ -26,7 +26,7 @@ import { createNotification } from "@/lib/notifications";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [AUTO-INCASSO] Book the invoices the bank collects on its own — see src/lib/incasso-settle.ts.
-import { incassoSupported, settleIncassoForUser } from "@/lib/incasso-settle";
+import { incassoSupported, settleIncassoForUser, proposeIncassoMandates, markIncassoSuggested } from "@/lib/incasso-settle";
 import { amsterdamToday, formatEuroNL } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
@@ -120,6 +120,7 @@ export async function GET(req: NextRequest) {
   let failed = 0;
   let truncated = 0;
   let incassoBooked = 0;
+  let incassoProposed = 0;
 
   // [CRON-FAIRNESS] Rotate the start each run so, if the full list can't finish within maxDuration,
   // a FIXED tail never permanently starves. On Vercel Pro this cron now fires HOURLY, so key the
@@ -191,6 +192,35 @@ export async function GET(req: NextRequest) {
         console.error("[AUTO-INCASSO] settle failed (non-fatal)", { uid, error: ie instanceof Error ? ie.message : String(ie) });
         Sentry.captureException(ie instanceof Error ? ie : new Error(String(ie)), { tags: { cron: "reconcile", phase: "auto-incasso" }, extra: { uid } });
       }
+
+      // [DD-SIGNAL] …and the half where the app notices on its own. The bank statement NAMES a
+      // SEPA incasso — MT940's NDDT, CAMT's <MndtId>, ING's "IC", Rabobank's Machtigingskenmerk —
+      // so a supplier that has collected twice does not need the owner to remember the mandate.
+      //
+      // It PROPOSES. Turning it on changes how that supplier's invoices are booked from then on,
+      // and this app's rule for that step is the one at the top of bank-matching.ts: the system
+      // prepares, the human confirms. Asked once per supplier (incasso_suggested_at) — an hourly
+      // repeat is a notification the owner switches off, taking the ones that matter with it.
+      try {
+        const proposals = await proposeIncassoMandates(pipeline, uid);
+        if (proposals.length > 0) {
+          const names = proposals.slice(0, 3).map((p) => p.name).join(", ");
+          const more = proposals.length > 3 ? ` en ${proposals.length - 3} andere` : "";
+          await createNotification({
+            userId: uid,
+            type: "status",
+            title: proposals.length === 1 ? `${proposals[0].name} schrijft automatisch af` : `${proposals.length} leveranciers schrijven automatisch af`,
+            body: `Dat zien we op je bankafschrift bij ${names}${more}. Zet het aan, dan vragen we je niet meer om deze facturen te betalen — en zetten we ze na de vervaldatum vanzelf op betaald.`,
+            link: "/dashboard/incoming/manage",
+          }).catch((ne) => console.error("[DD-SIGNAL] proposal notify failed", { uid, error: ne instanceof Error ? ne.message : String(ne) }));
+          // Only AFTER the notification went out: stamping first and then failing to send would
+          // lose the proposal for good, since the question is asked exactly once.
+          await markIncassoSuggested(pipeline, uid, proposals, new Date().toISOString());
+          incassoProposed += proposals.length;
+        }
+      } catch (pe) {
+        console.error("[DD-SIGNAL] mandate proposal failed (non-fatal)", { uid, error: pe instanceof Error ? pe.message : String(pe) });
+      }
       usersProcessed += 1;
       // [JET-GAP0] The "automatisch gekoppeld" bell now lives INSIDE runBankAutoConfirm, so every
       // entry point (incl. this cron) notifies from one place — no duplicate insert here.
@@ -207,7 +237,7 @@ export async function GET(req: NextRequest) {
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked, incassoProposed } });
 
-  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked });
+  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked, incassoProposed });
 }

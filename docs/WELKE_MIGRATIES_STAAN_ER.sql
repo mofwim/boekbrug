@@ -179,7 +179,10 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- ── Automatische incasso ────────────────────────────────────────────────────────────────
   (34, 'auto_incasso.sql',
        'Welke leveranciers zelf afschrijven (huur, energie, verzekering). Ontbreekt hij, dan is de functie eerlijk UIT: elke lezer behandelt de ontbrekende kolom als "niemand staat op incasso" en de route antwoordt 503 in het Nederlands — precies het gedrag van vóór deze migratie. Wat hij kost zolang hij open staat: de facturen die je bank al heeft afgeschreven blijven "te laat" heten en houden hun betaalknop, en die knop is bij een al geïncasseerde factuur een TWEEDE betaling',
-       'column', 'suppliers.auto_incasso')
+       'column', 'suppliers.auto_incasso'),
+  (35, 'bank_tx_direct_debit.sql',
+       'Wat het BANKAFSCHRIFT zelf zegt over de betaalwijze: type_code, mandate_id en creditor_id op bank_transactions, plus suppliers.incasso_suggested_at. Ontbreekt hij, dan draait de import ongewijzigd door (bank-ingest vangt 42703 op en laat de drie kolommen weg) en stelt de app alleen niks meer uit zichzelf voor — de eigenaar moet dan zelf weten welke leverancier automatisch afschrijft. Wat hij oplevert zodra hij staat: MT940 NDDT, CAMT <MndtId>/<CdtrSchmeId>, de ING-kolom "Code" met IC en de twee Rabobank-kolommen worden bewaard, en na twee incasso''s vraagt de app of hij die leverancier zo mag onthouden',
+       'column', 'bank_transactions.mandate_id')
 )
 select
   nr                                                        as "#",
