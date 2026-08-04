@@ -16,6 +16,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const staticPages: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}/`, lastModified, changeFrequency: 'weekly', priority: 1 },
     { url: `${SITE_URL}/tools`, lastModified, changeFrequency: 'weekly', priority: 0.9 },
+    // [EN-HOME] The English homepage. Priority 0.9 — below the Dutch homepage, above every other
+    // English page, because it is the entry point the rest of /en links back to. It also belongs
+    // here for a second reason: sitemap.xml is one of the three sources the public smoke test
+    // sweeps, and it is the only one that would have caught /en being behind the login wall.
+    { url: `${SITE_URL}/en`, lastModified, changeFrequency: 'weekly', priority: 0.9 },
     { url: `${SITE_URL}/blog`, lastModified, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${SITE_URL}/en/blog`, lastModified, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${SITE_URL}/ar/blog`, lastModified, changeFrequency: 'weekly', priority: 0.4 },
