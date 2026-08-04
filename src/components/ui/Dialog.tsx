@@ -31,6 +31,7 @@
 
 'use client'
 
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 import {
   createContext,
   useCallback,
@@ -222,6 +223,11 @@ function DialogSurface({
     if (target === inputRef.current && inputRef.current) inputRef.current.select()
     return () => previous?.focus?.()
   }, [])
+
+  // [BACK-CLOSES] …and on a phone the system back button does what Escape does on a keyboard.
+  // Wired HERE rather than at the call sites: every confirm, alert and prompt in the app goes
+  // through this component, so one line covers all of them and none can be forgotten.
+  useCloseOnBack(true, dismiss)
 
   // Escape cancels; Tab is trapped inside the panel so the dialog behaves like
   // the native one it replaces.

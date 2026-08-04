@@ -9,6 +9,8 @@ import { Spinner } from "../ui/Spinner";
 import { BestandRow } from "../../types";
 import { fileEmoji, formatSize, formatDate } from "../../helpers";
 import { getSignedUrl } from "../../signedUrl";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -27,6 +29,9 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
     });
     return () => { cancelled = true; };
   }, [doc.id]);
+  // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
+  useCloseOnBack(true, onClose)
+
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };

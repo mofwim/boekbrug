@@ -18,6 +18,8 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSearch } from "@/hooks/useSearch";
 import { flattenGroups, type SearchResult, type SearchResultGroup } from "@/lib/search";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -521,6 +523,12 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
   const { query, setQuery, groups, totalCount, loading, error, clear } = useSearch({ debounceMs: 200 });
 
   const [open, setOpen] = useState(false);
+
+  // [BACK-CLOSES] Only the COMPACT overlay is a thing to close; on a wide screen the search box
+
+  // is part of the page and back belongs to the page.
+
+  useCloseOnBack(!!open, () => setOpen(false))
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [recent, setRecent] = useState<string[]>([]);
   const [isMobile, setIsMobile] = useState(false);

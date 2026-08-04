@@ -30,6 +30,8 @@ import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens
 import {
   priceFieldValue, priceFieldToStored, repriceForRateChange, toDisplayCents, type PriceMode,
 } from '@/lib/price-mode'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -501,6 +503,7 @@ function NewInvoicePageContent() {
   // [FACTUUR-A] Send confirmation dialog — sending is irreversible (number
   // consumed + e-mail delivered). Centered modal, per house convention.
   const [showSendConfirm, setShowSendConfirm] = useState(false)
+  useCloseOnBack(!!showSendConfirm, () => setShowSendConfirm(false))
 
   // ── Lines — pre-filled from replace flow, offerte, or AI generation ──────────
   // [BOEK-029] from offerte: use total_ex_btw as unit_price so BTW calculates correctly
@@ -540,6 +543,7 @@ function NewInvoicePageContent() {
 
   // ── Offerte convert confirm ───────────────────────────────────────────────────
   const [showConvertDialog, setShowConvertDialog] = useState(false)
+  useCloseOnBack(!!showConvertDialog, () => setShowConvertDialog(false))
   const [convertingOfferte, setConvertingOfferte] = useState(false)
   // offerte_id if we're converting an existing offerte — read-only from URL
   const offerteId = offerteParam

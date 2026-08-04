@@ -23,6 +23,8 @@
 import { useState } from 'react'
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
 import { M3, R } from '@/lib/design/tokens'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -64,6 +66,8 @@ export default function InvoiceCorrectionModal({
   /** Each screen has its own snackbar; the editor does not reach for one. */
   onMessage: (text: string) => void
 }) {
+  // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
+  useCloseOnBack(true, onClose)
   const [amounts, setAmounts] = useState({
     ex: invoice.total_ex_btw ?? 0,
     btw: invoice.btw_amount ?? 0,

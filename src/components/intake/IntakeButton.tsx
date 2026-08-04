@@ -32,6 +32,8 @@ import { useToast } from '@/components/ui/Toast'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, sheetPaddingBottom } from '@/lib/design/tokens'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -76,6 +78,7 @@ export default function IntakeButton({
     // first sent with — a forced retry of a picked PDF must not turn into a "camera" row.
     { message: string; originalId?: string; canForce?: boolean; archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }; file?: File; source?: 'camera' | 'upload' } | null
   >(null)
+  useCloseOnBack(!!dupModal, () => setDupModal(null))
   const [restoring, setRestoring] = useState(false)
   // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
   // the owner needs to KNOW where it landed — a persistent modal (iOS-styled,
@@ -89,6 +92,7 @@ export default function IntakeButton({
     // WEGGEGOOID zodra er een mapnaam was. Zie de modal onderaan.
     { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null; isDuplicate?: boolean; couldNotRead?: boolean } | null
   >(null)
+  useCloseOnBack(!!destModal, () => setDestModal(null))
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 

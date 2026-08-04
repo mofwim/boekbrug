@@ -35,6 +35,8 @@ import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial
 // API route re-checks before it writes. The dialog below is that decision, rendered.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
 import { useToast } from "@/components/ui/Toast"
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -171,6 +173,7 @@ export default function FacturenClient({
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
   // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
   const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
+  useCloseOnBack(!!repeatCtx, () => setRepeatCtx(null))
   // [HERHAAL] Every schedule this owner has, in full — not just a lookup keyed by invoice.
   //
   // The per-row badge needs the map; the PANEL needs the list, and the panel is the part that
@@ -204,6 +207,7 @@ export default function FacturenClient({
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog shown when client tries to unpay an accountant-verwerkt invoice
   const [verwerktCtx, setVerwerktCtx] = useState<{ id: string; number: string } | null>(null)
+  useCloseOnBack(!!verwerktCtx, () => setVerwerktCtx(null))
   const [requestSent, setRequestSent] = useState(false)
 
   // ── [BUNDEL-BETAALVERZOEK] Multi-select → one payment link for several open
@@ -212,6 +216,7 @@ export default function FacturenClient({
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number }>>({})
   const [bundle, setBundle] = useState<{ url: string; amount: number; reference: string; count: number; iban: string } | null>(null)
+  useCloseOnBack(!!bundle, () => setBundle(null))
   const [bundleLoading, setBundleLoading] = useState(false)
   const [bundleQr, setBundleQr] = useState('')
   const [bundleCopied, setBundleCopied] = useState(false)

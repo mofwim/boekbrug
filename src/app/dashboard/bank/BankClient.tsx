@@ -33,6 +33,8 @@ import { M3, R, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { parseAmountInput } from '@/lib/partial-payment'
 // [FULL-CORRECTION] The correction editor, shared with the pay screen.
 import InvoiceCorrectionModal, { type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -186,6 +188,7 @@ export default function BankClient() {
   // [MOVE-PAYMENT] Which payment sits on this bank line, and which invoices it may move to. The
   // server ranks and filters the targets (same rules as the RPC), so this holds display only.
   const [moveCtx, setMoveCtx] = useState<{ txId: string; source: MoveSource; payments: MovePayment[] } | null>(null)
+  useCloseOnBack(!!moveCtx, () => setMoveCtx(null))
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
@@ -202,6 +205,7 @@ export default function BankClient() {
   // [BANK-STATEMENT-DELETE] The statement pending deletion (shown in a confirm
   // dialog) and the id currently being deleted (to disable its row button).
   const [statementToDelete, setStatementToDelete] = useState<{ id: string; name: string } | null>(null)
+  useCloseOnBack(!!statementToDelete, () => setStatementToDelete(null))
   const [deletingStatementId, setDeletingStatementId] = useState<string | null>(null)
   // [BANK-FORMAT-GUARD] When the owner picks a file we can't read into transactions
   // (CSV, PDF, or any non-MT940/CAMT file), we show a clear modal — not a quick
@@ -209,6 +213,7 @@ export default function BankClient() {
   // the two cases: rejected before upload (kept=false) vs stored for the accountant
   // but unreadable as transactions (kept=true).
   const [formatNotice, setFormatNotice] = useState<{ name: string; kept: boolean } | null>(null)
+  useCloseOnBack(!!formatNotice, () => setFormatNotice(null))
   const [data, setData] = useState<MatchResponse | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
   // [BANK-MULTI-CONFIRM] One transaction can cover several invoices, so we track
@@ -248,6 +253,7 @@ export default function BankClient() {
     return () => clearTimeout(t)
   }, [findParam])
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
+  useCloseOnBack(!!verwerktCtx, () => setVerwerktCtx(null))
   // [DECLARED-INVOICE] Open when a booking was refused because the payment names an invoice that is
   // not in the administration yet. Nothing was written, so every way out is still available: add the
   // missing invoice first, put only part of the payment on this one, or book it all anyway.
@@ -255,6 +261,7 @@ export default function BankClient() {
     txId: string; invoiceId: string; invoiceNumber: string | null;
     missingNumbers: string[]; detail: string;
   } | null>(null)
+  useCloseOnBack(!!splitCtx, () => setSplitCtx(null))
   const [splitAmount, setSplitAmount] = useState('')
   // [FULL-CORRECTION] The invoice being corrected from this screen, once its full record has been
   // fetched. A bank card carries only what a MATCH needs — number, gross total, date — so the

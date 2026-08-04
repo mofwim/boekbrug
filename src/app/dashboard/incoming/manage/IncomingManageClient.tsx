@@ -76,6 +76,8 @@ import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
 // both sides of the app — and the server re-checks it before writing.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -434,10 +436,12 @@ export default function IncomingManageClient({
   const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
   // [MOVE-PAYMENT] Which payment(s) sit on this invoice, and where they are allowed to go.
   const [moveCtx, setMoveCtx]           = useState<{ inv: IncomingRow; payments: MovePayment[] } | null>(null)
+  useCloseOnBack(!!moveCtx, () => setMoveCtx(null))
   const [moveLoadingId, setMoveLoadingId] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
+  useCloseOnBack(!!verwerktCtx, () => setVerwerktCtx(null))
   const [requestSent, setRequestSent]   = useState(false)
   // [PAY-SAFE] Prepare-payment sheet (QR + copy details). Holds the row to pay.
   const [prepareCtx, setPrepareCtx]     = useState<IncomingRow | null>(null)
@@ -447,6 +451,7 @@ export default function IncomingManageClient({
     ctx: PayCtx
     match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
   } | null>(null)
+  useCloseOnBack(!!dupWarn, () => setDupWarn(null))
   const [checkingId, setCheckingId]     = useState<string | null>(null)
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
@@ -471,6 +476,7 @@ export default function IncomingManageClient({
     held: { invoiceNumber: string | null; reason: string }[]
     warning?: string
   } | null>(null)
+  useCloseOnBack(!!incassoResult, () => setIncassoResult(null))
 
   // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
   // same leverancier in ONE transfer. Selection is a set of ids; the rows are
