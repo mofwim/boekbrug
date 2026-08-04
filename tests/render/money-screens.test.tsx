@@ -1002,3 +1002,47 @@ test("[RENDER-GATE] the debtor board renders, and stays honest about what it can
   assert.match(geen, /Nog geen enkele klant heeft je gemachtigd/, "no mandate says something else");
   assert.match(geen, /Instellingen/, "…and points at where the CLIENT turns it on");
 });
+
+test("[RENDER-GATE] stukken opvragen renders, and refuses to promise completeness", async () => {
+  const { default: AccountantOpvragen } = await import("../../src/modules/accountant/pages/AccountantOpvragen");
+
+  const props = {
+    klanten: [{ id: "k1", naam: "Bakkerij Yilmaz" }, { id: "k2", naam: "Loodgieter De Vries" }],
+    kwartalen: [
+      { year: 2026, quarter: 2, label: "Q2 2026" },
+      { year: 2026, quarter: 1, label: "Q1 2026" },
+    ],
+  };
+
+  // Effects never run under renderToStaticMarkup, so the readiness fetch never fires — which is
+  // the pre-selection state, and the one a bug in the picker would show first.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantOpvragen as any, props));
+  assert.match(html, /Stukken opvragen/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…with the linked clients");
+  assert.match(html, /Q2 2026/, "…and the quarters to pick from");
+
+  // No linked clients is a different sentence from no gaps — one sends the accountant to the
+  // invite screen, the other to a phone call.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leeg = renderToStaticMarkup(React.createElement(AccountantOpvragen as any, { ...props, klanten: [] }));
+  assert.match(leeg, /nog geen gekoppelde klanten/, "the empty state names the actual blocker");
+  assert.match(leeg, /Klanten beheren/, "…and where to fix it");
+});
+
+test("[RENDER-GATE] the request text the client receives never claims the quarter is complete", async () => {
+  // The pure builder is what BOTH the preview and the server use, so asserting it here covers the
+  // sentence the client actually reads. readiness.ts cannot see a receipt that was never uploaded;
+  // a request implying "then we are done" breaks at exactly the wrong moment.
+  const { buildDocumentRequest } = await import("../../src/lib/document-request");
+  const r = buildDocumentRequest({
+    items: [{ title: "3 bankregels zonder bon", detail: "€ 412 aan kosten" }],
+    quarterLabel: "Q2 2026",
+    accountantName: "Administratiekantoor De Wit",
+  });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.match(r.text, /wat er niet in staat, kan ik ook niet zien/);
+    assert.doesNotMatch(r.text, /compleet|volledig/i);
+  }
+});

@@ -98,6 +98,10 @@ export type AuditAction =
   // antwoord hebben.
   | 'accountant.invoice_mandate_granted'
   | 'accountant.invoice_mandate_revoked'
+  // [OPVRAGEN] De boekhouder vroeg zijn klant om de ontbrekende stukken van een kwartaal. In het
+  // spoor omdat het antwoord op "waarom is dit kwartaal zo laat ingediend" vaak precies hier ligt:
+  // wanneer is er gevraagd, en hoe vaak.
+  | 'accountant.documents_requested'
   // [ACTING-FOR] Een herinnering die MET DE HAND is verstuurd (de cron logt in invoice_reminders,
   // niet hier). Aan de andere kant zit een klant van de ondernemer; wie op die knop drukte hoort
   // dus terug te vinden te zijn — zeker als dat een medewerker was en niet de eigenaar zelf.
