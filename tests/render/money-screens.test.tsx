@@ -862,3 +862,44 @@ test("[INTAKE-QUEUE] the idle button invites a capture and claims no work in pro
   assert.match(html, /Maak een foto of upload/, "the resting state must invite a capture");
   assert.doesNotMatch(html, /wordt gelezen/, "an idle button must not claim something is processing");
 });
+
+test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was checked", async () => {
+  // The sheet exists to make verifying cheap. All three parts have to be on screen at once — the
+  // document alone is what the old window.open already gave, and it is not what made checking
+  // expensive. What was missing is our reading beside it, and the checks stated instead of implied.
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+
+  const clean = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d1", client_name: "Oz&er food", invoice_number: "26035350", invoice_date: "2026-06-24",
+        invoice_type: "factuur", total_ex_btw: 257.85, btw_amount: 23.21, total_inc_btw: 281.06,
+        vendor_iban: "NL65RABO0171136276", field_confidence: null, vendorNumbers: [],
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+  assert.match(clean, /Wat wij hebben gelezen/, "our reading is on screen next to the paper");
+  assert.match(clean, /26035350/, "…with the number the owner is about to compare");
+  assert.match(clean, /281,06/, "…and the total, formatted the Dutch way");
+  assert.match(clean, /Alle 7 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
+
+  // The half that must never be cosmetic: a check that could not run says so, and the summary
+  // stops claiming completeness. A green list that overstates is worse than no list.
+  const unsure = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d2", client_name: "Oz&er food", invoice_number: "26035350", invoice_date: "2026-06-24",
+        invoice_type: "factuur", total_ex_btw: 257.85, btw_amount: 23.21, total_inc_btw: 281.06,
+        vendor_iban: "NL65RABO0171136276", vendorNumbers: [],
+        field_confidence: { _safecore: { iban_check_unavailable: true } },
+      },
+      onClose() {}, onCorrect: null,
+    }),
+  );
+  assert.doesNotMatch(unsure, /Alle \d+ controles gedaan/, "a skipped check breaks the completeness claim");
+  assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
+});

@@ -50,6 +50,9 @@ import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 // [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
 import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
+// [DOC-INLINE] The paper and our reading of it, on one screen — see the component's header for why
+// leaving the app to look at a pdf was the trust problem and not a convenience one.
+import InvoiceDocumentSheet from '@/components/invoice/InvoiceDocumentSheet'
 import {
   looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict,
   // [CREDIT-SAFE] One stance, read by every widget that would treat a row as a debt — the dunning
@@ -448,6 +451,8 @@ export default function IncomingManageClient({
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
   const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
+  // [DOC-INLINE] Which invoice's document is open. The sheet fetches its own signed url.
+  const [docCtx, setDocCtx]             = useState<IncomingRow | null>(null)
 
   // ── [AUTO-INCASSO] Which suppliers collect their own invoices ──
   // Local state, not the prop straight through: flipping the switch has to change the screen
@@ -1460,22 +1465,20 @@ export default function IncomingManageClient({
   // pdf_url. Storage paths (e.g. "incoming/...pdf") are not directly fetchable;
   // they 404 as relative URLs. /api/email/file/[id] returns a short-lived signed
   // URL, exactly as the verification queue (IncomingInvoicesClient) does.
-  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null)
-  async function openPdf(id: string) {
-    setPdfLoadingId(id)
-    try {
-      const res = await fetch(`/api/email/file/${id}`)
-      const data = await res.json()
-      if (data.url) {
-        window.open(data.url, '_blank', 'noopener,noreferrer')
-      } else {
-        showToast(data.error || 'Kon bestand niet openen')
-      }
-    } catch {
-      showToast('Kon bestand niet openen')
-    } finally {
-      setPdfLoadingId(null)
-    }
+  // [DOC-INLINE] Open the document INSIDE the app.
+  //
+  // This used to fetch a signed url and window.open it. On a phone that hands the file to the
+  // operating system: the app goes to the background, a viewer or a download takes over, and coming
+  // back means finding your place in a list of hundreds again. Checking one invoice cost half a
+  // minute and a lost scroll position — so checking every invoice, which is what a careful owner
+  // does, cost their afternoon.
+  //
+  // The sheet fetches the url itself, so this is now a state change and nothing else. The "open in
+  // a new tab" route still exists, inside the sheet, as the escape hatch it should always have been.
+  function openPdf(id: string) {
+    const row = invoices.find(i => i.id === id)
+    if (!row) return
+    setDocCtx(row)
   }
 
   return (
@@ -2474,10 +2477,10 @@ export default function IncomingManageClient({
                         )}
                         {inv.pdf_url && (
                           <button
-                            onClick={e => { e.stopPropagation(); if (pdfLoadingId !== inv.id) openPdf(inv.id) }}
+                            onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
                             style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                              {pdfLoadingId === inv.id ? 'hourglass_empty' : 'picture_as_pdf'}
+                              picture_as_pdf
                             </span>
                             Bekijk PDF
                           </button>
@@ -3001,6 +3004,30 @@ export default function IncomingManageClient({
       })()}
 
       {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
+      {/* [DOC-INLINE] The document, our reading of it, and the seven checks — see the component. */}
+      {docCtx && (
+        <InvoiceDocumentSheet
+          invoice={{
+            id: docCtx.id,
+            client_name: docCtx.client_name,
+            invoice_number: docCtx.invoice_number,
+            invoice_date: docCtx.invoice_date,
+            invoice_type: docCtx.invoice_type,
+            total_ex_btw: docCtx.total_ex_btw,
+            btw_amount: docCtx.btw_amount,
+            total_inc_btw: docCtx.total_inc_btw,
+            vendor_iban: docCtx.vendor_iban,
+            field_confidence: docCtx.field_confidence as never,
+            // The creditnota signal needs the numbers this SUPPLIER has used — the same list the
+            // row badges read, so the sheet and the card cannot disagree about what a CR… means.
+            vendorNumbers: vendorNumbersByName.get((docCtx.client_name ?? '').trim().toLowerCase()) ?? [],
+          }}
+          onClose={() => setDocCtx(null)}
+          // The whole loop in one place: see the paper, see our numbers, fix it in one tap.
+          onCorrect={() => setCorrectFor(docCtx)}
+        />
+      )}
+
       {matchResult && (
         <MatchResultSheet
           result={matchResult}

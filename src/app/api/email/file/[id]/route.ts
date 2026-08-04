@@ -114,5 +114,15 @@ export async function GET(
     );
   }
 
-  return NextResponse.json({ url: signed.signedUrl });
+  // [DOC-INLINE] The KIND, so the viewer can render it instead of handing it to the operating
+  // system. A camera intake is a JPEG and belongs in an <img>; a pdf goes in a frame. Derived from
+  // the stored path, which is the only thing we have — the bucket does not carry a content type we
+  // can trust here, and guessing wrong costs a blank frame, never a wrong file.
+  const lower = storagePath.toLowerCase();
+  const kind = /\.(jpe?g|png|webp|heic|gif)$/.test(lower) ? "image"
+    : /\.pdf$/.test(lower) ? "pdf"
+    : "other";
+  const name = storagePath.split("/").pop() ?? "factuur";
+
+  return NextResponse.json({ url: signed.signedUrl, kind, name });
 }
