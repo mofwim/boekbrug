@@ -79,13 +79,33 @@ export const PUBLIC_PATHS = [
 ] as const;
 
 /**
+ * [EXACT-PUBLIC] Public as themselves, without opening anything nested underneath.
+ *
+ * These cannot go in PUBLIC_PATHS, because that list is a prefix rule: "/" there would make the
+ * entire app public, and "/en" there would make every future route under /en public — plus every
+ * route that merely BEGINS with those two letters, since startsWith("/en") also matches
+ * "/energie". So they are matched exactly, and each page under them stays listed on its own.
+ *
+ * "/en" is here because it was missing everywhere: the English homepage was written, built and
+ * linked from boekbrug.nl ("Read this page in English →"), while /en/prijzen, /en/blog and the
+ * five /en/* calculators were all in the prefix list — so the one page a visitor actually clicked
+ * was the one the guard sent to /login?redirect=%2Fen. No gate could see it either: the smoke
+ * test's three sweeps read PUBLIC_PATHS (which did not have it), sitemap.xml (which did not have
+ * it either — fixed in sitemap.ts) and the footer (the link sits in a section above it).
+ */
+export const EXACT_PUBLIC_PATHS = ["/", "/en"] as const;
+
+/**
  * Is this path reachable without a session?
  *
- * The homepage is matched EXACTLY — never via the prefix rule, or "/" would make every route
- * public. Everything else is a prefix match, so nested routes under a public section (a blog
- * post, a tool's sub-page) are public with it.
+ * Two rules, and the difference matters: EXACT_PUBLIC_PATHS matches the path and nothing below it
+ * (see the note there), PUBLIC_PATHS is a prefix match so nested routes under a public section — a
+ * blog post, a tool's sub-page — are public with it.
  */
 export function isPublic(pathname: string): boolean {
-  if (pathname === "/") return true;
-  return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  // A trailing slash is the same page. Next normalises "/en/" to "/en" with a redirect, but that
+  // is a config default (trailingSlash), not a guarantee this guard should depend on.
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if ((EXACT_PUBLIC_PATHS as readonly string[]).includes(path)) return true;
+  return PUBLIC_PATHS.some((p) => path.startsWith(p));
 }

@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { PUBLIC_PATHS } from '../src/lib/public-paths';
+import { PUBLIC_PATHS, EXACT_PUBLIC_PATHS } from '../src/lib/public-paths';
 
 /**
  * [PUBLIC-SMOKE] Everything a logged-OUT visitor is promised, requested as a logged-out visitor.
@@ -71,7 +71,10 @@ test.describe('public surface', () => {
     expect(paths.length, 'PUBLIC_PATHS is empty — the import is wrong').toBeGreaterThan(10);
 
     const failures: string[] = [];
-    for (const pathname of ['/', ...paths]) {
+    // EXACT_PUBLIC_PATHS as well as the prefix list: "/" used to be hard-coded here, which meant
+    // the second exact path ("/en") would have been swept by nothing. Spread the array instead, so
+    // this sweep keeps asking the guard about its WHOLE list.
+    for (const pathname of [...EXACT_PUBLIC_PATHS, ...paths]) {
       const status = await statusOf(request, pathname);
       if (isPublicFailure(status)) failures.push(`${pathname} → ${status}`);
     }
