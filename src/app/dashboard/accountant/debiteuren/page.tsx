@@ -23,6 +23,18 @@ import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteure
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * De klok, één keer gelezen, buiten de render om.
+ *
+ * Zelfde vorm als readClock() in /dashboard/verkoop: `Date.now()` in het lichaam van een component
+ * wordt door de React-compiler terecht als onzuiver aangemerkt. Hier apart, zodat de renderfunctie
+ * puur blijft en "te laat" voor elke rij op hetzelfde moment wordt bepaald — een lijst waarin de
+ * ene factuur tegen een andere klok is gemeten dan de volgende, sorteert zichzelf verkeerd.
+ */
+function readClock(): number {
+  return new Date().getTime()
+}
+
 export default async function AccountantDebiteurenPage() {
   const supabase = await createServerSupabaseClient()
 
@@ -116,7 +128,7 @@ export default async function AccountantDebiteurenPage() {
     reminder_count: spoor[r.id]?.count ?? 0,
   }))
 
-  const groepen = buildDebtorBoard(invoer, namen, Date.now())
+  const groepen = buildDebtorBoard(invoer, namen, readClock())
 
   return (
     <AccountantDebiteuren
