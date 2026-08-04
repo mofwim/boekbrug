@@ -930,3 +930,26 @@ test("[RENDER-GATE] factureren namens een klant renders, and says whose invoice 
   assert.match(leeg, /Instellingen/, "…and points at where the CLIENT turns it on");
   assert.match(leeg, /35a/, "…and says the responsibility stays with the entrepreneur");
 });
+
+test("[ARTIKELEN-WIPE] the empty-the-catalogue action exists, and only when there is something to empty", async () => {
+  // A destructive action on a screen full of rows: the render gate is where "it is on the page at
+  // all" is held, since the manage screen's own gates cannot see this one.
+  const { default: ArtikelenClient } = await import("../../src/app/dashboard/artikelen/ArtikelenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  // Effects never run under renderToStaticMarkup, so the list starts empty and loading — which is
+  // exactly the state that must NOT offer to delete everything.
+  const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(ArtikelenClient as any, {}))),
+  );
+  assert.ok(html.length > 200, "the screen rendered");
+  assert.doesNotMatch(
+    html, /artikelen verwijderen/,
+    "with nothing loaded there is nothing to empty — offering it would be a destructive button " +
+      "over an unknown list",
+  );
+});

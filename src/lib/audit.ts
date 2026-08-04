@@ -136,6 +136,11 @@ export type AuditAction =
   | 'document.deleted'
   | 'document.bulk_deleted'
   | 'document.restored'
+  // [ARTIKELEN-WIPE] The owner emptying their whole article catalogue in one action. Level 3 and
+  // not Level 1 on purpose: articles are TEMPLATES — invoice_lines copied their text, price and
+  // btw-rate at the moment a line was made — so no invoice, total or aangifte moves by a cent.
+  // What is destroyed is the list itself, permanently, which is exactly what an audit row is for.
+  | 'article.bulk_deleted'
   | 'folder.created'
   | 'folder.deleted'
   | 'folder.renamed'

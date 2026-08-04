@@ -112,6 +112,43 @@ export default function ArtikelenClient() {
   }
 
 
+  // [ARTIKELEN-WIPE] Empty the whole catalogue in one action.
+  //
+  // Deleting thirty articles one tap at a time is not a safety feature, it is a missing one: the
+  // owner does the same destructive thing anyway, thirty times, with thirty chances to hit the
+  // wrong row. One deliberate action with one honest confirmation is faster AND safer.
+  //
+  // The confirmation names the one thing an owner emptying a list would rightly worry about, and
+  // it happens to be reassuring: nothing points at an article. invoice_lines copied the text, the
+  // price and the btw-rate at the moment each line was made, so an invoice from two years ago
+  // keeps every word of what it said. What IS lost is the list, permanently.
+  async function removeAll() {
+    const used = articles.filter((a) => a.usage_count > 0).length
+    const ok = await dialog.confirm({
+      title: `Alle ${articles.length} artikelen verwijderen?`,
+      message:
+        'Je facturen veranderen hier niet van — een artikel is een sjabloon, de tekst en het bedrag staan al op de factuur zelf.'
+        + (used > 0 ? ` ${used} van deze artikelen heb je eerder op een factuur gebruikt.` : '')
+        + ' De lijst zelf is daarna weg en komt niet terug.',
+      confirmLabel: 'Alles verwijderen',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      const res = await fetch('/api/articles', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        // The route refuses a bare DELETE on purpose: a request that empties a table on an empty
+        // body is one mis-fired fetch away from doing it by accident.
+        body: JSON.stringify({ confirm: 'ALLES' }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.ok) { setToast(typeof json.error === 'string' ? json.error : 'Leegmaken mislukt — er is niets verwijderd.'); return }
+      setToast(json.deleted === 1 ? '1 artikel verwijderd' : `${json.deleted} artikelen verwijderd`)
+    } catch { setToast('Leegmaken mislukt — controleer je verbinding'); return }
+    finally { await load() }
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
@@ -136,6 +173,20 @@ export default function ArtikelenClient() {
           </div>
           <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuw</button>
         </div>
+
+        {/* [ARTIKELEN-WIPE] Only when there is something to empty, and deliberately quiet: a
+            secondary link rather than a button beside "+ Nieuw", so the destructive action never
+            competes for the thumb with the one people use every day. */}
+        {!loading && articles.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -8, marginBottom: 14 }}>
+            <button
+              onClick={removeAll}
+              style={{ background: 'transparent', border: 'none', color: M3.error, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, padding: '4px 2px' }}
+            >
+              Alle {articles.length} artikelen verwijderen
+            </button>
+          </div>
+        )}
 
         {showForm && (
           <div style={{ background: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 18, marginBottom: 16 }}>
