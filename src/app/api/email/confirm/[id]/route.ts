@@ -25,6 +25,8 @@ import { hasSettledMoney } from "@/lib/invoice-removal";
 import { normalizeArchiveReason } from "@/lib/archive-reason";
 // [READING-MEMORY] Which fields the human changed about the reader's answer — the one signal that
 // makes "this supplier keeps being misread" a fact instead of a feeling.
+// [SUPPLIER-ALIAS] Learn what a corrected leverancier name means — see src/lib/supplier-alias.ts.
+import { learnSupplierAlias } from "@/lib/supplier-alias-write";
 import { correctedFields } from "@/lib/reading-memory";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
@@ -65,7 +67,9 @@ export async function POST(
   // into the books cannot answer the same outage two different ways.
   const { data: invoice, error: readErr } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date, invoice_type")
+    // [SUPPLIER-ALIAS] supplier_id + vendor_iban: what says WHICH company a corrected name belongs
+    // to. Without one of them a rename is one name pointing at another, and only the alias is safe.
+    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date, invoice_type, supplier_id, vendor_iban")
     .eq("id", id)
     .maybeSingle();
 
@@ -513,7 +517,27 @@ export async function POST(
     console.error("[BRIDGE-B] user notification failed", userNotifErr);
   }
 
-  return NextResponse.json({ ok: true, ...(warnings.length ? { warnings } : {}) });
+  // [SUPPLIER-ALIAS] The SAME lesson the pay screen's correction sheet learns. Both doors correct a
+  // leverancier name, so a lesson learned at one and not the other is a feature the owner cannot
+  // rely on — and this door is the one they use first, on every imported invoice.
+  //
+  // After the confirm, never before: a lesson drawn from a correction that did not save would teach
+  // the app something that is not in the books.
+  const aliasLearned = updatePatch.client_name
+    ? await learnSupplierAlias(supabase, user.id, {
+        printedName: invoice.client_name,
+        correctedName: updatePatch.client_name,
+        supplierId: (invoice as { supplier_id?: string | null }).supplier_id ?? null,
+        vendorIban: (invoice as { vendor_iban?: string | null }).vendor_iban ?? null,
+      })
+    : null;
+
+  return NextResponse.json({
+    ok: true,
+    // Null when nothing was learned — never a claimed memory that does not exist.
+    supplier_memory: aliasLearned?.message ?? null,
+    ...(warnings.length ? { warnings } : {}),
+  });
 }
 
 // ── DELETE — ignore (archive) ─────────────────────────────────────────────────

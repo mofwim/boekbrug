@@ -182,7 +182,10 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
        'column', 'suppliers.auto_incasso'),
   (35, 'bank_tx_direct_debit.sql',
        'Wat het BANKAFSCHRIFT zelf zegt over de betaalwijze: type_code, mandate_id en creditor_id op bank_transactions, plus suppliers.incasso_suggested_at. Ontbreekt hij, dan draait de import ongewijzigd door (bank-ingest vangt 42703 op en laat de drie kolommen weg) en stelt de app alleen niks meer uit zichzelf voor — de eigenaar moet dan zelf weten welke leverancier automatisch afschrijft. Wat hij oplevert zodra hij staat: MT940 NDDT, CAMT <MndtId>/<CdtrSchmeId>, de ING-kolom "Code" met IC en de twee Rabobank-kolommen worden bewaard, en na twee incasso''s vraagt de app of hij die leverancier zo mag onthouden',
-       'column', 'bank_transactions.mandate_id')
+       'column', 'bank_transactions.mandate_id'),
+  (36, 'supplier_aliases.sql',
+       'Wat een gecorrigeerde leveranciersnaam BETEKENT: de spelling zoals hij op het papier staat, gekoppeld aan de leverancier die de eigenaar bedoelde. Zonder deze tabel wordt de correctie op één factuurregel gezet en verder nergens — de lezer maakt volgende maand dezelfde leesfout en de eigenaar corrigeert opnieuw. Erger: invoices.client_name is de identiteitssleutel van de IBAN-controle, de incasso-machtiging, het creditnota-signaal en het leesgeheugen, dus een gecorrigeerde naam die de registratie niet bereikt haalt de factuur stilletjes uit de geschiedenis van zijn leverancier — en dan antwoordt de fraudecontrole "geen IBAN bekend". De code draait er zonder gewoon doorheen (de correctie slaat op, er wordt alleen niets geleerd)',
+       'table', 'supplier_aliases')
 )
 select
   nr                                                        as "#",
