@@ -15,6 +15,7 @@ import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveActingFor, type ActingFor, type MemberLink } from "@/lib/acting-for";
+import { resolveAccountantActing, type MandateRow } from "@/lib/accountant-mandate";
 
 /**
  * Who is acting here, on whose behalf? Returns `null` when nobody is logged in.
@@ -59,6 +60,68 @@ export const getActingFor = cache(async (): Promise<ActingFor | null> => {
 
   return resolveActingFor(user.id, link, Date.now());
 });
+
+/**
+ * [MANDAAT] Who is acting for THIS client — the accountant door.
+ *
+ * WHY IT IS A SECOND FUNCTION AND NOT A PARAMETER ON getActingFor()
+ * getActingFor() answers "who are you?" from an ambient link and is memoised per request. An
+ * accountant's answer depends on WHICH client the request names, so it is not ambient and must not
+ * be cached under one key. Keeping the doors separate also means the owner and sales paths are
+ * untouched by this feature — they never reach a line of it.
+ *
+ * `clientId` empty/absent ⇒ falls through to getActingFor(): the ordinary owner or sales answer.
+ * That is what makes this safe to wire into the existing invoice routes — for everyone who is not
+ * an accountant naming a client, literally nothing changes.
+ *
+ * Returns null when the caller may not act for this client. Callers must answer 403 and stop; see
+ * resolveAccountantActing() for why there is no "fall back to yourself" here.
+ */
+export async function getActingForClient(
+  clientId: string | null | undefined,
+): Promise<ActingFor | null> {
+  if (!clientId) return getActingFor();
+
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Their own administration through the accountant door is not an accountant question at all —
+  // hand it to the ordinary path, which gives them a proper owner ActingFor.
+  if (user.id === clientId) return getActingFor();
+
+  // Read with the SESSION client, not service_role. RLS on both tables already limits an
+  // accountant to their own rows, so a wrong answer here needs two independent failures.
+  const [{ data: profile }, { data: link }, { data: mandate }] = await Promise.all([
+    supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+    supabase
+      .from("accountant_clients")
+      .select("id")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", clientId)
+      .maybeSingle(),
+    // [DEPLOY-SAFE] The table only exists after accountant_invoice_mandate.sql. Until then every
+    // accountant simply has no mandate — the feature is off, and nothing else breaks.
+    supabase
+      .from("accountant_invoice_mandates")
+      .select("zzper_id, accountant_id, revoked_at")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", clientId)
+      .is("revoked_at", null)
+      .maybeSingle(),
+  ]);
+
+  return resolveAccountantActing(
+    user.id,
+    clientId,
+    {
+      callerRole: (profile as { role?: string } | null)?.role ?? null,
+      linked: Boolean(link),
+      mandate: (mandate as MandateRow | null) ?? null,
+    },
+    Date.now(),
+  );
+}
 
 /**
  * Who, within this company, created something — and what is that person called?

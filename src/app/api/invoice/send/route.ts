@@ -46,7 +46,7 @@ import { computeInvoiceTotals } from '@/lib/invoice-totals'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
-import { getActingFor } from '@/lib/acting-for-server'
+import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canSendInvoice } from '@/lib/acting-for'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
@@ -88,9 +88,32 @@ export async function POST(request: NextRequest) {
     // verandert er hieronder letterlijk niets. Voor een verkoopmedewerker is ownerId de BAAS —
     // en dat is de enige manier waarop er één nummerreeks per bedrijf blijft bestaan
     // (Art. 35 Wet OB: doorlopend, zonder gaten, en een uitgegeven nummer komt niet terug).
-    const acting = await getActingFor()
-    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    //
+    // [MANDAAT] En sinds het boekhoudersmandaat is er een derde geval. De body wordt daarom HIER
+    // gelezen in plaats van bij stap 3: wie de eigenaar is hangt af van `namens_klant_id`, en dat
+    // moet vaststaan vóór de eerste query. Zonder dat veld gebeurt letterlijk hetzelfde als
+    // vroeger — de eigenaar en de verkoopmedewerker raken geen regel van deze uitbreiding.
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'Ongeldig verzoek' }, { status: 400 })
+    }
+    const namensKlantId =
+      typeof body.namens_klant_id === 'string' && body.namens_klant_id ? body.namens_klant_id : null
+
+    const acting = namensKlantId ? await getActingForClient(namensKlantId) : await getActingFor()
+    if (!acting) {
+      return namensKlantId
+        ? NextResponse.json(
+            { error: 'Je hebt geen toestemming om namens deze klant te factureren' },
+            { status: 403 },
+          )
+        : NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const ownerId = invoiceOwnerId(acting)
+    // Waar de MENS die op de knop drukte naartoe moet als er iets misgaat. Voor een medewerker is
+    // dat zijn eigen lijst, voor een boekhouder het dossier van deze klant — '/dashboard/verkoop'
+    // is voor hem een scherm dat hij niet eens mag openen.
+    const actorLink = acting.role === 'boekhouder' ? `/dashboard/clients/${ownerId}` : '/dashboard/verkoop'
 
     // ── 2. Rate limit — 100 sends/hour per user ────────────────
     // Op de MENS, niet op het bedrijf: dit hek gaat over snelheid, en twee mensen die allebei
@@ -118,7 +141,7 @@ export async function POST(request: NextRequest) {
     // ("verstuur opnieuw") kost de gebruiker niets meer.
 
     // ── 3. Parse body ──────────────────────────────────────────
-    const body = await request.json()
+    // (Gelezen bij stap 1 — zie [MANDAAT] daar: de eigenaar hangt ervan af.)
     const { invoiceId, convertOnly = false, resend = false } = body
     // convertOnly=true: "Maak factuur aan" flow — convert pro_forma to factuur
     // resend=true: [FACTUUR-A] re-deliver PDF+e-mail for an already-sent
@@ -479,7 +502,7 @@ export async function POST(request: NextRequest) {
             body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
             type: 'invoice',
             read: false,
-            link: uid === ownerId ? '/dashboard/facturen' : '/dashboard/verkoop',
+            link: uid === ownerId ? '/dashboard/facturen' : actorLink,
           })),
         )
       } catch { /* non-blocking — the warning field below is the primary signal */ }
@@ -586,7 +609,7 @@ export async function POST(request: NextRequest) {
             body: `Factuur ${finalNumber} is genummerd en opgeslagen, maar de e-mail naar de klant is niet verstuurd — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
             type: 'invoice',
             read: false,
-            link: uid === ownerId ? '/dashboard/facturen' : '/dashboard/verkoop',
+            link: uid === ownerId ? '/dashboard/facturen' : actorLink,
           })),
         )
       } catch { /* non-blocking — the warning in the response stays the primary signal */ }
@@ -599,13 +622,39 @@ export async function POST(request: NextRequest) {
       try {
         const pipelineClient = createPipelineClient()
 
+        // [MANDAAT] De andere kant op: stuurde de BOEKHOUDER deze factuur namens de klant, dan
+        // moet de KLANT het weten. Dit is geen nette extra — het is de helft die van art. 35a een
+        // waarheid maakt in plaats van een zin in de voorwaarden. De ondernemer blijft zelf
+        // aansprakelijk voor elke factuur die onder zijn naam en BTW-nummer uitgaat, en dat kan
+        // hij alleen zijn als hij weet dat hij bestaat. Zonder dit bericht kan er maanden onder
+        // zijn nummer worden gefactureerd zonder dat hij ooit iets ziet.
+        //
+        // Best-effort, net als het bericht hieronder: de factuur is al uitgegeven en gaat niet
+        // terug omdat een melding niet lukt. Wat wél gebeurt is dat het in de log staat.
+        if (acting.role === 'boekhouder') {
+          const { error: klantNotifError } = await pipelineClient
+            .from('notifications')
+            .insert({
+              user_id: ownerId,
+              title: 'Je boekhouder heeft een factuur verstuurd',
+              body: `Factuur ${finalNumber} is namens jou verstuurd naar ${invoice.client_name || 'je klant'} — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. De factuur staat op jouw naam en in jouw nummerreeks.`,
+              type: 'invoice',
+              read: false,
+              link: '/dashboard/facturen',
+            })
+          if (klantNotifError) {
+            console.error('[MANDAAT] melding aan de klant mislukt', { invoiceId, klantNotifError })
+          }
+        }
+
         const { data: accountantLink } = await pipelineClient
           .from('accountant_clients')
           .select('accountant_id')
           .eq('zzper_id', ownerId)
           .maybeSingle()
 
-        if (accountantLink?.accountant_id) {
+        // Niet aan zichzelf melden dat hij zojuist zelf op de knop drukte.
+        if (accountantLink?.accountant_id && accountantLink.accountant_id !== acting.actorId) {
           const { error: notifError } = await pipelineClient
             .from('notifications')
             .insert({

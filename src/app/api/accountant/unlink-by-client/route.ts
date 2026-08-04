@@ -33,6 +33,19 @@ export async function POST(req: NextRequest) {
     .from('profiles').select('full_name, company_name').eq('id', user.id).single()
   const clientName = client?.company_name || client?.full_name || 'Een klant'
 
+  // [MANDAAT] Eerst elke machtiging intrekken, dán pas ontkoppelen — en niet andersom.
+  //
+  // Zonder dit blijft de rij in accountant_invoice_mandates op revoked_at IS NULL staan. Vandaag
+  // doet dat niets (has_active_invoice_mandate() eist óók de koppeling), maar nodigt deze klant
+  // dezelfde boekhouder later opnieuw uit, dan komt de koppeling terug en leeft het oude mandaat
+  // weer — zonder dat hij er ooit opnieuw toestemming voor heeft gegeven. Een toestemming die
+  // vanzelf terugkomt is geen toestemming.
+  await pipeline
+    .from('accountant_invoice_mandates')
+    .update({ revoked_at: new Date().toISOString(), revoked_by: user.id })
+    .eq('zzper_id', user.id)
+    .is('revoked_at', null)
+
   // Delete ALL of this client's links in one scoped statement (zzper_id = user.id).
   const { error } = await supabase
     .from('accountant_clients')

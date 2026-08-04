@@ -36,8 +36,24 @@
 // their employer's profit. By NEVER letting the member read the owner's rows directly, every
 // existing policy stays exactly as it was.
 
-/** The roles within one company. Deliberately two — see the header: this is not a role system. */
-export type CompanyRole = "eigenaar" | "verkoop";
+/**
+ * The roles that can act inside one administration.
+ *
+ * Still not a role system — three named cases, each with its own source of proof:
+ *   · eigenaar    — it is their own administration. No proof needed.
+ *   · verkoop     — an active row in company_members. Ambient: one per session.
+ *   · boekhouder  — an accountant_clients link PLUS an active invoice mandate from the client
+ *                   (accountant-mandate.ts). NOT ambient: an accountant acts for the ONE client
+ *                   named in the request, never for "their" client in general.
+ *
+ * That last difference is the reason resolveActingFor() below does not handle 'boekhouder'. It
+ * takes an ambient link and answers "who are you?"; for an accountant the question is always "who
+ * are you FOR THIS CLIENT?", which needs the client id and therefore a different door.
+ *
+ * What the two non-owner roles have in common is everything that matters here: the books belong to
+ * ownerId, the human goes in actorId, and they may only touch what they created themselves.
+ */
+export type CompanyRole = "eigenaar" | "verkoop" | "boekhouder";
 
 /** One row from company_members, as the database returns it. */
 export interface MemberLink {
@@ -137,15 +153,37 @@ export const SALES_SCREENS: readonly string[] = [
 ];
 
 /**
+ * The screens a mandated accountant may reach WHILE ACTING FOR A CLIENT.
+ *
+ * Short on purpose. An accountant already has their own portal, reached as themselves; this list
+ * is only about the screens where they stand in their client's shoes. Everything else they do —
+ * reading the quarter, marking documents verwerkt — happens under their OWN id and does not pass
+ * through here at all.
+ */
+export const ACCOUNTANT_SCREENS: readonly string[] = [
+  // Where they pick a client and write the invoice.
+  "/dashboard/accountant/factuur",
+  // The invoice they just made. Same reasoning as the sales member: without it every row in their
+  // own list dead-ends.
+  "/dashboard/invoice",
+];
+
+/**
  * May this actor reach this path?
  *
- * An owner: everywhere (their own administration). A member: only the list above, and only as an
- * exact match or as a subpath — so /dashboard/verkoop/x is included but /dashboard/verkoopcijfers
- * is NOT (a prefix comparison without a boundary is how guards like this silently grow too wide).
+ * An owner: everywhere (their own administration). Anyone else: only their own closed list, and
+ * only as an exact match or as a subpath — so /dashboard/verkoop/x is included but
+ * /dashboard/verkoopcijfers is NOT (a prefix comparison without a boundary is how guards like this
+ * silently grow too wide).
+ *
+ * An unknown role reaches NOTHING. Same failure direction as resolveActingFor: a role nobody named
+ * here cannot inherit another role's screens by accident.
  */
 export function canAccessScreen(a: ActingFor, path: string): boolean {
   if (a.role === "eigenaar") return true;
-  return SALES_SCREENS.some((s) => path === s || path.startsWith(s + "/"));
+  const allowed =
+    a.role === "verkoop" ? SALES_SCREENS : a.role === "boekhouder" ? ACCOUNTANT_SCREENS : [];
+  return allowed.some((s) => path === s || path.startsWith(s + "/"));
 }
 
 /**
@@ -167,6 +205,11 @@ export function invoiceCreatedBy(a: ActingFor): string {
  * The owner sees everything of their own. The member sees only what they created themselves —
  * not their employer's revenue, not a colleague's invoices. `created_by` is therefore not a
  * decorative field: it is the read boundary.
+ *
+ * [MANDAAT] A mandated accountant lands in the same branch, and that is right: this filter feeds
+ * the screen where they WRITE invoices, and there they should see the invoices they wrote. Their
+ * broader view of the client's books is a different screen with a different query (the accountant
+ * portal, accountant.repository.ts) — it does not come through here.
  */
 export function invoiceReadFilter(a: ActingFor): { sender_id: string; created_by?: string } {
   return a.role === "eigenaar"
@@ -196,6 +239,12 @@ export function canAccessInvoice(
  * mail. But the number comes from the OWNER's series (invoiceOwnerId), and that is what this
  * whole module guards. Sending is irreversible; the owner keeps control by revoking the link,
  * not through a per-invoice button.
+ *
+ * [MANDAAT] The same answer for an accountant, and for the same reason — with the mandate itself
+ * as the revocable link. Note what canAccessInvoice above already refuses them: an invoice the
+ * CLIENT made. A mandate is permission to write invoices in someone's name, never permission to
+ * finish or re-price the ones they wrote themselves. The database says the same thing in
+ * prevent_accountant_amount_changes(); this is the half that answers with a 403 instead of a 500.
  */
 export function canSendInvoice(
   a: ActingFor,

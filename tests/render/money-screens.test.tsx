@@ -903,3 +903,30 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   assert.doesNotMatch(unsure, /Alle \d+ controles gedaan/, "a skipped check breaks the completeness claim");
   assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
 });
+
+test("[RENDER-GATE] factureren namens een klant renders, and says whose invoice it is", async () => {
+  const { default: AccountantFactuur } = await import("../../src/modules/accountant/pages/AccountantFactuur");
+
+  // With a mandate. Two clients, so the picker branch runs — one client auto-selects and would
+  // skip the very code path that decides which name goes on the invoice.
+  const html = renderToStaticMarkup(
+    React.createElement(AccountantFactuur, {
+      klanten: [
+        { id: "c1", naam: "Bakkerij Yilmaz", btwNummer: "NL001234567B01" },
+        { id: "c2", naam: "Loodgieter De Vries", btwNummer: null },
+      ],
+    }),
+  );
+  assert.match(html, /Factureren namens een klant/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…with the clients who granted a mandate");
+  // Art. 35: the number series belongs to the client, and the screen has to say so before the
+  // accountant presses a button that consumes one of their numbers.
+  assert.match(html, /art\. 35 Wet OB/, "the irreversibility of an issued number is stated");
+
+  // Without a mandate the screen must NOT look broken or empty — it has to name the one thing that
+  // is missing and who can fix it, because the accountant cannot fix it himself.
+  const leeg = renderToStaticMarkup(React.createElement(AccountantFactuur, { klanten: [] }));
+  assert.match(leeg, /Nog geen enkele klant heeft je hiervoor gemachtigd/, "the empty state explains itself");
+  assert.match(leeg, /Instellingen/, "…and points at where the CLIENT turns it on");
+  assert.match(leeg, /35a/, "…and says the responsibility stays with the entrepreneur");
+});

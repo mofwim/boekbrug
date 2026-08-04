@@ -26,6 +26,11 @@ export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
   const [accountant, setAccountant] = useState<ProfileRow | null>(null)
+  // [MANDAAT] Mag mijn boekhouder facturen op mijn naam uitreiken? Los van de koppeling, want het
+  // is een losse beslissing: bijna iedereen laat zijn boekhouder meekijken, bijna niemand laat hem
+  // ongevraagd factureren.
+  const [mayInvoice, setMayInvoice] = useState(false)
+  const [mandaatBezig, setMandaatBezig] = useState(false)
   // حالة الملف الشخصي
   const [profile, setProfile] = useState<ProfileRow | null>(null)
 
@@ -143,6 +148,7 @@ export default function SettingsPage() {
         if (res.ok) {
           const json = await res.json()
           if (json.accountant) setAccountant(json.accountant)
+          setMayInvoice(Boolean(json.mayInvoice))
         }
       }
 
@@ -340,10 +346,48 @@ export default function SettingsPage() {
     const res = await fetch('/api/accountant/unlink-by-client', { method: 'POST' })
     if (res.ok) {
       setAccountant(null)
+      // De machtiging gaat mee — de route trekt hem in, dit scherm hoort dat meteen te tonen.
+      setMayInvoice(false)
     } else {
       const data = await res.json().catch(() => ({}))
       toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
     }
+  }
+
+  // [MANDAAT] Facturen laten versturen door je boekhouder — aan- of uitzetten.
+  //
+  // Aanzetten vraagt om bevestiging, uitzetten niet. Dat is met opzet asymmetrisch: het geven van
+  // deze bevoegdheid is de stap met gevolgen (er gaan facturen uit onder JOUW nummer, en jij blijft
+  // er zelf verantwoordelijk voor — art. 35a Wet OB), het terugnemen ervan hoort nooit door een
+  // dialoog te worden vertraagd.
+  async function toggleInvoiceMandate() {
+    if (mandaatBezig) return
+    if (!mayInvoice) {
+      const confirmed = await dialog.confirm({
+        title: 'Je boekhouder laten factureren?',
+        message:
+          `${accountant?.company_name || accountant?.full_name || 'Je boekhouder'} mag dan facturen versturen op jouw naam, ` +
+          'met jouw nummerreeks en jouw btw-nummer. Je krijgt van elke factuur bericht, en je blijft er zelf verantwoordelijk voor. ' +
+          'Je kunt dit hier op elk moment weer uitzetten.',
+        confirmLabel: 'Machtigen',
+      })
+      if (!confirmed) return
+    }
+    setMandaatBezig(true)
+    const res = await fetch('/api/accountant/invoice-mandate', {
+      method: mayInvoice ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(mayInvoice ? { otherId: accountant?.id } : { accountantId: accountant?.id }),
+      }),
+    })
+    if (res.ok) {
+      setMayInvoice(!mayInvoice)
+    } else {
+      const data = await res.json().catch(() => ({}))
+      toast(data.error || 'Wijzigen mislukt', { tone: 'error' })
+    }
+    setMandaatBezig(false)
   }
 
   // [BOEK-032] تصدير كل بيانات الحساb (ZIP) ثم تفعيل زر الحذف
@@ -782,6 +826,37 @@ export default function SettingsPage() {
               >
                 Ontkoppelen
               </button>
+            </div>
+
+            {/* [MANDAAT] Art. 35 lid 1 Wet OB laat toe dat een derde de factuur uitreikt "in zijn
+                naam en voor zijn rekening". Art. 35a laat de verantwoordelijkheid wél bij de
+                ondernemer. Beide zinnen staan hier, in gewoon Nederlands, want dit is het scherm
+                waar hij het weggeeft. */}
+            <div className="pt-3 border-t border-gray-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Facturen versturen namens mij
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                    {mayInvoice
+                      ? 'Aan. De facturen krijgen jouw nummerreeks en jouw btw-nummer, en je krijgt van elke verstuurde factuur bericht. Je blijft er zelf verantwoordelijk voor.'
+                      : 'Uit. Je boekhouder kan je administratie wel inzien, maar geen facturen op jouw naam versturen.'}
+                  </p>
+                </div>
+                <button
+                  onClick={toggleInvoiceMandate}
+                  disabled={mandaatBezig}
+                  aria-pressed={mayInvoice}
+                  className={`shrink-0 text-xs font-medium px-3 py-1.5 rounded-full border ${
+                    mayInvoice
+                      ? 'text-red-500 border-red-200 hover:bg-red-50'
+                      : 'text-blue-600 border-blue-200 hover:bg-blue-50'
+                  } disabled:opacity-50`}
+                >
+                  {mandaatBezig ? '…' : mayInvoice ? 'Intrekken' : 'Machtigen'}
+                </button>
+              </div>
             </div>
           </div>
         )}
