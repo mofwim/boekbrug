@@ -953,3 +953,52 @@ test("[ARTIKELEN-WIPE] the empty-the-catalogue action exists, and only when ther
       "over an unknown list",
   );
 });
+
+test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
+  const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
+  const { buildDebtorBoard } = await import("../../src/lib/accountant-debtors");
+
+  const NOW = Date.parse("2026-08-04T12:00:00Z");
+  const day = (n: number) => new Date(NOW + n * 86_400_000).toISOString().slice(0, 10);
+  const inv = (over: Record<string, unknown> = {}) => ({
+    ownerId: "k1", id: "f1", invoice_number: "2026-001", client_name: "Afnemer BV",
+    client_email: "afnemer@example.com", invoice_date: day(-40), due_date: day(-30),
+    total_inc_btw: 500, amount_paid: 0, status: "sent", last_reminder_at: null,
+    reminder_count: 0, ...over,
+  });
+
+  // Rows that exercise the BRANCHES — an empty list would render the same for any bug in them.
+  const groepen = buildDebtorBoard(
+    [
+      inv({ id: "kan" }),                                            // the button path
+      inv({ id: "geen-mail", client_email: null }),                  // refused: no address
+      inv({ id: "stil", reminders_paused: true }),                   // refused: the owner said no
+      inv({ id: "oud", due_date: day(-200), total_inc_btw: 120 }),   // the months-late wording
+      inv({ id: "deel", total_inc_btw: 500, amount_paid: 180 }),     // a partial payment
+    ] as never,
+    { k1: "Bakkerij Yilmaz" },
+    NOW,
+  ).map((g) => ({ ...g, rows: g.rows.map((r) => ({ ...r, paused: false })) }));
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen }));
+  assert.match(html, /Openstaande facturen/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…grouped by the client whose money it is");
+  assert.match(html, /6 maanden te laat/, "…and the oldest debt is named in months, not raw days");
+  // The half that must never be cosmetic: a row that cannot be mailed says WHY. A grey button with
+  // no sentence teaches the accountant to stop reading the screen.
+  assert.match(html, /Deze klant heeft geen e-mailadres/, "the refusal is spelled out");
+  assert.match(html, /stilgezet/, "including the owner's own 'not this one'");
+  // And the ceiling that is a decision rather than a next tap.
+  assert.match(html, /art\. 6:96 BW/, "what comes after three reminders is not a button");
+
+  // Nothing overdue is a different sentence from no mandate — a board that says "geen mandaat"
+  // when everything is simply paid would send the accountant chasing a permission they have.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leeg = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen: [] }));
+  assert.match(leeg, /Niets te laat/, "all paid says so");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const geen = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen: [], geenMandaat: true }));
+  assert.match(geen, /Nog geen enkele klant heeft je gemachtigd/, "no mandate says something else");
+  assert.match(geen, /Instellingen/, "…and points at where the CLIENT turns it on");
+});

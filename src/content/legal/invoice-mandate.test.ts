@@ -100,3 +100,41 @@ test("an issued invoice number is still irreversible when the accountant issued 
   );
   assert.match(voorwaarden, /gecorrigeerd met een creditnota/, "and the real remedy is named");
 });
+
+test("the mandate covers reminders, and says where that stops", () => {
+  // [DEBITEUREN] Added when the accountant portal got a chase-list. §5.9.5 used to say the mandate
+  // was invoices "and nothing else" — true when it was written, false the day reminders shipped. A
+  // clause that quietly outgrows its own description is the failure this whole file guards against.
+  assert.match(
+    voorwaarden,
+    /De machtiging dekt ook betalingsherinneringen/,
+    "§5.9.7 — reminding is named, not left to be inferred from 'invoicing'",
+  );
+  assert.match(
+    voorwaarden,
+    /óók aan facturen die jij zelf hebt gemaakt/,
+    "and the wider scope is admitted plainly: debiteurenbeheer over the client's OWN invoices",
+  );
+  assert.match(
+    voorwaarden,
+    /Een herinnering verandert niets aan de factuur/,
+    "…which is only defensible because a reminder touches no number, amount or status",
+  );
+  assert.match(voorwaarden, /van elke verstuurde herinnering bericht/, "and the client is told each time");
+});
+
+test("the ceilings on reminding are published, including the one the client controls", () => {
+  assert.match(voorwaarden, /hoogstens drie per factuur/, "the cap");
+  assert.match(voorwaarden, /minstens drie dagen ertussen/, "the cooldown");
+  assert.match(
+    voorwaarden,
+    /herinneringen voor een factuur stilgezet/,
+    "reminders_paused is a promise to the client, not an internal flag",
+  );
+  // The WIK step is where a reminder stops being a nudge and starts costing the customer money.
+  assert.match(
+    voorwaarden,
+    /artikel 6:96 BW/,
+    "a formal aanmaning is never sent by a mandated third party",
+  );
+});

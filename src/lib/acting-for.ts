@@ -252,3 +252,58 @@ export function canSendInvoice(
 ): boolean {
   return canAccessInvoice(a, invoice);
 }
+
+/**
+ * [DEBITEUREN] May this actor send a payment REMINDER for this invoice?
+ *
+ * WHY THIS IS NOT canAccessInvoice, AND WHY THE ACCOUNTANT IS WIDER HERE
+ *
+ * Issuing and reminding are two different acts, and conflating them gets one of them wrong:
+ *
+ *   · ISSUING creates a document under someone else's name and VAT number and consumes a number
+ *     from their series, irreversibly (art. 35). An accountant may only finish what they started
+ *     themselves — hence created_by in canAccessInvoice.
+ *   · REMINDING changes nothing at all. No number, no status, no amount — the reminder route says
+ *     so in its own header, and all it writes is a row in invoice_reminders. It is asking for money
+ *     that is already owed on an invoice that already exists.
+ *
+ * Debiteurenbeheer is meaningless scoped to the invoices the accountant happened to type. The
+ * client's overdue invoices are overwhelmingly ones the CLIENT made; a screen that hides those is
+ * not a chase-list, it is a list of the accountant's own typing. So a mandated accountant reaches
+ * every invoice of that client — and only that client.
+ *
+ * The sales member stays narrow, deliberately: they are inside one company with colleagues, and
+ * chasing the boss's other customers is not their job.
+ *
+ * AND THE ONE THING THAT OVERRULES ALL OF IT
+ * `reminders_paused` is how the owner says "not this one" — a disputed invoice, a customer they
+ * are handling by phone, a relationship they are repairing. The cron already obeys it. A third
+ * party pressing a button must obey it too, because the owner set that flag knowing exactly what
+ * it was for and cannot be in the room when someone else decides otherwise. The OWNER themselves
+ * is not blocked: pausing the automatic mails and then sending one by hand is a coherent thing to
+ * want, and it is their relationship.
+ */
+export function canRemindInvoice(
+  a: ActingFor,
+  invoice: { sender_id: string | null; created_by?: string | null; reminders_paused?: boolean | null },
+): { allowed: true } | { allowed: false; reason: string } {
+  if (invoice.sender_id !== a.ownerId) {
+    return { allowed: false, reason: "Deze factuur hoort niet bij deze administratie." };
+  }
+  if (a.role === "eigenaar") return { allowed: true };
+
+  if (invoice.reminders_paused) {
+    return {
+      allowed: false,
+      reason: "De ondernemer heeft herinneringen voor deze factuur stilgezet. Overleg met hem.",
+    };
+  }
+  if (a.role === "boekhouder") return { allowed: true };
+  if (a.role === "verkoop") {
+    return invoice.created_by === a.actorId
+      ? { allowed: true }
+      : { allowed: false, reason: "Je kunt alleen herinneren aan facturen die je zelf hebt gemaakt." };
+  }
+  // An unknown role gets nothing — same failure direction as everywhere else in this file.
+  return { allowed: false, reason: "Je hebt geen toestemming om hieraan te herinneren." };
+}

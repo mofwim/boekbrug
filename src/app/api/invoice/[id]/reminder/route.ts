@@ -25,8 +25,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendInvoiceReminder } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { getActingFor } from '@/lib/acting-for-server'
-import { invoiceOwnerId, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
+import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
+import { invoiceOwnerId, isActingForOther, canRemindInvoice } from '@/lib/acting-for'
 import { canRemind, nextManualOffset, outstandingAmount } from '@/lib/sales-overview'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
@@ -35,8 +35,23 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params
-    const acting = await getActingFor()
-    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    // [DEBITEUREN] Zonder `namens_klant_id` is dit letterlijk de oude route. Mét dat veld moet de
+    // beller een boekhouder zijn met een levend mandaat van precies die klant — anders 403, nooit
+    // een terugval op "dan maar voor jezelf" (zie accountant-mandate.ts).
+    const body = await request.json().catch(() => null)
+    const namensKlantId =
+      typeof body?.namens_klant_id === 'string' && body.namens_klant_id ? body.namens_klant_id : null
+
+    const acting = namensKlantId ? await getActingForClient(namensKlantId) : await getActingFor()
+    if (!acting) {
+      return namensKlantId
+        ? NextResponse.json(
+            { error: 'Je hebt geen toestemming om namens deze klant te herinneren' },
+            { status: 403 },
+          )
+        : NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     const limit = await checkRateLimit({
       userId: acting.actorId,
@@ -49,9 +64,15 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const supabase = await createServerSupabaseClient()
     const pipeline = createPipelineClient()
 
-    const { data: inv } = await supabase
+    // [DEBITEUREN] Een boekhouder leest de factuur van zijn klant niet via RLS op de sessie —
+    // invoices_accountant_read geeft hem alleen GEDEELDE facturen, en een openstaande verkoop-
+    // factuur hoeft niet gedeeld te zijn om te laat te zijn. Vandaar de service_role-client, met
+    // sender_id expliciet op ownerId: hetzelfde patroon als accountant-access.ts, waar de
+    // TOESTEMMING op de sessie is bepaald en de DATA daarna scoped wordt opgehaald.
+    const leesClient = acting.role === 'boekhouder' ? pipeline : supabase
+    const { data: inv } = await leesClient
       .from('invoices')
-      .select('id, invoice_number, client_name, client_email, due_date, total_inc_btw, amount_paid, status, sender_id')
+      .select('id, invoice_number, client_name, client_email, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused')
       .eq('id', id)
       .eq('sender_id', ownerId)
       .maybeSingle()
@@ -60,9 +81,21 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     // Tweede slot naast RLS — dit is het moment waarop een geraden id binnenkomt, en het gevolg
     // is een mail naar de klant van iemand anders.
+    //
+    // canRemindInvoice en NIET canAccessInvoice: herinneren en uitgeven zijn twee verschillende
+    // handelingen, en de boekhouder mag bij de eerste breder dan bij de tweede. De reden staat
+    // voluit in acting-for.ts — kort: uitgeven maakt een document onder andermans BTW-nummer,
+    // herinneren verandert helemaal niets. Deze functie bewaakt óók reminders_paused, de vlag
+    // waarmee de ondernemer "deze niet" zegt.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (!canAccessInvoice(acting, inv as any)) {
-      return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+    const mag = canRemindInvoice(acting, inv as any)
+    if (!mag.allowed) {
+      // 404 wanneer het niet zijn administratie is (een geraden id mag niet bevestigd worden),
+      // 409 wanneer het wél zijn administratie is maar deze factuur niet mag — dan is de reden
+      // nuttige informatie in plaats van een lek.
+      return inv.sender_id === ownerId
+        ? NextResponse.json({ error: mag.reason }, { status: 409 })
+        : NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
     // ── Het spoor tot nu toe: hoeveel gingen er al uit, en wanneer de laatste? ──
@@ -146,6 +179,25 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       await (pipeline as any).from('invoice_reminders').update({ status: 'failed' }).eq('id', claim.id)
       console.error('[ACTING-FOR] herinnering versturen mislukt', { id, error: String(e) })
       return NextResponse.json({ error: 'De herinnering kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
+    }
+
+    // [DEBITEUREN] Stuurde de BOEKHOUDER hem, dan moet de ondernemer het weten. Aan de andere kant
+    // van die mail zit ZIJN klant, en de relatie die eronder lijdt is de zijne. Hij hoort niet pas
+    // bij het volgende telefoontje te horen dat er is aangedrongen — dan is het zijn probleem
+    // geworden zonder dat hij erbij was. Best-effort: de mail is al weg.
+    if (acting.role === 'boekhouder') {
+      try {
+        await pipeline.from('notifications').insert({
+          user_id: ownerId,
+          title: 'Je boekhouder heeft een herinnering gestuurd',
+          body: `${inv.client_name?.trim() || 'Je klant'} is herinnerd aan factuur ${inv.invoice_number?.trim() || '—'}. Dit was herinnering ${geslaagd.length + 1}.`,
+          type: 'invoice',
+          read: false,
+          link: '/dashboard/facturen',
+        })
+      } catch (e) {
+        console.error('[DEBITEUREN] melding aan de ondernemer mislukt', { id, error: String(e) })
+      }
     }
 
     await logAuditAction({

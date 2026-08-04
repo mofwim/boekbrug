@@ -58,6 +58,8 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/accountant/agenda", "Aangifte & status"],
   // [MANDAAT] Factureren namens een klant die daarvoor gemachtigd heeft.
   ["/dashboard/accountant/factuur", "Factuur namens klant"],
+  // [DEBITEUREN] De chase-lijst over alle gemachtigde klanten heen.
+  ["/dashboard/accountant/debiteuren", "Openstaande facturen"],
   // HAS-ACTIONS pages: the shared bar gives back + title; the page keeps its own
   // search/filter/sort controls as a secondary sticky toolbar offset below it.
   ["/dashboard/facturen", "Mijn facturen"],
