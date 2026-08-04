@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { getActingFor } from '@/lib/acting-for-server'
+import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
 import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
 // [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
@@ -56,8 +56,28 @@ const DB_TYPE: Record<Soort, string> = {
 
 export async function POST(request: NextRequest) {
   try {
-    const acting = await getActingFor()
-    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // [MANDAAT] `namensKlantId` in de body is het ENIGE verschil met vroeger: staat hij er niet,
+    // dan is dit letterlijk de oude route. Staat hij er wel, dan moet de beller een boekhouder zijn
+    // met een levend mandaat van precies die klant — anders 403, nooit een terugval op "dan maar
+    // voor jezelf". Zie accountant-mandate.ts.
+    const voorbody = await request.json().catch(() => null)
+    if (!voorbody || typeof voorbody !== 'object') {
+      return NextResponse.json({ error: 'Ongeldig verzoek' }, { status: 400 })
+    }
+    const namensKlantId =
+      typeof voorbody.namens_klant_id === 'string' && voorbody.namens_klant_id
+        ? voorbody.namens_klant_id
+        : null
+
+    const acting = namensKlantId ? await getActingForClient(namensKlantId) : await getActingFor()
+    if (!acting) {
+      return namensKlantId
+        ? NextResponse.json(
+            { error: 'Je hebt geen toestemming om namens deze klant te factureren' },
+            { status: 403 },
+          )
+        : NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     const limit = await checkRateLimit({
       userId: acting.actorId,
@@ -66,10 +86,7 @@ export async function POST(request: NextRequest) {
     })
     if (!limit.allowed) return rateLimitResponse(limit)
 
-    const body = await request.json().catch(() => null)
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json({ error: 'Ongeldig verzoek' }, { status: 400 })
-    }
+    const body = voorbody
 
     const soort: Soort =
       body.invoiceType === 'creditnota' ? 'creditnota' : body.invoiceType === 'offerte' ? 'offerte' : 'factuur'

@@ -904,6 +904,33 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
 });
 
+test("[RENDER-GATE] factureren namens een klant renders, and says whose invoice it is", async () => {
+  const { default: AccountantFactuur } = await import("../../src/modules/accountant/pages/AccountantFactuur");
+
+  // With a mandate. Two clients, so the picker branch runs — one client auto-selects and would
+  // skip the very code path that decides which name goes on the invoice.
+  const html = renderToStaticMarkup(
+    React.createElement(AccountantFactuur, {
+      klanten: [
+        { id: "c1", naam: "Bakkerij Yilmaz", btwNummer: "NL001234567B01" },
+        { id: "c2", naam: "Loodgieter De Vries", btwNummer: null },
+      ],
+    }),
+  );
+  assert.match(html, /Factureren namens een klant/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…with the clients who granted a mandate");
+  // Art. 35: the number series belongs to the client, and the screen has to say so before the
+  // accountant presses a button that consumes one of their numbers.
+  assert.match(html, /art\. 35 Wet OB/, "the irreversibility of an issued number is stated");
+
+  // Without a mandate the screen must NOT look broken or empty — it has to name the one thing that
+  // is missing and who can fix it, because the accountant cannot fix it himself.
+  const leeg = renderToStaticMarkup(React.createElement(AccountantFactuur, { klanten: [] }));
+  assert.match(leeg, /Nog geen enkele klant heeft je hiervoor gemachtigd/, "the empty state explains itself");
+  assert.match(leeg, /Instellingen/, "…and points at where the CLIENT turns it on");
+  assert.match(leeg, /35a/, "…and says the responsibility stays with the entrepreneur");
+});
+
 test("[ARTIKELEN-WIPE] the empty-the-catalogue action exists, and only when there is something to empty", async () => {
   // A destructive action on a screen full of rows: the render gate is where "it is on the page at
   // all" is held, since the manage screen's own gates cannot see this one.
@@ -963,4 +990,53 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
   // And the old behaviour must be gone: handing the file to the operating system loses the queue
   // position, which on this screen means losing your place in the verification you were doing.
   assert.doesNotMatch(html, /Bekijk factuur<\/button>/, "the OS hand-off label is gone");
+});
+
+test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
+  const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
+  const { buildDebtorBoard } = await import("../../src/lib/accountant-debtors");
+
+  const NOW = Date.parse("2026-08-04T12:00:00Z");
+  const day = (n: number) => new Date(NOW + n * 86_400_000).toISOString().slice(0, 10);
+  const inv = (over: Record<string, unknown> = {}) => ({
+    ownerId: "k1", id: "f1", invoice_number: "2026-001", client_name: "Afnemer BV",
+    client_email: "afnemer@example.com", invoice_date: day(-40), due_date: day(-30),
+    total_inc_btw: 500, amount_paid: 0, status: "sent", last_reminder_at: null,
+    reminder_count: 0, ...over,
+  });
+
+  // Rows that exercise the BRANCHES — an empty list would render the same for any bug in them.
+  const groepen = buildDebtorBoard(
+    [
+      inv({ id: "kan" }),                                            // the button path
+      inv({ id: "geen-mail", client_email: null }),                  // refused: no address
+      inv({ id: "stil", reminders_paused: true }),                   // refused: the owner said no
+      inv({ id: "oud", due_date: day(-200), total_inc_btw: 120 }),   // the months-late wording
+      inv({ id: "deel", total_inc_btw: 500, amount_paid: 180 }),     // a partial payment
+    ] as never,
+    { k1: "Bakkerij Yilmaz" },
+    NOW,
+  ).map((g) => ({ ...g, rows: g.rows.map((r) => ({ ...r, paused: false })) }));
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen }));
+  assert.match(html, /Openstaande facturen/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…grouped by the client whose money it is");
+  assert.match(html, /6 maanden te laat/, "…and the oldest debt is named in months, not raw days");
+  // The half that must never be cosmetic: a row that cannot be mailed says WHY. A grey button with
+  // no sentence teaches the accountant to stop reading the screen.
+  assert.match(html, /Deze klant heeft geen e-mailadres/, "the refusal is spelled out");
+  assert.match(html, /stilgezet/, "including the owner's own 'not this one'");
+  // And the ceiling that is a decision rather than a next tap.
+  assert.match(html, /art\. 6:96 BW/, "what comes after three reminders is not a button");
+
+  // Nothing overdue is a different sentence from no mandate — a board that says "geen mandaat"
+  // when everything is simply paid would send the accountant chasing a permission they have.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leeg = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen: [] }));
+  assert.match(leeg, /Niets te laat/, "all paid says so");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const geen = renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen: [], geenMandaat: true }));
+  assert.match(geen, /Nog geen enkele klant heeft je gemachtigd/, "no mandate says something else");
+  assert.match(geen, /Instellingen/, "…and points at where the CLIENT turns it on");
 });

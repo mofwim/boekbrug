@@ -146,7 +146,11 @@ test("an unreadable previous date turns the button OFF, not on", () => {
 test("there is an upper limit — beyond it, it is no longer reminding", () => {
   const out = canRemind(f({ reminder_count: MAX_MANUAL_REMINDERS }), NOW);
   assert.equal(out.allowed, false);
-  if (!out.allowed) assert.match(out.reason, /werkgever/, "and the member should know who to turn to");
+  // [DEBITEUREN] The sentence is role-neutral now: the owner, a sales member and a mandated
+  // accountant all reach this button, and what comes after three reminders is a decision with
+  // legal consequences (art. 6:96 BW) rather than a next tap — whoever is reading.
+  if (!out.allowed) assert.match(out.reason, /beslissing van de ondernemer/, "…and it says whose decision it is");
+  if (!out.allowed) assert.doesNotMatch(out.reason, /werkgever/, "not 'your employer' — the owner reads this too");
   assert.equal(canRemind(f({ reminder_count: MAX_MANUAL_REMINDERS - 1 }), NOW).allowed, true);
 });
 

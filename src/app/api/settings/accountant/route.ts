@@ -23,13 +23,31 @@ export async function GET() {
       return NextResponse.json({ accountant: null })
     }
 
-    const { data: accountantData } = await pipeline
-      .from('profiles')
-      .select('full_name, company_name, email')
-      .eq('id', links[0].accountant_id)
-      .single()
+    const accountantId = links[0].accountant_id
 
-    return NextResponse.json({ accountant: accountantData ?? null })
+    // [MANDAAT] Mag deze boekhouder facturen op naam van deze klant uitreiken? Het antwoord hoort
+    // bij de boekhouder zelf: de klant moet op één scherm kunnen zien wie hij heeft, en wat die
+    // persoon mag. Een toestemming die je alleen terugvindt in een menu dat je niet opent, is een
+    // toestemming die je niet meer intrekt.
+    const [{ data: accountantData }, { data: mandaat }] = await Promise.all([
+      pipeline
+        .from('profiles')
+        .select('full_name, company_name, email')
+        .eq('id', accountantId)
+        .single(),
+      pipeline
+        .from('accountant_invoice_mandates')
+        .select('id')
+        .eq('zzper_id', user.id)
+        .eq('accountant_id', accountantId)
+        .is('revoked_at', null)
+        .maybeSingle(),
+    ])
+
+    return NextResponse.json({
+      accountant: accountantData ? { ...accountantData, id: accountantId } : null,
+      mayInvoice: Boolean(mandaat),
+    })
   } catch (error) {
     console.error('[settings/accountant] error:', error)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })

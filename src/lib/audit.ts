@@ -91,6 +91,13 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [MANDAAT] De klant machtigt zijn boekhouder om facturen op zijn naam uit te reiken (art. 35
+  // lid 1 Wet OB), of trekt dat in. Dit hoort in het auditspoor en niet alleen in de tabel: de
+  // ondernemer blijft zelf aansprakelijk voor elke factuur die onder zijn nummer uitgaat, dus de
+  // vraag "wanneer heb ik dit gegeven, en wie heeft het beëindigd" moet jaren later nog een
+  // antwoord hebben.
+  | 'accountant.invoice_mandate_granted'
+  | 'accountant.invoice_mandate_revoked'
   // [ACTING-FOR] Een herinnering die MET DE HAND is verstuurd (de cron logt in invoice_reminders,
   // niet hier). Aan de andere kant zit een klant van de ondernemer; wie op die knop drukte hoort
   // dus terug te vinden te zijn — zeker als dat een medewerker was en niet de eigenaar zelf.

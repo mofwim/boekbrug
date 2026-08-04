@@ -36,8 +36,24 @@
 // their employer's profit. By NEVER letting the member read the owner's rows directly, every
 // existing policy stays exactly as it was.
 
-/** The roles within one company. Deliberately two — see the header: this is not a role system. */
-export type CompanyRole = "eigenaar" | "verkoop";
+/**
+ * The roles that can act inside one administration.
+ *
+ * Still not a role system — three named cases, each with its own source of proof:
+ *   · eigenaar    — it is their own administration. No proof needed.
+ *   · verkoop     — an active row in company_members. Ambient: one per session.
+ *   · boekhouder  — an accountant_clients link PLUS an active invoice mandate from the client
+ *                   (accountant-mandate.ts). NOT ambient: an accountant acts for the ONE client
+ *                   named in the request, never for "their" client in general.
+ *
+ * That last difference is the reason resolveActingFor() below does not handle 'boekhouder'. It
+ * takes an ambient link and answers "who are you?"; for an accountant the question is always "who
+ * are you FOR THIS CLIENT?", which needs the client id and therefore a different door.
+ *
+ * What the two non-owner roles have in common is everything that matters here: the books belong to
+ * ownerId, the human goes in actorId, and they may only touch what they created themselves.
+ */
+export type CompanyRole = "eigenaar" | "verkoop" | "boekhouder";
 
 /** One row from company_members, as the database returns it. */
 export interface MemberLink {
@@ -137,15 +153,37 @@ export const SALES_SCREENS: readonly string[] = [
 ];
 
 /**
+ * The screens a mandated accountant may reach WHILE ACTING FOR A CLIENT.
+ *
+ * Short on purpose. An accountant already has their own portal, reached as themselves; this list
+ * is only about the screens where they stand in their client's shoes. Everything else they do —
+ * reading the quarter, marking documents verwerkt — happens under their OWN id and does not pass
+ * through here at all.
+ */
+export const ACCOUNTANT_SCREENS: readonly string[] = [
+  // Where they pick a client and write the invoice.
+  "/dashboard/accountant/factuur",
+  // The invoice they just made. Same reasoning as the sales member: without it every row in their
+  // own list dead-ends.
+  "/dashboard/invoice",
+];
+
+/**
  * May this actor reach this path?
  *
- * An owner: everywhere (their own administration). A member: only the list above, and only as an
- * exact match or as a subpath — so /dashboard/verkoop/x is included but /dashboard/verkoopcijfers
- * is NOT (a prefix comparison without a boundary is how guards like this silently grow too wide).
+ * An owner: everywhere (their own administration). Anyone else: only their own closed list, and
+ * only as an exact match or as a subpath — so /dashboard/verkoop/x is included but
+ * /dashboard/verkoopcijfers is NOT (a prefix comparison without a boundary is how guards like this
+ * silently grow too wide).
+ *
+ * An unknown role reaches NOTHING. Same failure direction as resolveActingFor: a role nobody named
+ * here cannot inherit another role's screens by accident.
  */
 export function canAccessScreen(a: ActingFor, path: string): boolean {
   if (a.role === "eigenaar") return true;
-  return SALES_SCREENS.some((s) => path === s || path.startsWith(s + "/"));
+  const allowed =
+    a.role === "verkoop" ? SALES_SCREENS : a.role === "boekhouder" ? ACCOUNTANT_SCREENS : [];
+  return allowed.some((s) => path === s || path.startsWith(s + "/"));
 }
 
 /**
@@ -167,6 +205,11 @@ export function invoiceCreatedBy(a: ActingFor): string {
  * The owner sees everything of their own. The member sees only what they created themselves —
  * not their employer's revenue, not a colleague's invoices. `created_by` is therefore not a
  * decorative field: it is the read boundary.
+ *
+ * [MANDAAT] A mandated accountant lands in the same branch, and that is right: this filter feeds
+ * the screen where they WRITE invoices, and there they should see the invoices they wrote. Their
+ * broader view of the client's books is a different screen with a different query (the accountant
+ * portal, accountant.repository.ts) — it does not come through here.
  */
 export function invoiceReadFilter(a: ActingFor): { sender_id: string; created_by?: string } {
   return a.role === "eigenaar"
@@ -196,10 +239,71 @@ export function canAccessInvoice(
  * mail. But the number comes from the OWNER's series (invoiceOwnerId), and that is what this
  * whole module guards. Sending is irreversible; the owner keeps control by revoking the link,
  * not through a per-invoice button.
+ *
+ * [MANDAAT] The same answer for an accountant, and for the same reason — with the mandate itself
+ * as the revocable link. Note what canAccessInvoice above already refuses them: an invoice the
+ * CLIENT made. A mandate is permission to write invoices in someone's name, never permission to
+ * finish or re-price the ones they wrote themselves. The database says the same thing in
+ * prevent_accountant_amount_changes(); this is the half that answers with a 403 instead of a 500.
  */
 export function canSendInvoice(
   a: ActingFor,
   invoice: { sender_id: string | null; created_by?: string | null },
 ): boolean {
   return canAccessInvoice(a, invoice);
+}
+
+/**
+ * [DEBITEUREN] May this actor send a payment REMINDER for this invoice?
+ *
+ * WHY THIS IS NOT canAccessInvoice, AND WHY THE ACCOUNTANT IS WIDER HERE
+ *
+ * Issuing and reminding are two different acts, and conflating them gets one of them wrong:
+ *
+ *   · ISSUING creates a document under someone else's name and VAT number and consumes a number
+ *     from their series, irreversibly (art. 35). An accountant may only finish what they started
+ *     themselves — hence created_by in canAccessInvoice.
+ *   · REMINDING changes nothing at all. No number, no status, no amount — the reminder route says
+ *     so in its own header, and all it writes is a row in invoice_reminders. It is asking for money
+ *     that is already owed on an invoice that already exists.
+ *
+ * Debiteurenbeheer is meaningless scoped to the invoices the accountant happened to type. The
+ * client's overdue invoices are overwhelmingly ones the CLIENT made; a screen that hides those is
+ * not a chase-list, it is a list of the accountant's own typing. So a mandated accountant reaches
+ * every invoice of that client — and only that client.
+ *
+ * The sales member stays narrow, deliberately: they are inside one company with colleagues, and
+ * chasing the boss's other customers is not their job.
+ *
+ * AND THE ONE THING THAT OVERRULES ALL OF IT
+ * `reminders_paused` is how the owner says "not this one" — a disputed invoice, a customer they
+ * are handling by phone, a relationship they are repairing. The cron already obeys it. A third
+ * party pressing a button must obey it too, because the owner set that flag knowing exactly what
+ * it was for and cannot be in the room when someone else decides otherwise. The OWNER themselves
+ * is not blocked: pausing the automatic mails and then sending one by hand is a coherent thing to
+ * want, and it is their relationship.
+ */
+export function canRemindInvoice(
+  a: ActingFor,
+  invoice: { sender_id: string | null; created_by?: string | null; reminders_paused?: boolean | null },
+): { allowed: true } | { allowed: false; reason: string } {
+  if (invoice.sender_id !== a.ownerId) {
+    return { allowed: false, reason: "Deze factuur hoort niet bij deze administratie." };
+  }
+  if (a.role === "eigenaar") return { allowed: true };
+
+  if (invoice.reminders_paused) {
+    return {
+      allowed: false,
+      reason: "De ondernemer heeft herinneringen voor deze factuur stilgezet. Overleg met hem.",
+    };
+  }
+  if (a.role === "boekhouder") return { allowed: true };
+  if (a.role === "verkoop") {
+    return invoice.created_by === a.actorId
+      ? { allowed: true }
+      : { allowed: false, reason: "Je kunt alleen herinneren aan facturen die je zelf hebt gemaakt." };
+  }
+  // An unknown role gets nothing — same failure direction as everywhere else in this file.
+  return { allowed: false, reason: "Je hebt geen toestemming om hieraan te herinneren." };
 }

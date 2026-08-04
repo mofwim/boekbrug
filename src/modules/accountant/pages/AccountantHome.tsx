@@ -425,6 +425,12 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             <ToolTile icon="bar_chart" tint="#E37400" label="Kwartaal" onClick={() => router.push('/dashboard/quarterly')} />
             <ToolTile icon="account_tree" tint="#1967D2" label="Brug" onClick={() => router.push('/dashboard/brug')} />
             <ToolTile icon="description" tint="#00897B" label="Facturen" onClick={() => router.push('/dashboard/facturen')} />
+            {/* [MANDAAT] Altijd zichtbaar, ook zonder machtiging: het scherm erachter legt dan uit
+                dat de klant het zelf moet aanzetten. Een tegel die pas verschijnt als iemand hem
+                al niet meer nodig heeft, vertelt niemand dat de functie bestaat. */}
+            <ToolTile icon="edit_note" tint="#C5221F" label="Factureren" onClick={() => router.push('/dashboard/accountant/factuur')} />
+            {/* [DEBITEUREN] Waar staat het geld stil, over alle gemachtigde klanten heen. */}
+            <ToolTile icon="schedule_send" tint="#E37400" label="Openstaand" onClick={() => router.push('/dashboard/accountant/debiteuren')} />
             <ToolTile icon="folder_open" tint="#5F6368" label="Bestanden" onClick={() => router.push('/dashboard/bestanden')} />
             <ToolTile icon="settings" tint="#7B1FA2" label="Instellingen" onClick={() => router.push('/dashboard/settings')} />
           </div>

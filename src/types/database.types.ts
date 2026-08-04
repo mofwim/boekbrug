@@ -82,6 +82,36 @@ export type Database = {
           },
         ]
       }
+      // [MANDAAT] Hand-written, from accountant_invoice_mandate.sql. The client's authorisation
+      // for their accountant to issue invoices in their name (art. 35 lid 1 Wet OB). Rows are
+      // never deleted — revoking sets revoked_at, so the history stays answerable.
+      accountant_invoice_mandates: {
+        Row: {
+          accountant_id: string
+          granted_at: string
+          id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          zzper_id: string
+        }
+        Insert: {
+          accountant_id: string
+          granted_at?: string
+          id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          zzper_id: string
+        }
+        Update: {
+          accountant_id?: string
+          granted_at?: string
+          id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          zzper_id?: string
+        }
+        Relationships: []
+      }
       accountant_subject_status: {
         Row: {
           accountant_id: string

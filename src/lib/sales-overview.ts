@@ -133,7 +133,12 @@ export function canRemind(f: SalesInvoice, nowMs: number): ReminderVerdict {
   if ((f.reminder_count ?? 0) >= MAX_MANUAL_REMINDERS) {
     return {
       allowed: false,
-      reason: `Er zijn al ${MAX_MANUAL_REMINDERS} herinneringen verstuurd. Vraag je werkgever wat er verder moet gebeuren.`,
+      // [DEBITEUREN] Deliberately role-neutral. This sentence used to say "vraag je werkgever",
+      // which was already wrong for the owner reading it on their own screen, and became wrong a
+      // second way once an accountant could reach this button. What comes after three reminders —
+      // a WIK-aanmaning, an incassobureau, writing it off — is a decision with legal consequences
+      // (art. 6:96 BW), and it belongs to the entrepreneur no matter who is looking at the screen.
+      reason: `Er zijn al ${MAX_MANUAL_REMINDERS} herinneringen verstuurd. Wat hierna komt — een aanmaning of incasso — is een beslissing van de ondernemer, geen knop.`,
     };
   }
   if (f.last_reminder_at) {
