@@ -171,6 +171,107 @@ export async function POST(req: NextRequest) {
   // line to spend. Deploy-safe: an undefined function (bank_confirm_atomic.sql not applied yet)
   // falls through to the previous path — which keeps its loud over-application detector, so an
   // un-migrated database is exactly as safe as it was yesterday.
+  // [DECLARED-INVOICE] BEFORE any booking runs — which is the whole point, and was the bug.
+  //
+  // The atomic confirm_bank_payment call below books and RETURNS. This guard used to sit after
+  // it, reachable only when that function was MISSING (the pre-migration fall-through). So the
+  // migration that made confirmation atomic silently turned the double-payment refusal into dead
+  // code: from the moment bank_confirm_atomic.sql was applied, a payment naming an invoice the
+  // administration does not hold was booked in full onto the one invoice it did hold — the ATAPACK
+  // case the comment below describes, refused in theory and booked in practice.
+  //
+  // The money it needs (payAvailable, moneyLeftOver) is computed here for the same reason: a guard
+  // that runs after the write is not a guard.
+
+  const refNumbers = parseReferenceNumbers(tx.reference);
+  const payAmount = Math.abs(tx.amount ?? 0);
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] Which path this booking takes is decided by the MONEY, not
+  // by how many number-shaped tokens the reference happens to contain.
+  //
+  //   payment <= what this invoice still owes  → this one invoice absorbs the whole payment
+  //                                              (in full, or as an honest deelbetaling)
+  //   payment >  what this invoice still owes  → settle this invoice and keep the bank line OPEN
+  //                                              for the rest of the money
+  //
+  // The reference-token count could not answer either question. It said "multi" for a single
+  // payment whose description merely carried a customer number — booking a €500 instalment on a
+  // €1.815 invoice as fully paid — and it said "single" for a real bundle whose numbers the
+  // extractor had mutilated ("2026-045, 2026-046" is stored as "045, 046"), so the €1.100 that
+  // paid two invoices was consumed by the first one and the second stayed open forever with its
+  // money already spent. Both are the same mistake: guessing intent from text instead of
+  // reading the amounts. (refNumbers survives below only as the legacy coverage fallback.)
+  const invMoney = inv as { total_inc_btw?: number | null; amount_paid?: number | null };
+  const invOpen = openBalanceFromAmounts(invMoney);
+
+  // How much of this bank line is already spent on OTHER invoices. A payment can be confirmed
+  // against several invoices one after another, and each booking may only spend what is LEFT —
+  // otherwise the second confirmation of a €1.100 payment that already settled €605 would still
+  // believe it has €1.100 to give, and would mark a €600 invoice fully paid with €105 that never
+  // arrived. bank_tx_invoices.amount_applied records what each booking took, on every path.
+  // Read BEFORE any write so a retry can never count our own link twice.
+  let appliedElsewhere = 0;
+  let appliedElsewhereKnown = true;
+  {
+    const { data: linkRows, error: linkReadErr } = await pipeline
+      .from("bank_tx_invoices")
+      .select("invoice_id, amount_applied")
+      .eq("user_id", user.id)
+      .eq("transaction_id", transactionId);
+    if (linkReadErr) {
+      appliedElsewhereKnown = false;
+    } else {
+      for (const r of (linkRows ?? []) as { invoice_id: string; amount_applied: number | null }[]) {
+        if (r.invoice_id === invoiceId) continue;
+        // A link with no amount is a pre-[PARTIAL-PAY] row: we cannot tell what it settled, so we
+        // do not pretend to know what is left. The legacy reference rule takes over below.
+        if (r.amount_applied == null) { appliedElsewhereKnown = false; continue; }
+        appliedElsewhere += Math.max(0, Number(r.amount_applied));
+      }
+    }
+  }
+  // What this payment still has to give. Unknown sibling amounts ⇒ fall back to the full amount,
+  // which is exactly how it behaved before per-link amounts existed.
+  const payAvailable = appliedElsewhereKnown
+    ? Math.round(Math.max(0, payAmount - appliedElsewhere) * 100) / 100
+    : payAmount;
+
+  const moneyLeftOver = paymentExceedsOpenBalance(payAvailable, invMoney);
+
+  // [DECLARED-INVOICE] Does this payment SAY it also pays an invoice we do not have?
+  //
+  // Booking now consumes the bank line. If the description names a second invoice that is not in
+  // the administration yet, the money for it is spent here — and when that invoice arrives it
+  // reads fully open, gets dunned, and can be paid a second time. That is the ATAPACK case:
+  // "Tweede deel factuur 26302050 , factuur 26302362", where only the first was imported and the
+  // first had room to absorb the entire €2.265,41.
+  //
+  // Refused rather than warned, and only when the booking would swallow the WHOLE line: waiting
+  // is reversible and a wrong booking is not. An owner who knows better passes `force`. Skipped
+  // entirely when an explicit amount was stated — stating one IS the owner allocating deliberately.
+  if (requestedAmount == null && !force && !moneyLeftOver) {
+    const missing = undeclaredMissingInvoices(
+      { reference: tx.reference, description: tx.description },
+      [...refNumbers, inv.invoice_number],
+    );
+    if (missing.length > 0) {
+      return NextResponse.json(
+        {
+          error: "declared_invoice_missing",
+          code: "declared_invoice_missing",
+          missingNumbers: missing,
+          canForce: true,
+          detail:
+            `Deze betaling noemt ook ${missing.length === 1 ? "factuur" : "facturen"} ${missing.join(", ")}, ` +
+            `${missing.length === 1 ? "die staat" : "die staan"} nog niet in je administratie. Als we het hele bedrag nu op ` +
+            `${inv.invoice_number ?? "deze factuur"} boeken, is het geld op zodra ${missing.length === 1 ? "die factuur" : "die facturen"} ` +
+            `binnenkomt — en dan lijkt ${missing.length === 1 ? "hij" : "die"} onbetaald. Voeg ${missing.length === 1 ? "hem" : "ze"} eerst toe, ` +
+            `of vul hieronder in welk deel van dit bedrag op deze factuur hoort.`,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   {
     // confirm_bank_payment is added by bank_confirm_atomic.sql and not yet in the generated
     // types — same convention as auto_match_reason. Regenerate types after applying.
@@ -270,59 +371,6 @@ export async function POST(req: NextRequest) {
   // cover the total. Everything the payment had left goes to this one invoice, so the bank line
   // is fully consumed → matched. Session client so the B.4 verwerkt trigger has auth context
   // (the RPC also re-checks verwerkt under its row lock).
-  const refNumbers = parseReferenceNumbers(tx.reference);
-  const payAmount = Math.abs(tx.amount ?? 0);
-  // [BANK-ONE-PAYMENT-MANY-INVOICES] Which path this booking takes is decided by the MONEY, not
-  // by how many number-shaped tokens the reference happens to contain.
-  //
-  //   payment <= what this invoice still owes  → this one invoice absorbs the whole payment
-  //                                              (in full, or as an honest deelbetaling)
-  //   payment >  what this invoice still owes  → settle this invoice and keep the bank line OPEN
-  //                                              for the rest of the money
-  //
-  // The reference-token count could not answer either question. It said "multi" for a single
-  // payment whose description merely carried a customer number — booking a €500 instalment on a
-  // €1.815 invoice as fully paid — and it said "single" for a real bundle whose numbers the
-  // extractor had mutilated ("2026-045, 2026-046" is stored as "045, 046"), so the €1.100 that
-  // paid two invoices was consumed by the first one and the second stayed open forever with its
-  // money already spent. Both are the same mistake: guessing intent from text instead of
-  // reading the amounts. (refNumbers survives below only as the legacy coverage fallback.)
-  const invMoney = inv as { total_inc_btw?: number | null; amount_paid?: number | null };
-  const invOpen = openBalanceFromAmounts(invMoney);
-
-  // How much of this bank line is already spent on OTHER invoices. A payment can be confirmed
-  // against several invoices one after another, and each booking may only spend what is LEFT —
-  // otherwise the second confirmation of a €1.100 payment that already settled €605 would still
-  // believe it has €1.100 to give, and would mark a €600 invoice fully paid with €105 that never
-  // arrived. bank_tx_invoices.amount_applied records what each booking took, on every path.
-  // Read BEFORE any write so a retry can never count our own link twice.
-  let appliedElsewhere = 0;
-  let appliedElsewhereKnown = true;
-  {
-    const { data: linkRows, error: linkReadErr } = await pipeline
-      .from("bank_tx_invoices")
-      .select("invoice_id, amount_applied")
-      .eq("user_id", user.id)
-      .eq("transaction_id", transactionId);
-    if (linkReadErr) {
-      appliedElsewhereKnown = false;
-    } else {
-      for (const r of (linkRows ?? []) as { invoice_id: string; amount_applied: number | null }[]) {
-        if (r.invoice_id === invoiceId) continue;
-        // A link with no amount is a pre-[PARTIAL-PAY] row: we cannot tell what it settled, so we
-        // do not pretend to know what is left. The legacy reference rule takes over below.
-        if (r.amount_applied == null) { appliedElsewhereKnown = false; continue; }
-        appliedElsewhere += Math.max(0, Number(r.amount_applied));
-      }
-    }
-  }
-  // What this payment still has to give. Unknown sibling amounts ⇒ fall back to the full amount,
-  // which is exactly how it behaved before per-link amounts existed.
-  const payAvailable = appliedElsewhereKnown
-    ? Math.round(Math.max(0, payAmount - appliedElsewhere) * 100) / 100
-    : payAmount;
-
-  const moneyLeftOver = paymentExceedsOpenBalance(payAvailable, invMoney);
   if (!moneyLeftOver) {
     if (payAvailable <= 0) {
       // Every euro of this bank line is already booked on other invoices — there is nothing left
@@ -352,40 +400,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // [DECLARED-INVOICE] Does this payment SAY it also pays an invoice we do not have?
-    //
-    // Booking now consumes the bank line. If the description names a second invoice that is not in
-    // the administration yet, the money for it is spent here — and when that invoice arrives it
-    // reads fully open, gets dunned, and can be paid a second time. That is the ATAPACK case:
-    // "Tweede deel factuur 26302050 , factuur 26302362", where only the first was imported and the
-    // first had room to absorb the entire €2.265,41.
-    //
-    // Refused rather than warned, and only when the booking would swallow the WHOLE line: waiting
-    // is reversible and a wrong booking is not. An owner who knows better passes `force`. Skipped
-    // entirely when an explicit amount was stated — stating one IS the owner allocating deliberately.
-    if (requestedAmount == null && !force && !moneyLeftOver) {
-      const missing = undeclaredMissingInvoices(
-        { reference: tx.reference, description: tx.description },
-        [...refNumbers, inv.invoice_number],
-      );
-      if (missing.length > 0) {
-        return NextResponse.json(
-          {
-            error: "declared_invoice_missing",
-            code: "declared_invoice_missing",
-            missingNumbers: missing,
-            canForce: true,
-            detail:
-              `Deze betaling noemt ook ${missing.length === 1 ? "factuur" : "facturen"} ${missing.join(", ")}, ` +
-              `${missing.length === 1 ? "die staat" : "die staan"} nog niet in je administratie. Als we het hele bedrag nu op ` +
-              `${inv.invoice_number ?? "deze factuur"} boeken, is het geld op zodra ${missing.length === 1 ? "die factuur" : "die facturen"} ` +
-              `binnenkomt — en dan lijkt ${missing.length === 1 ? "hij" : "die"} onbetaald. Voeg ${missing.length === 1 ? "hem" : "ze"} eerst toe, ` +
-              `of vul hieronder in welk deel van dit bedrag op deze factuur hoort.`,
-          },
-          { status: 409 },
-        );
-      }
-    }
 
     const { data: applyRows, error: applyErr } = await supabase.rpc("apply_bank_payment", {
       p_user_id: user.id,

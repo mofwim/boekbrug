@@ -939,11 +939,27 @@ export async function POST(req: NextRequest) {
   // [DEDUP-SOFT] Merge the possible-duplicate signal into _safecore BEFORE the auto-advance check
   // below, so classifyImportHealth reads it → needs-review → the invoice can NEVER auto-book as a
   // second cost. The verify queue then shows "mogelijk dubbel met X".
-  if (possibleDup) {
+  // [DEDUP-READ-HONEST] Outside the `if (possibleDup)` guard, and that placement IS the fix.
+  //
+  // markDuplicateCheckUnavailable exists for exactly one case: the invoices probe FAILED, so no
+  // candidate was found. Nesting it inside "a candidate was found" made it provably unwritable —
+  // and its own first line returns unchanged when possible_duplicate is already true, so even on
+  // the branch it could reach it was a no-op. dedupCheckFailed was computed in three places and
+  // then discarded.
+  //
+  // What that cost: supabase-js does not throw, so a timed-out probe gives `data: null` → `?? []`
+  // → no candidate → possibleDup null → no flag → classifyImportHealth says 'clean' →
+  // shouldAutoAdvanceInvoice books the invoice as 'received' with no human in the loop. A paper
+  // invoice photographed after the same one arrived by e-mail (different bytes, so the hash gate
+  // correctly misses) is then a second cost in the books and a second voorbelasting claim, with
+  // nothing on any card saying the duplicate check never ran.
+  //
+  // /api/email/upload:465 has always applied it unconditionally. This is that shape.
+  {
     const merged = (dedupCheckFailed
       ? markDuplicateCheckUnavailable(mergePossibleDuplicate(fieldConfidence, possibleDup))
-      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown>
-    fieldConfidence._safecore = merged._safecore
+      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown> | null
+    if (merged?._safecore) fieldConfidence._safecore = merged._safecore
   }
   // [MULTI-INVOICE] Draagt dit ENE bestand meerdere verschillende facturen? Dan is er precies
   // één ingelezen en bestaan de andere nergens — geen rij, geen bestand, geen melding. Ook dit
@@ -1458,11 +1474,27 @@ async function handleUblInvoice(
   }
   // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
   // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".
-  if (possibleDup) {
+  // [DEDUP-READ-HONEST] Outside the `if (possibleDup)` guard, and that placement IS the fix.
+  //
+  // markDuplicateCheckUnavailable exists for exactly one case: the invoices probe FAILED, so no
+  // candidate was found. Nesting it inside "a candidate was found" made it provably unwritable —
+  // and its own first line returns unchanged when possible_duplicate is already true, so even on
+  // the branch it could reach it was a no-op. dedupCheckFailed was computed in three places and
+  // then discarded.
+  //
+  // What that cost: supabase-js does not throw, so a timed-out probe gives `data: null` → `?? []`
+  // → no candidate → possibleDup null → no flag → classifyImportHealth says 'clean' →
+  // shouldAutoAdvanceInvoice books the invoice as 'received' with no human in the loop. A paper
+  // invoice photographed after the same one arrived by e-mail (different bytes, so the hash gate
+  // correctly misses) is then a second cost in the books and a second voorbelasting claim, with
+  // nothing on any card saying the duplicate check never ran.
+  //
+  // /api/email/upload:465 has always applied it unconditionally. This is that shape.
+  {
     const merged = (dedupCheckFailed
       ? markDuplicateCheckUnavailable(mergePossibleDuplicate(fieldConfidence, possibleDup))
-      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown>
-    fieldConfidence._safecore = merged._safecore
+      : mergePossibleDuplicate(fieldConfidence, possibleDup)) as Record<string, unknown> | null
+    if (merged?._safecore) fieldConfidence._safecore = merged._safecore
   }
 
   const { data: invoice, error: dbError } = await pipeline
