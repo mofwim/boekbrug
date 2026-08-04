@@ -437,8 +437,38 @@ export function mapEnableBankingTransaction(
     // it as a key would collapse real transactions into one another. Dedup keys on content
     // (see the contentKey header in bank-import.ts), which is why this is safe to store as-is.
     transactionId: cleanString(tx.entry_reference),
-    rawLine: "",
+    // [DD-SIGNAL] The feed's own ISO bank transaction code — the same family/sub-family a CAMT
+    // file carries in <BkTxCd> (RDDT / ESDD for a direct debit). Sub-code first: it is the more
+    // specific of the two, exactly as the file parser prefers <SubFmlyCd> over <Fmly><Cd>.
+    typeCode: cleanString(tx.bank_transaction_code?.sub_code) ?? cleanString(tx.bank_transaction_code?.code),
+    // [DD-SIGNAL] The machtiging and the incassant live in the COMPOSED statement line, and
+    // statementRemittance deliberately cuts everything after "Machtiging ID:" off the description
+    // — it is metadata, not the payer's text, and leaving it in poisons the invoice-number
+    // extraction. So the raw composition is kept HERE, in rawLine, where it is the one field whose
+    // job is "the original line". readDirectDebit reads it; nothing else does.
+    rawLine: statementMetadata(tx),
   };
+}
+
+/**
+ * [DD-SIGNAL] The labelled segments statementRemittance throws away, kept for the one reader that
+ * needs them.
+ *
+ * enablebanking-map already knows "Machtiging ID" and "Incassant ID" — it names both as boundaries
+ * where the remittance stops. Knowing where something ends and keeping it are different things,
+ * and only the first was true. This is the second, and deliberately narrow: it returns the parts of
+ * the composed line that name the INSTRUMENT, never the payer's own description.
+ */
+function statementMetadata(tx: EnableBankingRawTransaction): string {
+  const parts = (tx.remittance_information ?? []).filter((p): p is string => typeof p === "string");
+  const whole = parts.join(" ");
+  const kept = [
+    /(?:Machtiging(?:\s*ID)?):\s*([^\s]+)/i,
+    /(?:Incassant(?:\s*ID)?):\s*([^\s]+)/i,
+  ]
+    .map((re) => re.exec(whole)?.[0] ?? null)
+    .filter((v): v is string => !!v);
+  return kept.join(" ");
 }
 
 /**

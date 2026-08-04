@@ -154,6 +154,14 @@ interface ColumnMap {
   iban: number;        // counterpart IBAN, or -1
   ownIban: number;     // account's own IBAN, or -1
   descCols: number[];  // one or more remittance columns (Rabo has Omschrijving-1/-2/-3)
+  // [DD-SIGNAL] The columns that say what the transaction WAS. ING has both: a `Code` column
+  // whose value for an incasso is "IC", and a `Mutatiesoort` column whose value is "Incasso".
+  // Rabobank does not classify in one column but gives the two identifying fields their own:
+  // `Machtigingskenmerk` and `Incassant ID`. Every one of them was unmapped, so the only Dutch
+  // export format that names the instrument in a dedicated column was read as if it did not.
+  typeCode: number;    // ING Code / Mutatiesoort, or -1
+  mandate: number;     // Rabo Machtigingskenmerk, or -1
+  creditor: number;    // Rabo Incassant ID, or -1
 }
 
 // A header matches a role if ANY of its regexes hit. Order matters: we resolve
@@ -208,7 +216,15 @@ function mapColumns(headers: string[]): ColumnMap {
     descCols = [name];
   }
 
-  return { date, amount, sign, name, iban, ownIban, descCols };
+  // [DD-SIGNAL] `Mutatiesoort` before `Code`: it holds the readable word ("Incasso") where Code
+  // holds the two-letter abbreviation, and both mean the same thing to readDirectDebit. Excluded
+  // from the generic /code/ match: "Transactiereferentie" and "Betalingskenmerk" are references,
+  // not classifications, and a reference in the type-code slot would be compared against nothing.
+  const typeCode = find(/mutatiesoort|transactiesoort|^code$|^soort$|transaction ?type|^type$/, /kenmerk|referentie|munt|currency|valuta/);
+  const mandate = find(/machtigingskenmerk|machtiging ?id|mandaat|mandate/);
+  const creditor = find(/incassant|creditor ?id|crediteur ?id/);
+
+  return { date, amount, sign, name, iban, ownIban, descCols, typeCode, mandate, creditor };
 }
 
 // ─── Row → BankTransaction ────────────────────────────────────────────────────
@@ -265,6 +281,12 @@ function rowToTransaction(row: string[], map: ColumnMap, currency: string): Bank
     counterpartIban,
     reference,
     transactionId: null,
+    // [DD-SIGNAL] Kept raw. A bank that has no such column simply yields null here, and
+    // readDirectDebit then falls back to the description — which is how ABN AMRO, SNS and
+    // Triodos say it, since they have no column at all.
+    typeCode: cell(row, map.typeCode) || null,
+    mandateId: cell(row, map.mandate) || null,
+    creditorId: cell(row, map.creditor) || null,
     rawLine: row.join(" | "),
   };
 }

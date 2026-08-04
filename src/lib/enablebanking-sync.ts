@@ -222,7 +222,10 @@ async function storeTransactions(args: {
   // entry_reference; the rest store NULL and stay on the fingerprint.
   let { data: insData, error } = await pipeline
     .from("bank_transactions")
-    .upsert(rows, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
+    // [DD-SIGNAL] type_code/mandate_id/creditor_id arrive with bank_tx_direct_debit.sql and are not
+    // yet in the generated types — the 42703 branch below is what makes the write safe.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .upsert(rows as any, { onConflict: "user_id,source,external_id", ignoreDuplicates: true })
     .select("id");
   // Resilient to a half-applied schema, exactly as bank-ingest is, and for the same reason: a
   // failed insert here is not a missing hint, it is a day of the owner's money that never lands.
@@ -231,10 +234,11 @@ async function storeTransactions(args: {
   //     constraint for ON CONFLICT to match. Keep the values, drop the conflict clause.
   const failureCode = (error as { code?: string } | null)?.code;
   if (failureCode === "42703") {
-    const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, ...r }) => r);
+    const stripped = rows.map(({ counterpart_iban: _iban, source: _src, external_id: _ext, type_code: _tc, mandate_id: _mid, creditor_id: _cid, ...r }) => r);
     ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
   } else if (failureCode === "42P10") {
-    ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id"));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ({ data: insData, error } = await pipeline.from("bank_transactions").insert(rows as any).select("id"));
   }
   if (error) {
     console.error("[ENABLEBANKING] inserting transactions failed", { userId, rows: rows.length, error });

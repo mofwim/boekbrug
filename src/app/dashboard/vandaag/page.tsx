@@ -25,6 +25,8 @@ import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 // [CREDITNOTA-NO-CHASE] shared "is this still owed to me" rule — both sides of a credited pair
 // must leave the list together (see src/lib/credited-invoices.ts)
 import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+// [AUTO-INCASSO] The same normalized supplier key the registry stores — see src/lib/auto-incasso.ts.
+import { supplierNameKey } from "@/lib/supplier-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -102,7 +104,44 @@ export default async function VandaagPage() {
     // plain `.gte(total,0)` dropped it (SQL: NULL >= 0 → NULL) and hid a genuine payable.
     .or("total_inc_btw.gte.0,total_inc_btw.is.null");
 
-  const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
+  const payableAll = (payableRaw ?? []) as unknown as VandaagInvoice[];
+
+  // [AUTO-INCASSO] Invoices the BANK pays do not belong on the list of things the owner has to do.
+  //
+  // This is the screen the whole feature was reported from: two WonenBreburg rent invoices sitting
+  // in "Te betalen" wearing "2 dagen te laat", with a Betalen button, for money that had already
+  // left the account. The owner was not late — the collection simply had not run — and the only
+  // way to get them off the screen was "Verbergen", which is a useState and comes back on the next
+  // load. They hid the same two rows every time they opened the app.
+  //
+  // Filtered here rather than in the client so this page keeps its one job: what still needs doing.
+  //
+  // A FAILED read leaves the list exactly as it is today. That is the deliberate direction to fail
+  // in: showing an incasso invoice as payable is the state the app has always been in, while
+  // dropping a genuinely payable invoice because a supplier lookup hiccuped would hide a bill.
+  let incassoKeys: Set<string> | null = null;
+  try {
+    // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from("suppliers")
+      .select("name_key")
+      .eq("user_id", user.id)
+      .eq("auto_incasso", true);
+    if (error) throw new Error(error.message);
+    incassoKeys = new Set(
+      ((data ?? []) as { name_key: string | null }[]).map((s) => s.name_key).filter((k): k is string => !!k),
+    );
+  } catch (e) {
+    console.error("[AUTO-INCASSO] supplier read failed — Vandaag keeps listing incasso invoices as payable", { userId: user.id, error: e instanceof Error ? e.message : String(e) });
+    incassoKeys = null;
+  }
+  const payable = incassoKeys === null || incassoKeys.size === 0
+    ? payableAll
+    : payableAll.filter((inv) => {
+        const key = supplierNameKey(inv.client_name);
+        return !(key.length > 0 && incassoKeys!.has(key));
+      });
   // [CREDITNOTA-NO-CHASE] "Herinner je klant" must not list an invoice the owner WITHDREW with a
   // creditnota — nor the creditnota itself, which is also outgoing + 'sent' and so comes back from
   // the query above with a negative total. The home tile (/api/daily-truth) already filters both,

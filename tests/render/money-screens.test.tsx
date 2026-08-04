@@ -124,6 +124,68 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
 });
 
+test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost money", async () => {
+  // The screen this feature was reported from. Two WonenBreburg rent invoices, both past their
+  // vervaldatum, both wearing "2 dagen te laat" and offering a Betalen button — for money the bank
+  // had already taken. The badge is the annoyance; the button is a second payment.
+  //
+  // Rendered against the LIST, not an opened card, because that is where both of them stood.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { supplierNameKey } = await import("../../src/lib/supplier-registry");
+
+  const rows = [
+    // Two invoices from one supplier, DIFFERENT amounts — the pair that proves an amount rule
+    // would have covered one and left the other behind.
+    manageRow({ id: "h1", client_name: "WonenBreburg", invoice_number: "VHF0001107004", total_ex_btw: 83.70, btw_amount: 0, total_inc_btw: 83.70, invoice_date: "2026-07-15", due_date: "2026-08-01" }),
+    manageRow({ id: "h2", client_name: "WonenBreburg", invoice_number: "VHF0001107657", total_ex_btw: 74.96, btw_amount: 0, total_inc_btw: 74.96, invoice_date: "2026-07-15", due_date: "2026-08-01" }),
+    // A supplier NOT on incasso, equally overdue — the control. Everything this test asserts is
+    // missing for the two above must still be present for this one, or the assertions would pass
+    // just as well on a screen that lost its pay buttons entirely.
+    manageRow({ id: "g1", client_name: "Groothandel", invoice_number: "263548", due_date: "2026-07-14" }),
+  ];
+
+  const render = (keys: string[] | null) => renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(IncomingManageClient as any, {
+        profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
+        readFailed: [], filedQuarters: [], incassoKeys: keys,
+      })),
+  );
+
+  const on = render([supplierNameKey("WonenBreburg")]);
+  assert.ok(on.length > 1000, "the screen rendered something substantial");
+  assert.match(on, /Automatisch afgeschreven/, "the incasso rows say who pays them");
+  // The control is still late, so the badge itself has not been removed from the screen — only
+  // from the rows the bank collects.
+  assert.match(on, /dagen te laat/, "the ordinary overdue invoice is still marked late");
+  // The em-dash form appears in the badge's title attribute, once per late row — the visible text
+  // repeats the same words, so a bare /dagen te laat/ counts each row twice.
+  assert.equal(
+    (on.match(/— \d+ dagen? te laat/g) ?? []).length, 1,
+    "only the non-incasso invoice may be late — the owner is not late for a collection that runs itself",
+  );
+  // The pay CTA: one, for the one invoice the owner actually has to pay.
+  assert.equal(
+    (on.match(/Heb je betaald\?/g) ?? []).length, 1,
+    "an incasso invoice still offering to be marked paid is one tap away from a double payment",
+  );
+
+  // Switch the mandate off and the same three rows behave as they always did. Without this, a
+  // component that simply never renders those elements would pass everything above.
+  const off = render([]);
+  assert.equal((off.match(/— \d+ dagen? te laat/g) ?? []).length, 3, "with no mandate, all three are late again");
+  assert.equal((off.match(/Heb je betaald\?/g) ?? []).length, 3, "and all three can be paid by hand");
+  assert.doesNotMatch(off, /Automatisch afgeschreven/);
+
+  // And the read that could not run is its own state: it must not read as "nobody is on incasso"
+  // in silence, because that silence is what puts the Betalen button back.
+  const unknown = render(null);
+  assert.match(unknown, /niet ophalen/, "a failed incasso read is said out loud");
+  assert.match(unknown, /Betaal ze niet nog een keer/, "…and it names the actual risk");
+});
+
 test("[VRIJGESTELD] the cost-attribution control renders each of its three states", async () => {
   const { CostAttribution } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
 
@@ -799,4 +861,45 @@ test("[INTAKE-QUEUE] the idle button invites a capture and claims no work in pro
   );
   assert.match(html, /Maak een foto of upload/, "the resting state must invite a capture");
   assert.doesNotMatch(html, /wordt gelezen/, "an idle button must not claim something is processing");
+});
+
+test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was checked", async () => {
+  // The sheet exists to make verifying cheap. All three parts have to be on screen at once — the
+  // document alone is what the old window.open already gave, and it is not what made checking
+  // expensive. What was missing is our reading beside it, and the checks stated instead of implied.
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+
+  const clean = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d1", client_name: "Oz&er food", invoice_number: "26035350", invoice_date: "2026-06-24",
+        invoice_type: "factuur", total_ex_btw: 257.85, btw_amount: 23.21, total_inc_btw: 281.06,
+        vendor_iban: "NL65RABO0171136276", field_confidence: null, vendorNumbers: [],
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+  assert.match(clean, /Wat wij hebben gelezen/, "our reading is on screen next to the paper");
+  assert.match(clean, /26035350/, "…with the number the owner is about to compare");
+  assert.match(clean, /281,06/, "…and the total, formatted the Dutch way");
+  assert.match(clean, /Alle 7 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
+
+  // The half that must never be cosmetic: a check that could not run says so, and the summary
+  // stops claiming completeness. A green list that overstates is worse than no list.
+  const unsure = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d2", client_name: "Oz&er food", invoice_number: "26035350", invoice_date: "2026-06-24",
+        invoice_type: "factuur", total_ex_btw: 257.85, btw_amount: 23.21, total_inc_btw: 281.06,
+        vendor_iban: "NL65RABO0171136276", vendorNumbers: [],
+        field_confidence: { _safecore: { iban_check_unavailable: true } },
+      },
+      onClose() {}, onCorrect: null,
+    }),
+  );
+  assert.doesNotMatch(unsure, /Alle \d+ controles gedaan/, "a skipped check breaks the completeness claim");
+  assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
 });

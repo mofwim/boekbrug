@@ -119,7 +119,15 @@ export default function InvoiceCorrectionModal({
       // amount the server may have refused, on a screen the owner pays from.
       onSaved(data as CorrectionResult)
       onClose()
-      onMessage('Factuur gecorrigeerd')
+      // [SUPPLIER-ALIAS] When the server LEARNED something from this correction, say that instead
+      // — it is the more useful of the two sentences. "Factuur gecorrigeerd" tells the owner what
+      // they already know; naming the memory tells them they will not be typing this again next
+      // month, which is the whole reason the lesson exists. Null when nothing was learned, and then
+      // nothing is claimed.
+      const memory = typeof (data as { supplier_memory?: unknown }).supplier_memory === 'string'
+        ? (data as { supplier_memory: string }).supplier_memory
+        : null
+      onMessage(memory ?? 'Factuur gecorrigeerd')
     } catch {
       onMessage('Corrigeren mislukt — controleer je verbinding')
     } finally {

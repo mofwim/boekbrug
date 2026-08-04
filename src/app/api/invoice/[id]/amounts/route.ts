@@ -49,6 +49,8 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // [NAMENS] Correcting a booked purchase amount is bookkeeping, not sales. A sales member has no
 // business here — and saying so explicitly beats relying on the receiver_id check happening to
 // exclude them. Same choice as the archive and ignore routes.
+// [SUPPLIER-ALIAS] Learn what a corrected leverancier name means — see src/lib/supplier-alias.ts.
+import { learnSupplierAlias } from "@/lib/supplier-alias-write";
 import { requireOwner } from "@/lib/owner-only";
 // [AMOUNT-CORRECTION] One predicate for "this invoice already holds money" — shared with the
 // archive and ignore routes.
@@ -201,7 +203,9 @@ export async function PATCH(
     .from("invoices")
     // client_name is read for the audit trail only — [READING-MEMORY] keys a correction to the
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid")
+    // [SUPPLIER-ALIAS] supplier_id + vendor_iban ride along: they are what says WHICH company a
+    // corrected name belongs to, and without one of them a rename is one name pointing at another.
+    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban")
     .eq("id", id)
     .maybeSingle();
 
@@ -422,10 +426,30 @@ export async function PATCH(
     ipAddress: getClientIP(req),
   });
 
+  // [SUPPLIER-ALIAS] The lesson. A corrected leverancier name is not a label on one invoice: it is
+  // the owner saying who this company is, and invoices.client_name is the identity key the IBAN
+  // check, the incasso mandate, the creditnota signal and the reading memory all resolve through.
+  // Left unlearned, the same misread comes back next month AND this invoice quietly leaves its
+  // supplier's history — which is how the fraud check ends up answering "no IBAN on record".
+  //
+  // After the write and never before it: a lesson drawn from a correction that did not save would
+  // teach the app something that is not in the books.
+  const aliasLearned = patch.client_name
+    ? await learnSupplierAlias(supabase, user.id, {
+        printedName: invoice.client_name,
+        correctedName: patch.client_name,
+        supplierId: (invoice as { supplier_id?: string | null }).supplier_id ?? null,
+        vendorIban: (invoice as { vendor_iban?: string | null }).vendor_iban ?? null,
+      })
+    : null;
+
   // The screen replaces its row with THIS, so it must be what was stored — otherwise a flipped
   // credit note would show positive until the next reload and the owner would correct it again.
   return NextResponse.json({
     ok: true,
+    // Null when nothing was learned — the client says nothing rather than claiming a memory that
+    // does not exist.
+    supplier_memory: aliasLearned?.message ?? null,
     total_ex_btw: signed.totalExBtw,
     btw_amount: signed.btwAmount,
     total_inc_btw: signed.totalIncBtw,

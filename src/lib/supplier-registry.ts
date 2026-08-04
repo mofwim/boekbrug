@@ -14,6 +14,9 @@
 // reliable key (an IBAN, or a reliable name) — never a "Onbekende leverancier" island.
 
 import { normalizeVendor, isReliableVendor } from '@/lib/safecore'
+// [SUPPLIER-ALIAS] What the owner has already taught us a printed name means — see
+// src/lib/supplier-alias.ts. Best-effort by the same contract as this whole function.
+import { supplierIdForPrintedName } from '@/lib/supplier-alias-write'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database.types'
 
@@ -93,6 +96,25 @@ export async function resolveSupplierForImport(
 
     // Nothing to key on → don't manufacture a junk supplier island. KVK is now a valid key too.
     if (!iban && !kvk && !reliableName) return null
+
+    // ── 0. [SUPPLIER-ALIAS] Has the owner already told us what this spelling means? ──
+    //
+    // Ahead of every other tier, because it is the only one that knows something the paper does
+    // not: the owner corrected this exact misread before. Without it the reader repeats its
+    // mistake every month, resolution finds no match on the wrong name, and a SECOND supplier row
+    // appears for a company the owner already named — which is how one shop ends up as three
+    // islands with the history split between them.
+    //
+    // Only when there is no IBAN. An IBAN is a stronger statement about identity than a name the
+    // owner mapped, and letting an alias outrank it would let a stale lesson redirect a payment.
+    if (!iban) {
+      const aliased = await supplierIdForPrintedName(supabase, userId, cleanName)
+      if (aliased) {
+        const { data: byAlias } = await supabase
+          .from('suppliers').select('id, name').eq('id', aliased).eq('user_id', userId).maybeSingle()
+        if (byAlias) return { id: byAlias.id, name: byAlias.name }
+      }
+    }
 
     // ── 1. IBAN tier (strongest): one supplier per (user, IBAN) ──────────────────
     if (iban) {
