@@ -712,3 +712,69 @@ export async function sendQuarterReadyToAccountant({
   // te horen of het lukte — dit is de mail die het product maakt: "het kwartaal staat klaar".
   return deliverEmail(__sendResult, { label: 'quarter-ready-accountant', critical: false })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [WAARSCHUWING] De 30-dagenbrief van voorwaarden §5.7.5.
+//
+// Dit is de enige mail in dit bestand waarvan het NIET-verzenden geen ongemak is maar een
+// contractbreuk. Hij gaat naar iemand die BoekBrug allang verlaten heeft, wiens wettelijke
+// bewaartermijn afloopt, en die daarna zijn administratie kwijt is. §5.7.5 belooft hem dertig
+// dagen en een werkende export, en dit is die dertig dagen.
+//
+// `critical: true` — anders dan de herinneringsmail. Een mislukte betalingsherinnering probeer je
+// morgen opnieuw; een mislukte waarschuwing is de reden dat er straks iets weg is zonder dat
+// iemand het wist. De cron zet purge_warning_sent_at daarom pas NA een geslaagde verzending: geen
+// mail = geen stempel = geen verwijdering. Zie retention-warning.ts.
+//
+// Geen enkele knop in deze mail is een actie die wij voor hem kunnen doen. Exporteren doet hij
+// zelf, en dat is precies wat §5.7.5 hem belooft dat blijft werken.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function sendRetentionWarning({
+  toEmail,
+  name,
+  daysLeft,
+  eligibleDate,
+  loginUrl,
+}: {
+  toEmail: string
+  name: string | null
+  /** Hoeveel dagen er nog zijn. 0 = de termijn is al verstreken; de brief loopt dan vanaf vandaag. */
+  daysLeft: number
+  /** De datum waarop de wettelijke bewaartermijn afloopt, ISO. */
+  eligibleDate: string
+  loginUrl: string | null
+}) {
+  const datum = new Date(eligibleDate).toLocaleDateString('nl-NL', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  })
+  const aanhef = name?.trim() ? `Beste ${escapeHtml(name.trim())},` : 'Beste ondernemer,'
+  // De belofte is "minstens 30 dagen". Is de termijn al verstreken, dan begint die dertig dagen
+  // vandaag — nooit korter, nooit met terugwerkende kracht.
+  const termijn =
+    daysLeft > 0
+      ? `Op <strong>${datum}</strong> loopt de wettelijke bewaartermijn van je administratie af.`
+      : `De wettelijke bewaartermijn van je administratie is verstreken (${datum}).`
+
+  const knop = loginUrl
+    ? `<p style="margin:24px 0;"><a href="${loginUrl}" style="background:#1a73e8; color:#fff; padding:12px 20px; border-radius:8px; text-decoration:none; display:inline-block;">Inloggen en exporteren</a></p>`
+    : `<p style="color:#555;">Log in op boekbrug.nl om je gegevens te exporteren.</p>`
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: 'Je administratie bij BoekBrug wordt over 30 dagen verwijderd',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">Nog 30 dagen om je administratie op te halen</h2>
+        <p style="color: #555;">${aanhef}</p>
+        <p style="color: #555;">${termijn} Over <strong>30 dagen</strong> verwijderen wij je gegevens definitief.</p>
+        <p style="color: #555;">Tot die tijd kun je alles nog kosteloos exporteren — je facturen, je bonnen en je documenten, in één bestand. Daarna is het weg, en dat kunnen wij niet ongedaan maken.</p>
+        ${knop}
+        <p style="color: #555; font-size: 13px;">Wil je je administratie langer bewaren? Dat kan met de Bewaarkluis. Log in en kies zelf tot welk jaar.</p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Je krijgt deze mail omdat je BoekBrug-account is beëindigd en wij je administratie sindsdien hebben bewaard. Dit is de aankondiging uit artikel 5.7.5 van onze voorwaarden.</p>
+        <p style="color: #aaa; font-size: 12px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+  })
+  await deliverEmail(__sendResult, { label: 'retention-warning', critical: true })
+}

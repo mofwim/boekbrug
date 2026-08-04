@@ -94,6 +94,18 @@ export function buildDebtorBoard(
   const byClient = new Map<string, DebtorRow[]>();
 
   for (const f of invoices) {
+    // [CREDITNOTA-NO-CHASE] A credit note is not a small debt, it is the opposite of one — and it
+    // is written with status 'sent', a due_date of today and a NEGATIVE total, while
+    // outstandingAmount() takes the absolute value. So without this line it lands here as an
+    // overdue receivable for exactly the amount the customer is owed BACK, inflating the headline
+    // total and putting the client higher up the chase list.
+    //
+    // Excluded rather than shown-but-refused. Everything else on this board is real money that is
+    // genuinely late; a row that is neither would make the one number at the top wrong, and that
+    // number is the whole reason the screen exists. The page filters the WITHDRAWN ORIGINAL too
+    // (filterOpenReceivables) — that half needs the creditnota's original_invoice_id, which this
+    // pure function does not receive.
+    if ((f.invoice_type ?? "factuur") !== "factuur") continue;
     // Only what is genuinely late. 'concept', 'betaald' and 'vervallen' are not debts, and an
     // invoice whose due date has not passed is not one either — chasing it early is the fastest
     // way for an accountant to damage a relationship they were hired to protect.

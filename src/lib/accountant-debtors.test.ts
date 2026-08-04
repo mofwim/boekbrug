@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 
 import { buildDebtorBoard, boardTotals, daysLate, type DebtorInput } from "./accountant-debtors";
 import { canRemindInvoice } from "./acting-for";
+import { canRemind } from "./sales-overview";
 import { resolveAccountantActing } from "./accountant-mandate";
 
 const NOW = Date.parse("2026-08-04T12:00:00Z");
@@ -204,4 +205,28 @@ test("paused beats every timing rule — waiting does not make it allowed", () =
   const v = board[0].rows[0].verdict;
   assert.equal(v.allowed, false);
   if (!v.allowed) assert.match(v.reason, /stilgezet/, "not a cooldown sentence");
+});
+
+test("[CREDITNOTA-NO-CHASE] a credit note is never dunned as a receivable", () => {
+  // The defect this pins: a creditnota is written with status 'sent', a due_date of its own issue
+  // date and a NEGATIVE total — and outstandingAmount() takes the absolute value. Every gate in
+  // canRemind() passed, so the board showed it as overdue debt with a live Herinner button, and
+  // pressing it mailed the client's customer a demand for money that customer is owed BACK.
+  const board = buildDebtorBoard(
+    [inv({ id: "cn", invoice_type: "creditnota", total_inc_btw: -500, due_date: day(-1) })],
+    names,
+    NOW,
+  );
+  // It is not debt at all, so it does not belong on the board or in the total.
+  assert.equal(board.length, 0, "a credit note is not a receivable");
+});
+
+test("[CREDITNOTA-NO-CHASE] canRemind refuses any type that is not 'factuur'", () => {
+  const cn = canRemind({ ...inv(), invoice_type: "creditnota" }, NOW);
+  assert.equal(cn.allowed, false);
+  if (!cn.allowed) assert.match(cn.reason, /geen openstaande vordering/);
+  assert.equal(canRemind({ ...inv(), invoice_type: "pro_forma" }, NOW).allowed, false, "an offerte is not owed either");
+  // A missing column keeps the old behaviour — a caller that does not select it is unaffected.
+  assert.equal(canRemind({ ...inv(), invoice_type: undefined }, NOW).allowed, true);
+  assert.equal(canRemind({ ...inv(), invoice_type: "factuur" }, NOW).allowed, true);
 });

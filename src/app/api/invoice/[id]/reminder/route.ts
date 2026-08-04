@@ -72,7 +72,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const leesClient = acting.role === 'boekhouder' ? pipeline : supabase
     const { data: inv } = await leesClient
       .from('invoices')
-      .select('id, invoice_number, client_name, client_email, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused')
+      .select('id, invoice_number, client_name, client_email, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused, invoice_type')
       .eq('id', id)
       .eq('sender_id', ownerId)
       .maybeSingle()
@@ -120,12 +120,46 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         amount_paid: (inv as any).amount_paid ?? 0,
         status: inv.status,
+        // [CREDITNOTA-NO-CHASE] canRemind weigert alles wat geen 'factuur' is. Zonder dit veld zou
+        // hij een creditnota als gewone factuur beoordelen — en die haalt élke controle: status
+        // 'sent', vervaldatum vandaag, en een openstaand bedrag omdat outstandingAmount() de
+        // absolute waarde van het negatieve totaal neemt.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        invoice_type: (inv as any).invoice_type ?? 'factuur',
         last_reminder_at: geslaagd[0]?.sent_at ?? null,
         reminder_count: geslaagd.length,
       },
       Date.now(),
     )
     if (!oordeel.allowed) return NextResponse.json({ error: oordeel.reason }, { status: 409 })
+
+    // [CREDITNOTA-NO-CHASE] De andere helft van het paar: deze factuur IS geen creditnota, maar er
+    // kan er een tegenaan staan. Dan is het geld teruggedraaid en is er niets meer te vorderen —
+    // en nergens in dit product wordt de status van het origineel op 'credited' gezet, dus geen
+    // enkele eerdere controle ziet dat.
+    //
+    // De vraag staat hier, vlak vóór de claim: een weigering mag geen herinneringsregel verbruiken.
+    // Faalt de query, dan gaat er GEEN mail — hetzelfde 'bij twijfel niets' dat de rest van deze
+    // route al aanhoudt, want de fout die wij hier kunnen maken zit bij de klant van de ondernemer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: tegenCreditnota, error: creditErr } = await (pipeline as any)
+      .from('invoices')
+      .select('id')
+      .eq('sender_id', ownerId)
+      .eq('invoice_type', 'creditnota')
+      .eq('original_invoice_id', id)
+      .limit(1)
+      .maybeSingle()
+    if (creditErr) {
+      console.error('[CREDITNOTA-NO-CHASE] creditnota-controle mislukt — niets verstuurd', { id, creditErr })
+      return NextResponse.json({ error: 'Herinneren lukte niet — probeer het zo nog eens' }, { status: 503 })
+    }
+    if (tegenCreditnota) {
+      return NextResponse.json(
+        { error: 'Er staat een creditnota tegenover deze factuur — er valt niets meer te vorderen.' },
+        { status: 409 },
+      )
+    }
 
     // ── Claim vóór de mail ──────────────────────────────────────────────────
     // Zelfde volgorde als bij SnelStart: het onomkeerbare (een mail bij een klant) gebeurt pas

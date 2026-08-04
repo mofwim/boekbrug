@@ -24,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { isEligibleForDeletion } from "./retention";
+import { warningSatisfied, type WarnableRow } from "./retention-warning";
 
 /** A deletion_requests row, as far as this decision is concerned. */
 export type DeletionRequestRow = {
@@ -60,6 +61,10 @@ export type PurgeRefusal =
   | "unparseable_date" // garbage in the column → refuse rather than guess
   | "retention_not_expired" // the seven years are not up
   | "bewaarkluis_actief" // [KLUIS] paid for, and paid-for storage is not ours to erase
+  // [WAARSCHUWING] §5.7.5 promises 30 days' notice by e-mail before anything is deleted. No
+  // provable notice ⇒ no deletion. See the header of retention-warning.ts for why this is a
+  // PRECONDITION and not merely an earlier step in the cron.
+  | "no_warning_sent"
   | "already_purged"; // done before; re-running must be a no-op
 
 /**
@@ -109,6 +114,24 @@ export function decidePurge(row: DeletionRequestRow, now: Date): PurgeVerdict {
   const kluis = row.kluis_keep_through_year;
   if (typeof kluis === "number" && Number.isFinite(kluis) && now.getUTCFullYear() <= kluis) {
     return { purge: false, reason: "bewaarkluis_actief" };
+  }
+
+  // [WAARSCHUWING] Het allerlaatste hek, en het is een BELOFTE en geen techniek.
+  //
+  // Voorwaarden §5.7.5: "Wij verwijderen daarna niets zonder je minstens 30 dagen vooraf per
+  // e-mail te waarschuwen, en in die periode kun je alles alsnog kosteloos exporteren."
+  //
+  // Die zin stond er, en er was niets dat hem waarmaakte. Hij staat nu HIER in plaats van in de
+  // cron, want een stap vóór het wissen kan overgeslagen worden — door een mislukte run, door een
+  // uitgezette cron, door iemand die deze functie ooit los aanroept. Een voorwaarde kan dat niet:
+  // zonder aantoonbare brief van 30 dagen oud gebeurt er niets. De faalstand is daarmee "te lang
+  // bewaard", wat §5.7.5 niets kost, in plaats van "gewist zonder bericht" — precies het enige wat
+  // dat artikel moet voorkomen.
+  //
+  // warningSatisfied() faalt op elk twijfelgeval dicht: geen kolom, geen waarde, onleesbare datum,
+  // een datum in de toekomst. Er is geen invoer die per ongeluk "ja, wis maar" oplevert.
+  if (!warningSatisfied(row as WarnableRow, now)) {
+    return { purge: false, reason: "no_warning_sent" };
   }
 
   return { purge: true };
