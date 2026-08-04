@@ -34,6 +34,8 @@ import { useEffect, useState } from 'react'
 import { M3, R, FONT, EL2, COLUMN, columnInner, sheetPaddingBottom } from '@/lib/design/tokens'
 import { formatEuroNL } from '@/lib/format-nl'
 import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from '@/lib/invoice-checks'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
 export interface DocumentSheetInvoice extends CheckInput {
@@ -81,6 +83,9 @@ export default function InvoiceDocumentSheet({
       .catch(() => { if (!cancelled) setDoc({ phase: 'failed', message: 'Kon het bestand niet openen — controleer je verbinding' }) })
     return () => { cancelled = true }
   }, [invoice.id])
+  // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
+  useCloseOnBack(true, onClose)
+
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }

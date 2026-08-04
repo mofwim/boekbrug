@@ -31,6 +31,8 @@ import { PreviewModal } from "./components/modals/PreviewModal";
 import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
 import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // [BESTANDEN-SMART] Virtual, cross-folder listings — the Drive/OneDrive left-nav.
 // These replace the folder view with a flat file list filtered by a virtual axis.
@@ -266,6 +268,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // rechterbovenhoek. Bij de klik staat het element er gegarandeerd.
   const [sortMenuPos, setSortMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  useCloseOnBack(!!sidebarOpen, () => setSidebarOpen(false))
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
   // [SEARCH] Matching folders (by name) shown above file results.
@@ -1065,6 +1068,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             setAiSuggest(null);
             setMoveTarget({ id: docId, type: "file" });
           }}
+          // [BACK-CLOSES] Nothing moves: the file stays in the root, which is where it already is.
+          onDismiss={() => setAiSuggest(null)}
         />
       )}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}

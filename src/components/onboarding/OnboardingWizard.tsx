@@ -32,6 +32,8 @@ import Link from 'next/link'
 import { M3 } from '@/lib/design/tokens'
 // [FUNNEL-OVERDRACHT] Wat op /factuur-maken is ingevuld, hier terugzien in plaats van opnieuw tikken.
 import { readHandoff, hasSenderContent, toOnboardingCompany } from "@/lib/factuur-handoff";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -213,6 +215,7 @@ export function OnboardingWizard({
   const [numberingError, setNumberingError] = useState("");
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  useCloseOnBack(!!showResetConfirm, () => setShowResetConfirm(false))
 
   // [BOEK-011] Fix 2: detect gmail=connected from OAuth callback
   const [gmailConnected, setGmailConnected] = useState(false);

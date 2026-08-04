@@ -10,6 +10,8 @@ import { Icon } from "../ui/Icon";
 import { FolderRow } from "../../types";
 import { folderColor } from "../../helpers";
 import { foldText } from "@/lib/search";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // [SMART-FILTER] Vanaf dit aantal mappen wordt scrollen vervelend en tonen we
 // het zoekveld. Daaronder is de lijst in één oogopslag te overzien.
@@ -25,6 +27,9 @@ interface MoveModalProps {
 export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProps) {
   const [selected, setSelected] = useState<string | null | "__none__">("__none__");
   const [query, setQuery] = useState("");
+  // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
+  useCloseOnBack(true, onClose)
+
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };

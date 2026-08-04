@@ -11,6 +11,8 @@ import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 import type { ClientSummary, ClientReadiness } from '../accountant.types'
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest, fact-only client summary. No "Klaar"/"ready" verdict — the
@@ -60,6 +62,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
 
   // Confirm unlink dialog state
   const [unlinkTarget, setUnlinkTarget] = useState<ClientSummary | null>(null)
+  useCloseOnBack(!!unlinkTarget, () => setUnlinkTarget(null))
   const [unlinkLoading, setUnlinkLoading] = useState(false)
   const [unlinkError, setUnlinkError] = useState<string | null>(null)
 

@@ -4,17 +4,26 @@
 
 import { T } from "../../tokens";
 import { Icon } from "../ui/Icon";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 interface AiSuggestionModalProps {
   fileName: string;
   suggestedPath: string;       // e.g. "2026 / Q2 / Bank"
   onAccept: () => void;        // move to suggested folder
   onChooseManually: () => void; // open MoveModal
+  // [BACK-CLOSES] "Not now" — the file stays where it was uploaded. This modal had NO way out at
+  // all: no ✕, no backdrop click, two buttons that both act. On a phone the back button is the
+  // universal escape, and a modal that eats it is a modal the owner is stuck in.
+  onDismiss: () => void;
 }
 
 export function AiSuggestionModal({
-  fileName, suggestedPath, onAccept, onChooseManually,
+  fileName, suggestedPath, onAccept, onChooseManually, onDismiss,
 }: AiSuggestionModalProps) {
+  // [BACK-CLOSES] Back means "not now", which is the harmless one of the three outcomes: nothing
+  // moves and the file is still in the root where the owner can find it.
+  useCloseOnBack(true, onDismiss)
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 400,

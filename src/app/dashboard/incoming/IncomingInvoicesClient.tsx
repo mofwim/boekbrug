@@ -80,6 +80,8 @@ import { useToast } from "@/components/ui/Toast";
 import { M3, COLUMN } from '@/lib/design/tokens'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
 import { reconcileBtw } from '@/lib/btw-reconcile'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -3160,6 +3162,7 @@ export default function IncomingInvoicesClient({
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  useCloseOnBack(!!bulkConfirmOpen, () => setBulkConfirmOpen(false))
   const [bulkRunning, setBulkRunning] = useState(false);
 
   // ── [BULK-IGNORE] Dezelfde selectie, de andere uitgang ──

@@ -5,6 +5,8 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
 import { Icon } from "../ui/Icon";
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 interface RenameModalProps {
   currentName: string;
@@ -31,6 +33,9 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
       }
     }, 50);
   }, [currentName, type]);
+  // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
+  useCloseOnBack(true, onClose)
+
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };

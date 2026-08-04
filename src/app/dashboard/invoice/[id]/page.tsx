@@ -17,6 +17,8 @@ import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
 import { InvoiceTypeBadge, type InvoiceType } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
 import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -84,12 +86,17 @@ export default function InvoiceDetailPage() {
   // creditnota with original_invoice_id=null — an orphan that severed the link and
   // allowed unlimited duplicate legal credits. This dialog calls the route directly.
   const [showCreditDialog, setShowCreditDialog] = useState(false)
+  useCloseOnBack(!!showCreditDialog, () => { if (!creatingCredit) setShowCreditDialog(false) })
+  // …and it obeys the same refusal the backdrop does: while the creditnota is being minted
+  // there is a number in flight, and dismissing would leave the owner not knowing whether it
+  // exists. `!creatingCredit` is the SAME condition the backdrop click checks.
   const [creditReason, setCreditReason] = useState('')
   const [creatingCredit, setCreatingCredit] = useState(false)
   const [creditError, setCreditError] = useState<string | null>(null)
 
   // [BOEK-031] Send flow state — May 2026
   const [showSendModal, setShowSendModal] = useState(false)
+  useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
 

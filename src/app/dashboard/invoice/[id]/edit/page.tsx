@@ -16,6 +16,8 @@ import type { ProfileRow } from '@/types/rows'
 import { COLUMN } from '@/lib/design/tokens';
 // [PRIJS-MODUS] Dezelfde omrekening als het aanmaakscherm — één definitie, twee schermen.
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
+// [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 type InvoiceLine = {
   description: string
@@ -39,6 +41,7 @@ export default function InvoiceEditPage() {
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
   const [showSendModal, setShowSendModal] = useState(false)
+  useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
 
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
