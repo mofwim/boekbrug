@@ -135,6 +135,12 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // total at the top — reported three times by the owner, who found each pair by adding up their
   // own list. The warning has to be on the COLLAPSED row: that is where they were looking.
   assert.match(html, /staat 2× in je administratie/, "the pair is named on the row");
+
+  // [BULK-UNDO] The reverse of "Meerdere betalen" has to be reachable, and as its own entry point:
+  // the two modes select different rows (open vs settled), so one shared selection would let a tap
+  // land on the opposite of what the owner meant, on the money core.
+  assert.match(html, /Meerdere annuleren/, "bulk undo is offered");
+  assert.match(html, /Meerdere betalen/, "…beside the one it mirrors, not instead of it");
   assert.match(html, /correctie of een dubbele import/, "…and says what that means");
   // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
   // resolves lives in the opened card, where the detail belongs — the chip carries it here.

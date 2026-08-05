@@ -32,6 +32,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
 // [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
 import { findPayableDuplicates, duplicateWarningText } from '@/lib/duplicate-payable'
+// [BULK-UNDO] What un-paying in bulk actually touches — said before it happens.
+import { planBulkUndo, bulkUndoWarnings, bulkUndoTitle, type UndoPlan } from '@/lib/bulk-undo-pay'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
@@ -476,6 +478,13 @@ export default function IncomingManageClient({
   // null from the server means the read failed. Kept as its own fact, never folded into "empty".
   const incassoUnknown = incassoKeys === null
   const [incassoBusy, setIncassoBusy] = useState<string | null>(null)
+  // [INCASSO-CONFIRM] The switch this holds is the only control on the screen that can mark a year
+  // of invoices paid from one tap — the route settles everything already collected, server-side.
+  // A bare toggle for that is the same shape as the toasts this codebase keeps replacing: the
+  // action is large and the gesture is small. Held as a row so the sheet can name the supplier and
+  // count what is about to move.
+  const [incassoAsk, setIncassoAsk] = useState<{ inv: IncomingRow; on: boolean } | null>(null)
+  useCloseOnBack(!!incassoAsk, () => setIncassoAsk(null))
   // What the last switch actually did, so the owner sees the invoices it settled rather than a
   // number they have to go and verify themselves.
   const [incassoResult, setIncassoResult] = useState<{
@@ -491,11 +500,19 @@ export default function IncomingManageClient({
   // same leverancier in ONE transfer. Selection is a set of ids; the rows are
   // derived from this page's own list (single client-owned array, no pagination).
   const [selectMode, setSelectMode] = useState(false)
+  // [BULK-UNDO] What the selection is FOR. 'pay' bundles open invoices into one payment; 'undo'
+  // withdraws settlements. They cannot share one mode: each selects a different set of rows
+  // (received vs paid), and a bar that offered both over one selection would let a tap land on the
+  // opposite of what the owner meant on the money core.
+  const [selectPurpose, setSelectPurpose] = useState<'pay' | 'undo'>('pay')
   const [selectedIds, setSelectedIds] = useState<Record<string, true>>({})
   // The sheet snapshot: the rows being paid + the pure-built QR/details.
   const [bundleCtx, setBundleCtx] = useState<{ rows: IncomingRow[]; built: BundelBetalingResult } | null>(null)
   // Bank/Contant + date dialog for the WHOLE set (one answer, N invoices).
   const [bundlePayRows, setBundlePayRows] = useState<IncomingRow[] | null>(null)
+  // [BULK-UNDO] The plan being confirmed. Held rather than recomputed on confirm, so what the
+  // owner read is exactly what runs.
+  const [bulkUndoPlan, setBulkUndoPlan] = useState<UndoPlan | null>(null)
   const [bundleBusy, setBundleBusy] = useState(false)
 
   // [BUNDEL-SELECTIE] Only rows that are still OPEN belong in the set. A selected row can stop
@@ -505,6 +522,13 @@ export default function IncomingManageClient({
   // and the amount describing the SAME set; filtering only the euros would have fixed the sum and
   // left "3 geselecteerd" standing over two payable invoices.
   const selectedRows = invoices.filter(i => selectedIds[i.id] && i.status === 'received')
+  // [BULK-UNDO] The other selection: settled rows the owner wants to un-pay.
+  const selectedPaidRows = invoices.filter(i => selectedIds[i.id] && i.status === 'paid')
+  const undoPlan: UndoPlan = useMemo(
+    () => planBulkUndo(selectedPaidRows, filedQuarters ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedIds, invoices, filedQuarters],
+  )
   // Live validation — pure and cheap, so the action bar can explain itself
   // (same-IBAN rule, missing IBAN, sum) on every tap.
   const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows) : null
@@ -522,7 +546,62 @@ export default function IncomingManageClient({
       return next
     })
   }
-  function exitSelectMode() { setSelectMode(false); setSelectedIds({}) }
+  function exitSelectMode() { setSelectMode(false); setSelectedIds({}); setSelectPurpose('pay') }
+  /** [BULK-UNDO] Which rows this selection mode may touch — one answer, used by the row, the
+   *  checkbox and the bar, so a row can never be selectable for an action it cannot take. */
+  const selectableInMode = (inv: IncomingRow) =>
+    selectPurpose === 'undo' ? inv.status === 'paid' : inv.status === 'received'
+
+  // ── [BULK-UNDO] Withdraw N settlements, one at a time, through the SAME audited route the
+  //    single undo uses (/api/invoice/pay-toggle, action 'undo'). No bulk SQL: every guard that
+  //    route carries — the accountant's 'verwerkt' trigger, the link removal, the kasboek
+  //    reconcile, recompute_invoice_amount_paid, the audit row — is inherited rather than
+  //    re-implemented, and re-implementing them for a bulk path is exactly how the two would
+  //    drift apart on the money core.
+  //
+  //    Sequential on purpose. Twenty concurrent writes that each remove links and re-run a
+  //    recompute is a race against ourselves, on the one invariant this app exists to protect
+  //    (amount_paid = Σ amount_applied). It is slower and it is right.
+  async function executeBulkUndo(plan: UndoPlan) {
+    setBulkUndoPlan(null)
+    setBundleBusy(true)
+    exitSelectMode()
+    let okCount = 0
+    const failed: { number: string; reason: string }[] = []
+    for (const row of plan.eligible) {
+      const label = row.invoice_number ?? '—'
+      try {
+        const res = await fetch('/api/invoice/pay-toggle', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: row.id, action: 'undo' }),
+        })
+        if (res.ok) {
+          okCount++
+          // [PARTIAL-PAY] amount_paid goes with it: the server clears every recorded instalment,
+          // and leaving the local value behind would show a 'Te betalen' row that still claims
+          // money was applied to it.
+          patchLocal(row.id, {
+            status: 'received', payment_method: null, payment_date: null,
+            payment_prepared_at: null, amount_paid: 0,
+          })
+        } else {
+          const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+          failed.push({ number: label, reason: payToggleReason(res.status, json) })
+        }
+      } catch {
+        failed.push({ number: label, reason: 'geen verbinding' })
+      }
+    }
+    setBundleBusy(false)
+    if (failed.length === 0) {
+      showToast(okCount === 1 ? 'Betaling teruggedraaid ✓' : `${okCount} betalingen teruggedraaid ✓`)
+      return
+    }
+    const byReason = new Map<string, string[]>()
+    for (const f of failed) byReason.set(f.reason, [...(byReason.get(f.reason) ?? []), f.number])
+    const parts = [...byReason.entries()].map(([reason, nums]) => `${nums.join(', ')}: ${reason}`)
+    showToast(`${okCount} teruggedraaid ✓ — niet gelukt · ${parts.join(' · ')}`)
+  }
 
   // ── [BUNDEL-BETALING] "Ja, ik heb betaald" for the whole set: one Bank/Contant
   // + date answer, then N audited pay-toggle writes (the SAME server path as a
@@ -1581,6 +1660,21 @@ export default function IncomingManageClient({
               </span>
               {selectMode ? 'Klaar' : 'Meerdere betalen'}
             </button>
+            {/* [BULK-UNDO] The reverse, and it needs to be its own entry point rather than a second
+                action inside one selection: the two modes select DIFFERENT rows (open vs settled),
+                and a bar offering both over one selection would let a tap land on the opposite of
+                what the owner meant, on the money core. */}
+            {!selectMode && (
+              <button onClick={() => { setSelectPurpose('undo'); setSelectMode(true) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+                  borderRadius: R.full, background: '#fff', border: `1px solid ${M3.surfaceVariant}`,
+                  fontSize: 13, fontWeight: 600, fontFamily: FONT, color: '#3c4043', cursor: 'pointer',
+                }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>
+                Meerdere annuleren
+              </button>
+            )}
             <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
             </Link>
@@ -2114,12 +2208,13 @@ export default function IncomingManageClient({
                     transition: 'box-shadow 0.4s ease',
                   }}
                 >
-                  {/* Main row — in select mode a tap toggles the bundle selection
-                      (only for open 'received' rows); otherwise it expands. */}
+                  {/* Main row — in select mode a tap toggles the selection (only for the rows this
+                      MODE can act on: open ones when bundling a payment, settled ones when undoing
+                      it); otherwise it expands. */}
                   <div
                     className="inv-row"
                     onClick={() => selectMode
-                      ? (inv.status === 'received' && toggleSelect(inv.id))
+                      ? (selectableInMode(inv) && toggleSelect(inv.id))
                       : setExpandedId(expanded ? null : inv.id)}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
@@ -2128,10 +2223,10 @@ export default function IncomingManageClient({
                     // rows to 'paid' mid-selection). Keying the highlight off the raw id would let
                     // a row keep the selected background while the bar no longer counts it — and it
                     // cannot be tapped off either, since the toggle only fires on 'received'.
-                    style={{ background: (selectedIds[inv.id] && inv.status === 'received') ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
+                    style={{ background: (selectedIds[inv.id] && selectableInMode(inv)) ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && !selectableInMode(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !selectableInMode(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
-                    {selectMode && inv.status === 'received' && (
+                    {selectMode && selectableInMode(inv) && (
                       <span className="material-symbols-outlined" style={{ fontSize: 22, color: selectedIds[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
                         {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
@@ -2651,7 +2746,7 @@ export default function IncomingManageClient({
                       {!incassoUnknown && inv.direction === 'incoming' && (inv.client_name ?? '').trim() !== '' && (
                         <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${M3.surfaceVariant}` }}>
                           <button
-                            onClick={e => { e.stopPropagation(); toggleIncasso(inv, !isIncassoRow(inv)) }}
+                            onClick={e => { e.stopPropagation(); setIncassoAsk({ inv, on: !isIncassoRow(inv) }) }}
                             disabled={incassoBusy === inv.id}
                             style={{
                               display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left',
@@ -2659,10 +2754,12 @@ export default function IncomingManageClient({
                               cursor: incassoBusy === inv.id ? 'default' : 'pointer',
                             }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 20, color: isIncassoRow(inv) ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
-                              {incassoBusy === inv.id ? 'hourglass_empty' : isIncassoRow(inv) ? 'toggle_on' : 'toggle_off'}
-                            </span>
-                            <span style={{ minWidth: 0 }}>
+                            {/* [INCASSO-SWITCH-TRAILING] The switch sits AFTER the sentence, on the
+                                trailing edge, where every switch on a phone lives — the label says
+                                what it controls and the control is where the thumb reaches. Leading
+                                it also made the two lines of explanation hang off a 20px column,
+                                so the paragraph started a third of the way across the card. */}
+                            <span style={{ flex: 1, minWidth: 0 }}>
                               <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: M3.onSurface }}>
                                 {inv.client_name} schrijft automatisch af
                               </span>
@@ -2671,6 +2768,9 @@ export default function IncomingManageClient({
                                   ? 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.'
                                   : 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.'}
                               </span>
+                            </span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 26, color: isIncassoRow(inv) ? M3.primary : '#9AA0A6', flexShrink: 0, marginTop: -2 }}>
+                              {incassoBusy === inv.id ? 'hourglass_empty' : isIncassoRow(inv) ? 'toggle_on' : 'toggle_off'}
                             </span>
                           </button>
                         </div>
@@ -2713,7 +2813,42 @@ export default function IncomingManageClient({
 
       {/* ── [BUNDEL-BETALING] Selection action bar — one transfer for the set.
           Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
-      {selectMode && (
+      {selectMode && selectPurpose === 'undo' && (
+        <div style={{
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
+          maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,
+          background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          padding: '12px 16px', fontFamily: FONT,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+                {undoPlan.eligible.length} geselecteerd · {fmtEur(undoPlan.total)}
+              </p>
+              <p style={{ fontSize: 11.5, color: '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {undoPlan.eligible.length === 0
+                  ? 'Kies betaalde facturen om terug te draaien'
+                  : 'Deze facturen komen terug op "Te betalen"'}
+              </p>
+            </div>
+            <button
+              onClick={() => { if (undoPlan.eligible.length > 0) setBulkUndoPlan(undoPlan) }}
+              disabled={undoPlan.eligible.length === 0 || bundleBusy}
+              style={{
+                flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
+                background: undoPlan.eligible.length > 0 && !bundleBusy ? M3.warningContainer : M3.surfaceVariant,
+                color: undoPlan.eligible.length > 0 && !bundleBusy ? '#7C5800' : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>undo</span>
+              {bundleBusy ? 'Bezig…' : 'Terugdraaien'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectMode && selectPurpose === 'pay' && (
         <div style={{
           position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           // [BAR-ALIGN] Same 648 as before, now derived from the column — this bar
@@ -2770,6 +2905,60 @@ export default function IncomingManageClient({
             setBundlePayRows(rows)
           }}
           onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+        />
+      )}
+
+      {/* ── [INCASSO-CONFIRM] What this switch is about to do, before it does it.
+          Turning it ON settles every invoice from this supplier the bank has already collected —
+          the route's own header says so — so one tap can mark a year of rent invoices paid. The
+          count is taken from the rows on screen, which is what the owner is looking at; the server
+          decides the real set and reports it afterwards in the existing result sheet.
+          Turning it OFF is the milder direction and says so: nothing already booked is undone. ── */}
+      {incassoAsk && (() => {
+        const name = (incassoAsk.inv.client_name ?? 'deze leverancier').trim()
+        const key = supplierNameKey(name)
+        const openFromSupplier = invoices.filter(
+          (i) => i.status === 'received' && supplierNameKey((i.client_name ?? '').trim()) === key,
+        )
+        const openSumHere = openFromSupplier.reduce((sum, i) => sum + openAmount(i), 0)
+        return (
+          <BottomSheet
+            title={incassoAsk.on
+              ? `${name} zelf laten afschrijven?`
+              : `Automatische incasso uitzetten voor ${name}?`}
+            body={incassoAsk.on
+              ? [
+                  'Facturen van deze leverancier krijgen geen betaalknop meer — je zou anders betalen wat de bank al heeft afgeschreven.',
+                  openFromSupplier.length > 0
+                    ? `Wat de bank al heeft geïncasseerd zetten we meteen op betaald. Nu staan er ${openFromSupplier.length} facturen van ${name} open, samen ${fmtEur(Math.round(openSumHere * 100) / 100)} — daarvan gaat op betaald wat we in je bankafschrift terugvinden.`
+                    : 'Wat de bank al heeft geïncasseerd zetten we meteen op betaald.',
+                  'Je krijgt daarna een overzicht van precies welke facturen zijn verwerkt en welke niet.',
+                ].join('\n\n')
+              : [
+                  `Facturen van ${name} krijgen weer een betaalknop.`,
+                  'Wat al op betaald staat, blijft staan — dit draait niets terug.',
+                ].join('\n\n')}
+            confirmLabel={incassoAsk.on ? 'Ja, zet aan' : 'Ja, zet uit'}
+            confirmBg={incassoAsk.on ? M3.primary : M3.surfaceVariant}
+            onConfirm={() => { const a = incassoAsk; setIncassoAsk(null); void toggleIncasso(a.inv, a.on) }}
+            onCancel={() => setIncassoAsk(null)}
+          />
+        )
+      })()}
+
+      {/* ── [BULK-UNDO] The confirm, and it earns its place: this is the only action on the screen
+          that REMOVES settlements other things were derived from. Every consequence is named
+          before it happens — the bank links coming loose, the kasboek entries going, the invoices
+          the accountant has locked that will stay put, and first of all a filed quarter, which is
+          the one effect that reaches outside the app. ── */}
+      {bulkUndoPlan && (
+        <BottomSheet
+          title={bulkUndoTitle(bulkUndoPlan)}
+          body={bulkUndoWarnings(bulkUndoPlan).join('\n\n')}
+          confirmLabel="Ja, draai terug"
+          confirmBg={M3.warningContainer}
+          onConfirm={() => executeBulkUndo(bulkUndoPlan)}
+          onCancel={() => setBulkUndoPlan(null)}
         />
       )}
 

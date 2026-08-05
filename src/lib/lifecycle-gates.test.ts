@@ -270,6 +270,52 @@ test("[PAYMENT-NAMES-MISSING] a payment naming an un-imported invoice is still a
   assert.match(src, /\.\.\.missingNamed\.filter/, "the missing numbers become slots");
 });
 
+test("[INCASSO-CONFIRM] the switch that can settle a year of invoices asks first", () => {
+  // Turning auto-incasso ON settles every invoice from that supplier the bank has already
+  // collected — the route's own header says so. A bare toggle for a change of that size is the
+  // same shape as the "gelukt" toasts this codebase keeps replacing: large action, small gesture.
+  const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(
+    src, /setIncassoAsk\(\{ inv, on: !isIncassoRow\(inv\) \}\)/,
+    "the toggle opens a confirm instead of firing the request",
+  );
+  assert.doesNotMatch(
+    src, /onClick=\{e => \{ e\.stopPropagation\(\); toggleIncasso\(/,
+    "the switch calls the route directly again — one tap then marks a year of invoices paid",
+  );
+});
+
+test("[INCASSO-CONFIRM] the switch sits after the sentence it controls", () => {
+  // Trailing edge, where a switch lives on a phone: the label says what it controls and the
+  // control is where the thumb reaches. Leading it also made the two lines of explanation hang off
+  // a 20px column, starting the paragraph a third of the way across the card.
+  //
+  // Held here rather than in the render gate because this block only exists inside the EXPANDED
+  // card, and that gate renders the collapsed list — an assertion there would match nothing and
+  // pass forever, which is the shape of half the defects in this file.
+  const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const label = src.indexOf("schrijft automatisch af");
+  const toggle = src.indexOf("'toggle_on' : 'toggle_off'");
+  assert.ok(label > 0 && toggle > 0, "both the label and the switch must still be there");
+  assert.ok(label < toggle, "the switch renders after its label, not in front of it");
+});
+
+test("[BULK-UNDO] undoing payments in bulk goes through the audited single route", () => {
+  // Every guard that route carries — the accountant's 'verwerkt' trigger, the link removal, the
+  // kasboek reconcile, recompute_invoice_amount_paid, the audit row — is inherited rather than
+  // re-implemented. A bulk SQL path would have to repeat all of them, and repeating them is how
+  // the two drift apart on the invariant this app exists to protect.
+  const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(src, /executeBulkUndo/, "the bulk undo exists");
+  assert.match(
+    src, /body: JSON\.stringify\(\{ invoiceId: row\.id, action: 'undo' \}\)/,
+    "and it calls the same pay-toggle route the single undo uses",
+  );
+  // Confirmed before it runs, with the consequences named — a filed quarter above all, which is
+  // the one effect that reaches outside the app.
+  assert.match(src, /bulkUndoWarnings\(bulkUndoPlan\)/, "the consequences are shown before the tap");
+});
+
 test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
   // A native <input type="date"> orders its segments by the BROWSER's locale, and nothing on the
   // page changes that — measured, including `lang` on the input, on a wrapper and on <html>. Under
