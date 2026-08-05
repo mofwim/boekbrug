@@ -77,6 +77,49 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+// ─── The issuing path: two reads whose empty answer was accepted as an answer ──────────
+//
+// Both are art. 35 surfaces, and both failed OPEN. supabase-js does not throw, so `const { data }`
+// and `const { count }` turn a database problem into "no lines" and "nobody has invoiced yet" —
+// and on this path those are not recoverable states. A number is consumed and a document goes to
+// a customer.
+
+test("[ART35-READ-HONEST] sending an invoice refuses when its lines cannot be read", () => {
+  // `lines ?? []` reaches renderInvoicePdf. A failed read therefore e-mailed an invoice with an
+  // EMPTY item table, carrying a consumed number that cannot be rolled back — and the totals fell
+  // back to the browser-supplied figures the block right above them exists to stop trusting.
+  // The refusal runs BEFORE the number is minted, so nothing is written and a retry costs nothing.
+  const src = code("src/app/api/invoice/send/route.ts");
+  assert.match(
+    src, /const \{ data: lines, error: linesError \}/,
+    "the invoice_lines read dropped its error again — an unreadable read then becomes an invoice " +
+      "with no goods or services on it, sent, under a number that cannot be given back",
+  );
+  assert.match(src, /code: 'lines_unavailable'/, "and it must refuse, not merely log");
+  // Order matters as much as the check: refusing after the number is minted leaves a permanent
+  // gap in the doorlopende reeks for a failure that was fully recoverable. Anchored on the MINT
+  // itself rather than on the "POINT OF NO RETURN" comment beside it — `code()` strips comments,
+  // so a prose anchor here silently matches nothing and the ordering goes unchecked.
+  const guard = src.indexOf("lines_unavailable");
+  const mint = src.indexOf("generateInvoiceNumber(");
+  assert.ok(guard > 0 && mint > 0 && guard < mint,
+    "the refusal must come BEFORE the number is minted — refusing after it leaves a permanent " +
+      "gap in the doorlopende reeks for a failure that was entirely recoverable");
+});
+
+test("[ART35-READ-HONEST] an unreadable issued-count locks the numbering instead of opening it", () => {
+  // `(issuedCount ?? 0) > 0` read a failed count as "this owner has issued nothing", so the
+  // template and padding of a doorlopende reeks could be rewritten after numbers had gone out —
+  // and the audit row that exists to prove the platform refused exactly that was skipped too.
+  const src = code("src/app/api/invoice/numbering/route.ts");
+  assert.match(
+    src, /const \{ count: issuedCount, error: lockError \}/,
+    "the lock count dropped its error again — a database hiccup then reads as 'nobody has " +
+      "invoiced yet' and the art. 35 numbering lock opens",
+  );
+  assert.match(src, /code: 'lock_check_unavailable'/, "an unreadable count must refuse, not unlock");
+});
+
 test("[SCHEME-MERGE] no money-read route replaces the scheme's per-invoice maps", () => {
   // Under kas the invoices a quarter SETTLES are mostly not the ones it DATES, so
   // `{ ...sr.opts, exemptShareByInvoice: myOwnMap }` deletes the half that quarter is about — and
