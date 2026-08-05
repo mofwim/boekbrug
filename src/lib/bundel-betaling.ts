@@ -13,6 +13,8 @@
 // share a bundle, so a batch can never silently pay the wrong party.
 
 import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
+// [CREDIT-SAFE] The one answer to "is this a debt?" that the whole money line shares.
+import { creditStance, payableAsDebt } from "./creditnota-signal";
 
 /** The incoming-invoice fields the bundle logic reads. A subset of the row. */
 export interface BundelBetalingInvoice {
@@ -24,6 +26,10 @@ export interface BundelBetalingInvoice {
   vendor_iban: string | null;            // the account the money goes TO
   total_inc_btw: number | null;
   amount_paid?: number | null;           // [PARTIAL-PAY] already settled
+  // [CREDIT-SAFE] Needed to tell a DEBT from a CREDIT. A creditnota from a supplier is also
+  // 'received' and also has an open balance — and openAmount() takes |total|, so without this it
+  // joins the transfer as a positive amount and the owner pays MORE, by twice its value.
+  invoice_type?: string | null;
 }
 
 export interface BundelBetalingResult {
@@ -68,6 +74,28 @@ export function buildBundelBetaling(
     if (inv.status !== "received") {
       const nr = inv.invoice_number ? `Factuur ${inv.invoice_number}` : "Een geselecteerde factuur";
       return { ok: false, error: `${nr} staat niet open als te betalen.` };
+    }
+    // [CREDIT-SAFE] A creditnota is money coming BACK, and it must never join a transfer.
+    //
+    // The one guard that could have caught this — `items.some(it => it.amount <= 0)` below — is
+    // defeated two functions up: openAmount takes Math.abs(total), so a credit of € 51,80 arrives
+    // as a POSITIVE € 51,80, passes the check, and is ADDED to the total. The owner transfers
+    // € 103,60 more than they owe: once for not subtracting it, once for adding it.
+    //
+    // Refused rather than silently dropped. The screen says "3 geselecteerd" over the rows the
+    // owner picked; quietly paying two of them would make the count and the money disagree, and
+    // this is the screen where that difference IS the product.
+    if (!payableAsDebt(creditStance({
+      invoiceNumber: inv.invoice_number,
+      totalIncBtw: inv.total_inc_btw,
+      invoiceType: inv.invoice_type ?? null,
+      vendorNumbers: [],
+    }))) {
+      const nr = inv.invoice_number ? `Factuur ${inv.invoice_number}` : "Een geselecteerde regel";
+      return {
+        ok: false,
+        error: `${nr} is een creditnota — dat geld komt naar je toe. Haal hem uit de selectie; hij gaat vanzelf van je openstaande saldo af.`,
+      };
     }
   }
 
