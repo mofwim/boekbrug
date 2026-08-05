@@ -91,6 +91,18 @@ AS $$
   );
 $$;
 
+-- ⚠ LET OP — DEZE TWEE FUNCTIES WORDEN LATER NOG EEN KEER HERSCHREVEN.
+-- accountant_confirm_mandate.sql past has_active_invoice_mandate() aan (filter op kind =
+-- 'facturen') en voegt uitzondering 5 toe aan prevent_accountant_amount_changes() (de boekhouder
+-- die een inkoopfactuur bevestigt). Allebei met CREATE OR REPLACE op dezelfde functie.
+--
+-- Draai je DIT bestand daarna nog eens, dan wint de versie hieronder en gebeuren er twee dingen
+-- geruisloos: (1) een klant die alleen 'bevestigen' heeft aangezet, geeft daarmee ineens ook
+-- 'facturen' weg, en (2) bevestigen breekt af op "Permission denied". Draai in dat geval
+-- accountant_confirm_mandate.sql er nog een keer achteraan — hij is idempotent.
+--
+-- De volgorde is dus altijd: dit bestand EERST, accountant_confirm_mandate.sql DAARNA.
+
 -- ── The number series — the third exception, and the last one ────────────────
 -- next_invoice_seq() refuses to mint unless you ARE the owner or you are an active 'verkoop'
 -- member of theirs. A mandated accountant is the third case, and it is added the same way the
