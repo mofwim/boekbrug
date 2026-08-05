@@ -126,3 +126,139 @@ test("[DECLARED-INVOICE] and it still knows how much of the line the booking wou
     "the refusal's three conditions must be intact: no stated amount, no override, whole line consumed",
   );
 });
+
+// ─── The import itself, end to end on the expression that now runs on every intake ────
+//
+// The source gates above hold the PLACEMENT. This holds the BEHAVIOUR, and above all the half that
+// a fix in an import path has to prove first: that a healthy invoice still imports exactly as it
+// did. Moving a merge out of a guard makes it run on every single import — including the millions
+// where nothing is wrong — so "unchanged for a clean invoice" is not an assumption to make.
+
+import { mergePossibleDuplicate, markDuplicateCheckUnavailable } from "./possible-duplicate-collect";
+import type { PossibleDuplicate } from "./safecore";
+
+/** The exact expression /api/intake now runs, unconditionally, on both handlers. */
+function intakeMerge(
+  fc: Record<string, unknown>,
+  dedupCheckFailed: boolean,
+  possibleDup: PossibleDuplicate | null,
+): Record<string, unknown> {
+  const merged = (dedupCheckFailed
+    ? markDuplicateCheckUnavailable(mergePossibleDuplicate(fc, possibleDup))
+    : mergePossibleDuplicate(fc, possibleDup)) as Record<string, unknown> | null;
+  if (merged?._safecore) fc._safecore = merged._safecore;
+  return fc;
+}
+
+const readField = () => ({ vendor: 0.93, invoice_number: 0.98, _safecore: { arithmetic_ok: true } }) as Record<string, unknown>;
+const LOOKALIKE: PossibleDuplicate = {
+  match: { id: "x", invoice_number: "2026-4471", client_name: "Atapack" } as PossibleDuplicate["match"],
+  reason: "zelfde bedrag en datum",
+};
+
+test("[DEDUP-READ-HONEST] a healthy import is byte-for-byte what it was before the fix", () => {
+  // The one that matters most. This expression now runs on EVERY import, so the ordinary case —
+  // a clean invoice, a probe that answered, no look-alike — must come out untouched.
+  const before = JSON.stringify(readField());
+  const after = intakeMerge(readField(), false, null);
+  assert.equal(JSON.stringify(after), before, "a clean import must not gain a single key");
+});
+
+test("[DEDUP-READ-HONEST] a probe that could not run now reaches the row", () => {
+  // The whole point. Before the fix this produced nothing at all, and the invoice auto-booked.
+  const sc = intakeMerge(readField(), true, null)._safecore as Record<string, unknown>;
+  assert.equal(sc.possible_duplicate, true, "classifyImportHealth reads this → needs-review → no auto-advance");
+  assert.equal(sc.possible_duplicate_reason, "we konden de dubbelcheck niet uitvoeren");
+  assert.equal(sc.arithmetic_ok, true, "and it does not trample what the reader already stored");
+});
+
+test("[DEDUP-READ-HONEST] a NAMED look-alike outranks the generic reason", () => {
+  // The precedence markDuplicateCheckUnavailable's own comment argues for: a run that found a
+  // look-alike and then failed its second probe must keep naming the invoice it did find. "Lijkt op
+  // factuur 2026-4471" is something the owner can act on; "we konden het niet nagaan" is not.
+  const found = intakeMerge(readField(), false, LOOKALIKE)._safecore as Record<string, unknown>;
+  const both = intakeMerge(readField(), true, LOOKALIKE)._safecore as Record<string, unknown>;
+  assert.equal(found.possible_duplicate_of, "2026-4471");
+  assert.deepEqual(both, found, "a failed second probe must not overwrite a real find");
+});
+
+// ─── [WATERMARK-SERVER-TIME] The mailbox must not be stoppable by a sender ────────────
+//
+// The sync watermark is the point every LATER sync starts from. It walks the dates of the messages
+// in the window and stores the newest complete one; the next run then asks the provider for mail
+// after it.
+//
+// The Gmail path took that date from the `Date:` header — written by whoever sent the mail. One
+// message stamped 1 January 2027 does not import one wrong invoice: it moves the mark to 2027 and
+// the mailbox imports NOTHING for a year and a half, while every sync reports success. It needs no
+// attacker; a sending server with a wrong clock is enough, and the app cannot tell them apart.
+//
+// Microsoft has always used receivedDateTime — the server's own receipt time. Gmail now uses
+// internalDate, its exact analogue. And because a third provider will one day be added by someone
+// who has not read that sentence, a second belt drops future-dated messages from the walk
+// regardless of where the date came from.
+
+test("[WATERMARK-SERVER-TIME] the Gmail walk is fed the server's receipt time, not the sender's header", () => {
+  const src = code("src/lib/email-integration.ts");
+  assert.match(
+    src, /const internalMs = Number\(msg\.internalDate\)/,
+    "the Gmail message date no longer comes from internalDate — a sender's `Date:` header can move " +
+      "the sync watermark, which stops the mailbox importing for as long as that date is away",
+  );
+  // The header stays as a FALLBACK, which is correct — a message with neither is caught by the
+  // existing NaN guard. What must not come back is the header as the primary source.
+  assert.doesNotMatch(
+    src, /const date = headerVal\('date'\)/,
+    "the header is the primary source again",
+  );
+  // Microsoft's side must keep using the server's own timestamp.
+  assert.match(src, /date: m\.receivedDateTime as string/, "the Microsoft path lost receivedDateTime");
+});
+
+test("[WATERMARK-SERVER-TIME] a future-dated message is dropped from the walk, whatever the provider", () => {
+  const src = code("src/lib/email-integration.ts");
+  assert.match(src, /const futureFloorMs = Date\.now\(\)/, "the future clamp is gone");
+  assert.match(
+    src, /t <= futureFloorMs/,
+    "the walk no longer excludes future-dated messages — the belt that protects a mailbox when a " +
+      "provider returns something odd, and when a third provider is added later",
+  );
+});
+
+// ─── Every import door still reaches the books ────────────────────────────────────────
+//
+// The doors are: the camera/upload intake, the UBL e-invoice intake, the manual file upload, and
+// the two mailbox syncs. They share nothing but the shape of what they must produce, so a change in
+// one is exactly the kind that silently skips another — and an invoice that never becomes a row
+// makes no noise at all.
+
+test("[IMPORT-COMPLETE] every door still writes an invoice row, and still holds its guards", () => {
+  const doors: Array<[string, string[]]> = [
+    // [file, phrases that must survive]
+    ["src/app/api/intake/route.ts", ['from("invoices")', "shouldAutoAdvanceInvoice", "markDuplicateCheckUnavailable"]],
+    ["src/app/api/email/upload/route.ts", ['from("invoices")', "markDuplicateCheckUnavailable"]],
+    ["src/lib/email-integration.ts", ["from('invoices')", "markDuplicateCheckUnavailable"]],
+  ];
+  for (const [f, phrases] of doors) {
+    const src = code(f);
+    for (const p of phrases) {
+      assert.ok(
+        src.includes(p),
+        `${f} no longer contains \`${p}\` — an import door that stopped writing, or stopped ` +
+          `checking, is invisible: the owner simply never sees the invoice again`,
+      );
+    }
+  }
+});
+
+test("[IMPORT-COMPLETE] the byte-hash gate is still the first thing every file meets", () => {
+  // The gate that makes re-uploading the same file harmless. If it moves after the AI read, a
+  // re-upload costs a paid extraction; if it disappears, the same bytes become a second cost.
+  for (const f of ["src/app/api/intake/route.ts", "src/app/api/email/upload/route.ts"]) {
+    const src = code(f);
+    assert.match(
+      src, /content_hash|contentHash/,
+      `${f} no longer consults the byte hash — the same file re-uploaded becomes a second invoice`,
+    );
+  }
+});
