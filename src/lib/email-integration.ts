@@ -32,6 +32,12 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 import { readingPromptHint } from '@/lib/reading-memory'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+// [MULTI-INVOICE] / [ONE-INVOICE-UNVERIFIED] The same two questions /api/intake asks before it
+// lets anything auto-book — one file can hold several invoices, and a scanned stack cannot be
+// checked at all. Same module, same mergers, so the queue reads identically on both doors.
+import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from '@/lib/multi-invoice-pdf'
+// [PDF-TEXT] The text layer both checks read, shared with the intake door.
+import { readPdfTextLayer } from '@/lib/pdf-text'
 // [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
@@ -1470,6 +1476,13 @@ export interface AttachmentClassification {
     // because the mixed-rate summary block could not be summed. Carried through to
     // field_confidence so import-health can ask the owner to confirm the figure.
     _btw_derived?: { read: number | null; used: number | null }
+    // [BTW-SPLIT] / [PRINTED-TOTAL] The evidence a mixed-rate invoice needs, from the same reader
+    // call. Declared here because the value is spread into field_confidence further down: without
+    // these keys the type says they are gone while at runtime they are not, and the next person to
+    // read this block would have no way to know the checklist depends on them.
+    _btw_rows?: { rate: number; base: number; btw: number }[]
+    _total_printed?: number | null
+    _total_derived?: 'total' | 'excl'
   }
 }
 
@@ -3075,7 +3088,12 @@ export async function syncUserEmails(
               .limit(50)
             if (dedupErr) dedupCheckFailed = true
             return data ?? []
-          }
+          },
+          // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+          // callbacks above already record a failed read in dedupCheckFailed →
+          // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+          // uitvoeren". Leaving this off would abort the message mid-sync over one soft probe.
+          { bestEffort: true },
         )
       }
 
@@ -3384,6 +3402,46 @@ export async function syncUserEmails(
           if (pay.paidMethodZeker) fc._intake_paid_method_zeker = true
         }
         fieldConfidenceValue = fc
+      }
+
+      // [MULTI-INVOICE] / [ONE-INVOICE-UNVERIFIED] The two checks the e-mail door never ran.
+      //
+      // /api/intake asks both of these before it lets anything auto-book, and its comments say
+      // why: one file can carry SEVERAL invoices, exactly one of them gets read, and the others
+      // exist nowhere — no row, no file, no notification. This door asked neither. Not by a
+      // decision: the text layer they read was extracted by a helper private to the intake route
+      // (now @/lib/pdf-text), so the question could not be asked from here at all.
+      //
+      // What that cost is specific. A wholesaler who e-mails one PDF holding three invoices got
+      // one of them booked as 'received' and tagged _auto_verified — an automatic booking with no
+      // human anywhere near it — while the other two were simply absent: missing cost, missing
+      // voorbelasting, and two supplier bills nobody knows are owed. The e-mail door is the one
+      // where that pattern is MOST common, since suppliers batch by mail rather than by camera.
+      //
+      // Both signals go through the same mergers /api/intake uses, so the queue shows the same
+      // reason and the "nee, dit is één factuur" answer clears them the same way. Only for a PDF:
+      // an image is one page by definition and cannotVerifySingleInvoice says so itself.
+      if (classification.isInvoice) {
+        const isPdf = (attachment.mimeType ?? '').includes('pdf') ||
+          (attachment.filename ?? '').toLowerCase().endsWith('.pdf')
+        if (isPdf) {
+          const { text: pdfText, pages: pdfPages } = await readPdfTextLayer(fileBuffer)
+          const multi = detectMultipleInvoices(pdfText)
+          if (multi) {
+            fieldConfidenceValue = mergeMultipleInvoices(fieldConfidenceValue, multi) as Record<string, unknown>
+          } else {
+            // The other half, and the reason it is not enough to run the check above: a scanned
+            // stack has no text layer, so detectMultipleInvoices looks at nothing and returns
+            // null — and null was being read as "one invoice, all fine". A check that could not
+            // run is not a check that passed.
+            const unverified = cannotVerifySingleInvoice({ pages: pdfPages, hasTextLayer: !!pdfText })
+            if (unverified) {
+              fieldConfidenceValue = mergeUnverifiedSingle(
+                fieldConfidenceValue, unverified, pdfPages,
+              ) as Record<string, unknown>
+            }
+          }
+        }
       }
 
       // [BOEK-011] ALL email imports enter the verify queue ('processing') —

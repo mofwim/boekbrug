@@ -16,6 +16,8 @@ import { syncUserEmails } from "@/lib/email-integration";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+// [PAGINATE] The mailbox list is the WORK, not a report — see the read below.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
@@ -45,11 +47,26 @@ export async function GET(req: NextRequest) {
 
   const pipeline = createPipelineClient();
   // Ordered by connected_at so the iteration order is deterministic across runs.
-  const { data: conns, error } = await pipeline
-    .from("email_connections")
-    .select("user_id, connected_at")
-    .order("connected_at", { ascending: true });
-  if (error) {
+  //
+  // [PAGINATE] Paged past the silent ~1000-row cap. PostgREST truncates a response at that size
+  // and says nothing about it, and this list is not a report — it IS the work. Beyond a thousand
+  // connected mailboxes the tail simply never syncs, and because the order is connected_at
+  // ASCENDING the tail is the NEWEST connections: a customer who links their mailbox today would
+  // watch nothing arrive, forever, with no error anywhere and a cron run reporting success.
+  //
+  // fetchAllRows throws on a failed page rather than returning a short one, which is the right
+  // shape here for the same reason: a partial list is indistinguishable from "these are all the
+  // mailboxes", and acting on it silently skips real owners.
+  let conns: { user_id: string | null; connected_at: string | null }[];
+  try {
+    conns = await fetchAllRows<{ user_id: string | null; connected_at: string | null }>(
+      (from, to) => pipeline
+        .from("email_connections")
+        .select("user_id, connected_at")
+        .order("connected_at", { ascending: true })
+        .range(from, to),
+    );
+  } catch {
     return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
   }
 

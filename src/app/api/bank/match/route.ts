@@ -26,6 +26,8 @@ import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
+// [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
+import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -98,7 +100,7 @@ export async function GET() {
         .select(
           // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
           // instalment matches on amount.
-          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference"
+          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id"
         )
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
@@ -115,7 +117,13 @@ export async function GET() {
     );
   }
 
-  const invoices = (invRows ?? []) as InvoiceForMatching[];
+  // [SUPPLIER-IBAN] The account each supplier is known to bill from, for the invoices whose own
+  // document never named one. Best-effort: an empty map leaves the matcher exactly as it was.
+  const rawInvoices = (invRows ?? []) as (InvoiceForMatching & { supplier_id?: string | null })[];
+  const invoices: InvoiceForMatching[] = withSupplierIbans(
+    rawInvoices,
+    await fetchSupplierIbans(pipeline, user.id, rawInvoices),
+  );
 
   // 4. Run the pure matcher.
   // [BANK-BIG-BUNDLE] maxCandidates raised from the default 5: a wholesaler bundle routinely
@@ -253,7 +261,7 @@ export async function GET() {
   const paidInvRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id")
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .eq("status", "paid")
       .order("id", { ascending: true })

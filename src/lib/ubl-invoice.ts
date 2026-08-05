@@ -50,6 +50,16 @@ export interface UblInvoiceExtract {
   totalExBtw: number | null;
   btwAmount: number | null;
   totalIncBtw: number | null;
+  // [BTW-SPLIT] The per-rate breakdown, one entry per cac:TaxSubtotal. Always positive magnitudes,
+  // exactly as UBL states them; the caller applies the creditnota sign the same way it does to the
+  // totals. Empty when the file carries no subtotals.
+  btwRows: { rate: number; base: number; btw: number }[];
+}
+
+/** Every occurrence of an (optionally-prefixed) element, whole block including its tags. */
+function allBlocks(xml: string, local: string): string[] {
+  const re = new RegExp(`<(?:\\w+:)?${local}\\b[\\s\\S]*?</(?:\\w+:)?${local}>`, "gi");
+  return xml.match(re) ?? [];
 }
 
 /**
@@ -92,7 +102,34 @@ export function parseUblInvoice(xml: string): UblInvoiceExtract {
   const totalExBtw = num(firstTag(legalBlock, "TaxExclusiveAmount") ?? firstTag(legalBlock, "LineExtensionAmount"));
   const totalIncBtw = num(firstTag(legalBlock, "TaxInclusiveAmount") ?? firstTag(legalBlock, "PayableAmount"));
   const taxBlock = /<(?:\w+:)?TaxTotal\b[\s\S]*?<\/(?:\w+:)?TaxTotal>/i.exec(xml)?.[0] ?? "";
+  // firstTag finds the TaxTotal's own TaxAmount, which UBL prints before the subtotals.
   const btwAmount = num(firstTag(taxBlock, "TaxAmount"));
+
+  // [BTW-SPLIT] The per-rate breakdown. On a mixed-rate invoice this is the only thing that can
+  // verify the btw total at all — any blend between the rates present is legal, so btw/excl proves
+  // nothing (see btw-split.ts, and the Enka Horeca invoice that cost € 0,46 of voorbelasting).
+  //
+  // Here it costs nothing to be certain: UBL states TaxableAmount, TaxAmount and Percent as
+  // separate typed elements. No column to pick, no OCR to misread — the disagreement a PDF reader
+  // can produce is structurally impossible. A mixed-rate e-invoice therefore gets a real tick
+  // rather than an honest "we could not check this".
+  const btwRows: { rate: number; base: number; btw: number }[] = [];
+  for (const sub of allBlocks(taxBlock, "TaxSubtotal")) {
+    const base = num(firstTag(sub, "TaxableAmount"));
+    const tax = num(firstTag(sub, "TaxAmount"));
+    // Percent lives one level down, in cac:TaxCategory. Scoped rather than taken from the whole
+    // subtotal, so a percentage that turns up in some other child cannot be read as the rate.
+    const catBlock = /<(?:\w+:)?TaxCategory\b[\s\S]*?<\/(?:\w+:)?TaxCategory>/i.exec(sub)?.[0] ?? "";
+    const pct = num(firstTag(catBlock, "Percent"));
+    // Only a legal Dutch rate. A foreign or malformed rate would poison the column sums this
+    // block exists to provide, and a half-read breakdown is worse than none: it would turn a
+    // correct invoice into a flagged one.
+    if (base == null || tax == null || pct == null || ![0, 9, 21].includes(pct)) {
+      btwRows.length = 0;
+      break;
+    }
+    btwRows.push({ rate: pct, base: Math.abs(base), btw: Math.abs(tax) });
+  }
 
   return {
     isCreditNote,
@@ -105,5 +142,6 @@ export function parseUblInvoice(xml: string): UblInvoiceExtract {
     totalExBtw,
     btwAmount,
     totalIncBtw,
+    btwRows,
   };
 }

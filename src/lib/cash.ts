@@ -32,6 +32,10 @@ export interface SettleableInvoice {
   // the cost (incoming) / the omzet (outgoing) was ALREADY booked on accrual by the invoice. So
   // the drawer moves but nothing is double-counted. Default 'incoming' for older callers.
   direction?: "incoming" | "outgoing";
+  // [CASH-CREDITNOTA] A creditnota moves the drawer the OTHER way from an invoice of the same
+  // direction, because the money travels the other way. Read from the stored invoice_type, with
+  // the sign as a second witness — see settlementDirection below for what goes wrong without it.
+  invoice_type?: string | null;
   total_inc_btw: number | null;
   // [CASH-SETTLE] Fallback components: when total_inc_btw is null but ex + btw are present, the
   // gross paid = ex + btw. Without this, a cash-paid invoice with a null gross booked its cost
@@ -125,15 +129,54 @@ function cents(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** How a settlement reads in the kasboek. Direction follows the invoice: an outgoing (sales)
- *  invoice paid in cash raises the drawer ('in'); an incoming (purchase) invoice lowers it
- *  ('out'). Both are category 'betaling' (P&L-neutral) — the omzet/cost already came from the
- *  invoice. `part` numbers a movement when there are several ("1e termijn"), so the owner can
- *  tell them apart in a list of otherwise identical lines. */
-function settlementDescription(inv: SettleableInvoice, part?: { index: number; of: number }): string {
+/**
+ * [CASH-CREDITNOTA] Is this document a credit rather than a bill?
+ *
+ * Two witnesses, and either one is enough. invoice_type is the DECLARED truth and survives a
+ * mis-signed amount; a negative gross is the ARITHMETIC truth and survives a row imported before
+ * the type was set, or one the reader typed as a plain invoice. Requiring both would let a single
+ * missing field book the drawer backwards, which is the failure this exists to stop.
+ */
+function isCreditDocument(inv: SettleableInvoice): boolean {
+  if ((inv.invoice_type ?? "").toLowerCase() === "creditnota") return true;
+  return typeof inv.total_inc_btw === "number" && inv.total_inc_btw < 0;
+}
+
+/**
+ * [CASH-CREDITNOTA] Which way the drawer moves. The invoice's direction alone does not say.
+ *
+ * `direction` records who sent the document, not which way the money travelled — and on a
+ * creditnota those are opposite. A supplier who refunds me in cash sends an INCOMING document
+ * while money comes INTO the till; I who refund a customer send an OUTGOING one while money goes
+ * OUT. Booking by direction alone puts every cash-settled creditnota in the drawer backwards, and
+ * a wrong-signed entry is off by TWICE its amount: the balance the Belastingdienst reads is short
+ * by 2 × the refund, on a book whose whole purpose is that it reconciles.
+ *
+ * settlementGross already refuses a creditnota — `raw <= 0 → null`, with the reason written on it.
+ * That guard sits on the LEGACY aggregate path, and the per-instalment path added later returns
+ * before it is ever consulted. Same shape as everything else this session: a refusal written,
+ * argued for, and bypassed by a newer path above it.
+ */
+function settlementDirection(inv: SettleableInvoice): "in" | "out" {
   const outgoing = inv.direction === "outgoing";
-  const verb = outgoing ? "Ontvangen (contant) factuur" : "Betaling factuur";
-  const label = [verb, inv.invoice_number ?? ""].join(" ").trim();
+  // XOR: a credit flips whichever way the invoice direction would have pointed.
+  return outgoing !== isCreditDocument(inv) ? "in" : "out";
+}
+
+/** How a settlement reads in the kasboek. Direction follows the MONEY (settlementDirection), which
+ *  on an ordinary invoice is the invoice's own direction: an outgoing (sales) invoice paid in cash
+ *  raises the drawer ('in'), an incoming (purchase) invoice lowers it ('out'). Both are category
+ *  'betaling' (P&L-neutral) — the omzet/cost already came from the invoice. `part` numbers a
+ *  movement when there are several ("1e termijn"), so the owner can tell them apart in a list of
+ *  otherwise identical lines. */
+function settlementDescription(inv: SettleableInvoice, part?: { index: number; of: number }): string {
+  const credit = isCreditDocument(inv);
+  const noun = credit ? "creditnota" : "factuur";
+  // The verb follows the drawer, not the document — for the same reason the direction does.
+  const verb = settlementDirection(inv) === "in"
+    ? "Ontvangen (contant)"
+    : credit ? "Terugbetaling" : "Betaling";
+  const label = [verb, noun, inv.invoice_number ?? ""].join(" ").trim();
   const withParty = inv.client_name ? `${label} — ${inv.client_name}` : label;
   return part && part.of > 1 ? `${withParty} (${part.index}e termijn van ${part.of})` : withParty;
 }
@@ -157,8 +200,8 @@ function isoDay(value: string | null | undefined): string | undefined {
  * invoice — because a garbage entry in the kasboek is worse than none.
  */
 export function buildCashSettlements(inv: SettleableInvoice): CashSettlementRow[] {
-  const outgoing = inv.direction === "outgoing";
-  const dir: "in" | "out" = outgoing ? "in" : "out";
+  // [CASH-CREDITNOTA] Follows the money, not the document — see settlementDirection.
+  const dir = settlementDirection(inv);
 
   const instalments = (inv.cash_instalments ?? [])
     .filter((p) => p && p.id && cents(Math.abs(Number(p.amount) || 0)) > 0.005)
@@ -181,6 +224,12 @@ export function buildCashSettlements(inv: SettleableInvoice): CashSettlementRow[
     }));
   }
 
+  // [CASH-CREDITNOTA] The legacy aggregate path deliberately still books nothing for a credit:
+  // settlementGross returns null on a non-positive gross, and here there are no instalment rows to
+  // read an amount from — only `gross − amount_paid`, which is meaningless over a negative gross.
+  // So the asymmetry with the branch above is intentional: that one has a real per-payment amount
+  // and can book the movement correctly, this one would have to invent it. No entry beats a
+  // wrong one, and every cash payment recorded since instalments exist takes the branch above.
   const amount = settlementGross(inv);
   if (amount === null) return [];
   const iso = isoDay(inv.payment_date);

@@ -41,6 +41,11 @@ import { describeUploadFailure } from "@/lib/upload-failure";
 import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
 // [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
 import InvoiceDocumentSheet from "@/components/invoice/InvoiceDocumentSheet";
+// [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
+import { reimportDecision, reimportPromptText } from "@/lib/reimport-eligibility";
+// [DATE-NL] A date the owner TYPES, in the order they read it. The native control puts the
+// MONTH first under an en-US browser and nothing on the page changes that — see date-field-nl.ts.
+import { DUTCH_DATE_PLACEHOLDER, formatDutchDateInput, dutchDateToIso, isoToDutchDate } from "@/lib/date-field-nl";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,6 +87,8 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { reconcileBtw } from '@/lib/btw-reconcile'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -585,12 +592,12 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  type="date"
+                <DateFieldNL
                   value={backfillDate}
                   max={amsterdamToday()}
-                  onChange={(e) => setBackfillDate(e.target.value)}
+                  onChange={setBackfillDate}
                   disabled={syncing}
+                  aria-label="Ophalen vanaf"
                   style={{
                     border: "1px solid #dadce0", borderRadius: 8, padding: "8px 10px",
                     fontSize: 14, fontFamily: "inherit",
@@ -790,6 +797,10 @@ function ConfirmPaidModal({
   const [vendor, setVendor] = useState(invoice.client_name || "");
   const [invoiceNumber, setInvoiceNumber] = useState(invoice.invoice_number || "");
   const [invoiceDate, setInvoiceDate] = useState(invoice.invoice_date || "");
+  // [DATE-NL] What the owner SEES while typing, in Dutch order. Held next to the ISO value rather
+  // than derived from it, because half of "21-01-20" has no ISO to be derived from — and clearing
+  // the field on every keystroke is exactly what a derived display would do.
+  const [invoiceDateTyped, setInvoiceDateTyped] = useState(() => isoToDutchDate(invoice.invoice_date));
   const [submitting, setSubmitting] = useState(false);
   // [BRIDGE-B] payStep = showing the Bank/Contant choice (after "Markeer als betaald")
   const [payStep, setPayStep] = useState(false);
@@ -804,6 +815,10 @@ function ConfirmPaidModal({
   })();
   const [paymentDate, setPaymentDate] = useState(
     paperPaidDate ?? amsterdamToday()
+  );
+  // [DATE-NL] Same pairing as invoiceDateTyped above.
+  const [paymentDateTyped, setPaymentDateTyped] = useState(() =>
+    isoToDutchDate(paperPaidDate ?? amsterdamToday())
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
@@ -1254,10 +1269,16 @@ function ConfirmPaidModal({
                 </span>
                 {editing ? (
                   <input
-                    type="date"
+                    type="text"
+                    inputMode="numeric"
                     ref={dateInputRef}
-                    value={invoiceDate}
-                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    placeholder={DUTCH_DATE_PLACEHOLDER}
+                    value={formatDutchDateInput(invoiceDateTyped)}
+                    onChange={(e) => {
+                      const shown = formatDutchDateInput(e.target.value)
+                      setInvoiceDateTyped(shown)
+                      setInvoiceDate(dutchDateToIso(shown) ?? "")
+                    }}
                     style={{
                       padding: "6px 10px", fontSize: 15,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -1402,10 +1423,15 @@ function ConfirmPaidModal({
               Betaaldatum
             </label>
             <input
-              type="date"
-              value={paymentDate}
-              max={amsterdamToday()}
-              onChange={(e) => setPaymentDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              placeholder={DUTCH_DATE_PLACEHOLDER}
+              value={formatDutchDateInput(paymentDateTyped)}
+              onChange={(e) => {
+                const shown = formatDutchDateInput(e.target.value)
+                setPaymentDateTyped(shown)
+                setPaymentDate(dutchDateToIso(shown) ?? "")
+              }}
               disabled={submitting}
               style={{
                 width: "100%", padding: "12px 14px", borderRadius: 12,
@@ -1816,9 +1842,17 @@ export function InvoiceCard({
     }
   };
 
-  // [REIMPORT] Re-read this invoice's stored PDF with the current extractor. Only offered on
-  // a flagged item still in the queue; the server refuses anything already verified/archived.
+  // [REIMPORT] Re-read this invoice's stored PDF with the current extractor.
+  // [REREAD-CONFIRMED] …and no longer only on a FLAGGED item. The offer below covers the clean
+  // ones too, because a clean-looking invoice is exactly where a misread amount hides: the amber
+  // block that used to hold the only button never appears on it.
   const [reimporting, setReimporting] = useState(false);
+  // The same predicate the server re-checks, so the button never opens on a refusal.
+  const reread = reimportDecision(invoice);
+  const rereadOk = reread.allowed;
+  // Whether the amber block above is already showing its own copy of this button.
+  const hasHealthWarning =
+    invoice.health.level === "needs-review" && invoice.health.reasons.length > 0;
   const handleReimport = async () => {
     if (reimporting) return;
     setReimporting(true);
@@ -2338,6 +2372,35 @@ export function InvoiceCard({
               <span style={{ fontSize: 16 }}>📄</span>
               Bekijk factuur en controles
             </button>
+          )}
+
+          {/* [REREAD-CONFIRMED] The offer, on EVERY queued invoice — not only the flagged ones.
+              The button above lives inside the amber "Even controleren" block, so on an invoice
+              the app considers fine it is not on the screen at all. That is precisely the invoice
+              this exists for: Enka Horeca showed every check green over a btw that was € 0,46
+              wrong, the owner was told to press "Opnieuw inlezen", and there was nothing to press.
+
+              Same argument as [AMOUNT-CORRECTION] on the pay screen: the reader can be wrong
+              without any gate noticing, and the owner is the one holding the paper. */}
+          {mode === "pending" && !hasHealthWarning && rereadOk && (
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 12, color: "#5f6368", margin: "0 0 6px", lineHeight: 1.45 }}>
+                {reimportPromptText(reread)}
+              </p>
+              <button
+                onClick={handleReimport}
+                disabled={reimporting}
+                style={{
+                  padding: "7px 12px", borderRadius: 9,
+                  background: "#fff", cursor: reimporting ? "default" : "pointer",
+                  border: "1px solid #dadce0", color: "#1a73e8", fontWeight: 600, fontSize: 12.5,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 13 }}>↻</span>
+                {reimporting ? "Bezig met opnieuw inlezen…" : "Opnieuw inlezen"}
+              </button>
+            </div>
           )}
 
           {/* [BOEK-011] Folder location — link to Mijn Bestanden */}

@@ -24,12 +24,21 @@
 // iban_check_unavailable and one_invoice_unverified are both "we could not look", written by code
 // that refused to let a skipped check read as a passed one.
 //
+// ── AND IT HAPPENED ANYWAY, ON THE AXIS NOBODY WAS WATCHING ──
+// Enka Horeca 26701681 showed "Alle 7 controles gedaan, niets geks gevonden" over a btw that was
+// € 0,46 wrong. No check misfired: the list simply had no row for the btw itself, and the row it
+// did have — "bedragen kloppen met elkaar" — is true of any three numbers that were made to add
+// up. The lesson is narrower than "check more": a check whose CONSTRAINT disappears on some
+// invoices must say so on those invoices. On a mixed-rate invoice the legal-rate constraint does
+// exactly that, silently. See btw-split.ts, and check 2 below.
+//
 // Pure: no I/O, no clock. It reads what the import already stored and what classifyImportHealth
 // already computes — it introduces no new judgement about an invoice, it only says what the
 // existing ones concluded.
 
 import { classifyImportHealth, type HealthInput, type FieldConfidence } from '@/lib/import-health'
 import { creditStance, payableAsDebt } from '@/lib/creditnota-signal'
+import { classifyBtwSplit, btwSplitCorroborated, btwSplitDetail } from '@/lib/btw-split'
 
 export type CheckOutcome =
   | 'passed'      // the check ran and found nothing wrong
@@ -38,7 +47,7 @@ export type CheckOutcome =
 
 export interface InvoiceCheck {
   /** Stable id for keys and tests. */
-  id: 'arithmetic' | 'duplicate' | 'iban' | 'single-invoice' | 'date' | 'number' | 'kind'
+  id: 'arithmetic' | 'btw-split' | 'duplicate' | 'iban' | 'single-invoice' | 'date' | 'number' | 'kind'
   /** What was checked. Dutch — this is what the owner reads (AGENTS.md). */
   label: string
   outcome: CheckOutcome
@@ -72,14 +81,53 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   const out: InvoiceCheck[] = []
 
   // ── 1. The arithmetic ──
+  //
+  // [PRINTED-TOTAL] A pass here means the three amounts agree WITH EACH OTHER. That is worth
+  // something only when all three came off the paper. When the reader returned two of them and we
+  // computed the third, the identity holds because we made it hold — and a tick would be reporting
+  // our own subtraction back to the owner as a verified fact about their invoice.
+  const totalDerived = inv.field_confidence?._total_derived
   out.push({
     id: 'arithmetic',
     label: 'Bedragen kloppen met elkaar',
-    outcome: health.flags.arithmetic ? 'flagged' : 'passed',
-    detail: health.flags.arithmetic ? 'excl. + btw komt niet uit op het totaal' : null,
+    outcome: health.flags.arithmetic ? 'flagged' : totalDerived ? 'not-checked' : 'passed',
+    detail: health.flags.arithmetic
+      ? 'excl. + btw komt niet uit op het totaal'
+      : totalDerived === 'total'
+        ? 'het totaal stond niet los op de factuur — wij hebben het uit excl. + btw berekend'
+        : totalDerived === 'excl'
+          ? 'het bedrag excl. btw stond niet los op de factuur — wij hebben het uit totaal − btw berekend'
+          : null,
   })
 
-  // ── 2. A second copy of an invoice you already have ──
+  // ── 2. The btw itself ──
+  //
+  // [BTW-SPLIT] The axis the checklist used to be silent about, and the one that let a € 0,46
+  // error through with seven green ticks. On a single-rate invoice btw/excl must land exactly on
+  // 9% or 21%, so the amounts corroborate each other and a tick is earned. On a MIXED-rate invoice
+  // any blend between the rates is legal, that constraint disappears, and unless the per-rate
+  // summary block was read there is nothing left that the btw was compared against. See
+  // btw-split.ts — the row is omitted entirely when there are no amounts, because the arithmetic
+  // row above already says that and repeating it is noise rather than honesty.
+  const split = classifyBtwSplit({
+    totalExBtw: inv.total_ex_btw,
+    btwAmount: inv.btw_amount,
+    rows: inv.field_confidence?._btw_rows ?? null,
+  })
+  if (split.kind !== 'no-basis') {
+    out.push({
+      id: 'btw-split',
+      label: 'Btw-bedrag nagerekend',
+      outcome: btwSplitCorroborated(split)
+        ? 'passed'
+        : split.kind === 'blend-unverified'
+          ? 'not-checked'
+          : 'flagged',
+      detail: btwSplitDetail(split, inv.btw_amount),
+    })
+  }
+
+  // ── 3. A second copy of an invoice you already have ──
   out.push({
     id: 'duplicate',
     label: 'Geen dubbele factuur gevonden',
@@ -89,7 +137,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       : null,
   })
 
-  // ── 3. The account number — the axis where a wrong tick costs the payment ──
+  // ── 4. The account number — the axis where a wrong tick costs the payment ──
   //
   // Three genuinely different states, and collapsing any two of them is the failure this whole
   // file is careful about:
@@ -118,7 +166,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       : 'ongewijzigd ten opzichte van eerdere facturen',
   })
 
-  // ── 4. One invoice, or several in one file ──
+  // ── 5. One invoice, or several in one file ──
   // Same split as the IBAN row above, and for the same reason: health.flags.multipleInvoices is
   // true for "we saw several" AND for "a scanned pdf gave us no text to look at".
   const multiple = sc.multiple_invoices === true
@@ -135,7 +183,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
         : null,
   })
 
-  // ── 5. The date, which decides the kwartaal ──
+  // ── 6. The date, which decides the kwartaal ──
   //
   // A MISSING date is 'flagged', not 'not-checked', and the difference is real: the check ran and
   // its answer is that this invoice has no usable date. Under the factuurstelsel that date picks
@@ -150,7 +198,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       : null,
   })
 
-  // ── 6. The invoice number ──
+  // ── 7. The invoice number ──
   // Skipped entirely for a kassabon: it carries no factuurnummer and does not have to (a
   // vereenvoudigde factuur is not an art. 35 invoice), so a row about it would be noise on every
   // receipt — the same reasoning classifyImportHealth uses to leave that axis alone.
@@ -167,7 +215,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     })
   }
 
-  // ── 7. Factuur or creditnota ──
+  // ── 8. Factuur or creditnota ──
   // The signal that says a document numbered CR… is behaving as a debt. It is here rather than in
   // a warning banner because on a CLEAN invoice this row is the reassurance: it says the app looked
   // at what kind of document this is, and not merely at its numbers.

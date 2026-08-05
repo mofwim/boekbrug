@@ -183,11 +183,26 @@ export async function GET(req: NextRequest) {
       // The lines are what is actually billed. A concept without them would be a €0 invoice with
       // the right totals in the header — the kind of half-copy that is worse than none, so a
       // failure here removes the draft again rather than leaving it behind.
-      const { data: lines } = await pipeline
+      //
+      // [LINES-READ-HONEST] The error is read, and a failed read rolls the draft back — the same
+      // treatment the INSERT failure already got, for the same reason the comment above gives.
+      // supabase-js does not throw, so `const { data: lines }` answered a database problem with
+      // null, `lines && lines.length > 0` was false, and the code walked straight past the copy
+      // into the schedule update: next_run_date advanced, runs_count incremented, "Terugkerende
+      // factuur staat klaar" sent to the owner — over precisely the half-copy the comment says is
+      // worse than none. And because the schedule had moved on, nothing retried it until the next
+      // cadence, so the owner's bill for this month simply had no lines on it.
+      const { data: lines, error: linesErr } = await pipeline
         .from("invoice_lines")
         // [UNIT] '*' zodat de eenheid meekomt; de INSERT typt hieronder expliciet over.
         .select("*")
         .eq("invoice_id", s.source_invoice_id);
+      if (linesErr) {
+        await pipeline.from("invoices").delete().eq("id", draft.id as string);
+        failed += 1;
+        console.error("[CRON-RECURRING] line read failed — draft rolled back", { schedule: s.id, error: linesErr.message });
+        continue;
+      }
       if (lines && lines.length > 0) {
         const { error: lineErr } = await pipeline.from("invoice_lines").insert(
           // [UNIT] A recurring invoice is a COPY of the same delivery, so the unit travels with

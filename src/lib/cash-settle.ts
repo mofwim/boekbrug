@@ -136,7 +136,11 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       }
     }
 
-    const baseColumns = "id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
+    // [CASH-CREDITNOTA] invoice_type rides along, and without it the fix in cash.ts cannot reach a
+    // single real row: settlementDirection would see `undefined` and fall back to the sign alone,
+    // so a creditnota stored with positive amounts (the 'conflict' stance import-health flags)
+    // would still book the drawer backwards.
+    const baseColumns = "id, direction, invoice_type, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
     const invRows = await fetchAllRows<Record<string, unknown> & { id: string }>(
       (from, to) => supabase
         .from("invoices")

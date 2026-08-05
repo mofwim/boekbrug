@@ -60,6 +60,8 @@ import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
+// [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
+import { readPdfTextLayer } from "@/lib/pdf-text"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -362,7 +364,7 @@ export async function POST(req: NextRequest) {
   let pdfText: string | null = null
   let pdfPages = 0
   if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const read = await readPdf(buffer)
+    const read = await readPdfTextLayer(buffer)
     pdfText = read.text
     pdfPages = read.pages
     const dailyResp = await handleDailySalesPdf(pdfText, buffer, file, user.id, supabase, req, source)
@@ -712,7 +714,12 @@ export async function POST(req: NextRequest) {
             .limit(200)
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
-        }
+        },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }
@@ -1213,19 +1220,6 @@ export async function POST(req: NextRequest) {
 // getal is het verschil tussen "één beeld, dus één factuur" en "een stapel die we niet konden
 // lezen" — zie cannotVerifySingleInvoice. `pages: 0` bij een onleesbaar of niet-PDF bestand, wat
 // daar als "geen meerpagina-bestand" telt.
-async function readPdf(buffer: Buffer): Promise<{ text: string | null; pages: number }> {
-  try {
-    const unpdf = await import("unpdf")
-    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
-    const pages = typeof doc.numPages === "number" ? doc.numPages : 0
-    const { text } = await unpdf.extractText(doc, { mergePages: true })
-    const t = (text ?? "").trim()
-    return { text: t.length > 0 ? t : null, pages }
-  } catch {
-    return { text: null, pages: 0 }
-  }
-}
-
 // Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
 // exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the
@@ -1414,6 +1408,11 @@ async function handleUblInvoice(
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }
@@ -1471,6 +1470,21 @@ async function handleUblInvoice(
     invoice_number: v.invoiceNumber ? 0.98 : 0.2,
     invoice_date: v.invoiceDate ? 0.98 : 0.2,
     _source: "ubl_xml",
+  }
+  // [BTW-SPLIT] The per-rate breakdown straight out of the XML, signed the same way as the totals
+  // just above. On a mixed-rate invoice this is the difference between a checklist that can say
+  // "nagerekend" and one that has to admit it compared the btw with nothing — and on this path the
+  // numbers are typed elements, so there is nothing to have misread.
+  //
+  // Stored whether or not it agrees with our two figures, exactly as on the reader path. Whether a
+  // disagreement means "hold this invoice" is classifyImportHealth's judgement to make, in one
+  // place; filtering here would quietly delete the evidence it needs to make it.
+  if (v.btwRows.length > 0) {
+    fieldConfidence._btw_rows = v.btwRows.map((r) => ({
+      rate: r.rate,
+      base: sign * r.base,
+      btw: sign * r.btw,
+    }))
   }
   // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
   // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".

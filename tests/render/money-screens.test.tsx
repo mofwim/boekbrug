@@ -97,6 +97,11 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
     manageRow({ id: "cn", client_name: "Vlees", invoice_number: "CN9", invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109 }),
     // A paid invoice, so the paid tab and the settled-amount paths are exercised too.
     manageRow({ id: "paid", client_name: "Energie", invoice_number: "E-1", status: "paid", amount_paid: 871.4, payment_date: "2026-03-20" }),
+    // [DUP-ON-PAY] The Enka pair, verbatim: one supplier, one invoice number, two amounts, both
+    // waiting to be paid. Without BOTH rows the grouping has nothing to group and the assertion
+    // below would pass over an empty list.
+    manageRow({ id: "dupA", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 134.64, total_inc_btw: 1348.14, invoice_date: "2026-01-30" }),
+    manageRow({ id: "dupB", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68, invoice_date: "2026-01-30" }),
   ];
 
   const html = renderToStaticMarkup(
@@ -118,6 +123,28 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // [INVOICE-SCAN] The banner is the whole reason this file exists — assert it actually appears for
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
+
+  // [CREDIT-NOT-PAYABLE] The row 'cn' is a correctly booked credit note (all three amounts
+  // negative). It wore "Te betalen", a vervaldatum, "Heb je betaald?" and a QR Betalen button —
+  // four claims about direction, all pointing the wrong way, and the last one prepares a real
+  // transfer of money the supplier owes the OWNER. What has to be on screen instead is what
+  // actually happens to it, because with the buttons gone the row would otherwise say nothing.
+  assert.match(html, /Te ontvangen/, "a credit note is money coming in, and the chip must say so");
+
+  // [DUP-ON-PAY] Two rows, one supplier, one invoice number, both "Te betalen", both counted in the
+  // total at the top — reported three times by the owner, who found each pair by adding up their
+  // own list. The warning has to be on the COLLAPSED row: that is where they were looking.
+  assert.match(html, /staat 2× in je administratie/, "the pair is named on the row");
+
+  // [BULK-UNDO] The reverse of "Meerdere betalen" has to be reachable, and as its own entry point:
+  // the two modes select different rows (open vs settled), so one shared selection would let a tap
+  // land on the opposite of what the owner meant, on the money core.
+  assert.match(html, /Meerdere annuleren/, "bulk undo is offered");
+  assert.match(html, /Meerdere betalen/, "…beside the one it mirrors, not instead of it");
+  assert.match(html, /correctie of een dubbele import/, "…and says what that means");
+  // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
+  // resolves lives in the opened card, where the detail belongs — the chip carries it here.
+  assert.doesNotMatch(html, /Heb je betaald\?[\s\S]{0,40}CR0300343/, "no pay prompt beside a credit note");
   // A filed quarter changes what the owner has to DO, so it must be said, not implied.
   assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
   // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.
@@ -883,8 +910,9 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   assert.match(clean, /Wat wij hebben gelezen/, "our reading is on screen next to the paper");
   assert.match(clean, /26035350/, "…with the number the owner is about to compare");
   assert.match(clean, /281,06/, "…and the total, formatted the Dutch way");
-  assert.match(clean, /Alle 7 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  assert.match(clean, /Alle 8 controles gedaan/, "a clean invoice says what was checked instead of nothing");
   assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
+  assert.match(clean, /9% over het hele bedrag/, "including the btw axis, which is a real check here");
 
   // The half that must never be cosmetic: a check that could not run says so, and the summary
   // stops claiming completeness. A green list that overstates is worse than no list.
@@ -902,6 +930,34 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   );
   assert.doesNotMatch(unsure, /Alle \d+ controles gedaan/, "a skipped check breaks the completeness claim");
   assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
+
+  // [BTW-SPLIT] The invoice this whole axis exists for, on the screen it lied on: Enka Horeca
+  // 26701681, whose three amounts agree with each other and are € 0,46 wrong. Nothing else on this
+  // sheet can tell — so the one row that CAN say "we did not check this" has to actually reach the
+  // markup, greyed and worded, and the summary line above it has to stop claiming completeness.
+  const mixed = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d3", client_name: "Enka Horeca B.V.", invoice_number: "26701681",
+        invoice_date: "2026-01-30", invoice_type: "factuur",
+        total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68,
+        vendor_iban: "NL65RABO0171136276", field_confidence: null, vendorNumbers: [],
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+  assert.doesNotMatch(mixed, /Alle \d+ controles gedaan/, "seven green ticks over a wrong btw is the bug");
+  assert.match(mixed, /mengt btw-tarieven/, "the reason the btw could not be verified is on screen");
+  assert.match(mixed, /btw-specificatie/, "and it says where to look on the paper");
+
+  // The colour is read before the sentence. Green over "1 konden we niet nagaan" says stop-looking
+  // while the words say keep-looking, and at a glance the colour wins — the same overstatement in
+  // a different medium. #137333 is the green reserved for a genuinely complete list.
+  const summaryColour = (html: string) => /font-weight:700;color:(#[0-9A-Fa-f]{6})[^"]*">[^<]*controles/.exec(html)?.[1];
+  assert.equal(summaryColour(clean), "#137333", "a complete list earns the green");
+  assert.notEqual(summaryColour(mixed), "#137333", "an incomplete one must not wear it");
+  assert.notEqual(summaryColour(unsure), "#137333");
 });
 
 test("[RENDER-GATE] factureren namens een klant renders, and says whose invoice it is", async () => {
@@ -970,6 +1026,10 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
     pdf_url: "u1/x.pdf", document_id: null, created_at: "2026-06-24T10:00:00Z",
     folder_id: null, folder_name: null, field_confidence: null,
     vendor_iban: "NL65RABO0171136276",
+    // [REREAD-CONFIRMED] What page.tsx now selects, and what reimportDecision reads. Left out, the
+    // predicate answers "no" and the re-read offer silently never renders — which is exactly the
+    // failure it exists to prevent, so the fixture has to carry them.
+    direction: "incoming", status: "processing", accountant_status: null,
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const invoice = { ...base, health: classifyImportHealth(base as any) };
@@ -990,6 +1050,13 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
   // And the old behaviour must be gone: handing the file to the operating system loses the queue
   // position, which on this screen means losing your place in the verification you were doing.
   assert.doesNotMatch(html, /Bekijk factuur<\/button>/, "the OS hand-off label is gone");
+
+  // [REREAD-CONFIRMED] This invoice is CLEAN — classifyImportHealth finds nothing, so the amber
+  // "Even controleren" block that used to hold the only "Opnieuw inlezen" button never renders.
+  // That is the case the owner hit: told to press it, nothing to press. The offer has to be here
+  // on a spotless card, with the sentence that says what it is for.
+  assert.match(html, /Opnieuw inlezen/, "a clean invoice can be re-read too — that is where a misread amount hides");
+  assert.match(html, /Klopt er iets niet/, "and the owner is told what the button is for");
 });
 
 test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {

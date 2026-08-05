@@ -29,6 +29,9 @@ import type { ComputeOpts } from "./financial-result";
 // [RUBRIEK-SPLIT] Same helper the accrual surfaces use — one definition of an invoice rate mix.
 import { fetchRateShares } from "./btw-rate-split-fetch";
 import { exemptShareOf } from "./vat-exemption";
+// [VRIJGESTELD · KASSTELSEL] The purchase-side attributions for the invoices the SETTLEMENTS
+// point at — a different set from the ones the window DATES. See the call site.
+import { fetchVatDeductions } from "./vat-exemption-collect";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -260,6 +263,55 @@ export async function resolveOwnerSchemeSpan(
   };
 }
 
+/**
+ * [SCHEME-MERGE] Fold a caller's own per-invoice maps into the scheme opts, merging both.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A SPREAD AT EACH CALL SITE ──
+ * The three money-read routes each build their own maps from a DATE-RANGE query over the invoices
+ * dated in the quarter. Under kas the settlements point somewhere else: at invoices from earlier
+ * quarters that were PAID in this one, which is the normal case — payment lags the invoice date
+ * and regularly crosses a quarter boundary. So the two sets barely overlap, and neither is a
+ * superset of the other.
+ *
+ * Writing `{ ...sr.opts, exemptShareByInvoice: myOwnMap }` therefore does not "override a
+ * default", it DELETES the half that covers the invoices this quarter actually settles. It reads
+ * completely ordinary, and what it costs is specific: a sale invoiced in Q1, paid in Q2, under a
+ * vrijgestelde-omzet regime has no exempt share left in the Q2 figures, so its exempt portion
+ * counts as 0 and the whole settlement is declared as TAXED turnover. The owner pays BTW on
+ * exempt omzet, on the aangifte, and nothing anywhere disagrees with itself.
+ *
+ * /api/aangifte did exactly that on exemptShareByInvoice while merging rateSharesByInvoice one
+ * line above with a comment explaining why merging was necessary; /api/readiness did it on both.
+ * compute-result-range had it right. Three copies, two of them wrong — so it becomes one function
+ * that cannot be half-applied.
+ */
+export function mergeSchemeOpts(
+  opts: ComputeOpts,
+  local: {
+    rateSharesByInvoice?: ComputeOpts["rateSharesByInvoice"]
+    exemptShareByInvoice?: ComputeOpts["exemptShareByInvoice"]
+    // [VRIJGESTELD · KASSTELSEL] The purchase-side attributions. Same window problem as the two
+    // above, and it must be MERGED for the same reason — a settled cost whose attribution lives
+    // only in the caller's date-range map, or only in the scheme's settled map, keeps it either
+    // way. Set it after this call and the other half is gone.
+    deductionByInvoice?: ComputeOpts["deductionByInvoice"]
+  },
+): ComputeOpts {
+  // The caller's own map goes LAST, so where both know an invoice the freshly-read value wins —
+  // the same precedence the working call site already used.
+  const merge = <V>(a?: Map<string, V>, b?: Map<string, V>): Map<string, V> | undefined =>
+    a || b ? new Map([...(a ?? new Map<string, V>()), ...(b ?? new Map<string, V>())]) : undefined
+  const rateSharesByInvoice = merge(opts.rateSharesByInvoice, local.rateSharesByInvoice)
+  const exemptShareByInvoice = merge(opts.exemptShareByInvoice, local.exemptShareByInvoice)
+  const deductionByInvoice = merge(opts.deductionByInvoice, local.deductionByInvoice)
+  return {
+    ...opts,
+    ...(rateSharesByInvoice ? { rateSharesByInvoice } : {}),
+    ...(exemptShareByInvoice ? { exemptShareByInvoice } : {}),
+    ...(deductionByInvoice ? { deductionByInvoice } : {}),
+  }
+}
+
 /** What a money-read route needs to become scheme-aware in one call. */
 export interface SchemeResolution {
   scheme: VatScheme;
@@ -314,6 +366,23 @@ export async function resolveSchemeSettlements(
   const { rateShares: rateSharesByInvoice, exemptExByInvoice } = await fetchRateShares(
     pipeline, settledSales, { exemptRegime },
   );
+
+  // [VRIJGESTELD · KASSTELSEL] The PURCHASE side of the same argument, and it was missing.
+  //
+  // Every caller builds deductionByInvoice from collectVatExemption over the invoices DATED in the
+  // window. Under cash basis the costs that count are the ones SETTLED in it, and those routinely
+  // belong to invoices dated in an earlier quarter. A settled cost with no attribution falls to
+  // 'mixed' in the engine (financial-result's bookVoorbelasting default) — the pro-rata share —
+  // and that is wrong in BOTH directions: a cost the owner marked 'direct_taxed' loses part of a
+  // deduction it was fully entitled to, and one marked 'direct_exempt' gains a share of one it was
+  // entitled to none of. The owner attributed their costs and the figure came out as if they had
+  // not. Read here, beside the rate mix, for the same reason: one entry point, no caller able to
+  // disagree. Only under the regime — off it, bookVoorbelasting ignores the map entirely.
+  const settledPurchaseIds = exemptRegime
+    ? [...new Set(qs.events.filter((e) => e.direction === "incoming").map((e) => e.invoiceId))]
+    : [];
+  const { deductionByInvoice } = await fetchVatDeductions(pipeline, ownerId, settledPurchaseIds);
+
   return {
     scheme: "kas",
     opts: {
@@ -323,6 +392,7 @@ export async function resolveSchemeSettlements(
       rateSharesByInvoice,
       // Fractions, because a settlement settles a PART of its invoice — see exemptShareOf.
       exemptShareByInvoice: exemptShareOf(settledSales, exemptExByInvoice),
+      ...(deductionByInvoice.size > 0 ? { deductionByInvoice } : {}),
     },
     undatedPaidCount: qs.undatedPaidCount,
     estimatedPortionCount: qs.estimatedCount,

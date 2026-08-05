@@ -240,10 +240,40 @@ export async function POST(request: NextRequest) {
     // rounded — so the stored total depended on whether the draft was touched. We
     // recompute here for issuance and conversion, through the SAME shared module the edit
     // route uses (lib/invoice-totals). A resend delivers the already-issued PDF, untouched.
-    const { data: lines } = await supabase
+    //
+    // [LINES-READ-HONEST] The error is read, and a failed read REFUSES. supabase-js does not
+    // throw — it answers a failed read with { data: null, error } — so `const { data: lines }`
+    // turned a database problem into "this invoice has no lines", and both consumers below take
+    // that silently:
+    //   · computedTotals stays null, so finalTotalInc falls back to invoice.total_inc_btw — the
+    //     browser-supplied figure this very block exists to stop trusting on the record that gets
+    //     a legal number;
+    //   · renderInvoicePdf receives `lines ?? []` and renders an invoice with an EMPTY item table.
+    // It is then e-mailed to the customer, and it carries a consumed art. 35 number that cannot be
+    // rolled back. An invoice without its goods or services does not meet art. 35 lid 1 sub e-g,
+    // and no later correction can un-send it.
+    //
+    // Refusing here costs nothing: this runs BEFORE the number is committed (step 11), so nothing
+    // has been written and the owner simply presses send again. An EMPTY list is not an error —
+    // an older or imported invoice can legitimately carry only a header, which is why the guard
+    // below still tests length rather than presence.
+    const { data: lines, error: linesError } = await supabase
       .from('invoice_lines')
       .select('*')
       .eq('invoice_id', invoiceId)
+    if (linesError) {
+      console.error('[LINES-READ-HONEST] invoice_lines read failed — refusing to issue', {
+        invoiceId, error: linesError.message,
+      })
+      return NextResponse.json(
+        {
+          error: 'We konden de factuurregels nu niet ophalen. Er is niets verstuurd en er is geen ' +
+            'factuurnummer gebruikt — probeer het zo meteen opnieuw.',
+          code: 'lines_unavailable',
+        },
+        { status: 503 },
+      )
+    }
     let computedTotals: { total_ex_btw: number; btw_amount: number; total_inc_btw: number } | null = null
     if (!resend && Array.isArray(lines) && lines.length > 0) {
       // [BTW-ROUND] Round BTW PER TARIEF, then sum — the Belastingdienst/Peppol method the legal

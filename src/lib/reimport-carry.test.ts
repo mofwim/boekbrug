@@ -139,6 +139,24 @@ test("_btw_derived hoort bij de bedragen die het verklaart", () => {
   assert.equal(weg?._btw_derived, undefined, "verse bedragen → de oude verklaring gaat mee weg");
 });
 
+test("[BTW-SPLIT] elke verklaring van de OPGESLAGEN bedragen volgt dezelfde regel", () => {
+  // De gevaarlijke richting: "Opnieuw inlezen" levert niets op, de bedragen blijven dus staan —
+  // en de lege verse lezing zou de verklaring eronder wegvegen. Dan wordt een factuur die werd
+  // vastgehouden ineens schoon zonder dat er iets aan veranderd is.
+  const rows = [{ rate: 9, base: 1101.38, btw: 99.06 }, { rate: 21, base: 112.12, btw: 23.58 }];
+  const prior = { _btw_rows: rows, _total_printed: 1336.14, _total_derived: "total" };
+
+  const behouden = buildReimportFieldConfidence(input({ priorFc: prior, freshHasTotal: false, verdict: null }));
+  assert.deepEqual(behouden?._btw_rows, rows, "de btw-specificatie hoort bij de bedragen die blijven staan");
+  assert.equal(behouden?._total_printed, 1336.14);
+  assert.equal(behouden?._total_derived, "total");
+
+  const weg = buildReimportFieldConfidence(input({ priorFc: prior, freshHasTotal: true }));
+  assert.equal(weg?._btw_rows, undefined, "verse bedragen → verse specificatie, of geen");
+  assert.equal(weg?._total_printed, undefined);
+  assert.equal(weg?._total_derived, undefined);
+});
+
 test("de verse AI-zekerheden komen er gewoon bij", () => {
   const fc = buildReimportFieldConfidence(input({
     aiConfidence: { vendor: 0.97, invoice_number: 0.4 },

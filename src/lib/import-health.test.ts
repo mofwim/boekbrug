@@ -221,5 +221,47 @@ console.log('\n— [CREDIT-PREFIX-GATE] a credit-numbered document is held, and 
   check('a correctly booked creditnota is clean on this axis', booked.flags.creditPrefix === false)
 }
 
+console.log('\n— [BTW-SPLIT] a per-rate block that contradicts our btw holds the invoice —')
+{
+  // Enka Horeca 26701681, verbatim. Stored 1.213,50 + 122,18 = 1.335,68 — internally perfect, a
+  // 10% blend, so the sum gate and the rate gate both stay silent and this invoice AUTO-BOOKED a
+  // voorbelasting that was € 0,46 too low. The printed specification is the only witness.
+  const rows = [{ rate: 9, base: 1101.38, btw: 99.06 }, { rate: 21, base: 112.12, btw: 23.58 }]
+  const enka = classifyImportHealth(inv({
+    total_ex_btw: 1213.50, btw_amount: 122.18, total_inc_btw: 1335.68,
+    field_confidence: { _btw_rows: rows },
+  }))
+  check('printed block ≠ stored btw → needs-review', enka.level === 'needs-review' && enka.flags.arithmetic === true)
+  check('reason names both figures', enka.reasons.some((r) => r.includes('122,64') && r.includes('122,18')))
+
+  // The same block over the CORRECT amounts must go quiet — otherwise every mixed-rate invoice
+  // lands in the queue and the signal drowns.
+  const right = classifyImportHealth(inv({
+    total_ex_btw: 1213.50, btw_amount: 122.64, total_inc_btw: 1336.14,
+    field_confidence: { _btw_rows: rows },
+  }))
+  check('the same block over the right amounts is clean', right.level === 'clean')
+
+  // And without the block, nothing changed: this is why the extraction had to start returning it.
+  const blind = classifyImportHealth(inv({ total_ex_btw: 1213.50, btw_amount: 122.18, total_inc_btw: 1335.68 }))
+  check('without the block the wrong invoice still reads clean (the reason it was needed)', blind.level === 'clean')
+}
+
+console.log('\n— [PRINTED-TOTAL] a total that disagrees with the printed one is never waved through —')
+{
+  const disagree = classifyImportHealth(inv({
+    total_ex_btw: 1213.50, btw_amount: 122.18, total_inc_btw: 1335.68,
+    field_confidence: { _total_printed: 1336.14 },
+  }))
+  check('printed ≠ stored → needs-review', disagree.level === 'needs-review' && disagree.flags.arithmetic === true)
+  check('reason names both amounts', disagree.reasons.some((r) => r.includes('1.336,14') && r.includes('1.335,68')))
+
+  // [PRINTED-TOTAL] The mark for "we computed the third figure ourselves" is a DISPLAY answer
+  // (invoice-checks.ts turns the arithmetic row grey), never a hold. Flagging it would demand
+  // human attention on a path whose frequency nobody has measured.
+  const filledIn = classifyImportHealth(inv({ field_confidence: { _total_derived: 'total' } }))
+  check('_total_derived alone does not hold the invoice', filledIn.level === 'clean')
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

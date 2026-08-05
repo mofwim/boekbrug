@@ -322,7 +322,12 @@ const dup = await findSemanticDuplicate(
               .limit(50);
             if (dedupErr) dedupCheckFailed = true;
             return data ?? [];
-          }
+          },
+          // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+          // callbacks above already record a failed read in dedupCheckFailed →
+          // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+          // uitvoeren". Leaving this off would fail the whole upload over one soft probe.
+          { bestEffort: true },
         )
       : null;
 
