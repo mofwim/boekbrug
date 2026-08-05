@@ -97,6 +97,11 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
     manageRow({ id: "cn", client_name: "Vlees", invoice_number: "CN9", invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109 }),
     // A paid invoice, so the paid tab and the settled-amount paths are exercised too.
     manageRow({ id: "paid", client_name: "Energie", invoice_number: "E-1", status: "paid", amount_paid: 871.4, payment_date: "2026-03-20" }),
+    // [DUP-ON-PAY] The Enka pair, verbatim: one supplier, one invoice number, two amounts, both
+    // waiting to be paid. Without BOTH rows the grouping has nothing to group and the assertion
+    // below would pass over an empty list.
+    manageRow({ id: "dupA", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 134.64, total_inc_btw: 1348.14, invoice_date: "2026-01-30" }),
+    manageRow({ id: "dupB", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68, invoice_date: "2026-01-30" }),
   ];
 
   const html = renderToStaticMarkup(
@@ -125,6 +130,12 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // transfer of money the supplier owes the OWNER. What has to be on screen instead is what
   // actually happens to it, because with the buttons gone the row would otherwise say nothing.
   assert.match(html, /Te ontvangen/, "a credit note is money coming in, and the chip must say so");
+
+  // [DUP-ON-PAY] Two rows, one supplier, one invoice number, both "Te betalen", both counted in the
+  // total at the top — reported three times by the owner, who found each pair by adding up their
+  // own list. The warning has to be on the COLLAPSED row: that is where they were looking.
+  assert.match(html, /staat 2× in je administratie/, "the pair is named on the row");
+  assert.match(html, /correctie of een dubbele import/, "…and says what that means");
   // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
   // resolves lives in the opened card, where the detail belongs — the chip carries it here.
   assert.doesNotMatch(html, /Heb je betaald\?[\s\S]{0,40}CR0300343/, "no pay prompt beside a credit note");

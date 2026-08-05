@@ -30,6 +30,8 @@ import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } f
 import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
+// [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
+import { findPayableDuplicates, duplicateWarningText } from '@/lib/duplicate-payable'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
@@ -672,6 +674,15 @@ export default function IncomingManageClient({
   // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
   // calendar while recording payments against another. One clock for the whole page.
   const todayIso = amsterdamToday()
+
+  // [DUP-ON-PAY] Which rows share a supplier + invoice number with another row?
+  //
+  // Over the WHOLE list, not the filtered view: the twin may be sitting under a different tab or
+  // outside the chosen period, and a warning that disappears when you filter is worse than none —
+  // it teaches the owner the pair went away. An invoice number is unique per supplier by
+  // construction, so seeing one twice is a correction, a re-issue or a double import, never two
+  // bills. Three pairs were found by the owner adding up their own list before this existed.
+  const duplicateByRow = useMemo(() => findPayableDuplicates(invoices), [invoices])
 
   // [SEARCH] In-page live filter (leverancier / factuurnummer / bedrag), on top of the
   // status tabs — in place, no navigation.
@@ -2002,6 +2013,8 @@ export default function IncomingManageClient({
               // that then says no has been misled by the screen, not by the server.
               const reread = reimportDecision(inv)
               const rereadOk = reread.allowed
+              // [DUP-ON-PAY] Is there a second row with this supplier's same invoice number?
+              const duplicate = duplicateByRow.get(inv.id) ?? null
               // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
               // owner hasn't confirmed paying yet. Only meaningful while unpaid.
               const isPrepared = inv.status === 'received' && !!inv.payment_prepared_at
@@ -2455,6 +2468,26 @@ export default function IncomingManageClient({
                     </div>
 
                   </div>
+
+                  {/* [DUP-ON-PAY] On the COLLAPSED row, because that is where the owner was looking
+                      when they found each of these pairs by adding up their own list — and because
+                      the Betalen button two lines up is on the collapsed row too.
+
+                      The import-time flag knows this shape ([DEDUP-CORRECTED]) and is deliberately
+                      not a block: a number our OCR shortened could otherwise reject a real bill,
+                      and a missing crediteur is the worse error. What was missing is this SECOND
+                      moment — both copies confirmed, side by side, each with its own pay button,
+                      both counted in the total at the top.
+
+                      It names the OTHER amount and stops there. Which of the two is right is a
+                      question about paper: the owner has it, we do not, and on the Enka pair the
+                      correct copy was the one our reader had got wrong. Removing a row here would
+                      be guessing with a bill. */}
+                  {duplicate && (
+                    <p style={{ fontSize: 12.5, color: '#7C5800', background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px', margin: 0, lineHeight: 1.45 }}>
+                      {duplicateWarningText(duplicate, inv.invoice_number)}
+                    </p>
+                  )}
 
                   {/* Inline expand */}
                   {expanded && (
