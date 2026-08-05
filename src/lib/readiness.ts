@@ -253,8 +253,15 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "missing",
         title: gap === 1 ? "1 factuur mist het originele document" : `${gap} facturen missen het originele document`,
         detail: s.missingEvidence.length
-          ? `Zonder PDF: ${s.missingEvidence.slice(0, 5).join(", ")}${s.missingEvidence.length > 5 ? " …" : ""}. De boekhouder kan deze niet controleren.`
-          : "De boekhouder kan deze niet controleren zonder de bon/factuur.",
+          ? `Zonder PDF: ${s.missingEvidence.slice(0, 5).join(", ")}${s.missingEvidence.length > 5 ? " …" : ""}. De boekhouder kan deze niet controleren — voeg het origineel toe.`
+          : "De boekhouder kan deze niet controleren zonder de bon/factuur — voeg het origineel toe.",
+        // [ORIGINEEL] This was the ONE item in the whole report with no fix link, and the reason was
+        // not an oversight in the report: until now there was nowhere for it to point. document_id
+        // was written at creation and by nothing afterwards, so an invoice without its original
+        // could never be given one — the accountant asked every quarter and the client could not
+        // answer. The tab holds exactly the counted set (confirmed, no document), so following the
+        // link and clearing it clears the item.
+        fix: { label: "Origineel toevoegen", href: "/dashboard/incoming/manage?filter=geen-document" },
       });
     }
     // [PACKAGE-READINESS] Unverified invoices dated in the quarter block "klaar": they are

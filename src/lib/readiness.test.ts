@@ -60,6 +60,22 @@ console.log("\n— [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting
   check("undefined count → treated as 0 (older callers keep working)", !legacy.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
 }
 
+console.log("\n— [ORIGINEEL] the evidence gap now points somewhere the client can act —");
+{
+  // This was the only item in the whole report with no fix link, and the reason was not an
+  // oversight in the report: there was nowhere for it to point. The accountant asks for the missing
+  // original every quarter; the client had no route, no button, no way to supply it.
+  const r = buildReadiness(perfect({ verifiedInvoiceCount: 10, invoicesWithEvidence: 7, missingEvidence: ["26302050", "26302362"] }));
+  const item = r.missing.find((m) => /originele document/.test(m.title));
+  check("still a blocking gap — evidence the accountant cannot read is evidence missing", !!item);
+  check("and it now carries a way to act", !!item?.fix?.href);
+  check("pointing at exactly the counted set", item?.fix?.href === "/dashboard/incoming/manage?filter=geen-document");
+  check("the detail names the action, not just the problem", /origineel toe/.test(item?.detail ?? ""));
+  check("and still names WHICH invoices", /26302050/.test(item?.detail ?? ""));
+  const complete = buildReadiness(perfect({ verifiedInvoiceCount: 10, invoicesWithEvidence: 10 }));
+  check("nothing missing → nothing said", !complete.missing.some((m) => /originele document/.test(m.title)));
+}
+
 console.log("\n— [KAS-AUTO-BOOK] bookings made on amount + name are offered before the aangifte —");
 {
   // These book themselves unattended under the kasstelsel for exactly one reason: they stay

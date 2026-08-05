@@ -55,6 +55,12 @@ export type AuditAction =
   // aangifte, so who confirmed it, and when relative to the filing, is the evidence that the review
   // actually happened.
   | 'bank.match_checked'              // ← [KAS-AUTO-BOOK] owner confirmed an amount-only auto-booking is the right invoice
+  // [ORIGINEEL] The client supplied the original document for an invoice that had none — the answer
+  // to the accountant's "opvragen". Its own action because it is the only write in the app that
+  // adds EVIDENCE to a booked invoice without touching a single figure, and an auditor asking
+  // "when did the proof for this line arrive, and was it before or after the aangifte" has no
+  // other way to know.
+  | 'invoice.document_attached'       // ← [ORIGINEEL] an original was attached to an existing invoice
   // [BANK-IGNORE-AUDIT] Ignoring a bank line moves a financial record out of every queue that
   // could still explain it — the matcher, auto-confirm, auto-categorize, the nightly sweep, and
   // every categorize read. It also deletes the [VOORBELASTING-RISK] warning for that line, since

@@ -353,13 +353,35 @@ interface MatchRunResult {
   byInvoice?: Record<string, InvoiceRecon>
 }
 
-type FilterTab = 'all' | 'received' | 'paid' | 'auto'
+// [ORIGINEEL] 'geen-document' is the tab the readiness board's "X facturen missen het originele
+// document" now links to. Counted ⟺ shown: the board counts VERIFIED invoices with no stored PDF,
+// and this tab holds exactly those, so clearing the tab clears the item.
+type FilterTab = 'all' | 'received' | 'paid' | 'auto' | 'geen-document'
 const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'all',      label: 'Alle'                  },
   { id: 'received', label: 'Te betalen'            },
   { id: 'paid',     label: 'Betaald'               },
   { id: 'auto',     label: 'Automatisch verwerkt'  },
+  { id: 'geen-document', label: 'Zonder origineel'  },
 ]
+
+// [ORIGINEEL] Which rows a tab holds. Extracted because the SAME expression was written twice
+// twenty lines apart (the list, and the dateless-hidden count), and a fifth tab written into one
+// of them is a tab whose count disagrees with itself.
+//
+// 'geen-document' mirrors exactly what the readiness board counts as an evidence gap. That board
+// resolves an INCOMING invoice's original through document_id (closing-package.ts does the same
+// when it builds the accountant's ZIP), and it counts only CONFIRMED invoices — one still in the
+// verify queue is a different, separately-reported problem. Counted ⟺ shown: clear this tab and
+// the readiness item goes away, which is the only way a "Bekijk" link is worth following.
+function matchesTab(inv: IncomingRow, tab: FilterTab): boolean {
+  if (tab === 'all') return true
+  if (tab === 'auto') return isAutoVerified(inv)
+  if (tab === 'geen-document') {
+    return inv.status !== 'processing' && inv.status !== 'draft' && !inv.document_id
+  }
+  return inv.status === tab
+}
 
 // [SORT] Ordering moved to the shared module (@/lib/invoice-sort) — SORTS,
 // SortKey and sortRows are imported above. Default stays 'added_desc' (nieuwste
@@ -449,6 +471,10 @@ export default function IncomingManageClient({
   // [REREAD-CONFIRMED] Which row is being read again. One at a time — the read costs an AI call,
   // and a screen full of spinners invites the owner to fire ten of them at once.
   const [rereadingId, setRereadingId]   = useState<string | null>(null)
+  // [ORIGINEEL] Which row is attaching its original. One at a time for the same reason as the
+  // re-read above: the row re-renders from the server answer, and two in flight on one screen means
+  // the second overwrites the first's result.
+  const [attachingId, setAttachingId]   = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
@@ -814,7 +840,7 @@ export default function IncomingManageClient({
 
   const displayed = sortRows(
     invoices.filter(inv => {
-      const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
+      const tabOk = matchesTab(inv, filter)
       if (!tabOk) return false
       // [INVOICE-SCAN] The worklist view: only the rows the scan flagged. Placed FIRST among the
       // filters so it composes with period and search rather than replacing them — "everything
@@ -835,7 +861,7 @@ export default function IncomingManageClient({
   // het soort stille verdwijning waar de rest van dit scherm tegen beveiligd is, dus wordt het
   // geteld en gezegd (met de knop om ze te zien).
   const datelessHidden = period === 'all' ? 0 : invoices.filter(inv => {
-    const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
+    const tabOk = matchesTab(inv, filter)
     if (!tabOk) return false
     if (inv.invoice_date) return false
     return rowMatchesQuery(rawS, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
@@ -921,6 +947,41 @@ export default function IncomingManageClient({
       showToast('Opnieuw inlezen is niet gelukt — controleer je verbinding.')
     } finally {
       setRereadingId(null)
+    }
+  }
+
+  // [ORIGINEEL] Attach the original document to an invoice that has none.
+  //
+  // Deliberately not the upload flow: that one READS the file and creates an invoice from what it
+  // finds. This invoice already exists and its figures are confirmed, so the route stores the file
+  // and links it — nothing else. The distinction is the whole safety of the feature, and it is why
+  // this handler has no "we read it again, check the amounts" branch: there is nothing to check.
+  const attachOriginal = async (inv: IncomingRow, file: File) => {
+    if (attachingId) return
+    setAttachingId(inv.id)
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      const res = await fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // Each refusal says what to DO about it. "Mislukt" on its own is how a dead end starts.
+        const err = String(json?.error ?? '')
+        showToast(
+          err === 'heeft_al_een_origineel' ? 'Deze factuur heeft al een origineel — ververs de pagina.'
+          : err === 'bestandstype_niet_ondersteund' ? 'Dit bestandstype kan niet: stuur een PDF of een foto (JPG, PNG).'
+          : err === 'bestand_te_groot' ? 'Het bestand is te groot (maximaal 20 MB).'
+          : err === 'not_found' ? 'Deze factuur bestaat niet meer.'
+          : 'Toevoegen is niet gelukt — probeer het nog een keer.',
+        )
+        return
+      }
+      showToast('Origineel toegevoegd. De boekhouder kan de factuur nu controleren.')
+      router.refresh()
+    } catch {
+      showToast('Toevoegen is niet gelukt — controleer je verbinding.')
+    } finally {
+      setAttachingId(null)
     }
   }
 
@@ -2685,6 +2746,46 @@ export default function IncomingManageClient({
                             </span>
                             {rereadingId === inv.id ? 'Bezig met opnieuw inlezen…' : 'Opnieuw inlezen'}
                           </button>
+                        )}
+                        {/* [ORIGINEEL] "Origineel toevoegen" — the answer the client never had.
+                            The readiness board counts invoices with no stored original and says the
+                            accountant cannot check them; the accountant's "opvragen" turns that into
+                            a request by invoice number. And then the client could do nothing:
+                            document_id was written at CREATION and by nothing afterwards, so an
+                            invoice typed in by hand, or one whose upload failed halfway, was
+                            permanently unprovable.
+
+                            It sits with the other two ways out, and it is the one that adds evidence
+                            rather than changing a figure — the route does not read the file at all,
+                            because a re-read here could silently overwrite an amount the owner (or
+                            the accountant) already confirmed. Shown only where the slot is empty. */}
+                        {!inv.document_id && (
+                          <label
+                            style={{
+                              fontSize: 13, color: M3.primary, background: '#fff',
+                              border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
+                              padding: '8px 16px', cursor: attachingId === inv.id ? 'default' : 'pointer',
+                              fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
+                              opacity: attachingId === inv.id ? 0.6 : 1,
+                            }}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <input
+                              type="file"
+                              accept=".pdf,image/*"
+                              disabled={attachingId === inv.id}
+                              style={{ display: 'none' }}
+                              onChange={e => {
+                                const f = e.target.files?.[0] ?? null
+                                e.target.value = ''
+                                if (f) void attachOriginal(inv, f)
+                              }}
+                            />
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                              {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
+                            </span>
+                            {attachingId === inv.id ? 'Bezig met toevoegen…' : 'Origineel toevoegen'}
+                          </label>
                         )}
                         {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
                             real but sits on the wrong invoice: a supplier's corrected re-issue, a

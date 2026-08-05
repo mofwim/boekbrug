@@ -817,3 +817,79 @@ test("[SUPPLIER-IBAN] it is weighed as what it is, not as the document's own acc
     "a name on the line that does not even reach the listing bar must refuse the booking",
   );
 });
+
+test("[ORIGINEEL] the loop the accountant opens can be closed by the client", () => {
+  // The accountant's "opvragen" is built from readiness items, so it can ask for a missing original
+  // by invoice number. Until this existed the client could not answer: document_id was written at
+  // CREATION by three doors and by NOTHING afterwards. Each half is gated, because either half
+  // alone is a feature that does not work.
+  const route = code("src/app/api/invoice/[id]/document/route.ts");
+  assert.match(route, /document_id: documentId/, "the route links the file to the invoice");
+  assert.match(
+    route, /\.is\("document_id", null\)/,
+    "as a compare-and-set — two tabs attaching at once must not leave the second file linked to nothing",
+  );
+
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(client, /attachOriginal\(inv, f\)/, "the button is wired to the handler");
+  assert.match(client, /api\/invoice\/\$\{inv\.id\}\/document/, "which calls the route");
+  assert.match(
+    client, /\{!inv\.document_id && \(/,
+    "and it is offered exactly where the slot is empty — a button on a row that already has its " +
+      "original is an action the route will refuse",
+  );
+
+  const readiness = code("src/lib/readiness.ts");
+  assert.match(
+    readiness, /filter=geen-document/,
+    "the readiness item points at the tab — it was the ONE item in the report with no fix link, " +
+      "and re-losing the link puts the client back where they could see the problem and not act on it",
+  );
+});
+
+test("[ORIGINEEL] it adds evidence and never touches a figure", () => {
+  // The whole safety of this route. Every other upload door READS the file and creates an invoice
+  // from what it finds. This invoice already exists and its amounts are confirmed — by the owner,
+  // or by an accountant who has processed it. A re-read here would let a misread silently overwrite
+  // a booked figure, which is the most expensive possible way to fix a missing attachment.
+  const route = code("src/app/api/invoice/[id]/document/route.ts");
+  assert.doesNotMatch(
+    route, /verifyInvoiceFromPdf|extractInvoice|readInvoice/,
+    "the route reads the document with the extractor — that can overwrite a confirmed amount",
+  );
+  // The invoice update must carry the two evidence pointers and nothing else. Stated as "there is
+  // exactly ONE update on invoices, and it is that one" rather than as a blanket ban on money words
+  // anywhere in the file: the first version banned the words and failed on `invoice_date: string |
+  // null` in a type annotation over a READ, which is not a write at all. A gate that cannot tell a
+  // read from a write teaches people to loosen it.
+  const updates = [...route.matchAll(/\.from\("invoices"\)\s*\.update\(([^)]*)\)/g)];
+  assert.equal(updates.length, 1, `expected exactly one invoices update, found ${updates.length}`);
+  assert.match(
+    updates[0][1], /^\{ document_id: documentId, pdf_url: storagePath \}$/,
+    "the invoice write must be the two evidence pointers and nothing else — any money or status " +
+      "field here means this route can change a figure the owner already confirmed",
+  );
+  // And it must not refuse an accountant-locked invoice: the lock protects the figures they booked,
+  // this changes none of them, and refusing would refuse precisely the invoice they asked about.
+  assert.doesNotMatch(
+    route, /accountant_status/,
+    "the 'verwerkt' lock was applied here — it would block exactly the invoice the accountant " +
+      "requested the original for, which is the case this whole route exists to serve",
+  );
+});
+
+test("[ORIGINEEL] one tab rule, so the count and the list cannot disagree", () => {
+  // The tab predicate was written out twice, twenty lines apart — once for the list and once for
+  // the dateless-hidden count. A fifth tab added to one of them is a tab whose own count contradicts
+  // what it shows.
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(client, /function matchesTab\(inv: IncomingRow, tab: FilterTab\)/, "one predicate");
+  const inlined = [...client.matchAll(/filter === 'all' \? true : filter === 'auto'/g)];
+  assert.equal(
+    inlined.length, 0,
+    "the tab rule is inlined again — the two copies drift, and the drift is invisible until a tab " +
+      "shows rows its own counter does not know about",
+  );
+  const uses = [...client.matchAll(/matchesTab\(inv, filter\)/g)];
+  assert.ok(uses.length >= 2, `both call sites must use it (found ${uses.length})`);
+});
