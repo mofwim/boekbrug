@@ -35,6 +35,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
+import { planStatementReversal } from "@/lib/statement-reversal";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
@@ -152,8 +153,22 @@ export async function POST(req: NextRequest) {
     // FILTERING this list in JS (both below), so a truncated page silently drops invoices from
     // the reversal while their transactions are deleted anyway — the same unreachable half-state
     // the tx read above describes. Account-wide and all-time, so a few busy years reach the cap.
+    //
+    // [REVERSAL-SET] `.eq("payment_method","bank")` used to sit on this query, and it silently
+    // dropped invoices this statement provably paid. apply_manual_payment writes the method of the
+    // LAST payment, so an invoice settled in two instalments — a bank payment from this statement,
+    // then a cash payment that closed it — ends up reading 'kas'. Deleting the statement cascaded
+    // its link away and recompute_invoice_amount_paid lowered amount_paid to the cash part (money
+    // correct), while `status` stayed 'paid'. Nothing re-derives status, so the invoice sat marked
+    // fully settled with half of it still owed: out of the debtor list, out of dunning.
+    //
+    // The filter is gone from the READ, not replaced by nothing: it moved into the gap-fill tier
+    // inside planStatementReversal, which is the only tier where it was ever doing work. See that
+    // module — widening the number-matched tier the same way would un-pay a cash-settled invoice
+    // whose number merely appears in a deleted statement, which is the worse failure of the two.
     let paid: {
       id: string; invoice_number: string | null; direction: string | null; status: string | null;
+      payment_method: string | null;
       accountant_status: string | null; marked_paid_at: string | null; payment_date: string | null;
       amount_paid: number | null;
     }[];
@@ -162,10 +177,11 @@ export async function POST(req: NextRequest) {
         pipeline
           .from("invoices")
           // [PARTIAL-PAY] amount_paid moet mee: de rollback hieronder zet hem terug zoals hij was.
-          .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
+          // [REVERSAL-SET] payment_method moet mee: de gap-fill leest hem, en de rollback zet hem
+          // terug zoals hij was in plaats van 'bank' te verzinnen.
+          .select("id, invoice_number, direction, status, payment_method, accountant_status, marked_paid_at, payment_date, amount_paid")
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
           .eq("status", "paid")
-          .eq("payment_method", "bank")
           .order("id", { ascending: true })
           .range(from, to),
       );
@@ -178,51 +194,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // (1) Exact, collision-free part: invoices this statement's txs are id-linked to.
+    // [REVERSAL-SET] The two tiers, decided in one tested place. They are NOT the same kind of
+    // evidence and the module's header is where that is argued:
+    //   (1) id-linked — a link row says this statement's transaction paid this invoice. Proof, and
+    //       it now holds whatever payment_method the invoice ended up carrying.
+    //   (2) [GAP-FILL] number-matched — a PRE-migration batch only backfilled its representative id
+    //       (the migration cannot reconstruct the older siblings), so an uncovered reference number
+    //       falls back to a DIRECTION-GUARDED, BANK-ONLY match. A freshly-booked batch is fully
+    //       id-covered, so this adds nothing for it; it only recovers historical siblings.
+    const plan = planStatementReversal(paid, idSet, txs, parseReferenceNumbers, normalizeRef);
     const toRestoreMap = new Map<string, (typeof paid)[number]>();
-    for (const inv of paid) if (idSet.has(inv.id)) toRestoreMap.set(inv.id, inv);
-
-    // (2) [GAP-FILL] A PRE-migration batch only backfilled its representative id (the migration
-    //     cannot reconstruct the older siblings). For any reference number NOT already covered by an
-    //     id-link, fall back to a DIRECTION-GUARDED number match so those siblings are reversed too
-    //     — without the direction guard a same-number invoice of the opposite direction could be
-    //     wrongly un-paid. A freshly-booked batch is fully id-covered, so this adds nothing for it
-    //     (no number-collision surface); it only recovers historical siblings this statement paid.
-    const coveredNums = new Set<string>();
-    for (const inv of toRestoreMap.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
-    // Collect number gap-fill candidates across this statement's batch txs, then exclude any that
-    // are id-linked to a transaction OUTSIDE this statement (they belong to a different payment —
-    // a same-number stray). A tx with a null/zero amount has no reliable direction, so we skip its
-    // gap-fill rather than guess (its id-linked invoices are already restored above).
-    const gapCandidates = new Map<string, (typeof paid)[number]>();
-    for (const t of txs) {
-      const rn = parseReferenceNumbers(t.reference);
-      if (rn.length <= 1) continue;
-      const dir: "incoming" | "outgoing" | null =
-        (t.amount ?? 0) < 0 ? "incoming" : (t.amount ?? 0) > 0 ? "outgoing" : null;
-      if (!dir) continue;
-      const uncovered = new Set(rn.filter((n) => !coveredNums.has(n)));
-      if (uncovered.size === 0) continue;
-      for (const inv of paid) {
-        if (!toRestoreMap.has(inv.id) && inv.direction === dir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) {
-          gapCandidates.set(inv.id, inv);
-        }
-      }
-    }
-    if (gapCandidates.size > 0) {
+    for (const inv of plan.idLinked) toRestoreMap.set(inv.id, inv);
+    if (plan.gapCandidates.length > 0) {
+      // Exclude any candidate that is id-linked to a transaction OUTSIDE this statement — it
+      // belongs to a different payment (a same-number stray).
       // [LINKS-READ-HONEST] The stray-exclusion guard throws now rather than failing open (an
       // empty answer would WIDEN the reversal and un-pay another payment's invoice). Nothing is
       // written yet at this point, so refusing costs the owner only a retry.
       let claimed: Set<string>;
       try {
-        claimed = await invoicesClaimedByOtherTx(pipeline, user.id, [...gapCandidates.keys()], txIds);
+        claimed = await invoicesClaimedByOtherTx(pipeline, user.id, plan.gapCandidates.map((i) => i.id), txIds);
       } catch (e) {
         return NextResponse.json(
           { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
           { status: 500 },
         );
       }
-      for (const [id, inv] of gapCandidates) if (!claimed.has(id)) toRestoreMap.set(id, inv);
+      for (const inv of plan.gapCandidates) if (!claimed.has(inv.id)) toRestoreMap.set(inv.id, inv);
     }
     const toRestore = [...toRestoreMap.values()];
 
@@ -238,7 +236,12 @@ export async function POST(req: NextRequest) {
     // paid invoice with its bank line deleted). All-or-nothing, mirroring unlink's discipline.
     // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date so a rollback never loses
     // the settlement date (which attributes the payment to the correct quarter).
-    const restored: { id: string; marked_paid_at: string | null; payment_date: string | null; amount_paid: number | null }[] = [];
+    // [REVERSAL-SET] …and the original payment_method with them. It used to write 'bank' flat,
+    // which was true of every invoice the old filter let through and is no longer: an invoice
+    // settled in two instalments carries the method of the LAST one. A rollback that rewrites 'kas'
+    // to 'bank' would leave the row claiming a settlement it never had, on a path whose entire
+    // promise is that nothing was touched.
+    const restored: { id: string; marked_paid_at: string | null; payment_date: string | null; amount_paid: number | null; payment_method: string | null }[] = [];
     const repay = async () => {
       for (const r of restored) {
         await supabase
@@ -246,7 +249,7 @@ export async function POST(req: NextRequest) {
           // [PARTIAL-PAY] amount_paid hoort bij de betaling die we terugdraaien, dus hij gaat mee
           // terug. Zonder dit zou een mislukte reversal de factuur betaald terugzetten met een
           // amount_paid van 0 — betaald én volledig openstaand tegelijk.
-          .update({ status: "paid", payment_method: "bank", amount_paid: r.amount_paid ?? undefined, marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
+          .update({ status: "paid", payment_method: r.payment_method, amount_paid: r.amount_paid ?? undefined, marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
           .eq("id", r.id)
           .neq("status", "paid");
       }
@@ -276,7 +279,7 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ error: "reversal_failed", detail: restoreErr.message }, { status: 500 });
       }
-      restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date, amount_paid: inv.amount_paid ?? null });
+      restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date, amount_paid: inv.amount_paid ?? null, payment_method: inv.payment_method });
     }
 
     // [MED-3] Audit snapshot BEFORE the destructive delete — record exactly which transactions

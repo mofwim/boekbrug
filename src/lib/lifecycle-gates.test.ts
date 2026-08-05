@@ -77,6 +77,23 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[REVERSAL-SET] deleting a statement decides its reversal in the tested place", () => {
+  // The two tiers are not the same kind of evidence, and the filter that tells them apart moved
+  // from the SQL (where it silenced the proven tier too) into planStatementReversal. Putting a
+  // payment_method filter back on this query re-creates the defect: an invoice settled in two
+  // instalments reads 'kas', drops out of the reversal, and is left marked fully paid with half of
+  // it still owed. Doing the split inline again loses the tests that keep the other direction —
+  // never un-paying a cash-settled invoice whose number a deleted statement merely prints.
+  const src = code("src/app/api/bank/delete-statement/route.ts");
+  assert.match(src, /planStatementReversal\(paid, idSet, txs/, "the reversal set is planned in one tested place");
+  assert.doesNotMatch(
+    src, /\.eq\("payment_method", "bank"\)/,
+    "the reversal query filters on payment_method again — that hides every invoice whose LAST " +
+      "instalment was cash, and nothing re-derives status, so it stays marked paid while half of " +
+      "it is still owed",
+  );
+});
+
 test("[DEDUP-READ-HONEST] the bank-attach refusal is REACHABLE, not merely written", () => {
   // The same class again, one level deeper. Every queued path may degrade a failed probe to "no
   // flag" — a human still sees the invoice. /api/bank/attach-invoice may not: it books straight to
