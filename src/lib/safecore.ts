@@ -913,7 +913,8 @@ export function deriveDueDate(
 /**
  * Normalize a date string to ISO "YYYY-MM-DD", accepting either ISO
  * ("2026-05-27", optionally with a time part) or Dutch "DD-MM-YYYY"
- * ("27-05-2026"). Returns null for empty/unparseable input. Pure.
+ * ("27-05-2026"), including a TWO-DIGIT year ("06/05/26"). Returns null for
+ * empty/unparseable input. Pure.
  */
 // [DATE-ISO-SAFE / I6] Tolerant date→ISO for STORAGE. The write paths used
 // `new Date(x).toISOString()`, which THROWS on a Dutch "15-05-2026" (Invalid Date). In
@@ -933,12 +934,25 @@ export function normalizeToIso(raw: string | null | undefined): string | null {
     return isValidYmd(+y, +m, +d) ? `${y}-${m}-${d}` : null
   }
 
-  // Dutch "DD-MM-YYYY" (also tolerant of "/" or "." separators).
-  const nl = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/)
+  // [DATE-2DIGIT-YEAR] Dutch "DD-MM-YYYY" — and "DD-MM-YY", which is what a great many small
+  // Dutch suppliers actually print. A real one: Bakkerij Saada's invoice 0714 states its Datum and
+  // its Vervaldag both as "06/05/26". The pattern demanded four digits, so a completely ordinary
+  // Dutch invoice date parsed as NOTHING.
+  //
+  // A null date is not a small loss on this row. The invoice lands dateless, the queue asks the
+  // owner to type a date the document plainly states, deriveDueDate can compute no vervaldatum
+  // (so no reminder, no overdue), and — the quiet one — the aangifte and result fetches select on
+  // invoice_date BETWEEN, so a dateless invoice is silently outside every quarter it belongs to.
+  //
+  // The century needs no guessing window, because one already exists: two digits expand to 20YY
+  // and isValidYmd then holds them to 2020–2030, the same business range every other date on this
+  // path passes through. "26" is 2026; "99" expands to 2099 and is refused there, exactly as a
+  // four-digit 2099 already is. Nothing widens — a date that was accepted before is unchanged.
+  const nl = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/)
   if (nl) {
     const d = +nl[1]
     const m = +nl[2]
-    const y = +nl[3]
+    const y = nl[3].length === 2 ? 2000 + +nl[3] : +nl[3]
     if (!isValidYmd(y, m, d)) return null
     const mm = String(m).padStart(2, '0')
     const dd = String(d).padStart(2, '0')

@@ -262,6 +262,27 @@ console.log('═══ safecore creditnota tests ═══\n')
     evaluateArithmetic({ totalExBtw: 480, btwAmount: 0, totalIncBtw: 480 }).ok === true)
 }
 
+console.log('\n═══ [DATE-2DIGIT-YEAR] a Dutch date with a two-digit year is a date ═══\n')
+{
+  // Bakkerij Saada, factuur 0714: Datum and Vervaldag both printed "06/05/26". The pattern
+  // demanded four digits, so an ordinary Dutch invoice date parsed as NOTHING — and a dateless
+  // invoice is not merely untidy. It falls outside every `invoice_date BETWEEN` fetch the aangifte
+  // and the result screen use, so it is silently absent from the quarter it belongs to.
+  check('06/05/26 → 2026-05-06', normalizeToIso('06/05/26') === '2026-05-06')
+  check('every separator this path already accepted', 
+    normalizeToIso('06-05-26') === '2026-05-06' && normalizeToIso('06.05.26') === '2026-05-06')
+  check('single-digit day/month still pads', normalizeToIso('6-5-26') === '2026-05-06')
+
+  // Nothing widens. The century needs no guessing window because one already exists: two digits
+  // expand to 20YY and the 2020–2030 business range refuses the rest — the same range a
+  // four-digit year passes through.
+  check('an impossible day is still refused', normalizeToIso('31-02-26') === null)
+  check('a year outside the business range is still refused', normalizeToIso('06/05/99') === null)
+  check('four-digit years are unchanged', normalizeToIso('15-05-2026') === '2026-05-15')
+  check('ISO is unchanged', normalizeToIso('2026-05-06') === '2026-05-06')
+  check('garbage is still garbage', normalizeToIso('06/05/2') === null && normalizeToIso('not a date') === null)
+}
+
 console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')
 {
   check('spacing around a separator folds', normalizeInvoiceNumber('26 / 3958') === normalizeInvoiceNumber('26/3958'))

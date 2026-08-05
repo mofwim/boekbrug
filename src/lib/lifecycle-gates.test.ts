@@ -239,6 +239,17 @@ test("[REREAD-CONFIRMED] the re-read predicate is given the columns it reads", (
   }
 });
 
+test("[SKIPPED-READ-HONEST] the panel that explains a missing invoice cannot answer 'nothing'", () => {
+  // This is where an owner goes when an invoice never arrived. Both of its reads answered a
+  // database failure with an empty result — `const { data }` → null → `?? []`, and a failed COUNT
+  // → 0 — so the panel would report "niets overgeslagen" to the one person actively looking for
+  // something that IS missing, and they would stop looking.
+  const src = code("src/app/api/email/skipped/route.ts");
+  assert.match(src, /error: skippedError/, "the skip-registry read must keep its error");
+  assert.match(src, /error: couldNotReadError/, "and so must the unreadable-files count");
+  assert.match(src, /code: 'skipped_unavailable'/, "a failed read must refuse, not report zero");
+});
+
 test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
   // A native <input type="date"> orders its segments by the BROWSER's locale, and nothing on the
   // page changes that — measured, including `lang` on the input, on a wrapper and on <html>. Under
