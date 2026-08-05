@@ -77,6 +77,26 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[SCHEME-MERGE] no money-read route replaces the scheme's per-invoice maps", () => {
+  // Under kas the invoices a quarter SETTLES are mostly not the ones it DATES, so
+  // `{ ...sr.opts, exemptShareByInvoice: myOwnMap }` deletes the half that quarter is about — and
+  // under a vrijgestelde-omzet regime that turns exempt turnover into taxed turnover on the
+  // aangifte. It reads like overriding a default, which is why it survived in two of the three
+  // routes while the third merged by hand with a comment explaining why merging was necessary.
+  for (const f of ["src/app/api/aangifte/route.ts", "src/app/api/readiness/route.ts"]) {
+    const src = code(f);
+    assert.match(src, /mergeSchemeOpts\(sr\.opts/, `${f} no longer merges the scheme opts`);
+    // The assignment shape that caused it: a per-invoice map set on the same object literal that
+    // spreads sr.opts. mergeSchemeOpts takes them as arguments instead, so this cannot recur
+    // without deleting the call above.
+    assert.doesNotMatch(
+      src, /\.\.\.sr\.opts,[\s\S]{0,600}?(exemptShareByInvoice|rateSharesByInvoice):/,
+      `${f} sets a per-invoice map alongside a raw \`...sr.opts\` spread again — that drops every ` +
+        `invoice this quarter SETTLED but did not DATE, which under kas is most of them`,
+    );
+  }
+});
+
 test("[CASH-CREDITNOTA] the reconciler still reads what decides the drawer's direction", () => {
   // cash.ts flips the drawer for a creditnota, and it can only do that for a row it is TOLD is
   // one. The reconciler is the sole caller, and its projection is a hand-written column list —

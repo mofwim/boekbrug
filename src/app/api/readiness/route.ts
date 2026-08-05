@@ -31,7 +31,7 @@ import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
-import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { resolveSchemeSettlements, mergeSchemeOpts } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 // [ICP] Sales to EU businesses: only the PROBLEMS reach readiness — see the call site.
 import { buildIcp, type IcpInvoice } from "@/lib/icp";
@@ -356,11 +356,18 @@ export async function GET(req: NextRequest) {
   // omzetZonderBtwNonCash, and the KOR turnover check); the commission is a cost with no BTW and
   // cannot move any of them. /api/result, which reports profit, books it. The triangle IS run
   // below — for the card-mismatch risk, not for a money figure.
+  // [SCHEME-MERGE] Same merge as /api/aangifte, and for the same reason: this route's own maps
+  // cover the invoices DATED in the quarter, sr.opts covers the ones its SETTLEMENTS point at.
+  // Overwriting either dropped the invoices paid this quarter but dated in an earlier one, which
+  // under a vrijgestelde-omzet regime turns their exempt part into taxed omzet — and this route
+  // decides whether the quarter may be called "klaar". Both maps go through one function.
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, {
-    ...sr.opts,
+    ...mergeSchemeOpts(sr.opts, {
+      rateSharesByInvoice,
+      exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+    }),
     exemptRegime: exemption.active,
     deductionByInvoice: exemption.deductionByInvoice,
-    exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
   });
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the

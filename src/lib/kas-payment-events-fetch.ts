@@ -260,6 +260,48 @@ export async function resolveOwnerSchemeSpan(
   };
 }
 
+/**
+ * [SCHEME-MERGE] Fold a caller's own per-invoice maps into the scheme opts, merging both.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A SPREAD AT EACH CALL SITE ──
+ * The three money-read routes each build their own maps from a DATE-RANGE query over the invoices
+ * dated in the quarter. Under kas the settlements point somewhere else: at invoices from earlier
+ * quarters that were PAID in this one, which is the normal case — payment lags the invoice date
+ * and regularly crosses a quarter boundary. So the two sets barely overlap, and neither is a
+ * superset of the other.
+ *
+ * Writing `{ ...sr.opts, exemptShareByInvoice: myOwnMap }` therefore does not "override a
+ * default", it DELETES the half that covers the invoices this quarter actually settles. It reads
+ * completely ordinary, and what it costs is specific: a sale invoiced in Q1, paid in Q2, under a
+ * vrijgestelde-omzet regime has no exempt share left in the Q2 figures, so its exempt portion
+ * counts as 0 and the whole settlement is declared as TAXED turnover. The owner pays BTW on
+ * exempt omzet, on the aangifte, and nothing anywhere disagrees with itself.
+ *
+ * /api/aangifte did exactly that on exemptShareByInvoice while merging rateSharesByInvoice one
+ * line above with a comment explaining why merging was necessary; /api/readiness did it on both.
+ * compute-result-range had it right. Three copies, two of them wrong — so it becomes one function
+ * that cannot be half-applied.
+ */
+export function mergeSchemeOpts(
+  opts: ComputeOpts,
+  local: {
+    rateSharesByInvoice?: ComputeOpts["rateSharesByInvoice"]
+    exemptShareByInvoice?: ComputeOpts["exemptShareByInvoice"]
+  },
+): ComputeOpts {
+  // The caller's own map goes LAST, so where both know an invoice the freshly-read value wins —
+  // the same precedence the working call site already used.
+  const merge = <V>(a?: Map<string, V>, b?: Map<string, V>): Map<string, V> | undefined =>
+    a || b ? new Map([...(a ?? new Map<string, V>()), ...(b ?? new Map<string, V>())]) : undefined
+  const rateSharesByInvoice = merge(opts.rateSharesByInvoice, local.rateSharesByInvoice)
+  const exemptShareByInvoice = merge(opts.exemptShareByInvoice, local.exemptShareByInvoice)
+  return {
+    ...opts,
+    ...(rateSharesByInvoice ? { rateSharesByInvoice } : {}),
+    ...(exemptShareByInvoice ? { exemptShareByInvoice } : {}),
+  }
+}
+
 /** What a money-read route needs to become scheme-aware in one call. */
 export interface SchemeResolution {
   scheme: VatScheme;

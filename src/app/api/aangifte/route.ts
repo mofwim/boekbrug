@@ -17,7 +17,7 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { isMissingRelation } from "@/lib/pg-missing";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
-import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { resolveSchemeSettlements, mergeSchemeOpts } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, read from the customers' EU VAT numbers.
@@ -168,24 +168,27 @@ export async function GET(req: NextRequest) {
   // [VRIJGESTELD] The regime travels in: under kas the settled invoices are a different set
   // from the dated ones, so their exempt parts have to be read there too.
   const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end, exemption.active);
-  // [RUBRIEK-SPLIT] MERGE, never overwrite. `rateSharesByInvoice` covers the invoices DATED in
-  // this quarter (the accrual path needs those); sr.opts carries the ones its SETTLEMENTS point
-  // at, which under kas includes invoices from earlier quarters that were paid in this one.
-  // Spreading the local map last used to drop exactly those.
-  const mergedRateShares = new Map([
-    ...(sr.opts.rateSharesByInvoice ?? new Map()),
-    ...rateSharesByInvoice,
-  ]);
+  // [RUBRIEK-SPLIT · SCHEME-MERGE] MERGE, never overwrite. These maps cover the invoices DATED in
+  // this quarter (what the accrual path needs); sr.opts carries the ones its SETTLEMENTS point at,
+  // which under kas includes invoices from earlier quarters that were paid in this one — the
+  // normal case, since payment lags the invoice date and regularly crosses a quarter.
+  //
+  // rateSharesByInvoice was merged here by hand and exemptShareByInvoice on the very next line was
+  // not, so a sale invoiced last quarter and paid in this one lost its exempt share entirely and
+  // was declared as fully TAXED omzet — BTW paid on vrijgestelde omzet, on the aangifte itself.
+  // Both now go through one function that cannot be half-applied. See mergeSchemeOpts.
+  //
+  // [VRIJGESTELD · KASSTELSEL] The accrual path reads exempt_ex off each invoice above; the
+  // cash-basis path books SETTLEMENTS, which carry only an invoice id, so it needs the exempt part
+  // as a fraction of that invoice's ex-BTW total. Same numbers, expressed the way each branch can
+  // use them.
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, {
-    ...sr.opts,
-    rateSharesByInvoice: mergedRateShares,
+    ...mergeSchemeOpts(sr.opts, {
+      rateSharesByInvoice,
+      exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+    }),
     exemptRegime: exemption.active,
     deductionByInvoice: exemption.deductionByInvoice,
-    // [VRIJGESTELD · KASSTELSEL] The accrual path reads exempt_ex off each invoice above; the
-    // cash-basis path books SETTLEMENTS, which carry only an invoice id, so it needs the exempt
-    // part as a fraction of that invoice's ex-BTW total. Same numbers, expressed the way each
-    // branch can use them.
-    exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
   });
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
