@@ -15,12 +15,63 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 
-/** Source with comments stripped — these files explain the very mistakes the gates look for. */
+/**
+ * Source with comments stripped — these files explain the very mistakes the gates look for, so a
+ * gate that searched the raw text would match its own description instead of the code.
+ *
+ * [STRIPPER-BLIND] The block-comment rule requires a delimiter before the `/*`, and that is not
+ * cosmetic — without it this helper DELETES REAL CODE. `accept=".pdf,image/*"` is an ordinary file
+ * input attribute, and the `/*` inside that STRING opened a comment that ran to the next genuine
+ * `*​/` — 1549 characters of live JSX in IncomingManageClient, and the same shape in BankClient and
+ * UploadClient. Every gate over those regions was reading a hole.
+ *
+ * Which direction that breaks matters: an assert.match over deleted code FAILS loudly, so it gets
+ * noticed. An assert.doesNotMatch over deleted code PASSES — vacuously, forever, on exactly the
+ * files where "this must never come back" is being claimed. That is this file's own defect class,
+ * in the helper the file is built on.
+ *
+ * A real comment always follows a delimiter: line start, whitespace, or one of `{(,;=`. A `/*`
+ * inside a path-ish string follows a letter or a dot, so requiring the delimiter separates them
+ * without needing a tokenizer.
+ */
 function code(path: string): string {
   return readFileSync(path, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[\s{(,;=])\/\*[\s\S]*?\*\//g, "$1 ")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
 }
+
+test("[STRIPPER-BLIND] the comment stripper this whole file rests on does not eat code", () => {
+  // Every gate here reads code() and asserts over the result. So a stripper that deletes real code
+  // does not fail — it makes the gates read a hole, and the ones written as doesNotMatch then pass
+  // VACUOUSLY, forever, on exactly the files where "this must never come back" is being claimed.
+  //
+  // It was doing that. `accept=".pdf,image/*"` is an ordinary file input attribute; the `/*` inside
+  // that string opened a comment which ran to the next real `*​/`. Measured across the files that
+  // contain it, over 14.000 characters of live code were invisible — 4.146 in BankClient alone, and
+  // 702 in email-integration.ts, which is a doesNotMatch target two tests below.
+  const sample = [
+    'const a = 1',
+    'accept=".pdf,image/*"',   // the string that broke it
+    'const KEEP_ME = "reachable"',
+    '{/* a real comment */}',
+    'const ALSO_KEEP = "reachable too"',
+  ].join("\n");
+  const stripped = sample
+    .replace(/(^|[\s{(,;=])\/\*[\s\S]*?\*\//g, "$1 ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+  assert.match(stripped, /KEEP_ME/, "code between a path-ish string and the next comment was eaten");
+  assert.match(stripped, /ALSO_KEEP/, "code after the comment was eaten");
+  assert.doesNotMatch(stripped, /a real comment/, "and a genuine comment must still be removed");
+
+  // And the rule itself, in the file, so a later 'simplification' back to the naive regex is caught
+  // here rather than by a gate quietly going blind.
+  const self = readFileSync("src/lib/lifecycle-gates.test.ts", "utf8");
+  assert.ok(
+    self.includes("(^|[\\s{(,;=])\\/\\*"),
+    "the block-comment rule lost its leading-delimiter requirement — without it, `image/*` in a " +
+      "string opens a comment and this file starts reading holes again",
+  );
+});
 
 // ─── [DEDUP-READ-HONEST] A failed duplicate probe must not read as "no duplicate" ─────
 //
