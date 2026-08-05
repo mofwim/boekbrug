@@ -48,9 +48,12 @@ interface IncomingInvoiceRow {
   // [IMPORT-MONITOR] Part 1 — read-time health verdict (clean | needs-review +
   // plain-language reasons). Computed server-side from existing signals only.
   health: ImportHealth;
-  // [INCOMING-BEVESTIGD] Only set on the "Bevestigd" list — 'received' (verified, te betalen)
-  // or 'paid' (settled). NULL/absent on pending (always 'processing') + ignored ('archived').
+  // [REREAD-CONFIRMED] Always selected now, on every list — reimportDecision needs it, and so do
+  // the two below. The comment that used to stand here said this was only on "Bevestigd"; that was
+  // true when only that list displayed it.
   status?: string | null;
+  direction?: string | null;
+  accountant_status?: string | null;
   // [NEGEER-REDEN] Alleen op de Genegeerd-lijst geselecteerd, en ook daar optioneel: oude rijen
   // hebben hem niet, en zolang de migratie niet gedraaid is bestaat de kolom nog niet.
   archive_reason?: string | null;
@@ -67,7 +70,12 @@ const INVOICE_COLUMNS =
   // Without it every queued invoice would report "er staat geen rekeningnummer op deze factuur" —
   // which is not a missing number on the paper, it is a column we did not ask for, and saying it
   // is the overstatement invoice-checks.ts exists to prevent.
-  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence, vendor_iban";
+  // [REREAD-CONFIRMED] direction + status + accountant_status ride along for the same reason
+  // vendor_iban does: reimportDecision reads all three, and a predicate whose inputs are missing
+  // does not fail loudly — it simply answers "no", and the "Opnieuw inlezen" button silently never
+  // appears on any card. A control that is never on screen is indistinguishable from one that was
+  // never built.
+  "id, client_name, client_email, invoice_type, direction, status, accountant_status, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence, vendor_iban";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();

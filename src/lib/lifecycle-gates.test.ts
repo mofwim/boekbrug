@@ -13,7 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 
 /** Source with comments stripped — these files explain the very mistakes the gates look for. */
 function code(path: string): string {
@@ -204,6 +204,70 @@ test("[ART35-READ-HONEST] an unreadable issued-count locks the numbering instead
       "invoiced yet' and the art. 35 numbering lock opens",
   );
   assert.match(src, /code: 'lock_check_unavailable'/, "an unreadable count must refuse, not unlock");
+});
+
+test("[REREAD-CONFIRMED] the re-read predicate is given the columns it reads", () => {
+  // A predicate whose inputs are missing does not fail loudly — it answers "no". So an
+  // "Opnieuw inlezen" button gated on reimportDecision simply never renders, on any card, and a
+  // control that is never on screen is indistinguishable from one that was never built. Both
+  // screens and the route decide from the same three columns; each has to actually select them.
+  for (const [f, needs] of [
+    ["src/app/dashboard/incoming/page.tsx", ["direction", "accountant_status"]],
+    ["src/app/dashboard/incoming/manage/page.tsx", ["direction", "accountant_status"]],
+    ["src/app/api/email/reimport/[id]/route.ts", ["accountant_status"]],
+  ] as const) {
+    // The invoice projection is the quoted comma-list that carries total_inc_btw — matched that
+    // way rather than by `.select(` because two of these files hold it in a named constant.
+    const lists = (code(f).match(/["'`][^"'`\n]*total_inc_btw[^"'`\n]*["'`]/g) ?? []).join(" ");
+    for (const col of needs) {
+      assert.ok(
+        lists.includes(col),
+        `${f} no longer selects ${col} — reimportDecision then reads undefined and silently ` +
+          `refuses every invoice, so the re-read offer disappears with nothing failing`,
+      );
+    }
+  }
+
+  // And the rule stays ONE rule. Re-deriving it inline on a screen is how the button and the
+  // route drift into disagreeing, which shows the owner a control that then refuses them.
+  for (const f of [
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/api/email/reimport/[id]/route.ts",
+  ]) {
+    assert.match(code(f), /reimportDecision\(/, `${f} no longer asks the shared predicate`);
+  }
+});
+
+test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
+  // A native <input type="date"> orders its segments by the BROWSER's locale, and nothing on the
+  // page changes that — measured, including `lang` on the input, on a wrapper and on <html>. Under
+  // an en-US browser the first box is the MONTH, so a Dutch owner cannot type a two-digit day, and
+  // the field then reads 02/01/2026, which is two different dates depending on who looks at it.
+  //
+  // Every one of these fields decides a quarter: an invoice date under the factuurstelsel, a
+  // payment date under the kasstelsel, a cash entry's day in the drawer. One re-introduced native
+  // control is one screen where the owner silently cannot type what they mean.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+  const offenders = walk("src/app")
+    .filter((f) => /type="date"/.test(code(f)))
+    .map((f) => f);
+
+  assert.deepEqual(
+    offenders, [],
+    "these screens still use a native date input, whose segment order follows the browser's " +
+      "locale rather than the owner's:\n" + offenders.map((o) => `  · ${o}`).join("\n") +
+      "\n\nUse DateFieldNL from @/components/ui/DateFieldNL — it types in dd-mm-jjjj, keeps the " +
+      "native picker one tap away, and says back which date it understood.",
+  );
 });
 
 test("[SCHEME-MERGE] no money-read route replaces the scheme's per-invoice maps", () => {

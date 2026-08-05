@@ -23,11 +23,15 @@
 
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
-import { amsterdamToday, formatEuroNL } from '@/lib/format-nl'
+import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
+// [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
+import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
+// [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
@@ -438,6 +442,9 @@ export default function IncomingManageClient({
   const [moveCtx, setMoveCtx]           = useState<{ inv: IncomingRow; payments: MovePayment[] } | null>(null)
   useCloseOnBack(!!moveCtx, () => setMoveCtx(null))
   const [moveLoadingId, setMoveLoadingId] = useState<string | null>(null)
+  // [REREAD-CONFIRMED] Which row is being read again. One at a time — the read costs an AI call,
+  // and a screen full of spinners invites the owner to fire ten of them at once.
+  const [rereadingId, setRereadingId]   = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
@@ -795,6 +802,37 @@ export default function IncomingManageClient({
   // [FULL-CORRECTION] Opening is all this screen does now — the editor and its save live in the
   // shared component, so /bank cannot end up with a second one that drifts.
   const openCorrection = (inv: IncomingRow) => setCorrectFor(inv)
+
+  // [REREAD-CONFIRMED] Read this invoice's own paper again with the current extractor.
+  //
+  // On a CONFIRMED invoice the server sends it back to the verify queue, which means it leaves
+  // this list. That has to be said in the toast: a bill disappearing off the pay screen with a
+  // bare "gelukt" reads like the app lost it, and an owner who believes that stops trusting the
+  // list — which is the whole thing this screen is for.
+  const runReread = async (inv: IncomingRow) => {
+    if (rereadingId) return
+    setRereadingId(inv.id)
+    try {
+      const res = await fetch(`/api/email/reimport/${inv.id}`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast(json?.error || 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.')
+        return
+      }
+      if (json?.returnedToQueue) {
+        showToast('Opnieuw ingelezen. De factuur staat nu in de controlewachtrij — bevestig daar de nieuwe bedragen.')
+        // It genuinely left this list, so the list has to be re-fetched rather than patched.
+        router.refresh()
+        return
+      }
+      showToast('Opnieuw ingelezen.')
+      router.refresh()
+    } catch {
+      showToast('Opnieuw inlezen is niet gelukt — controleer je verbinding.')
+    } finally {
+      setRereadingId(null)
+    }
+  }
 
   // ── [CREDIT-SAFE] The question that stands in front of a payment ──────────────
   // A row whose stance is not 'none' does not go straight to the pay flow: it asks first. The
@@ -1959,6 +1997,11 @@ export default function IncomingManageClient({
                 ? inv.total_inc_btw - totalExBtw
                 : null)
               const isVerwerkt = inv.accountant_status === 'verwerkt'
+              // [REREAD-CONFIRMED] May this row be read again? The SAME predicate the route
+              // re-checks, so the button never opens on a refusal — an owner who taps something
+              // that then says no has been misled by the screen, not by the server.
+              const reread = reimportDecision(inv)
+              const rereadOk = reread.allowed
               // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
               // owner hasn't confirmed paying yet. Only meaningful while unpaid.
               const isPrepared = inv.status === 'received' && !!inv.payment_prepared_at
@@ -2114,9 +2157,14 @@ export default function IncomingManageClient({
                       {hasChips && (
                       <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                         {/* Status chip */}
+                        {/* [CREDIT-NOT-PAYABLE] "Te betalen" is a claim about DIRECTION, and on a
+                            credit note it points the wrong way: that money is coming TO the owner.
+                            The chip, the vervaldatum, the "Heb je betaald?" and the Betalen button
+                            all read the same status column, so all four were wrong together — and
+                            the last one prepares a real transfer of money the supplier owes YOU. */}
                         {CHIP[inv.status] && (
-                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
-                            {CHIP[inv.status].label}
+                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: payable || isPaid ? CHIP[inv.status].bg : '#E3F0FD', color: payable || isPaid ? CHIP[inv.status].color : '#0B57D0' }}>
+                            {payable || isPaid ? CHIP[inv.status].label : 'Te ontvangen'}
                           </span>
                         )}
                         {recon[inv.id] && (
@@ -2201,7 +2249,11 @@ export default function IncomingManageClient({
                             vervaldatum, or invoice date + a printed term (see lib/safecore.ts).
                             When the invoice stated neither we say so, rather than leaving a blank
                             that reads as "no rush" or inventing the customary 30 days. */}
-                        {inv.due_date ? (
+                        {/* [CREDIT-NOT-PAYABLE] Only on something you actually owe. A vervaldatum on
+                            a credit note states a deadline for a payment that is never going to be
+                            made — and "geen vervaldatum" reads as a gap in the reading rather than
+                            as a document that has none by nature. */}
+                        {!payable ? null : inv.due_date ? (
                           <span style={{ whiteSpace: 'nowrap' }}>· uiterlijk {fmtDateSmart(inv.due_date, thisYear)}</span>
                         ) : (
                           <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
@@ -2357,7 +2409,12 @@ export default function IncomingManageClient({
                       {/* [AUTO-INCASSO] `!incasso`: the bank pays this one, so there is nothing to
                           confirm. The button is not merely redundant here — it is the door to a
                           second payment of money that has already left. */}
-                      {inv.status === 'received' && !incasso && (
+                      {/* [CREDIT-NOT-PAYABLE] …and `payable`, for the same class of reason. "Heb je
+                          betaald?" on a credit note asks the owner about a payment that must never
+                          happen. payGuarded already caught the tap and asked a question back, which
+                          is the right backstop — but a control that exists only to be refused is
+                          still telling the owner the wrong thing about their own document. */}
+                      {inv.status === 'received' && !incasso && payable && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
@@ -2424,6 +2481,37 @@ export default function IncomingManageClient({
                         />
                       )}
 
+                      {/* [CREDIT-NOT-PAYABLE] With the pay controls gone, the row would say nothing
+                          at all about how this document ends — and silence on a screen called
+                          "te betalen" reads as "stuck". It is not stuck: a supplier credit note
+                          resolves by itself, both ways, and both are already built.
+
+                          · Refunded to the bank → it arrives as money IN and the matcher pairs it
+                            (bank-matching.ts, [M7-CREDITNOTA]: magnitudes on both sides).
+                          · Deducted from the next payment run → [CREDIT-NETTING] books it against
+                            that payment, and the bundled-pay sheet subtracts it rather than adding
+                            it (the defect fixed in "A supplier's creditnota joined the bundled
+                            payment").
+
+                          So the honest line is what to expect, not a button to press. */}
+                      {!payable && !isPaid && (
+                        <p style={{ fontSize: 12, color: '#0B57D0', background: '#E3F0FD', borderRadius: R.md, padding: '10px 12px', margin: '0 0 8px', lineHeight: 1.45 }}>
+                          Dit is geld dat jóu toekomt — je hoeft niets te betalen. Krijg je het
+                          teruggestort, dan herkennen we dat in je bankafschrift. Verrekent je
+                          leverancier het met een volgende factuur, dan gaat het daar vanzelf vanaf.
+                        </p>
+                      )}
+
+                      {/* [REREAD-CONFIRMED] The sentence, not just the button. A control the owner
+                          never notices is a control that does not exist — and the owner's own words
+                          for this were "I always want to check the invoice". Telling them what to do
+                          when something IS wrong is what turns that habit from a cost into one tap. */}
+                      {rereadOk && (
+                        <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '0 0 8px', lineHeight: 1.45 }}>
+                          {reimportPromptText(reread)}
+                        </p>
+                      )}
+
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
                             invoice whose amounts were misread could only be archived (which hides a
@@ -2443,6 +2531,31 @@ export default function IncomingManageClient({
                             }}
                           >
                             Bedragen corrigeren
+                          </button>
+                        )}
+                        {/* [REREAD-CONFIRMED] "Opnieuw inlezen" — the other way out, and on most
+                            invoices the better one: the app is holding the paper, so it can read it
+                            again instead of asking the owner to type what it says. It stands next to
+                            "Bedragen corrigeren" because that button was the only answer here, and
+                            typing is the fallback, not the first move.
+
+                            Same eligibility as the server (reimportDecision), so the button never
+                            opens on something the route will refuse. */}
+                        {rereadOk && (
+                          <button
+                            onClick={e => { e.stopPropagation(); void runReread(inv) }}
+                            disabled={rereadingId === inv.id}
+                            style={{
+                              fontSize: 13, color: M3.primary, background: '#fff',
+                              border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
+                              padding: '8px 16px', cursor: rereadingId === inv.id ? 'default' : 'pointer',
+                              fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                              {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
+                            </span>
+                            {rereadingId === inv.id ? 'Bezig met opnieuw inlezen…' : 'Opnieuw inlezen'}
                           </button>
                         )}
                         {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
@@ -2470,7 +2583,7 @@ export default function IncomingManageClient({
                             pre-fills the supplier's IBAN and amount in the owner's banking app,
                             which on an already-collected invoice is a second payment with one tap
                             and no warning anywhere. */}
-                        {inv.status === 'received' && !incasso && (
+                        {inv.status === 'received' && !incasso && payable && (
                           <button
                             // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
                             // pre-fills the supplier's IBAN and the amount in the owner's bank app.
@@ -3039,6 +3152,9 @@ export default function IncomingManageClient({
           result={matchResult}
           onClose={() => setMatchResult(null)}
           onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
+          // [MATCH-NAMED] The screen already holds every row, so naming what was booked costs no
+          // round trip — and a second fetch could disagree with the patch just applied.
+          supplierOf={(id) => invoices.find(i => i.id === id)?.client_name ?? null}
         />
       )}
 
@@ -3237,14 +3353,19 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 common case: a thumb on a phone); the refusal that actually protects the books is
                 the server's, in /api/invoice/pay-toggle, because a client answer is not a
                 permission. */}
-            <input
-              type="date"
-              value={paymentDate}
-              min={PAYMENT_DATE_FLOOR}
-              max={amsterdamToday()}
-              onChange={e => setPaymentDate(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
-            />
+            {/* [DATE-NL] Not a native date input: Chromium orders its segments by the BROWSER
+                locale, so on an en-US browser the first box is the MONTH and a Dutch owner cannot
+                type a two-digit day at all. On the field that decides which quarter this payment's
+                BTW lands in, that is not cosmetic. */}
+            <div style={{ marginBottom: 16 }}>
+              <DateFieldNL
+                value={paymentDate}
+                min={PAYMENT_DATE_FLOOR}
+                max={amsterdamToday()}
+                onChange={setPaymentDate}
+                aria-label="Betaaldatum"
+              />
+            </div>
             {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
                 balance (unchanged behaviour); a number records an instalment and leaves the
                 invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
@@ -3355,10 +3476,12 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
 //   3. what is LEFT for the owner (found-but-ambiguous payments → the Bank page).
 // A run that changed nothing says so plainly instead of implying work happened. A pass that
 // FAILED is named — a partial run must never read as a clean one.
-function MatchResultSheet({ result, onClose, onOpenBank }: {
+function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
   result: MatchRunResult
   onClose: () => void
   onOpenBank: () => void
+  /** The supplier behind an invoice id, from the list this screen already holds. */
+  supplierOf: (invoiceId: string) => string | null
 }) {
   const { bookedCount, amountOnlyCount, cash, categorized, pendingTransactions, pendingMatchCount, failed } = result
   const cashTouched = cash.created + cash.updated + cash.deleted
@@ -3414,6 +3537,49 @@ function MatchResultSheet({ result, onClose, onOpenBank }: {
               tone="warn"
               text={`${amountOnlyCount === 1 ? '1 koppeling is' : `${amountOnlyCount} koppelingen zijn`} alleen op bedrag herkend (geen factuurnummer in de omschrijving) — controleer die even.`}
             />
+          )}
+          {/* ── [MATCH-NAMED] WHICH invoices, not how many ────────────────────────────────────
+              This button marks purchase invoices PAID. It reported "3 facturen herkend en op
+              betaald gezet" and stopped there, so the owner learned that three of their bills had
+              been settled by the app and not which three, for how much, or against which date.
+              The sibling sheet forty lines down already argues this, in this file, about a change
+              of exactly the same size: "a toast saying gelukt over a change of that size is the
+              quiet money movement this codebase keeps finding and closing".
+
+              The amount-only rows are listed FIRST and marked, because they are the ones matched
+              without an invoice number in the bank description — a supplier who bills the same
+              amount twice is precisely where that tier can pick the wrong one, and it is the row
+              the owner can settle with one glance at the paper. */}
+          {result.booked.length > 0 && (
+            <div style={{ border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.md, padding: '8px 10px' }}>
+              <p style={{ fontSize: 11.5, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 6px', letterSpacing: 0.3, textTransform: 'uppercase' }}>
+                Op betaald gezet
+              </p>
+              {[...result.booked]
+                .sort((a, b) => (a.tier === 'amount_only' ? 0 : 1) - (b.tier === 'amount_only' ? 0 : 1))
+                .map(b => {
+                  const supplier = supplierOf(b.invoiceId)
+                  return (
+                    <div key={b.invoiceId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '4px 0', alignItems: 'baseline' }}>
+                      <span style={{ minWidth: 0, fontSize: 12.5, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {supplier ?? 'Onbekende leverancier'}
+                        <span style={{ color: M3.onSurfaceVariant }}>
+                          {b.invoiceNumber ? ` · ${b.invoiceNumber}` : ''}
+                          {b.paymentDate ? ` · ${formatDateNL(b.paymentDate)}` : ''}
+                        </span>
+                        {b.tier === 'amount_only' && (
+                          <span style={{ display: 'block', fontSize: 11.5, color: '#7C5800', lineHeight: 1.35 }}>
+                            alleen op bedrag en naam herkend — controleer deze
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, whiteSpace: 'nowrap' }}>
+                        {formatEuroNL(Math.abs(b.amount))}
+                      </span>
+                    </div>
+                  )
+                })}
+            </div>
           )}
           {/* 2) Kas ↔ facturen */}
           <ResultLine

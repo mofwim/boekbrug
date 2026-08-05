@@ -118,6 +118,16 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // [INVOICE-SCAN] The banner is the whole reason this file exists — assert it actually appears for
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
+
+  // [CREDIT-NOT-PAYABLE] The row 'cn' is a correctly booked credit note (all three amounts
+  // negative). It wore "Te betalen", a vervaldatum, "Heb je betaald?" and a QR Betalen button —
+  // four claims about direction, all pointing the wrong way, and the last one prepares a real
+  // transfer of money the supplier owes the OWNER. What has to be on screen instead is what
+  // actually happens to it, because with the buttons gone the row would otherwise say nothing.
+  assert.match(html, /Te ontvangen/, "a credit note is money coming in, and the chip must say so");
+  // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
+  // resolves lives in the opened card, where the detail belongs — the chip carries it here.
+  assert.doesNotMatch(html, /Heb je betaald\?[\s\S]{0,40}CR0300343/, "no pay prompt beside a credit note");
   // A filed quarter changes what the owner has to DO, so it must be said, not implied.
   assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
   // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.
@@ -999,6 +1009,10 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
     pdf_url: "u1/x.pdf", document_id: null, created_at: "2026-06-24T10:00:00Z",
     folder_id: null, folder_name: null, field_confidence: null,
     vendor_iban: "NL65RABO0171136276",
+    // [REREAD-CONFIRMED] What page.tsx now selects, and what reimportDecision reads. Left out, the
+    // predicate answers "no" and the re-read offer silently never renders — which is exactly the
+    // failure it exists to prevent, so the fixture has to carry them.
+    direction: "incoming", status: "processing", accountant_status: null,
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const invoice = { ...base, health: classifyImportHealth(base as any) };
@@ -1019,6 +1033,13 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
   // And the old behaviour must be gone: handing the file to the operating system loses the queue
   // position, which on this screen means losing your place in the verification you were doing.
   assert.doesNotMatch(html, /Bekijk factuur<\/button>/, "the OS hand-off label is gone");
+
+  // [REREAD-CONFIRMED] This invoice is CLEAN — classifyImportHealth finds nothing, so the amber
+  // "Even controleren" block that used to hold the only "Opnieuw inlezen" button never renders.
+  // That is the case the owner hit: told to press it, nothing to press. The offer has to be here
+  // on a spotless card, with the sentence that says what it is for.
+  assert.match(html, /Opnieuw inlezen/, "a clean invoice can be re-read too — that is where a misread amount hides");
+  assert.match(html, /Klopt er iets niet/, "and the owner is told what the button is for");
 });
 
 test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
