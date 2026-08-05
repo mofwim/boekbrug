@@ -24,6 +24,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { boardTotals, type DebtorGroup, type DebtorRow } from '@/lib/accountant-debtors'
+import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 
 /** Eén rij, met het extra veld dat de pagina meegeeft om de grijze knop te kunnen uitleggen. */
 export interface SchermRij extends DebtorRow {
@@ -38,6 +39,8 @@ interface Props {
   groepen: SchermGroep[]
   /** Geen enkele klant heeft deze boekhouder gemachtigd — een ander verhaal dan "niets openstaand". */
   geenMandaat?: boolean
+  /** [VRAAG-MACHTIGING] De GEKOPPELDE klanten — om te kunnen vragen wat er nog niet is. */
+  gekoppeld?: KoppelKlant[]
 }
 
 function euro(n: number): string {
@@ -59,7 +62,7 @@ function kleurVoor(dagen: number): string {
   return M3.onSurfaceVariant
 }
 
-export default function AccountantDebiteuren({ groepen, geenMandaat = false }: Props) {
+export default function AccountantDebiteuren({ groepen, geenMandaat = false, gekoppeld = [] }: Props) {
   const router = useRouter()
   const [bezig, setBezig] = useState<string | null>(null)
   const [klaar, setKlaar] = useState<Record<string, string>>({})
@@ -112,6 +115,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false }: P
             Je klant zet het zelf aan bij <strong>Instellingen → Jouw boekhouder</strong>, met
             dezelfde machtiging waarmee je ook namens hem kunt factureren.
           </p>
+          <VraagMachtiging klanten={gekoppeld} kind="facturen" />
         </div>
       </main>
     )

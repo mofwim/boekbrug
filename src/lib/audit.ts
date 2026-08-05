@@ -107,6 +107,10 @@ export type AuditAction =
   // vraag "wie heeft dit geboekt, en wanneer" moet jaren later nog een antwoord hebben, ook als
   // de machtiging allang is ingetrokken en de kolom confirmed_by is overschreven.
   | 'accountant.invoice_confirmed'
+  // [VRAAG-MACHTIGING] De boekhouder heeft zijn klant om een machtiging gevraagd. Staat hier niet
+  // alleen als spoor: deze rij IS de wachttijd. Twee keer vragen is zeuren, en de vorige vraag
+  // moet ergens duurzaam staan zonder daar een tabel voor op te tuigen.
+  | 'accountant.mandate_requested'
   // [WAARSCHUWING] De 30-dagenbrief van voorwaarden art. 5.7.5 is verstuurd. Dit is het enige
   // spoor dat later kan aantonen DAT er is gewaarschuwd voordat er iets werd gewist — de kolom
   // purge_warning_sent_at kan worden overschreven, een auditregel niet.

@@ -23,6 +23,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
+import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 
 export interface TeBevestigen {
   id: string
@@ -41,6 +42,8 @@ interface Props {
   rijen: TeBevestigen[]
   /** Geen enkele klant heeft deze boekhouder gemachtigd om te bevestigen. */
   geenMandaat?: boolean
+  /** [VRAAG-MACHTIGING] De GEKOPPELDE klanten — om te kunnen vragen wat er nog niet is. */
+  gekoppeld?: KoppelKlant[]
 }
 
 function euro(n: number | null): string {
@@ -56,7 +59,7 @@ function datumNl(iso: string | null): string {
     : d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-export default function AccountantBevestigen({ rijen, geenMandaat = false }: Props) {
+export default function AccountantBevestigen({ rijen, geenMandaat = false, gekoppeld = [] }: Props) {
   const router = useRouter()
   const [bezig, setBezig] = useState<string | null>(null)
   const [klaar, setKlaar] = useState<Record<string, boolean>>({})
@@ -110,6 +113,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false }: Pro
             kwartaalpakket en blijft het kwartaal op &quot;niet klaar&quot; staan. Zonder deze
             machtiging kan alleen je klant dat slot openen.
           </p>
+          <VraagMachtiging klanten={gekoppeld} kind="bevestigen" />
         </div>
       </main>
     )

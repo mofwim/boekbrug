@@ -27,6 +27,34 @@ import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteure
 export const dynamic = 'force-dynamic'
 
 /**
+ * [VRAAG-MACHTIGING] Alle GEKOPPELDE klanten, ook (juist) die zonder machtiging.
+ *
+ * Zonder deze lijst is de lege staat een doodlopende weg: hij legt uit dat de klant het moet
+ * aanzetten, en biedt geen manier om het hem te vragen. Sessie-client, dus RLS geeft een
+ * boekhouder alleen zijn eigen koppelingen.
+ */
+async function gekoppeldeKlanten(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  accountantId: string,
+): Promise<{ id: string; naam: string }[]> {
+  const { data: links } = await supabase
+    .from('accountant_clients')
+    .select('zzper_id')
+    .eq('accountant_id', accountantId)
+  const ids = Array.from(
+    new Set((links ?? []).map((l: { zzper_id: string | null }) => l.zzper_id).filter(Boolean)),
+  ) as string[]
+  if (ids.length === 0) return []
+  const { data: profielen } = await supabase
+    .from('profiles').select('id, full_name, company_name').in('id', ids)
+  return ((profielen ?? []) as Array<{ id: string; full_name: string | null; company_name: string | null }>)
+    .map((p) => ({ id: p.id, naam: p.company_name || p.full_name || 'Klant' }))
+    .sort((a, b) => a.naam.localeCompare(b.naam, 'nl'))
+}
+
+
+/**
  * De klok, één keer gelezen, buiten de render om.
  *
  * Zelfde vorm als readClock() in /dashboard/verkoop: `Date.now()` in het lichaam van een component
@@ -64,7 +92,7 @@ export default async function AccountantDebiteurenPage() {
   const gemandateerd = Array.from(new Set((mandaten ?? []).map((m) => m.zzper_id).filter(Boolean)))
 
   if (gemandateerd.length === 0) {
-    return <AccountantDebiteuren groepen={[]} geenMandaat />
+    return <AccountantDebiteuren groepen={[]} geenMandaat gekoppeld={await gekoppeldeKlanten(supabase, user.id)} />
   }
 
   // De koppeling moet er óók zijn — een mandaat zonder koppeling is een mandaat van een vreemde,
@@ -77,7 +105,7 @@ export default async function AccountantDebiteurenPage() {
   const klantIds = Array.from(new Set((links ?? []).map((l) => l.zzper_id).filter((v): v is string => !!v)))
 
   if (klantIds.length === 0) {
-    return <AccountantDebiteuren groepen={[]} geenMandaat />
+    return <AccountantDebiteuren groepen={[]} geenMandaat gekoppeld={await gekoppeldeKlanten(supabase, user.id)} />
   }
 
   // ── Data, met service_role en expliciet beperkt tot die klanten ────────────

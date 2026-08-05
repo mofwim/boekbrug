@@ -22,6 +22,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { UNITS, DEFAULT_UNIT_CODE, unitLabel } from '@/lib/units'
+import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 
 /** Eén klant die deze boekhouder gemachtigd heeft. */
 export interface GemachtigdeKlant {
@@ -40,6 +41,8 @@ interface Regel {
 
 interface Props {
   klanten: GemachtigdeKlant[]
+  /** [VRAAG-MACHTIGING] De GEKOPPELDE klanten — om te kunnen vragen wat er nog niet is. */
+  gekoppeld?: KoppelKlant[]
 }
 
 const BTW_TARIEVEN = [21, 9, 0] as const
@@ -62,7 +65,7 @@ function euro(n: number): string {
   return `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export default function AccountantFactuur({ klanten }: Props) {
+export default function AccountantFactuur({ klanten, gekoppeld = [] }: Props) {
   const router = useRouter()
   const [klantId, setKlantId] = useState<string>(klanten.length === 1 ? klanten[0].id : '')
   const [naam, setNaam] = useState('')
@@ -184,6 +187,7 @@ export default function AccountantFactuur({ klanten }: Props) {
             blijft er zelf verantwoordelijk voor (art. 35a Wet OB). Daarom vraagt de app het hem, en
             niet jou.
           </p>
+          <VraagMachtiging klanten={gekoppeld} kind="facturen" />
         </div>
       </main>
     )
