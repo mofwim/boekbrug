@@ -3,9 +3,11 @@
 // ANY entry point — the /bank page, an invoice verify, a bank IMPORT, and a background cron —
 // not only when a browser happens to sit on /dashboard/bank. It books the two auto tiers:
 // 'certain' (invoice number printed in the statement OR supplier IBAN, + amount to the cent —
-// booked silently) and 'amount_only' (exact amount + strong counterpart name + date proximity,
-// single clear winner — booked but flagged "controleer"; blocked under kasstelsel), plus the
-// provably-exact multi-invoice batch ties. Fully reversible (owner can unlink) and audited.
+// booked silently) and 'amount_only' (exact amount + an identity that is not the document's own:
+// a strong counterpart name with date proximity, the account the supplier is known to bill from,
+// or the owner's own pay-sheet declaration — single clear winner, booked but flagged "controleer";
+// under kasstelsel only into a quarter whose aangifte has NOT been filed, see kas-auto-book.ts),
+// plus the provably-exact multi-invoice batch ties. Fully reversible (owner can unlink) and audited.
 //
 // payClient vs pipeline: the invoice→'paid' write goes through `payClient`. A ROUTE passes its
 // SESSION client, so the DB 'verwerkt' guard trigger fires with a real auth.uid(); a CRON or a
@@ -36,9 +38,20 @@ import { getVatScheme } from "./vat-scheme";
 // [KAS-AUTO-BOOK] When a kasstelsel owner's amount-only match may book itself — see kas-auto-book.ts.
 import { decideKasAutoBook, filingStateOf, filingKey } from "./kas-auto-book";
 import { quarterKeyOf } from "./quarter";
+// [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
+import { fetchSupplierIbans, withSupplierIbans } from "./supplier-known-iban";
 import { isMissingRelation } from "./pg-missing";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+
+// [SUPPLIER-IBAN] One invoice row as this module handles it: what the matcher needs, plus the two
+// fields only this file reads (the instalment balance and the registry link). Named because it is
+// now referenced in three places, and three inline intersections drift.
+type MatchableInvoice = InvoiceForMatching & {
+  amount_paid?: number | null;
+  supplier_id?: string | null;
+  supplier_known_iban: string | null;
+};
 
 export interface AutoConfirmed {
   transactionId: string;
@@ -144,7 +157,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, amount_paid, payment_prepared_at")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, amount_paid, payment_prepared_at, supplier_id")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })
@@ -153,7 +166,15 @@ export async function runBankAutoConfirm(args: {
   if (txRows.length === 0 || invRows.length === 0) return [];
 
   const transactions = (txRows as BankTransactionDbRow[]).map((r) => rowToTransaction(r));
-  const allInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null })[];
+  // [SUPPLIER-IBAN] Attach the account each supplier is KNOWN to bill from before any scoring runs.
+  // Applied to allInvoices rather than to the filtered pools, so every downstream pass — the 1:1
+  // matcher, the batch reconciler, the hidden-competitor scan — sees the same rows. A signal that
+  // reaches one pass and not another is a guard that does not exist.
+  const rawInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null; supplier_id?: string | null })[];
+  const allInvoices: MatchableInvoice[] = withSupplierIbans(
+    rawInvoices,
+    await fetchSupplierIbans(pipeline, userId, rawInvoices),
+  );
   // [PARTIAL-PAY] Auto-confirm books full-amount matches by writing status='paid' directly (not
   // via apply_bank_payment), so it must NEVER touch an invoice that is mid-instalment (amount_paid
   // > 0): a full-amount payment landing on a partially-settled invoice would over-pay it. Those are
@@ -217,7 +238,7 @@ export async function runBankAutoConfirm(args: {
 
     // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch
     // containing a partly-paid invoice would otherwise lose it here and be skipped silently.
-    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is InvoiceForMatching => !!x);
+    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is MatchableInvoice => !!x);
     if (planInvs.length !== plan.invoiceIds.length) continue;
     const tx = rowToTransaction(row);
     if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants

@@ -722,3 +722,47 @@ test("[KAS-AUTO-BOOK] the quarter-close is where the flagged bookings are actual
     "counting the flagged rows themselves, so confirming one clears the risk (counted ⟺ shown)",
   );
 });
+
+test("[SUPPLIER-IBAN] the registry account reaches EVERY matcher entry point, or none", () => {
+  // Three doors run the same matcher: the /bank screen, the "probeer alles opnieuw" sweep, and the
+  // server-side auto-confirm (import, verify, cron, email). Evidence that reaches one and not
+  // another makes the two disagree about the same line — worse than neither having it, because the
+  // owner then sees a suggestion that the background pass will not book, or the reverse.
+  for (const f of [
+    "src/app/api/bank/match/route.ts",
+    "src/app/api/bank/rematch/route.ts",
+    "src/lib/bank-auto-confirm.ts",
+  ]) {
+    const src = code(f);
+    assert.match(src, /supplier_id/, `${f} no longer selects supplier_id — the link to the registry`);
+    assert.match(
+      src, /withSupplierIbans\(/,
+      `${f} loads the invoices but never attaches the known account — the signal silently vanishes ` +
+        `on this door while the other two still have it`,
+    );
+  }
+});
+
+test("[SUPPLIER-IBAN] it is weighed as what it is, not as the document's own account", () => {
+  const src = code("src/lib/bank-matching.ts");
+  // Booked flagged, never silently: the registry can attach an account to a supplier via a
+  // normalised NAME key, and two real companies can collide on one.
+  assert.doesNotMatch(
+    src, /includes\("reference"\) \|\| sig\.includes\("iban"\) \|\| sig\.includes\("supplier_iban"\)/,
+    "the registry account reached the 'certain' tier — that books with no human and no flag",
+  );
+  assert.match(
+    src, /if \(sig\.includes\("supplier_iban"\)\)[\s\S]{0,900}return "amount_only"/,
+    "its tier must resolve to the flagged booking",
+  );
+  // The double-count guard: when the document named the account, the registry adds nothing.
+  assert.match(
+    src, /!ibanOk && ibanMatches\(tx\.counterpartIban, inv\.supplier_known_iban\)/,
+    "without !ibanOk the same account is counted twice and a plain document match climbs the ranking",
+  );
+  // And the collision veto — the one weakness the tier actually has.
+  assert.match(
+    src, /counterpartName \?\? ""\)\.trim\(\) && !sig\.includes\("counterpart"\)/,
+    "a name on the line that does not even reach the listing bar must refuse the booking",
+  );
+});

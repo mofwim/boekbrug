@@ -51,10 +51,21 @@ export interface InvoiceForMatching {
   // FAC/2026/00296 — but a Dutch betalingskenmerk works the same way. Null when the invoice quotes
   // its own number, which is the majority; then this changes nothing.
   payment_reference?: string | null;
+  // [SUPPLIER-IBAN] The account this SUPPLIER is known to bill from, from the supplier registry —
+  // learned from their other invoices, not printed on this one. It exists because vendor_iban is
+  // null far more often than the supplier is unknown: an IBAN sits in a PDF footer the extractor
+  // did not reach, or the invoice arrived before the app had ever seen that supplier. The registry
+  // has known the account the whole time and no matcher ever asked. Null when the invoice has no
+  // supplier_id, or the supplier record carries no IBAN → changes nothing.
+  supplier_known_iban?: string | null;
 }
 
 /** Which signal(s) fired for a candidate. */
-export type MatchSignal = "reference" | "amount" | "date" | "counterpart" | "iban" | "prepared";
+export type MatchSignal =
+  | "reference" | "amount" | "date" | "counterpart" | "iban" | "prepared"
+  // [SUPPLIER-IBAN] The account this supplier is KNOWN to bill from, taken from the supplier
+  // registry rather than from this invoice's own document — see the block in scorePair.
+  | "supplier_iban";
 
 // [PAY-INTENT] How long after the owner opened the pay sheet a debit may still be that payment.
 // A SEPA transfer settles the same day or the next; ten days is generous enough for a payment
@@ -604,6 +615,29 @@ export function scorePair(
       signals.push("iban");
       reasons.push("zelfde rekeningnummer (IBAN) als op de factuur");
     }
+    // [SUPPLIER-IBAN] The same question, asked of the registry when the DOCUMENT could not answer
+    // it. vendor_iban is null far more often than the supplier is unknown — the number sits in a
+    // PDF footer the extractor did not reach, or the invoice arrived before this supplier had ever
+    // been seen — and in every one of those cases the app already knew the account from the
+    // supplier's OTHER invoices and never asked.
+    //
+    // It is a separate signal and NOT a backfill of vendor_iban, because it is one step weaker and
+    // the difference is worth keeping visible. `vendor_iban` says "THIS document names this
+    // account". The registry says "this SUPPLIER bills from this account", which rests on the
+    // supplier resolution having been right — and that resolution can fall back to a normalised
+    // NAME key, which can collide between two real companies. Same conclusion, one more link in
+    // the chain, so it earns less: 0.30 against 0.45, and autoConfirmTier books it at the flagged
+    // 'amount_only' tier rather than 'certain'.
+    //
+    // Guarded against double-counting: when the document DID name an account, that is the stronger
+    // claim and this adds nothing on top of it.
+    const supplierIbanOk =
+      !ibanOk && ibanMatches(tx.counterpartIban, inv.supplier_known_iban);
+    if (supplierIbanOk) {
+      confidence += 0.30;
+      signals.push("supplier_iban");
+      reasons.push("betaald naar het rekeningnummer dat deze leverancier gebruikt");
+    }
     // [PAY-INTENT] The owner told us which invoice they were about to pay, BEFORE the money moved:
     // they opened the pay sheet on it, which stamps payment_prepared_at. Nothing in the matcher
     // ever heard that — every tier here reasons backwards from the bank text, inferring what the
@@ -664,7 +698,12 @@ export function scorePair(
     // prints that invoice's number (reproduced: it did, and booked silently as 'certain').
     // Thresholds are untouched: 0.95/0.96 clear autoConfidence (0.7) exactly as before, so
     // every single-candidate outcome is unchanged — only who WINS when the ranks compete.
-    confidence = Math.min(confidence, ibanOk ? 0.96 : 0.95);
+    // [SUPPLIER-IBAN] sits at 0.955 — between the coincidence ceiling and the document's own IBAN,
+    // which is exactly what it is: the same account, established one link further away. Expressed
+    // in the cap rather than as a bonus because a bonus added before this line is swallowed whole
+    // (every candidate without a reference lands on the ceiling), which is how the first version of
+    // [PAY-INTENT] silently changed nothing.
+    confidence = Math.min(confidence, ibanOk ? 0.96 : supplierIbanOk ? 0.955 : 0.95);
     // [PAY-INTENT] The nudge sits AFTER that cap, and it is deliberately tiny.
     //
     // Added before it, a +0.2 bonus was swallowed whole: every candidate without a reference lands
@@ -796,6 +835,35 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
   const sig = m.best.signals;
   if (!sig.includes("amount")) return null; // the amount is the money-truth — required by both tiers
   if (sig.includes("reference") || sig.includes("iban")) return "certain";
+  // [SUPPLIER-IBAN] The account the supplier bills from, known from the registry rather than
+  // printed on this invoice. Placed ABOVE the name branch because it is the stronger evidence: a
+  // full account number cannot collide the way a name can, and the case this exists for is the one
+  // where there is no name at all.
+  //
+  // That is the gap it fills. An MT940 line often carries a counterpart IBAN and nothing else — no
+  // invoice number, no counterparty name — so 'certain' had nothing to match (vendor_iban was null
+  // because the PDF footer was never read) and 'amount_only' had no name to require. Those lines
+  // were unbookable by construction while the app had known the account since the supplier's first
+  // invoice.
+  //
+  // It books FLAGGED, never 'certain', and the reason is precisely the extra link in the chain:
+  // the registry attaches an IBAN to a supplier, and supplier resolution can fall back to a
+  // normalised NAME key, which can collide between two real companies. The document's own IBAN has
+  // no such step.
+  if (sig.includes("supplier_iban")) {
+    const winnerNum = normalizeRef(m.best.invoiceNumber ?? "");
+    const printed = parseReferenceNumbers(m.transaction.reference);
+    // Same rule every other tier applies: the bank naming a different bill outranks any identity
+    // we inferred. The winner has no 'reference' signal, so any printed token is a contradiction.
+    if (printed.some((t) => !(winnerNum === t || winnerNum.includes(t)))) return null;
+    // And the name-key collision this tier's own weakness allows: two real companies normalising to
+    // the same key means one of them can inherit the other's account. When the line DOES carry a
+    // name and that name does not even clear the listing bar (nameSimThreshold — the 'counterpart'
+    // signal never fired), the registry link is the thing more likely to be wrong than the bank.
+    // A name absent is fine: that absence is the whole reason this tier exists.
+    if ((m.transaction.counterpartName ?? "").trim() && !sig.includes("counterpart")) return null;
+    return "amount_only";
+  }
   if (sig.includes("counterpart")) {
     // [BANK-AMOUNT-ONLY] Auto-book on name ONLY when the name is a STRONG match. A merely-similar
     // name (0.5–0.8: a shared token like a common first word + "B.V.") is enough to LIST the

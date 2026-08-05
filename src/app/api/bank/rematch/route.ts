@@ -28,6 +28,8 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
+import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { planRematch } from "@/lib/bank-rematch";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
@@ -75,7 +77,7 @@ export async function POST() {
     );
     invRows = await fetchAllRows((from, to) =>
       pipeline.from("invoices")
-        .select("id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at")
+        .select("id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id")
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
         .order("id", { ascending: true }).range(from, to),
@@ -87,10 +89,14 @@ export async function POST() {
     );
   }
 
+  // [SUPPLIER-IBAN] "Probeer alles opnieuw" must reason from the same evidence the other two entry
+  // points have. A signal that reaches the matcher on /bank but not on the rematch sweep would make
+  // the two disagree about the same line, which is worse than neither having it.
+  const rawInvoices = invRows as (InvoiceForMatching & { supplier_id?: string | null })[];
   const plan = planRematch({
     ignored: ignoredRows.map(rowToTransaction),
     pending: pendingRows.map(rowToTransaction),
-    invoices: invRows as InvoiceForMatching[],
+    invoices: withSupplierIbans(rawInvoices, await fetchSupplierIbans(pipeline, user.id, rawInvoices)),
   });
 
   // ── Reactivate the provable ones ────────────────────────────────────────────────────────────
