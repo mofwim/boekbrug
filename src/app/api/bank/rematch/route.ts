@@ -75,7 +75,7 @@ export async function POST() {
     );
     invRows = await fetchAllRows((from, to) =>
       pipeline.from("invoices")
-        .select("id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference")
+        .select("id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at")
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
         .order("id", { ascending: true }).range(from, to),

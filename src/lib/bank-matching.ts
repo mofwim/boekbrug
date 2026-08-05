@@ -40,6 +40,11 @@ export interface InvoiceForMatching {
   // counterpart IBAN equals this, it is a STRONG, supplier-specific identity signal (a bare
   // amount can collide across suppliers; a full IBAN cannot). Null when unknown → simply not used.
   vendor_iban?: string | null;
+  // [PAY-INTENT] When the owner opened the pay sheet on this invoice — the moment they told us,
+  // before any money moved, which bill they were about to settle. Everything else in this matcher
+  // reasons BACKWARDS from the bank text to a conclusion the owner had already stated. ISO
+  // timestamp, or null when they never prepared it.
+  payment_prepared_at?: string | null;
   // [PAY-REFERENCE] The betalingskenmerk the invoice asks the payer to quote, when it differs from
   // the invoice number. A Belgian gestructureerde mededeling is the everyday case — the paper says
   // "Communication de paiement: +++000/0000/60321+++" while the invoice is numbered
@@ -49,7 +54,13 @@ export interface InvoiceForMatching {
 }
 
 /** Which signal(s) fired for a candidate. */
-export type MatchSignal = "reference" | "amount" | "date" | "counterpart" | "iban";
+export type MatchSignal = "reference" | "amount" | "date" | "counterpart" | "iban" | "prepared";
+
+// [PAY-INTENT] How long after the owner opened the pay sheet a debit may still be that payment.
+// A SEPA transfer settles the same day or the next; ten days is generous enough for a payment
+// prepared on a Friday and released the following week, and short enough that an unrelated debit
+// of the same amount a month later is not swept in.
+export const PREPARED_WINDOW_DAYS = 10;
 
 /** Normalize an IBAN for comparison: upper-case, strip every non-alphanumeric char (spaces,
  *  dots). Returns "" for a value too short to be a real IBAN (never match on junk).
@@ -527,6 +538,21 @@ export function scorePair(
       : (inv.total_inc_btw < 0 ? -1 : 1) * Math.max(0, Math.abs(inv.total_inc_btw) - paidSoFar);
   const amtOk = amountMatches(tx.amount, amountTarget, opts.amountEpsilon);
   const ibanOk = ibanMatches(tx.counterpartIban, inv.vendor_iban);
+  // [PAY-INTENT] Did the owner declare this invoice, and could this debit be that payment?
+  // Three conditions, and each one is load-bearing:
+  //   · the amount is exact — intent without the right sum is not evidence about THIS payment;
+  //   · the payment is not dated BEFORE the intent. A transfer cannot precede the moment it was
+  //     prepared, so an older debit that happens to fit is a different payment;
+  //   · and it is inside PREPARED_WINDOW_DAYS, so an unrelated debit of the same amount weeks
+  //     later is not swept in.
+  const preparedOk = (() => {
+    if (!amtOk) return false;
+    const stamp = Date.parse(inv.payment_prepared_at ?? "");
+    const paid = Date.parse(`${tx.date ?? ""}T23:59:59Z`);
+    if (Number.isNaN(stamp) || Number.isNaN(paid)) return false;
+    const days = (paid - stamp) / 86_400_000;
+    return days >= 0 && days <= PREPARED_WINDOW_DAYS;
+  })();
   const dateBonus = dateProximityScore(
     tx.date,
     inv.invoice_date,
@@ -578,6 +604,31 @@ export function scorePair(
       signals.push("iban");
       reasons.push("zelfde rekeningnummer (IBAN) als op de factuur");
     }
+    // [PAY-INTENT] The owner told us which invoice they were about to pay, BEFORE the money moved:
+    // they opened the pay sheet on it, which stamps payment_prepared_at. Nothing in the matcher
+    // ever heard that — every tier here reasons backwards from the bank text, inferring what the
+    // owner had already stated.
+    //
+    // It is deliberately a RANKING signal and not a booking one. autoConfirmTier is untouched, so
+    // this cannot make anything auto-book that did not before; what it does is put the invoice the
+    // owner named at the top of the list, with the reason on it, instead of leaving them to find it
+    // among same-amount siblings. The cap below still applies, so intent never outranks a printed
+    // invoice number or a matching IBAN — a declaration of what you MEANT to pay is weaker evidence
+    // than the bank statement naming the bill you DID pay.
+    //
+    // Direction and order matter: a payment cannot precede the intent that produced it, so a debit
+    // dated before the stamp is not this payment however well the amount fits.
+    if (preparedOk) {
+      // Weighted like the other identity-ish signals rather than as a tie-break, and measured:
+      // with a token nudge a declared payment scored 0.6994 against an autoConfidence of 0.70 —
+      // whether it booked hinged on how many days lay between the invoice date and the payment,
+      // which is not a principled place for a money decision to turn. 0.25 puts a declared,
+      // otherwise-anonymous payment reliably over the bar while the cap below still holds it under
+      // a matching IBAN and under a printed invoice number.
+      confidence += 0.25;
+      signals.push("prepared");
+      reasons.push("je hebt deze factuur klaargezet om te betalen");
+    }
     confidence += dateBonus;
     if (dateBonus > 0) {
       signals.push("date");
@@ -614,6 +665,26 @@ export function scorePair(
     // Thresholds are untouched: 0.95/0.96 clear autoConfidence (0.7) exactly as before, so
     // every single-candidate outcome is unchanged — only who WINS when the ranks compete.
     confidence = Math.min(confidence, ibanOk ? 0.96 : 0.95);
+    // [PAY-INTENT] The nudge sits AFTER that cap, and it is deliberately tiny.
+    //
+    // Added before it, a +0.2 bonus was swallowed whole: every candidate without a reference lands
+    // on 0.95, so two same-amount siblings tied at 0.95 and the declaration changed nothing. The
+    // signal was pushed, the reason was written, and the ranking it existed for did not move — the
+    // same shape as every defect this file's neighbours document.
+    //
+    // The hierarchy the cap enforces is unchanged, and intent lives under it:
+    //   ≤0.950  amount + name + date, declared or not  — the cap
+    //    0.960  matching IBAN + exact amount           — supplier identity
+    //    0.970  printed invoice number + amount        — document identity
+    // A declaration of what you MEANT to pay must never outrank the statement naming what you DID,
+    // however much weight the declaration carries below that line.
+    //
+    // And a nudge AFTER the cap, because the cap flattens: with a matching counterparty name on
+    // both, a declared and an undeclared sibling both land on 0.950 and the +0.25 above is eaten
+    // whole — the same swallowing this signal already hit once, one level up. 0.005 keeps the
+    // declared one FIRST in the list (which is what the owner reads) without ever reaching
+    // autoMargin, so a genuine same-amount tie still goes to the human.
+    if (preparedOk) confidence = Math.min(confidence + 0.005, 0.955);
   }
 
   // [BANK-PARTIAL] A payment whose reference/description says it is an INSTALMENT
@@ -765,6 +836,40 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
       ? "amount_only"
       : null;
   }
+  // [PAY-INTENT-BOOK] The owner DECLARED this invoice before the money moved: they opened the pay
+  // sheet on it, which stamps payment_prepared_at, and then exactly that amount left the account
+  // within days, in the right direction, and no other invoice is a plausible candidate.
+  //
+  // This is the gap the other two tiers leave. 'certain' needs the bank to name the bill or the
+  // account; 'amount_only' needs the counterparty NAME — and an MT940 line frequently carries
+  // neither, so a payment the owner had explicitly queued sat in the manual pile beside twenty
+  // others. That is the case this exists for.
+  //
+  // It books at the FLAGGED tier, never 'certain', and the distinction is not cosmetic: intent is
+  // a statement about what the owner MEANT to pay, and the bank statement is what happened. The
+  // row is booked, marked "controleer", and is one tap to reverse.
+  //
+  // What makes it safe is the conjunction, and every clause is load-bearing:
+  //   · the shared gates above already required outcome 'auto' — so this invoice is the ONLY
+  //     plausible candidate for the line. Two same-amount siblings tie and stay a human choice;
+  //   · scorePair only raises 'prepared' on an exact amount, a debit not dated BEFORE the
+  //     declaration, and within PREPARED_WINDOW_DAYS;
+  //   · and a printed document number that is not this invoice's still vetoes, exactly as it does
+  //     for the name tier — the bank naming another bill outranks what the owner meant.
+  if (sig.includes("prepared")) {
+    const winnerNum = normalizeRef(m.best.invoiceNumber ?? "");
+    const printed = parseReferenceNumbers(m.transaction.reference);
+    if (printed.some((t) => !(winnerNum === t || winnerNum.includes(t)))) return null;
+    // A counterparty name that is present and points elsewhere is a contradiction too — and the
+    // test for "present" is the LINE, not the similarity score. Keying it on `nameSim > 0` let the
+    // worst case through: "Volledig Andere Leverancier B.V." against an ATAPACK invoice shares no
+    // token at all, so it scores exactly 0 and read as "no name information" — the one shape that
+    // must block hardest. Absent is fine; that absence is the whole reason this tier exists.
+    if ((m.transaction.counterpartName ?? "").trim() && (m.best.nameSim ?? 0) < HIGH_NAME_SIM) {
+      return null;
+    }
+    return "amount_only";
+  }
   return null; // amount + date only, no identity → too weak, stays human
 }
 
@@ -815,7 +920,20 @@ function topReachesAuto(
   const second = Math.max(free[1]?.confidence ?? Number.NEGATIVE_INFINITY, phantomSecond);
   const strongLead = !Number.isFinite(second) || top.confidence - second >= opts.autoMargin;
   const uniqueRef = topHasRef && !free.slice(1).some((c) => c.signals.includes("reference"));
-  return strongLead || uniqueRef;
+  // [PAY-INTENT] The owner's own declaration is a discriminator of the same kind, and it needs the
+  // same waiver for the same reason. Two invoices from one supplier for the same amount both cap at
+  // the identity ceiling (0.95), so the margin between them is a rounding artefact — no confidence
+  // bump can clear autoMargin without also breaking the hierarchy the cap exists to hold. But one of
+  // the two is not like the other: the owner opened its pay sheet, and the app stamped
+  // payment_prepared_at BEFORE the money moved. That is not a better score, it is a different fact,
+  // and it is precisely the disambiguation the bank line failed to provide.
+  // Uniqueness is what makes it decisive, exactly as with a printed number: if the owner queued BOTH
+  // siblings, the declaration says nothing about which one this debit was, and it stays a human
+  // choice. And elimination cannot manufacture it — a phantom second dilutes a numeric lead because
+  // the lead was an artefact of removal, while the stamp was written before any matching ran.
+  const uniquePrepared =
+    top.signals.includes("prepared") && !free.slice(1).some((c) => c.signals.includes("prepared"));
+  return strongLead || uniqueRef || uniquePrepared;
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────────────
