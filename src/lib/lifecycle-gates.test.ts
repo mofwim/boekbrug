@@ -634,3 +634,91 @@ test("[IMPORT-COMPLETE] the byte-hash gate is still the first thing every file m
     );
   }
 });
+
+test("[KAS-AUTO-BOOK] the blanket kas refusal is gone, and what replaced it still refuses", () => {
+  // The line removed was `if (tier === "amount_only" && ownerScheme === "kas") continue` — right in
+  // its premise, wider than its premise in its conclusion, and the width cost a kasstelsel owner
+  // every amount-only booking forever. What replaced it must not be a plain deletion: the refusal
+  // still has to exist for a quarter that has been DECLARED, and for one we could not read.
+  const src = code("src/lib/bank-auto-confirm.ts");
+  assert.doesNotMatch(
+    src, /tier === "amount_only" && ownerScheme === "kas"/,
+    "the blanket refusal is back — every amount-only match is manual again under kasstelsel",
+  );
+  assert.match(src, /decideKasAutoBook/, "the decision is delegated to the module that argues it");
+  assert.match(
+    src, /filingStateOf\(/,
+    "and it is fed the three-state filing answer, not a boolean that cannot say 'unknown'",
+  );
+  assert.match(
+    src, /if \(!verdict\.book\)[\s\S]{0,120}continue/,
+    "a refusal must still SKIP the booking — a verdict computed and then ignored is the defect " +
+      "class this file exists for",
+  );
+});
+
+test("[KAS-AUTO-BOOK] a failed btw_filings read can never read as 'nothing is filed'", () => {
+  // `const { data } = await …` turns an outage into an empty set, and an empty set is the single
+  // answer that authorises booking into a declared quarter. The read is wrapped and the flag is
+  // separate from the rows, all the way to the decision.
+  const src = code("src/lib/bank-auto-confirm.ts");
+  assert.match(src, /filingsReadOk/, "the read's success is carried as its own fact");
+  assert.match(
+    src, /filingsReadOk = false/,
+    "and something must actually SET it false — a flag that is always true is not a flag",
+  );
+  assert.match(
+    src, /isMissingRelation\(message\)/,
+    "with the migration-not-applied case told apart from a failure (that one IS a complete answer)",
+  );
+});
+
+test("[KAS-AUTO-BOOK] the flag the booking leaves behind can be answered both ways", () => {
+  // An amount-only booking is allowed to happen unattended because it stays reversible until the
+  // aangifte. That makes the review real only if the owner can END it: "Ontkoppelen" said the
+  // booking is wrong, and nothing said it was right, so the amber banner could never come down.
+  const client = code("src/app/dashboard/bank/BankClient.tsx");
+  // Anchored on the WIRING, not on the declaration. A first version of this gate matched the bare
+  // word `onMatchChecked`, which the optional prop type satisfies on its own — so removing the call
+  // site AND disabling the button left the gate green. An unreachable button is exactly what this
+  // test is for, and the negative control is what said so.
+  assert.match(
+    client, /onMatchChecked=\{\(\) => markMatchChecked\(/,
+    "the card is actually GIVEN the handler — an optional prop nobody passes renders nothing",
+  );
+  assert.match(
+    client, /\{onMatchChecked && \(\s*<button/,
+    "and the button renders on the strength of that prop, not behind a disabled condition",
+  );
+  assert.match(client, /match-checked/, "and calls the route that clears the flag");
+  // The button must live INSIDE the amount-only warning: a "Klopt, gecontroleerd" anywhere else
+  // answers a question nobody asked.
+  const warn = client.indexOf("amount_only");
+  const btn = client.indexOf("Klopt, gecontroleerd");
+  assert.ok(warn > 0 && btn > warn, "the confirm sits inside the flag it answers");
+  const route = code("src/app/api/bank/match-checked/route.ts");
+  assert.match(route, /auto_match_reason: null/, "which is what clearing it means");
+  assert.match(
+    route, /\.eq\("status", "matched"\)/,
+    "and only on a line that is still linked — confirming a flag on an unlinked line claims " +
+      "something about a booking that no longer exists",
+  );
+});
+
+test("[KAS-AUTO-BOOK] the quarter-close is where the flagged bookings are actually offered", () => {
+  // The permission to book unattended rests on "the owner reviews before filing". A promise with
+  // no mechanism is a promise that is false, so readiness has to count them on the quarter they
+  // land in — after filing, the same correction is a suppletie.
+  const readiness = code("src/lib/readiness.ts");
+  assert.match(readiness, /amountOnlyBookingCount/, "the signal exists");
+  assert.match(
+    readiness, /alleen op bedrag gekoppeld/,
+    "and it is SAID — a signal collected and never rendered is not a review",
+  );
+  const route = code("src/app/api/readiness/route.ts");
+  assert.match(route, /amountOnlyBookingCount/, "and the route actually measures it");
+  assert.match(
+    route, /not\("auto_match_reason", "is", null\)/,
+    "counting the flagged rows themselves, so confirming one clears the risk (counted ⟺ shown)",
+  );
+});
