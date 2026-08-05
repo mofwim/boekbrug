@@ -237,6 +237,31 @@ console.log('═══ safecore creditnota tests ═══\n')
   check('13i. …and it is still blocked', halfRead.ok === false)
 }
 
+// ── 14. [NO-BASE] BTW over an empty base, on the STANDARD gate ──────────────────────
+{
+  // The rate check is guarded by `ex > 0` — with no base there is no rate to compute. The comment
+  // there says the sum check "already covers ex=0 cases meaningfully", and it does not cover this
+  // one: 0 + 21 = 21 holds EXACTLY, so both gates stayed silent and the invoice read CLEAN. That
+  // is all shouldAutoAdvanceInvoice needs to book it — €21 of voorbelasting claimed on a purchase
+  // with no taxable base at all. The creditnota branch has caught this for a while; the standard
+  // one, which almost every invoice takes, did not.
+  const allBtw = evaluateArithmetic({ totalExBtw: 0, btwAmount: 21, totalIncBtw: 21 })
+  check('14a. an invoice that is ENTIRELY btw is blocked', allBtw.ok === false)
+  check('14b. …and says so in words the owner can act on',
+    (allBtw.reason ?? '').includes('zonder grondslag'), JSON.stringify(allBtw.reason))
+  check('14c. …under the same flag consumers already match', (allBtw.flags ?? []).includes('illegal_btw_rate'))
+
+  // Both directions of the fence. A rounding-sized btw over a zero base is float noise, not a
+  // claim — flagging it would put a warning on nothing.
+  check('14d. a cent of float noise over a zero base is not a finding',
+    evaluateArithmetic({ totalExBtw: 0, btwAmount: 0.01, totalIncBtw: 0.01 }).ok === true)
+  // And an ordinary invoice must be untouched by all of this.
+  check('14e. a normal 21% invoice is still clean',
+    evaluateArithmetic({ totalExBtw: 100, btwAmount: 21, totalIncBtw: 121 }).ok === true)
+  check('14f. a 0%-btw invoice with a real base is still clean',
+    evaluateArithmetic({ totalExBtw: 480, btwAmount: 0, totalIncBtw: 480 }).ok === true)
+}
+
 console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')
 {
   check('spacing around a separator folds', normalizeInvoiceNumber('26 / 3958') === normalizeInvoiceNumber('26/3958'))

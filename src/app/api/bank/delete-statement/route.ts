@@ -33,7 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { planStatementReversal } from "@/lib/statement-reversal";
 import { logAuditAction, getClientIP } from "@/lib/audit";
@@ -225,7 +225,38 @@ export async function POST(req: NextRequest) {
     const toRestore = [...toRestoreMap.values()];
 
     // A 'verwerkt' (accountant-locked) invoice blocks the whole reversal — nothing is touched.
-    if (toRestore.some((i) => i.accountant_status === "verwerkt")) {
+    //
+    // [VERWERKT-SCOPE] Over every invoice this delete will TOUCH, not only the ones it un-pays.
+    // The check read `toRestore`, which comes from a query filtered on status='paid' — so a
+    // PARTIALLY paid invoice was invisible to it while being modified all the same: its links
+    // cascade away with the transactions and recompute_invoice_amount_paid lowers its amount_paid
+    // straight afterwards. An accountant-locked invoice was therefore silently changed by exactly
+    // the operation this block exists to refuse, and the owner saw no 409 at all.
+    //
+    // A second read, because the amounts read above cannot answer it: those rows are the paid ones
+    // by construction. Nothing has been written yet, so refusing here still touches nothing.
+    const willTouch = [...new Set([...idSet, ...toRestore.map((i) => i.id)])];
+    let lockedRows: { id: string; accountant_status: string | null }[];
+    try {
+      lockedRows = await fetchAllRowsForIds<{ id: string; accountant_status: string | null }, string>(
+        willTouch,
+        (chunk, from, to) => pipeline
+          .from("invoices")
+          .select("id, accountant_status")
+          .in("id", chunk)
+          .eq("accountant_status", "verwerkt")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    } catch (e) {
+      // Same rule as every other read on this route: never delete a statement while we cannot see
+      // what it would touch. An unreadable lock check is not an absent lock.
+      return NextResponse.json(
+        { error: "reversal_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
+    }
+    if (lockedRows.length > 0) {
       return NextResponse.json({ error: "verwerkt", detail: "Een factuur van dit afschrift is al verwerkt door de boekhouder. Vraag eerst om ontwerken." }, { status: 409 });
     }
 

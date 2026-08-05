@@ -209,6 +209,17 @@ test("[REVERSAL-SET] deleting a statement decides its reversal in the tested pla
       "instalment was cash, and nothing re-derives status, so it stays marked paid while half of " +
       "it is still owed",
   );
+
+  // [VERWERKT-SCOPE] The accountant lock must be checked over every invoice this delete TOUCHES,
+  // not only the ones it un-pays. Reading it off `toRestore` — which comes from a status='paid'
+  // query — left a partially-paid, accountant-locked invoice invisible to the refusal while its
+  // links cascaded away and its amount_paid was recomputed underneath it.
+  assert.doesNotMatch(
+    src, /toRestore\.some\(\(i\) => i\.accountant_status === "verwerkt"\)/,
+    "the verwerkt refusal reads the restore set again, which is status='paid' only — a partially " +
+      "paid invoice the accountant has locked is then modified with no 409 anywhere",
+  );
+  assert.match(src, /const willTouch = /, "the lock is checked over everything the delete touches");
 });
 
 test("[DEDUP-READ-HONEST] the bank-attach refusal is REACHABLE, not merely written", () => {

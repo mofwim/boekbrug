@@ -213,6 +213,18 @@ export function evaluateArithmetic(
         const rh = sumOk ? rateHint(btw, ex) : null
         reasons.push(rh ? `ongeldig BTW-tarief (${rate}%). ${rh}` : `ongeldig BTW-tarief (${rate}%)`)
       }
+    } else if (Math.abs(btw) > 0.02) {
+      // [NO-BASE] The hole the `ex > 0` guard above leaves open — and the one the creditnota branch
+      // below has closed with this exact check for a while.
+      //
+      // With ex = 0 there is no rate to compute, so the check is skipped, and the comment above
+      // says the sum check "already covers ex=0 cases meaningfully". It does not cover the one that
+      // matters: ex 0 · btw 21 · incl 21 satisfies 0 + 21 = 21 exactly. Both gates then stay silent
+      // and the invoice reads CLEAN — which is all shouldAutoAdvanceInvoice needs to book it, with
+      // a €21 voorbelasting claim on a purchase that has no taxable base at all. An invoice whose
+      // entire total is BTW is not an invoice, it is a mis-read.
+      flags.push('illegal_btw_rate')
+      reasons.push('BTW zonder grondslag — controleer de bedragen')
     }
   }
 
