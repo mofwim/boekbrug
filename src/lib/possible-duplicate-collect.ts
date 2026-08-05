@@ -2,8 +2,25 @@
 // [DEDUP-SOFT] I/O glue for the pure assessPossibleDuplicate detector, shared by every
 // ingestion path (manual upload, intake camera, email sync). Kept out of safecore (which
 // stays dependency-free) — the caller injects a scoped "fetch same-total invoices" query,
-// and this runs the pure assessment. Best-effort: a query error degrades to "no flag"
-// (a soft signal must never block or fail an import).
+// and this runs the pure assessment.
+//
+// ── WHO DECIDES WHAT A FAILED READ MEANS ──
+// Not this file. It used to: both lookups were wrapped in `catch { return null }`, and null is
+// the same answer as "no look-alike found". For the three paths that land an invoice in the
+// verify queue that is the right trade — refusing a whole upload batch over one failed read costs
+// more than it buys, and they already carry the failure themselves (a `dedupCheckFailed` flag set
+// inside their own callback, which then writes markDuplicateCheckUnavailable below).
+//
+// But /api/bank/attach-invoice books STRAIGHT TO 'paid'. There is no verify queue behind it and no
+// later moment where anyone looks, so it deliberately throws inside its callbacks and wraps the
+// call in a try/catch that answers 503 "we could not check". That catch could never fire: the
+// throw died here, one stack frame in, and the route carried on and booked the payment. The
+// refusal, its Dutch message, its `code: "dedup_unavailable"` and its force door were all
+// unreachable — a protection written, argued for, and cancelled by a sibling line.
+//
+// So the swallow is now something a caller asks for BY NAME. The default direction is to throw,
+// because that is the one that cannot lose money: a caller who forgets the option gets a failed
+// import instead of a silently double-booked bill.
 
 import {
   assessPossibleDuplicate,
@@ -21,12 +38,22 @@ export async function collectPossibleDuplicate(
   // one case where it does not. Optional so a call site that cannot form the query (no real
   // number) simply keeps the old behaviour instead of failing.
   fetchByNumber?: (invoiceNumber: string) => Promise<PossibleDupCandidate[]>,
+  /**
+   * `bestEffort: true` — a lookup that throws degrades to "no flag" instead of failing the call.
+   *
+   * Only for callers whose invoice lands in the VERIFY QUEUE, where a human still sees it and the
+   * caller marks the failure itself (markDuplicateCheckUnavailable). A caller that books money on
+   * the answer must leave this off, and leaving it off is the default precisely so that forgetting
+   * it fails in the safe direction. See the note at the top of this file.
+   */
+  opts?: { bestEffort?: boolean },
 ): Promise<PossibleDuplicate | null> {
   if (typeof input.totalIncBtw !== "number" || !Number.isFinite(input.totalIncBtw)) return null;
   let rows: PossibleDupCandidate[];
   try {
     rows = await fetchByTotal(input.totalIncBtw);
-  } catch {
+  } catch (e) {
+    if (!opts?.bestEffort) throw e;
     return null;
   }
   let extra: PossibleDupCandidate[] = [];
@@ -34,9 +61,11 @@ export async function collectPossibleDuplicate(
   if (fetchByNumber && number.length > 0) {
     try {
       extra = (await fetchByNumber(number)) ?? [];
-    } catch {
-      // Best-effort, exactly like the by-total read: a failed second query degrades to the
-      // amount-anchored tiers, never to a failed import.
+    } catch (e) {
+      // The corrected-re-issue tier is the ONLY one this lookup feeds, and it is the only tier that
+      // can see a supplier re-sending one invoice number with a different amount. Losing it quietly
+      // is losing that whole class — so the same rule applies here as above, not a softer one.
+      if (!opts?.bestEffort) throw e;
       extra = [];
     }
   }

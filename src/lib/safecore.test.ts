@@ -212,6 +212,29 @@ console.log('═══ safecore creditnota tests ═══\n')
   const w = evaluateArithmetic({ totalExBtw: 100, btwAmount: 5, totalIncBtw: 200 })
   check('13d. present-but-wrong split → still "excl + BTW ≠ totaal"',
     (w.reason ?? '').includes('≠'), JSON.stringify(w.reason))
+
+  // ── The shape this ACTUALLY has once it is stored ──
+  //
+  // Both write paths insert `v.total_ex_btw ?? 0` into a NOT-NULL numeric column, so on every row
+  // the owner has ever seen, the absent split reads back as 0 — never null. 13a–13c above only
+  // ever passed inside the write path; at read time the branch fell through to reconcileHint with
+  // an ex of 0, which reports the whole gross as the excl the invoice "should" have. An owner who
+  // follows that sentence sets their btw to zero and loses the voorbelasting.
+  const stored = evaluateArithmetic({ totalExBtw: 0, btwAmount: 0, totalIncBtw: 8980.05 })
+  check('13e. stored-as-0 split reads as MISSING, like the null it came from',
+    (stored.reason ?? '').includes('uitsplitsing'), JSON.stringify(stored.reason))
+  check('13f. …and never proposes the gross as the excl (that zeroes the btw)',
+    !(stored.reason ?? '').includes('8.980,05'), JSON.stringify(stored.reason))
+  const storedCn = evaluateArithmetic(
+    { totalExBtw: 0, btwAmount: 0, totalIncBtw: -8980.05 }, { isCreditNote: true })
+  check('13g. same on the creditnota gate', (storedCn.reason ?? '').includes('uitsplitsing'))
+
+  // The fence: a REAL contradiction must still be a contradiction. Only ex is missing here, so a
+  // split WAS read — and widening this test must never swallow that.
+  const halfRead = evaluateArithmetic({ totalExBtw: 0, btwAmount: 21, totalIncBtw: 121 })
+  check('13h. half a split is not a missing split', (halfRead.reason ?? '').includes('≠'),
+    JSON.stringify(halfRead.reason))
+  check('13i. …and it is still blocked', halfRead.ok === false)
 }
 
 console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')

@@ -23,6 +23,35 @@
 // one out. reconcile* computes and writes nothing.
 import { reconcileBtw, reconcileHint, rateHint } from './btw-reconcile'
 
+/**
+ * [BREAKDOWN-MISSING] Was a btw split read AT ALL, or is this the "only the printed total came
+ * through" case?
+ *
+ * The obvious test is `== null`, and it was the test for a long time — which made the whole
+ * distinction unreachable on every invoice the owner has ever seen. Both write paths store
+ * `v.total_ex_btw ?? 0` and `v.btw_amount ?? 0` into NOT-NULL numeric columns, so by the time
+ * classifyImportHealth re-runs this gate over a stored row the absent split reads as 0, never null.
+ * null only ever survives inside the write path itself, where the classification object still
+ * carries the reader's undefineds.
+ *
+ * That was not merely a missing message. The branch it fell through to hands reconcileHint an
+ * ex of 0, which computes impliedExcl = the whole total and reports it as the one legal repair:
+ *
+ *     "excl + BTW ≠ totaal. Verschil € 1.335,68.
+ *      Klopt het totaal, dan hoort het bedrag excl. BTW € 1.335,68 te zijn."
+ *
+ * An owner who does what that sentence says sets excl to the full gross and their btw to zero —
+ * deleting the voorbelasting on an invoice whose split we simply failed to read. The app was
+ * giving, in writing, the one instruction that costs money on this axis.
+ *
+ * Safe to widen: this only runs when the sum ALREADY failed, and ex = 0 with btw = 0 over a
+ * non-zero total is not an invoice that exists — a bill you have to pay has a base, or a tax, or
+ * both. So it can never silence a real contradiction; it can only name one correctly.
+ */
+function noSplitRead(v: number | null | undefined): boolean {
+  return v == null || Math.abs(v) < 0.005
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule 1 — arithmetic safety (no silent arithmetic error)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,7 +174,7 @@ export function evaluateArithmetic(
       // "excl + BTW ≠ totaal") from a genuine arithmetic contradiction (a split that IS present
       // but doesn't add up). Same flag, clearer owner-facing reason. The total is still the money;
       // the invoice is held either way until the human supplies the breakdown.
-      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      const breakdownMissing = noSplitRead(c.totalExBtw) && noSplitRead(c.btwAmount)
       // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
       // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
       // arithmetic can often already point at it — and where it cannot, it can at least name the
@@ -254,7 +283,7 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
       flags.push('sum_mismatch')
       // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
       // (both absent) reads clearer than a false "≠ totaal".
-      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      const breakdownMissing = noSplitRead(c.totalExBtw) && noSplitRead(c.btwAmount)
       // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
       // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
       // arithmetic can often already point at it — and where it cannot, it can at least name the

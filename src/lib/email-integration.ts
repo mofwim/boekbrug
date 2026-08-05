@@ -3082,7 +3082,12 @@ export async function syncUserEmails(
               .limit(50)
             if (dedupErr) dedupCheckFailed = true
             return data ?? []
-          }
+          },
+          // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+          // callbacks above already record a failed read in dedupCheckFailed →
+          // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+          // uitvoeren". Leaving this off would abort the message mid-sync over one soft probe.
+          { bestEffort: true },
         )
       }
 

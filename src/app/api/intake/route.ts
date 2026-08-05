@@ -712,7 +712,12 @@ export async function POST(req: NextRequest) {
             .limit(200)
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
-        }
+        },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }
@@ -1414,6 +1419,11 @@ async function handleUblInvoice(
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }

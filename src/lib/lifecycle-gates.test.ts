@@ -77,6 +77,37 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[DEDUP-READ-HONEST] the bank-attach refusal is REACHABLE, not merely written", () => {
+  // The same class again, one level deeper. Every queued path may degrade a failed probe to "no
+  // flag" — a human still sees the invoice. /api/bank/attach-invoice may not: it books straight to
+  // 'paid', so there is no later moment where anyone looks. It therefore throws inside its probe
+  // callbacks and answers 503 "we konden nu niet nakijken".
+  //
+  // For a long time that could not happen. collectPossibleDuplicate caught the throw one frame in
+  // and returned null — which is the same value as "no look-alike found" — so the route carried on
+  // and booked the payment. The 503, its Dutch message, its `dedup_unavailable` code and its force
+  // door were all unreachable.
+  //
+  // Two halves, and BOTH are needed: the callbacks must still throw, and the call must NOT ask for
+  // bestEffort. Either one alone puts the silent double-booking back.
+  const src = code("src/app/api/bank/attach-invoice/route.ts");
+  assert.match(
+    src, /if \(error\) throw new Error\(error\.message\)/,
+    "the duplicate probes no longer throw on a failed read — a { data: null } answer then reads " +
+      "as 'no duplicate' and this route pays the bill a second time",
+  );
+  assert.doesNotMatch(
+    src, /collectPossibleDuplicate\([\s\S]{0,3000}?bestEffort/,
+    "this route asked for bestEffort. That swallows the throw above and returns null, which is " +
+      "the same answer as 'no look-alike found' — on the one path that books money without a " +
+      "human. The 503 below it becomes unreachable code.",
+  );
+  assert.match(
+    src, /code: "dedup_unavailable"/,
+    "the refusal itself is gone — then a failed probe has no honest answer left at all",
+  );
+});
+
 // ─── [DECLARED-INVOICE] The double-payment refusal must precede the booking ───────────
 //
 // The refusal exists for the ATAPACK case: a payment whose description names TWO invoices while

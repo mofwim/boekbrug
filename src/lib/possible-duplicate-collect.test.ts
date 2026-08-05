@@ -56,9 +56,10 @@ async function run() {
     check('de-duplicated by id, still flagged once', r?.match.id === 'same')
   }
 
-  console.log('\n— best-effort: neither lookup may break an import —')
+  console.log('\n— best-effort, ASKED FOR BY NAME: neither lookup may break a queued import —')
   {
-    const r = await collectPossibleDuplicate(input(), none, async () => { throw new Error('db down') })
+    const r = await collectPossibleDuplicate(
+      input(), none, async () => { throw new Error('db down') }, { bestEffort: true })
     check('a failing by-number query degrades to no flag', r === null)
   }
   {
@@ -66,14 +67,38 @@ async function run() {
       input(),
       async () => { throw new Error('db down') },
       async () => [cand()],
+      { bestEffort: true },
     )
-    check('a failing by-total query short-circuits, as before', r === null)
+    check('a failing by-total query short-circuits', r === null)
   }
   {
     const r = await collectPossibleDuplicate(input({ totalIncBtw: null }), none, async () => [cand()])
     check('no usable total → no assessment at all', r === null)
   }
 
+  console.log('\n— and WITHOUT it, a failed read is not an answer —')
+  {
+    // The failure this closes. /api/bank/attach-invoice books straight to 'paid': no verify queue
+    // behind it, no later moment where anyone looks. So it throws inside its callbacks and wraps
+    // the call in a try/catch that answers 503 "we konden nu niet nakijken". That catch could never
+    // fire — the throw died one frame in, here, and null reads as "no look-alike found", so the
+    // route carried on and booked the payment. A second copy of a bill, paid, silently.
+    let threw = false
+    try {
+      await collectPossibleDuplicate(input(), async () => { throw new Error('db down') }, async () => [])
+    } catch { threw = true }
+    check('a failing by-total read propagates when best-effort was NOT asked for', threw)
+
+    let threw2 = false
+    try {
+      await collectPossibleDuplicate(input(), none, async () => { throw new Error('db down') })
+    } catch { threw2 = true }
+    check('…and so does the by-number read, which feeds the corrected-re-issue tier alone', threw2)
+
+    // The direction that matters: forgetting the option must fail the import, never book a
+    // duplicate. That is why the default is to throw and the swallow is opt-in.
+    check('the swallow is opt-in, so forgetting it fails CLOSED', threw && threw2)
+  }
   // ───────────────────────────────────────────────────────────────────────────────────────────
   // [SUPERSEDE] mergePossibleDuplicate writes the keys the queue reads. The id among them is what
   // the "Deze vervangt factuur X" button acts on, and it is the one key that CANNOT be recovered
