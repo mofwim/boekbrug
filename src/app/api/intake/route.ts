@@ -60,6 +60,8 @@ import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
+// [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
+import { readPdfTextLayer } from "@/lib/pdf-text"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -362,7 +364,7 @@ export async function POST(req: NextRequest) {
   let pdfText: string | null = null
   let pdfPages = 0
   if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const read = await readPdf(buffer)
+    const read = await readPdfTextLayer(buffer)
     pdfText = read.text
     pdfPages = read.pages
     const dailyResp = await handleDailySalesPdf(pdfText, buffer, file, user.id, supabase, req, source)
@@ -1218,19 +1220,6 @@ export async function POST(req: NextRequest) {
 // getal is het verschil tussen "één beeld, dus één factuur" en "een stapel die we niet konden
 // lezen" — zie cannotVerifySingleInvoice. `pages: 0` bij een onleesbaar of niet-PDF bestand, wat
 // daar als "geen meerpagina-bestand" telt.
-async function readPdf(buffer: Buffer): Promise<{ text: string | null; pages: number }> {
-  try {
-    const unpdf = await import("unpdf")
-    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
-    const pages = typeof doc.numPages === "number" ? doc.numPages : 0
-    const { text } = await unpdf.extractText(doc, { mergePages: true })
-    const t = (text ?? "").trim()
-    return { text: t.length > 0 ? t : null, pages }
-  } catch {
-    return { text: null, pages: 0 }
-  }
-}
-
 // Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
 // exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the

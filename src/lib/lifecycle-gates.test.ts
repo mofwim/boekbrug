@@ -77,6 +77,37 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[MULTI-INVOICE] the e-mail door asks the same two questions before auto-booking", () => {
+  // One PDF can carry several invoices; exactly one gets read and the others exist nowhere. The
+  // intake door refuses to auto-book on that signal, and on its counterpart — a scanned stack has
+  // no text layer, so the check cannot RUN, and null is not "one invoice, all fine".
+  //
+  // The e-mail door asked neither, and not by decision: the text layer both checks read came from
+  // a helper private to the intake route, so the question was unaskable from there. Suppliers
+  // batch by MAIL more than by camera, so this is the door where it matters most — a wholesaler's
+  // three-invoice PDF booked one of them _auto_verified and lost two bills entirely.
+  const src = code("src/lib/email-integration.ts");
+  for (const call of ["detectMultipleInvoices(", "cannotVerifySingleInvoice(", "readPdfTextLayer("]) {
+    assert.ok(src.includes(call), `the e-mail door no longer calls ${call} — a multi-invoice PDF ` +
+      `then auto-books one invoice and silently drops the rest`);
+  }
+  // Before the gate, not after: these signals work by making classifyImportHealth see a problem,
+  // and shouldAutoAdvanceInvoice reads that health. Merged afterwards they change nothing.
+  assert.ok(
+    src.indexOf("detectMultipleInvoices(") < src.indexOf("shouldAutoAdvanceInvoice("),
+    "the multi-invoice check must run BEFORE the auto-advance gate — it works by holding the " +
+      "invoice through health, so merging it afterwards leaves the booking already decided",
+  );
+
+  // And one reader, not two. The private copy in the intake route is what made the e-mail door
+  // unable to ask; a second copy would put it straight back.
+  assert.doesNotMatch(
+    code("src/app/api/intake/route.ts"), /async function readPdf\(/,
+    "the PDF text reader is private to the intake route again — that is exactly what kept the " +
+      "e-mail door from running the checks that read a text layer",
+  );
+});
+
 // ─── The issuing path: two reads whose empty answer was accepted as an answer ──────────
 //
 // Both are art. 35 surfaces, and both failed OPEN. supabase-js does not throw, so `const { data }`
