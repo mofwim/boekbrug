@@ -125,8 +125,21 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
   const [fout, setFout] = useState<string | null>(null)
 
   const datum = datumNL(vraag.askedAt)
-  const naam = vraag.documentName
-    ?? (vraag.documentMissing ? 'Een bestand dat we niet meer kunnen tonen' : 'Naamloos bestand')
+  // [FACTUURVRAAG] Een vraag gaat over een BESTAND of over een FACTUUR, en de terugvalzin moet dat
+  // zeggen: "naamloos bestand" boven een vraag over een inkoopfactuur van € 2.265 is precies de
+  // verwarring die dit scherm komt opheffen.
+  const isFactuur = vraag.subjectType === 'invoice'
+  const naam = vraag.documentName ?? (
+    isFactuur
+      ? (vraag.documentMissing ? 'Een factuur die we niet meer kunnen tonen' : 'Factuur')
+      : (vraag.documentMissing ? 'Een bestand dat we niet meer kunnen tonen' : 'Naamloos bestand')
+  )
+  // De factuur zelf, met ?focus= — dezelfde deep-link die een melding gebruikt: hij klapt de rij
+  // open, scrollt hem in beeld en licht hem even op. Alleen wanneer wij de factuur ook echt konden
+  // lezen; een link naar een rij die er niet is, is erger dan geen link.
+  const factuurHref = isFactuur && !vraag.documentMissing
+    ? `/dashboard/incoming/manage?focus=${encodeURIComponent(vraag.documentId)}`
+    : null
 
   async function verstuur() {
     const bericht = bouwAntwoordBericht(vraag.documentName, antwoord)
@@ -170,6 +183,17 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
               href={vraag.fileUrl}
               target="_blank"
               rel="noopener noreferrer"
+              style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 600, color: M3.primary, textDecoration: 'none', padding: '4px 2px' }}
+            >
+              Bekijk
+            </a>
+          )}
+          {/* [FACTUURVRAAG] Dezelfde plek, dezelfde belofte: de vraag brengt je bij het ding waar
+              hij over gaat. Zonder dit moet de klant zelf gaan zoeken welke van zijn vierhonderd
+              facturen bedoeld wordt — en dan verhuist het gesprek alsnog naar WhatsApp. */}
+          {factuurHref && (
+            <a
+              href={factuurHref}
               style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 600, color: M3.primary, textDecoration: 'none', padding: '4px 2px' }}
             >
               Bekijk

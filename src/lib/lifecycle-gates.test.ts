@@ -893,3 +893,79 @@ test("[ORIGINEEL] one tab rule, so the count and the list cannot disagree", () =
   const uses = [...client.matchAll(/matchesTab\(inv, filter\)/g)];
   assert.ok(uses.length >= 2, `both call sites must use it (found ${uses.length})`);
 });
+
+test("[FACTUURVRAAG] the counters that were reading zero now have a writer", () => {
+  // Three accountant surfaces READ invoices.accountant_status = 'vraag': the "Open vraag" KPI on
+  // the home, the red dot in Klantenbeheer, and the ❓ todo on the werkboard. No route wrote it.
+  // The DB trigger explicitly permits an accountant to move accountant_status — the permission was
+  // granted and the write path never built, so the single most common bookkeeper question had no
+  // home in the app and its counters read zero forever.
+  const route = code("src/app/api/accountant/invoice-question/route.ts");
+  assert.match(
+    route, /\.from\('invoices'\)\s*\.update\(\{ accountant_status: VRAAG_STATUS \}\)/,
+    "the route must actually set the status the three surfaces count",
+  );
+  // And the TEXT, without which a 'vraag' is the problem this feature exists to replace: the client
+  // sees that something is wrong and not what.
+  assert.match(route, /subject_type: 'invoice'/, "the question is stored against the invoice");
+  assert.match(route, /vraag_text: question/, "with the accountant's actual words");
+  // Text first, status second — a status with no text is worse than no status.
+  assert.ok(
+    route.indexOf("vraag_text: question") < route.indexOf("accountant_status: VRAAG_STATUS"),
+    "the text must be written BEFORE the status, so a half-failure never leaves a question the " +
+      "client can see the existence of but not the content of",
+  );
+  // An empty question is refused rather than stored.
+  assert.match(route, /if \(!question\) return/, "an empty question is not a question");
+});
+
+test("[FACTUURVRAAG] the client can reach the invoice the question is about", () => {
+  // /dashboard/vragen filtered subject_type='document', so an invoice question could never appear
+  // on the one screen built to show questions. Both halves are read, separately — they arrive under
+  // different RLS policies, and one query for both fails entirely until the second policy ships.
+  const page = code("src/app/dashboard/vragen/page.tsx");
+  assert.match(page, /\.eq\('subject_type', 'invoice'\)/, "invoice questions are read");
+  assert.match(page, /buildOpenInvoiceVragen\(/, "and built into the list");
+  assert.match(
+    page, /if \(invStatusErr\) loadFailed = true/,
+    "[NO-SILENT-EMPTY] a failed read of this half must not read as 'no questions' either",
+  );
+
+  const client = code("src/app/dashboard/vragen/VragenClient.tsx");
+  assert.match(
+    client, /\/dashboard\/incoming\/manage\?focus=/,
+    "the question must link to the invoice itself — otherwise the client hunts through four " +
+      "hundred rows for the one being asked about, and the conversation moves to WhatsApp",
+  );
+  assert.match(
+    client, /!vraag\.documentMissing/,
+    "and only when the invoice was actually readable: a link to a row that is not there is worse " +
+      "than no link",
+  );
+});
+
+test("[FACTUURVRAAG] the accountant asks from where they are looking", () => {
+  // The button was a bare <a href="/dashboard/accountant/opvragen">: it navigated AWAY from the
+  // invoice to a quarter-level screen for missing DOCUMENTS, carrying nothing — not the invoice,
+  // not the client, not the doubt. That is where the loop ended.
+  const src = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.doesNotMatch(
+    src, /href="\/dashboard\/accountant\/opvragen"/,
+    "the row's 'klopt niet' action navigates away again, carrying no invoice",
+  );
+  assert.match(src, /invoice-question/, "it posts the question about THIS invoice");
+  // Anchored on the question's OWN body, not on the words appearing somewhere in the file. The
+  // first version asserted `clientId: rij.clientId` file-wide and stayed green when the question
+  // call lost it — because the CONFIRM call three functions up passes the same pair. A gate that
+  // can be satisfied by a different call site is not guarding this one.
+  const body = /invoice-question[\s\S]{0,400}?body: JSON\.stringify\(\{([^}]*)\}\)/.exec(src);
+  assert.ok(body, "the question's request body must be findable next to its URL");
+  assert.match(
+    body[1], /invoiceId: rij\.id/,
+    "with the invoice id — the whole difference between a question and a change of screen",
+  );
+  assert.match(
+    body[1], /clientId: rij\.clientId/,
+    "and the client it belongs to, so a question can never land in another client's books",
+  );
+});

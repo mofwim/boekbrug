@@ -9,6 +9,8 @@ import {
   bouwAntwoordBericht,
   vragenBannerTekst,
   VRAAG_STATUS,
+  buildOpenInvoiceVragen,
+  invoiceLabel,
 } from "./vragen";
 
 const doc = (id: string, name: string | null, trashed = false) => ({
@@ -121,3 +123,87 @@ test("de klant kan een vraag niet zelf afvinken — die weg bestaat hier niet", 
     );
   }
 });
+
+// ─── [FACTUURVRAAG] Vragen over een FACTUUR ──────────────────────────────────
+//
+// De boekhouder kon een factuur al op 'vraag' zetten in de zin dat drie van zijn schermen die
+// status TELDEN — de KPI "Open vraag", de rode stip bij een klant, het ❓-punt op het werkboard —
+// terwijl geen enkele route hem schreef. Dit is de helft die ontbrak, met dezelfde eerlijkheids-
+// regels als de documentkant: niets verzinnen, niets stil weglaten.
+
+test('[FACTUURVRAAG] een factuurvraag komt terug met de factuur erbij', () => {
+  const open = buildOpenInvoiceVragen(
+    [{ subject_id: 'i1', status: VRAAG_STATUS, vraag_text: 'Is dit zakelijk of privé?', updated_at: '2026-08-01T10:00:00Z' }],
+    [{ id: 'i1', invoice_number: '26302050', client_name: 'ATAPACK Cash & Carry B.V.', total_inc_btw: 2265.41, invoice_date: '2026-06-01' }],
+  )
+  assert.equal(open.length, 1)
+  assert.equal(open[0].subjectType, 'invoice')
+  assert.equal(open[0].question, 'Is dit zakelijk of privé?')
+  assert.equal(open[0].invoice?.invoice_number, '26302050')
+})
+
+test('[FACTUURVRAAG] de factuur wordt genoemd zoals de eigenaar hem herkent', () => {
+  // "Je factuur" is niets waard voor iemand met vierhonderd facturen. De leverancier is wat hij
+  // het eerst herkent, het nummer maakt het er precies één, en het bedrag maakt dat hij hem zich
+  // herinnert.
+  const label = invoiceLabel({
+    id: 'i1', invoice_number: '26302050', client_name: 'ATAPACK Cash & Carry B.V.',
+    total_inc_btw: 2265.41, invoice_date: '2026-06-01',
+  })
+  assert.match(label, /ATAPACK/)
+  assert.match(label, /26302050/)
+  assert.match(label, /2\.265,41/)
+
+  // Elk deel alleen als wij het ECHT hebben — nooit een plaatshouder die als gegeven leest.
+  assert.equal(invoiceLabel({ id: 'x', invoice_number: null, client_name: null, total_inc_btw: null, invoice_date: null }), 'Factuur')
+  assert.equal(invoiceLabel({ id: 'x', invoice_number: null, client_name: 'Sligro', total_inc_btw: null, invoice_date: null }), 'Sligro')
+  // Een creditnota is negatief; het label toont de omvang, niet een minteken dat als typefout leest.
+  assert.match(invoiceLabel({ id: 'x', invoice_number: 'CR1', client_name: null, total_inc_btw: -50, invoice_date: null }), /50,00/)
+})
+
+test('[FACTUURVRAAG] een vraag over een factuur die wij niet kunnen lezen verdwijnt niet stil', () => {
+  // Dezelfde regel als aan de documentkant: hem verbergen is ook een bewering. De vraag staat
+  // open, en het scherm moet kunnen zeggen dat wij het onderwerp niet meer kunnen tonen.
+  const open = buildOpenInvoiceVragen(
+    [{ subject_id: 'weg', status: VRAAG_STATUS, vraag_text: 'Welke klus was dit?', updated_at: '2026-08-01T10:00:00Z' }],
+    [],
+  )
+  assert.equal(open.length, 1)
+  assert.equal(open[0].documentMissing, true)
+  assert.equal(open[0].invoice, null)
+  assert.equal(open[0].documentName, null)
+})
+
+test('[FACTUURVRAAG] alleen status vraag telt, en oudste eerst', () => {
+  const open = buildOpenInvoiceVragen(
+    [
+      { subject_id: 'nieuw', status: VRAAG_STATUS, vraag_text: 'b', updated_at: '2026-08-05T10:00:00Z' },
+      { subject_id: 'verwerkt', status: 'verwerkt', vraag_text: null, updated_at: '2026-08-01T10:00:00Z' },
+      { subject_id: 'oud', status: VRAAG_STATUS, vraag_text: 'a', updated_at: '2026-07-01T10:00:00Z' },
+      { subject_id: 'zonderdatum', status: VRAAG_STATUS, vraag_text: 'c', updated_at: null },
+    ],
+    [],
+  )
+  assert.deepEqual(open.map((v) => v.documentId), ['oud', 'nieuw', 'zonderdatum'],
+    'verwerkt is geen vraag; oudste eerst; zonder datum achteraan')
+})
+
+test('[FACTUURVRAAG] een lege toelichting wordt niet als vraag verzonnen', () => {
+  const open = buildOpenInvoiceVragen(
+    [{ subject_id: 'i1', status: VRAAG_STATUS, vraag_text: '   ', updated_at: null }],
+    [{ id: 'i1', invoice_number: '1', client_name: 'X', total_inc_btw: 1, invoice_date: null }],
+  )
+  assert.equal(open[0].question, null, 'het scherm zegt dan "geen toelichting", niet een verzonnen zin')
+})
+
+test('[FACTUURVRAAG] de documentkant blijft precies wat hij was', () => {
+  // Deze uitbreiding mag de bestaande helft niet verschuiven: subjectType wordt gezet, verder
+  // verandert er niets aan wat buildOpenVragen teruggeeft.
+  const open = buildOpenVragen(
+    [{ subject_id: 'd1', status: VRAAG_STATUS, vraag_text: 'Mis ik hier een bon?', updated_at: '2026-08-01T10:00:00Z' }],
+    [{ id: 'd1', file_name: 'bon.pdf', trashed: false }],
+  )
+  assert.equal(open[0].subjectType, 'document')
+  assert.equal(open[0].documentName, 'bon.pdf')
+  assert.equal(open[0].invoice, undefined, 'een documentvraag draagt geen factuur mee')
+})

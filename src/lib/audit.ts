@@ -61,6 +61,11 @@ export type AuditAction =
   // "when did the proof for this line arrive, and was it before or after the aangifte" has no
   // other way to know.
   | 'invoice.document_attached'       // ← [ORIGINEEL] an original was attached to an existing invoice
+  // [FACTUURVRAAG] The accountant asked their client about ONE invoice. Its own action because it
+  // is the only accountant write that is a QUESTION rather than an assertion about the books — and
+  // because a status that says 'vraag' with no record of who asked, when, or about which client's
+  // administration is the shape this whole feature exists to replace.
+  | 'accountant.invoice_question'     // ← [FACTUURVRAAG] accountant asked the client about one invoice
   // [BANK-IGNORE-AUDIT] Ignoring a bank line moves a financial record out of every queue that
   // could still explain it — the matcher, auto-confirm, auto-categorize, the nightly sweep, and
   // every categorize read. It also deletes the [VOORBELASTING-RISK] warning for that line, since

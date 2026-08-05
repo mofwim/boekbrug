@@ -23,6 +23,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
+// [BACK-CLOSES] De vraag-sheet hoort op de terugstapel: op een telefoon is 'terug' hoe je een
+// overlay sluit, en zonder dit verlaat die tik de hele pagina — inclusief de plek in de stapel.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 
 export interface TeBevestigen {
@@ -64,6 +67,38 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
   const [bezig, setBezig] = useState<string | null>(null)
   const [klaar, setKlaar] = useState<Record<string, boolean>>({})
   const [fout, setFout] = useState<Record<string, string>>({})
+  // [FACTUURVRAAG] Welke rij een vraag krijgt, en de tekst. Eén tegelijk: een vraag stellen is een
+  // zin schrijven, en twee half-getypte vragen naast elkaar leveren er meestal nul op.
+  const [vraagVoor, setVraagVoor] = useState<TeBevestigen | null>(null)
+  const [vraagTekst, setVraagTekst] = useState('')
+  const [vraagBezig, setVraagBezig] = useState(false)
+  const [vraagFout, setVraagFout] = useState<string | null>(null)
+  const [gevraagd, setGevraagd] = useState<Record<string, boolean>>({})
+  useCloseOnBack(!!vraagVoor, () => setVraagVoor(null))
+
+  async function stelVraag() {
+    const rij = vraagVoor
+    const tekst = vraagTekst.trim()
+    if (!rij || !tekst) return
+    setVraagBezig(true); setVraagFout(null)
+    try {
+      const res = await fetch('/api/accountant/invoice-question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: rij.clientId, invoiceId: rij.id, question: tekst }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'De vraag kon niet worden verstuurd.')
+      setGevraagd((g) => ({ ...g, [rij.id]: true }))
+      setVraagVoor(null)
+      setVraagTekst('')
+      router.refresh()
+    } catch (e) {
+      setVraagFout(e instanceof Error ? e.message : 'Er ging iets mis.')
+    } finally {
+      setVraagBezig(false)
+    }
+  }
 
   async function bevestig(rij: TeBevestigen) {
     setBezig(rij.id)
@@ -237,25 +272,117 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
               >
                 {isKlaar ? 'Bevestigd' : bezig === rij.id ? 'Bezig…' : 'Bevestigen'}
               </button>
-              {!isKlaar && (
-                <a
-                  href="/dashboard/accountant/opvragen"
+              {/* [FACTUURVRAAG] Was een kale link naar /opvragen: die navigeert wég van de factuur
+                  naar een kwartaalscherm voor ontbrekende STUKKEN, en neemt niets mee — niet de
+                  factuur, niet de klant, niet wat er mis was. De boekhouder keek naar ATAPACK
+                  26302050 met twijfel over de BTW, tikte "navragen", en stond op een pagina die
+                  vroeg wélke klant en wélke ontbrekende documenten. Daar eindigde het, en het
+                  gesprek ging verder op WhatsApp.
+                  Nu stelt hij de vraag hier, over déze factuur. */}
+              {!isKlaar && gevraagd[rij.id] && (
+                <span style={{
+                  padding: '9px 16px', borderRadius: R.full, fontSize: 14,
+                  background: M3.warnContainer ?? M3.surfaceVariant, color: M3.onSurfaceVariant,
+                }}>
+                  Vraag verstuurd
+                </span>
+              )}
+              {!isKlaar && !gevraagd[rij.id] && (
+                <button
+                  onClick={() => { setVraagVoor(rij); setVraagTekst('') }}
                   style={{
                     padding: '9px 16px',
                     border: `1px solid ${M3.outline}`,
                     borderRadius: R.full,
                     fontSize: 14,
                     color: M3.onSurfaceVariant,
-                    textDecoration: 'none',
+                    background: M3.surface,
+                    cursor: 'pointer',
                   }}
                 >
-                  Klopt niet — navragen
-                </a>
+                  Klopt niet — vraag stellen
+                </button>
               )}
             </div>
           </section>
         )
       })}
+
+      {/* [FACTUURVRAAG] De vraag zelf. Eén veld, en het zegt waar de vraag over gaat — de klant
+          krijgt hem met leverancier, factuurnummer en bedrag erbij, en één tik brengt hem naar
+          precies die regel. Dat is het verschil met de kale link die hier stond. */}
+      {vraagVoor && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => { if (!vraagBezig) setVraagVoor(null) }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.32)', zIndex: 60,
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: M3.surface, borderRadius: `${R.lg}px ${R.lg}px 0 0`,
+              width: '100%', maxWidth: COLUMN.work, padding: '20px 18px 24px', boxShadow: EL1,
+            }}
+          >
+            <div style={{ fontSize: 17, fontWeight: 600, color: M3.onSurface }}>
+              Vraag over deze factuur
+            </div>
+            <div style={{ fontSize: 13, color: M3.onSurfaceVariant, marginTop: 4, marginBottom: 14 }}>
+              {vraagVoor.leverancier}
+              {vraagVoor.factuurnummer ? ` · factuur ${vraagVoor.factuurnummer}` : ''}
+              {` · ${euro(vraagVoor.totaalInc)}`}
+              {` — gaat naar ${vraagVoor.clientNaam}`}
+            </div>
+            <textarea
+              value={vraagTekst}
+              onChange={(e) => setVraagTekst(e.target.value.slice(0, 500))}
+              rows={4}
+              autoFocus
+              placeholder="Bijvoorbeeld: is dit zakelijk of privé? Of: klopt het btw-bedrag hier?"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '10px 12px',
+                border: `1px solid ${M3.outline}`, borderRadius: R.md,
+                fontSize: 14, fontFamily: 'inherit', resize: 'vertical', color: M3.onSurface,
+              }}
+            />
+            <div style={{ fontSize: 12, color: M3.onSurfaceVariant, marginTop: 6 }}>
+              {vraagTekst.trim().length}/500 · je klant krijgt een melding en kan hier antwoorden
+            </div>
+            {vraagFout && (
+              <div style={{ fontSize: 13, color: M3.error, marginTop: 10 }}>{vraagFout}</div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setVraagVoor(null)}
+                disabled={vraagBezig}
+                style={{
+                  padding: '9px 16px', border: `1px solid ${M3.outline}`, borderRadius: R.full,
+                  fontSize: 14, background: M3.surface, color: M3.onSurfaceVariant,
+                  cursor: vraagBezig ? 'default' : 'pointer',
+                }}
+              >
+                Annuleren
+              </button>
+              <button
+                onClick={() => void stelVraag()}
+                disabled={vraagBezig || vraagTekst.trim().length === 0}
+                style={{
+                  padding: '9px 18px', border: 'none', borderRadius: R.full, fontSize: 14, fontWeight: 500,
+                  background: vraagTekst.trim().length === 0 ? M3.surfaceVariant : M3.primary,
+                  color: vraagTekst.trim().length === 0 ? M3.onSurfaceVariant : M3.onPrimary,
+                  cursor: vraagBezig || vraagTekst.trim().length === 0 ? 'default' : 'pointer',
+                }}
+              >
+                {vraagBezig ? 'Bezig…' : 'Vraag versturen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

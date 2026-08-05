@@ -1179,7 +1179,14 @@ test("[RENDER-GATE] the confirm queue renders, and never hides what the reader w
   assert.match(html, /Dit konden wij niet zeker lezen: het bedrag · de datum/);
   // And the sentence that keeps the liability where the law puts it (art. 52 AWR).
   assert.match(html, /art\. 52 AWR/, "the responsibility is named on the screen, not only in the terms");
-  assert.match(html, /Klopt niet — navragen/, "the alternative to confirming is one tap away");
+  // [FACTUURVRAAG] The alternative to confirming is one tap away — and it is now a QUESTION about
+  // this invoice, not a link away to a quarter-level screen for missing documents that carried
+  // neither the invoice nor the client.
+  assert.match(html, /Klopt niet — vraag stellen/, "the alternative to confirming is one tap away");
+  assert.doesNotMatch(
+    html, /href="\/dashboard\/accountant\/opvragen"/,
+    "the row's alternative navigates away again, carrying nothing about the invoice in front of it",
+  );
 
   // No mandate is a different sentence from an empty queue — one sends the accountant to their
   // client, the other means there is genuinely nothing to do.
