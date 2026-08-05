@@ -159,3 +159,38 @@ test("[WAARSCHUWING] §5.7.5 describes a mechanism, not an intention", () => {
     "…including which way it fails when the mail does not go out",
   );
 });
+
+test("[BEVESTIGEN] §5.10 is a SEPARATE permission, and says so first", () => {
+  // The whole design rests on these being two decisions. A clause that reads as "and your
+  // accountant can also do X" would let a client who wanted their books signed off discover
+  // invoices going out under their VAT number.
+  assert.ok(
+    voorwaarden.includes("### 5.10 Je boekhouder je inkoopfacturen laten bevestigen"),
+    "§5.10 exists, next to §5.9 rather than inside it",
+  );
+  assert.match(voorwaarden, /het is een \*\*aparte\*\* machtiging/, "and the separateness is the first thing said");
+  assert.match(voorwaarden, /Je zet ze los van elkaar aan en los van elkaar uit/, "…with both directions spelled out");
+});
+
+test("[BEVESTIGEN] the clause is honest about the missing legal cover", () => {
+  // Art. 35 lid 1 covers issuing an invoice. NOTHING covers confirming an administration, and
+  // art. 52 AWR leaves that duty with the entrepreneur. Saying so is what makes the permission
+  // defensible rather than a quiet transfer of liability.
+  assert.match(
+    voorwaarden,
+    /géén bepaling zoals artikel 35 lid 1 Wet OB/,
+    "the absence of cover is stated, not glossed over",
+  );
+  assert.match(voorwaarden, /artikel 52 AWR/, "and the article that keeps the duty with the client");
+  assert.match(voorwaarden, /dus jouw boeking/, "…in plain words, not only by article number");
+});
+
+test("[BEVESTIGEN] the boundary and the trail are both published", () => {
+  assert.match(
+    voorwaarden,
+    /geen bedragen, datums of btw-tarieven wijzigen/,
+    "what the accountant cannot do — enforced by the DB trigger, promised here",
+  );
+  assert.match(voorwaarden, /staat wie hem heeft bevestigd/, "confirmed_by is a promise, not an internal column");
+  assert.match(voorwaarden, /Wat al bevestigd is blijft bevestigd/, "revoking does not unbook the past");
+});

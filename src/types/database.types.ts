@@ -90,6 +90,9 @@ export type Database = {
           accountant_id: string
           granted_at: string
           id: string
+          // [BEVESTIGEN] 'facturen' | 'bevestigen' — two separate decisions by the client, one
+          // house. See accountant_confirm_mandate.sql.
+          kind: string
           revoked_at: string | null
           revoked_by: string | null
           zzper_id: string
@@ -98,6 +101,7 @@ export type Database = {
           accountant_id: string
           granted_at?: string
           id?: string
+          kind?: string
           revoked_at?: string | null
           revoked_by?: string | null
           zzper_id: string
@@ -106,6 +110,7 @@ export type Database = {
           accountant_id?: string
           granted_at?: string
           id?: string
+          kind?: string
           revoked_at?: string | null
           revoked_by?: string | null
           zzper_id?: string
@@ -1443,6 +1448,7 @@ export type Database = {
       }
       invoices: {
         Row: {
+          confirmed_by: string | null
           created_by: string | null
           accountant_note: string | null
           accountant_status: string | null
@@ -1495,6 +1501,7 @@ export type Database = {
           vendor_iban: string | null
         }
         Insert: {
+          confirmed_by?: string | null
           created_by?: string | null
           accountant_note?: string | null
           accountant_status?: string | null
@@ -1546,6 +1553,7 @@ export type Database = {
           vendor_iban?: string | null
         }
         Update: {
+          confirmed_by?: string | null
           created_by?: string | null
           accountant_note?: string | null
           accountant_status?: string | null

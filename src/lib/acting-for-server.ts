@@ -15,7 +15,7 @@ import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveActingFor, type ActingFor, type MemberLink } from "@/lib/acting-for";
-import { resolveAccountantActing, type MandateRow } from "@/lib/accountant-mandate";
+import { resolveAccountantActing, canConfirmForClient, type MandateRow } from "@/lib/accountant-mandate";
 
 /**
  * Who is acting here, on whose behalf? Returns `null` when nobody is logged in.
@@ -112,6 +112,55 @@ export async function getActingForClient(
   ]);
 
   return resolveAccountantActing(
+    user.id,
+    clientId,
+    {
+      callerRole: (profile as { role?: string } | null)?.role ?? null,
+      linked: Boolean(link),
+      mandate: (mandate as MandateRow | null) ?? null,
+    },
+    Date.now(),
+  );
+}
+
+/**
+ * [BEVESTIGEN] May this session confirm incoming invoices for this client?
+ *
+ * A boolean, not an ActingFor — see canConfirmForClient() for why the two permissions have
+ * different shapes. Confirming does not move ownership of anything; it records a signature.
+ *
+ * The mandate row is fetched WITHOUT filtering on kind, and the pure function decides. That is
+ * deliberate: filtering here would mean the kind rule lived in a query instead of in a tested
+ * function, and the one place it must never be is "somewhere in a query".
+ */
+export async function canConfirmForClientServer(clientId: string | null | undefined): Promise<boolean> {
+  if (!clientId) return false;
+
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || user.id === clientId) return false;
+
+  const [{ data: profile }, { data: link }, { data: mandate }] = await Promise.all([
+    supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+    supabase
+      .from("accountant_clients")
+      .select("id")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", clientId)
+      .maybeSingle(),
+    // [DEPLOY-SAFE] `kind` only exists after accountant_confirm_mandate.sql. Until then every row
+    // reads as 'facturen' (mandateKindOf) and nobody can confirm — the feature is simply off.
+    supabase
+      .from("accountant_invoice_mandates")
+      .select("zzper_id, accountant_id, kind, revoked_at")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", clientId)
+      .eq("kind", "bevestigen")
+      .is("revoked_at", null)
+      .maybeSingle(),
+  ]);
+
+  return canConfirmForClient(
     user.id,
     clientId,
     {

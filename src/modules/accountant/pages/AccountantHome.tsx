@@ -433,6 +433,8 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             <ToolTile icon="schedule_send" tint="#E37400" label="Openstaand" onClick={() => router.push('/dashboard/accountant/debiteuren')} />
             {/* [OPVRAGEN] De ontbrekende stukken opvragen — geen mandaat nodig, alleen een koppeling. */}
             <ToolTile icon="forward_to_inbox" tint="#1967D2" label="Opvragen" onClick={() => router.push('/dashboard/accountant/opvragen')} />
+            {/* [BEVESTIGEN] De stukken die het kwartaal van een klant tegenhouden. */}
+            <ToolTile icon="fact_check" tint="#188038" label="Bevestigen" onClick={() => router.push('/dashboard/accountant/bevestigen')} />
             <ToolTile icon="folder_open" tint="#5F6368" label="Bestanden" onClick={() => router.push('/dashboard/bestanden')} />
             <ToolTile icon="settings" tint="#7B1FA2" label="Instellingen" onClick={() => router.push('/dashboard/settings')} />
           </div>

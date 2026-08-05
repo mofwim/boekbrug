@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { isMandateActive, resolveAccountantActing, type MandateFacts } from "./accountant-mandate";
+import { isMandateActive, resolveAccountantActing, type MandateFacts, type MandateRow } from "./accountant-mandate";
 import { canAccessInvoice, canSendInvoice, canAccessScreen, invoiceOwnerId, invoiceCreatedBy, invoiceReadFilter } from "./acting-for";
 
 const ACCOUNTANT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -91,4 +91,51 @@ test("acting for a client opens the invoice screens and nothing else", () => {
   assert.equal(canAccessScreen(acting, "/dashboard/verkoop"), false);
   // No prefix bleed: a path that merely starts the same is not a subpath.
   assert.equal(canAccessScreen(acting, "/dashboard/accountant/factuurregels"), false);
+});
+
+// ── [BEVESTIGEN] De tweede machtiging ────────────────────────────────────────
+import { canConfirmForClient, mandateKindOf } from "./accountant-mandate";
+
+function bevestigFacts(): MandateFacts {
+  return {
+    callerRole: "accountant",
+    linked: true,
+    mandate: { zzper_id: CLIENT, accountant_id: ACCOUNTANT, kind: "bevestigen", revoked_at: null },
+  };
+}
+
+test("[BEVESTIGEN] a confirm mandate lets the accountant confirm — and nothing else", () => {
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, bevestigFacts(), NOW), true);
+  // The load-bearing separation: a confirm mandate is NOT permission to invoice in their name.
+  // Reading it as one would let a client who only wanted their books signed off discover invoices
+  // going out under their VAT number.
+  assert.equal(resolveAccountantActing(ACCOUNTANT, CLIENT, bevestigFacts(), NOW), null);
+});
+
+test("[BEVESTIGEN] and an invoice mandate is not permission to sign off the books", () => {
+  // The mirror. Art. 35 lid 1 covers issuing; nothing covers confirming, and art. 52 AWR leaves
+  // the administration duty with the entrepreneur — so it cannot be inherited from the other one.
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, live(), NOW), false);
+  assert.ok(resolveAccountantActing(ACCOUNTANT, CLIENT, live(), NOW));
+});
+
+test("[BEVESTIGEN] a row from before the kind column reads as 'facturen'", () => {
+  // Every mandate granted before this migration. It must keep working, and it must NOT silently
+  // become a confirm mandate.
+  const oud: MandateRow = { zzper_id: CLIENT, accountant_id: ACCOUNTANT, revoked_at: null };
+  assert.equal(mandateKindOf(oud), "facturen");
+  assert.equal(mandateKindOf({ ...oud, kind: null }), "facturen");
+  assert.equal(mandateKindOf({ ...oud, kind: "iets-nieuws" }), "facturen", "an unknown kind never grants the wider one");
+});
+
+test("[BEVESTIGEN] every other refusal applies here too", () => {
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, { ...bevestigFacts(), callerRole: "zzper" }, NOW), false);
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, { ...bevestigFacts(), linked: false }, NOW), false);
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, { ...bevestigFacts(), mandate: null }, NOW), false);
+  assert.equal(canConfirmForClient(ACCOUNTANT, ACCOUNTANT, bevestigFacts(), NOW), false, "not their own books");
+  const ingetrokken = {
+    ...bevestigFacts(),
+    mandate: { zzper_id: CLIENT, accountant_id: ACCOUNTANT, kind: "bevestigen", revoked_at: "2026-08-04T11:00:00Z" },
+  };
+  assert.equal(canConfirmForClient(ACCOUNTANT, CLIENT, ingetrokken, NOW), false, "revoking lands immediately");
 });

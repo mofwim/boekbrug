@@ -58,6 +58,13 @@ export async function POST(req: NextRequest) {
   }
   // Bij precies één koppeling hoeft de pagina niets mee te sturen; bij meer moet ze kiezen.
   const gevraagd = await req.json().catch(() => null)
+
+  // [BEVESTIGEN] Welke machtiging. Twee losse besluiten van de klant, nooit één — een onbekende
+  // waarde wordt NIET stilzwijgend 'facturen', want dat is de ruimere van de twee.
+  const soort = typeof gevraagd?.kind === 'string' ? gevraagd.kind : 'facturen'
+  if (soort !== 'facturen' && soort !== 'bevestigen') {
+    return NextResponse.json({ error: 'Onbekende machtiging.' }, { status: 400 })
+  }
   const doel =
     typeof gevraagd?.accountantId === 'string' && gevraagd.accountantId
       ? gevraagd.accountantId
@@ -77,13 +84,14 @@ export async function POST(req: NextRequest) {
     .select('id')
     .eq('zzper_id', user.id)
     .eq('accountant_id', doel)
+    .eq('kind', soort)
     .is('revoked_at', null)
     .maybeSingle()
   if (bestaand) return NextResponse.json({ ok: true, alVerleend: true })
 
   const { data: mandaat, error } = await pipeline
     .from('accountant_invoice_mandates')
-    .insert({ zzper_id: user.id, accountant_id: doel })
+    .insert({ zzper_id: user.id, accountant_id: doel, kind: soort })
     .select('id')
     .single()
 
@@ -98,11 +106,17 @@ export async function POST(req: NextRequest) {
     const klantNaam = await naamVan(pipeline, user.id, 'Een klant')
     await pipeline.from('notifications').insert({
       user_id: doel,
-      title: 'Je mag facturen versturen namens een klant',
-      body: `${klantNaam} heeft je gemachtigd om facturen op zijn naam uit te reiken. De facturen krijgen zijn nummerreeks en zijn BTW-nummer.`,
+      title:
+        soort === 'bevestigen'
+          ? 'Je mag inkoopfacturen bevestigen voor een klant'
+          : 'Je mag facturen versturen namens een klant',
+      body:
+        soort === 'bevestigen'
+          ? `${klantNaam} heeft je gemachtigd om zijn inkoopfacturen te bevestigen, zodat zijn kwartaal kan sluiten. Hij blijft er zelf verantwoordelijk voor — bij elke bevestiging staat jouw naam.`
+          : `${klantNaam} heeft je gemachtigd om facturen op zijn naam uit te reiken. De facturen krijgen zijn nummerreeks en zijn BTW-nummer.`,
       type: 'invoice',
       read: false,
-      link: '/dashboard/accountant/factuur',
+      link: soort === 'bevestigen' ? '/dashboard/accountant/bevestigen' : '/dashboard/accountant/factuur',
     })
   } catch (e) {
     console.error('[MANDAAT] melding aan de boekhouder mislukt', e)
@@ -113,7 +127,7 @@ export async function POST(req: NextRequest) {
     action: 'accountant.invoice_mandate_granted',
     entityType: 'accountant_invoice_mandate',
     entityId: mandaat.id,
-    newValue: { accountant_id: doel, zzper_id: user.id, initiated_by: 'client' },
+    newValue: { accountant_id: doel, zzper_id: user.id, kind: soort, initiated_by: 'client' },
     ipAddress: getClientIP(req),
   })
 
@@ -128,6 +142,10 @@ export async function DELETE(req: NextRequest) {
 
   const gevraagd = await req.json().catch(() => null)
   const tegenpartij = typeof gevraagd?.otherId === 'string' ? gevraagd.otherId : null
+  // [BEVESTIGEN] Eén soort intrekken mag de andere niet meenemen. Zonder `kind` trekt deze route
+  // ALLES in — dat is bruikbaar (de knop "haal alles weg"), maar het mag nooit per ongeluk zijn.
+  const soort =
+    gevraagd?.kind === 'facturen' || gevraagd?.kind === 'bevestigen' ? gevraagd.kind : null
 
   const pipeline = createPipelineClient()
 
@@ -135,12 +153,13 @@ export async function DELETE(req: NextRequest) {
   // knop drukt bepaalt niet WELKE kant hij is; de rij bepaalt dat.
   let vraag = pipeline
     .from('accountant_invoice_mandates')
-    .select('id, zzper_id, accountant_id')
+    .select('id, zzper_id, accountant_id, kind')
     .is('revoked_at', null)
     .or(`zzper_id.eq.${user.id},accountant_id.eq.${user.id}`)
   if (tegenpartij) {
     vraag = vraag.or(`zzper_id.eq.${tegenpartij},accountant_id.eq.${tegenpartij}`)
   }
+  if (soort) vraag = vraag.eq('kind', soort)
   const { data: mandaten } = await vraag
 
   // De .or() hierboven is een OF over de hele rij, dus een rij tussen twee ANDERE mensen zou er in
@@ -199,6 +218,7 @@ export async function DELETE(req: NextRequest) {
       oldValue: {
         accountant_id: m.accountant_id,
         zzper_id: m.zzper_id,
+        kind: m.kind ?? 'facturen',
         initiated_by: m.zzper_id === user.id ? 'client' : 'accountant',
       },
       ipAddress: getClientIP(req),

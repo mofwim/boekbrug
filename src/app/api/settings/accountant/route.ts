@@ -35,18 +35,22 @@ export async function GET() {
         .select('full_name, company_name, email')
         .eq('id', accountantId)
         .single(),
+      // [BEVESTIGEN] Beide soorten in één query — de klant moet op één scherm zien wat hij
+      // precies heeft weggegeven, en dat zijn twee losse dingen.
       pipeline
         .from('accountant_invoice_mandates')
-        .select('id')
+        .select('kind')
         .eq('zzper_id', user.id)
         .eq('accountant_id', accountantId)
-        .is('revoked_at', null)
-        .maybeSingle(),
+        .is('revoked_at', null),
     ])
+
+    const soorten = new Set((mandaat ?? []).map((m) => (m as { kind?: string }).kind ?? 'facturen'))
 
     return NextResponse.json({
       accountant: accountantData ? { ...accountantData, id: accountantId } : null,
-      mayInvoice: Boolean(mandaat),
+      mayInvoice: soorten.has('facturen'),
+      mayConfirm: soorten.has('bevestigen'),
     })
   } catch (error) {
     console.error('[settings/accountant] error:', error)

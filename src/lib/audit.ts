@@ -102,6 +102,11 @@ export type AuditAction =
   // spoor omdat het antwoord op "waarom is dit kwartaal zo laat ingediend" vaak precies hier ligt:
   // wanneer is er gevraagd, en hoe vaak.
   | 'accountant.documents_requested'
+  // [BEVESTIGEN] De boekhouder heeft een inkoopfactuur van zijn klant bevestigd (processing →
+  // received). Hoort in het spoor omdat de aansprakelijkheid NIET meeverhuist (art. 52 AWR): de
+  // vraag "wie heeft dit geboekt, en wanneer" moet jaren later nog een antwoord hebben, ook als
+  // de machtiging allang is ingetrokken en de kolom confirmed_by is overschreven.
+  | 'accountant.invoice_confirmed'
   // [WAARSCHUWING] De 30-dagenbrief van voorwaarden art. 5.7.5 is verstuurd. Dit is het enige
   // spoor dat later kan aantonen DAT er is gewaarschuwd voordat er iets werd gewist — de kolom
   // purge_warning_sent_at kan worden overschreven, een auditregel niet.

@@ -29,10 +29,27 @@
 
 import type { ActingFor } from "./acting-for";
 
+/**
+ * [BEVESTIGEN] Which permission this row grants. Two, and they are two SEPARATE decisions by the
+ * client — never one.
+ *
+ *   'facturen'   — issue invoices in the client's name, and remind their customers. Covered by
+ *                  art. 35 lid 1 Wet OB: a third party may issue the invoice.
+ *   'bevestigen' — confirm an incoming invoice so the quarter can close. NO article covers this,
+ *                  and art. 52 AWR leaves the administration duty with the entrepreneur — which is
+ *                  exactly why it needs its own explicit, revocable permission rather than a role.
+ *
+ * A client who wants their bookkeeping handled but their invoicing left alone is the common case,
+ * not an edge one. Folding these into one switch would take that choice away silently.
+ */
+export type MandateKind = "facturen" | "bevestigen";
+
 /** One row from accountant_invoice_mandates, as the database returns it. */
 export interface MandateRow {
   zzper_id: string;
   accountant_id: string;
+  /** Absent reads as 'facturen' — every row predates the kind column. */
+  kind?: string | null;
   /** Set ⇒ the mandate grants nothing from that moment on. */
   revoked_at: string | null;
 }
@@ -60,6 +77,11 @@ export interface MandateFacts {
   linked: boolean;
   /** The mandate row for this pair, or null. */
   mandate: MandateRow | null | undefined;
+}
+
+/** The kind a row grants. Absent reads as 'facturen' — the column arrived later. */
+export function mandateKindOf(row: MandateRow): MandateKind {
+  return row.kind === "bevestigen" ? "bevestigen" : "facturen";
 }
 
 /**
@@ -94,6 +116,51 @@ export function resolveAccountantActing(
   // wrong VAT number.
   if (facts.mandate!.accountant_id !== accountantId) return null;
   if (facts.mandate!.zzper_id !== clientId) return null;
+  // [BEVESTIGEN] And it must be the RIGHT permission. A client who only allowed confirming has not
+  // allowed invoicing, and a row that says so must never be read as the other one — that is the
+  // silent widening this whole design exists to prevent. The database says the same thing in
+  // has_active_invoice_mandate(), which filters on kind = 'facturen'.
+  if (mandateKindOf(facts.mandate!) !== "facturen") return null;
 
   return { ownerId: clientId, actorId: accountantId, role: "boekhouder" };
+}
+
+/**
+ * [BEVESTIGEN] May this accountant confirm this client's incoming invoices?
+ *
+ * WHY THIS IS A SEPARATE FUNCTION AND NOT A PARAMETER
+ *
+ * It answers a different question and returns a different thing. resolveAccountantActing() hands
+ * back an ActingFor, because issuing an invoice happens IN THE CLIENT'S NAME — the books, the
+ * number series and the counter all move to the client. Confirming does not: the invoice is
+ * already the client's, nothing is created, and the accountant stays themselves throughout. What
+ * gets recorded is `confirmed_by`, which is a signature, not a change of owner.
+ *
+ * AND THE LAW IS DIFFERENT TOO
+ *
+ * Art. 35 lid 1 Wet OB explicitly permits a third party to ISSUE an invoice. Nothing comparable
+ * exists for confirming an administration, and art. 52 AWR leaves that duty squarely with the
+ * entrepreneur. So this permission cannot transfer responsibility — it can only make the act
+ * visible. That is why the answer here is a boolean and not an identity.
+ *
+ * Same failure direction as everywhere else in this file: any doubt is false.
+ */
+export function canConfirmForClient(
+  accountantId: string,
+  clientId: string,
+  facts: MandateFacts,
+  nowMs: number,
+): boolean {
+  if (!accountantId || !clientId) return false;
+  // Their own administration is not a mandate question; the ordinary owner path handles it.
+  if (accountantId === clientId) return false;
+  if (facts.callerRole !== "accountant") return false;
+  if (!facts.linked) return false;
+  if (!isMandateActive(facts.mandate, nowMs)) return false;
+  if (facts.mandate!.accountant_id !== accountantId) return false;
+  if (facts.mandate!.zzper_id !== clientId) return false;
+  // The mirror of the check in resolveAccountantActing: an invoice mandate is NOT a confirm
+  // mandate. A client who let their accountant invoice has not thereby let them sign off the
+  // books, and the two are granted by two separate switches for exactly that reason.
+  return mandateKindOf(facts.mandate!) === "bevestigen";
 }

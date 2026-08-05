@@ -1084,3 +1084,43 @@ test("[RENDER-GATE] the request text the client receives never claims the quarte
     assert.doesNotMatch(r.text, /compleet|volledig/i);
   }
 });
+
+test("[RENDER-GATE] the confirm queue renders, and never hides what the reader was unsure about", async () => {
+  const { default: AccountantBevestigen } = await import("../../src/modules/accountant/pages/AccountantBevestigen");
+
+  const rij = (over: Record<string, unknown> = {}) => ({
+    id: "i1", clientId: "k1", clientNaam: "Bakkerij Yilmaz", leverancier: "Groothandel Bos",
+    factuurnummer: "RE0801378", datum: "2026-06-24", totaalInc: 871.4, btw: 71.95,
+    twijfels: [] as string[], ...over,
+  });
+
+  // Rows that exercise the branches — a clean one, one the reader was unsure about, and one with
+  // nothing filled in at all.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, {
+    rijen: [
+      rij(),
+      rij({ id: "i2", twijfels: ["het bedrag", "de datum"] }),
+      rij({ id: "i3", leverancier: "", factuurnummer: null, datum: null, totaalInc: null, btw: null }),
+    ],
+  }));
+  assert.match(html, /Bevestigen/, "the screen renders at all");
+  assert.match(html, /Bakkerij Yilmaz/, "…saying whose books these are, on every row");
+  assert.match(html, /871,40/, "…with the amount formatted the Dutch way");
+  // The half that must never become decoration: a doubt is shown BEFORE the button, in words.
+  // A confirm button above a hidden doubt turns the accountant into a rubber stamp.
+  assert.match(html, /Dit konden wij niet zeker lezen: het bedrag · de datum/);
+  // And the sentence that keeps the liability where the law puts it (art. 52 AWR).
+  assert.match(html, /art\. 52 AWR/, "the responsibility is named on the screen, not only in the terms");
+  assert.match(html, /Klopt niet — navragen/, "the alternative to confirming is one tap away");
+
+  // No mandate is a different sentence from an empty queue — one sends the accountant to their
+  // client, the other means there is genuinely nothing to do.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const geen = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], geenMandaat: true }));
+  assert.match(geen, /Nog geen enkele klant heeft je gemachtigd/);
+  assert.match(geen, /andere machtiging dan die om te factureren/, "and it says the two are separate");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leeg = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [] }));
+  assert.match(leeg, /Er staat niets te wachten/);
+});
