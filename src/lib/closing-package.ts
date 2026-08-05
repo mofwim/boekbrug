@@ -609,11 +609,31 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         continue;
       }
 
+      // [EVIDENCE-EXT] The file keeps its OWN extension. Every entry used to be written as
+      // `.pdf` whatever it actually was, so a photographed bon stored as a JPEG arrived in the
+      // accountant's package as `2026-03-04_Sligro_26701681.pdf` — a file their reader refuses to
+      // open. The evidence is intact and unreadable at the same time, which for a package whose
+      // whole job is to be handed to someone else is the same as missing.
+      //
+      // Read off the STORAGE PATH, not the display name: the path is what the upload wrote and
+      // always carries the real extension, while a display name comes from an e-mail attachment
+      // or a camera and is frequently extension-less. Unknown → .pdf, which is what it was.
+      const ext = /\.([a-z0-9]{1,5})$/i.exec(file.path)?.[1]?.toLowerCase() ?? "pdf";
+      const isPdf = ext === "pdf";
+
       let bytes = file.bytes;
       if (bucket === "betaald") {
         const info = paymentDates.get(inv.id);
-        if (info && info.date) {
+        if (info && info.date && isPdf) {
           bytes = await stampPaymentDate(bytes, info);
+        } else if (info && info.date) {
+          // [EVIDENCE-EXT] The stamp is drawn with pdf-lib, which cannot open an image. It
+          // returned the bytes unchanged, so the file was silently unstamped — and the package
+          // says elsewhere that a paid invoice carries its payment date on page 1. Say it instead.
+          warnings.push({
+            code: "payment_date_unstamped",
+            message: `Factuur ${inv.invoice_number ?? inv.id} is een ${ext.toUpperCase()}-bestand — de betaaldatum kon er niet op gestempeld worden. Hij staat wel in de administratie.`,
+          });
         } else {
           // Paid but no resolvable payment date — include unstamped, warn.
           warnings.push({
@@ -623,7 +643,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         }
       }
 
-      zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.pdf`, bytes);
+      zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.${ext}`, bytes);
       filesIncluded++;
       invoicePdfCount++;
     }
@@ -1647,7 +1667,10 @@ export async function buildClosingPackageZip(args: {
       supabase.from("ledger_daily").select("ledger_date, received, spent")
         .eq("user_id", ownerId).eq("kind", "pin")
         .gte("ledger_date", start).lte("ledger_date", end)
-        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+        // [PAGE-KEY] ledger_date is unique per (user, date, KIND) — up to four rows a day — so a
+        // .range() page boundary is not stable over it alone: ties may come back in a different
+        // order per query, repeating some days and dropping others. The id makes the order total.
+        .order("ledger_date", { ascending: true }).order("id", { ascending: true }).range(from, to)).catch(() => []);
     // NET PIN (received − spent) — matches /api/result and the till's net-of-refunds pin_amount.
     const pinLedgerByDay = new Map<string, number>();
     for (const r of (pinLedgerRows ?? [])) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
@@ -1949,7 +1972,21 @@ export async function buildClosingPackageZip(args: {
   }>((from, to) =>
     supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
       .eq("user_id", ownerId).lte("entry_date", end)
-      .order("entry_date", { ascending: true }).range(from, to),
+      // [PAGE-KEY] Ordered by id, not entry_date — the same read on /api/kasboek already says why,
+      // and this copy is the one that did not: entry_date is NOT unique (several cash entries on
+      // one day is the ordinary case for a shop), Postgres gives no defined order among ties, so
+      // across separate .range() windows a row can be served twice or skipped. In a RUNNING
+      // balance that does not spoil one day — it shifts every eindsaldo after it.
+      //
+      // Which makes THIS the worse of the two places to have missed it. The live screen the owner
+      // can compare against reality was correct; the sheet handed to the accountant was not, and
+      // it is the one nobody cross-checks. The pure builders group by day and sort themselves, so
+      // the read order is free.
+      //
+      // The daily_turnover read below deliberately gets NO tiebreaker: it carries
+      // UNIQUE (user_id, turnover_date), so within one owner's query the date already IS a total
+      // order and adding one would suggest a hazard that is not there.
+      .order("id", { ascending: true }).range(from, to),
   ).catch((e) => { console.error("[CLOSING-PACKAGE] kasboek entries read failed", { ownerId, error: String(e) }); return null; });
   const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
     entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",

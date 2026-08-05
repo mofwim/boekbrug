@@ -77,6 +77,61 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[PAGE-KEY] every paged read over a non-unique key carries a tiebreaker", () => {
+  // A .range() page boundary is only stable over a TOTAL order. Postgres gives no defined order
+  // among ties, so paging on a non-unique key can serve a row twice and skip another — and in a
+  // running balance that does not spoil one day, it shifts every eindsaldo after it.
+  //
+  // Two keys in this codebase are non-unique per owner: cash_entries.entry_date (several movements
+  // a day is ordinary for a shop) and ledger_daily.ledger_date (unique per day AND KIND, so up to
+  // four rows a day). daily_turnover.turnover_date carries UNIQUE (user_id, turnover_date) and is
+  // deliberately left alone — a tiebreaker there would imply a hazard that does not exist.
+  //
+  // The live /api/kasboek read had this right; the closing package, which produces the copy the
+  // accountant reads and nobody cross-checks, did not.
+  const NON_UNIQUE = /\.order\("(entry_date|ledger_date)", \{ ascending: true \}\)(?!\s*\.order\("id")/g;
+  const offenders: string[] = [];
+  for (const f of [
+    "src/lib/closing-package.ts",
+    "src/lib/compute-result-range.ts",
+    "src/app/api/readiness/route.ts",
+    "src/app/api/kasboek/route.ts",
+    "src/app/api/cash/route.ts",
+  ]) {
+    const src = code(f);
+    for (const m of src.matchAll(NON_UNIQUE)) {
+      // Only a PAGED read is at risk: a single unpaged query returns one consistent snapshot.
+      const after = src.slice(m.index ?? 0, (m.index ?? 0) + 200);
+      if (/range\(from, to\)/.test(after)) offenders.push(`${f} — ${m[1]}`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these paged reads order by a NON-UNIQUE key, so their page boundaries are undefined and a " +
+      "row can be served twice or skipped:\n" + offenders.map((o) => `  · ${o}`).join("\n") +
+      "\n\nAdd .order(\"id\", { ascending: true }) after it.",
+  );
+});
+
+test("[EVIDENCE-EXT] the accountant's package keeps each file's real extension", () => {
+  // Every entry was written as `.pdf` whatever it actually was, so a photographed bon stored as a
+  // JPEG arrived as `2026-03-04_Sligro_26701681.pdf` — a file the accountant's reader refuses to
+  // open. Evidence that is present and unreadable is, for a package whose whole job is to be
+  // handed to someone else, the same as missing.
+  const src = code("src/lib/closing-package.ts");
+  assert.match(
+    src, /zip\.file\(`facturen-en-bonnen\/\$\{dir\}\/\$\{bucket\}\/\$\{baseName\}\.\$\{ext\}`/,
+    "the package writes a hard-coded .pdf extension again — a JPEG bon then lands in the " +
+      "accountant's ZIP under a name their PDF reader cannot open",
+  );
+  // And the extension comes off the STORAGE PATH, which always carries it, not the display name —
+  // an e-mail attachment or a camera capture frequently has no extension in its name at all.
+  assert.match(src, /exec\(file\.path\)/, "the extension is read off the storage path");
+  // A payment stamp is drawn with pdf-lib and cannot touch an image. Silently skipping it left
+  // the package claiming elsewhere that a paid invoice carries its date on page 1.
+  assert.match(src, /code: "payment_date_unstamped"/, "an unstampable file says so");
+});
+
 test("[MULTI-INVOICE] the e-mail door asks the same two questions before auto-booking", () => {
   // One PDF can carry several invoices; exactly one gets read and the others exist nowhere. The
   // intake door refuses to auto-book on that signal, and on its counterpart — a scanned stack has

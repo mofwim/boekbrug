@@ -304,7 +304,10 @@ export async function computeResultForRange(args: {
     // changing a single counter (buffer days are excluded by the triangle's window predicate).
     .gte("ledger_date", start)
     .lte("ledger_date", end)
-    .order("ledger_date", { ascending: true }).range(from, to)).catch(() => { pinLedgerAvailable = false; return []; });
+    // [PAGE-KEY] ledger_date is unique per (user, date, KIND) — up to four rows a day — so a
+    // .range() page boundary is not stable over it alone: ties may come back in a different
+    // order per query, repeating some days and dropping others. The id makes the order total.
+    .order("ledger_date", { ascending: true }).order("id", { ascending: true }).range(from, to)).catch(() => { pinLedgerAvailable = false; return []; });
   const pinLedgerByDay = new Map<string, number>();
   for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
 

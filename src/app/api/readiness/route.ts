@@ -407,7 +407,10 @@ export async function GET(req: NextRequest) {
         .from("ledger_daily").select("ledger_date, received, spent")
         .eq("user_id", ownerId).eq("kind", "pin")
         .gte("ledger_date", start).lte("ledger_date", end)
-        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+        // [PAGE-KEY] ledger_date is unique per (user, date, KIND) — up to four rows a day — so a
+        // .range() page boundary is not stable over it alone: ties may come back in a different
+        // order per query, repeating some days and dropping others. The id makes the order total.
+        .order("ledger_date", { ascending: true }).order("id", { ascending: true }).range(from, to)).catch(() => []);
       const pinLedgerByDay = new Map<string, number>();
       for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
       const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
