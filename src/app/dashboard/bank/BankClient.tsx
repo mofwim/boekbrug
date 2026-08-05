@@ -9,6 +9,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { reconcileBatch, resolveBatchNumbers, settleableAmount } from '@/lib/bank-batch-reconcile'
+// [PAYMENT-NAMES-MISSING] What the payment NAMED, including invoices not yet imported.
+import { namedInvoiceNumbers, missingNamedInvoices, missingInvoiceNoticeText } from '@/lib/payment-named-invoices'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
@@ -2296,7 +2298,27 @@ function TxCard({
     [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers, ...(s.coveredNumbers ?? [])],
   )
   const resolvedRefCount = resolvedNumbers.length
-  const wasMulti = !isIgnoredTab && (resolvedRefCount >= 2 || s.partiallyLinked === true)
+  // [PAYMENT-NAMES-MISSING] Which invoices does the payment TEXT name, whether or not we hold
+  // them? resolveBatchNumbers above can only ever find numbers we already have — it iterates over
+  // them — so a payment naming a bill that was never imported resolves to one, falls out of the
+  // multi view, and the card offers to book the whole amount on the invoice it does recognise.
+  // The label three lines down already said "2 facturen" for exactly such a payment.
+  const namedInvoices = namedInvoiceNumbers(
+    `${s.reference ?? ''} ${s.description ?? ''}`,
+    [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers, ...(s.coveredNumbers ?? [])],
+  )
+  const missingNamed = missingNamedInvoices(namedInvoices).filter(
+    (n) => !dismissedNumbers.has(normRef(n)),
+  )
+  // [PAYMENT-NAMES-MISSING] …and a payment that names ≥2 invoices is a batch even when one of them
+  // is not in the administration yet. Counting only RESOLVED numbers meant the missing invoice
+  // silently downgraded the card to single-invoice mode, where "Bevestig betaling" books the whole
+  // debit onto the one we have — overpaying it, and spending the money that belonged to the other.
+  // The PSP guard the resolved-count protected is kept: namedInvoiceNumbers claims an unresolved
+  // run only on evidence (an introducing "factuur", or a sibling of ours with the same shape).
+  const wasMulti =
+    !isIgnoredTab &&
+    (resolvedRefCount >= 2 || s.partiallyLinked === true || resolvedRefCount + missingNamed.length >= 2)
   // Equality — not substring — so "263" can't claim "26302050".
   // [BANK-SLOT-PERSIST] Merge the SESSION's just-confirmed numbers with the server's
   // covered numbers (paid invoices, reload-safe) so an already-paid slot shows "Betaald"
@@ -2317,6 +2339,11 @@ function TxCard({
   })
   const slotNumbers = [
     ...resolvedNumbers.filter((n) => !dismissedNumbers.has(normRef(n))),
+    // [PAYMENT-NAMES-MISSING] The invoices the payment names that we do not hold. The slot view
+    // already knows what to do with a number that has no invoice behind it — its own input type
+    // says "null when no invoice with this number is in the system yet (the slot shows Koppelen)" —
+    // it simply never received one, because the list was built from what we own.
+    ...missingNamed.filter((n) => !resolvedNumbers.some((r) => normRef(r) === normRef(n))),
     ...leftoverRefParts,
   ]
   // [BANK-REF-DISPLAY] The compact label on the card. One number → show it; several → "N
@@ -2544,6 +2571,21 @@ function TxCard({
           bestand). The transaction stays here until every row is confirmed.
           [BANK-SLOT-DISMISS] Shown for any transaction that STARTED multi, so the
           UI (and Negeren) persists even after numbers are dismissed down to ≤1. */}
+      {/* [PAYMENT-NAMES-MISSING] The sentence that unblocks the owner. Without it the slot view
+          shows a row that cannot be filled and no reason why — and "Koppelen" on an invoice that
+          does not exist is a button that can only fail. Naming the bill and the consequence is
+          what turns a dead end into one action: add the invoice, then come back. */}
+      {wasMulti && missingNamed.length > 0 && (
+        <div style={{
+          marginTop: 12, display: 'flex', alignItems: 'flex-start', gap: 8,
+          padding: '10px 12px', borderRadius: R.md,
+          background: M3.warningContainer, color: '#7C5800', fontSize: 12.5, lineHeight: 1.45,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>info</span>
+          <span>{missingInvoiceNoticeText(missingNamed)}</span>
+        </div>
+      )}
+
       {wasMulti && (
         <div style={{ marginTop: 12 }}>
           {slots.length === 0 ? (

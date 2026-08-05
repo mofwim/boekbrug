@@ -250,6 +250,26 @@ test("[SKIPPED-READ-HONEST] the panel that explains a missing invoice cannot ans
   assert.match(src, /code: 'skipped_unavailable'/, "a failed read must refuse, not report zero");
 });
 
+test("[PAYMENT-NAMES-MISSING] a payment naming an un-imported invoice is still a batch", () => {
+  // resolveBatchNumbers iterates over the invoice numbers we HOLD, so a payment naming a bill that
+  // was never imported can only ever resolve to the others. Gating the multi-invoice view on that
+  // count downgraded the card to single-invoice mode, where "Bevestig betaling" books the WHOLE
+  // debit onto the one invoice we recognise — overpaying it and spending the money that belonged
+  // to the missing one. The card's own label said "2 facturen" three lines away.
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(src, /namedInvoiceNumbers\(/, "the payment text is read for names, not only for matches");
+  assert.match(
+    src, /resolvedRefCount \+ missingNamed\.length >= 2/,
+    "the multi gate counts what the payment NAMED, not only what resolved",
+  );
+  // The slot the owner cannot fill needs the reason beside it, or "Koppelen" on an invoice that
+  // does not exist is a button that can only fail.
+  assert.match(src, /missingInvoiceNoticeText\(missingNamed\)/, "and the reason is on screen");
+  // The numbers must reach the slot list too — the gate opening on a list that still holds one row
+  // would show a two-invoice batch as a single slot.
+  assert.match(src, /\.\.\.missingNamed\.filter/, "the missing numbers become slots");
+});
+
 test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
   // A native <input type="date"> orders its segments by the BROWSER's locale, and nothing on the
   // page changes that — measured, including `lang` on the input, on a wrapper and on <html>. Under
