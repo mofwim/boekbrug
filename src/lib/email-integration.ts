@@ -864,7 +864,25 @@ async function fetchMessageAttachments(
     headers.find(h => h.name.toLowerCase() === name)?.value || ''
   const subject = headerVal('subject')
   const from = headerVal('from')
-  const date = headerVal('date')
+
+  // [WATERMARK-SERVER-TIME] The date this message is FILED under comes from Gmail's own
+  // internalDate, not from the `Date:` header.
+  //
+  // That header is written by whoever sent the mail. The sync watermark walks these dates and
+  // stores the newest complete one, and every later sync asks Gmail for mail AFTER it — so one
+  // message with a wrong clock moves the mark to wherever its sender said. A marketing e-mail
+  // stamped 1 January 2027 does not import one wrong invoice; it stops the mailbox importing
+  // ANYTHING for a year and a half, silently, while every sync reports success. It needs no
+  // attacker: a misconfigured sending server is enough, and the app cannot tell them apart.
+  //
+  // internalDate is the timestamp Gmail assigned on receipt, in milliseconds — the exact analogue
+  // of receivedDateTime, which the Microsoft path at line ~1266 has always used. The header stays
+  // as the fallback for the case where internalDate is absent, and the NaN guard downstream still
+  // covers a message with neither.
+  const internalMs = Number(msg.internalDate)
+  const date = Number.isFinite(internalMs) && internalMs > 0
+    ? new Date(internalMs).toISOString()
+    : headerVal('date')
 
   // [BOEK-011] Intermediate shape — explicit flag, no guessing by string length
   interface PendingAttachment {
@@ -3708,8 +3726,35 @@ export async function syncUserEmails(
       })
     }
 
+    // [WATERMARK-SERVER-TIME] Second belt, and deliberately provider-INDEPENDENT: a message dated
+    // in the future is not walked at all.
+    //
+    // Using Gmail's internalDate removes the sender's control over the Gmail side, and Microsoft
+    // has always used receivedDateTime. This guard is what protects the mailbox when a provider
+    // returns something odd anyway, and when a future path adds a third provider that has not read
+    // this comment. The cost of being wrong here is not one lost invoice: the watermark is the
+    // point every later sync starts from, so one bad timestamp stops the import for as long as that
+    // date is away — silently, while every run reports success.
+    //
+    // A small tolerance because clocks disagree: a message legitimately received seconds ago can
+    // carry a timestamp a moment ahead of ours. A day is far beyond that and far below the harm.
+    const futureFloorMs = Date.now() + 24 * 60 * 60 * 1000
+    const futureDated = messageIndex.filter((m) => {
+      const t = new Date(m.date).getTime()
+      return Number.isFinite(t) && t > futureFloorMs
+    })
+    if (futureDated.length > 0) {
+      console.warn('[WATERMARK-SERVER-TIME] messages dated in the future are excluded from the watermark walk', {
+        count: futureDated.length,
+        newest: futureDated.map((m) => m.date).sort().slice(-1)[0],
+      })
+    }
+
     const sortedMsgs = messageIndex
-      .filter((m) => Number.isFinite(new Date(m.date).getTime()))
+      .filter((m) => {
+        const t = new Date(m.date).getTime()
+        return Number.isFinite(t) && t <= futureFloorMs
+      })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
     let candidateIso: string | null = null
