@@ -354,6 +354,33 @@ export default function BankClient() {
     finally { setProcessingId(null) }
   }, [runMatch])
 
+  // [KAS-AUTO-BOOK] The other answer to the amber "even controleren" flag. Ontkoppelen says the
+  // booking is wrong; this says it is right, and until now only the first had a button — so the
+  // warning could never come down, on a screen whose whole value is that a warning means something.
+  //
+  // It clears auto_match_reason and touches nothing else: the link, the payment and the invoice
+  // status are untouched, and Ontkoppelen still undoes the booking afterwards exactly as before.
+  // So the worst case of a mis-tap is a flag lowered on a link that is still fully reversible.
+  const markMatchChecked = useCallback(async (txId: string) => {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/match-checked', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionIds: [txId] }),
+      })
+      if (res.ok) {
+        // Re-read rather than patching local state: the flag lives on the server row, and a card
+        // that hides its own warning without the write having landed is the failure this whole
+        // screen is built against.
+        await runMatch()
+        showToast('Gecontroleerd — de melding is weg.')
+      } else {
+        showToast('Kon niet opslaan. Probeer het nog een keer.')
+      }
+    } catch { showToast('Kon niet opslaan. Probeer het nog een keer.') }
+    finally { setProcessingId(null) }
+  }, [runMatch])
+
   // [MOVE-PAYMENT] "This line is booked on the wrong invoice." The owner meets that realisation
   // from two directions and this is the second one: looking at the bank line, not at the invoice.
   // Ontkoppelen beside it answers a different question ("this booking should not exist") and
@@ -1950,6 +1977,7 @@ export default function BankClient() {
                 isDoneTab={bankTab === 'done'}
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
+                onMatchChecked={() => markMatchChecked(s.transactionId)}
               />
             ))}
             {activeList.length === 0 && (
@@ -2200,7 +2228,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove, onMatchChecked,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -2224,6 +2252,8 @@ function TxCard({
   onUnlink?: () => void
   /** [MOVE-PAYMENT] Move this line's booked payment to another invoice. */
   onMove?: () => void
+  /** [KAS-AUTO-BOOK] "Klopt" on the amount-only flag — the answer the warning never had. */
+  onMatchChecked?: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -2442,13 +2472,38 @@ function TxCard({
           on Ontkoppelen above undoes it. Only on the Gekoppeld tab. */}
       {isDoneTab && s.matchReason === 'amount_only' && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+          display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10,
           background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.sm, padding: '8px 10px',
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000' }}>rule</span>
-          <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
-            Automatisch gekoppeld op <strong>bedrag + naam</strong> (geen factuurnummer in het afschrift). Even controleren of dit de juiste factuur is.
-          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000', flexShrink: 0 }}>rule</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
+              Automatisch gekoppeld op <strong>bedrag + naam</strong> (geen factuurnummer in het afschrift). Even controleren of dit de juiste factuur is.
+            </span>
+            {/* [KAS-AUTO-BOOK] The warning had one answer — "Ontkoppelen" above — and the other
+                answer, "I looked and it is right", had no button at all. That gap is what makes a
+                warning permanent, and a permanent warning is one nobody reads. It matters more here
+                than it looks: the quarter-close now counts these before an aangifte goes out
+                (they are allowed to book themselves under the kasstelsel precisely because they
+                stay reversible until then), so without this tap the risk would sit on every
+                quarter for the rest of the administration's life. */}
+            {onMatchChecked && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onMatchChecked() }}
+                disabled={processing}
+                style={{
+                  marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: '#FFF', border: '1px solid #FBBC04', borderRadius: R.sm,
+                  padding: '5px 10px', fontSize: 12, fontWeight: 600, color: '#7A4F00',
+                  cursor: processing ? 'default' : 'pointer', opacity: processing ? 0.6 : 1,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                Klopt, gecontroleerd
+              </button>
+            )}
+          </div>
         </div>
       )}
       {/* Transaction row */}

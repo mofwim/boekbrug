@@ -66,6 +66,14 @@ export interface ReadinessSignals {
   // Self-clearing: confirming a line (category_confirmed=true) drops it from this count. Optional
   // (undefined → 0 → no risk) so older callers/tests are unchanged.
   unreviewedExcludedCount?: number;
+  // [KAS-AUTO-BOOK] Bank links this quarter that the app made on AMOUNT + supplier name alone
+  // (auto_match_reason='amount_only'), still unconfirmed by the owner. Under the kasstelsel those
+  // now book themselves as long as the quarter is not yet declared — and that permission rests
+  // entirely on the mistake being reversible until filing. So the quarter-close is where they have
+  // to be offered for a look; after filing, the same correction is a suppletie. A RISK (they are
+  // usually right, and blocking would make the verdict useless), never a gap. Optional
+  // (undefined → 0 → no risk) so older callers/tests are unchanged.
+  amountOnlyBookingCount?: number;
   // [STATEMENT-CONTINUITY] Gaten TUSSEN de ingelezen bankafschriften: een ontbrekende periode
   // (januari en maart geüpload, februari vergeten) of een saldobreuk (het ene afschrift eindigt
   // op een ander bedrag dan waarmee het volgende begint). Dit is onzichtbaar voor elke andere
@@ -397,6 +405,30 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
           detail:
             "Deze regel(s) zijn automatisch ingedeeld als privé, overboeking of belasting en tellen daarom NIET mee in je omzet, kosten of BTW. Controleer eenmalig of er geen zakelijke ontvangst of kost tussen zit — die zou anders buiten je boekhouding vallen.",
           fix: { label: "Controleer", href: reviewHref },
+        });
+      }
+      // [KAS-AUTO-BOOK] Bank lines the app booked onto an invoice on AMOUNT + supplier name alone —
+      // no invoice number in the description. They are marked auto_match_reason='amount_only' and
+      // one tap unlinks them, and that reversibility is the entire reason they are allowed to book
+      // themselves under the kasstelsel: the mistake stays inside the app right up until the quarter
+      // is declared. Which makes THIS the moment it has to be shown. Filing without looking is what
+      // would turn a wrong pick into a suppletie, so the promise "the owner reviews before filing"
+      // needs a place where the review is actually offered — a promise with no mechanism is the
+      // shape half of this file exists to correct.
+      //
+      // A RISK, never a block: these bookings are usually right, and blocking every quarter that
+      // contains one would make the verdict useless. Self-clearing — confirming the link drops it.
+      const flaggedBookings = s.amountOnlyBookingCount ?? 0;
+      if (flaggedBookings > 0) {
+        risks.push({
+          severity: "risk",
+          title:
+            flaggedBookings === 1
+              ? "1 factuur is alleen op bedrag gekoppeld"
+              : `${flaggedBookings} facturen zijn alleen op bedrag gekoppeld`,
+          detail:
+            "De app herkende deze betalingen aan het bedrag en de naam van de leverancier, maar er stond geen factuurnummer in de omschrijving. Loop ze na vóór je de aangifte indient — daarna is corrigeren een suppletie. Eén tik maakt een koppeling los.",
+          fix: { label: "Controleer", href: "/dashboard/bank?tab=done" },
         });
       }
     }

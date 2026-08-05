@@ -60,6 +60,21 @@ console.log("\n— [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting
   check("undefined count → treated as 0 (older callers keep working)", !legacy.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
 }
 
+console.log("\n— [KAS-AUTO-BOOK] bookings made on amount + name are offered before the aangifte —");
+{
+  // These book themselves unattended under the kasstelsel for exactly one reason: they stay
+  // reversible until the quarter is declared. That reason only holds if the quarter-close actually
+  // OFFERS them, so this is the mechanism behind the permission, not a decoration.
+  const r = buildReadiness(perfect({ amountOnlyBookingCount: 3 }));
+  check("surfaced as a RISK", r.risks.some((m) => /alleen op bedrag gekoppeld/.test(m.title)));
+  check("never a block — most are right, and blocking every quarter makes the verdict useless", r.status === "ready" && r.ready === true);
+  check("the detail names the deadline that makes it matter", r.risks.some((m) => /suppletie/.test(m.detail ?? "")));
+  check("and points at the tab where the flag can be answered", r.risks.some((m) => m.fix?.href === "/dashboard/bank?tab=done"));
+  check("singular phrasing for one", buildReadiness(perfect({ amountOnlyBookingCount: 1 })).risks.some((m) => /^1 factuur is alleen op bedrag/.test(m.title)));
+  check("zero → silence (a nag with nothing behind it is worse than none)", !buildReadiness(perfect({ amountOnlyBookingCount: 0 })).risks.some((m) => /alleen op bedrag/.test(m.title)));
+  check("undefined → treated as 0 (older callers unchanged)", !buildReadiness(perfect()).risks.some((m) => /alleen op bedrag/.test(m.title)));
+}
+
 console.log("\n— [PACKAGE-READINESS] invoices still in the verify queue block 'klaar' —");
 {
   // A real bill dated in the quarter but not yet verified reaches the accountant nowhere —

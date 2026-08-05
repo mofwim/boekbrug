@@ -99,6 +99,37 @@ export async function GET(req: NextRequest) {
     .select("amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
+  // [KAS-AUTO-BOOK] Bank lines this quarter that the app booked onto an invoice on amount + supplier
+  // name alone, still carrying the flag (the owner has not tapped "Klopt, gecontroleerd"). Read
+  // SEPARATELY from the select above, and that separation is the whole point: auto_match_reason
+  // arrives with a hand-applied migration, and a column PostgREST does not know refuses the entire
+  // select — folding it into the main read would turn a lagging migration into a readiness board
+  // with no bank dimension at all. Its own wrapped read degrades to "no flags", which before the
+  // migration is the true answer: nothing can have been booked under a column that does not exist.
+  let amountOnlyBookingCount = 0;
+  try {
+    const flagged = await fetchAllRows<{ id: string }>((from, to) =>
+      (pipeline as unknown as {
+        from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => { not: (c: string, op: string, v: null) => { gte: (c: string, v: string) => { lte: (c: string, v: string) => { order: (c: string, o: { ascending: boolean }) => { range: (f: number, t: number) => PromiseLike<{ data: { id: string }[] | null; error: { message: string } | null }> } } } } } } } };
+      })
+        .from("bank_transactions")
+        .select("id")
+        .eq("user_id", ownerId)
+        .eq("status", "matched")
+        .not("auto_match_reason", "is", null)
+        .gte("date", start).lte("date", end)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    amountOnlyBookingCount = flagged.length;
+  } catch (e) {
+    // Pre-migration (no column) → no flags, which is correct. Any other failure also degrades to 0
+    // rather than breaking the board: this is a REVIEW nudge, and a readiness page that fails to
+    // render helps nobody. Logged so a persistent failure is findable.
+    console.warn("[KAS-AUTO-BOOK] flagged-booking count unavailable for readiness", {
+      ownerId, error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   let undocumentedCount = 0;
   // [AUTO-EXCLUDE-REVIEW] Lines the app auto-coded (category_confirmed !== true) into an EXCLUDED
   // identity — privé / overboeking / belasting (pnlRole 'excluded') — that the owner never reviewed.
@@ -574,6 +605,7 @@ export async function GET(req: NextRequest) {
     unmatchedIncomeCount,
     probablePaymentAsOmzetCount,
     unreviewedExcludedCount, // [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting, unreviewed
+    amountOnlyBookingCount,  // [KAS-AUTO-BOOK] booked on amount + name, not yet eyeballed by the owner
     // [STATEMENT-CONTINUITY] ontbrekende periode / saldobreuk tussen de ingelezen afschriften
     bankGapMessages,
 
