@@ -96,6 +96,12 @@ export default function InvoiceDocumentSheet({
   const checks = invoiceChecks(invoice)
   const summary = checksSummary(checks)
   const hasFlag = checks.some((c) => c.outcome === 'flagged')
+  // [CHECKLIST] The colour is read before the sentence is. Green over "1 konden we niet nagaan"
+  // says stop-looking while the words say keep-looking, and on a glance the colour wins — which is
+  // the same overstatement in a different medium. Three states in the text, three on screen: red
+  // for something to fix, GREY for something we could not check (information, not a verdict), and
+  // green reserved for the only case that earns it.
+  const hasUnknown = !hasFlag && checks.some((c) => c.outcome === 'not-checked')
 
   const row = (label: string, value: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0' }}>
@@ -154,7 +160,7 @@ export default function InvoiceDocumentSheet({
 
           {/* ── What we checked ── the answer to "why should I not look myself?" ── */}
           <div style={{ border: `1px solid ${hasFlag ? '#F5C6C0' : '#DADCE0'}`, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
-            <p style={{ fontSize: 12.5, fontWeight: 700, color: hasFlag ? '#B3261E' : '#137333', margin: '0 0 6px' }}>
+            <p style={{ fontSize: 12.5, fontWeight: 700, color: hasFlag ? '#B3261E' : hasUnknown ? M3.onSurfaceVariant : '#137333', margin: '0 0 6px' }}>
               {summary}
             </p>
             {checks.map((c) => (

@@ -883,8 +883,9 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   assert.match(clean, /Wat wij hebben gelezen/, "our reading is on screen next to the paper");
   assert.match(clean, /26035350/, "…with the number the owner is about to compare");
   assert.match(clean, /281,06/, "…and the total, formatted the Dutch way");
-  assert.match(clean, /Alle 7 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  assert.match(clean, /Alle 8 controles gedaan/, "a clean invoice says what was checked instead of nothing");
   assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
+  assert.match(clean, /9% over het hele bedrag/, "including the btw axis, which is a real check here");
 
   // The half that must never be cosmetic: a check that could not run says so, and the summary
   // stops claiming completeness. A green list that overstates is worse than no list.
@@ -902,6 +903,34 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   );
   assert.doesNotMatch(unsure, /Alle \d+ controles gedaan/, "a skipped check breaks the completeness claim");
   assert.match(unsure, /konden we niet nagaan/, "and it is said, not merely left quieter");
+
+  // [BTW-SPLIT] The invoice this whole axis exists for, on the screen it lied on: Enka Horeca
+  // 26701681, whose three amounts agree with each other and are € 0,46 wrong. Nothing else on this
+  // sheet can tell — so the one row that CAN say "we did not check this" has to actually reach the
+  // markup, greyed and worded, and the summary line above it has to stop claiming completeness.
+  const mixed = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d3", client_name: "Enka Horeca B.V.", invoice_number: "26701681",
+        invoice_date: "2026-01-30", invoice_type: "factuur",
+        total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68,
+        vendor_iban: "NL65RABO0171136276", field_confidence: null, vendorNumbers: [],
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+  assert.doesNotMatch(mixed, /Alle \d+ controles gedaan/, "seven green ticks over a wrong btw is the bug");
+  assert.match(mixed, /mengt btw-tarieven/, "the reason the btw could not be verified is on screen");
+  assert.match(mixed, /btw-specificatie/, "and it says where to look on the paper");
+
+  // The colour is read before the sentence. Green over "1 konden we niet nagaan" says stop-looking
+  // while the words say keep-looking, and at a glance the colour wins — the same overstatement in
+  // a different medium. #137333 is the green reserved for a genuinely complete list.
+  const summaryColour = (html: string) => /font-weight:700;color:(#[0-9A-Fa-f]{6})[^"]*">[^<]*controles/.exec(html)?.[1];
+  assert.equal(summaryColour(clean), "#137333", "a complete list earns the green");
+  assert.notEqual(summaryColour(mixed), "#137333", "an incomplete one must not wear it");
+  assert.notEqual(summaryColour(unsure), "#137333");
 });
 
 test("[RENDER-GATE] factureren namens een klant renders, and says whose invoice it is", async () => {

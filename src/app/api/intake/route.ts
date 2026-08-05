@@ -1472,6 +1472,21 @@ async function handleUblInvoice(
     invoice_date: v.invoiceDate ? 0.98 : 0.2,
     _source: "ubl_xml",
   }
+  // [BTW-SPLIT] The per-rate breakdown straight out of the XML, signed the same way as the totals
+  // just above. On a mixed-rate invoice this is the difference between a checklist that can say
+  // "nagerekend" and one that has to admit it compared the btw with nothing — and on this path the
+  // numbers are typed elements, so there is nothing to have misread.
+  //
+  // Stored whether or not it agrees with our two figures, exactly as on the reader path. Whether a
+  // disagreement means "hold this invoice" is classifyImportHealth's judgement to make, in one
+  // place; filtering here would quietly delete the evidence it needs to make it.
+  if (v.btwRows.length > 0) {
+    fieldConfidence._btw_rows = v.btwRows.map((r) => ({
+      rate: r.rate,
+      base: sign * r.base,
+      btw: sign * r.btw,
+    }))
+  }
   // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
   // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".
   // [DEDUP-READ-HONEST] Outside the `if (possibleDup)` guard, and that placement IS the fix.

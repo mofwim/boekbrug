@@ -1470,6 +1470,13 @@ export interface AttachmentClassification {
     // because the mixed-rate summary block could not be summed. Carried through to
     // field_confidence so import-health can ask the owner to confirm the figure.
     _btw_derived?: { read: number | null; used: number | null }
+    // [BTW-SPLIT] / [PRINTED-TOTAL] The evidence a mixed-rate invoice needs, from the same reader
+    // call. Declared here because the value is spread into field_confidence further down: without
+    // these keys the type says they are gone while at runtime they are not, and the next person to
+    // read this block would have no way to know the checklist depends on them.
+    _btw_rows?: { rate: number; base: number; btw: number }[]
+    _total_printed?: number | null
+    _total_derived?: 'total' | 'excl'
   }
 }
 

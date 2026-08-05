@@ -28,6 +28,20 @@
 const ARITHMETIC_KEYS = ["arithmetic_ok", "reason", "flags", "held_at"] as const;
 
 /**
+ * De sleutels op het TOP-niveau van field_confidence die de OPGESLAGEN bedragen verklaren.
+ *
+ * Ze horen bij de bedragen, niet bij de lezing: blijven de bedragen staan, dan blijft de
+ * verklaring staan. Wie hier een nieuwe soort verklaring toevoegt en deze lijst vergeet, laat hem
+ * bij een mislukte herlezing verdampen terwijl de bedragen die hij verklaart gewoon blijven staan.
+ */
+const AMOUNT_EXPLAINING_KEYS: readonly string[] = [
+  "_btw_derived",     // [BTW-SUM-FIX] de BTW is onze rekensom, niet die van de factuur
+  "_btw_rows",        // [BTW-SPLIT]   de btw-specificatie zoals die op het papier staat
+  "_total_printed",   // [PRINTED-TOTAL] het gedrukte te-betalen totaal, dat afwijkt van het onze
+  "_total_derived",   // [PRINTED-TOTAL] wij hebben één van de drie bedragen zelf uitgerekend
+];
+
+/**
  * De sleutels binnen `_safecore` die over de RELATIE met een andere factuur gaan.
  * Deze overleven een re-import ALTIJD: opnieuw naar dít document kijken zegt niets over de
  * vraag of er elders een tweeling ligt, en de route zoekt die tweeling niet opnieuw op.
@@ -86,10 +100,17 @@ export function buildReimportFieldConfidence(input: ReimportCarryInput): Record<
       // niets aan. (Ook _intake_paid_evidence en _intake_paid_card4 horen hierbij: dat is het
       // bewijs waarop de betaalwijze rust — een audit-spoor dat niet mag verdampen.)
       if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      // [BTW-SUM-FIX] _btw_derived verklaart de OPGESLAGEN bedragen ("deze BTW is van ons, niet
-      // van de factuur"). Blijven die bedragen staan, dan moet de verklaring meegaan; komen er
-      // verse bedragen, dan gaat de verklaring met de oude bedragen mee weg.
-      else if (!freshHasTotal && k === "_btw_derived") carried[k] = priorFc[k];
+      // [BTW-SUM-FIX] / [BTW-SPLIT] / [PRINTED-TOTAL] Deze sleutels verklaren de OPGESLAGEN
+      // bedragen: "deze BTW is van ons, niet van de factuur", "de btw-specificatie op het papier
+      // telt op tot iets anders", "op de factuur staat een ander te betalen totaal", "het derde
+      // bedrag hebben wij zelf uitgerekend". Blijven die bedragen staan, dan moet de verklaring
+      // meegaan; komen er verse bedragen, dan gaat de verklaring met de oude bedragen mee weg.
+      //
+      // Zonder deze regel doet de knop "Opnieuw inlezen" precies het verkeerde bij een lezing die
+      // NIETS oplevert: de bedragen blijven ongewijzigd staan, maar de verse (lege) aiConfidence
+      // overschrijft de basis en de verklaring verdwijnt — een vastgehouden factuur wordt dan weer
+      // schoon zonder dat er iets aan is veranderd. Dat is de gevaarlijke richting.
+      else if (!freshHasTotal && AMOUNT_EXPLAINING_KEYS.includes(k)) carried[k] = priorFc[k];
     }
   }
 
