@@ -826,7 +826,11 @@ export default function SettingsPage() {
         )}
         {/* محاسب ZZP'er الحالي */}
         {profile.role === 'zzper' && accountant && (
-          <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+          /* [VRAAG-MACHTIGING] Het anker waar de melding van een boekhouder naartoe wijst. Zonder
+             dit landt hij bovenaan een scherm van duizend regels en moet hij zoeken naar iets
+             waarvan hij net voor het eerst hoorde — dat is het verschil tussen "hij las het" en
+             "hij deed het". */
+          <div id="boekhouder" className="bg-white rounded-2xl p-5 shadow-sm space-y-3 scroll-mt-20">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               Jouw boekhouder
             </p>

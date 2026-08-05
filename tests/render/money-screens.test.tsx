@@ -1124,3 +1124,42 @@ test("[RENDER-GATE] the confirm queue renders, and never hides what the reader w
   const leeg = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [] }));
   assert.match(leeg, /Er staat niets te wachten/);
 });
+
+test("[VRAAG-MACHTIGING] the empty states offer a way OUT of themselves", async () => {
+  // The gap this closes: four screens waited on a permission and none of them could ask for one.
+  // Their empty states said "your client turns it on in Settings" — instructions for a phone call
+  // that has to happen outside the app. A feature that only starts after a phone call does not
+  // start. So every one of those empty states now carries the ask, right under the explanation.
+  const { default: AccountantFactuur } = await import("../../src/modules/accountant/pages/AccountantFactuur");
+  const { default: AccountantBevestigen } = await import("../../src/modules/accountant/pages/AccountantBevestigen");
+  const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
+
+  const gekoppeld = [{ id: "k1", naam: "Bakkerij Yilmaz" }, { id: "k2", naam: "Loodgieter De Vries" }];
+
+  const schermen: Array<[string, string]> = [
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ["factuur", renderToStaticMarkup(React.createElement(AccountantFactuur as any, { klanten: [], gekoppeld }))],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ["bevestigen", renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], geenMandaat: true, gekoppeld }))],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ["debiteuren", renderToStaticMarkup(React.createElement(AccountantDebiteuren as any, { groepen: [], geenMandaat: true, gekoppeld }))],
+  ];
+
+  for (const [naam, html] of schermen) {
+    assert.match(html, /Vraag toestemming/, `${naam}: the ask is on the screen`);
+    assert.match(html, /Bakkerij Yilmaz/, `${naam}: …with the linked clients to ask`);
+    // It asks; it never grants. The client decides on their own screen — an accountant who could
+    // grant themselves is the hole accountant_clients_insert_consent.sql closed.
+    assert.match(html, /Beslissen doet hij zelf/, `${naam}: and says who decides`);
+  }
+});
+
+test("[VRAAG-MACHTIGING] with no linked clients at all, the ask stays hidden", async () => {
+  // Nothing to ask, and a picker with an empty dropdown is worse than no picker: it looks broken
+  // rather than not-yet-applicable. The screen's own explanation already names the real blocker.
+  const { default: AccountantBevestigen } = await import("../../src/modules/accountant/pages/AccountantBevestigen");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], geenMandaat: true, gekoppeld: [] }));
+  assert.doesNotMatch(html, /Vraag toestemming/);
+  assert.match(html, /Nog geen enkele klant heeft je gemachtigd/, "the explanation is still there");
+});

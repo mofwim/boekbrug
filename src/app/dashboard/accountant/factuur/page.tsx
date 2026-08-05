@@ -40,6 +40,23 @@ export default async function AccountantFactuurPage() {
 
   const ids = Array.from(new Set((mandaten ?? []).map((m) => m.zzper_id).filter(Boolean)))
 
+  // [VRAAG-MACHTIGING] Alle GEKOPPELDE klanten, ook (juist) die zonder machtiging. Zonder deze
+  // lijst is de lege staat een doodlopende weg: hij legt uit dat de klant het moet aanzetten, en
+  // biedt geen manier om het hem te vragen.
+  const { data: alleLinks } = await supabase
+    .from('accountant_clients')
+    .select('zzper_id')
+    .eq('accountant_id', user.id)
+  const alleIds = Array.from(new Set((alleLinks ?? []).map((l) => l.zzper_id).filter((v): v is string => !!v)))
+  let gekoppeld: { id: string; naam: string }[] = []
+  if (alleIds.length > 0) {
+    const { data: alleProfielen } = await supabase
+      .from('profiles').select('id, full_name, company_name').in('id', alleIds)
+    gekoppeld = (alleProfielen ?? [])
+      .map((p) => ({ id: p.id, naam: p.company_name || p.full_name || 'Klant' }))
+      .sort((a, b) => a.naam.localeCompare(b.naam, 'nl'))
+  }
+
   // De koppeling moet er óók zijn. has_active_invoice_mandate() eist hem in de database, dus een
   // mandaat zonder koppeling zou hier een naam in de lijst zetten waarvoor elke verzending faalt.
   let klanten: GemachtigdeKlant[] = []
@@ -66,5 +83,5 @@ export default async function AccountantFactuurPage() {
       .sort((a, b) => a.naam.localeCompare(b.naam, 'nl'))
   }
 
-  return <AccountantFactuur klanten={klanten} />
+  return <AccountantFactuur klanten={klanten} gekoppeld={gekoppeld} />
 }
