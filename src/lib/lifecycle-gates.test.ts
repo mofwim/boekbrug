@@ -77,6 +77,20 @@ test("[DEDUP-READ-HONEST] the sibling paths still apply it unconditionally", () 
   }
 });
 
+test("[CASH-CREDITNOTA] the reconciler still reads what decides the drawer's direction", () => {
+  // cash.ts flips the drawer for a creditnota, and it can only do that for a row it is TOLD is
+  // one. The reconciler is the sole caller, and its projection is a hand-written column list —
+  // drop invoice_type from it and settlementDirection falls back to the sign alone, so a credit
+  // stored with positive amounts (the 'conflict' stance) books the till backwards again, by twice
+  // its amount. A pure fix nobody wired is not a fix.
+  const src = code("src/lib/cash-settle.ts");
+  assert.match(
+    src, /const baseColumns = "[^"]*\binvoice_type\b/,
+    "invoice_type left the invoice projection — the creditnota direction flip in cash.ts then " +
+      "never sees a document type and a cash refund moves the drawer the wrong way",
+  );
+});
+
 test("[REVERSAL-SET] deleting a statement decides its reversal in the tested place", () => {
   // The two tiers are not the same kind of evidence, and the filter that tells them apart moved
   // from the SQL (where it silenced the proven tier too) into planStatementReversal. Putting a

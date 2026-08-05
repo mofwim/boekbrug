@@ -60,6 +60,72 @@ console.log("\n— [CASH-SETTLE] buildCashSettlement (a cash-paid invoice → a 
   }
 }
 
+console.log("\n— [CASH-CREDITNOTA] a refund moves the drawer the OTHER way, and it was booked backwards —");
+{
+  // `direction` records who SENT the document, not which way the money travelled, and on a
+  // creditnota those are opposite. Booking by direction alone puts a cash refund in the drawer
+  // backwards — and a wrong-signed entry is off by TWICE its amount, on the one book whose whole
+  // purpose is that it reconciles against the coins in the till.
+  //
+  // The legacy aggregate path was already safe (settlementGross refuses a non-positive gross).
+  // The per-instalment path added later returns BEFORE that guard is consulted, which is the only
+  // path a cash payment recorded today takes.
+  const supplierRefund = buildCashSettlements({
+    id: "cn1", direction: "incoming", invoice_type: "creditnota",
+    total_inc_btw: -75, invoice_number: "CR-1", client_name: "Sligro",
+    cash_instalments: [{ id: "i1", amount: -75, paid_on: "2026-05-03" }],
+  });
+  check("supplier refunds me in cash → drawer UP", supplierRefund.length === 1 && supplierRefund[0].direction === "in");
+  check("…for the magnitude, not the sign", supplierRefund[0]?.amount === 75);
+  check("…and it stays P&L-neutral", supplierRefund[0]?.category === "betaling" && supplierRefund[0]?.btw_rate === null);
+  check("…and reads as a creditnota, not a factuur",
+    (supplierRefund[0]?.description ?? "").includes("creditnota") && !(supplierRefund[0]?.description ?? "").includes("factuur"));
+
+  const iRefundCustomer = buildCashSettlements({
+    id: "cn2", direction: "outgoing", invoice_type: "creditnota",
+    total_inc_btw: -40, invoice_number: "2026-CR-2", client_name: "Klant BV",
+    cash_instalments: [{ id: "i2", amount: -40, paid_on: "2026-05-04" }],
+  });
+  check("I refund my customer in cash → drawer DOWN", iRefundCustomer[0]?.direction === "out");
+  check("…and reads 'Terugbetaling'", (iRefundCustomer[0]?.description ?? "").includes("Terugbetaling"));
+
+  // Either witness alone is enough. A creditnota imported with POSITIVE amounts is the 'conflict'
+  // stance import-health flags — the type is the declared truth and must still flip the drawer.
+  const typedOnly = buildCashSettlements({
+    id: "cn3", direction: "incoming", invoice_type: "creditnota", total_inc_btw: 75,
+    cash_instalments: [{ id: "i3", amount: 75, paid_on: "2026-05-05" }],
+  });
+  check("type alone flips it (a credit stored with positive amounts)", typedOnly[0]?.direction === "in");
+  // …and a negative gross with no type set (an older row, or one the reader typed as an invoice).
+  const signOnly = buildCashSettlements({
+    id: "cn4", direction: "incoming", total_inc_btw: -75,
+    cash_instalments: [{ id: "i4", amount: -75, paid_on: "2026-05-06" }],
+  });
+  check("sign alone flips it (no invoice_type stored)", signOnly[0]?.direction === "in");
+
+  // The negative control that keeps the fix honest: an ORDINARY invoice must not move.
+  const ordinary = buildCashSettlements({
+    id: "ok1", direction: "incoming", invoice_type: "factuur", total_inc_btw: 121,
+    cash_instalments: [{ id: "i5", amount: 121, paid_on: "2026-05-07" }],
+  });
+  check("an ordinary purchase still lowers the drawer", ordinary[0]?.direction === "out");
+  check("…and still reads 'Betaling factuur'", (ordinary[0]?.description ?? "").includes("Betaling factuur"));
+
+  // The drawers already booked backwards are not stranded: the reconciler compares direction and
+  // heals it. Without this the fix would only apply to refunds recorded from today on, and every
+  // existing one would keep the kasboek off by twice its amount forever.
+  const sync = computeCashSettlementSync(
+    [{
+      id: "cn1", direction: "incoming", invoice_type: "creditnota", total_inc_btw: -75,
+      cash_instalments: [{ id: "i1", amount: -75, paid_on: "2026-05-03" }],
+    }],
+    [{ id: "e-old", invoice_id: "cn1", settlement_id: "i1", amount: 75, entry_date: "2026-05-03", direction: "out" }],
+  );
+  check("an existing backwards entry is healed, not duplicated",
+    sync.toUpdate.length === 1 && sync.toCreate.length === 0 && sync.toDeleteIds.length === 0);
+  check("…to the direction the money actually moved", sync.toUpdate[0]?.row.direction === "in");
+}
+
 console.log("\n— [CASH-SETTLE] computeCashSettlementSync (self-healing: create / heal / reverse) —");
 {
   const paid = [
