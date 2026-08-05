@@ -50,6 +50,27 @@ test('[SCHEME-MERGE] the settled-in-this-quarter invoices survive the route\'s o
   assert.ok(merged.rateSharesByInvoice?.has('inv-q1') && merged.rateSharesByInvoice?.has('inv-q2'))
 })
 
+test('[SCHEME-MERGE] the PURCHASE attributions merge too, or a deduction is quietly pro-rated', () => {
+  // The sales side of this was fixed first and the purchase side was still open. A cost the owner
+  // marked 'direct_taxed' is fully deductible; with no attribution in the map, financial-result's
+  // bookVoorbelasting falls to its default bucket — 'mixed', the pro-rata share — so the owner
+  // loses part of a deduction they were entitled to in full. The other attribution fails the other
+  // way: 'direct_exempt' would gain a share of a deduction it is entitled to none of.
+  //
+  // Under kas the costs that count are the ones SETTLED in the quarter, so the scheme's map is
+  // where a purchase invoiced last quarter and paid in this one lives — nowhere else.
+  const merged = mergeSchemeOpts(
+    { deductionByInvoice: new Map([['bill-q1', 'direct_taxed']]) },
+    { deductionByInvoice: new Map([['bill-q2', 'direct_exempt']]) },
+  )
+  assert.equal(
+    merged.deductionByInvoice?.get('bill-q1'), 'direct_taxed',
+    'a cost paid this quarter but invoiced in an earlier one keeps its attribution',
+  )
+  assert.equal(merged.deductionByInvoice?.get('bill-q2'), 'direct_exempt')
+  assert.equal(merged.deductionByInvoice?.size, 2)
+})
+
 test('[SCHEME-MERGE] the freshly-read value wins where both know an invoice', () => {
   // Same precedence the working call site used: the route's own read is the newer one.
   const merged = mergeSchemeOpts(

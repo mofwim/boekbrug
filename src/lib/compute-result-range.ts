@@ -21,7 +21,7 @@ import { fetchSettlementEvents, resolveOwnerSchemeSpan } from "./kas-payment-eve
 import type { VatScheme } from "./vat-scheme";
 // [RUBRIEK-SPLIT] Omzet per BTW rate, read from the invoice's own lines.
 import { fetchRateShares } from "./btw-rate-split-fetch";
-import { collectVatExemption } from "./vat-exemption-collect";
+import { collectVatExemption, fetchVatDeductions } from "./vat-exemption-collect";
 import { exemptShareOf } from "./vat-exemption";
 
 // [FIN-4] Infer a NULL direction from ownership (the owner is the receiver of an incoming
@@ -394,6 +394,23 @@ export async function computeResultForRange(args: {
         ...exemptShareOf(typedInvRows, exemptExByInvoice),
       ]),
       rateSharesByInvoice: new Map([...settledShares, ...rateSharesByInvoice]),
+      // [VRIJGESTELD · KASSTELSEL] And the PURCHASE side of the same argument, which was the one
+      // still missing here. kasOpts was seeded with the attributions of the invoices DATED in this
+      // window; the costs a cash-basis window actually books are the ones SETTLED in it, and those
+      // routinely belong to invoices dated earlier. A settled cost with no attribution falls to
+      // the pro-rata bucket, so an owner who marked a cost 'direct_taxed' loses part of a
+      // deduction they were fully entitled to. fetchSettlementEvents has no invoice_date filter,
+      // which is precisely why the two sets differ.
+      deductionByInvoice: new Map([
+        ...(await fetchVatDeductions(
+          pipeline,
+          ownerId,
+          exemption.active
+            ? [...new Set(qs.events.filter((e) => e.direction === "incoming").map((e) => e.invoiceId))]
+            : [],
+        )).deductionByInvoice,
+        ...exemption.deductionByInvoice,
+      ]),
     };
   }
   // [KASSTELSEL] Under cash basis the triangle delta is NOT auto-booked (see the note above), so

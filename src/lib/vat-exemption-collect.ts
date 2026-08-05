@@ -88,9 +88,34 @@ export async function collectVatExemption(args: {
   if (!active) return NO_EXEMPTION;
 
   // ── 2. What each cost serves ────────────────────────────────────────────────
-  const ids = (args.incomingInvoiceIds ?? []).filter((id): id is string => !!id);
+  const { deductionByInvoice, degraded } = await fetchVatDeductions(client, ownerId, args.incomingInvoiceIds);
+  return { active: true, deductionByInvoice, degraded };
+}
+
+/**
+ * [VRIJGESTELD · KASSTELSEL] Read the cost attributions for a given set of purchase invoices.
+ *
+ * Split out of collectVatExemption because the KASSTELSEL needs it for a DIFFERENT set. Every
+ * caller of the collector passes the invoices DATED in the period, which is right for the accrual
+ * path — but under cash basis the costs that count are the ones SETTLED in the period, and those
+ * routinely belong to invoices dated in an earlier quarter (payment lags the invoice date).
+ *
+ * A cost whose attribution is missing falls to 'mixed' in the engine — the pro-rata share — and
+ * that is wrong in BOTH directions depending on what the owner actually attributed: a cost they
+ * marked 'direct_taxed' loses part of a deduction it was fully entitled to, and one they marked
+ * 'direct_exempt' gains a share of a deduction it was entitled to none of. The owner did the work
+ * of attributing their costs and the number came out as if they hadn't.
+ *
+ * Never throws — same contract as the collector it came from.
+ */
+export async function fetchVatDeductions(
+  client: PipelineClient,
+  ownerId: string,
+  incomingInvoiceIds?: readonly string[],
+): Promise<{ deductionByInvoice: Map<string, string | null>; degraded: boolean }> {
+  const ids = (incomingInvoiceIds ?? []).filter((id): id is string => !!id);
   const deductionByInvoice = new Map<string, string | null>();
-  if (ids.length === 0) return { active: true, deductionByInvoice, degraded: false };
+  if (ids.length === 0) return { deductionByInvoice, degraded: false };
 
   try {
     // [IN-CHUNK] Chunked for the same reason every other id-keyed read here is: the list travels
@@ -107,7 +132,7 @@ export async function collectVatExemption(args: {
           .range(from, to),
     );
     for (const r of rows) if (r.id) deductionByInvoice.set(r.id, r.vat_deduction);
-    return { active: true, deductionByInvoice, degraded: false };
+    return { deductionByInvoice, degraded: false };
   } catch (e) {
     // The regime IS active and we could not read the attributions. Every cost then falls back to
     // 'mixed' in the engine — the pro-rata share — which is the legally-default treatment for a
@@ -117,6 +142,6 @@ export async function collectVatExemption(args: {
       invoiceCount: ids.length,
       error: e instanceof Error ? e.message : String(e),
     });
-    return { active: true, deductionByInvoice: new Map(), degraded: true };
+    return { deductionByInvoice: new Map(), degraded: true };
   }
 }

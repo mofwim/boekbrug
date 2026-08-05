@@ -186,9 +186,14 @@ export async function GET(req: NextRequest) {
     ...mergeSchemeOpts(sr.opts, {
       rateSharesByInvoice,
       exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+      // [VRIJGESTELD · KASSTELSEL] Through the merge too, never after it. Under kas the costs
+      // that count are the ones SETTLED in the quarter, and sr.opts carries the attributions for
+      // exactly those; this map covers the ones DATED in it. Assigning after the merge drops the
+      // settled half, and a cost with no attribution falls to the pro-rata bucket — the owner
+      // attributed their costs and the deduction comes out as if they had not.
+      deductionByInvoice: exemption.deductionByInvoice,
     }),
     exemptRegime: exemption.active,
-    deductionByInvoice: exemption.deductionByInvoice,
   });
 
   // Honest completeness — counts of the ACTUAL data behind each figure.

@@ -90,9 +90,18 @@ test("[SCHEME-MERGE] no money-read route replaces the scheme's per-invoice maps"
     // spreads sr.opts. mergeSchemeOpts takes them as arguments instead, so this cannot recur
     // without deleting the call above.
     assert.doesNotMatch(
-      src, /\.\.\.sr\.opts,[\s\S]{0,600}?(exemptShareByInvoice|rateSharesByInvoice):/,
+      src, /\.\.\.sr\.opts,[\s\S]{0,600}?(exemptShareByInvoice|rateSharesByInvoice|deductionByInvoice):/,
       `${f} sets a per-invoice map alongside a raw \`...sr.opts\` spread again — that drops every ` +
         `invoice this quarter SETTLED but did not DATE, which under kas is most of them`,
+    );
+    // deductionByInvoice belongs INSIDE the merge, not after it. Assigning it on the outer object
+    // literal — where it reads like the two lines next to it — replaces the settled attributions
+    // with the dated ones, and every cost that loses its attribution falls to the pro-rata bucket.
+    assert.doesNotMatch(
+      src, /\}\),\s*(exemptRegime: [^,]+,\s*)?deductionByInvoice:/,
+      `${f} assigns deductionByInvoice AFTER mergeSchemeOpts, which overwrites the attributions ` +
+        `of the invoices this quarter settled — an owner who attributed their costs then gets ` +
+        `the pro-rata ratio applied to them anyway`,
     );
   }
 });
