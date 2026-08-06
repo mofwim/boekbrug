@@ -1097,7 +1097,7 @@ test("[GEGROND] the only non-self-referential check on a money field is actually
     "and STORE it — a verdict computed and dropped is the defect class this whole file is for",
   );
   assert.match(
-    ai, /statementText,\s*\);/,
+    ai, /groundMoneyFields\(amounts, statementText, 'text'\)/,
     "fed with the document's own extracted text, which is the entire point: any other input makes " +
       "this the reader checking itself again",
   );
@@ -1130,5 +1130,54 @@ test("[GEGROND] the only non-self-referential check on a money field is actually
     health, /_grounding[\s\S]{0,400}?niet letterlijk in de tekst/,
     "the verify screen must say it in words — that sentence is the difference between checking " +
       "the invoice yourself and not having to",
+  );
+});
+
+test("[GEGROND-OCR] the second read is blind, or it is worth nothing", () => {
+  // [GEGROND] gave the app its first check on a money figure that is not the reader checking itself
+  // — but only for a text PDF. A photograph has no characters to search, so the majority of intake
+  // got no independent check at all. This is the photo half.
+  //
+  // Its entire value is that the transcription call never sees what the extractor found. Show a
+  // model a number and ask it to check that number and it agrees; the exercise then measures
+  // nothing while reporting confidence, which is worse than not running it — it manufactures trust.
+  const mod = code("src/lib/ocr-amounts.ts");
+  assert.doesNotMatch(
+    mod, /OCR_AMOUNTS_PROMPT[\s\S]{0,600}?\$\{/,
+    "the transcription prompt gained an interpolation — anything from the extraction reaching it " +
+      "turns an independent witness into an echo",
+  );
+  assert.match(mod, /Reken NIETS uit/, "and it asks for what is SEEN, not for a total");
+
+  const ai = code("src/lib/ai.ts");
+  assert.match(
+    ai, /transcribeAmountsForGrounding\(fileBase64, mimeType/,
+    "the call receives the FILE and nothing derived from the first read",
+  );
+  assert.match(
+    ai, /grounding\.totalIncBtw === 'unreadable' &&/,
+    "and it runs only where the text layer gave nothing — paying an API call to re-confirm what " +
+      "the document's own characters already proved buys a WORSE answer",
+  );
+  assert.match(
+    ai, /groundMoneyFields\(amounts, transcribed, 'ocr'\)/,
+    "the verdict must record which witness spoke: presenting a model read as the mechanical " +
+      "certainty of a text layer is how a green tick stops meaning anything",
+  );
+});
+
+test("[GEGROND-OCR] the weaker witness never borrows the stronger one's words", () => {
+  // An owner told "we found this literally in the text" about a photograph, who later finds one of
+  // those wrong, is right to distrust every green tick afterwards.
+  const g = code("src/lib/amount-grounding.ts");
+  assert.match(g, /source === 'ocr'/, "the sentence branches on the witness");
+  assert.match(g, /teruggelezen van de foto/, "with its own, weaker claim");
+  // And the separator class may not swallow line breaks again: `\s` covers `\n`, which made a
+  // newline between two amounts read as a thousands separator and turned correct reads into false
+  // alarms. Spelled out, so the ordinary space cannot silently fall out of it either.
+  assert.match(
+    g, /const SEP = \/\[\.,\\u0020\\u00A0\\u202F\\u2009\]\//,
+    "the grouping-separator class was changed — this is the guard that decides whether a match is " +
+      "part of a bigger number, and it has broken in BOTH directions before",
   );
 });

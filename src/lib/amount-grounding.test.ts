@@ -140,6 +140,26 @@ test('[GEGROND] the real misread this exists for', () => {
   assert.ok(Math.abs(gelezen.totalExBtw + gelezen.btwAmount - gelezen.totalIncBtw) <= 0.02)
 })
 
+test('[GEGROND] amounts sitting next to each other do not shadow one another', () => {
+  // Two bugs lived here, both found by running the OCR half against a real transcription, and both
+  // in the SAME guard — the one that decides whether a match is part of a bigger number.
+  //
+  // 1. `\\s` in the separator class covers `\\n`. A document listing amounts on consecutive lines
+  //    made the newline read as a thousands separator, so a CORRECTLY read amount came back
+  //    'absent'. A false alarm on a correct invoice is how a warning stops being read.
+  // 2. Fixing that by spelling the class out dropped the ordinary space, and then "265,41" was
+  //    confirmed by a document printing "2 265,41" — the thousand-euro error the guard exists for.
+  //
+  // Both directions are held here, because each fix broke the other.
+  assert.equal(groundAmount(393.17, '1.872,24\n393,17'), 'found', 'a newline is a line break, not a grouping separator')
+  assert.equal(groundAmount(2265.41, '1.872,24 2.265,41'), 'found', 'nor is the gap between two finished amounts')
+  assert.equal(groundAmount(265.41, 'Totaal 2 265,41'), 'absent', 'but a space INSIDE one number still groups it')
+  assert.equal(groundAmount(2265.41, 'Totaal 2 265,41'), 'found')
+  // The non-breaking and thin spaces some templates use must behave identically.
+  assert.equal(groundAmount(265.41, 'Totaal 2\u00A0265,41'), 'absent')
+  assert.equal(groundAmount(265.41, 'Totaal 2\u202F265,41'), 'absent')
+})
+
 test('[GEGROND] an adversarial sweep: no amount is ever confirmed by a different one', () => {
   // A false 'found' is the ONLY outcome that makes this feature dangerous: it would bless a wrong
   // number using the very check built to catch wrong numbers. So the property is checked

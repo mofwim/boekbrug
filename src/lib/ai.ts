@@ -82,6 +82,7 @@ import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 // [GEGROND] The independent witness on a money field — see amount-grounding.ts.
 import { groundMoneyFields } from './amount-grounding';
+import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
  * Het model waarmee deze app leest. Geëxporteerd zodat een route die een ANDER model wil proberen
@@ -783,6 +784,47 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
 // PDF caller — sends actual PDF bytes to Claude
 // [BOEK-011] reads the real content, not just metadata — May 2026
 // ─────────────────────────────────────────────────────────
+/**
+ * [GEGROND-OCR] Read the amounts off a document that has no text layer, so the grounding check can
+ * run on a PHOTO too.
+ *
+ * The call is deliberately blind: it receives the file and a fixed instruction, and NOTHING from the
+ * extraction that just ran. Show a model a number and ask it to check that number and it will agree;
+ * the exercise then measures nothing while reporting confidence. That independence is the entire
+ * value here, and a source gate holds it.
+ *
+ * Best-effort by construction: any failure — budget, network, an empty reply — returns null, which
+ * the grounding check reads as 'unreadable'. A transcription that did not happen is not evidence
+ * about the document, and must never harden into "the amount is absent".
+ */
+async function transcribeAmountsForGrounding(
+  fileBase64: string,
+  mediaType: string,
+  model: string,
+): Promise<string | null> {
+  try {
+    const isImage = /^image\/(jpeg|png|webp|gif)$/.test(mediaType);
+    const reply = isImage
+      ? await callClaudeWithImage(
+          fileBase64,
+          mediaType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+          OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, model,
+        )
+      : await callClaudeWithPdf(fileBase64, OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, model);
+    const haystack = parseOcrAmounts(reply);
+    // A reply with one token is far more likely to be a model that gave up than an invoice with one
+    // number on it. Treating that as a real search space would turn every amount into a false
+    // 'absent' — a warning that is wrong is worse than no warning.
+    if (ocrAmountCount(haystack) < MIN_OCR_AMOUNTS) return null;
+    return haystack;
+  } catch (e) {
+    console.warn('[GEGROND-OCR] transcription unavailable — grounding stays unreadable', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
+
 async function callClaudeWithPdf(
   pdfBase64: string,
   prompt: string,
@@ -1783,14 +1825,34 @@ Return JSON only.`;
     // all. Stored beside _safecore, in three states, because a check that could not RUN (a photo has
     // no text layer) must never read as one that passed, nor as one that failed.
     {
-      const grounding = groundMoneyFields(
-        {
-          totalIncBtw: parsed.total_inc_btw,
-          totalExBtw: parsed.total_ex_btw,
-          btwAmount: parsed.btw_amount,
-        },
-        statementText,
-      );
+      const amounts = {
+        totalIncBtw: parsed.total_inc_btw,
+        totalExBtw: parsed.total_ex_btw,
+        btwAmount: parsed.btw_amount,
+      };
+      let grounding = groundMoneyFields(amounts, statementText, 'text');
+
+      // [GEGROND-OCR] No text layer means no characters to search, so the check above says
+      // 'unreadable' — honest, and useless, because a photographed receipt is the ordinary case this
+      // app exists for. Most of what comes in would get no independent check at all.
+      //
+      // So for a photo we ask a SECOND, blind read to transcribe the amounts it can see, and search
+      // that instead. It is a weaker witness than a text layer and the verdict records which one
+      // spoke (source: 'ocr'), because presenting a model read as mechanical certainty is how a
+      // green tick stops meaning anything.
+      //
+      // Only when the first check found nothing to work with, and only when there is a total worth
+      // corroborating: this costs an API call, and spending one to re-confirm what the document's
+      // own characters already proved would be paying for a worse answer.
+      if (
+        grounding.totalIncBtw === 'unreadable' &&
+        typeof parsed.total_inc_btw === 'number' &&
+        Number.isFinite(parsed.total_inc_btw)
+      ) {
+        const transcribed = await transcribeAmountsForGrounding(fileBase64, mimeType, model ?? CLAUDE_MODEL);
+        if (transcribed) grounding = groundMoneyFields(amounts, transcribed, 'ocr');
+      }
+
       (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
     }
 

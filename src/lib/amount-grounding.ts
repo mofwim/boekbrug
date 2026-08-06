@@ -39,10 +39,26 @@
 /** What the document's text can tell us about one number. */
 export type GroundingVerdict = 'found' | 'absent' | 'unreadable'
 
+/**
+ * WHICH witness produced the verdict, because they are not equally strong and the app must not
+ * present them as if they were.
+ *
+ *   'text' — the document's own characters, extracted from a text PDF. Mechanical: no model, no
+ *            opinion. The strongest thing this app can say about a number.
+ *   'ocr'  — a separate transcription read of a photo ([GEGROND-OCR]). Weaker: it is a model, from
+ *            the same family as the extractor. It earns its place because it answers a DIFFERENT
+ *            question with different failure modes — "write down what you see" fails locally on a
+ *            smudged digit, where "what is the total?" fails semantically by computing a figure
+ *            that is not on the paper. Corroboration, not proof.
+ */
+export type GroundingSource = 'text' | 'ocr'
+
 export interface MoneyGrounding {
   totalIncBtw: GroundingVerdict
   totalExBtw: GroundingVerdict
   btwAmount: GroundingVerdict
+  /** Absent on rows written before OCR grounding existed → read as 'text', which is what they were. */
+  source?: GroundingSource
 }
 
 /** Below this, a number is too common in ordinary text to mean anything. */
@@ -99,8 +115,27 @@ function variants(amount: number): string[] {
  * catch it. So a match must not be flanked by a digit, nor by a separator that is itself flanked by
  * a digit (which is what makes it part of a larger grouped number).
  */
-/** Characters that can group a number: a real amount is never flanked by one WITH a digit beyond it. */
-const SEP = /[.,\s  ]/
+/**
+ * Characters that can group the digits INSIDE one number: a dot, a comma, or a single space in its
+ * various widths — the ordinary space included, spelled as \u0020 so it cannot fall out of the
+ * class unnoticed the way it did once: with the plain space missing, "265,41" was confirmed by a
+ * document printing "2 265,41", which is the thousand-euro error this guard exists to prevent.
+ *
+ * Line breaks and tabs are deliberately NOT here, and that omission is a bug this cost. `\s` covers
+ * `\n`, so on a document listing amounts on consecutive lines — "1.872,24" then "393,17" — the
+ * newline before 393,17 read as a thousands separator with a digit beyond it, and a correctly-read
+ * amount came back 'absent'. A false alarm on a correct invoice is precisely how a warning stops
+ * being read, so it is the failure direction that matters most here.
+ */
+const SEP = /[.,\u0020\u00A0\u202F\u2009]/
+
+/** Does the text ending here already finish an amount (…2,24)? Then the next separator is a gap. */
+const COMPLETED = /\d[.,]\d{2}$/
+
+/** Does this needle already carry its cents? Then no thousands group can follow it. */
+function hasCents(needle: string): boolean {
+  return /[.,]\d{2}$/.test(needle)
+}
 
 function occursWhole(haystack: string, needle: string): boolean {
   let from = 0
@@ -114,7 +149,10 @@ function occursWhole(haystack: string, needle: string): boolean {
 
     const digitBefore = /[0-9]/.test(before)
     // "1.871,40" — the char before is a grouping separator AND before that is a digit.
-    const groupedBefore = SEP.test(before) && /[0-9]/.test(beforeTwo)
+    // Only when the text before it is NOT already a finished amount: in "1.872,24 393,17" the space
+    // follows a completed number, so it is a gap between two amounts, not a thousands separator.
+    const groupedBefore =
+      SEP.test(before) && /[0-9]/.test(beforeTwo) && !COMPLETED.test(haystack.slice(0, i - 1))
     // A digit straight after means we matched a prefix of a longer number.
     const digitAfter = /[0-9]/.test(after)
     // The mirror of groupedBefore, and it is not symmetry for its own sake — it is a bug this
@@ -124,7 +162,10 @@ function occursWhole(haystack: string, needle: string): boolean {
     // of 1.260 amount/format pairs found six of these and no other defect.
     // Nothing legitimate is lost: "500,00" is matched by its own variant long before the bare
     // "500" is tried, so the only strings this rejects are leading groups of larger numbers.
-    const groupedAfter = SEP.test(after) && /[0-9]/.test(afterTwo)
+    // The mirror — and it applies ONLY to a needle without cents. A number already ending in ",41"
+    // is complete, so digits past the next separator belong to a DIFFERENT amount; applying the rule
+    // there rejected "2.265,41" whenever another amount followed it on the same line.
+    const groupedAfter = !hasCents(needle) && SEP.test(after) && /[0-9]/.test(afterTwo)
 
     if (!digitBefore && !groupedBefore && !digitAfter && !groupedAfter) return true
     from = i + 1
@@ -156,11 +197,13 @@ export function groundAmount(amount: number | null | undefined, text: string | n
 export function groundMoneyFields(
   amounts: { totalIncBtw?: number | null; totalExBtw?: number | null; btwAmount?: number | null },
   text: string | null | undefined,
+  source: GroundingSource = 'text',
 ): MoneyGrounding {
   return {
     totalIncBtw: groundAmount(amounts.totalIncBtw, text),
     totalExBtw: groundAmount(amounts.totalExBtw, text),
     btwAmount: groundAmount(amounts.btwAmount, text),
+    source,
   }
 }
 
@@ -189,11 +232,19 @@ export function groundingBlocksAutoBooking(g: MoneyGrounding): boolean {
  * checking the invoice yourself and not having to.
  */
 export function groundingText(g: MoneyGrounding): string | null {
+  const viaOcr = g.source === 'ocr'
   switch (g.totalIncBtw) {
     case 'found':
-      return 'Dit bedrag staat zo op de factuur — wij hebben het letterlijk teruggevonden in de tekst.'
+      // The OCR sentence is deliberately weaker. Saying "wij hebben het letterlijk teruggevonden in
+      // de tekst" about a photograph would claim the mechanical certainty of a text layer for a
+      // model read, and an owner who later found one wrong would be right to distrust all of them.
+      return viaOcr
+        ? 'Wij hebben dit bedrag ook teruggelezen van de foto zelf — het komt overeen.'
+        : 'Dit bedrag staat zo op de factuur — wij hebben het letterlijk teruggevonden in de tekst.'
     case 'absent':
-      return 'Let op: dit bedrag staat NIET letterlijk op de factuur. Controleer het even aan het document zelf.'
+      return viaOcr
+        ? 'Let op: bij het teruglezen van de foto vonden wij dit bedrag niet terug. Controleer het even aan het document zelf.'
+        : 'Let op: dit bedrag staat NIET letterlijk op de factuur. Controleer het even aan het document zelf.'
     case 'unreadable':
       // Said plainly rather than hidden: "we could not check" is a different state from "we checked
       // and it was fine", and pretending otherwise is what makes a green tick meaningless.
