@@ -97,15 +97,29 @@ export async function GET(req: NextRequest) {
   // maken; wie te veel leest loopt tegen het eerlijk gebruik aan
   // (aiDocuments in src/lib/fair-use.ts), niet tegen een betaalmuur.
   //
-  // Tot die maandteller ook hier meetelt — hij bestaat nu in code en op de
-  // publieke pagina, nog niet als kolom — draagt de begrenzing op twee dingen:
-  //   1. de globale dagzekering in src/lib/ai-budget.ts, die ELKE weg naar
-  //      Anthropic afdekt en dus ook deze;
-  //   2. de rondelimiet hierboven plus de zachte deadline hieronder.
+  // ✅ DAT OPEN PUNT IS DICHT (augustus 2026). Hier stond: "een verlaten mailbox
+  // van een gratis account blijft tot die maandteller er is meelopen in deze run.
+  // De dagzekering maakt dat betaalbaar, maar niet gratis."
   //
-  // ⚠️ OPEN PUNT, eerlijk opgeschreven: een verlaten mailbox van een gratis
-  // account blijft tot die maandteller er is meelopen in deze run. De dagzekering
-  // maakt dat betaalbaar, maar niet gratis. Zie docs/PORT_VAN_BILLING_TAK.md §4.
+  // De maandteller telt nu ook op dit pad mee. syncUserEmails() reserveert vóór
+  // PHASE 1 zoveel classificaties als er nog binnen aiDocuments passen en laat de
+  // rest staan — bewaard, niet gelezen, precies zoals onExceed het belooft. Wat
+  // strandde op een storing wordt teruggegeven. Zie de poort daar; de uitleg
+  // staat op de plek waar de beslissing valt, niet hier.
+  //
+  // Wat dat verandert voor deze lus: een gratis mailbox die niemand meer leest
+  // kost hooguit zijn 50 documenten van die maand, en daarna alleen nog het
+  // ophalen. De begrenzing rust dus nu op drie dingen in plaats van twee:
+  //   1. de globale dagzekering in src/lib/ai-budget.ts, die ELKE weg naar
+  //      Anthropic afdekt en dus ook deze — en die sinds ai_budget_settle.sql
+  //      afrekent op het werkelijke verbruik in plaats van op max_tokens;
+  //   2. de maandgrens per gebruiker, hierboven beschreven;
+  //   3. de rondelimiet hierboven plus de zachte deadline hieronder.
+  //
+  // Eén gevolg om te kennen: een gebruiker die aan zijn maandgrens zit levert een
+  // ronde op die niets classificeert. De drain-lus hieronder ziet dan geen
+  // voortgang en stopt na één extra aanroep — dezelfde bescherming die daar voor
+  // een vastzittende bijlage staat, en om dezelfde reden juist.
 
   let synced = 0, failed = 0, saved = 0, truncated = 0;
   // [CRON-FAIRNESS] Rotate the start each run so a fixed tail of mailboxes never permanently starves

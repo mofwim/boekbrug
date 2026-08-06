@@ -65,7 +65,7 @@ if (typeof window !== 'undefined') {
 // one of the three transports below, and each of them reserves budget first —
 // so there is no way to reach the paid API that skips the ceiling. See
 // src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
-import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
+import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
@@ -676,6 +676,9 @@ async function callClaude(
   }
 
   const data = await response.json();
+  // [COST-GUARD] Correct the reservation to what this actually cost — BEFORE the
+  // shape check below, because an answer we cannot parse was still paid for.
+  await settleAiBudget({ reserved: budget, usage: data?.usage, label: 'callClaude' })
   const content = data.content?.[0];
   if (!content || content.type !== 'text') {
     throw new Error('Claude API returned unexpected response shape');
@@ -903,6 +906,9 @@ async function callClaudeWithPdf(
   }
 
   const data = await response.json();
+  // [COST-GUARD] A raw PDF is the shape the reservation over-estimates most: the
+  // system prompt is a cache read on all but the first of a batch.
+  await settleAiBudget({ reserved: budget, usage: data?.usage, label: 'callClaudeWithPdf' })
   const content = data.content?.[0];
   if (!content || content.type !== 'text') {
     throw new Error('Claude PDF API returned unexpected response shape');
@@ -1071,6 +1077,9 @@ async function callClaudeWithImage(
   }
 
   const data = await response.json();
+  // [COST-GUARD] The downscale already cut the image tokens ~13×; this cuts the
+  // reservation down to what the downscaled call actually used.
+  await settleAiBudget({ reserved: budget, usage: data?.usage, label: 'callClaudeWithImage' })
   const content = data.content?.[0];
   if (!content || content.type !== 'text') {
     throw new Error('Claude Image API returned unexpected response shape');

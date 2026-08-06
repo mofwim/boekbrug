@@ -1956,3 +1956,29 @@ test("[E-FACTUUR-XML] the supplier's party is read from the SUPPLIER's block", (
     "a value that is not an IBAN must never reach the payment sheet",
   );
 });
+
+test("[E-FACTUUR-XML] a free read never spends the monthly AI allowance", () => {
+  // A cross-session interaction, and the kind that produces no merge conflict at all: one session
+  // added a monthly quota on 'aiDocuments', another added a document class that costs NO ai read.
+  // Counted together, the owner pays quota for something free — and worse, a real invoice that DOES
+  // need reading gets pushed out of the allowance by one that never used it.
+  const src = code("src/lib/email-integration.ts");
+  assert.match(
+    src, /const aiCandidates = batchCandidates\.filter\(\(a\) => !isEInvoiceXmlMime\(a\.mimeType\)\)/,
+    "only the reads that cost something may be counted",
+  );
+  assert.match(
+    src, /wanted: aiCandidates\.length/,
+    "…and the reservation must ask for that number, not the batch size",
+  );
+  // A positional slice would let a free XML occupy a paid place. The selection walks the batch and
+  // keeps every XML plus paid reads until the grant runs out.
+  assert.doesNotMatch(
+    src, /const freshAttachments = batchCandidates\.slice\(0, fairUse\.granted\)/,
+    "a slice counts an XML as a place and still pushes a real invoice out",
+  );
+  assert.match(
+    src, /if \(isEInvoiceXmlMime\(a\.mimeType\)\) return true[\s\S]{0,120}?if \(aiBudget <= 0\) return false/,
+    "free reads always pass; paid ones stop at the grant",
+  );
+});

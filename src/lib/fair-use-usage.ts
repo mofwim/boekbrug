@@ -135,6 +135,67 @@ export async function consumeFairUse(params: {
 }
 
 /**
+ * Reserveer ZOVEEL van een batch als er nog binnen de grens past.
+ *
+ * ── WAAROM ER EEN TWEEDE VORM VAN RESERVEREN MOET ZIJN ──
+ * consumeFairUse() is alles-of-niets, en dat klopt voor een handeling die de gebruiker zelf
+ * doet: hij drukt op een knop, en die knop gaat door of pauzeert. De achtergrondsync heeft
+ * dat karakter niet. Daar komen veertig bijlagen tegelijk binnen terwijl er nog drie binnen
+ * de maandgrens passen, en alles-of-niets zou dan die drie ook weigeren — terwijl de
+ * gepubliceerde belofte precies andersom is: tot je grens lezen wij, daarna bewaren wij en
+ * vul je zelf in.
+ *
+ * ── HET KOST GEEN NIEUWE SQL, EN DAT IS MET OPZET ──
+ * fair_use_consume() geeft bij een weigering al `remaining` terug: de ruimte die er nog wél
+ * was. Een tweede aanroep met precies dat getal is dus nog steeds atomair, en er komt geen
+ * losse "hoeveel mag ik nog"-vraag bij die tussen lezen en ophogen kan verschuiven. Loopt er
+ * ondertussen iemand anders doorheen, dan wordt die tweede aanroep gewoon geweigerd en is
+ * het antwoord 0 — nooit een reservering die niet is opgeschreven.
+ *
+ * Faalt OPEN, net als de rest van dit bestand: bij een onbereikbare teller mag alles door.
+ *
+ * ── WAAROM `consume` EEN PARAMETER IS ──
+ * Dit is de enige plek in het eerlijk gebruik waar een getal wordt UITGEREKEND in plaats van
+ * doorgegeven, en het is een getal dat maar één kant op fout mag gaan: te veel toekennen is de
+ * grens weggeven. Zo'n som hoort getest, en testen kan alleen als de teller vervangbaar is —
+ * `consumeFairUse` praat rechtstreeks met de database. De standaardwaarde is de echte teller,
+ * dus geen enkele aanroeper merkt hier iets van.
+ */
+export async function consumeFairUseUpTo(
+  params: {
+    userId: string;
+    metric: FairUseKey;
+    plan: UsagePlan;
+    /** Hoeveel je er zou willen doen. */
+    wanted: number;
+    now?: Date;
+  },
+  consume: typeof consumeFairUse = consumeFairUse,
+): Promise<{ granted: number; period: string; reason: ConsumeVerdict["reason"] }> {
+  const period = currentPeriod(params.now);
+  const wanted = Math.max(0, Math.floor(params.wanted));
+  if (wanted === 0) return { granted: 0, period, reason: "within_limit" };
+
+  const first = await consume({ ...params, amount: wanted });
+  if (first.allowed) return { granted: wanted, period: first.period, reason: first.reason };
+  if (first.reason === "counter_unavailable") {
+    return { granted: wanted, period: first.period, reason: first.reason };
+  }
+
+  // Geweigerd, maar er kan nog ruimte zijn geweest. -1 betekent "geen grens" en hoort hier
+  // niet voor te komen (zonder grens wordt er niets geweigerd), dus die telt als geen ruimte.
+  const room = Math.min(wanted, Math.max(0, first.remaining));
+  if (room <= 0) return { granted: 0, period: first.period, reason: "exceeded" };
+
+  const second = await consume({ ...params, amount: room });
+  if (second.allowed) return { granted: room, period: second.period, reason: second.reason };
+  if (second.reason === "counter_unavailable") {
+    return { granted: wanted, period: second.period, reason: second.reason };
+  }
+  return { granted: 0, period: second.period, reason: "exceeded" };
+}
+
+/**
  * Geef een reservering terug omdat de handeling mislukte.
  *
  * Dit maakt de zin op /eerlijk-gebruik waar: "Een bestand dat wij niet konden lezen telt

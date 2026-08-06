@@ -32,9 +32,26 @@
 import { createPipelineClient } from "./supabase-pipeline";
 
 /**
- * Daily ceiling in euros. Default 5.00 — enough for ~550 document reads a day,
- * which is far past any honest single-tenant use of a pre-revenue app, and far
- * below a number that would hurt to lose.
+ * Daily ceiling in euros. Default 5.00.
+ *
+ * ── WHAT €5 ACTUALLY BUYS, AND WHY THAT NUMBER MOVED ──
+ * This comment used to claim "~550 document reads a day". It did not match this
+ * module's own arithmetic: estimateCostMicros(6000, 2000) is €0.019, so the fuse
+ * blew at ~260 reads — and it blew GLOBALLY, for every user at once. One owner
+ * importing a quarter of backlog on a Tuesday afternoon turned off automatic
+ * reading for everybody else until midnight UTC.
+ *
+ * The reservation was the problem, not the ceiling. It charges max_tokens (2000)
+ * where a real extraction answers in ~400, and it charges every input token at
+ * the cache-WRITE rate where a batch reads the system prompt at 0.1×. Both are
+ * the right direction to GUESS in — you must reserve before you know — but they
+ * are the wrong number to KEEP.
+ *
+ * settleAiBudget() below now corrects each reservation to the tokens Anthropic
+ * actually reported, within milliseconds of the call returning. A real read
+ * costs ~€0.007 cold and ~€0.004 inside a batch, so the same €5 is roughly 700
+ * documents a day — and the over-reservation now only bounds how many calls can
+ * be in flight at once, which is exactly what a fuse should bound.
  *
  * Set AI_DAILY_BUDGET_EUR=0 to disable the ceiling but KEEP COUNTING, which is
  * the right setting for a few days after go-live: you learn the real shape of
@@ -56,11 +73,27 @@ function budgetMicros(): number {
 // These are ESTIMATES and the fuse only needs them to be the right order of
 // magnitude — it is a spend ceiling, not an invoice. Deliberately rounded UP so
 // the fuse trips slightly early rather than slightly late.
+//
+// The four rates are separate because prompt caching makes them differ by more
+// than an order of magnitude, and the settlement below needs each one. The
+// RESERVATION deliberately keeps using the most expensive of them.
+
+/** Euros (in micros) per 1000 tokens, by kind. Haiku 4.5, USD→EUR at 1.10. */
+export const MICROS_PER_KTOK = {
+  /** Ordinary input: $1.00 / MTok. */
+  input: 1_100,
+  /** A cache WRITE: 1.25× input — what the first call of a batch pays. */
+  cacheWrite: 1_375,
+  /** A cache READ: 0.1× input — the 90% discount every later call of a batch gets. */
+  cacheRead: 110,
+  /** Output: $5.00 / MTok. */
+  output: 5_500,
+} as const;
 
 /** Euros (in micros) per 1000 input tokens, assuming a cache WRITE (cold). */
-const MICROS_PER_KTOK_IN = 1_375; // $1.00 × 1.25 × 1.10 = €1.375 / MTok
+const MICROS_PER_KTOK_IN = MICROS_PER_KTOK.cacheWrite;
 /** Euros (in micros) per 1000 output tokens. */
-const MICROS_PER_KTOK_OUT = 5_500; // $5.00 × 1.10 = €5.50 / MTok
+const MICROS_PER_KTOK_OUT = MICROS_PER_KTOK.output;
 
 /**
  * What one call is expected to cost, in micro-euros.
@@ -96,6 +129,16 @@ export type BudgetVerdict = {
   budgetEur: number;
   /** Why it was allowed — useful in logs. */
   reason: "within_budget" | "no_ceiling" | "exceeded" | "guard_unavailable";
+  /** What was actually put on the day's tab, in micro-euros. */
+  reservedMicros: number;
+  /**
+   * Did the counter really record this reservation?
+   *
+   * False when the guard was unreachable (fail-open) or when the call was
+   * refused — in both cases NOTHING was added, so settling afterwards would
+   * subtract money that was never charged. settleAiBudget() checks this.
+   */
+  recorded: boolean;
 };
 
 /**
@@ -138,7 +181,14 @@ export async function reserveAiBudget(params: {
         `[COST-GUARD] budget guard unavailable — allowing ${params.label}`,
         error?.message ?? "no rows"
       );
-      return { allowed: true, spentEur: 0, budgetEur: ceiling / 1_000_000, reason: "guard_unavailable" };
+      return {
+        allowed: true,
+        spentEur: 0,
+        budgetEur: ceiling / 1_000_000,
+        reason: "guard_unavailable",
+        reservedMicros: costMicros,
+        recorded: false,
+      };
     }
 
     const row = data[0] as { allowed: boolean; spent_micros: number; budget_micros: number };
@@ -151,7 +201,14 @@ export async function reserveAiBudget(params: {
         `[COST-GUARD] DAILY AI BUDGET EXHAUSTED — refused ${params.label}. ` +
           `spent ≈ €${spentEur.toFixed(2)} of €${budgetEur.toFixed(2)}.`
       );
-      return { allowed: false, spentEur, budgetEur, reason: "exceeded" };
+      return {
+        allowed: false,
+        spentEur,
+        budgetEur,
+        reason: "exceeded",
+        reservedMicros: 0, // a refused call reserves nothing — see ai_budget_consume()
+        recorded: false,
+      };
     }
 
     return {
@@ -159,10 +216,143 @@ export async function reserveAiBudget(params: {
       spentEur,
       budgetEur,
       reason: budgetEur === 0 ? "no_ceiling" : "within_budget",
+      reservedMicros: costMicros,
+      recorded: true,
     };
   } catch (err) {
     console.warn(`[COST-GUARD] budget guard threw — allowing ${params.label}:`, err);
-    return { allowed: true, spentEur: 0, budgetEur: ceiling / 1_000_000, reason: "guard_unavailable" };
+    return {
+      allowed: true,
+      spentEur: 0,
+      budgetEur: ceiling / 1_000_000,
+      reason: "guard_unavailable",
+      reservedMicros: costMicros,
+      recorded: false,
+    };
+  }
+}
+
+// ── The settlement ───────────────────────────────────────────────────
+//
+// WHY A RESERVATION IS NOT AN ANSWER.
+//
+// You have to reserve before the call, and before the call you do not know two
+// things that swing the price by 3–4×:
+//
+//   · how long the answer will be. We reserve max_tokens (2000) and a real
+//     extraction answers in ~400. Output is the dearest token there is (5×
+//     input), so that one guess is most of the error.
+//   · whether the system prompt was a cache write or a cache read. Cold it
+//     costs 1.25× input, warm it costs 0.1× — a 12× spread on ~4,300 tokens,
+//     and inside a batch almost every call is warm.
+//
+// Guessing high is right; KEEPING the high guess is not. It made a €5/day
+// ceiling behave like €1.50 of real spend, and since the ceiling is global that
+// error was paid by every other user in the app.
+//
+// So: reserve high, then correct within milliseconds using the usage block
+// Anthropic returns on every response. What remains over-reserved is only the
+// handful of calls in flight at that moment, which is precisely what a fuse
+// should hold back.
+
+/** The usage block of a Messages API response. Every field may be absent. */
+export interface ClaudeUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+}
+
+/** A token count, or 0 for anything that is not a usable number. */
+function tokens(v: number | null | undefined): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * What a call really cost, from the tokens Anthropic reported.
+ *
+ * Returns null when the usage block is missing or empty — and null means "do
+ * not settle", so the conservative reservation simply stands. Never invent a
+ * cheaper number from a response we could not read: that is the one direction
+ * in which a fuse must not err.
+ *
+ * `input_tokens` excludes the cached portions; the API reports those in their
+ * own two fields, which is why they are added rather than subtracted.
+ */
+export function actualCostMicros(usage: ClaudeUsage | null | undefined): number | null {
+  if (!usage || typeof usage !== "object") return null;
+
+  const inTok = tokens(usage.input_tokens);
+  const write = tokens(usage.cache_creation_input_tokens);
+  const read = tokens(usage.cache_read_input_tokens);
+  const outTok = tokens(usage.output_tokens);
+
+  // All four at zero is not a €0 call, it is an unreadable usage block.
+  if (inTok + write + read + outTok === 0) return null;
+
+  return Math.ceil(
+    (inTok / 1000) * MICROS_PER_KTOK.input +
+      (write / 1000) * MICROS_PER_KTOK.cacheWrite +
+      (read / 1000) * MICROS_PER_KTOK.cacheRead +
+      (outTok / 1000) * MICROS_PER_KTOK.output
+  );
+}
+
+/**
+ * How much the day's tab must move, given what was reserved and what it cost.
+ *
+ * Almost always negative — a refund. Positive when a document turned out bigger
+ * than the estimate, and then it must be charged: a settlement that only ever
+ * refunds is not a correction, it is a discount.
+ *
+ * Zero when there is nothing to correct, when nothing was reserved, or when the
+ * usage block was unreadable. Pure, so the arithmetic is testable without a
+ * database.
+ */
+export function settlementMicros(
+  reserved: Pick<BudgetVerdict, "reservedMicros" | "recorded">,
+  usage: ClaudeUsage | null | undefined
+): number {
+  if (!reserved.recorded || reserved.reservedMicros <= 0) return 0;
+  const actual = actualCostMicros(usage);
+  if (actual === null) return 0;
+  return actual - reserved.reservedMicros;
+}
+
+/**
+ * Correct one reservation to what the call really cost. Call it AFTER the
+ * response, with `data.usage` from the body.
+ *
+ * Never throws and never blocks: a settlement that fails leaves the day's tab
+ * on the conservative estimate, which costs the app a little capacity and costs
+ * the user nothing. That is the only acceptable failure here — this runs after
+ * a document has already been read, and nothing about it may reach the owner.
+ */
+export async function settleAiBudget(params: {
+  reserved: Pick<BudgetVerdict, "reservedMicros" | "recorded">;
+  usage: ClaudeUsage | null | undefined;
+  /** For the log line — which call site is settling. */
+  label: string;
+}): Promise<void> {
+  const delta = settlementMicros(params.reserved, params.usage);
+  if (delta === 0) return;
+
+  try {
+    const pipeline = createPipelineClient();
+    // ai_budget_settle is added by ai_budget_settle.sql and is not in the
+    // generated types → relaxed client.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (pipeline as any).rpc("ai_budget_settle", {
+      p_delta_micros: delta,
+    });
+    if (error) {
+      console.warn(
+        `[COST-GUARD] settlement failed for ${params.label} — the estimate stands`,
+        error.message
+      );
+    }
+  } catch (err) {
+    console.warn(`[COST-GUARD] settlement threw for ${params.label} — the estimate stands:`, err);
   }
 }
 
