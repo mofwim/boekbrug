@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { reserveAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
+import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from '@/lib/ai-model'
 
 export const runtime = 'nodejs'
@@ -268,6 +268,11 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json()
+    // [COST-GUARD] Settle before the shape check: an answer we cannot parse was
+    // still paid for, and on THIS endpoint the reservation is the whole defence
+    // — over-charging it by 3× shrinks the public scanner's daily capacity to a
+    // third for no reason.
+    await settleAiBudget({ reserved: budget, usage: data?.usage, label: 'public-scan' })
     const block = data.content?.[0]
     if (!block || block.type !== 'text' || typeof block.text !== 'string') {
       throw new Error('Unexpected Claude response shape')
