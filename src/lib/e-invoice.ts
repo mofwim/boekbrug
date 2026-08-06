@@ -19,10 +19,37 @@
 // The app could not see any of it. A Factur-X PDF was photographed by the model like any other
 // page while the exact figures sat unread inside the same bytes.
 //
-// ── AND IT MATTERS MORE EVERY YEAR ──
-// The Netherlands makes Peppol e-invoicing mandatory for businesses over €800k turnover from
-// 1 January 2027, and for everyone — zzp included — from 1 January 2028, with EU ViDA behind it.
-// German suppliers already send ZUGFeRD today, so a Dutch buyer receives these now.
+// ── AND IT MATTERS MORE EVERY YEAR — BUT NOT ON THE DATE THIS COMMENT USED TO CLAIM ──
+//
+// What stood here was: "The Netherlands makes Peppol e-invoicing mandatory for businesses over
+// €800k turnover from 1 January 2027, and for everyone — zzp included — from 1 January 2028."
+//
+// That is not true, and the way it became "true" is worth writing down, because it will happen
+// again. One session wrote it from an unnamed source; a later session read it in this file and
+// cited it back as a fact about the world, and a strategy was proposed on top of it. A claim does
+// not become verified by being committed. Checked against the actual record (August 2026):
+//
+//   · B2G — real and long-standing. Suppliers to the Dutch national government have invoiced
+//     electronically over Peppol since 2017. That is the only Dutch e-invoicing OBLIGATION today.
+//   · Domestic B2B — NOT law, and not yet even a bill. ViDA lets a member state mandate it; the
+//     Netherlands is consulting. Cabinet clarity on scope was due summer 2026, a draft bill goes
+//     to consultation in Q4 2026, and the legislation is to be ADOPTED by mid-2028 — which is
+//     almost certainly where the "2028" in the deleted sentence came from. Adoption is not entry
+//     into force.
+//   · Cross-border B2B — 1 July 2030 under ViDA. That is the first hard EU date.
+//
+// So the honest version: the direction is certain, the deadline is roughly four years further out
+// than this file claimed, and NOTHING here should be justified by urgency.
+//
+// It does not need to be. The reason this code pays for itself TODAY has nothing to do with Dutch
+// law: German suppliers send ZUGFeRD now, French ones Factur-X, Belgian ones Peppol UBL since
+// January 2026 — and a Dutch buyer receives all three already. Every one of those arrives as a
+// number nobody has to read off a picture. That is the whole argument, and it holds whatever the
+// Belastingdienst decides in 2028.
+//
+// Sources: Kamerbrief "Kabinetsreactie op het rapport ViDA e-facturatie en digitale rapportage"
+// (tweedekamer.nl, 2026Z04773); EY advisory report on the Dutch implementation; peppol.nl on
+// country-specific obligations. Re-check before quoting: this is a moving file.
 //
 // ── WHAT THIS FILE DOES AND DOES NOT DO ──
 // It finds the XML and reads the money out of it. It does not validate against EN 16931, does not
@@ -312,4 +339,56 @@ export function eInvoiceOf(fieldConfidence: unknown): (EInvoiceFigures & { contr
 /** Does the supplier's own file disagree with what was read? Only `true` blocks; unknown never does. */
 export function eInvoiceContradictsRead(fieldConfidence: unknown): boolean {
   return eInvoiceOf(fieldConfidence)?.contradicts === true
+}
+
+/**
+ * Is the money on this row SETTLED by the supplier's own file, rather than read off a page?
+ *
+ * ── WHY THIS PREDICATE HAD TO EXIST ──
+ * Everything this app does to be sure of an amount guards ONE risk: the reading might be wrong.
+ * The arithmetic gate compares three figures one read produced. field_confidence is the model's
+ * opinion of its own answer. [GEGROND] asks whether the figure occurs in the document's own
+ * characters. [DOCCHECK] asks whether it sits where a total is printed. The OCR pass is a second
+ * reading. Five ways of asking "did we read this right?".
+ *
+ * When a complete, self-consistent e-invoice is present and AGREES with the read, that risk is
+ * gone. Not reduced — gone. The supplier stated the number in a form with nothing to interpret,
+ * and the read matches it to the cent. Continuing to hold such an invoice out of the queue because
+ * the MODEL was only 0.72 sure of a number the SUPPLIER already stated is guarding a doubt that no
+ * longer exists.
+ *
+ * That was the shape of the mistake: the strongest witness in the building was wired in as a sixth
+ * check on the reading instead of as a replacement for it. This turns it into the answer.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT SETTLE ──
+ * Only the money. parseEInvoice reads totals, not what KIND of document this is. A statement, a
+ * reminder and a creditnota can all carry perfectly valid XML, and each of those still needs a
+ * human — so every gate about the document's kind, about duplicates, and about the vendor, number
+ * and date stays exactly where it was. This narrows one axis; it does not open a door.
+ *
+ * ── AND IT FAILS CLOSED, LIKE EVERYTHING AROUND IT ──
+ * No e-invoice → false. Unreadable or incomplete XML → parseEInvoice already refused it, so the
+ * row carries nothing and this is false. Contradiction → false, and the contradiction keeps its
+ * own, stronger refusal elsewhere. There is no input to this function that turns absence of
+ * evidence into evidence.
+ */
+export function eInvoiceSettlesAmounts(fieldConfidence: unknown): boolean {
+  const e = eInvoiceOf(fieldConfidence)
+  if (e === null) return false
+
+  // ── AND WHY THIS DOES NOT SIMPLY READ e.contradicts ──
+  // eInvoiceOf normalises with `=== true`, which is right for a gate that only acts on `true`: a
+  // missing or malformed value must not BLOCK anything. Here the direction is reversed — this
+  // function GRANTS — and the same normalisation would turn `contradicts: "nee"`, or any other
+  // corrupted value, into a clean bill of health. A test written for the opposite reason found it.
+  //
+  // So the raw value is read again, and only two shapes settle anything:
+  //   absent  — an older row, read before the comparison was stored. The reader has written this
+  //             field on every extraction since; absent means the question predates the field, not
+  //             that it was dodged.
+  //   false   — the comparison ran and the figures agreed.
+  // Anything else is a value we do not understand, and a value we do not understand is a doubt.
+  const raw = ((fieldConfidence as Record<string, unknown>)._einvoice as Record<string, unknown>)
+    .contradicts
+  return raw === undefined || raw === false
 }
