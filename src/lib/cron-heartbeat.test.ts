@@ -1,6 +1,7 @@
 // [CRON-HARTSLAG] Pure node test — run: npx tsx --test src/lib/cron-heartbeat.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { judgeCron, cronsNeedingAttention, cronHealthNote, CRON_JOBS } from "./cron-heartbeat";
 
@@ -8,14 +9,30 @@ const NU = Date.parse("2026-07-30T12:00:00.000Z");
 const gelede = (uur: number) => new Date(NU - uur * 3_600_000).toISOString();
 const run = (uur: number, ok: boolean | null = true) => ({ job: "x", started_at: gelede(uur), ok });
 
-test("de zeven crons uit vercel.json staan erin, met hun ritme", () => {
-  assert.deepEqual(Object.keys(CRON_JOBS).sort(), [
-    "bank-sync", "email-sync", "quarter-close", "reconcile", "recurring", "reminders", "retention-purge",
-  ]);
+test("elke cron uit vercel.json staat in het register, en andersom", () => {
+  // [DAGSTART] Stond hier als een hardgecodeerde lijst van zeven namen. Dat vangt precies het
+  // verkeerde: wie een cron TOEVOEGT aan vercel.json en het register vergeet, krijgt geen rood —
+  // hij krijgt een cron die draait en die de hartslag niet kent, dus die stil kan sterven zonder
+  // dat iets het merkt. Dat is de storing waar dit hele bestand voor bestaat.
+  //
+  // Afgeleid uit vercel.json is de vergelijking dus de bewaking, en niet een tweede lijst die
+  // dezelfde fout kan maken als de eerste.
+  const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons: { path: string }[] };
+  const uitVercel = vercel.crons
+    .map((c) => c.path.replace(/^\/api\/cron\//, ""))
+    .sort();
+  assert.deepEqual(
+    Object.keys(CRON_JOBS).sort(), uitVercel,
+    "vercel.json en CRON_JOBS lopen uiteen — een cron die in maar één van de twee staat, draait " +
+      "zonder bewaking of wordt bewaakt zonder te draaien",
+  );
+
   assert.equal(CRON_JOBS["reconcile"], 1);
   assert.equal(CRON_JOBS["email-sync"], 2);
   // [ENABLEBANKING] Dagelijks: de bank staat maar een handvol opvragingen per dag per rekening toe.
   assert.equal(CRON_JOBS["bank-sync"], 24);
+  // [DAGSTART] Het ochtendbericht aan de boekhouder — dagelijks, en met opzet vaak stil.
+  assert.equal(CRON_JOBS["accountant-daily"], 24);
 });
 
 test("een verse geslaagde run is gewoon goed", () => {
@@ -69,6 +86,10 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
       recurring: run(2),
       "retention-purge": run(10),
       "quarter-close": run(24 * 30),
+      // [DAGSTART] Het ochtendbericht aan de boekhouder. Dagelijks; een run van twee uur oud is
+      // gewoon vers. Dat hij vaak GEEN bericht stuurt is geen storing — bewaakt wordt dat de run
+      // zelf gebeurde, niet dat er iets uit kwam.
+      "accountant-daily": run(2),
     },
     NU,
   );

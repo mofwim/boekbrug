@@ -1044,3 +1044,40 @@ test("[BULK-BEVESTIG] the confirm keeps what the single confirm promised", () =>
   // booking into the wrong client's books is the mistake that costs most.
   assert.match(mod, /verschillende klanten/, "a multi-client selection says so");
 });
+
+test("[DAGSTART] the morning message stays silent unless something moved", () => {
+  // This app produces around forty distinct notifications and exactly ONE is addressed to an
+  // accountant — from quarter-close, four times a year. So the confirm stack grows in silence and
+  // the deadline counts down on a screen nobody was asked to open.
+  //
+  // The obvious fix is worse: "you have 40 invoices waiting", every morning, is a message people
+  // stop reading — and then the day it says something new, they miss it. What makes this safe is
+  // that it speaks about work that is NEW and about a deadline that has MOVED, and otherwise says
+  // nothing at all.
+  const mod = code("src/lib/accountant-daily.ts");
+  assert.match(
+    mod, /if \(newWork === 0 && !deadline\) return null/,
+    "nothing new and no deadline band → NO message. Losing this line turns the whole thing into " +
+      "a daily nag, which is strictly worse than the silence it replaced",
+  );
+  assert.match(
+    mod, /DEADLINE_BANDS as readonly number\[\]\)\.includes\(days\)/,
+    "the deadline speaks on its bands, not every day — otherwise it repeats itself for a month",
+  );
+
+  const cron = code("src/app/api/cron/accountant-daily/route.ts");
+  // "New" must be measured against a window, not against the whole stack. Reading totalToConfirm
+  // as the trigger is exactly the nag above.
+  assert.match(cron, /created_at \?\? ""\) >= since/, "new work is measured against a window");
+  assert.match(
+    cron, /if \(!message\) \{ quiet\+\+; continue; \}/,
+    "and a null plan must actually SKIP the send — a plan computed and then ignored is the defect " +
+      "class this whole file exists for",
+  );
+  // It may write notifications and nothing else: a digest that could move a figure is a digest
+  // nobody should trust.
+  assert.doesNotMatch(
+    cron, /\.update\(|\.upsert\(/,
+    "the morning message writes nothing but a notification",
+  );
+});
