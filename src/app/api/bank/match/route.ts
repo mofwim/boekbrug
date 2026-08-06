@@ -261,11 +261,25 @@ export async function GET() {
   const paidInvRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id")
+      // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
+      // an invoice here, and it decides which evidence is enough below.
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence")
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .eq("status", "paid")
       .order("id", { ascending: true })
       .range(from, to),
+  );
+  // [BON-AUTO] Which of those paid invoices are kassabonnen. A bon has no invoice number and no
+  // vendor IBAN — a till does not print either — so the rule below can never be satisfied for one,
+  // and every pin-paid bon turned its own bank debit into a "missende inkoopfactuur" the owner
+  // could not clear. The receipt IS the missing document; it is sitting right there, paid.
+  const receiptIds = new Set(
+    (paidInvRows ?? [])
+      .filter((r) => {
+        const fc = (r as { field_confidence?: unknown }).field_confidence;
+        return !!fc && typeof fc === "object" && (fc as { _intake_kind?: unknown })._intake_kind === "receipt";
+      })
+      .map((r) => (r as { id: string }).id),
   );
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0) {
@@ -276,6 +290,17 @@ export async function GET() {
       if (!id || !m.best) continue;
       const sig = m.best.signals;
       if ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) paidExplained.add(id);
+      // [BON-AUTO] For a kassabon, the identity that exists is the SHOP NAME, the exact amount and
+      // the day — the bank line for a card purchase carries the counterpart and nothing else. Three
+      // independent axes agreeing is not weaker evidence than a reference; it is the only evidence
+      // this document class can produce. Display-only, exactly like the rule above: this hides a
+      // false alarm, it never books, re-pays or links anything.
+      else if (
+        receiptIds.has(m.best.invoiceId) &&
+        sig.includes("counterpart") && sig.includes("amount") && sig.includes("date")
+      ) {
+        paidExplained.add(id);
+      }
     }
   }
 

@@ -97,6 +97,19 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
     manageRow({ id: "cn", client_name: "Vlees", invoice_number: "CN9", invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109 }),
     // A paid invoice, so the paid tab and the settled-amount paths are exercised too.
     manageRow({ id: "paid", client_name: "Energie", invoice_number: "E-1", status: "paid", amount_paid: 871.4, payment_date: "2026-03-20" }),
+    // [BON-AUTO] A kassabon the app marked PAID by itself, on the strength of the tender line the
+    // till printed. Its badge only renders for a row that carries _auto_paid, so without this row
+    // the assertion below would pass over markup that was never produced.
+    manageRow({
+      id: "bon", client_name: "Nettorama", invoice_number: null, status: "paid",
+      total_ex_btw: 9.86, btw_amount: 0.88, total_inc_btw: 10.74, amount_paid: 10.74,
+      invoice_date: "2026-03-18", payment_date: "2026-03-18", payment_method: "kas",
+      field_confidence: {
+        _intake_kind: "receipt",
+        _auto_verified: { at: "2026-03-18T09:00:00Z", reason: "clean" },
+        _auto_paid: { at: "2026-03-18T09:00:00Z", method: "kas", date: "2026-03-18", reason: "bon_tender_cash", evidence: "wisselgeld" },
+      },
+    }),
     // [DUP-ON-PAY] The Enka pair, verbatim: one supplier, one invoice number, two amounts, both
     // waiting to be paid. Without BOTH rows the grouping has nothing to group and the assertion
     // below would pass over an empty list.
@@ -145,6 +158,14 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
   // resolves lives in the opened card, where the detail belongs — the chip carries it here.
   assert.doesNotMatch(html, /Heb je betaald\?[\s\S]{0,40}CR0300343/, "no pay prompt beside a credit note");
+  // [BON-AUTO] A bon the app both booked AND paid needs its own badge. "Automatisch" alone reads
+  // as "booked", and an owner who believes a settled bon is still open pays it a second time.
+  assert.match(html, /Bon · al afgerekend/, "an auto-settled bon says so on the row");
+  // And the basis is the WORD ON THE PAPER, not our conclusion — a claim the owner can check by
+  // looking at the bon, with the way back named in the same breath.
+  assert.match(html, /Op de bon staat &quot;wisselgeld&quot;/, "the tender line is quoted");
+  assert.match(html, /Zet de betaling hieronder terug/, "…and undoing it is offered beside it");
+
   // A filed quarter changes what the owner has to DO, so it must be said, not implied.
   assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
   // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.

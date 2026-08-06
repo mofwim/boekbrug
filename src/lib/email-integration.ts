@@ -6,6 +6,7 @@
 // never in plaintext columns. The three helpers below are the ONLY way to
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
+import { randomUUID } from 'node:crypto'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
@@ -45,6 +46,8 @@ import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
 import { paymentSuggestion } from '@/lib/intake-router'
+// [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
+import { planReceiptSettlement } from '@/lib/receipt-auto-settle'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
 // van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
@@ -608,15 +611,23 @@ export interface GmailAttachment {
 // actionable "upload it at Bank" reason) instead of dropping it silently. Money data still
 // enters ONLY through the reviewed Bank upload flow. Bytes are deliberately absent here.
 /**
- * [OVERSIZED-VISIBLE] Een bijlage die de app NOOIT heeft opgehaald omdat hij boven de 10 MB lag.
+ * [OVERSLAG-ZICHTBAAR] Een bijlage die de app heeft ZIEN binnenkomen en NIET heeft gelezen.
+ *
  * Reist langs precies dezelfde weg als BankStatementRef: gezien tijdens het ophalen, gemeld in de
- * skip-registratie, nooit ingelezen. De bytes worden ook nu niet gedownload.
+ * skip-registratie, nooit ingelezen. De bytes worden niet gedownload — bij `oversized` met opzet
+ * (dat is de hele reden), bij de rest omdat er geen lezer voor is.
+ *
+ * Waarom dit bestaat: te groot, te klein en onleesbaar-formaat verdwenen alle drie met exact
+ * dezelfde stille weigering als een logo in een handtekening. Het overgeslagen-paneel meldde dan
+ * "Niets overgeslagen" over een mail waar wel degelijk een factuur in zat.
  */
-export interface OversizedAttachmentRef {
+export interface SkippedAttachmentRef {
   messageId: string
   filename: string
-  /** De Nederlandse reden uit attachmentSkipReason(). */
+  /** De Nederlandse reden, zoals de eigenaar hem in het paneel leest. */
   reason: string
+  /** Waarom hij afviel — bepaalt of er ook een melding uit gaat. */
+  kind: AttachmentSkipKind
 }
 
 export interface BankStatementRef {
@@ -696,7 +707,7 @@ export async function fetchGmailAttachments(
   // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
   statements: BankStatementRef[]
   // [OVERSIZED-VISIBLE] Attachments skipped for SIZE — surfaced, never downloaded.
-  oversized: OversizedAttachmentRef[]
+  unread: SkippedAttachmentRef[]
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
@@ -819,7 +830,7 @@ export async function fetchGmailAttachments(
   const results: GmailAttachment[] = []
   const statements: BankStatementRef[] = []
   // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
-  const oversized: OversizedAttachmentRef[] = []
+  const unread: SkippedAttachmentRef[] = []
   let attachmentsOk = true
 
   // 2. Fetch each message in parallel (max 10 at a time)
@@ -829,7 +840,7 @@ export async function fetchGmailAttachments(
     for (const f of fetched) {
       results.push(...f.items)
       statements.push(...f.statements)
-      oversized.push(...f.oversized)
+      unread.push(...f.unread)
       if (!f.ok) attachmentsOk = false
     }
   }
@@ -846,13 +857,13 @@ export async function fetchGmailAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, oversized }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, unread }
 }
 
 async function fetchMessageAttachments(
   messageId: string,
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; oversized: OversizedAttachmentRef[] }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; unread: SkippedAttachmentRef[] }> {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -860,7 +871,7 @@ async function fetchMessageAttachments(
 
   // [BOEK-011 throttle×watermark] ok:false = this email wasn't fully read; the
   // caller marks the whole fetch incomplete so the watermark holds.
-  if (!res.ok) return { items: [], ok: false, statements: [], oversized: [] }
+  if (!res.ok) return { items: [], ok: false, statements: [], unread: [] }
 
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
@@ -908,7 +919,7 @@ async function fetchMessageAttachments(
   // never fetched or ingested (see BankStatementRef). Deduped by filename within a message.
   const statements: BankStatementRef[] = []
   // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
-  const oversized: OversizedAttachmentRef[] = []
+  const unread: SkippedAttachmentRef[] = []
   const statementSeen = new Set<string>()
 
   // Recursively find attachment parts
@@ -945,9 +956,21 @@ async function fetchMessageAttachments(
         // Bank flow. Running INSIDE the null-MIME branch guarantees an importable pdf/image can
         // NEVER be diverted here. Bytes are never fetched; no money is auto-imported.
         const kind = looksLikeBankStatementFile(filename)
-        if (kind && !statementSeen.has(filename)) {
-          statementSeen.add(filename)
-          statements.push({ messageId, filename, kind })
+        if (kind) {
+          if (!statementSeen.has(filename)) {
+            statementSeen.add(filename)
+            statements.push({ messageId, filename, kind })
+          }
+          continue
+        }
+        // [OVERSLAG-ZICHTBAAR] Geen afschrift, en ook geen bestand dat wij kunnen openen — een
+        // .xlsx, een .heic, een gezipte factuurbundel, een doorgestuurde .eml. Dit was de stilste
+        // weg van allemaal: hij viel hier weg zonder één spoor. Wij kunnen het inderdaad niet
+        // lezen, maar dat is geen reden om het niet te MELDEN; alleen de eigenaar kan het
+        // rechtzetten. Agendaverkeer en handtekeningen blijven stil — zie unreadableFormatReason.
+        const unreadableReason = unreadableFormatReason(filename)
+        if (unreadableReason) {
+          unread.push({ messageId, filename, reason: unreadableReason, kind: 'unreadable-format' })
         }
         continue
       }
@@ -956,15 +979,17 @@ async function fetchMessageAttachments(
       // has:attachment already hides most inline images, so this rarely fires
       // here — but keeping both paths identical means consistent behaviour and
       // no surprise if Gmail starts surfacing inline parts.
-      // [OVERSIZED-VISIBLE] Weigert de poort op OMVANG, dan is dat geen ruis maar een bestand dat
-      // wij nooit hebben bekeken — meld het. Weigert hij op VORM (logo/handtekening), dan blijft
+      // [OVERSLAG-ZICHTBAAR] Eén poort, en zij draagt haar eigen verantwoording. Geeft zij een
+      // reden, dan is dit geen ruis maar een bestand dat een factuur kan zijn en dat wij nooit
+      // hebben gelezen — meld het. Zwijgt zij, dan is het een logo of een handtekening en blijft
       // het stil, precies zoals het hoort.
-      const tooBig = attachmentSkipReason({ filename, mimeType, size })
-      if (tooBig) {
-        oversized.push({ messageId, filename, reason: tooBig })
+      const triage = triageAttachment({ filename, mimeType, size })
+      if (!triage.keep) {
+        if (triage.reason && triage.kind) {
+          unread.push({ messageId, filename, reason: triage.reason, kind: triage.kind })
+        }
         continue
       }
-      if (!isLikelyInvoiceCandidate({ filename, mimeType, size })) continue
 
       // [BOEK-011] Store with explicit flag — never confuse ID with data. The
       // NORMALISED mime is stored so the classifier downstream gets a type it can read.
@@ -1028,7 +1053,7 @@ async function fetchMessageAttachments(
   // attachment fetch (filters already ran in walkParts) — one failure marks
   // this email incomplete so the watermark holds this round.
   const items = resolved.filter((a): a is GmailAttachment => a !== null)
-  return { items, ok: items.length === resolved.length, statements, oversized }
+  return { items, ok: items.length === resolved.length, statements, unread }
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
@@ -1141,7 +1166,7 @@ export async function fetchOutlookAttachments(
   // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
   statements: BankStatementRef[]
   // [OVERSIZED-VISIBLE] Attachments skipped for SIZE — surfaced, never downloaded.
-  oversized: OversizedAttachmentRef[]
+  unread: SkippedAttachmentRef[]
 }> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
@@ -1260,7 +1285,7 @@ export async function fetchOutlookAttachments(
   const results: GmailAttachment[] = []
   const statements: BankStatementRef[] = []
   // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
-  const oversized: OversizedAttachmentRef[] = []
+  const unread: SkippedAttachmentRef[] = []
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
@@ -1306,12 +1331,12 @@ export async function fetchOutlookAttachments(
     for (const f of fetched) {
       results.push(...f.items)
       statements.push(...f.statements)
-      oversized.push(...f.oversized)
+      unread.push(...f.unread)
       if (!f.ok) attachmentsOk = false
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, oversized }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, unread }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -1323,7 +1348,7 @@ async function fetchOutlookMessageAttachments(
     hasAttachments?: boolean
   },
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; oversized: OversizedAttachmentRef[] }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; unread: SkippedAttachmentRef[] }> {
   const attRes = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`,
     accessToken
@@ -1338,7 +1363,7 @@ async function fetchOutlookMessageAttachments(
       messageId: message.id,
       status: attRes.status,
     })
-    return { items: [], ok: false, statements: [], oversized: [] }
+    return { items: [], ok: false, statements: [], unread: [] }
   }
 
   const attData = await attRes.json()
@@ -1359,7 +1384,7 @@ async function fetchOutlookMessageAttachments(
   // [EMAIL→BANK] Bank statements seen on this message — surfaced, never fetched/ingested.
   const statements: BankStatementRef[] = []
   // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
-  const oversized: OversizedAttachmentRef[] = []
+  const unread: SkippedAttachmentRef[] = []
   const statementSeen = new Set<string>()
 
   for (const att of attachments) {
@@ -1381,22 +1406,32 @@ async function fetchOutlookMessageAttachments(
       // (MT940 / CAMT.053 / bank CSV) instead of losing it silently. Inside the null-MIME branch
       // so an importable pdf/image can never be diverted; bytes are never used, no auto-import.
       const kind = looksLikeBankStatementFile(filename)
-      if (kind && !statementSeen.has(filename)) {
-        statementSeen.add(filename)
-        statements.push({ messageId: message.id, filename, kind })
+      if (kind) {
+        if (!statementSeen.has(filename)) {
+          statementSeen.add(filename)
+          statements.push({ messageId: message.id, filename, kind })
+        }
+        continue
+      }
+      // [OVERSLAG-ZICHTBAAR] Zie de Gmail-tak: een formaat waar wij geen lezer voor hebben wordt
+      // gemeld in plaats van weggegooid; agendaverkeer en handtekeningen blijven stil.
+      const unreadableReason = unreadableFormatReason(filename)
+      if (unreadableReason) {
+        unread.push({
+          messageId: message.id, filename, reason: unreadableReason, kind: 'unreadable-format',
+        })
       }
       continue
     }
 
     // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
     // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
-    // [OVERSIZED-VISIBLE] Zie de Gmail-tak: omvang wordt gemeld, vorm blijft stil.
-    const tooBigOutlook = attachmentSkipReason({ filename, mimeType, size: att.size || 0 })
-    if (tooBigOutlook) {
-      oversized.push({ messageId: message.id, filename, reason: tooBigOutlook })
-      continue
-    }
-    if (!isLikelyInvoiceCandidate({ filename, mimeType, size: att.size || 0 })) {
+    // [OVERSLAG-ZICHTBAAR] Zie de Gmail-tak: één poort, en zij draagt haar eigen verantwoording.
+    const triage = triageAttachment({ filename, mimeType, size: att.size || 0 })
+    if (!triage.keep) {
+      if (triage.reason && triage.kind) {
+        unread.push({ messageId: message.id, filename, reason: triage.reason, kind: triage.kind })
+      }
       continue
     }
 
@@ -1412,7 +1447,7 @@ async function fetchOutlookMessageAttachments(
     })
   }
 
-  return { items: out, ok: true, statements, oversized }
+  return { items: out, ok: true, statements, unread }
 }
 
 // ─── AI Classification ────────────────────────────────────────────────────────
@@ -1645,94 +1680,213 @@ export function normalizeAttachmentMime(mimeType: string, filename: string): str
 }
 
 /**
- * [OVERSIZED-VISIBLE] Waarom is deze bijlage NIET meegenomen — en moet de eigenaar dat weten?
+ * [OVERSLAG-ZICHTBAAR] Waarom is deze bijlage NIET meegenomen — en moet de eigenaar dat weten?
  *
- * De poort hieronder weigert om twee heel verschillende redenen, en die verdienen een heel
- * verschillende behandeling:
+ * Elke weigering hieronder valt in precies één van twee bakken, en het verschil is het hele punt:
  *
- *   · VORM ("dit is een handtekening, een logo, een tracking-pixel") — daar hoort niemand iets
- *     van te horen. Het is ruis, en er elke keer een regel over schrijven maakt het
- *     overgeslagen-paneel onleesbaar, waarna niemand er meer naar kijkt.
- *   · OMVANG (> 10 MB) — daar hoort de eigenaar WÉL van te horen. Wij hebben het bestand nooit
- *     opgehaald en nooit bekeken; het kan net zo goed zijn grootste inkoopfactuur van het
- *     kwartaal zijn geweest. Toch verdween het met precies dezelfde stille `false` als een
- *     logo, dus het overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets
- *     binnenkwam dat zij niet las — zweeg erover en meldde "Niets overgeslagen".
+ *   · RUIS — "dit is een handtekening, een logo, een tracking-pixel, een agenda-uitnodiging".
+ *     Daar hoort niemand iets van te horen. Er elke keer een regel over schrijven maakt het
+ *     overgeslagen-paneel onleesbaar, en een paneel dat niemand meer opent meldt niets meer.
+ *   · EEN BESTAND DAT EEN FACTUUR KAN ZIJN — te groot, te klein, of een formaat waar hier geen
+ *     lezer voor is. Wij hebben het nooit gelezen; het kan de grootste inkoopfactuur van het
+ *     kwartaal zijn geweest. Dat MOET de eigenaar horen, want alleen hij kan het rechtzetten.
  *
- * Retourneert de reden (in het Nederlands, voor de skip-registratie) of null wanneer er niets
- * te melden valt.
+ * De tweede bak verdween tot nu toe met exact dezelfde stille `false` als een logo, waarna het
+ * overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets binnenkwam dat zij niet las
+ * — "Niets overgeslagen" meldde. Dat is de zin die een ondernemer laat ophouden met zoeken.
+ */
+export type AttachmentSkipKind =
+  /** Boven de 10 MB: nooit opgehaald, nooit bekeken. */
+  | 'oversized'
+  /** Een afbeelding die te klein is voor leesbare tekst, maar geen herkenbare e-mailruis. */
+  | 'too-small'
+  /** Een bestandstype waar in deze app geen lezer voor bestaat (.xlsx, .docx, .zip, .eml …). */
+  | 'unreadable-format'
+
+export interface AttachmentTriage {
+  /** Ophalen en door de classificatie halen. */
+  keep: boolean
+  /** Nederlands, voor de eigenaar. null ⇒ met opzet stil: dit is e-mailruis. */
+  reason: string | null
+  /** null wanneer er niets te melden valt. */
+  kind: AttachmentSkipKind | null
+}
+
+/** Alles wat wél binnenkwam maar niet gelezen is, reist hier langs. */
+const KEEP: AttachmentTriage = { keep: true, reason: null, kind: null }
+const SILENT: AttachmentTriage = { keep: false, reason: null, kind: null }
+
+/**
+ * Automatisch gegenereerde namen van mailprogramma's — e-mailruis, en niets anders.
+ *
+ * 🔴 VERANKERD, geen substring. Elk patroon matcht de HELE bestandsnaam (^…$), zodat de factuur
+ * van "Iconic Foods" niet op de 'icon'-regel sneuvelt en "banner-print-invoice.png" niet op
+ * 'banner'. Alleen bestanden waarvan de hele naam het ruispatroon ís, vallen af.
+ */
+const CHROME_EXACT_PATTERNS = [
+  /^image\d{3,}$/,        // image001, image017  (Outlook inline)
+  /^att\d{5,}$/,          // ATT00001            (Apple Mail / forwards)
+  /^oledata$/,            // oledata.mso
+  /^logo$/,               // exactly "logo.png"
+  /^logo[-_]?\d*$/,       // logo, logo1, logo_2
+  /^signature$/,          // exactly "signature.png"
+  /^signature[-_]?\d*$/,  // signature, signature-1
+  /^sig$/,                // "sig.png"
+  /^icon$/,               // exactly "icon.png"
+  /^banner$/,             // exactly "banner.png"
+  /^footer$/,             // signature footers
+  /^header$/,             // letterhead headers (image, not the invoice)
+  /^spacer$/,             // layout spacers
+  /^pixel$/,              // tracking pixels
+]
+
+/** De naam zonder extensie, kleingeletterd — waar de ruispatronen op matchen. */
+function attachmentBaseName(filename: string): string {
+  return filename.toLowerCase().trim().replace(/\.[a-z0-9]{1,5}$/i, '')
+}
+
+function looksLikeMailChrome(filename: string): boolean {
+  const base = attachmentBaseName(filename)
+  return CHROME_EXACT_PATTERNS.some((re) => re.test(base))
+}
+
+/**
+ * Onder deze grens kán er geen leesbaar document in zitten — in geen enkel formaat. Een
+ * tracking-pixel is 43 bytes, een JPEG-kop alleen al zo'n 600. Hier zwijgen wij dus, en dat is
+ * geen smaak maar natuurkunde: wie hierover een regel schrijft, schrijft over niets.
+ */
+const SILENT_IMAGE_BYTES = 2 * 1024
+
+/**
+ * Boven SILENT_IMAGE_BYTES en hieronder: te klein om te vertrouwen, te groot om te negeren.
+ *
+ * 12 KB, met opzet heel laag. Een leesbare bonfoto van één pagina — ook een gecomprimeerde
+ * thermische of zwart-witscan — zit daar comfortabel boven. Liever een grensgeval van 15 KB naar
+ * Claude dan een echte kleine bon weggooien. En wat hier wél afvalt, wordt vanaf nu GEMELD in
+ * plaats van weggegooid: een bon van 8 KB is zeldzaam, maar hij bestaat, en dan is het paneel het
+ * enige spoor dat hij er ooit was.
+ */
+const TINY_IMAGE_BYTES = 12 * 1024
+
+/**
+ * De ENIGE poort. `isLikelyInvoiceCandidate` en `attachmentSkipReason` leiden hier allebei van af,
+ * zodat het besluit en de verantwoording ervan nooit uit elkaar kunnen lopen.
+ */
+export function triageAttachment(att: {
+  filename: string
+  mimeType: string
+  size: number
+}): AttachmentTriage {
+  // [M1] Bovengrens eerst — geldt voor PDF's en afbeeldingen gelijk. Een door de provider gemelde
+  // omvang boven de grens valt af VÓÓRDAT wij de bytes ophalen (geen download, geen Storage, geen
+  // AI). size===0 betekent "onbekend" en wordt verderop op de echte bytelengte afgevangen.
+  if (att.size > MAX_EMAIL_ATTACHMENT_BYTES) {
+    return {
+      keep: false,
+      kind: 'oversized',
+      // De boodschap noemt de uitweg die er echt is. "Voeg hem handmatig toe" zou de eigenaar
+      // tegen dezelfde 10 MB-muur bij Uploaden sturen.
+      reason: 'te groot om automatisch te lezen (max 10 MB) — splits de PDF of maak er een foto van',
+    }
+  }
+
+  // PDF's gaan altijd door — het sterkste factuursignaal, nooit op omvang of naam gefilterd.
+  if (att.mimeType === 'application/pdf') return KEEP
+
+  // Niet-afbeelding, niet-PDF hoort hier niet te komen (de fetchers filteren al op MIME); als het
+  // toch gebeurt, is het geen factuur die wij kunnen lezen.
+  if (!att.mimeType.startsWith('image/')) return SILENT
+
+  // Vanaf hier: een afbeelding.
+  //
+  // ── DE VOLGORDE IS DE HELE TRUC ──
+  // De naamregel staat nu VÓÓR de omvangregel, en dat verandert geen enkele import: beide
+  // weigeren, dus de verzameling bestanden die doorgaat is bit voor bit dezelfde. Wat het wél
+  // verandert is de VERANTWOORDING. Andersom viel elk logo van 3 KB op de omvangregel, en zou het
+  // melden van die regel het paneel volgooien met veertig handtekeningen — waarna niemand er meer
+  // naar kijkt en de ene echte bon ertussen onvindbaar is. Ruis eerst wegnemen, dán melden wat
+  // overblijft.
+  if (looksLikeMailChrome(att.filename)) return SILENT
+
+  // (size===0 = "onbekend" bij de provider → NIET op omvang filteren → gaat door.)
+  if (att.size > 0 && att.size < SILENT_IMAGE_BYTES) return SILENT
+  if (att.size > 0 && att.size < TINY_IMAGE_BYTES) {
+    return {
+      keep: false,
+      kind: 'too-small',
+      reason: 'te klein om te kunnen lezen (kleiner dan 12 KB) — is dit toch een bon, voeg hem dan toe bij Uploaden',
+    }
+  }
+
+  // Twijfel → houden. Een grotere, normaal genoemde afbeelding kan een gefotografeerde factuur
+  // zijn; Claude mag het oordelen. Liever een verspilde AI-aanroep dan een verloren factuur.
+  return KEEP
+}
+
+/**
+ * Bestandstypen die als bijlage horen bij e-mail zelf, niet bij de boekhouding. Hierover zwijgen
+ * wij, want een regel per agenda-uitnodiging is precies hoe het paneel onbruikbaar wordt.
+ *
+ * `.svg` staat er met opzet bij: normalizeAttachmentMime weigert die om veiligheidsredenen
+ * (script-in-XML), en vrijwel elke handtekening bevat er één.
+ */
+const SILENT_MAIL_FORMATS = new Set([
+  'ics', 'ical', 'vcf', 'vcard',        // agenda-uitnodigingen en contactkaarten
+  'p7s', 'p7m', 'pgp', 'asc', 'sig',    // handtekening- en versleutelingsenveloppen
+  'dat',                                 // winmail.dat — de TNEF-verpakking van Outlook
+  'svg',                                 // handtekeninglogo's; wordt bewust geweigerd
+  'txt',                                 // de tekstversie van de mail, door sommige clients bijgevoegd
+  'mso',                                 // oledata.mso en familie
+])
+
+/**
+ * [OVERSLAG-ZICHTBAAR] Een bijlage die de app niet eens kán openen — moet de eigenaar dat horen?
+ *
+ * Deze weg werd het stilst van allemaal afgelopen: een `factuur.xlsx`, een `bon.heic`, een
+ * gezipte factuurbundel of een doorgestuurde `.eml` valt bij normalizeAttachmentMime op `null` en
+ * verdween dan zonder enig spoor. Wij kunnen die bestanden inderdaad niet lezen — maar "niet
+ * kunnen lezen" en "niet melden" zijn twee verschillende dingen, en alleen de eigenaar kan er iets
+ * aan doen.
+ *
+ * Standaard dus MELDEN, en alleen zwijgen over wat aantoonbaar bij de mail hoort. Die kant op, en
+ * niet andersom: een lijst van "wat is een factuur" raadt altijd verkeerd, een lijst van "wat is
+ * agendaverkeer" is eindig en te controleren.
+ *
+ * Retourneert de Nederlandse reden, of null wanneer er niets te melden valt.
+ */
+export function unreadableFormatReason(filename: string): string | null {
+  const name = (filename || '').toLowerCase().trim()
+  if (!name) return null
+  // Automatisch gegenereerde namen zijn ruis, ongeacht de extensie (ATT00001.txt, image001.svg).
+  if (looksLikeMailChrome(name)) return null
+  const ext = name.match(/\.([a-z0-9]{1,5})$/)?.[1] ?? ''
+  // Zonder extensie valt er niets zinnigs over te zeggen; een regel "onbekend bestand" helpt
+  // niemand vooruit.
+  if (!ext) return null
+  if (SILENT_MAIL_FORMATS.has(ext)) return null
+  return `.${ext} kunnen wij niet automatisch lezen — is dit een factuur, bewaar hem dan als PDF ` +
+    'of maak er een foto van en voeg die toe bij Uploaden'
+}
+
+/**
+ * De reden waarom deze bijlage niet is meegenomen, of null wanneer er niets te melden valt.
+ * Afgeleid van triageAttachment — één poort, één waarheid.
  */
 export function attachmentSkipReason(att: {
   filename: string
   mimeType: string
   size: number
 }): string | null {
-  if (att.size > MAX_EMAIL_ATTACHMENT_BYTES) {
-    // De boodschap noemt de uitweg die er echt is. "Voeg hem handmatig toe" zou de eigenaar
-    // tegen dezelfde 10 MB-muur bij Uploaden sturen.
-    return 'te groot om automatisch te lezen (max 10 MB) — splits de PDF of maak er een foto van'
-  }
-  return null
+  return triageAttachment(att).reason
 }
 
+/** Doorlaten of niet. Afgeleid van triageAttachment — zie daar voor de redenen. */
 export function isLikelyInvoiceCandidate(att: {
   filename: string
   mimeType: string
   size: number
 }): boolean {
-  // [M1] Upper ceiling first — applies to PDFs and images alike. A provider-reported
-  // size over the cap is dropped BEFORE we fetch the bytes (no download, no Storage,
-  // no AI). size===0 means "unknown" → enforced at the byte-length chokepoint below.
-  // [OVERSIZED-VISIBLE] Zelfde grens, één definitie — zie attachmentSkipReason hierboven voor
-  // waarom deze weigering wél gemeld moet worden en de vorm-weigeringen eronder niet.
-  if (attachmentSkipReason(att) !== null) return false
-
-  // PDFs always go through — the strongest invoice signal, never size/name filtered.
-  if (att.mimeType === 'application/pdf') return true
-
-  // Non-image, non-pdf shouldn't reach here (fetchers already filter), but be safe.
-  if (!att.mimeType.startsWith('image/')) return false
-
-  // From here: it's an image. Apply the cheap signature/logo heuristics.
-  const name = att.filename.toLowerCase().trim()
-
-  // Tiny images are signatures / logos / tracking pixels — never an invoice scan.
-  // 12 KB: deliberately very low. A legible one-page receipt photo — even a
-  // compressed thermal/B&W scan — is comfortably larger. We'd rather send a
-  // borderline 15 KB image to Claude than risk dropping a real small receipt.
-  // (size===0 means "unknown" from the provider → do NOT size-filter → passes.)
-  const TINY_IMAGE_BYTES = 12 * 1024
-  if (att.size > 0 && att.size < TINY_IMAGE_BYTES) return false
-
-  // Auto-generated inline-image names from mail clients — email chrome.
-  //
-  // 🔴 ANCHORED, not substring. Each pattern matches the ENTIRE filename (^…$),
-  // so a vendor invoice named "iconic-foods-factuur.png" is NOT caught by the
-  // 'icon' rule, and "banner-print-invoice.png" is NOT caught by 'banner'.
-  // Only files whose WHOLE name is the chrome pattern are dropped.
-  const base = name.replace(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i, '')
-  const chromeExactPatterns = [
-    /^image\d{3,}$/,        // image001, image017  (Outlook inline)
-    /^att\d{5,}$/,          // ATT00001            (Apple Mail / forwards)
-    /^oledata$/,            // oledata.mso
-    /^logo$/,               // exactly "logo.png"
-    /^logo[-_]?\d*$/,       // logo, logo1, logo_2
-    /^signature$/,          // exactly "signature.png"
-    /^signature[-_]?\d*$/,  // signature, signature-1
-    /^sig$/,                // "sig.png"
-    /^icon$/,               // exactly "icon.png"
-    /^banner$/,             // exactly "banner.png"
-    /^footer$/,             // signature footers
-    /^header$/,             // letterhead headers (image, not the invoice)
-    /^spacer$/,             // layout spacers
-    /^pixel$/,              // tracking pixels
-  ]
-  if (chromeExactPatterns.some((re) => re.test(base))) return false
-
-  // Unsure → keep. A larger, normally-named image could be a photographed
-  // invoice; we let Claude be the judge. Better a wasted AI call than a lost
-  // invoice.
-  return true
+  return triageAttachment(att).keep
 }
 
 // ─── [IMPORT-MONITOR Part 0] SAFECORE primitives moved to src/lib/safecore.ts ──
@@ -1927,7 +2081,7 @@ export async function syncUserEmails(
   let statements: BankStatementRef[] = []
   // [OVERSIZED-VISIBLE] Bijlagen die op OMVANG zijn geweigerd. Net als de afschriften hierboven
   // buiten de facturen-balansrekening gehouden: ze zijn nooit een kandidaat geweest.
-  let oversized: OversizedAttachmentRef[] = []
+  let unread: SkippedAttachmentRef[] = []
   try {
     if (tokens.provider === 'gmail') {
       const r = await fetchGmailAttachments(accessToken, syncAfterMs)
@@ -1936,7 +2090,7 @@ export async function syncUserEmails(
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
       statements = r.statements
-      oversized = r.oversized
+      unread = r.unread
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
@@ -1946,7 +2100,7 @@ export async function syncUserEmails(
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
       statements = r.statements
-      oversized = r.oversized
+      unread = r.unread
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
@@ -1965,20 +2119,21 @@ export async function syncUserEmails(
   // candidate (it never entered `attachments`), so it must not inflate `fetched` or the
   // balanced() reconciliation. The upsert is idempotent (unique user+message key), so a
   // re-sync of the same email neither duplicates the row nor re-notifies.
-  // [OVERSIZED-VISIBLE] Bijlagen die boven de 10 MB lagen. Die zijn NOOIT opgehaald en nooit
-  // bekeken — het kan de grootste inkoopfactuur van het kwartaal zijn geweest. Toch verdwenen ze
-  // met exact dezelfde stille `false` als een logo of een handtekening, waardoor het
-  // overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets binnenkwam dat zij niet
-  // las — "Niets overgeslagen" meldde. Dat is de zin die een ondernemer laat ophouden met zoeken.
+  // [OVERSLAG-ZICHTBAAR] Bijlagen die wij hebben ZIEN binnenkomen en NIET hebben gelezen: te groot
+  // (nooit opgehaald), te klein om te vertrouwen, of een formaat waar hier geen lezer voor is.
+  // Alle drie verdwenen met exact dezelfde stille weigering als een logo of een handtekening,
+  // waardoor het overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets binnenkwam
+  // dat zij niet las — "Niets overgeslagen" meldde. Dat is de zin die een ondernemer laat ophouden
+  // met zoeken, en het kan de grootste inkoopfactuur van het kwartaal zijn geweest.
   //
   // Zelfde behandeling als de bankafschriften hierboven: idempotente upsert in de skip-registratie,
   // buiten de facturen-balansrekening (ze waren nooit een kandidaat). De bytes blijven ongelezen.
-  if (oversized.length > 0) {
-    const oversizedSeen = new Set<string>()
-    for (const ov of oversized) {
+  if (unread.length > 0) {
+    const unreadSeen = new Set<string>()
+    for (const ov of unread) {
       const key = `${ov.messageId}:${ov.filename}`
-      if (oversizedSeen.has(key)) continue
-      oversizedSeen.add(key)
+      if (unreadSeen.has(key)) continue
+      unreadSeen.add(key)
       try {
         const { data: inserted } = await supabase
           .from('email_skipped_attachments')
@@ -1987,10 +2142,14 @@ export async function syncUserEmails(
             { onConflict: 'user_id,source_message_id', ignoreDuplicates: true },
           )
           .select('id')
-        // Eén melding per nieuw bestand, en alleen voor een PDF: een 15 MB brochure of
+        // Eén melding per nieuw bestand, en alleen voor een te grote PDF: een 15 MB brochure of
         // productfoto hoort niet te piepen, een te grote factuur wel. De registratieregel komt er
-        // hoe dan ook, dus in het paneel staat alles — de melding is alleen de duw.
-        if (inserted && inserted.length > 0 && /\.pdf$/i.test(ov.filename)) {
+        // hoe dan ook, dus in het paneel staat álles — de melding is alleen de duw.
+        //
+        // [OVERSLAG-ZICHTBAAR] Op `kind`, niet op de tekst van de reden. Sinds er ook te kleine
+        // afbeeldingen en onleesbare formaten in deze lijst zitten, zou "meld elke PDF" een .pdf
+        // van 8 KB aankondigen als "groter dan 10 MB" — een melding die liegt is erger dan geen.
+        if (inserted && inserted.length > 0 && ov.kind === 'oversized' && /\.pdf$/i.test(ov.filename)) {
           await createNotification({
             userId,
             title: 'Bijlage te groot om te lezen',
@@ -2001,7 +2160,7 @@ export async function syncUserEmails(
         }
       } catch (e) {
         // Non-fataal: het melden van een overgeslagen bijlage mag de facturen-sync nooit breken.
-        console.error('[OVERSIZED-VISIBLE] skip surface failed (non-fatal)', {
+        console.error('[OVERSLAG-ZICHTBAAR] skip surface failed (non-fatal)', {
           key,
           error: e instanceof Error ? e.message : String(e),
         })
@@ -2082,6 +2241,11 @@ export async function syncUserEmails(
   // Only a 'received' invoice is matchable by the bank engine (EXCLUDED_STATUSES bars
   // 'processing'), so we only bother running the linker post-loop when this is > 0.
   let autoAdvanced = 0
+  // [BON-AUTO] Heeft deze run minstens één kassabon CONTANT afgeboekt? Een 'kas'-betaling is een
+  // gedateerde regel in het kasboek, en die moet worden bijgewerkt — maar één keer na afloop, niet
+  // per bon: reconcileCashSettlements loopt de hele administratie langs, dus per factuur aanroepen
+  // is dezelfde uitkomst tegen n keer de kosten.
+  let cashSettledThisRun = false
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -3463,11 +3627,34 @@ export async function syncUserEmails(
       // 'uncertain'; statements are already filtered out above (is_invoice=false); _safecore
       // (arithmetic / reminder / dedup) flows into the health check and holds anything doubtful.
       // The near-certain bank/cash links are closed by the hourly reconcile cron.
+      // [BON-AUTO] Mag deze bon zichzelf afboeken? Een kassabon bestáát omdat er aan de kassa is
+      // betaald. Wat de soort NIET zegt is HOE, en dat verschil beweegt de kaslade wel of niet —
+      // dus alleen wanneer het papier de tenderregel afdrukt. Zie receipt-auto-settle.ts. Dezelfde
+      // beslissing als aan de camera-deur, uit hetzelfde bestand: een automatisering op één deur
+      // is geen automatisering, het is een verschil dat niemand kan uitleggen.
+      const settlePlan = planReceiptSettlement({
+        documentKind: bonKind,
+        suggestion: {
+          suggestPaid: pay.suggestPaid,
+          paidMethod: pay.paidMethod,
+          paidMethodZeker: pay.paidMethodZeker,
+          paidDate: pay.paidDate,
+        },
+        invoiceDate,
+        totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
+        today: new Date().toISOString().slice(0, 10),
+      })
+
       // [BON-EMAIL] A paid suggestion is never auto-booked. Auto-advance lands an invoice as
       // 'received' — booked and UNPAID — which is the one status a settled bon must not get: it
       // would stand in "nog te betalen" for money already gone, be dunned for it, and be payable a
       // second time. Same gate, same reason, as /api/intake's `!decision.suggestPaid`.
-      const autoAdv = !classification.uncertain && !pay.suggestPaid
+      // [BON-AUTO] …with the one hole that objection allows: a bon that is SETTLED in the same
+      // breath never passes through 'received' as a debt, so the reason to hold it is gone. The
+      // safety bar itself does not move — grounding, placement, the printed BTW split, the
+      // arithmetic, the dedup and the health classifier all still decide whether the READ may be
+      // trusted; settling only decides which status a trusted read lands in.
+      const autoAdv = !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,
@@ -3506,6 +3693,23 @@ export async function syncUserEmails(
         fieldConfidenceValue = {
           ...(fieldConfidenceValue ?? {}),
           _auto_verified: { at: new Date().toISOString(), reason: autoAdv.reason },
+        }
+      }
+      // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is
+      // proven by the paper (settlePlan). Either one alone books something nobody checked.
+      const willSettle = autoAdv.advance && settlePlan.settle
+      if (willSettle) {
+        // The basis, on the row, in the paper's own words — so "waarom staat deze bon op betaald?"
+        // is answerable a year later without re-reading the document.
+        fieldConfidenceValue = {
+          ...(fieldConfidenceValue ?? {}),
+          _auto_paid: {
+            at: new Date().toISOString(),
+            method: settlePlan.method,
+            date: settlePlan.payDate,
+            reason: settlePlan.reason,
+            evidence: pay.paidEvidence ?? null,
+          },
         }
       }
       const invoiceStatus = autoAdv.advance ? 'received' : 'processing'
@@ -3625,6 +3829,53 @@ export async function syncUserEmails(
         // whole statement each call). Only auto-advanced invoices are eligible: a held/processing
         // one is barred by EXCLUDED_STATUSES anyway.
         if (autoAdv.advance && verdict.ok) autoAdvanced++
+
+        // [BON-AUTO] The bon pays itself off. Through apply_manual_payment — the SAME audited,
+        // atomic, row-locking call the manual "Markeer als betaald" button makes — and not by
+        // writing status='paid' onto the insert above. That shortcut looks equivalent and is not:
+        // the RPC also writes the bank_tx_invoices instalment row that keeps
+        // amount_paid = SUM(amount_applied) true, and without it recompute_invoice_amount_paid
+        // would reset amount_paid to zero on an invoice that says it is paid. Reusing the ordinary
+        // booking also means the ordinary UNDO button reverses it.
+        //
+        // AFTER the insert on purpose: a failure here leaves the bon as 'received' — booked,
+        // unpaid, one tap from correct — which is exactly where it stood before this existed. The
+        // failure direction is the old behaviour, never a half-booking.
+        if (willSettle && insertedInvoice?.id && settlePlan.method && settlePlan.payDate) {
+          const { error: settleErr } = await insertPipeline.rpc('apply_manual_payment', {
+            p_user_id: userId,
+            p_invoice_id: insertedInvoice.id,
+            p_amount: null,                   // null = the whole remaining balance
+            p_pay_date: settlePlan.payDate,
+            p_method: settlePlan.method,
+            p_payable_statuses: ['received'], // it was just inserted as 'received'
+            p_client_key: randomUUID(),
+          })
+          if (settleErr) {
+            // [NO-SILENT-EMPTY] Never swallowed. The invoice is correct either way, but an owner
+            // who was told "automatisch afgehandeld" and finds it in "nog te betalen" needs the
+            // trail to say which half ran.
+            console.error('[BON-AUTO] receipt settlement failed — left as received (unpaid)', {
+              invoiceId: insertedInvoice.id, error: settleErr.message,
+            })
+          } else {
+            // A 'kas' booking is a dated kasboek movement; one reconcile after the loop closes
+            // them all, so the drawer is never a pass behind.
+            if (settlePlan.method === 'kas') cashSettledThisRun = true
+            await logAuditAction({
+              userId,
+              action: 'invoice.auto_paid',
+              entityType: 'invoice',
+              entityId: insertedInvoice.id,
+              oldValue: { status: 'received' },
+              newValue: {
+                status: 'paid', method: settlePlan.method, payment_date: settlePlan.payDate,
+                reason: settlePlan.reason, evidence: pay.paidEvidence ?? null,
+                source: 'email_receipt_auto_settle',
+              },
+            }).catch(() => {})
+          }
+        }
 
         // [BOEK-SAFECORE] When held for an arithmetic problem, audit it —
         // truth in the log. Non-fatal. (Only on a held invoice; a clean
@@ -3884,6 +4135,18 @@ export async function syncUserEmails(
       await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId })
     } catch (e) {
       console.error('[BANK-LINK] post-import auto-confirm failed (non-fatal)', e)
+    }
+  }
+
+  // [BON-AUTO] En de kaslade. Een contant afgeboekte bon is geld dat de la uit is; zonder deze pas
+  // staat de betaling wel op de factuur maar niet in het kasboek, en dan klopt het kassaldo dat de
+  // boekhouder leest niet met de facturen eronder. Eén keer per run, na alle bonnen.
+  if (cashSettledThisRun) {
+    try {
+      const { reconcileCashSettlements } = await import('@/lib/cash-settle')
+      await reconcileCashSettlements(createPipelineClient(), userId)
+    } catch (e) {
+      console.error('[BON-AUTO] kasboek reconcile after auto-settle failed (non-fatal)', e)
     }
   }
 
