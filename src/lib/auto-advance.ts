@@ -52,6 +52,25 @@ export interface AutoAdvanceSignals {
   // btw_amount is 0 silently zeroes the voorbelasting; we only allow a zero BTW to auto-book when the
   // read EXPLICITLY says 0% (a genuine vrijgesteld / 0-rate invoice), never on a null/absent rate.
   btwRate?: number | null;
+  // [GEGROND] What the DOCUMENT'S OWN TEXT says about the total the reader reported: was that exact
+  // number found in it, is it demonstrably not in it, or was there no text to search (a photo).
+  // Every other signal in this interface is the reader's opinion of the reader; this is the only
+  // one from outside it. Optional — absent means the check did not run, which is treated exactly
+  // like 'unreadable' and blocks nothing.
+  totalGrounding?: "found" | "absent" | "unreadable" | null;
+  // [DOCCHECK] WHERE that total sits on the document: labelled as the total ('anchored'), the
+  // largest amount on the page ('largest'), or merely printed somewhere ('present') — which is the
+  // subtotal-read-as-total shape. Optional; absent means the check did not run and blocks nothing.
+  totalPlacement?: "anchored" | "largest" | "present" | "absent" | "unreadable" | null;
+  // [DOCCHECK-SPLIT] True when the document prints a valid BTW split that differs from the one read.
+  // Optional; absent means the check did not run and blocks nothing.
+  btwContradictsDocument?: boolean | null;
+  /**
+   * [E-FACTUUR] The supplier's own structured figures disagree with what was read off the page.
+   * Only `true` blocks — a document with no e-invoice in it answers null, and a check that could
+   * not run must never read as one that failed.
+   */
+  eInvoiceContradicts?: boolean | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -95,6 +114,55 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   const btw = s.health?.btw_amount;
   if (typeof btw === "number" && Math.abs(btw) < 0.005 && s.btwRate !== 0) {
     return { advance: false, reason: "zero_btw_not_explicit_zero_rate" };
+  }
+
+  // [GEGROND] The reader reported a total that is NOT printed anywhere in the document's own text.
+  // That is not low confidence and it is not bad arithmetic — the other gates cannot see it at all,
+  // because they only ever compare the read against itself. It is a figure the paper does not
+  // contain, and booking it without a human is how a wrong number becomes a cost, a voorbelasting
+  // claim and a line in an aangifte.
+  //
+  // Only 'absent' holds. 'unreadable' is a photographed receipt — the ordinary case this app exists
+  // for — and refusing to automate those would take the product away in the name of protecting it.
+  // The check adds a way to be CERTAIN; it never adds a way to be stuck.
+  if (s.totalGrounding === "absent") {
+    return { advance: false, reason: "total_not_in_document_text" };
+  }
+
+  // [DOCCHECK] And the sharper form of the same question. 'present' means the figure IS printed on
+  // the document but neither carries a total-label nor is the largest amount on the page — which is
+  // exactly what a SUBTOTAL, a LINE ITEM and the BTW look like. Measured on a real layout, all three
+  // of those wrong reads came back 'found' to the grounding check above and were booked.
+  //
+  // Only 'present' is added here; 'absent' is already held one line up, and 'unreadable' still holds
+  // nothing.
+  if (s.totalPlacement === "present") {
+    return { advance: false, reason: "total_not_where_a_total_is_printed" };
+  }
+
+  // [DOCCHECK-SPLIT] And the shape the whole line of work started from. The € 0,46 error had a
+  // RIGHT total, consistent arithmetic and an invented split — so every gate above it, including the
+  // two new ones, waved it through. This holds when the document prints a DIFFERENT valid split than
+  // the one that was read: the paper contradicts the reader, in the reader's own units.
+  //
+  // Never merely because the BTW was not printed: a receipt stating a rate and a total leaves the
+  // split to be computed, and holding those would fill the queue with correct documents.
+  if (s.btwContradictsDocument === true) {
+    return { advance: false, reason: "btw_contradicts_printed_split" };
+  }
+
+  // [E-FACTUUR] The strongest refusal in this function, and the one no other gate could reach.
+  //
+  // A Factur-X or ZUGFeRD PDF carries the invoice a second time as XML the SUPPLIER produced. When
+  // that disagrees with what was read off the page, every check above is satisfied: the arithmetic
+  // is consistent, the figure is printed, it sits exactly where a total belongs, the model is
+  // confident. They are all examining the same reading. Only the supplier's own file can say the
+  // reading is of the wrong number.
+  //
+  // Nothing is corrected here. The figure the document states is recorded on the row and named to
+  // the owner, so the fix is one look instead of a hunt — see import-health.ts.
+  if (s.eInvoiceContradicts === true) {
+    return { advance: false, reason: "e_invoice_contradicts_read" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

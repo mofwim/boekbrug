@@ -17,6 +17,8 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-no
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, COLUMN } from '@/lib/design/tokens'
+// [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -507,10 +509,9 @@ export default function KasClient() {
               inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00"
               style={{ flex: 1, minWidth: 0, padding: '12px 14px', fontSize: 16, borderRadius: 12, border: `1.5px solid ${M3.outlineVariant}`, fontFamily: FONT_NUM, boxSizing: 'border-box' }}
             />
-            <input
-              type="date" value={date} onChange={(e) => setDate(e.target.value)}
-              style={{ padding: '12px 14px', fontSize: 16, borderRadius: 12, border: `1.5px solid ${M3.outlineVariant}`, fontFamily: FONT, boxSizing: 'border-box' }}
-            />
+            {/* [DATE-NL] The kasboek date decides the day a cash movement lands on, which is what
+                the drawer is reconciled against. Same reason as the payment dialogs. */}
+            <DateFieldNL value={date} onChange={setDate} aria-label="Datum" />
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>

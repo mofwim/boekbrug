@@ -31,7 +31,7 @@ import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
-import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { resolveSchemeSettlements, mergeSchemeOpts } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 // [ICP] Sales to EU businesses: only the PROBLEMS reach readiness — see the call site.
 import { buildIcp, type IcpInvoice } from "@/lib/icp";
@@ -99,6 +99,37 @@ export async function GET(req: NextRequest) {
     .select("amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
+  // [KAS-AUTO-BOOK] Bank lines this quarter that the app booked onto an invoice on amount + supplier
+  // name alone, still carrying the flag (the owner has not tapped "Klopt, gecontroleerd"). Read
+  // SEPARATELY from the select above, and that separation is the whole point: auto_match_reason
+  // arrives with a hand-applied migration, and a column PostgREST does not know refuses the entire
+  // select — folding it into the main read would turn a lagging migration into a readiness board
+  // with no bank dimension at all. Its own wrapped read degrades to "no flags", which before the
+  // migration is the true answer: nothing can have been booked under a column that does not exist.
+  let amountOnlyBookingCount = 0;
+  try {
+    const flagged = await fetchAllRows<{ id: string }>((from, to) =>
+      (pipeline as unknown as {
+        from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => { not: (c: string, op: string, v: null) => { gte: (c: string, v: string) => { lte: (c: string, v: string) => { order: (c: string, o: { ascending: boolean }) => { range: (f: number, t: number) => PromiseLike<{ data: { id: string }[] | null; error: { message: string } | null }> } } } } } } } };
+      })
+        .from("bank_transactions")
+        .select("id")
+        .eq("user_id", ownerId)
+        .eq("status", "matched")
+        .not("auto_match_reason", "is", null)
+        .gte("date", start).lte("date", end)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    amountOnlyBookingCount = flagged.length;
+  } catch (e) {
+    // Pre-migration (no column) → no flags, which is correct. Any other failure also degrades to 0
+    // rather than breaking the board: this is a REVIEW nudge, and a readiness page that fails to
+    // render helps nobody. Logged so a persistent failure is findable.
+    console.warn("[KAS-AUTO-BOOK] flagged-booking count unavailable for readiness", {
+      ownerId, error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   let undocumentedCount = 0;
   // [AUTO-EXCLUDE-REVIEW] Lines the app auto-coded (category_confirmed !== true) into an EXCLUDED
   // identity — privé / overboeking / belasting (pnlRole 'excluded') — that the owner never reviewed.
@@ -356,11 +387,23 @@ export async function GET(req: NextRequest) {
   // omzetZonderBtwNonCash, and the KOR turnover check); the commission is a cost with no BTW and
   // cannot move any of them. /api/result, which reports profit, books it. The triangle IS run
   // below — for the card-mismatch risk, not for a money figure.
+  // [SCHEME-MERGE] Same merge as /api/aangifte, and for the same reason: this route's own maps
+  // cover the invoices DATED in the quarter, sr.opts covers the ones its SETTLEMENTS point at.
+  // Overwriting either dropped the invoices paid this quarter but dated in an earlier one, which
+  // under a vrijgestelde-omzet regime turns their exempt part into taxed omzet — and this route
+  // decides whether the quarter may be called "klaar". Both maps go through one function.
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, {
-    ...sr.opts,
+    ...mergeSchemeOpts(sr.opts, {
+      rateSharesByInvoice,
+      exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
+      // [VRIJGESTELD · KASSTELSEL] Through the merge too, never after it. Under kas the costs
+      // that count are the ones SETTLED in the quarter, and sr.opts carries the attributions for
+      // exactly those; this map covers the ones DATED in it. Assigning after the merge drops the
+      // settled half, and a cost with no attribution falls to the pro-rata bucket — the owner
+      // attributed their costs and the deduction comes out as if they had not.
+      deductionByInvoice: exemption.deductionByInvoice,
+    }),
     exemptRegime: exemption.active,
-    deductionByInvoice: exemption.deductionByInvoice,
-    exemptShareByInvoice: exemptShareOf(invRaw, exemptExByInvoice),
   });
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
@@ -395,7 +438,10 @@ export async function GET(req: NextRequest) {
         .from("ledger_daily").select("ledger_date, received, spent")
         .eq("user_id", ownerId).eq("kind", "pin")
         .gte("ledger_date", start).lte("ledger_date", end)
-        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+        // [PAGE-KEY] ledger_date is unique per (user, date, KIND) — up to four rows a day — so a
+        // .range() page boundary is not stable over it alone: ties may come back in a different
+        // order per query, repeating some days and dropping others. The id makes the order total.
+        .order("ledger_date", { ascending: true }).order("id", { ascending: true }).range(from, to)).catch(() => []);
       const pinLedgerByDay = new Map<string, number>();
       for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
       const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
@@ -559,6 +605,7 @@ export async function GET(req: NextRequest) {
     unmatchedIncomeCount,
     probablePaymentAsOmzetCount,
     unreviewedExcludedCount, // [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting, unreviewed
+    amountOnlyBookingCount,  // [KAS-AUTO-BOOK] booked on amount + name, not yet eyeballed by the owner
     // [STATEMENT-CONTINUITY] ontbrekende periode / saldobreuk tussen de ingelezen afschriften
     bankGapMessages,
 

@@ -3,9 +3,11 @@
 // ANY entry point — the /bank page, an invoice verify, a bank IMPORT, and a background cron —
 // not only when a browser happens to sit on /dashboard/bank. It books the two auto tiers:
 // 'certain' (invoice number printed in the statement OR supplier IBAN, + amount to the cent —
-// booked silently) and 'amount_only' (exact amount + strong counterpart name + date proximity,
-// single clear winner — booked but flagged "controleer"; blocked under kasstelsel), plus the
-// provably-exact multi-invoice batch ties. Fully reversible (owner can unlink) and audited.
+// booked silently) and 'amount_only' (exact amount + an identity that is not the document's own:
+// a strong counterpart name with date proximity, the account the supplier is known to bill from,
+// or the owner's own pay-sheet declaration — single clear winner, booked but flagged "controleer";
+// under kasstelsel only into a quarter whose aangifte has NOT been filed, see kas-auto-book.ts),
+// plus the provably-exact multi-invoice batch ties. Fully reversible (owner can unlink) and audited.
 //
 // payClient vs pipeline: the invoice→'paid' write goes through `payClient`. A ROUTE passes its
 // SESSION client, so the DB 'verwerkt' guard trigger fires with a real auth.uid(); a CRON or a
@@ -33,8 +35,23 @@ import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-r
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
 import { getVatScheme } from "./vat-scheme";
+// [KAS-AUTO-BOOK] When a kasstelsel owner's amount-only match may book itself — see kas-auto-book.ts.
+import { decideKasAutoBook, filingStateOf, filingKey } from "./kas-auto-book";
+import { quarterKeyOf } from "./quarter";
+// [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
+import { fetchSupplierIbans, withSupplierIbans } from "./supplier-known-iban";
+import { isMissingRelation } from "./pg-missing";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+
+// [SUPPLIER-IBAN] One invoice row as this module handles it: what the matcher needs, plus the two
+// fields only this file reads (the instalment balance and the registry link). Named because it is
+// now referenced in three places, and three inline intersections drift.
+type MatchableInvoice = InvoiceForMatching & {
+  amount_paid?: number | null;
+  supplier_id?: string | null;
+  supplier_known_iban: string | null;
+};
 
 export interface AutoConfirmed {
   transactionId: string;
@@ -69,13 +86,64 @@ export async function runBankAutoConfirm(args: {
 
   // [JET-GAP2] Is the owner on kasstelsel? Under kas the payment DATE an auto-booking writes is
   // VAT-timing truth (it decides the BTW quarter), so an 'amount_only' match — amount + name but NO
-  // printed reference — must NOT auto-book: a wrong same-amount pick would land BTW in the wrong
-  // quarter. 'certain' (printed reference / IBAN to the cent) still auto-books. Own deploy-safe
+  // printed reference — is decided by [KAS-AUTO-BOOK] below rather than booked outright. 'certain'
+  // (printed reference / IBAN to the cent) still auto-books under either scheme. Own deploy-safe
   // query; defaults factuur if the vat_scheme migration lags (then amount_only books as before,
   // which is safe under accrual where the pay date is not VAT-timing).
+  // `vat_scheme_since` comes along because the election does not reach back: an owner who chose kas
+  // in July is on factuurstelsel for Q1 and Q2, and those quarters were never the concern.
   const { data: schemeProf } = await pipeline
-    .from("profiles").select("vat_scheme").eq("id", userId).maybeSingle();
-  const ownerScheme = getVatScheme((schemeProf as { vat_scheme?: string | null } | null)?.vat_scheme);
+    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", userId).maybeSingle();
+  const schemeRow = schemeProf as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  const ownerScheme = getVatScheme(schemeRow?.vat_scheme);
+  const ownerSchemeSince = schemeRow?.vat_scheme_since ?? null;
+
+  // [KAS-AUTO-BOOK] Which quarters have already been declared. Only consulted for an amount-only
+  // match under kas, so the read is skipped entirely for a factuur owner — no cost where there is
+  // no question.
+  //
+  // The `readOk` flag is the point of the shape. `const { data }` alone turns an outage into an
+  // empty set, and an empty set reads as "nothing has been filed" — which is the single answer that
+  // authorises booking into a declared quarter. The three states are kept apart all the way to
+  // decideKasAutoBook, where "unknown" refuses. A MISSING TABLE is different and is a real answer:
+  // btw_filings arrives by hand-applied migration, and where it has not landed nothing can have
+  // been filed through it.
+  const filedQuarters = new Set<string>();
+  let filingsReadOk = true;
+  if (ownerScheme === "kas") {
+    try {
+      const rows = await fetchAllRows<{ year: number; quarter: number }>((from, to) =>
+        (pipeline as unknown as {
+          from: (t: string) => {
+            select: (c: string) => {
+              eq: (c: string, v: string) => {
+                order: (c: string, o: { ascending: boolean }) => {
+                  range: (f: number, t: number) => PromiseLike<{ data: { year: number; quarter: number }[] | null; error: { message: string } | null }>;
+                };
+              };
+            };
+          };
+        })
+          .from("btw_filings").select("year, quarter").eq("user_id", userId)
+          .order("year", { ascending: true }).range(from, to),
+      );
+      for (const r of rows) filedQuarters.add(filingKey(Number(r.year), Number(r.quarter)));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (isMissingRelation(message)) {
+        // The migration has not landed on this deployment. Nothing was ever filed through a table
+        // that is not there — a complete answer, not a blind spot.
+        filingsReadOk = true;
+      } else {
+        filingsReadOk = false;
+        console.error("[KAS-AUTO-BOOK] btw_filings unreadable — amount-only bookings stay manual", { userId, message });
+      }
+    }
+  }
+  // Why every refusal is counted: the failure mode of this gate is that it stops booking ENTIRELY
+  // and the run still returns a clean empty list, which reads identically to a quiet day. Counting
+  // them means an outage is visible in the log instead of being indistinguishable from silence.
+  const kasRefusals: Partial<Record<"filed_quarter" | "unknown_filing" | "no_payment_date", number>> = {};
 
   const txRows = await fetchAllRows((from, to) =>
     pipeline
@@ -89,7 +157,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, amount_paid")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, amount_paid, payment_prepared_at, supplier_id")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })
@@ -98,7 +166,15 @@ export async function runBankAutoConfirm(args: {
   if (txRows.length === 0 || invRows.length === 0) return [];
 
   const transactions = (txRows as BankTransactionDbRow[]).map((r) => rowToTransaction(r));
-  const allInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null })[];
+  // [SUPPLIER-IBAN] Attach the account each supplier is KNOWN to bill from before any scoring runs.
+  // Applied to allInvoices rather than to the filtered pools, so every downstream pass — the 1:1
+  // matcher, the batch reconciler, the hidden-competitor scan — sees the same rows. A signal that
+  // reaches one pass and not another is a guard that does not exist.
+  const rawInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null; supplier_id?: string | null })[];
+  const allInvoices: MatchableInvoice[] = withSupplierIbans(
+    rawInvoices,
+    await fetchSupplierIbans(pipeline, userId, rawInvoices),
+  );
   // [PARTIAL-PAY] Auto-confirm books full-amount matches by writing status='paid' directly (not
   // via apply_bank_payment), so it must NEVER touch an invoice that is mid-instalment (amount_paid
   // > 0): a full-amount payment landing on a partially-settled invoice would over-pay it. Those are
@@ -162,7 +238,7 @@ export async function runBankAutoConfirm(args: {
 
     // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch
     // containing a partly-paid invoice would otherwise lose it here and be skipped silently.
-    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is InvoiceForMatching => !!x);
+    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is MatchableInvoice => !!x);
     if (planInvs.length !== plan.invoiceIds.length) continue;
     const tx = rowToTransaction(row);
     if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants
@@ -245,10 +321,28 @@ export async function runBankAutoConfirm(args: {
     const inv = invById.get(invoiceId);
     if (!inv) continue;
 
-    // [JET-GAP2] Under kasstelsel, an amount-only match stays a human-confirm suggestion (it remains
-    // a pending transaction the /bank matcher surfaces for one-tap confirm) — never auto-booked,
-    // because the pay date it would write decides the BTW quarter. 'certain' still books.
-    if (tier === "amount_only" && ownerScheme === "kas") continue;
+    // [JET-GAP2 + KAS-AUTO-BOOK] Under kasstelsel the pay date an amount-only match writes decides
+    // the BTW quarter, so a wrong same-amount pick moves a declared figure. That premise is intact;
+    // what changed is where it stops applying. A quarter that has NOT been declared corrects with
+    // one tap and never leaves the app — refusing there bought no safety and cost a kasstelsel owner
+    // every amount-only booking, forever. A quarter that HAS been declared corrects with a suppletie
+    // to the Belastingdienst, and a quarter we could not READ is not "not declared". See
+    // kas-auto-book.ts for the full argument; the three refusals are counted below so a silent
+    // full-stop (a btw_filings outage) cannot pass as "nothing matched today".
+    if (tier === "amount_only") {
+      const verdict = decideKasAutoBook({
+        tier,
+        profileScheme: ownerScheme,
+        schemeSince: ownerSchemeSince,
+        // The BANK LINE's date — the same value written to payment_date below, never "today".
+        paymentDate: m.transaction.date ?? null,
+        filingState: filingStateOf(quarterKeyOf(m.transaction.date ?? null), filedQuarters, filingsReadOk),
+      });
+      if (!verdict.book) {
+        kasRefusals[verdict.refusal] = (kasRefusals[verdict.refusal] ?? 0) + 1;
+        continue;
+      }
+    }
 
     // [BANK-HIDDEN-COMPETITOR] The matcher's "single clear winner" is judged against the VISIBLE
     // candidate pool — but a same-amount invoice sitting in the verify queue ('processing', not yet
@@ -414,6 +508,24 @@ export async function runBankAutoConfirm(args: {
     } catch (e) {
       console.error("[JET-GAP0] auto-confirm notification threw", { userId, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  // [KAS-AUTO-BOOK] A gate that stops booking entirely returns the same empty list a quiet day
+  // returns, so the two must be told apart somewhere. 'unknown_filing' is the one that matters: it
+  // means btw_filings could not be read, and every kasstelsel owner's amount-only matches are
+  // silently piling up as manual work until someone notices. It is reported as a handled failure
+  // rather than logged, because "the automation quietly stopped" is precisely the class of thing
+  // nobody notices from a log line.
+  if ((kasRefusals.unknown_filing ?? 0) > 0) {
+    reportHandledFailure({
+      tag: "KAS-AUTO-BOOK",
+      message: "btw_filings unreadable — every amount-only booking refused for a kasstelsel owner",
+      severity: "gate-unavailable",
+      context: { userId, refused: kasRefusals.unknown_filing },
+    });
+  }
+  if (kasRefusals.filed_quarter || kasRefusals.no_payment_date) {
+    console.info("[KAS-AUTO-BOOK] refusals this run", { userId, ...kasRefusals });
   }
 
   return confirmed;

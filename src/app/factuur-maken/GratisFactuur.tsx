@@ -29,6 +29,9 @@ import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
 import { vakOpties, vakBySlug, vakRegelsVoorFormulier } from '@/lib/vak-sjablonen'
+// [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts. The public tool gets it
+// too: a wrong invoice date here becomes a wrong quarter the moment the invoice is real.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 // [PDF-LAZY] react-pdf touches browser APIs AND weighs 1,4 MB, dus hij hoort pas geladen te worden
 // wanneer er echt gedownload wordt. Dat stond hier al — en werkte niet: twaalf regels hoger stond
@@ -579,35 +582,35 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
             </div>
             <div style={s.field}>
               <label style={s.label}>Factuurdatum</label>
-              <input
-                type="date"
+              <DateFieldNL
                 min={MIN_DATE}
                 max={MAX_DATE}
                 style={s.input}
                 value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
+                onChange={setInvoiceDate}
+                aria-label="Factuurdatum"
               />
             </div>
             <div style={s.field}>
               <label style={s.label}>Vervaldatum</label>
-              <input
-                type="date"
+              <DateFieldNL
                 min={MIN_DATE}
                 max={MAX_DATE}
                 style={s.input}
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
+                onChange={setDueDate}
+                aria-label="Vervaldatum"
               />
             </div>
             <div style={s.field}>
               <label style={s.label}>Leverdatum (standaard = factuurdatum)</label>
-              <input
-                type="date"
+              <DateFieldNL
                 min={MIN_DATE}
                 max={MAX_DATE}
                 style={s.input}
                 value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
+                onChange={setDeliveryDate}
+                aria-label="Leverdatum"
               />
             </div>
           </div>

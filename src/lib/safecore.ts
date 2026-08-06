@@ -23,6 +23,35 @@
 // one out. reconcile* computes and writes nothing.
 import { reconcileBtw, reconcileHint, rateHint } from './btw-reconcile'
 
+/**
+ * [BREAKDOWN-MISSING] Was a btw split read AT ALL, or is this the "only the printed total came
+ * through" case?
+ *
+ * The obvious test is `== null`, and it was the test for a long time — which made the whole
+ * distinction unreachable on every invoice the owner has ever seen. Both write paths store
+ * `v.total_ex_btw ?? 0` and `v.btw_amount ?? 0` into NOT-NULL numeric columns, so by the time
+ * classifyImportHealth re-runs this gate over a stored row the absent split reads as 0, never null.
+ * null only ever survives inside the write path itself, where the classification object still
+ * carries the reader's undefineds.
+ *
+ * That was not merely a missing message. The branch it fell through to hands reconcileHint an
+ * ex of 0, which computes impliedExcl = the whole total and reports it as the one legal repair:
+ *
+ *     "excl + BTW ≠ totaal. Verschil € 1.335,68.
+ *      Klopt het totaal, dan hoort het bedrag excl. BTW € 1.335,68 te zijn."
+ *
+ * An owner who does what that sentence says sets excl to the full gross and their btw to zero —
+ * deleting the voorbelasting on an invoice whose split we simply failed to read. The app was
+ * giving, in writing, the one instruction that costs money on this axis.
+ *
+ * Safe to widen: this only runs when the sum ALREADY failed, and ex = 0 with btw = 0 over a
+ * non-zero total is not an invoice that exists — a bill you have to pay has a base, or a tax, or
+ * both. So it can never silence a real contradiction; it can only name one correctly.
+ */
+function noSplitRead(v: number | null | undefined): boolean {
+  return v == null || Math.abs(v) < 0.005
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule 1 — arithmetic safety (no silent arithmetic error)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,7 +174,7 @@ export function evaluateArithmetic(
       // "excl + BTW ≠ totaal") from a genuine arithmetic contradiction (a split that IS present
       // but doesn't add up). Same flag, clearer owner-facing reason. The total is still the money;
       // the invoice is held either way until the human supplies the breakdown.
-      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      const breakdownMissing = noSplitRead(c.totalExBtw) && noSplitRead(c.btwAmount)
       // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
       // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
       // arithmetic can often already point at it — and where it cannot, it can at least name the
@@ -184,6 +213,18 @@ export function evaluateArithmetic(
         const rh = sumOk ? rateHint(btw, ex) : null
         reasons.push(rh ? `ongeldig BTW-tarief (${rate}%). ${rh}` : `ongeldig BTW-tarief (${rate}%)`)
       }
+    } else if (Math.abs(btw) > 0.02) {
+      // [NO-BASE] The hole the `ex > 0` guard above leaves open — and the one the creditnota branch
+      // below has closed with this exact check for a while.
+      //
+      // With ex = 0 there is no rate to compute, so the check is skipped, and the comment above
+      // says the sum check "already covers ex=0 cases meaningfully". It does not cover the one that
+      // matters: ex 0 · btw 21 · incl 21 satisfies 0 + 21 = 21 exactly. Both gates then stay silent
+      // and the invoice reads CLEAN — which is all shouldAutoAdvanceInvoice needs to book it, with
+      // a €21 voorbelasting claim on a purchase that has no taxable base at all. An invoice whose
+      // entire total is BTW is not an invoice, it is a mis-read.
+      flags.push('illegal_btw_rate')
+      reasons.push('BTW zonder grondslag — controleer de bedragen')
     }
   }
 
@@ -254,7 +295,7 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
       flags.push('sum_mismatch')
       // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
       // (both absent) reads clearer than a false "≠ totaal".
-      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      const breakdownMissing = noSplitRead(c.totalExBtw) && noSplitRead(c.btwAmount)
       // [BTW-RECONCILE] "excl + BTW ≠ totaal" is true and useless: the owner sees three numbers,
       // knows one is wrong, and gets to dig through the PDF to find out which. Whereas the
       // arithmetic can often already point at it — and where it cannot, it can at least name the
@@ -872,7 +913,8 @@ export function deriveDueDate(
 /**
  * Normalize a date string to ISO "YYYY-MM-DD", accepting either ISO
  * ("2026-05-27", optionally with a time part) or Dutch "DD-MM-YYYY"
- * ("27-05-2026"). Returns null for empty/unparseable input. Pure.
+ * ("27-05-2026"), including a TWO-DIGIT year ("06/05/26"). Returns null for
+ * empty/unparseable input. Pure.
  */
 // [DATE-ISO-SAFE / I6] Tolerant date→ISO for STORAGE. The write paths used
 // `new Date(x).toISOString()`, which THROWS on a Dutch "15-05-2026" (Invalid Date). In
@@ -892,12 +934,25 @@ export function normalizeToIso(raw: string | null | undefined): string | null {
     return isValidYmd(+y, +m, +d) ? `${y}-${m}-${d}` : null
   }
 
-  // Dutch "DD-MM-YYYY" (also tolerant of "/" or "." separators).
-  const nl = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/)
+  // [DATE-2DIGIT-YEAR] Dutch "DD-MM-YYYY" — and "DD-MM-YY", which is what a great many small
+  // Dutch suppliers actually print. A real one: Bakkerij Saada's invoice 0714 states its Datum and
+  // its Vervaldag both as "06/05/26". The pattern demanded four digits, so a completely ordinary
+  // Dutch invoice date parsed as NOTHING.
+  //
+  // A null date is not a small loss on this row. The invoice lands dateless, the queue asks the
+  // owner to type a date the document plainly states, deriveDueDate can compute no vervaldatum
+  // (so no reminder, no overdue), and — the quiet one — the aangifte and result fetches select on
+  // invoice_date BETWEEN, so a dateless invoice is silently outside every quarter it belongs to.
+  //
+  // The century needs no guessing window, because one already exists: two digits expand to 20YY
+  // and isValidYmd then holds them to 2020–2030, the same business range every other date on this
+  // path passes through. "26" is 2026; "99" expands to 2099 and is refused there, exactly as a
+  // four-digit 2099 already is. Nothing widens — a date that was accepted before is unchanged.
+  const nl = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/)
   if (nl) {
     const d = +nl[1]
     const m = +nl[2]
-    const y = +nl[3]
+    const y = nl[3].length === 2 ? 2000 + +nl[3] : +nl[3]
     if (!isValidYmd(y, m, d)) return null
     const mm = String(m).padStart(2, '0')
     const dd = String(d).padStart(2, '0')

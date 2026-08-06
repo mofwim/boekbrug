@@ -18,6 +18,8 @@ import { COLUMN } from '@/lib/design/tokens';
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 type InvoiceLine = {
   description: string
@@ -381,21 +383,15 @@ export default function InvoiceEditPage() {
               <label className="block text-xs font-medium text-gray-500 mb-1">
                 Factuurdatum <span className="text-red-400">*</span>
               </label>
-              <input
-                type="date" value={invoiceDate}
-                onChange={e => setInvoiceDate(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-              />
+              {/* [DATE-NL] The browser's locale decides a native date input's segment order, and
+                  this date picks the quarter this sale is declared in. */}
+              <DateFieldNL value={invoiceDate} onChange={setInvoiceDate} aria-label="Factuurdatum" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
                 Vervaldatum <span className="text-red-400">*</span>
               </label>
-              <input
-                type="date" value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-              />
+              <DateFieldNL value={dueDate} onChange={setDueDate} aria-label="Vervaldatum" />
             </div>
           </div>
         </div>

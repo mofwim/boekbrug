@@ -4,11 +4,16 @@
 // statement booked as an invoice, a creditnota blanked to €0) after the extractor improves.
 //
 // THREE SAFETY GUARDS (money-truth):
-//   1. Never overwrite human work — allowed ONLY while status = 'processing' (still in the
-//      verify queue). A 'received' / 'paid' / 'archived' invoice has been human-confirmed or
-//      pushed to the accountant; re-reading it is refused (409).
+//   1. [REREAD-CONFIRMED] Never overwrite work that is no longer ours to overwrite — no money
+//      booked, not processed by the accountant, not archived. The rule is reimportDecision() in
+//      @/lib/reimport-eligibility, shared with both screens so a button never opens on a refusal.
+//      It deliberately covers 'received' as well as 'processing': a CONFIRMED, UNPAID invoice on
+//      the pay list is exactly where a misread amount is about to cost money, and refusing there
+//      left "type the numbers yourself" as the only way out on paper the app is holding.
 //   2. Same row, never a duplicate — UPDATE by id (+ receiver_id + status guard), never INSERT.
-//   3. Never auto-verify — the status STAYS 'processing'; the human still confirms.
+//   3. Never auto-verify — a re-read never confirms anything. A queued invoice stays queued; a
+//      CONFIRMED one goes BACK to the queue, so the fresh numbers land in front of a human before
+//      anyone pays them. Same rule the old guard was protecting, applied instead of refused.
 // The re-read result never leaves the owner's account and never marks anything paid/shared.
 
 import { NextRequest, NextResponse } from "next/server";
@@ -26,6 +31,8 @@ import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
 // [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
 import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
+// [REREAD-CONFIRMED] Who may be read again, and what happens to the one that is — one rule.
+import { reimportDecision } from "@/lib/reimport-eligibility";
 // [HERLEES-ARCHIVEER] Blijkt het geen factuur, dan archiveren we hem zelf — maar nooit als er geld
 // op staat. Dezelfde predicaat als de negeer-route, zodat de twee niet uit elkaar kunnen lopen.
 import { hasSettledMoney } from "@/lib/invoice-removal";
@@ -139,21 +146,27 @@ export async function POST(
     .from("invoices")
     // [HERLEES-ARCHIVEER] amount_paid meegenomen: het auto-archiveren hieronder mag nooit een
     // factuur wegzetten waarop al (deels) betaald is.
-    .select("id, receiver_id, direction, status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, field_confidence")
+    // [REREAD-CONFIRMED] accountant_status rides along because reimportDecision reads it. Left out
+    // of the projection it is simply undefined, and the accountant lock it feeds could never fire —
+    // a guard gathered and then never given its input is the defect this file keeps closing.
+    .select("id, receiver_id, direction, status, accountant_status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, field_confidence")
     .eq("id", id)
     .single();
 
   if (!invoice || invoice.receiver_id !== user.id) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
   }
-  if (invoice.direction !== "incoming") {
-    return NextResponse.json({ error: "Alleen inkomende facturen kunnen opnieuw ingelezen worden" }, { status: 400 });
-  }
-  // GUARD 1 — never overwrite human-confirmed data.
-  if (invoice.status !== "processing") {
+  // GUARD 1 — [REREAD-CONFIRMED] one shared predicate, re-checked here on the server. The screens
+  // use the same function to decide whether to offer the button at all, so an owner never taps
+  // something that then refuses them.
+  const eligibility = reimportDecision(invoice);
+  // Narrowed here rather than at the write: reimportDecision only allows 'processing' or
+  // 'received', so this is the value the TOCTOU guard below must re-assert.
+  const statusAtRead = (invoice.status ?? "") as string;
+  if (!eligibility.allowed) {
     return NextResponse.json(
-      { error: "Deze factuur is al geverifieerd of gearchiveerd — opnieuw inlezen kan alleen zolang hij nog in de controlewachtrij staat." },
-      { status: 409 }
+      { error: eligibility.message, code: eligibility.reason },
+      { status: eligibility.reason === "not_incoming" ? 400 : 409 },
     );
   }
   if (!invoice.pdf_url) {
@@ -421,7 +434,11 @@ export async function POST(
     // [DOUBLE-CHECK #2] Recompute due_date from the effective date + fresh term, so a
     // corrected invoice date doesn't leave a stale due date driving reminders/overdue.
     due_date: deriveDueDate(freshDate, c.dueDate ?? null, c.paymentTermDays ?? null) ?? invoice.due_date,
-    // status intentionally NOT set — stays 'processing' (never auto-verify).
+    // [REREAD-CONFIRMED] Never auto-verify. A queued invoice keeps its status; a CONFIRMED one is
+    // sent BACK to the queue, because its amounts have just been re-read and the owner is about to
+    // pay them. Writing fresh machine-read numbers straight onto a payable row would be exactly
+    // the silent overwrite the original guard existed to prevent.
+    ...(eligibility.returnsToQueue ? { status: "processing" } : {}),
   };
 
   // GUARD 2 + 3 — update the SAME row, and the status guard makes it a no-op if the invoice
@@ -431,7 +448,9 @@ export async function POST(
     .update(patch)
     .eq("id", id)
     .eq("receiver_id", user.id)
-    .eq("status", "processing")
+    // TOCTOU: re-assert the status we decided on, so a row that was paid or archived between the
+    // load and now loses the race instead of being revived.
+    .eq("status", statusAtRead)
     .select("id")
     .maybeSingle();
 
@@ -439,9 +458,9 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   if (!updated) {
-    // The status guard matched no row — the invoice left the queue concurrently.
+    // The status guard matched no row — the invoice moved on between the read and the write.
     return NextResponse.json(
-      { error: "Deze factuur staat niet meer in de controlewachtrij — vernieuw de pagina." },
+      { error: "Deze factuur is intussen gewijzigd — vernieuw de pagina en probeer het opnieuw." },
       { status: 409 }
     );
   }
@@ -472,6 +491,9 @@ export async function POST(
 
   return NextResponse.json({
     ok: true,
+    // [REREAD-CONFIRMED] Reported, so the screen can say where the invoice went. A row that
+    // disappears off the pay list with a bare "gelukt" reads like a lost bill.
+    returnedToQueue: eligibility.returnsToQueue,
     invoice: {
       total_ex_btw: patch.total_ex_btw,
       btw_amount: patch.btw_amount,

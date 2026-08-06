@@ -24,12 +24,21 @@
 /** De statuswaarde die een openstaande vraag markeert (accountant_subject_status.status). */
 export const VRAAG_STATUS = 'vraag' as const
 
+// [FACTUURVRAAG] What a question can be ABOUT. The table has allowed both kinds since it was
+// created (its CHECK names them), and only the document half was ever built — while the accountant
+// surfaces counted invoice questions that nothing could produce. English per AGENTS.md; the Dutch
+// identifiers around it are pre-existing and deliberately left alone (forward-looking rule).
+export type QuestionSubject = 'document' | 'invoice'
+
 /** Ruwe statusrij zoals hij uit accountant_subject_status komt. */
 export interface VraagStatusRow {
   subject_id: string
   status: string
   vraag_text: string | null
   updated_at: string | null
+  // Absent on rows read from a document-only query — those are documents by construction, so the
+  // default below keeps every existing caller behaving exactly as before.
+  subject_type?: string | null
 }
 
 /** Het document waar de vraag over gaat, zoals het uit documents komt. */
@@ -37,6 +46,22 @@ export interface VraagDocumentRow {
   id: string
   file_name: string | null
   trashed?: boolean | null
+}
+
+/**
+ * [FACTUURVRAAG] The invoice a question is about, as it comes out of invoices.
+ *
+ * Deliberately a different row type than the document one rather than a shared "thing with a name":
+ * what identifies an invoice to its owner is the number AND the supplier AND the amount, and a
+ * question that says only "your file" about a €2.265 purchase invoice is the friction this feature
+ * exists to remove.
+ */
+export interface VraagInvoiceRow {
+  id: string
+  invoice_number: string | null
+  client_name: string | null
+  total_inc_btw: number | null
+  invoice_date: string | null
 }
 
 /** Een openstaande vraag, klaar om te tonen. */
@@ -52,6 +77,15 @@ export interface OpenVraag {
   question: string | null
   /** Wanneer de vraag voor het laatst is gezet. null = onbekend, en dat tonen wij zo. */
   askedAt: string | null
+  // [FACTUURVRAAG] Which kind of thing this question is about. Defaults to 'document' so every
+  // existing caller — and every row written before invoices were askable — keeps its exact meaning.
+  subjectType?: QuestionSubject
+  /**
+   * The invoice, when subjectType is 'invoice'. Null for a document question, and null too when the
+   * invoice could not be read — which is NOT the same thing, and is why documentMissing above is a
+   * field of its own rather than an inference from a null name.
+   */
+  invoice?: VraagInvoiceRow | null
 }
 
 /**
@@ -84,9 +118,72 @@ export function buildOpenVragen(
       documentMissing: !doc,
       question: vraagTekst(row.vraag_text),
       askedAt: row.updated_at ?? null,
+      subjectType: 'document',
     })
   }
 
+  return sortOldestFirst(open)
+}
+
+/**
+ * [FACTUURVRAAG] The same list, for questions about invoices.
+ *
+ * A separate builder rather than a branch inside buildOpenVragen, for one reason: the two read from
+ * different tables under different RLS policies, so the caller already has them apart, and merging
+ * them here would mean inventing a shared row shape that neither query produces.
+ *
+ * The honesty rules are identical and deliberately so. An invoice that cannot be read comes back
+ * with invoice: null and documentMissing: true rather than being dropped — a question about
+ * something we can no longer show is still an open question, and hiding it is itself an assertion.
+ */
+export function buildOpenInvoiceVragen(
+  statusRows: readonly VraagStatusRow[],
+  invoices: readonly VraagInvoiceRow[],
+): OpenVraag[] {
+  const byId = new Map<string, VraagInvoiceRow>()
+  for (const i of invoices) byId.set(i.id, i)
+
+  const open: OpenVraag[] = []
+  for (const row of statusRows) {
+    if (row.status !== VRAAG_STATUS) continue
+    const inv = byId.get(row.subject_id) ?? null
+    open.push({
+      documentId: row.subject_id,
+      documentName: inv ? invoiceLabel(inv) : null,
+      documentTrashed: false, // an invoice has no bin; removing one archives it, which reads as missing
+      documentMissing: !inv,
+      question: vraagTekst(row.vraag_text),
+      askedAt: row.updated_at ?? null,
+      subjectType: 'invoice',
+      invoice: inv,
+    })
+  }
+  return sortOldestFirst(open)
+}
+
+/**
+ * [FACTUURVRAAG] How an invoice is named to the person who has to answer about it.
+ *
+ * "Je factuur" is useless to someone with four hundred of them. The supplier is what an owner
+ * recognises first, the number is what makes it exactly one invoice, and the amount is what makes
+ * them remember it — so all three, and each one only when we actually have it. Never a placeholder
+ * that reads like data.
+ */
+export function invoiceLabel(inv: VraagInvoiceRow): string {
+  const parts: string[] = []
+  const name = (inv.client_name ?? '').trim()
+  if (name) parts.push(name)
+  const num = (inv.invoice_number ?? '').trim()
+  if (num) parts.push(`factuur ${num}`)
+  const amount = typeof inv.total_inc_btw === 'number' && Number.isFinite(inv.total_inc_btw)
+    ? new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(inv.total_inc_btw))
+    : null
+  if (amount) parts.push(amount)
+  return parts.length > 0 ? parts.join(' · ') : 'Factuur'
+}
+
+/** Oudste eerst; rijen zonder datum achteraan. Gedeeld door beide bouwers. */
+function sortOldestFirst(open: OpenVraag[]): OpenVraag[] {
   return open.sort((a, b) => {
     if (a.askedAt && b.askedAt) return a.askedAt.localeCompare(b.askedAt)
     if (a.askedAt) return -1

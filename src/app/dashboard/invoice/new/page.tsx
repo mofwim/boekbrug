@@ -32,6 +32,8 @@ import {
 } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -329,13 +331,21 @@ function OutlinedInput({
   )
 }
 
-// ─── [FACTUUR-A] DateField — June 2026 (reverted to clean native) ────────────
-// A native <input type="date"> renders in the browser's locale (US desktops
-// may show MM/DD/YYYY). The earlier overlay approach to force DD-MM-YYYY
-// produced a doubled calendar icon and a worse tap experience, so we reverted:
-// clean native field (best picker on every device — iOS wheel, desktop
-// calendar) + an unambiguous Dutch DD-MM-YYYY caption underneath. The caption
-// is the source of truth for what the date means; the field is just the input.
+// ─── [FACTUUR-A · DATE-NL] DateField ─────────────────────────────────────────
+// A native <input type="date"> renders its SEGMENTS in the browser's locale, so a US desktop puts
+// the month first and a Dutch owner cannot type a two-digit day at all — "21" for the 21st becomes
+// February and the caret jumps. Measured: `lang` on the input, on a wrapper, and on <html> (which
+// this app sets to "nl") change nothing.
+//
+// An earlier attempt here forced DD-MM-YYYY by OVERLAYING the native control, which produced a
+// doubled calendar icon and a worse tap experience, and was rightly reverted to a clean native
+// field plus a Dutch caption. The caption made the value unambiguous once typed; it could not make
+// the typing work.
+//
+// DateFieldNL is not that overlay. The typing surface IS a text input in Dutch order, and the
+// native control is a 1px hidden element that exists only so the calendar button can call
+// showPicker() — it renders no icon of its own, so there is nothing to double. The picker stays
+// one tap away, which is what made the native field worth keeping on a phone.
 // Value in/out stays ISO (yyyy-mm-dd).
 function DateField({
   value, onChange, label, required = false, focusColor, hasError = false, min,
@@ -348,38 +358,25 @@ function DateField({
   hasError?: boolean
   min?: string                  // ISO lower bound (optional)
 }) {
-  const [focused, setFocused] = useState(false)
-  const borderColor = hasError ? '#EA4335' : focused ? focusColor : '#E0E0E0'
-  const borderWidth = hasError || focused ? '2px' : '1px'
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
+      <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focusColor }}>
         {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
       </label>
-      <input
-        type="date"
+      <DateFieldNL
         value={value}
+        onChange={onChange}
         min={min}
-        onChange={e => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        aria-label={label}
         style={{
-          width: '100%', minHeight: 48,
-          border: `${borderWidth} solid ${borderColor}`,
+          minHeight: 48,
+          border: `${hasError ? '2px' : '1px'} solid ${hasError ? '#EA4335' : '#E0E0E0'}`,
           borderRadius: 8, padding: '0 16px',
           fontSize: 16, color: '#202124',
           backgroundColor: hasError ? '#FFF8F7' : 'white',
-          outline: 'none', boxSizing: 'border-box',
-          transition: 'border 0.1s ease', fontFamily: 'inherit',
+          outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit',
         }}
       />
-      {/* Dutch DD-MM-YYYY caption — the unambiguous read of the value */}
-      {value && (
-        <p style={{ fontSize: 11, color: '#70757a', margin: '2px 0 0', fontFamily: 'Roboto Mono, monospace' }}>
-          {formatDateNL(value)}
-        </p>
-      )}
     </div>
   )
 }

@@ -80,6 +80,14 @@ import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 // een tweede keer werd overtreden: de herleesroute zette er zijn eigen model-id naast en ging langs
 // dit hele mechanisme heen. Eén plek, met tests — zie de kop van dat bestand.
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
+// [GEGROND] The independent witness on a money field — see amount-grounding.ts.
+import { groundMoneyFields } from './amount-grounding';
+// [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
+// factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
+import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts } from './e-invoice';
+// [DOCCHECK] The sharper check on the same text — see document-verify.ts.
+import { verifyDocument } from './document-verify';
+import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
  * Het model waarmee deze app leest. Geëxporteerd zodat een route die een ANDER model wil proberen
@@ -87,7 +95,9 @@ import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
  */
 export const CLAUDE_MODEL = resolveModel(process.env.CLAUDE_MODEL, DEFAULT_CLAUDE_MODEL);
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
-// The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
+// The invoice JSON has ~20 fields + nested field_confidence + a Dutch `reason`,
+// and since [BTW-SPLIT] also a btw_breakdown array — at most three rate rows on
+// a Dutch invoice, so a few dozen tokens.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
 // could TRUNCATE mid-JSON → safeParseJSON fails → FALLBACK → the invoice is
 // silently classified "not an invoice" and lost. 2000 gives ample headroom;
@@ -466,6 +476,14 @@ export interface VerifyInvoiceResult {
   btw_amount?: number;       // the BTW amount itself
   total_inc_btw?: number;    // total including BTW
   btw_rate?: number;         // detected rate: 0, 9 or 21
+  // [PRINTED-TOTAL] The final total EXACTLY as printed, copied without any arithmetic. Kept apart
+  // from total_inc_btw for one reason: so the two can DISAGREE. The moment the reader is allowed
+  // to reconcile them, the disagreement — which is the only evidence a misread happened — is gone.
+  total_printed?: number | null;
+  // [BTW-SPLIT] The per-rate summary block as printed: one entry per rate row, `base` the LEFT
+  // (grondslag) column and `btw` the RIGHT one. On a mixed-rate invoice this is the only thing
+  // that can verify the btw total, because the legal-rate constraint no longer applies to a blend.
+  btw_breakdown?: { rate: number; base: number; btw: number }[] | null;
   // [BRIDGE-EXTRACT] Per-field confidence (0–1) — lets the UI ask the user to
   // confirm ONLY the fields the AI is unsure about, instead of guessing silently.
   field_confidence?: {
@@ -481,6 +499,13 @@ export interface VerifyInvoiceResult {
     // Carries both figures so the owner sees exactly what changed; its presence keeps the
     // invoice in the verify queue (a derived BTW is never auto-booked).
     _btw_derived?: { read: number | null; used: number | null };
+    // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
+    // mixed-rate btw instead of reporting it as checked when nothing checked it.
+    _btw_rows?: { rate: number; base: number; btw: number }[];
+    // [PRINTED-TOTAL] The printed final total, and — when it differs from what we stored — the
+    // fact that WE produced one of the three amounts rather than reading it.
+    _total_printed?: number | null;
+    _total_derived?: 'total' | 'excl';
   };
 }
 
@@ -767,6 +792,63 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
 // PDF caller — sends actual PDF bytes to Claude
 // [BOEK-011] reads the real content, not just metadata — May 2026
 // ─────────────────────────────────────────────────────────
+/**
+ * [GEGROND-OCR] Read the amounts off a document that has no text layer, so the grounding check can
+ * run on a PHOTO too.
+ *
+ * The call is deliberately blind: it receives the file and a fixed instruction, and NOTHING from the
+ * extraction that just ran. Show a model a number and ask it to check that number and it will agree;
+ * the exercise then measures nothing while reporting confidence. That independence is the entire
+ * value here, and a source gate holds it.
+ *
+ * Best-effort by construction: any failure — budget, network, an empty reply — returns null, which
+ * the grounding check reads as 'unreadable'. A transcription that did not happen is not evidence
+ * about the document, and must never harden into "the amount is absent".
+ */
+/**
+ * [GEGROND-OCR] Public entry for the same blind transcription, so the books-audit can run it over a
+ * PHOTO that is already stored.
+ *
+ * Exported rather than duplicated: a second copy of this would be a second prompt, and the moment
+ * the two drift the audit stops measuring what the import measures. The independence rule travels
+ * with it — the caller passes a FILE, never anything derived from a read of that file.
+ */
+export async function transcribeStoredDocumentAmounts(
+  fileBase64: string,
+  mediaType: string,
+  model?: string,
+): Promise<string | null> {
+  return transcribeAmountsForGrounding(fileBase64, mediaType, model ?? CLAUDE_MODEL);
+}
+
+async function transcribeAmountsForGrounding(
+  fileBase64: string,
+  mediaType: string,
+  model: string,
+): Promise<string | null> {
+  try {
+    const isImage = /^image\/(jpeg|png|webp|gif)$/.test(mediaType);
+    const reply = isImage
+      ? await callClaudeWithImage(
+          fileBase64,
+          mediaType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+          OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, model,
+        )
+      : await callClaudeWithPdf(fileBase64, OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, model);
+    const haystack = parseOcrAmounts(reply);
+    // A reply with one token is far more likely to be a model that gave up than an invoice with one
+    // number on it. Treating that as a real search space would turn every amount into a false
+    // 'absent' — a warning that is wrong is worse than no warning.
+    if (ocrAmountCount(haystack) < MIN_OCR_AMOUNTS) return null;
+    return haystack;
+  } catch (e) {
+    console.warn('[GEGROND-OCR] transcription unavailable — grounding stays unreadable', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
+
 async function callClaudeWithPdf(
   pdfBase64: string,
   prompt: string,
@@ -1235,6 +1317,8 @@ Return only a JSON object with these exact keys:
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
+  "total_printed": number or null,
+  "btw_breakdown": [{ "rate": 0 | 9 | 21, "base": number, "btw": number }] or null,
   "btw_rate": 0 | 9 | 21 or null,
   "field_confidence": {
     "vendor": number between 0 and 1,
@@ -1449,13 +1533,18 @@ Statement / reminder detection (NOT an invoice — prevents double counting):
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
 - total_ex_btw: the FULL amount before BTW — the sum of ALL line bases across every rate,
-  INCLUDING any 0%-BTW lines. It must be chosen so that total_ex_btw + btw_amount =
-  total_inc_btw (the identity always holds). See STATIEGELD below.
+  INCLUDING any 0%-BTW lines. On a correctly read invoice total_ex_btw + btw_amount =
+  total_inc_btw. That identity is a CONSEQUENCE of reading all three right, not a rule to
+  enforce — see "IF THEY DISAGREE" below. See STATIEGELD below.
 - btw_amount: the total BTW/VAT amount shown on the invoice (the sum across all rates).
 - total_inc_btw: the final total the invoice asks you to pay — the "Totaal", "Te voldoen",
   "Totaalbedrag" or "Totaal te betalen" line. Return THIS printed final total even when it
   does not equal a simple product subtotal (statiegeld, emballage and shipping are added on
   top) and even when it is NEGATIVE (a return/creditnota where credited items exceed goods).
+- total_printed: that same final total, copied EXACTLY as printed and never touched again —
+  no rounding, no adjusting, no arithmetic of your own. null only when the invoice prints no
+  single final figure at all. It is a separate field from total_inc_btw on purpose: it is the
+  one number we can check your reading against.
 - btw_rate: the percentage — usually 21, sometimes 9 or 0. On a MIXED invoice (e.g. 9% goods
   plus 0% statiegeld) the effective blended rate is lower; that is normal, not an error.
 - If only the total is shown and BTW rate is known, calculate the breakdown
@@ -1466,9 +1555,9 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
 - Many wholesale invoices add STATIEGELD (a returnable-packaging deposit), EMBALLAGE, or a
   container/"Bijgel. container"/"Retour container" charge, usually at 0% BTW, ON TOP of the
   goods. There may be a whole "Statiegeld" column, or a summary line, or a "Geen BTW" grondslag.
-- These deposit amounts ARE part of what is paid. Fold them into total_ex_btw as 0%-BTW base
-  so that total_ex_btw + btw_amount = total_inc_btw stays exact. Do NOT drop them, and do NOT
-  let them make excl + BTW disagree with the printed total.
+- These deposit amounts ARE part of what is paid. Fold them into total_ex_btw as 0%-BTW base —
+  dropping them is the usual reason excl + BTW comes out below the printed total. Include the
+  0% line; do NOT instead shrink the total to match a base you left it out of.
 - Returned deposits are NEGATIVE (e.g. "Retour container -408,00"): include them with their
   sign. If the net printed total ("Te voldoen") is therefore negative, return it negative.
 
@@ -1489,10 +1578,21 @@ MIXED-RATE BTW SUMMARY BLOCK (the most common mis-read on wholesale/horeca invoi
 - btw_amount = the sum of the BTW column ONLY (233,20 + 172,70 = 405,90 in the example).
 - total_ex_btw = the printed "Totaal exclusief BTW" / "Ex. BTW" line, which equals the sum of
   the grondslag column (2.591,71 + 822,21 = 3.413,92).
+- btw_breakdown = those rows themselves, one entry per rate row: {"rate": 9, "base": 2591.71,
+  "btw": 233.20}. COPY both figures off the page — do not recompute base × rate, because a
+  supplier who rounds per line drifts a few cents from that product and your recomputation
+  would silently overwrite what the invoice actually says. Return null only when the invoice
+  prints no such per-rate block.
 - CHECK YOURSELF before answering: btw_amount MUST equal total_inc_btw − total_ex_btw
   (3.819,82 − 3.413,92 = 405,90 ✓). If your sum does not match that difference, you added the
-  wrong column or missed a rate row — recount the BTW column. Never return a btw_amount that
-  makes total_ex_btw + btw_amount differ from the printed "Totaal te voldoen".
+  wrong column or missed a rate row — RECOUNT the BTW column.
+- IF THEY DISAGREE: report all of it honestly and CHANGE NOTHING. Leave total_ex_btw,
+  btw_amount and total_inc_btw at what you actually read, put the printed final total in
+  total_printed, fill btw_breakdown, and score field_confidence.amount LOW. NEVER move one
+  figure so the other two add up. A disagreement is the only evidence we get that something was
+  misread; a triplet you balanced yourself passes every check we have while being wrong. That is
+  not hypothetical — a mixed-rate horeca invoice was booked with a btw € 0,46 short because the
+  total had been made to follow a mis-summed BTW column, and nothing anywhere could see it.
 - A blended rate between the rates present (e.g. 12% across 9% and 21% lines) is NORMAL. A
   computed rate ABOVE 21% is impossible in the Netherlands and always means a mis-read.
 
@@ -1742,6 +1842,98 @@ Return JSON only.`;
         : {}),
     };
 
+    // [GEGROND] The one check on a money field that is not the reader checking itself.
+    //
+    // Everything else here asks the same model about its own answer: the arithmetic gate verifies
+    // excl + btw = incl among three numbers ONE read produced, and field_confidence is its opinion
+    // of its own opinion. A read that is wrong consistently passes all of it — the EUR 0,46 BTW
+    // error on a real invoice was exactly that shape, and it is why an owner keeps the paper copy
+    // open beside the app instead of trusting the screen.
+    //
+    // For a text PDF we already hold the document's own characters — we extracted them and fed them
+    // TO the model — so "is this number really printed on the paper?" is answerable with no model at
+    // all. Stored beside _safecore, in three states, because a check that could not RUN (a photo has
+    // no text layer) must never read as one that passed, nor as one that failed.
+    {
+      const amounts = {
+        totalIncBtw: parsed.total_inc_btw,
+        totalExBtw: parsed.total_ex_btw,
+        btwAmount: parsed.btw_amount,
+      };
+      let grounding = groundMoneyFields(amounts, statementText, 'text');
+
+      // [E-FACTUUR] Before any of the reading checks: does this PDF carry the invoice a SECOND
+      // time, as structured XML the supplier produced? Factur-X and ZUGFeRD are ordinary-looking
+      // PDFs that do exactly that, and NL makes Peppol e-invoicing mandatory over €800k turnover
+      // from 2027 and for everyone from 2028 — so this arrives now and will only arrive more.
+      //
+      // It is not another way of reading the page. Everything else here checks a READING; this is
+      // the supplier's own statement of the money, in a form with nothing to interpret. When it is
+      // present and self-consistent, it is the best witness the app will ever have — and when it
+      // DISAGREES with what was read, that is an error no other gate in the building could catch:
+      // the arithmetic would be perfect, the figure printed, and its placement exactly right.
+      let eInvoice: ReturnType<typeof parseEInvoice> = null;
+      if (mimeType === 'application/pdf') {
+        const xml = await extractEmbeddedInvoiceXml(Buffer.from(cleanBase64(fileBase64), 'base64'));
+        if (xml) eInvoice = parseEInvoice(xml);
+      }
+      if (eInvoice) {
+        (parsed.field_confidence as unknown as Record<string, unknown>)._einvoice = {
+          ...eInvoice,
+          contradicts: eInvoiceContradicts(eInvoice, parsed.total_inc_btw),
+        };
+      }
+
+      // [GEGROND-OCR] No text layer means no characters to search, so the check above says
+      // 'unreadable' — honest, and useless, because a photographed receipt is the ordinary case this
+      // app exists for. Most of what comes in would get no independent check at all.
+      //
+      // So for a photo we ask a SECOND, blind read to transcribe the amounts it can see, and search
+      // that instead. It is a weaker witness than a text layer and the verdict records which one
+      // spoke (source: 'ocr'), because presenting a model read as mechanical certainty is how a
+      // green tick stops meaning anything.
+      //
+      // Only when the first check found nothing to work with, and only when there is a total worth
+      // corroborating: this costs an API call, and spending one to re-confirm what the document's
+      // own characters already proved would be paying for a worse answer.
+      if (
+        grounding.totalIncBtw === 'unreadable' &&
+        // [E-FACTUUR] Never when the supplier's own structured figures are already in hand. OCR is
+        // a second READING and this is the document itself — paying an API call to get a weaker
+        // answer to a question already settled is spending money to be less sure.
+        !eInvoice &&
+        typeof parsed.total_inc_btw === 'number' &&
+        Number.isFinite(parsed.total_inc_btw)
+      ) {
+        const transcribed = await transcribeAmountsForGrounding(fileBase64, mimeType, model ?? CLAUDE_MODEL);
+        if (transcribed) grounding = groundMoneyFields(amounts, transcribed, 'ocr');
+      }
+
+      (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
+
+      // [DOCCHECK] The sharper question, on the same text. Grounding proves a figure is PRINTED;
+      // this asks whether it is printed WHERE A TOTAL IS PRINTED — which is what tells a real total
+      // apart from the subtotal, a line item and the BTW, all three of which are printed too. It
+      // also gives the invoice DATE and NUMBER a witness for the first time.
+      //
+      // Stored beside the grounding rather than replacing it: the two answer different questions,
+      // and a screen that wants to say "we found this literally in the text" still needs the first.
+      const check = verifyDocument(
+        {
+          totalIncBtw: parsed.total_inc_btw,
+          btwAmount: parsed.btw_amount,
+          invoiceDate: parsed.invoice_date,
+          invoiceNumber: parsed.invoice_number,
+        },
+        // Never the OCR transcription. That reply is a bare LIST OF AMOUNTS with no labels and no
+        // guarantee of completeness, so 'anchored' can never fire on it and 'largest' would be a
+        // claim about a page we only partly saw — it would flag correct totals as 'present' and
+        // hold them. Passing null makes every field say the check did not run, which is true.
+        grounding.source === 'ocr' ? null : statementText,
+      );
+      (parsed.field_confidence as unknown as Record<string, unknown>)._doccheck = check;
+    }
+
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
     // despite the prompt, drop it — the receiver is never the vendor. Loose match
     // (case-insensitive, trimmed) so "kiwi food market" ~ "Kiwi Food Market B.V."
@@ -1954,17 +2146,28 @@ Return JSON only.`;
     // is stored verbatim into a numeric column and then never matches a clean re-read of 43.00 on
     // an exact-equality dedup query, silently defeating duplicate detection (a double-book).
     const round2 = (n: number) => Math.round(n * 100) / 100;
-    // Reconcile: if total is missing but ex + btw exist → compute it
+    // [PRINTED-TOTAL] Reconcile: if total is missing but ex + btw exist → compute it.
+    //
+    // And RECORD that we did. Filling the third amount is the right call — an invoice with two of
+    // three is more useful than one with two of three and a gap — but it makes "excl + btw =
+    // totaal" hold by construction, and from that moment the arithmetic gate is testing our own
+    // subtraction rather than the invoice. Without this mark the checklist would report that as a
+    // check the app performed and passed. See _total_derived in import-health.ts.
+    const markDerived = (which: 'total' | 'excl') => {
+      parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _total_derived: which };
+    };
     if (parsed.total_inc_btw === undefined &&
         parsed.total_ex_btw !== undefined &&
         parsed.btw_amount !== undefined) {
       parsed.total_inc_btw = round2(parsed.total_ex_btw + parsed.btw_amount);
+      markDerived('total');
     }
     // Reconcile: if ex is missing but total + btw exist → compute it
     if (parsed.total_ex_btw === undefined &&
         parsed.total_inc_btw !== undefined &&
         parsed.btw_amount !== undefined) {
       parsed.total_ex_btw = round2(parsed.total_inc_btw - parsed.btw_amount);
+      markDerived('excl');
     }
     // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
     // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
@@ -1995,6 +2198,70 @@ Return JSON only.`;
         if (parsed.btw_rate !== undefined && parsed.btw_rate !== impliedRate) {
           parsed.btw_rate = undefined;
         }
+      }
+    }
+
+    // [BTW-SPLIT] Carry the per-rate summary block through to storage.
+    //
+    // It is stored and never acted on here, and that is the whole design. Repairing Enka Horeca
+    // from this block means writing a new btw AND a new total — changing what the owner pays, on
+    // the strength of a read we have just established was wrong about this very invoice. The block
+    // goes to the checklist instead, which can say "the specification on your invoice adds up to
+    // € 122,64 and we read € 122,18" and let the person holding the paper decide.
+    //
+    // Not on a CREDITNOTA, and that exclusion is deliberate. There the sign of a per-rate row is
+    // genuinely ambiguous: the paper may print the specification positive with the credit-ness
+    // carried by the document type, and a NET-CREDIT invoice legitimately mixes signs (positive
+    // goods BTW over a negative net excl — the Altena case in safecore.ts). Comparing such a block
+    // against our signed totals would flag correctly-read credit notes, which already always need
+    // a human anyway (auto-advance refuses them outright). Noise there buys nothing and costs the
+    // credibility of the warning everywhere else.
+    {
+      const rows = parsed.is_credit_note === true || !Array.isArray(parsed.btw_breakdown)
+        ? []
+        : parsed.btw_breakdown;
+      const clean = rows
+        .filter((r): r is { rate: number; base: number; btw: number } => {
+          if (!r || typeof r !== 'object') return false;
+          const rate = (r as { rate?: unknown }).rate;
+          // Only a legal Dutch rate. A row labelled 6% or 100% is a mis-read of the layout, and
+          // one bad row poisons the column sums this block exists to provide.
+          if (typeof rate !== 'number' || ![0, 9, 21].includes(rate)) return false;
+          return (
+            typeof (r as { base?: unknown }).base === 'number' && isFinite((r as { base: number }).base) &&
+            typeof (r as { btw?: unknown }).btw === 'number' && isFinite((r as { btw: number }).btw)
+          );
+        })
+        .map((r) => ({ rate: r.rate, base: round2(r.base), btw: round2(r.btw) }))
+        // A Dutch invoice has at most three rates. More than that is not a specification block,
+        // and an unbounded array from a model reply has no business reaching a jsonb column.
+        .slice(0, 6);
+      if (clean.length > 0) {
+        parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _btw_rows: clean };
+      }
+    }
+
+    // [PRINTED-TOTAL] Keep the printed final total next to the one we ended up with.
+    //
+    // Only when the two DISAGREE, because that is the only case it says anything: the reader read
+    // "Totaal te voldoen" and then returned a different total_inc_btw, so one of its own numbers
+    // is wrong and it could not tell which. Storing it always would just be a second copy of a
+    // figure we already hold. Nothing is overwritten — picking the printed one would be guessing
+    // in a place where the disagreement is exactly what the owner needs to see.
+    {
+      const printed = typeof parsed.total_printed === 'number' && isFinite(parsed.total_printed)
+        ? round2(parsed.total_printed)
+        : null;
+      //
+      // Compared on MAGNITUDE. A creditnota's paper usually prints its total without a minus and
+      // carries the credit-ness in the document type, so a sign difference here is a formatting
+      // artefact and would hold every credit note. Whether the sign is right is a question the
+      // creditnota gate already owns (shouldTreatAsCreditNote + evaluateCreditnotaArithmetic);
+      // this field answers a different one — did the reader read a different NUMBER than it
+      // reported — and every real digit difference still shows up.
+      if (printed !== null && parsed.total_inc_btw !== undefined &&
+          Math.abs(Math.abs(printed) - Math.abs(parsed.total_inc_btw)) > 0.02) {
+        parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _total_printed: printed };
       }
     }
 

@@ -60,6 +60,37 @@ console.log("\n— [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting
   check("undefined count → treated as 0 (older callers keep working)", !legacy.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
 }
 
+console.log("\n— [ORIGINEEL] the evidence gap now points somewhere the client can act —");
+{
+  // This was the only item in the whole report with no fix link, and the reason was not an
+  // oversight in the report: there was nowhere for it to point. The accountant asks for the missing
+  // original every quarter; the client had no route, no button, no way to supply it.
+  const r = buildReadiness(perfect({ verifiedInvoiceCount: 10, invoicesWithEvidence: 7, missingEvidence: ["26302050", "26302362"] }));
+  const item = r.missing.find((m) => /originele document/.test(m.title));
+  check("still a blocking gap — evidence the accountant cannot read is evidence missing", !!item);
+  check("and it now carries a way to act", !!item?.fix?.href);
+  check("pointing at exactly the counted set", item?.fix?.href === "/dashboard/incoming/manage?filter=geen-document");
+  check("the detail names the action, not just the problem", /origineel toe/.test(item?.detail ?? ""));
+  check("and still names WHICH invoices", /26302050/.test(item?.detail ?? ""));
+  const complete = buildReadiness(perfect({ verifiedInvoiceCount: 10, invoicesWithEvidence: 10 }));
+  check("nothing missing → nothing said", !complete.missing.some((m) => /originele document/.test(m.title)));
+}
+
+console.log("\n— [KAS-AUTO-BOOK] bookings made on amount + name are offered before the aangifte —");
+{
+  // These book themselves unattended under the kasstelsel for exactly one reason: they stay
+  // reversible until the quarter is declared. That reason only holds if the quarter-close actually
+  // OFFERS them, so this is the mechanism behind the permission, not a decoration.
+  const r = buildReadiness(perfect({ amountOnlyBookingCount: 3 }));
+  check("surfaced as a RISK", r.risks.some((m) => /alleen op bedrag gekoppeld/.test(m.title)));
+  check("never a block — most are right, and blocking every quarter makes the verdict useless", r.status === "ready" && r.ready === true);
+  check("the detail names the deadline that makes it matter", r.risks.some((m) => /suppletie/.test(m.detail ?? "")));
+  check("and points at the tab where the flag can be answered", r.risks.some((m) => m.fix?.href === "/dashboard/bank?tab=done"));
+  check("singular phrasing for one", buildReadiness(perfect({ amountOnlyBookingCount: 1 })).risks.some((m) => /^1 factuur is alleen op bedrag/.test(m.title)));
+  check("zero → silence (a nag with nothing behind it is worse than none)", !buildReadiness(perfect({ amountOnlyBookingCount: 0 })).risks.some((m) => /alleen op bedrag/.test(m.title)));
+  check("undefined → treated as 0 (older callers unchanged)", !buildReadiness(perfect()).risks.some((m) => /alleen op bedrag/.test(m.title)));
+}
+
 console.log("\n— [PACKAGE-READINESS] invoices still in the verify queue block 'klaar' —");
 {
   // A real bill dated in the quarter but not yet verified reaches the accountant nowhere —

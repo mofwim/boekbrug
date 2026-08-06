@@ -40,6 +40,7 @@ export type AuditAction =
   | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
   | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
+  | 'invoice.auto_paid'               // ← [BON-AUTO] app settled a kassabon whose PAPER printed the tender line ("Kontant"/"Bankpas")
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment
@@ -48,6 +49,24 @@ export type AuditAction =
   | 'bank.overpayment_residue'        // ← [PARTIAL-PAY-RESIDUE] payment exceeded the balance; the excess was NOT booked
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
+  // [KAS-AUTO-BOOK] The other answer to the "even controleren" flag. 'bank.unlinked' records the
+  // owner rejecting an amount-only booking; this records them ACCEPTING one, which until now left
+  // no trace at all — the flag simply stayed up forever. It matters more than it looks: under the
+  // kasstelsel an amount-only match may book itself only because it is reversible until the
+  // aangifte, so who confirmed it, and when relative to the filing, is the evidence that the review
+  // actually happened.
+  | 'bank.match_checked'              // ← [KAS-AUTO-BOOK] owner confirmed an amount-only auto-booking is the right invoice
+  // [ORIGINEEL] The client supplied the original document for an invoice that had none — the answer
+  // to the accountant's "opvragen". Its own action because it is the only write in the app that
+  // adds EVIDENCE to a booked invoice without touching a single figure, and an auditor asking
+  // "when did the proof for this line arrive, and was it before or after the aangifte" has no
+  // other way to know.
+  | 'invoice.document_attached'       // ← [ORIGINEEL] an original was attached to an existing invoice
+  // [FACTUURVRAAG] The accountant asked their client about ONE invoice. Its own action because it
+  // is the only accountant write that is a QUESTION rather than an assertion about the books — and
+  // because a status that says 'vraag' with no record of who asked, when, or about which client's
+  // administration is the shape this whole feature exists to replace.
+  | 'accountant.invoice_question'     // ← [FACTUURVRAAG] accountant asked the client about one invoice
   // [BANK-IGNORE-AUDIT] Ignoring a bank line moves a financial record out of every queue that
   // could still explain it — the matcher, auto-confirm, auto-categorize, the nightly sweep, and
   // every categorize read. It also deletes the [VOORBELASTING-RISK] warning for that line, since

@@ -26,6 +26,11 @@ export const CRON_JOBS = {
   // Vier keer per jaar. Deze ziet er dus bijna altijd "stil" uit — de oordeelfunctie hieronder
   // houdt daar rekening mee, anders zou hij permanent alarm slaan en daarmee waardeloos worden.
   "quarter-close": 2184,
+  // [DAGSTART] Het ochtendbericht aan de boekhouder. Dagelijks, en het is met opzet vaak STIL —
+  // hij spreekt alleen over werk dat NIEUW is en over een deadline die een band is overgestoken.
+  // Een run zonder berichten is dus de gezonde normaaltoestand, niet een storing; wat hier bewaakt
+  // wordt is dat de run zelf gebeurde.
+  "accountant-daily": 24,
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

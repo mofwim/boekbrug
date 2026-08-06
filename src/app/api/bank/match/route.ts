@@ -26,6 +26,8 @@ import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
+// [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
+import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -98,7 +100,7 @@ export async function GET() {
         .select(
           // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
           // instalment matches on amount.
-          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference"
+          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id"
         )
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
@@ -115,7 +117,13 @@ export async function GET() {
     );
   }
 
-  const invoices = (invRows ?? []) as InvoiceForMatching[];
+  // [SUPPLIER-IBAN] The account each supplier is known to bill from, for the invoices whose own
+  // document never named one. Best-effort: an empty map leaves the matcher exactly as it was.
+  const rawInvoices = (invRows ?? []) as (InvoiceForMatching & { supplier_id?: string | null })[];
+  const invoices: InvoiceForMatching[] = withSupplierIbans(
+    rawInvoices,
+    await fetchSupplierIbans(pipeline, user.id, rawInvoices),
+  );
 
   // 4. Run the pure matcher.
   // [BANK-BIG-BUNDLE] maxCandidates raised from the default 5: a wholesaler bundle routinely
@@ -253,11 +261,25 @@ export async function GET() {
   const paidInvRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference")
+      // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
+      // an invoice here, and it decides which evidence is enough below.
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence")
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .eq("status", "paid")
       .order("id", { ascending: true })
       .range(from, to),
+  );
+  // [BON-AUTO] Which of those paid invoices are kassabonnen. A bon has no invoice number and no
+  // vendor IBAN — a till does not print either — so the rule below can never be satisfied for one,
+  // and every pin-paid bon turned its own bank debit into a "missende inkoopfactuur" the owner
+  // could not clear. The receipt IS the missing document; it is sitting right there, paid.
+  const receiptIds = new Set(
+    (paidInvRows ?? [])
+      .filter((r) => {
+        const fc = (r as { field_confidence?: unknown }).field_confidence;
+        return !!fc && typeof fc === "object" && (fc as { _intake_kind?: unknown })._intake_kind === "receipt";
+      })
+      .map((r) => (r as { id: string }).id),
   );
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0) {
@@ -268,6 +290,17 @@ export async function GET() {
       if (!id || !m.best) continue;
       const sig = m.best.signals;
       if ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) paidExplained.add(id);
+      // [BON-AUTO] For a kassabon, the identity that exists is the SHOP NAME, the exact amount and
+      // the day — the bank line for a card purchase carries the counterpart and nothing else. Three
+      // independent axes agreeing is not weaker evidence than a reference; it is the only evidence
+      // this document class can produce. Display-only, exactly like the rule above: this hides a
+      // false alarm, it never books, re-pays or links anything.
+      else if (
+        receiptIds.has(m.best.invoiceId) &&
+        sig.includes("counterpart") && sig.includes("amount") && sig.includes("date")
+      ) {
+        paidExplained.add(id);
+      }
     }
   }
 

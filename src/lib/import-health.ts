@@ -29,12 +29,18 @@
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
+// [E-FACTUUR] De cijfers die de leverancier zelf meestuurde — sterker dan elke lezing.
+import { eInvoiceOf } from '@/lib/e-invoice'
+// [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
+import { formatEuroNL } from './format-nl'
 // [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
 import { ibanChangeReason } from '@/lib/iban-change'
 // [CREDIT-PREFIX-GATE] One shared list of credit prefixes. A second copy here would drift from the
 // one the payment screen reads, and two screens disagreeing about what a credit note is is how the
 // same money goes the wrong way twice.
 import { looksLikeCreditnotaByNumber, numberPrefix } from '@/lib/creditnota-signal'
+// [BTW-SPLIT] The per-rate block, and what it is worth as evidence. Pure; imports nothing back.
+import { classifyBtwSplit } from '@/lib/btw-split'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
@@ -115,6 +121,21 @@ export interface FieldConfidence {
   // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
   // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
   _btw_derived?: { read?: number | null; used?: number | null }
+  // [BTW-SPLIT] The per-rate summary block as PRINTED — one row per rate, grondslag on the left,
+  // btw on the right. It is the only independent witness a MIXED-RATE invoice has: with two rates
+  // in play, btw/excl can legally be anything between them, so the rate check self-disables and
+  // the sum identity is the only constraint left over three numbers. Which is no constraint at
+  // all, because whoever produced the triplet can always satisfy it by moving the third figure.
+  // See btw-split.ts for the invoice that proved it.
+  _btw_rows?: { rate: number; base: number; btw: number }[]
+  // [PRINTED-TOTAL] "Totaal te voldoen" exactly as printed, before any arithmetic of ours. Stored
+  // separately from total_inc_btw precisely so the two can DISAGREE — the moment we let the reader
+  // reconcile them, the disagreement (the whole signal) is gone.
+  _total_printed?: number | null
+  // [PRINTED-TOTAL] Set when WE computed one of the three amounts because the reader returned only
+  // the other two. The identity then holds by construction, so "excl + btw = totaal" is no longer
+  // a check that passed — it is a check that could not run. The checklist reports it as such.
+  _total_derived?: 'total' | 'excl'
   // [BON-NUMMER] Wat voor document dit is, gezet door /api/intake. 'receipt' = kassabon.
   // Een kassabon draagt geen factuurnummer en hoeft dat ook niet: hij is een vereenvoudigde
   // factuur, geen art. 35-factuur. De nummer-as hieronder wordt daarom voor een bon
@@ -236,6 +257,87 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
     )
   }
+  // [GEGROND] Het bedrag dat de lezer opgaf staat NIET in de tekst van het document zelf.
+  //
+  // Dit staat bewust hier, hoog en apart, want het is de ENIGE controle in dit bestand die niet de
+  // lezer naar zijn eigen antwoord vraagt. De rekenkundige poort vergelijkt drie getallen die één
+  // en dezelfde lezing produceerde, en field_confidence is zijn mening over zijn eigen mening — een
+  // lezing die consistent fout is komt daar ongeschonden doorheen. Dat is precies wat er gebeurde
+  // bij de € 0,46-fout, en het is de reden dat een ondernemer de papieren factuur ernaast houdt.
+  //
+  // Alleen 'absent' spreekt. 'unreadable' is een foto of scan — dan is er geen tekst om in te
+  // zoeken, en "staat niet op je factuur" zeggen over een foto is een leugen die ervoor zorgt dat
+  // de échte waarschuwingen ook niet meer gelezen worden.
+  const grounding = (fc as unknown as { _grounding?: { totalIncBtw?: string } } | null)?._grounding
+  if (grounding?.totalIncBtw === 'absent') {
+    flags.arithmetic = true
+    reasons.push(
+      'het totaalbedrag staat niet letterlijk in de tekst van dit document — controleer het aan de factuur zelf',
+    )
+  }
+
+  // [DOCCHECK] En de scherpere vorm van dezelfde vraag. 'present' betekent: het bedrag STAAT wel op
+  // het document, maar niet op de plek waar een totaal staat — het draagt geen totaal-label en het
+  // is niet het hoogste bedrag op de pagina. Dat is precies hoe een SUBTOTAAL, een REGELBEDRAG en
+  // het BTW-bedrag eruitzien, en gemeten op een echte factuur kwamen alle drie die foute lezingen
+  // hierboven als 'gevonden' door.
+  const doccheck = (fc as unknown as {
+    _doccheck?: { total?: string; date?: string; btwContradiction?: { excl: number; btw: number; rate: number } | null }
+  } | null)?._doccheck
+  if (doccheck?.total === 'present') {
+    flags.arithmetic = true
+    reasons.push(
+      'dit bedrag staat wél op het document, maar niet waar het totaal staat — het lijkt een ' +
+      'subtotaal of een regelbedrag. Controleer welk bedrag het totaal is.',
+    )
+  }
+  // De datum had tot nu toe helemaal geen getuige, terwijl hij bepaalt in welk kwartaal de BTW
+  // valt. Geen blokkade — een factuur die zijn datum in een onvoorzien formaat afdrukt zou dan
+  // blijven hangen — maar wél gezegd.
+  if (doccheck?.date === 'absent') {
+    reasons.push('de factuurdatum staat niet zo op het document — controleer of de datum klopt')
+  }
+  // [DOCCHECK-SPLIT] Het document drukt een ANDERE btw-splitsing af dan er gelezen is. Dit is de
+  // vorm van de allereerste fout die dit hele spoor begon (€ 0,46): het totaal klopte, de rekensom
+  // klopte, en alleen de splitsing was verzonnen — waardoor geen enkele poort hem tegenhield.
+  // De zin noemt wat er OP HET PAPIER staat, want dat is het antwoord en niet alleen het probleem.
+  const contra = doccheck?.btwContradiction
+  if (contra) {
+    flags.arithmetic = true
+    reasons.push(
+      `op het document staat ${formatEuroNL(contra.excl)} + ${formatEuroNL(contra.btw)} btw (${contra.rate}%) — ` +
+      'dat is een andere btw dan hier is gelezen. Neem het bedrag van de factuur over.',
+    )
+  }
+
+  // [MAILTEKST] Dit "document" is door ons gemaakt van de tekst van een e-mail, omdat de
+  // leverancier niets meestuurde. Dat is geen fout — de kosten zijn echt en de voorbelasting is
+  // echt — maar de eigenaar hoort te weten waar hij naar kijkt voordat hij bevestigt: bij een
+  // geschil weegt een door ons opgemaakte pagina anders dan de PDF van de leverancier zelf.
+  if ((fc as { _mailtekst?: unknown } | null | undefined)?._mailtekst === true) {
+    reasons.push(
+      'deze factuur stond in de TEKST van een e-mail, zonder bijlage — wij hebben die tekst ' +
+      'bewaard als document. Controleer de bedragen en vraag de leverancier zo nodig om een PDF',
+    )
+  }
+
+  // [E-FACTUUR] De leverancier stuurde zijn cijfers ZELF mee, in machinevorm (Factur-X / ZUGFeRD /
+  // Peppol), en die spreken het gelezen bedrag tegen. Dit is de enige controle in het hele bestand
+  // die niet naar de lezing kijkt maar naar de factuur zelf: rekensom, plaatsing, zekerheid en
+  // splitsing kunnen alle vier kloppen terwijl het gewoon het verkeerde getal is.
+  //
+  // De zin noemt het juiste bedrag. Wij passen het niet zelf aan — dat blijft aan de ondernemer —
+  // maar hem laten zoeken naar iets wat de app al weet, is geen controle maar een raadsel.
+  const efact = eInvoiceOf(fc)
+  if (efact?.contradicts) {
+    flags.arithmetic = true
+    reasons.push(
+      `de leverancier stuurde een e-factuur mee en daarin staat ${formatEuroNL(efact.totalIncBtw)} ` +
+      `(${formatEuroNL(efact.totalExBtw)} + ${formatEuroNL(efact.btwAmount)} btw) — ` +
+      'dat is een ander bedrag dan hier is gelezen. Neem het bedrag uit de e-factuur over.',
+    )
+  }
+
   // [IBAN-WISSEL] Een bekende leverancier met een ander rekeningnummer. Dit staat bewust boven de
   // rekenkundige as: bij factuurfraude klopt de rekensom juist wél — het bedrag is overgenomen van
   // een echte factuur. Elke andere poort hier geeft groen, dus als deze zwijgt, zwijgt alles.
@@ -331,6 +433,46 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
         : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
     )
   }
+
+  // [BTW-SPLIT] The per-rate specification block, when the reader returned one, is the only thing
+  // that can contradict a MIXED-RATE btw — the sum identity and the legal-rate test both go quiet
+  // there (see btw-split.ts). So a block that does not reproduce our amounts has to be loud here:
+  // this is the axis on which Enka Horeca 26701681 was booked € 0,46 short with every check green,
+  // and voorbelasting is money the owner deducts. Flagging keeps it out of auto-advance, which
+  // requires level === 'clean'.
+  if (fc?._btw_rows && fc._btw_rows.length > 0) {
+    const split = classifyBtwSplit({
+      totalExBtw: inv.total_ex_btw,
+      btwAmount: inv.btw_amount,
+      rows: fc._btw_rows,
+    })
+    if (split.kind === 'blend-mismatch') {
+      flags.arithmetic = true
+      reasons.push(
+        split.baseAgrees
+          ? `de btw-specificatie op de factuur telt op tot ${formatEuro(split.rowsBtw)}, wij lazen ${formatEuro(inv.btw_amount ?? 0)} — controleer de btw`
+          : `de btw-specificatie op de factuur (${formatEuro(split.rowsBase)} excl., ${formatEuro(split.rowsBtw)} btw) wijkt af van wat wij lazen — controleer de uitsplitsing`
+      )
+    }
+  }
+
+  // [PRINTED-TOTAL] The reader read "Totaal te voldoen" and then returned a DIFFERENT total. One of
+  // its own two numbers is wrong and it could not tell which — which is precisely the state we now
+  // ask it to report instead of quietly balancing. The printed figure is what the owner pays, so
+  // this can never be waved through: it is held, with both numbers named.
+  if (typeof fc?._total_printed === 'number') {
+    flags.arithmetic = true
+    reasons.push(
+      `op de factuur staat ${formatEuro(fc._total_printed)} als te betalen totaal, wij lazen ${formatEuro(inv.total_inc_btw ?? 0)} — controleer welk bedrag klopt`
+    )
+  }
+
+  // [PRINTED-TOTAL] Deliberately NOT a flag here: _total_derived (we computed one of the three
+  // because the reader returned only two) is reported to the owner as a check that could not run
+  // — invoice-checks.ts, the arithmetic row — and stops there. It is not evidence that anything is
+  // wrong, and turning "we filled in the third figure" into "needs review" would add a demand for
+  // human attention on a path whose frequency nobody has measured. A warning that cries wolf is
+  // one the owner learns to tap past, and that costs more than it buys.
 
   // ── Money-truth axis (the amounts themselves) ────────────────────────────
   // [TRUST-AMOUNTS] The arithmetic gate above only runs its consistency checks

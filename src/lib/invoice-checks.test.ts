@@ -33,9 +33,9 @@ function outcome(inv: CheckInput, id: string): CheckOutcome {
 
 test('[CHECKLIST] a clean invoice says what was checked instead of saying nothing', () => {
   const checks = invoiceChecks(clean())
-  assert.equal(checks.length, 7, 'all seven axes are reported')
-  assert.equal(checksPassed(checks), 7, 'and on a clean invoice every one of them passed')
-  assert.match(checksSummary(checks), /Alle 7 controles gedaan/, 'the summary may claim completeness ONLY here')
+  assert.equal(checks.length, 8, 'all eight axes are reported')
+  assert.equal(checksPassed(checks), 8, 'and on a clean invoice every one of them passed')
+  assert.match(checksSummary(checks), /Alle 8 controles gedaan/, 'the summary may claim completeness ONLY here')
   for (const c of checks) {
     assert.ok(c.label.length > 5, `${c.id} has no label`)
     assert.doesNotMatch(c.label, /[a-z]+_[a-z]+/, `${c.id} leaks a field name into the owner's text: "${c.label}"`)
@@ -84,7 +84,7 @@ test('[CHECKLIST] the summary never claims completeness it does not have', () =>
   const summary = checksSummary(partial)
   assert.doesNotMatch(summary, /Alle \d+ controles/, 'a skipped check must break the "all done" claim')
   assert.match(summary, /konden we niet nagaan/, 'and it must say so, not just stay quieter')
-  assert.match(summary, /6 van de 7/, 'with the real numbers')
+  assert.match(summary, /7 van de 8/, 'with the real numbers')
 })
 
 test('[CHECKLIST] a flagged invoice leads with the thing to look at', () => {
@@ -120,8 +120,77 @@ test('[CHECKLIST] a kassabon is not asked for an invoice number', () => {
   // unanswerable question on every bon. Same reasoning classifyImportHealth uses.
   const bon = invoiceChecks(clean({ invoice_number: null, field_confidence: { _intake_kind: 'receipt' } }))
   assert.equal(bon.find((c) => c.id === 'number'), undefined, 'the row is absent, not "not-checked"')
-  assert.equal(bon.length, 6)
-  assert.match(checksSummary(bon), /Alle 6 controles gedaan/, 'and the count follows the list it describes')
+  assert.equal(bon.length, 7)
+  assert.match(checksSummary(bon), /Alle 7 controles gedaan/, 'and the count follows the list it describes')
+})
+
+test('[CHECKLIST] the invoice that showed seven green ticks over a wrong btw', () => {
+  // Enka Horeca 26701681, verbatim. Stored: excl 1.213,50 · btw 122,18 · totaal 1.335,68 — which
+  // add up, so the arithmetic row is right to pass. On the paper the per-rate block is 9% and 21%,
+  // and the real btw is 122,64. THIS is the row that has to refuse a tick, because a blended rate
+  // is compared with nothing at all.
+  const enka = clean({
+    invoice_number: '26701681',
+    invoice_date: '2026-01-30',
+    total_ex_btw: 1213.5,
+    btw_amount: 122.18,
+    total_inc_btw: 1335.68,
+  })
+  assert.equal(outcome(enka, 'arithmetic'), 'passed', 'the three stored amounts genuinely do add up')
+  assert.equal(outcome(enka, 'btw-split'), 'not-checked', 'and the btw itself was verified by nothing')
+
+  const summary = checksSummary(invoiceChecks(enka))
+  assert.doesNotMatch(summary, /Alle \d+ controles/, 'so the list may NOT claim it checked everything')
+  assert.match(summary, /konden we niet nagaan/)
+
+  // Negative control: the identical invoice with the CORRECT btw is equally unverifiable. That is
+  // the honest answer — the app cannot tell these two apart without reading the per-rate block, and
+  // a row that passed on one of them would be guessing on both.
+  const correct = clean({ total_ex_btw: 1213.5, btw_amount: 122.64, total_inc_btw: 1336.14 })
+  assert.equal(outcome(correct, 'btw-split'), 'not-checked')
+})
+
+test('[CHECKLIST] with the per-rate block stored, the btw row can finally answer', () => {
+  const rows = [
+    { rate: 9, base: 1101.38, btw: 99.06 },
+    { rate: 21, base: 112.12, btw: 23.58 },
+  ]
+  const wrong = clean({
+    total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68,
+    field_confidence: { _btw_rows: rows },
+  })
+  assert.equal(outcome(wrong, 'btw-split'), 'flagged', 'the printed block does not sum to what we stored')
+  assert.match(
+    invoiceChecks(wrong).find((c) => c.id === 'btw-split')?.detail ?? '',
+    /122,64/, 'and it names the figure the invoice actually adds up to',
+  )
+
+  const right = clean({
+    total_ex_btw: 1213.5, btw_amount: 122.64, total_inc_btw: 1336.14,
+    field_confidence: { _btw_rows: rows },
+  })
+  assert.equal(outcome(right, 'btw-split'), 'passed', 'a mixed-rate invoice earns its tick this way')
+})
+
+test('[CHECKLIST] an amount WE computed is not an amount we checked', () => {
+  // [PRINTED-TOTAL] The reader returned excl + btw and no printed total, so we subtracted our way
+  // to one. "excl + btw = totaal" then holds because we made it hold. Reporting that as a passed
+  // check hands the owner our own arithmetic back as a fact about their invoice.
+  const derived = clean({ field_confidence: { _total_derived: 'total' } })
+  assert.equal(outcome(derived, 'arithmetic'), 'not-checked')
+  assert.match(
+    invoiceChecks(derived).find((c) => c.id === 'arithmetic')?.detail ?? '',
+    /wij hebben het/, 'and it says whose arithmetic it is',
+  )
+  assert.doesNotMatch(checksSummary(invoiceChecks(derived)), /Alle \d+ controles/)
+
+  // A genuine contradiction still outranks it: flagged is louder than not-checked, and an invoice
+  // whose numbers disagree must never be softened into a grey "we could not look".
+  const alsoBroken = clean({
+    total_ex_btw: 100, btw_amount: 21, total_inc_btw: 130,
+    field_confidence: { _total_derived: 'total' },
+  })
+  assert.equal(outcome(alsoBroken, 'arithmetic'), 'flagged')
 })
 
 test('[CHECKLIST] the kind of document is stated, not only warned about', () => {

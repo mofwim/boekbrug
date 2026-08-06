@@ -21,7 +21,10 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
-import { buildOpenVragen, VRAAG_STATUS, type VraagStatusRow } from '@/lib/vragen'
+import {
+  buildOpenVragen, buildOpenInvoiceVragen, VRAAG_STATUS,
+  type VraagStatusRow, type VraagInvoiceRow,
+} from '@/lib/vragen'
 import VragenClient, { type VraagView } from './VragenClient'
 
 export const dynamic = 'force-dynamic'
@@ -53,7 +56,7 @@ export default async function VragenPage() {
     .eq('subject_type', 'document')
     .eq('status', VRAAG_STATUS)
 
-  const loadFailed = Boolean(statusErr)
+  let loadFailed = Boolean(statusErr)
   const statusRows = (statusData ?? []) as VraagStatusRow[]
 
   // ── De documenten erbij ──────────────────────────────────────────────────────
@@ -71,7 +74,48 @@ export default async function VragenPage() {
     id: string; file_name: string | null; file_url: string | null; trashed: boolean | null
   }>
 
-  const vragen = buildOpenVragen(statusRows, docRows)
+  const documentVragen = buildOpenVragen(statusRows, docRows)
+
+  // ── [FACTUURVRAAG] En de vragen over FACTUREN ────────────────────────────────
+  // De boekhouder kon een factuur al op 'vraag' zetten in de zin dat drie van zijn schermen die
+  // status TELDEN — hij had alleen geen route om hem te schrijven, en dit scherm filterde op
+  // subject_type='document', dus zo'n vraag kon hier nooit verschijnen.
+  //
+  // Aparte lezing, geen OR op subject_type: de twee rijen komen langs verschillende RLS-policies
+  // binnen (acc_status_client_read_document en acc_status_client_read_invoice), en één query die
+  // beide moet halen faalt geheel zodra de tweede policy nog niet is uitgerold. Zo blijven de
+  // documentvragen staan en komen de factuurvragen erbij zodra de migratie draait.
+  //
+  // [NO-SILENT-EMPTY] invoiceLoadFailed telt apart mee in loadFailed: "geen vragen" mag nooit uit
+  // een mislukte lezing komen, en dat geldt voor deze helft net zo goed als voor de andere.
+  const { data: invStatusData, error: invStatusErr } = await supabase
+    .from('accountant_subject_status')
+    .select('subject_id, status, vraag_text, updated_at')
+    .eq('subject_type', 'invoice')
+    .eq('status', VRAAG_STATUS)
+
+  const invStatusRows = (invStatusData ?? []) as VraagStatusRow[]
+  const invIds = invStatusRows.map((r) => r.subject_id)
+  const { data: invData } = invIds.length
+    ? await supabase
+        .from('invoices')
+        .select('id, invoice_number, client_name, total_inc_btw, invoice_date')
+        .in('id', invIds)
+    : { data: [] as VraagInvoiceRow[] }
+
+  // Een mislukte lezing van deze helft is óók een reden om niet 'geen vragen' te zeggen.
+  if (invStatusErr) loadFailed = true
+
+  const invoiceVragen = buildOpenInvoiceVragen(invStatusRows, (invData ?? []) as VraagInvoiceRow[])
+
+  // Samengevoegd en opnieuw op ouderdom gesorteerd: voor de klant is dit één lijst "wat wil mijn
+  // boekhouder van mij", niet twee lijstjes per tabel waar de vraag toevallig in staat.
+  const vragen = [...documentVragen, ...invoiceVragen].sort((a, b) => {
+    if (a.askedAt && b.askedAt) return a.askedAt.localeCompare(b.askedAt)
+    if (a.askedAt) return -1
+    if (b.askedAt) return 1
+    return 0
+  })
 
   // ── De boekhouder ────────────────────────────────────────────────────────────
   const { data: link } = await supabase

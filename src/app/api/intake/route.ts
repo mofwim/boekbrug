@@ -18,6 +18,7 @@
 // A bank statement is never run through the invoice extractor. SAFECORE Rule 1
 // (arithmetic) still applies on the invoice/receipt write path.
 
+import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
@@ -57,9 +58,17 @@ import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sa
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+// [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
+import { planReceiptSettlement } from "@/lib/receipt-auto-settle"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
+// [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
+import { readPdfTextLayer } from "@/lib/pdf-text"
+// [GEGROND] The stored verdict on whether the total is printed on the document.
+import { groundingOf } from '@/lib/amount-grounding'
+import { placementOf, btwContradictionOf } from '@/lib/document-verify'
+import { eInvoiceContradictsRead } from '@/lib/e-invoice'
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -362,7 +371,7 @@ export async function POST(req: NextRequest) {
   let pdfText: string | null = null
   let pdfPages = 0
   if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const read = await readPdf(buffer)
+    const read = await readPdfTextLayer(buffer)
     pdfText = read.text
     pdfPages = read.pages
     const dailyResp = await handleDailySalesPdf(pdfText, buffer, file, user.id, supabase, req, source)
@@ -712,7 +721,12 @@ export async function POST(req: NextRequest) {
             .limit(200)
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
-        }
+        },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }
@@ -1024,13 +1038,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // [BON-AUTO] Mag deze bon zichzelf afboeken? Een kassabon bestáát omdat er aan de kassa is
+  // betaald — dat is wat hem een bon maakt en geen factuur. De vraag die de soort NIET beantwoordt
+  // is HOE, en dat verschil is niet cosmetisch: 'kas' zet een gedateerde regel in het kasboek en
+  // beweegt de lade, 'bank' niet. Dus alleen wanneer het PAPIER de tenderregel afdrukt. Zie
+  // receipt-auto-settle.ts; hier wordt niets geboekt, alleen besloten.
+  const settlePlan = planReceiptSettlement({
+    documentKind: v.document_kind ?? null,
+    suggestion: {
+      suggestPaid: decision.suggestPaid,
+      paidMethod: decision.paidMethod ?? null,
+      paidMethodZeker: decision.paidMethodZeker === true,
+      paidDate: decision.paidDate ?? null,
+    },
+    invoiceDate,
+    totalIncBtw: v.total_inc_btw ?? null,
+    today: new Date().toISOString().slice(0, 10),
+  });
+
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
-  // directly as 'received' (booked, UNPAID, reversible). Never for a receipt (its "probably paid"
-  // suggestion needs a human pay-confirm), never for a pen-mark paid suggestion, never for a
-  // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
-  // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
+  // directly as 'received' (booked, UNPAID, reversible). Never for a pen-mark paid suggestion,
+  // never for a statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI
+  // number (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the
+  // queue.
+  //
+  // [BON-AUTO] The paid-suggestion block stays, with one hole in it: a bon that will be SETTLED in
+  // the same request. The block exists because auto-advance lands an invoice as 'received' —
+  // booked and UNPAID — which is the one status a settled bon must never get. When the payment is
+  // booked one breath later that objection is gone, and without the hole every receipt fell to a
+  // manual tap: the document class that needs the least judgement got the most of it.
+  //
+  // The safety bar itself is UNCHANGED. A bon still has to clear grounding, placement, the printed
+  // BTW split, the arithmetic, the dedup and the health classifier exactly like any other invoice —
+  // settling only decides the STATUS it lands in, never whether the read may be trusted.
   const autoAdv =
-    decision.destination === "invoice" && !decision.suggestPaid && !multiInvoice && !oneInvoiceUnverified
+    (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
+    (!decision.suggestPaid || settlePlan.settle) && !multiInvoice && !oneInvoiceUnverified
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,
           is_statement: v.is_statement,
@@ -1044,6 +1087,16 @@ export async function POST(req: NextRequest) {
           forcedDuplicate: force === true,
           // [BTW-GATE] a zero btw_amount only auto-books when the read is explicitly a 0% invoice.
           btwRate: v.btw_rate ?? null,
+          // [GEGROND] What the document's own text says about the total the reader reported. The
+          // only signal here that does not come from the reader — see amount-grounding.ts.
+          totalGrounding: groundingOf(v.field_confidence),
+// [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
+totalPlacement: placementOf(v.field_confidence),
+// [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
+btwContradictsDocument: btwContradictionOf(v.field_confidence),
+// [E-FACTUUR] And whether the supplier's OWN structured figures disagree with the read. Both
+// auto-booking doors must ask it: a gate on one door is not a gate.
+eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,
@@ -1057,6 +1110,20 @@ export async function POST(req: NextRequest) {
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  }
+  // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is proven
+  // by the paper (settlePlan). Either one alone books something nobody checked.
+  const willSettle = autoAdv.advance && settlePlan.settle;
+  if (willSettle) {
+    // The basis, on the row, in the paper's own words — so "waarom staat deze bon op betaald?" is
+    // answerable a year later without re-reading the document.
+    fieldConfidence._auto_paid = {
+      at: new Date().toISOString(),
+      method: settlePlan.method,
+      date: settlePlan.payDate,
+      reason: settlePlan.reason,
+      evidence: decision.paidEvidence ?? null,
+    };
   }
 
   const { data: invoice, error: dbError } = await pipeline
@@ -1140,15 +1207,70 @@ export async function POST(req: NextRequest) {
       newValue: { status: "received", reason: autoAdv.reason, source: "intake_auto_advance" },
       ipAddress: getClientIP(req),
     }).catch(() => {})
+
+    // [BON-AUTO] The bon pays itself off. Through apply_manual_payment — the SAME audited, atomic,
+    // row-locking call the manual "Markeer als betaald" button makes — and not by writing
+    // status='paid' onto the insert above. That shortcut looks equivalent and is not: the RPC also
+    // writes the bank_tx_invoices instalment row that keeps amount_paid = SUM(amount_applied)
+    // true, and without it recompute_invoice_amount_paid would reset amount_paid to zero on an
+    // invoice that says it is paid. Reusing the ordinary booking also means the ordinary UNDO
+    // button reverses it, with no second code path to keep in step.
+    //
+    // Deliberately AFTER the insert rather than part of it: if this call fails the bon stands as
+    // 'received' — booked, unpaid, one tap from correct — which is exactly where it stood before
+    // this feature existed. The failure direction is the old behaviour, never a half-booking.
+    let settled = false;
+    if (willSettle && settlePlan.method && settlePlan.payDate) {
+      const { error: settleErr } = await pipeline.rpc("apply_manual_payment", {
+        p_user_id: user.id,
+        p_invoice_id: invoice.id,
+        p_amount: null,                     // null = the whole remaining balance
+        p_pay_date: settlePlan.payDate,
+        p_method: settlePlan.method,
+        p_payable_statuses: ["received"],   // it was just inserted as 'received'
+        p_client_key: randomUUID(),
+      });
+      if (settleErr) {
+        // [NO-SILENT-EMPTY] Never swallowed. The invoice is correct either way, but an owner who
+        // was told "automatisch afgehandeld" and finds it in "nog te betalen" needs the trail to
+        // say which half ran.
+        console.error("[BON-AUTO] receipt settlement failed — left as received (unpaid)", {
+          invoiceId: invoice.id, error: settleErr.message,
+        });
+      } else {
+        settled = true;
+        await logAuditAction({
+          userId: user.id,
+          action: "invoice.auto_paid",
+          entityType: "invoice",
+          entityId: invoice.id,
+          oldValue: { status: "received" },
+          newValue: {
+            status: "paid", method: settlePlan.method, payment_date: settlePlan.payDate,
+            reason: settlePlan.reason, evidence: decision.paidEvidence ?? null,
+            source: "intake_receipt_auto_settle",
+          },
+          ipAddress: getClientIP(req),
+        }).catch(() => {});
+      }
+    }
+    // Runs AFTER the settlement above on purpose: a 'kas' booking becomes a dated kasboek entry,
+    // and reconciling before it exists would leave the drawer a pass behind.
     try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
     try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
     try {
       await pipeline.from("notifications").insert({
         user_id: user.id,
-        title: "Factuur automatisch verwerkt",
+        // [BON-AUTO] A settled bon may NOT borrow the invoice sentence. "(nog niet betaald)" on a
+        // receipt the app has just marked paid is the app contradicting itself in the one message
+        // the owner actually reads, and it would send them looking for a payment to make.
+        title: settled ? "Bon automatisch verwerkt en afgeboekt" : "Factuur automatisch verwerkt",
         // .replace with a STRING replaces the first match only; a missing number left a second
         // double space untouched. A regex with /g collapses every run of spaces.
-        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace(/ {2,}/g, " "),
+        body: (settled
+          ? `${v.vendor || "Een leverancier"} — deze bon is gelezen en meteen als betaald geboekt (${settlePlan.method === "kas" ? "contant" : "met de pas"}, ${settlePlan.payDate}). Klopt dat niet, zet hem dan met één tik terug op openstaand.`
+          : `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`
+        ).replace(/ {2,}/g, " "),
         type: "invoice",
         // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
         // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
@@ -1213,19 +1335,6 @@ export async function POST(req: NextRequest) {
 // getal is het verschil tussen "één beeld, dus één factuur" en "een stapel die we niet konden
 // lezen" — zie cannotVerifySingleInvoice. `pages: 0` bij een onleesbaar of niet-PDF bestand, wat
 // daar als "geen meerpagina-bestand" telt.
-async function readPdf(buffer: Buffer): Promise<{ text: string | null; pages: number }> {
-  try {
-    const unpdf = await import("unpdf")
-    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
-    const pages = typeof doc.numPages === "number" ? doc.numPages : 0
-    const { text } = await unpdf.extractText(doc, { mergePages: true })
-    const t = (text ?? "").trim()
-    return { text: t.length > 0 ? t : null, pages }
-  } catch {
-    return { text: null, pages: 0 }
-  }
-}
-
 // Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
 // exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the
@@ -1414,6 +1523,11 @@ async function handleUblInvoice(
           if (dedupErr) dedupCheckFailed = true
           return data ?? []
         },
+        // [DEDUP-SOFT] Best-effort BY NAME. This invoice lands in the verify queue, and the
+        // callbacks above already record a failed read in dedupCheckFailed →
+        // markDuplicateCheckUnavailable, so the human still sees "we konden de dubbelcheck niet
+        // uitvoeren". Leaving this off would fail the whole import over one soft probe.
+        { bestEffort: true },
       )
     }
   }
@@ -1471,6 +1585,21 @@ async function handleUblInvoice(
     invoice_number: v.invoiceNumber ? 0.98 : 0.2,
     invoice_date: v.invoiceDate ? 0.98 : 0.2,
     _source: "ubl_xml",
+  }
+  // [BTW-SPLIT] The per-rate breakdown straight out of the XML, signed the same way as the totals
+  // just above. On a mixed-rate invoice this is the difference between a checklist that can say
+  // "nagerekend" and one that has to admit it compared the btw with nothing — and on this path the
+  // numbers are typed elements, so there is nothing to have misread.
+  //
+  // Stored whether or not it agrees with our two figures, exactly as on the reader path. Whether a
+  // disagreement means "hold this invoice" is classifyImportHealth's judgement to make, in one
+  // place; filtering here would quietly delete the evidence it needs to make it.
+  if (v.btwRows.length > 0) {
+    fieldConfidence._btw_rows = v.btwRows.map((r) => ({
+      rate: r.rate,
+      base: sign * r.base,
+      btw: sign * r.btw,
+    }))
   }
   // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
   // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".

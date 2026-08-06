@@ -37,6 +37,8 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/
 import { useToast } from "@/components/ui/Toast"
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -1954,14 +1956,18 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 side has. Both only bound the picker — /api/invoice/pay-toggle is what refuses an
                 impossible day, for every caller. */}
             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
-            <input
-              type="date"
-              value={paymentDate}
-              min={PAYMENT_DATE_FLOOR}
-              max={amsterdamToday()}
-              onChange={e => setPaymentDate(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
-            />
+            {/* [DATE-NL] See the sibling dialog on /dashboard/incoming/manage — same field, same
+                reason: the browser's locale decides a native date input's segment order, and this
+                one picks the BTW quarter. */}
+            <div style={{ marginBottom: 16 }}>
+              <DateFieldNL
+                value={paymentDate}
+                min={PAYMENT_DATE_FLOOR}
+                max={amsterdamToday()}
+                onChange={setPaymentDate}
+                aria-label="Betaaldatum"
+              />
+            </div>
 
             {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty settles the whole open
                 balance, which is what this dialog always did, so the ordinary case is unchanged

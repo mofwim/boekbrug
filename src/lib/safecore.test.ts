@@ -212,6 +212,75 @@ console.log('═══ safecore creditnota tests ═══\n')
   const w = evaluateArithmetic({ totalExBtw: 100, btwAmount: 5, totalIncBtw: 200 })
   check('13d. present-but-wrong split → still "excl + BTW ≠ totaal"',
     (w.reason ?? '').includes('≠'), JSON.stringify(w.reason))
+
+  // ── The shape this ACTUALLY has once it is stored ──
+  //
+  // Both write paths insert `v.total_ex_btw ?? 0` into a NOT-NULL numeric column, so on every row
+  // the owner has ever seen, the absent split reads back as 0 — never null. 13a–13c above only
+  // ever passed inside the write path; at read time the branch fell through to reconcileHint with
+  // an ex of 0, which reports the whole gross as the excl the invoice "should" have. An owner who
+  // follows that sentence sets their btw to zero and loses the voorbelasting.
+  const stored = evaluateArithmetic({ totalExBtw: 0, btwAmount: 0, totalIncBtw: 8980.05 })
+  check('13e. stored-as-0 split reads as MISSING, like the null it came from',
+    (stored.reason ?? '').includes('uitsplitsing'), JSON.stringify(stored.reason))
+  check('13f. …and never proposes the gross as the excl (that zeroes the btw)',
+    !(stored.reason ?? '').includes('8.980,05'), JSON.stringify(stored.reason))
+  const storedCn = evaluateArithmetic(
+    { totalExBtw: 0, btwAmount: 0, totalIncBtw: -8980.05 }, { isCreditNote: true })
+  check('13g. same on the creditnota gate', (storedCn.reason ?? '').includes('uitsplitsing'))
+
+  // The fence: a REAL contradiction must still be a contradiction. Only ex is missing here, so a
+  // split WAS read — and widening this test must never swallow that.
+  const halfRead = evaluateArithmetic({ totalExBtw: 0, btwAmount: 21, totalIncBtw: 121 })
+  check('13h. half a split is not a missing split', (halfRead.reason ?? '').includes('≠'),
+    JSON.stringify(halfRead.reason))
+  check('13i. …and it is still blocked', halfRead.ok === false)
+}
+
+// ── 14. [NO-BASE] BTW over an empty base, on the STANDARD gate ──────────────────────
+{
+  // The rate check is guarded by `ex > 0` — with no base there is no rate to compute. The comment
+  // there says the sum check "already covers ex=0 cases meaningfully", and it does not cover this
+  // one: 0 + 21 = 21 holds EXACTLY, so both gates stayed silent and the invoice read CLEAN. That
+  // is all shouldAutoAdvanceInvoice needs to book it — €21 of voorbelasting claimed on a purchase
+  // with no taxable base at all. The creditnota branch has caught this for a while; the standard
+  // one, which almost every invoice takes, did not.
+  const allBtw = evaluateArithmetic({ totalExBtw: 0, btwAmount: 21, totalIncBtw: 21 })
+  check('14a. an invoice that is ENTIRELY btw is blocked', allBtw.ok === false)
+  check('14b. …and says so in words the owner can act on',
+    (allBtw.reason ?? '').includes('zonder grondslag'), JSON.stringify(allBtw.reason))
+  check('14c. …under the same flag consumers already match', (allBtw.flags ?? []).includes('illegal_btw_rate'))
+
+  // Both directions of the fence. A rounding-sized btw over a zero base is float noise, not a
+  // claim — flagging it would put a warning on nothing.
+  check('14d. a cent of float noise over a zero base is not a finding',
+    evaluateArithmetic({ totalExBtw: 0, btwAmount: 0.01, totalIncBtw: 0.01 }).ok === true)
+  // And an ordinary invoice must be untouched by all of this.
+  check('14e. a normal 21% invoice is still clean',
+    evaluateArithmetic({ totalExBtw: 100, btwAmount: 21, totalIncBtw: 121 }).ok === true)
+  check('14f. a 0%-btw invoice with a real base is still clean',
+    evaluateArithmetic({ totalExBtw: 480, btwAmount: 0, totalIncBtw: 480 }).ok === true)
+}
+
+console.log('\n═══ [DATE-2DIGIT-YEAR] a Dutch date with a two-digit year is a date ═══\n')
+{
+  // Bakkerij Saada, factuur 0714: Datum and Vervaldag both printed "06/05/26". The pattern
+  // demanded four digits, so an ordinary Dutch invoice date parsed as NOTHING — and a dateless
+  // invoice is not merely untidy. It falls outside every `invoice_date BETWEEN` fetch the aangifte
+  // and the result screen use, so it is silently absent from the quarter it belongs to.
+  check('06/05/26 → 2026-05-06', normalizeToIso('06/05/26') === '2026-05-06')
+  check('every separator this path already accepted', 
+    normalizeToIso('06-05-26') === '2026-05-06' && normalizeToIso('06.05.26') === '2026-05-06')
+  check('single-digit day/month still pads', normalizeToIso('6-5-26') === '2026-05-06')
+
+  // Nothing widens. The century needs no guessing window because one already exists: two digits
+  // expand to 20YY and the 2020–2030 business range refuses the rest — the same range a
+  // four-digit year passes through.
+  check('an impossible day is still refused', normalizeToIso('31-02-26') === null)
+  check('a year outside the business range is still refused', normalizeToIso('06/05/99') === null)
+  check('four-digit years are unchanged', normalizeToIso('15-05-2026') === '2026-05-15')
+  check('ISO is unchanged', normalizeToIso('2026-05-06') === '2026-05-06')
+  check('garbage is still garbage', normalizeToIso('06/05/2') === null && normalizeToIso('not a date') === null)
 }
 
 console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')

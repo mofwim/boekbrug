@@ -111,7 +111,32 @@ export async function POST(req: NextRequest) {
     if (desired.yearlyReset) {
       lockQ = lockQ.gte('invoice_date', `${year}-01-01`).lte('invoice_date', `${year}-12-31`)
     }
-    const { count: issuedCount } = await lockQ
+    // [LOCK-READ-HONEST] The error is read, and an unreadable count LOCKS.
+    //
+    // `const { count }` alone made a failed read answer `count: null`, which `?? 0` turned into
+    // "this owner has issued nothing" — so the lock opened. That is the fail-OPEN direction on an
+    // art. 35 protection: the template and padding of a doorlopende reeks would be rewritten after
+    // numbers had already gone out, changing the SHAPE of a sequence mid-year, and the audit row
+    // twenty lines below — the one that exists to prove the platform refused exactly this — would
+    // never be written either. A database hiccup is not evidence that nobody has invoiced.
+    //
+    // Locking on an unreadable count is the recoverable direction: an owner who has genuinely
+    // issued nothing is asked to try again in a moment. The other direction cannot be undone.
+    const { count: issuedCount, error: lockError } = await lockQ
+    if (lockError) {
+      console.error('[LOCK-READ-HONEST] issued-invoice count failed — treating numbering as locked', {
+        userId: user.id, error: lockError.message,
+      })
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'We konden nu niet nagaan of je al facturen hebt verstuurd. Er is niets gewijzigd ' +
+            '— probeer het zo meteen opnieuw.',
+          code: 'lock_check_unavailable',
+        },
+        { status: 503 },
+      )
+    }
     const locked = (issuedCount ?? 0) > 0
 
     const isNoOp =
