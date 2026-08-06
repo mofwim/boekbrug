@@ -1114,8 +1114,20 @@ test("[GEGROND] the only non-self-referential check on a money field is actually
 
   const aa = code("src/lib/auto-advance.ts");
   assert.match(
-    aa, /if \(s\.totalGrounding === "absent"\)[\s\S]{0,120}?advance: false/,
+    aa, /if \(!amountsSettled && s\.totalGrounding === "absent"\)[\s\S]{0,120}?advance: false/,
     "and the gate must REFUSE on it — a signal that is passed in and ignored is decoration",
+  );
+  // [E-FACTUUR-BESLECHT] The ONE thing that may relax it, pinned by name.
+  //
+  // This guard used to demand the refusal be unconditional. It is now conditional, and that is a
+  // narrowing worth guarding harder rather than softer: the check exists because an amount was
+  // READ off a page, and it steps aside only where there is no page to have misread — a complete,
+  // self-consistent e-invoice the supplier produced. Pinning the identifier means a future `if
+  // (!somethingElse && s.totalGrounding === "absent")` fails this test instead of quietly widening
+  // the one door the money gates have.
+  assert.match(
+    aa, /const amountsSettled = eInvoiceSettlesAmounts\(s\.health\.field_confidence\)/,
+    "the only permitted relaxation is the supplier's own structured figures — nothing else may gate this",
   );
   // 'unreadable' must never block: a photographed receipt is the ordinary case this app exists for,
   // and refusing to automate those would take the product away in the name of protecting it.
@@ -1342,7 +1354,7 @@ test("[DOCCHECK] the sharper check is wired at every point the weaker one was", 
 
   const aa = code("src/lib/auto-advance.ts");
   assert.match(
-    aa, /if \(s\.totalPlacement === "present"\)[\s\S]{0,140}?advance: false/,
+    aa, /if \(!amountsSettled && s\.totalPlacement === "present"\)[\s\S]{0,140}?advance: false/,
     "and the gate must REFUSE on it — 'present' IS the subtotal-read-as-total shape",
   );
   // The two states that must never block: a photo, and a correctly-placed total.
