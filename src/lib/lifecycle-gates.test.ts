@@ -1896,3 +1896,63 @@ test("[MAILTEKST] the text conversion keeps table cells apart", () => {
     assert.ok(m.includes(shape), `"${shape}" must stay out of the queue`);
   }
 });
+
+test("[E-FACTUUR-XML] a Peppol invoice arriving on its own is booked, and no model reads it", () => {
+  // NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for everyone from
+  // 2028, and suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
+  // read one: a .xml attachment fell to "a format we cannot open" and was reported rather than
+  // booked — while it is the most exact invoice this app will ever receive.
+  const src = code("src/lib/email-integration.ts");
+
+  // Intercepted at classifyAttachment: the ONE door every attachment goes through, so dedup,
+  // health, queue, storage and the grounding gates all see an ordinary classification.
+  assert.match(
+    src,
+    /if \(isEInvoiceXmlMime\(mimeType\)\) \{[\s\S]{0,300}?parseEInvoice\(Buffer\.from\(base64Data, 'base64'\)\.toString\('utf8'\)\)[\s\S]{0,200}?if \(parsed\) return eInvoiceClassification\(parsed\)/,
+    "an e-invoice XML must be read from its own structure, never sent to the model",
+  );
+  // …and it must be intercepted BEFORE the model import, or the call happens anyway.
+  const guardAt = src.indexOf("if (isEInvoiceXmlMime(mimeType))");
+  const aiAt = src.indexOf("const { verifyInvoiceFromPdf } = await import('@/lib/ai')");
+  assert.ok(guardAt > 0 && aiAt > guardAt, "the interception precedes the AI import");
+
+  // Half an e-invoice is never booked: an incomplete parse falls through to the ordinary
+  // could-not-read path, which stores the file and tells the owner.
+  assert.match(
+    src, /return \{ isInvoice: false, confidence: 0, reason: 'e-factuur XML kon niet volledig worden gelezen' \}/,
+    "an XML that does not parse completely must not become an invoice",
+  );
+
+  // Both doors let it through, and Outlook — which already holds the bytes — checks the CONTENT so
+  // a CAMT statement that survived the name test still falls out.
+  assert.match(src, /pending\.push\(\{ filename, mimeType: E_INVOICE_XML_MIME/, "Gmail lets it through");
+  assert.match(
+    src, /looksLikeInvoiceXml\(xml\)\) \{[\s\S]{0,240}?mimeType: E_INVOICE_XML_MIME/,
+    "Outlook checks the content, not just the extension",
+  );
+
+  // The media type is a REAL one. A fabricated marker would be written to Storage and to
+  // documents.file_type, following the file for seven years.
+  assert.match(
+    src, /export const E_INVOICE_XML_MIME = 'application\/xml'/,
+    "no invented media type may be stored on a document",
+  );
+});
+
+test("[E-FACTUUR-XML] the supplier's party is read from the SUPPLIER's block", () => {
+  // Both parties carry the same element names in both syntaxes. The buyer booked as the supplier is
+  // a mistake nothing downstream can catch — the invoice looks perfectly ordinary, under the wrong
+  // crediteur, with the wrong IBAN on the payment sheet.
+  const m = code("src/lib/e-invoice.ts");
+  assert.match(m, /firstBlock\(xml, 'AccountingSupplierParty'\)/, "UBL: scoped to the supplier");
+  assert.match(m, /firstBlock\(xml, 'SellerTradeParty'\)/, "CII: scoped to the seller");
+  assert.doesNotMatch(
+    m, /firstText\(xml, 'RegistrationName'\)|firstText\(xml, 'Name'\)/,
+    "a document-wide name search can return the buyer",
+  );
+  // An IBAN only travels when it IS one — it reaches the bank matcher and the payment sheet.
+  assert.match(
+    m, /return \/\^\[A-Z\]\{2\}\\d\{2\}\[A-Z0-9\]\{11,30\}\$\/\.test\(s\) \? s : null/,
+    "a value that is not an IBAN must never reach the payment sheet",
+  );
+});

@@ -47,7 +47,7 @@ import { readPdfTextLayer } from '@/lib/pdf-text'
 // [GEGROND] The stored verdict on whether the total is printed on the document.
 import { groundingOf } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
-import { eInvoiceContradictsRead } from '@/lib/e-invoice'
+import { eInvoiceContradictsRead, parseEInvoice, looksLikeInvoiceXml } from '@/lib/e-invoice'
 // [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
@@ -993,6 +993,20 @@ async function fetchMessageAttachments(
           }
           continue
         }
+        // [E-FACTUUR-XML] Een .xml kan de factuur ZELF zijn: Peppol/NLCIUS stuurt hem zo, en dat
+        // wordt in Nederland verplicht — boven € 800k omzet vanaf 2027, voor iedereen vanaf 2028.
+        // De bytes gaan mee; of het echt een e-factuur is, beslist de inhoud verderop en niet de
+        // extensie. Parseert hij niet volledig, dan valt hij terug op de melding hieronder.
+        if (/\.(?:xml|ubl)$/i.test(filename)) {
+          if (p.body?.attachmentId) {
+            pending.push({ filename, mimeType: E_INVOICE_XML_MIME, size, attachmentId: p.body.attachmentId })
+            continue
+          }
+          if (p.body?.data) {
+            pending.push({ filename, mimeType: E_INVOICE_XML_MIME, size, inlineData: p.body.data })
+            continue
+          }
+        }
         // [OVERSLAG-ZICHTBAAR] Geen afschrift, en ook geen bestand dat wij kunnen openen — een
         // .xlsx, een .heic, een gezipte factuurbundel, een doorgestuurde .eml. Dit was de stilste
         // weg van allemaal: hij viel hier weg zonder één spoor. Wij kunnen het inderdaad niet
@@ -1659,6 +1673,20 @@ async function fetchOutlookMessageAttachments(
         }
         continue
       }
+      // [E-FACTUUR-XML] Zie de Gmail-tak: een .xml kan de factuur zelf zijn (Peppol/NLCIUS).
+      // Alleen wanneer de INHOUD er ook naar uitziet — hier zijn de bytes al binnen, dus die
+      // vraag kost niets en een CAMT-afschrift dat de naamtest overleefde valt er alsnog af.
+      if (/\.(?:xml|ubl)$/i.test(filename) && att.contentBytes) {
+        const xml = Buffer.from(att.contentBytes, 'base64').toString('utf8')
+        if (looksLikeInvoiceXml(xml)) {
+          out.push({
+            messageId: message.id, filename, mimeType: E_INVOICE_XML_MIME,
+            data: att.contentBytes, subject: message.subject || '', from,
+            date: message.receivedDateTime || new Date().toISOString(), size: att.size || 0,
+          })
+          continue
+        }
+      }
       // [OVERSLAG-ZICHTBAAR] Zie de Gmail-tak: een formaat waar wij geen lezer voor hebben wordt
       // gemeld in plaats van weggegooid; agendaverkeer en handtekeningen blijven stil.
       const unreadableReason = unreadableFormatReason(filename)
@@ -1802,6 +1830,54 @@ export interface AttachmentClassification {
 }
 
 /**
+ * [E-FACTUUR-XML] The media type an e-invoice XML travels under.
+ *
+ * The REAL one, not an invented marker, because this value is written to Storage as the object's
+ * content-type and to documents.file_type — where a made-up media type would follow the file
+ * around for seven years and confuse every viewer that ever opens it. Nothing else in this file
+ * produces `application/xml`: normalizeAttachmentMime returns only PDF and image types, so it
+ * still routes unambiguously.
+ */
+export const E_INVOICE_XML_MIME = 'application/xml'
+
+export function isEInvoiceXmlMime(mimeType: string): boolean {
+  return (mimeType || '').split(';')[0].trim().toLowerCase() === E_INVOICE_XML_MIME
+}
+
+/**
+ * The supplier's own statement, in the shape the sync already understands.
+ *
+ * confidence is 1: not flattery, a fact about where this came from. Every other value in this
+ * object is a number or a string the supplier wrote, not something anybody inferred — so the
+ * confidence gates downstream are being told the truth, and a lower score would make them hold a
+ * document that is more certain than any the app will ever see.
+ */
+function eInvoiceClassification(f: NonNullable<ReturnType<typeof parseEInvoice>>): AttachmentClassification {
+  return {
+    isInvoice: true,
+    confidence: 1,
+    vendor: f.vendorName ?? undefined,
+    invoiceNumber: f.invoiceNumber ?? undefined,
+    invoiceDate: f.invoiceDate ?? undefined,
+    dueDate: f.dueDate ?? undefined,
+    totalIncBtw: f.totalIncBtw,
+    totalExBtw: f.totalExBtw,
+    btwAmount: f.btwAmount,
+    amount: f.totalIncBtw,
+    vendorIban: f.vendorIban ?? undefined,
+    paymentReference: f.paymentReference ?? undefined,
+    isCreditNote: f.isCreditNote,
+    isStatement: false,
+    isReminder: false,
+    documentKind: 'invoice',
+    reason: `e-factuur (${f.syntax === 'ubl' ? 'Peppol/UBL' : 'Factur-X/CII'}) — bedragen door de leverancier zelf meegestuurd`,
+    fieldConfidence: {
+      vendor: 1, invoice_number: 1, invoice_date: 1, amount: 1,
+    },
+  }
+}
+
+/**
  * [BOEK-011] Classify a PDF/image attachment via Claude API
  * Uses verifyInvoiceFromPdf from @/lib/ai — reads actual file content
  * Confidence threshold enforced inside verifyInvoiceFromPdf (0.6)
@@ -1825,6 +1901,24 @@ export async function classifyAttachment(
     readingHint?: string | null
   }
 ): Promise<AttachmentClassification> {
+  // [E-FACTUUR-XML] A Peppol / NLCIUS invoice that arrived as XML on its own. Nothing here is read
+  // by a model: the supplier states the number, the dates, their own name, their account and all
+  // three amounts, in a structured form they produced. That is not a better reading of the
+  // document — it IS the document, and no OCR, no layout heuristic and no confidence score can
+  // improve on it.
+  //
+  // Intercepted at THIS function rather than in the sync loop because this is the one door every
+  // attachment goes through, so everything downstream — dedup, health, queue, storage, the grounding
+  // gates — sees an ordinary classification and needs no new case.
+  //
+  // A file that does not parse COMPLETELY falls through to the ordinary path, where it is reported
+  // as a format we cannot read. Half an e-invoice is never booked.
+  if (isEInvoiceXmlMime(mimeType)) {
+    const parsed = parseEInvoice(Buffer.from(base64Data, 'base64').toString('utf8'))
+    if (parsed) return eInvoiceClassification(parsed)
+    return { isInvoice: false, confidence: 0, reason: 'e-factuur XML kon niet volledig worden gelezen' }
+  }
+
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
   // [BOEK-011] Data is already base64 (converted in fetchMessageAttachments)

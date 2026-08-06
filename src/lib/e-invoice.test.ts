@@ -295,3 +295,159 @@ test('[E-FACTUUR] a non-invoice attachment inside a PDF is not mistaken for one'
   const bytes = Buffer.from(await doc.save())
   assert.equal(await extractEmbeddedInvoiceXml(bytes), null, 'a CAMT statement is not an e-invoice')
 })
+
+test('[E-FACTUUR-XML] a Peppol invoice states everything an import needs, and no model reads it', () => {
+  // The point of this half: a UBL invoice arriving on its own can be BOOKED without a model looking
+  // at anything. Exact figures, exact vendor, exact dates, exact account — stated by the supplier.
+  const xml = `<?xml version="1.0"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>2026-0418</cbc:ID>
+  <cbc:IssueDate>2026-03-12</cbc:IssueDate>
+  <cbc:DueDate>2026-04-11</cbc:DueDate>
+  <cac:AccountingSupplierParty><cac:Party>
+    <cac:PartyName><cbc:Name>Groothandel handelsnaam</cbc:Name></cac:PartyName>
+    <cac:PartyLegalEntity><cbc:RegistrationName>Groothandel Noord B.V.</cbc:RegistrationName></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty><cac:Party>
+    <cac:PartyLegalEntity><cbc:RegistrationName>De Koper V.O.F.</cbc:RegistrationName></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingCustomerParty>
+  <cac:PaymentMeans>
+    <cbc:PaymentID>0123456789012345</cbc:PaymentID>
+    <cac:PayeeFinancialAccount><cbc:ID>NL65 RABO 0171 1362 76</cbc:ID></cac:PayeeFinancialAccount>
+  </cac:PaymentMeans>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">799.45</cbc:TaxExclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">871.40</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  const f = parseEInvoice(xml)
+  assert.ok(f)
+  assert.equal(f?.invoiceNumber, '2026-0418')
+  assert.equal(f?.invoiceDate, '2026-03-12')
+  assert.equal(f?.dueDate, '2026-04-11')
+  assert.equal(f?.totalIncBtw, 871.4)
+  assert.equal(f?.btwAmount, 71.95)
+  // The LEGAL name, and — the part that matters — the SUPPLIER's, not the buyer's. Both parties
+  // carry the same element names, and the buyer booked as the supplier is a mistake nothing
+  // downstream can catch: the invoice would look perfectly ordinary under the wrong crediteur.
+  assert.equal(f?.vendorName, 'Groothandel Noord B.V.')
+  // The IBAN is normalised, because it reaches the bank matcher and the payment sheet — the
+  // costliest field on the whole invoice to get wrong.
+  assert.equal(f?.vendorIban, 'NL65RABO0171136276')
+  assert.equal(f?.paymentReference, '0123456789012345')
+  assert.equal(f?.isCreditNote, false)
+})
+
+test('[E-FACTUUR-XML] a Factur-X header gives the same fields, in its own notation', () => {
+  const xml = `<?xml version="1.0"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:rsm" xmlns:ram="urn:ram" xmlns:udt="urn:udt">
+  <rsm:ExchangedDocument>
+    <ram:ID>RE-99</ram:ID>
+    <ram:IssueDateTime><udt:DateTimeString format="102">20260312</udt:DateTimeString></ram:IssueDateTime>
+  </rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:SellerTradeParty><ram:Name>Lieferant GmbH</ram:Name></ram:SellerTradeParty>
+      <ram:BuyerTradeParty><ram:Name>De Koper V.O.F.</ram:Name></ram:BuyerTradeParty>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:SpecifiedTradeSettlementPaymentMeans>
+        <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>DE89370400440532013000</ram:IBANID></ram:PayeePartyCreditorFinancialAccount>
+      </ram:SpecifiedTradeSettlementPaymentMeans>
+      <ram:SpecifiedTradePaymentTerms>
+        <ram:DueDateDateTime><udt:DateTimeString format="102">20260411</udt:DateTimeString></ram:DueDateDateTime>
+      </ram:SpecifiedTradePaymentTerms>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:TaxBasisTotalAmount>100.00</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount currencyID="EUR">21.00</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount currencyID="EUR">121.00</ram:GrandTotalAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>`
+  const f = parseEInvoice(xml)
+  assert.ok(f)
+  assert.equal(f?.invoiceNumber, 'RE-99')
+  assert.equal(f?.invoiceDate, '2026-03-12', 'the "102" format is yyyymmdd, not an ISO day')
+  assert.equal(f?.dueDate, '2026-04-11')
+  assert.equal(f?.vendorName, 'Lieferant GmbH', 'the SELLER, never the buyer')
+  assert.equal(f?.vendorIban, 'DE89370400440532013000')
+})
+
+test('[E-FACTUUR-XML] the BUYER is never booked as the supplier', () => {
+  // Both parties carry the same element names. On a well-formed document the supplier happens to
+  // come first, so a document-wide search wins by luck and the scoping looks decorative — which is
+  // exactly what the first version of this test proved, and nothing else.
+  //
+  // Here the customer is listed FIRST. A search that is not scoped now returns "De Koper V.O.F."
+  // as the supplier: an invoice that looks perfectly ordinary, filed under a crediteur that does
+  // not exist, with the wrong account on the payment sheet. Nothing downstream can catch that.
+  const buyerFirst = `<?xml version="1.0"?>
+<Invoice xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>2026-9</cbc:ID>
+  <cac:AccountingCustomerParty><cac:Party>
+    <cac:PartyLegalEntity><cbc:RegistrationName>De Koper V.O.F.</cbc:RegistrationName></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingCustomerParty>
+  <cac:AccountingSupplierParty><cac:Party>
+    <cac:PartyLegalEntity><cbc:RegistrationName>Groothandel Noord B.V.</cbc:RegistrationName></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingSupplierParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">100.00</cbc:TaxExclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">121.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  assert.equal(parseEInvoice(buyerFirst)?.vendorName, 'Groothandel Noord B.V.')
+
+  // The same trap in CII: BuyerTradeParty before SellerTradeParty.
+  const buyerFirstCii = `<?xml version="1.0"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:rsm" xmlns:ram="urn:ram">
+  <rsm:SupplyChainTradeTransaction>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:BuyerTradeParty><ram:Name>De Koper V.O.F.</ram:Name></ram:BuyerTradeParty>
+      <ram:SellerTradeParty><ram:Name>Lieferant GmbH</ram:Name></ram:SellerTradeParty>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:TaxBasisTotalAmount>100.00</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount currencyID="EUR">21.00</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount currencyID="EUR">121.00</ram:GrandTotalAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>`
+  assert.equal(parseEInvoice(buyerFirstCii)?.vendorName, 'Lieferant GmbH')
+})
+
+test('[E-FACTUUR-XML] a credit note says so, and a malformed IBAN is dropped rather than carried', () => {
+  const credit = `<?xml version="1.0"?>
+<CreditNote xmlns="urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2" xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>CN-1</cbc:ID>
+  <cac:PaymentMeans><cac:PayeeFinancialAccount><cbc:ID>rekening onbekend</cbc:ID></cac:PayeeFinancialAccount></cac:PaymentMeans>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">100.00</cbc:TaxExclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">121.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</CreditNote>`
+  const f = parseEInvoice(credit)
+  assert.ok(f)
+  assert.equal(f?.isCreditNote, true, 'money coming back, not going out')
+  assert.equal(f?.vendorIban, null, 'a value that is not an IBAN never reaches the payment sheet')
+})
+
+test('[E-FACTUUR-XML] a field the document does not state stays null, never guessed', () => {
+  // The whole value of this path is that nothing is interpreted. A missing vendor is a missing
+  // vendor; inventing one would put a crediteur in the books that does not exist.
+  const bare = `<Invoice xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">100.00</cbc:TaxExclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">121.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  const f = parseEInvoice(bare)
+  assert.ok(f, 'the money is complete, so the figures still stand')
+  assert.equal(f?.vendorName, null)
+  assert.equal(f?.invoiceDate, null)
+  assert.equal(f?.dueDate, null)
+  assert.equal(f?.vendorIban, null)
+  assert.equal(f?.invoiceNumber, null)
+})
