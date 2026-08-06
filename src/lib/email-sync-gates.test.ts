@@ -179,9 +179,17 @@ test("[BON-EMAIL] the reader's payment fields survive the classification mapper"
 test("[BON-EMAIL] a paid suggestion is never auto-booked as an unpaid debt", () => {
   // Auto-advance lands an invoice as 'received' — booked and UNPAID — which is the one status a
   // settled bon must not get. /api/intake gates on !decision.suggestPaid; the sync must too.
+  // [MAILTEKST] The window is wider than it was because a body-rendered invoice is refused first,
+  // between `const autoAdv` and this clause. The invariant is unchanged: a paid suggestion still
+  // has to appear in the same expression that decides whether to auto-advance.
   assert.match(
-    SYNC, /const autoAdv[\s\S]{0,120}?!pay\.suggestPaid/,
+    SYNC, /const autoAdv[\s\S]{0,600}?!pay\.suggestPaid/,
     "the sync's auto-advance must be held back by a paid suggestion, as the camera path is",
+  );
+  // And the refusal that now precedes it: mail we assembled into a document never books itself.
+  assert.match(
+    SYNC, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice is held before any other consideration",
   );
 });
 

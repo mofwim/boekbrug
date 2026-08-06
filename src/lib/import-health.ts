@@ -310,6 +310,17 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     )
   }
 
+  // [MAILTEKST] Dit "document" is door ons gemaakt van de tekst van een e-mail, omdat de
+  // leverancier niets meestuurde. Dat is geen fout — de kosten zijn echt en de voorbelasting is
+  // echt — maar de eigenaar hoort te weten waar hij naar kijkt voordat hij bevestigt: bij een
+  // geschil weegt een door ons opgemaakte pagina anders dan de PDF van de leverancier zelf.
+  if ((fc as { _mailtekst?: unknown } | null | undefined)?._mailtekst === true) {
+    reasons.push(
+      'deze factuur stond in de TEKST van een e-mail, zonder bijlage — wij hebben die tekst ' +
+      'bewaard als document. Controleer de bedragen en vraag de leverancier zo nodig om een PDF',
+    )
+  }
+
   // [E-FACTUUR] De leverancier stuurde zijn cijfers ZELF mee, in machinevorm (Factur-X / ZUGFeRD /
   // Peppol), en die spreken het gelezen bedrag tegen. Dit is de enige controle in het hele bestand
   // die niet naar de lezing kijkt maar naar de factuur zelf: rekensom, plaatsing, zekerheid en

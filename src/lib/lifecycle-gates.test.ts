@@ -1821,3 +1821,78 @@ test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", ()
   // Both syntaxes, because both arrive — knowing only one fails silently on the other.
   assert.match(m, /isCii \? parseCii\(xml\) : parseUbl\(xml\)/, "CII and UBL both");
 });
+
+test("[MAILTEKST] a body-only invoice is found, stored as a document, and never books itself", () => {
+  // Both listings ask for mail WITH an attachment. A hosting bill, a phone subscription or a
+  // parking app that lays the invoice out in the message body was never even seen — not skipped,
+  // not reported, not counted — every month, for as long as the subscription runs.
+  const src = code("src/lib/email-integration.ts");
+
+  // The pass exists and is appended to the SAME list, so dedup, classifier, health and queue need
+  // no new case.
+  assert.match(
+    src, /await fetchBodyOnlyInvoices\(tokens\.provider, accessToken, syncAfterMs, tokens\.email \?\? null\)/,
+    "the sync must run the body pass",
+  );
+  assert.match(
+    src, /attachments = \[\.\.\.attachments, \.\.\.body\.items\]/,
+    "…and feed it through the ordinary pipeline",
+  );
+
+  // It must NOT enter the watermark walk. messageIndex is the guarantee that no attachment is
+  // skipped; a body message added to it could advance the mark over mail nobody read.
+  assert.doesNotMatch(
+    src, /messageIndex(?:\s*=\s*\[[^\]]*|\.push\([^)]*)body/,
+    "the body pass may never touch the watermark walk",
+  );
+
+  // Filtered MECHANICALLY before anything is sent anywhere — this path starts from ordinary mail,
+  // where almost everything carrying a euro amount is not an invoice.
+  assert.match(
+    src, /const verdict = bodyLooksLikeInvoice\(m\.text, m\.subject\)\s*\n\s*if \(!verdict\.candidate\) return null/,
+    "the filter runs before the render and before any AI call",
+  );
+
+  // And it becomes a real document, because the bewaarplicht needs one and [GEGROND] needs its
+  // text layer.
+  assert.match(src, /const pdf = await textToPdf\(m\.text,/, "the body is stored as a PDF");
+
+  // Never auto-booked. "Is this a purchase invoice at all" is the one question the mechanical
+  // filter cannot settle, and getting it wrong invents a cost with a voorbelasting claim on it.
+  assert.match(
+    src, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice must be refused before every other consideration",
+  );
+  // The owner is told what they are looking at before they confirm it.
+  assert.match(
+    src, /_mailtekst: true/,
+    "the row must record that the document is a rendering of an e-mail",
+  );
+  assert.match(
+    code("src/lib/import-health.ts"),
+    /deze factuur stond in de TEKST van een e-mail/,
+    "…and the queue must say so in words",
+  );
+});
+
+test("[MAILTEKST] the text conversion keeps table cells apart", () => {
+  // The bug this prevents is silent and total: the naive replace(/<[^>]+>/g,'') welds cells
+  // together, so "21%€ 21,00" is a token no amount parser reads and "Totaal€ 121,00" stops the
+  // grounding check finding a total that IS on the page — a correct invoice reading as a wrong one.
+  const m = code("src/lib/email-body-invoice.ts");
+  assert.match(
+    m, /\.replace\(\/<\[\^>\]\+>\/g, ' '\)/,
+    "a stripped tag must become a SPACE — with '' the cells weld into one unreadable token",
+  );
+  // Script and style carry numbers that are not money.
+  assert.match(m, /<script\\b\[\\s\\S\]\*\?<\\\/script>/, "script is stripped whole");
+  assert.match(m, /<style\\b\[\\s\\S\]\*\?<\\\/style>/, "and style");
+  // The filter needs ALL four conditions — each alone admits far too much.
+  for (const tag of ["body_too_short", "no_invoice_word", "no_tax_line", "no_euro_amount"]) {
+    assert.ok(m.includes(tag), `the ${tag} refusal must exist`);
+  }
+  // …and the exclusion list, which is what makes the filter trustworthy at all.
+  for (const shape of ["orderbevestiging", "offerte", "betaling ontvangen", "aanmaning", "proforma"]) {
+    assert.ok(m.includes(shape), `"${shape}" must stay out of the queue`);
+  }
+});
