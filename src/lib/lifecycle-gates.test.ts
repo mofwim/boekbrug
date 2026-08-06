@@ -1226,3 +1226,42 @@ test("[NAREKENEN] what it could not check is never counted as fine", () => {
   assert.match(route, /truncated,/, "the per-run cap is reported");
   assert.match(route, /withoutDocument:/, "and so are the invoices with nothing to check against");
 });
+
+test("[NAREKENEN] the audit is reachable, and looks like what it is", () => {
+  // A route with no button is a feature nobody has. This one answers the doubt an owner actually
+  // has — about the invoices ALREADY in their books — so it has to be somewhere they are looking.
+  const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(src, /runBooksAudit/, "the handler exists");
+  assert.match(
+    src, /onClick=\{\(\) => void runBooksAudit\(\)\}/,
+    "and a button is actually wired to it — an optional handler nobody calls renders nothing",
+  );
+  assert.match(src, /'\/api\/invoice\/audit'/, "which calls the audit route");
+  // The result has to be SHOWN. A pass that reports nothing is a pass that changed nothing and
+  // said nothing, which is indistinguishable from not running.
+  assert.match(src, /auditTitle\(summary\)/, "the report is rendered");
+  assert.match(src, /auditLines\(summary\)/, "with the sentences under it");
+  // And the counts the route reports about its own limits must reach the owner too: a cap they
+  // cannot see is a report claiming to cover more than it did.
+  // Anchored on the CONDITION, not on the words appearing somewhere. A first version matched the
+  // bare identifier and stayed green when the branch was disabled with `if (false)` — the counts
+  // were still referenced inside a block that could never run. Same trap as the clientId gate.
+  assert.match(
+    src, /if \(auditReport\.withoutDocument > 0\) \{/,
+    "invoices with no document must actually reach the report",
+  );
+  assert.match(
+    src, /if \(auditReport\.truncated > 0\) \{/,
+    "and so must the per-run cap — a limit the owner cannot see is a report claiming to cover " +
+      "more than it did",
+  );
+
+  // Not a primary button. It changes nothing, and a control that looks like an action is read as
+  // one that fixes things — on a screen where nothing here fixes anything.
+  const btn = src.slice(src.indexOf("runBooksAudit()"), src.indexOf("Reken mijn boeken na"));
+  assert.doesNotMatch(
+    btn, /background: M3\.primary/,
+    "the audit button is styled as a primary action — it only reports, and looking like it acts " +
+      "is how an owner comes to believe their books were corrected",
+  );
+});

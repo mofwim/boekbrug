@@ -34,6 +34,8 @@ import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility
 import { findPayableDuplicates, duplicateWarningText } from '@/lib/duplicate-payable'
 // [BULK-UNDO] What un-paying in bulk actually touches — said before it happens.
 import { planBulkUndo, bulkUndoWarnings, bulkUndoTitle, type UndoPlan } from '@/lib/bulk-undo-pay'
+// [NAREKENEN] The books-audit report — see books-audit.ts.
+import { summarizeAudit, auditTitle, auditLines, type AuditedInvoice } from '@/lib/books-audit'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
@@ -492,6 +494,17 @@ export default function IncomingManageClient({
   const [checkingId, setCheckingId]     = useState<string | null>(null)
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
+  // [NAREKENEN] The books-audit run and what it found. Read-only: the route writes the verdict and
+  // never a figure, so this holds a REPORT, not a result of changes.
+  const [auditBusy, setAuditBusy]       = useState(false)
+  const [auditReport, setAuditReport]   = useState<{
+    summary: { confirmed: number; unchecked: number; examined: number; mismatched: AuditedInvoice[] }
+    truncated: number
+    withoutDocument: number
+  } | null>(null)
+  // [BACK-CLOSES] The report is a dismissible overlay: on a phone 'back' is how you close one,
+  // and without this that tap leaves the whole screen instead.
+  useCloseOnBack(!!auditReport, () => setAuditReport(null))
   const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
   // [DOC-INLINE] Which invoice's document is open. The sheet fetches its own signed url.
   const [docCtx, setDocCtx]             = useState<IncomingRow | null>(null)
@@ -1123,6 +1136,41 @@ export default function IncomingManageClient({
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
     setInvoices(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
+  // ── [NAREKENEN] "Reken mijn boeken na" ───────────────────────────────────────
+  // Reads each booked invoice's stored document and asks the one question in this app that is not
+  // the reader checking itself: is the saved amount actually printed there? The route writes only
+  // the verdict — never an amount, a date or a status — so this handler has no rows to patch and
+  // nothing to undo. It receives a REPORT.
+  async function runBooksAudit() {
+    if (auditBusy) return
+    setAuditBusy(true)
+    try {
+      const res = await fetch('/api/invoice/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // [NO-SILENT-EMPTY] A failed run must never look like a clean bill of health on the one
+        // screen whose purpose is to say whether the books are right.
+        showToast(
+          json?.error === 'lookup_failed'
+            ? 'Narekenen is niet gelukt — wij konden je facturen nu niet lezen. Probeer het zo nog eens.'
+            : 'Narekenen is niet gelukt. Probeer het zo nog eens.',
+        )
+        return
+      }
+      setAuditReport(json)
+      // The row-level flags come from the stored verdict, so the list has to be re-read to show them.
+      router.refresh()
+    } catch {
+      showToast('Narekenen is niet gelukt — controleer je verbinding.')
+    } finally {
+      setAuditBusy(false)
+    }
   }
 
   // ── [MATCH-BUTTON] "Matchen met bank & kas" ──────────────────────────────────
@@ -1774,6 +1822,41 @@ export default function IncomingManageClient({
               {matchBusy ? 'refresh' : 'link'}
             </span>
             {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
+          </button>
+
+          {/* ── [NAREKENEN] "Reken mijn boeken na" ─────────────────────────────────
+              The answer to a doubt the app could not previously address. Every check
+              on an amount is the reader checking itself — the arithmetic gate compares
+              three numbers ONE read produced — so a read that is wrong consistently
+              passes all of them, and the owner keeps the paper invoice open beside the
+              screen. [GEGROND] fixed that for new imports; this covers the ones already
+              booked, which is the set the doubt is actually about.
+
+              Deliberately NOT solid primary: it changes nothing. It reads each stored
+              document's own text and reports whether the saved amount is printed there.
+              A button that looks like an action but only reports would be read as one
+              that fixes things, and nothing here fixes anything. */}
+          <button
+            onClick={() => void runBooksAudit()}
+            disabled={auditBusy}
+            title="Leest je facturen terug uit de documenten zelf en zegt of de bedragen er zo op staan. Verandert niets."
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 16px',
+              borderRadius: R.full, border: `1px solid ${M3.outline}`,
+              background: '#fff',
+              color: auditBusy ? '#9AA0A6' : M3.onSurfaceVariant,
+              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+              cursor: auditBusy ? 'default' : 'pointer',
+            }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 18, animation: auditBusy ? 'spin 1s linear infinite' : undefined }}
+            >
+              {auditBusy ? 'refresh' : 'rule'}
+            </span>
+            {auditBusy ? 'Bezig met narekenen…' : 'Reken mijn boeken na'}
           </button>
         </div>
 
@@ -3050,6 +3133,44 @@ export default function IncomingManageClient({
           onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
         />
       )}
+
+      {/* ── [NAREKENEN] What the pass found. A REPORT, and it says so: nothing was changed.
+          The failing invoices are named first — a reassuring count above a problem is how a
+          report gets skimmed past the one line that mattered — and what could NOT be checked is
+          never folded into the good news. ── */}
+      {auditReport && (() => {
+        const summary = summarizeAudit(auditReport.summary.mismatched.length > 0 || auditReport.summary.examined > 0
+          ? [
+              ...auditReport.summary.mismatched.map(m => ({ ...m, verdict: 'absent' as const })),
+              ...Array.from({ length: auditReport.summary.confirmed }, (_, i) => ({
+                id: `ok-${i}`, invoiceNumber: null, clientName: null, totalIncBtw: null, verdict: 'found' as const,
+              })),
+              ...Array.from({ length: auditReport.summary.unchecked }, (_, i) => ({
+                id: `nc-${i}`, invoiceNumber: null, clientName: null, totalIncBtw: null, verdict: 'unreadable' as const,
+              })),
+            ]
+          : [])
+        const extra: string[] = []
+        if (auditReport.withoutDocument > 0) {
+          extra.push(
+            `${auditReport.withoutDocument === 1 ? '1 factuur heeft' : `${auditReport.withoutDocument} facturen hebben`} ` +
+            'geen origineel document, dus daar viel niets naast te leggen. Voeg het origineel toe via de factuur zelf.',
+          )
+        }
+        if (auditReport.truncated > 0) {
+          extra.push(`Er stonden er nog ${auditReport.truncated} in de rij. Draai het nog een keer om die ook na te rekenen.`)
+        }
+        return (
+          <BottomSheet
+            title={auditTitle(summary)}
+            body={[...auditLines(summary), ...extra].join('\n\n')}
+            confirmLabel="Sluiten"
+            confirmBg={M3.surfaceVariant}
+            onConfirm={() => setAuditReport(null)}
+            onCancel={() => setAuditReport(null)}
+          />
+        )
+      })()}
 
       {/* ── [INCASSO-CONFIRM] What this switch is about to do, before it does it.
           Turning it ON settles every invoice from this supplier the bank has already collected —
