@@ -1318,3 +1318,63 @@ test("[NAREKENEN-FOTO] the photo witness never borrows the text layer's sentence
   assert.match(route, /transcribeStoredDocumentAmounts/, "the shared entry is used");
   assert.doesNotMatch(route, /OCR_AMOUNTS_PROMPT/, "the prompt is not re-declared here");
 });
+
+test("[DOCCHECK] the sharper check is wired at every point the weaker one was", () => {
+  // [GEGROND] proves a figure is PRINTED. Measured on a real layout, that still waved through the
+  // SUBTOTAL, a LINE ITEM and the BTW read as the total — all three are printed. This asks whether
+  // it is printed WHERE A TOTAL IS PRINTED, and a module that is never called changes nothing.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /verifyDocument\(/, "the extractor runs it");
+  assert.match(ai, /_doccheck = check/, "and STORES it — a verdict computed and dropped is nothing");
+  assert.match(
+    ai, /grounding\.source === 'ocr' \? null : statementText/,
+    "never fed the OCR transcription: that reply is a bare list of amounts with no labels and no " +
+      "guarantee of completeness, so 'largest' would be a claim about a page we only partly saw",
+  );
+
+  // Both auto-booking doors, or neither.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(
+      code(f), /totalPlacement: placementOf\(/,
+      `${f} no longer passes the placement — this door books a subtotal that the other door refuses`,
+    );
+  }
+
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(
+    aa, /if \(s\.totalPlacement === "present"\)[\s\S]{0,140}?advance: false/,
+    "and the gate must REFUSE on it — 'present' IS the subtotal-read-as-total shape",
+  );
+  // The two states that must never block: a photo, and a correctly-placed total.
+  for (const v of ["unreadable", "anchored", "largest"]) {
+    assert.doesNotMatch(
+      aa, new RegExp(`totalPlacement === "${v}"[\\s\\S]{0,80}?advance: false`),
+      `blocking on '${v}' would hold correct invoices, and a queue of correct invoices is how a ` +
+        `safety feature gets switched off`,
+    );
+  }
+
+  // And the owner has to see it, in words that name the actual suspicion.
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /_doccheck/, "the verify screen reads it");
+  assert.match(
+    health, /niet waar het totaal staat/,
+    "and says WHAT is suspected — 'er klopt iets niet' sends the owner hunting",
+  );
+  assert.match(health, /factuurdatum staat niet zo op het document/, "the date has a witness now too");
+});
+
+test("[DOCCHECK] an excl-label must never anchor the total it is not", () => {
+  // The one permissive failure that would make this worse than nothing: if "Totaal excl. btw"
+  // anchored, the module would bless exactly the read it exists to catch — and with MORE confidence
+  // than the check it replaced.
+  const mod = code("src/lib/document-verify.ts");
+  assert.match(mod, /const NOT_TOTAL = \[/, "the exclusion list exists");
+  for (const w of ["'sub'", "'excl'", "'netto'"]) {
+    assert.ok(mod.includes(w), `the exclusion list lost ${w}`);
+  }
+  assert.match(
+    mod, /if \(NOT_TOTAL\.some\(\(n\) => before\.includes\(n\) \|\| after\.includes\(n\)\)\) continue/,
+    "and it is checked on BOTH sides: 'subtotaal' puts it before the word, 'totaal excl.' after",
+  );
+});

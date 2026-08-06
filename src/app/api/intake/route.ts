@@ -64,6 +64,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 import { readPdfTextLayer } from "@/lib/pdf-text"
 // [GEGROND] The stored verdict on whether the total is printed on the document.
 import { groundingOf } from '@/lib/amount-grounding'
+import { placementOf } from '@/lib/document-verify'
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -1056,6 +1057,8 @@ export async function POST(req: NextRequest) {
           // [GEGROND] What the document's own text says about the total the reader reported. The
           // only signal here that does not come from the reader — see amount-grounding.ts.
           totalGrounding: groundingOf(v.field_confidence),
+// [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
+totalPlacement: placementOf(v.field_confidence),
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,

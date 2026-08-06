@@ -272,6 +272,26 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     )
   }
 
+  // [DOCCHECK] En de scherpere vorm van dezelfde vraag. 'present' betekent: het bedrag STAAT wel op
+  // het document, maar niet op de plek waar een totaal staat — het draagt geen totaal-label en het
+  // is niet het hoogste bedrag op de pagina. Dat is precies hoe een SUBTOTAAL, een REGELBEDRAG en
+  // het BTW-bedrag eruitzien, en gemeten op een echte factuur kwamen alle drie die foute lezingen
+  // hierboven als 'gevonden' door.
+  const doccheck = (fc as unknown as { _doccheck?: { total?: string; date?: string } } | null)?._doccheck
+  if (doccheck?.total === 'present') {
+    flags.arithmetic = true
+    reasons.push(
+      'dit bedrag staat wél op het document, maar niet waar het totaal staat — het lijkt een ' +
+      'subtotaal of een regelbedrag. Controleer welk bedrag het totaal is.',
+    )
+  }
+  // De datum had tot nu toe helemaal geen getuige, terwijl hij bepaalt in welk kwartaal de BTW
+  // valt. Geen blokkade — een factuur die zijn datum in een onvoorzien formaat afdrukt zou dan
+  // blijven hangen — maar wél gezegd.
+  if (doccheck?.date === 'absent') {
+    reasons.push('de factuurdatum staat niet zo op het document — controleer of de datum klopt')
+  }
+
   // [IBAN-WISSEL] Een bekende leverancier met een ander rekeningnummer. Dit staat bewust boven de
   // rekenkundige as: bij factuurfraude klopt de rekensom juist wél — het bedrag is overgenomen van
   // een echte factuur. Elke andere poort hier geeft groen, dus als deze zwijgt, zwijgt alles.

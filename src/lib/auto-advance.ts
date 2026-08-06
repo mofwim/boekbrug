@@ -58,6 +58,10 @@ export interface AutoAdvanceSignals {
   // one from outside it. Optional — absent means the check did not run, which is treated exactly
   // like 'unreadable' and blocks nothing.
   totalGrounding?: "found" | "absent" | "unreadable" | null;
+  // [DOCCHECK] WHERE that total sits on the document: labelled as the total ('anchored'), the
+  // largest amount on the page ('largest'), or merely printed somewhere ('present') — which is the
+  // subtotal-read-as-total shape. Optional; absent means the check did not run and blocks nothing.
+  totalPlacement?: "anchored" | "largest" | "present" | "absent" | "unreadable" | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -114,6 +118,17 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // The check adds a way to be CERTAIN; it never adds a way to be stuck.
   if (s.totalGrounding === "absent") {
     return { advance: false, reason: "total_not_in_document_text" };
+  }
+
+  // [DOCCHECK] And the sharper form of the same question. 'present' means the figure IS printed on
+  // the document but neither carries a total-label nor is the largest amount on the page — which is
+  // exactly what a SUBTOTAL, a LINE ITEM and the BTW look like. Measured on a real layout, all three
+  // of those wrong reads came back 'found' to the grounding check above and were booked.
+  //
+  // Only 'present' is added here; 'absent' is already held one line up, and 'unreadable' still holds
+  // nothing.
+  if (s.totalPlacement === "present") {
+    return { advance: false, reason: "total_not_where_a_total_is_printed" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

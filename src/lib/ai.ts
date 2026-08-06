@@ -82,6 +82,8 @@ import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 // [GEGROND] The independent witness on a money field — see amount-grounding.ts.
 import { groundMoneyFields } from './amount-grounding';
+// [DOCCHECK] The sharper check on the same text — see document-verify.ts.
+import { verifyDocument } from './document-verify';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
@@ -1870,6 +1872,28 @@ Return JSON only.`;
       }
 
       (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
+
+      // [DOCCHECK] The sharper question, on the same text. Grounding proves a figure is PRINTED;
+      // this asks whether it is printed WHERE A TOTAL IS PRINTED — which is what tells a real total
+      // apart from the subtotal, a line item and the BTW, all three of which are printed too. It
+      // also gives the invoice DATE and NUMBER a witness for the first time.
+      //
+      // Stored beside the grounding rather than replacing it: the two answer different questions,
+      // and a screen that wants to say "we found this literally in the text" still needs the first.
+      const check = verifyDocument(
+        {
+          totalIncBtw: parsed.total_inc_btw,
+          btwAmount: parsed.btw_amount,
+          invoiceDate: parsed.invoice_date,
+          invoiceNumber: parsed.invoice_number,
+        },
+        // Never the OCR transcription. That reply is a bare LIST OF AMOUNTS with no labels and no
+        // guarantee of completeness, so 'anchored' can never fire on it and 'largest' would be a
+        // claim about a page we only partly saw — it would flag correct totals as 'present' and
+        // hold them. Passing null makes every field say the check did not run, which is true.
+        grounding.source === 'ocr' ? null : statementText,
+      );
+      (parsed.field_confidence as unknown as Record<string, unknown>)._doccheck = check;
     }
 
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
