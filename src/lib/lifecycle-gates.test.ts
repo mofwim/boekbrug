@@ -969,3 +969,54 @@ test("[FACTUURVRAAG] the accountant asks from where they are looking", () => {
     "and the client it belongs to, so a question can never land in another client's books",
   );
 });
+
+test("[BULK-BEVESTIG] a doubt can never be swept into a bulk confirmation", () => {
+  // This screen's own doctrine, from its header and from the render gate that guards it: "a confirm
+  // button above a hidden doubt turns the accountant into a rubber stamp". A checkbox on a row the
+  // reader was unsure about does exactly that, at scale, in one tap — so the checkbox is not
+  // rendered there, AND the planner refuses such a row even if one arrives selected.
+  const src = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.match(
+    src, /bulkConfirmable\(rij\) && \(\s*<input\s*type="checkbox"/,
+    "the checkbox must be gated on the row being sweepable — an ungated one is the rubber stamp",
+  );
+  const mod = code("src/lib/bulk-confirm.ts");
+  assert.match(
+    mod, /if \(!bulkConfirmable\(r\)\) \{[\s\S]{0,120}?continue/,
+    "and the planner refuses it again, because a UI gate is not a guarantee about what arrives",
+  );
+  assert.match(
+    mod, /twijfels\.length === 0/,
+    "sweepable means the reader flagged NOTHING — any other rule lets a doubt through",
+  );
+});
+
+test("[BULK-BEVESTIG] the bulk path books through the one audited route", () => {
+  // Every guard that route carries — the mandate check, the compare-and-swap on status,
+  // confirmed_by, the client's notification — is inherited rather than reimplemented. A second
+  // booking path in SQL would have to repeat all of them, and repeating them is how two paths drift
+  // on the invariant that matters.
+  const src = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.match(src, /bevestigSelectie/, "the bulk run exists");
+  assert.match(
+    src, /bevestigSelectie[\s\S]{0,1400}?fetch\('\/api\/accountant\/bevestig'/,
+    "and it calls the SAME single route per invoice, not a new bulk endpoint",
+  );
+  // A half-succeeded run must say both numbers. "Gelukt" over a partial run is the failure this
+  // codebase keeps correcting.
+  assert.match(src, /bulkConfirmResultText\(gelukt, mislukt\)/, "both counts reach the screen");
+  const mod = code("src/lib/bulk-confirm.ts");
+  assert.match(mod, /bevestigd, \$\{failed\} niet/, "and the sentence names the failures");
+});
+
+test("[BULK-BEVESTIG] the confirm keeps what the single confirm promised", () => {
+  // Two sentences the single-confirm screen carries and the render gate holds there: the reading is
+  // not being changed, and the liability stays with the entrepreneur (art. 52 AWR). A bulk action
+  // booking forty invoices without them would be the one place the law is not mentioned.
+  const mod = code("src/lib/bulk-confirm.ts");
+  assert.match(mod, /art\. 52 AWR/, "the liability sentence survives the bulk path");
+  assert.match(mod, /je verandert er niets aan/, "and so does 'you confirm the reading'");
+  // More than one client is said out loud: this screen spans every authorised client at once, and
+  // booking into the wrong client's books is the mistake that costs most.
+  assert.match(mod, /verschillende klanten/, "a multi-client selection says so");
+});
