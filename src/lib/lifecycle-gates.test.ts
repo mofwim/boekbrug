@@ -1740,3 +1740,84 @@ test("[ONBEREIKBAAR] a byte fetch that will never succeed must not freeze the ma
     "one definition, used at each of the three places it can happen",
   );
 });
+
+test("[E-FACTUUR] the supplier's own figures are read, and they outrank the reading", () => {
+  // A Factur-X or ZUGFeRD PDF carries the invoice a SECOND time as XML the supplier produced, and
+  // the app was photographing it like any other page while the exact figures sat unread inside the
+  // same bytes. NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for
+  // everyone from 2028, so this arrives now and will only arrive more.
+  const ai = code("src/lib/ai.ts");
+  assert.match(
+    ai, /extractEmbeddedInvoiceXml\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
+    "the reader must look inside the PDF for it",
+  );
+  assert.match(
+    ai, /_einvoice = \{[\s\S]{0,160}?contradicts: eInvoiceContradicts\(eInvoice, parsed\.total_inc_btw\)/,
+    "…and record whether it disagrees with what was read",
+  );
+  // Never pay for an OCR second-reading when the document itself already answered.
+  assert.match(
+    ai, /grounding\.totalIncBtw === 'unreadable' &&[\s\S]{0,400}?!eInvoice &&/,
+    "the OCR pass must stand down when structured figures are in hand",
+  );
+
+  // BOTH auto-booking doors ask it — a gate on one door is not a gate.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(
+      code(f), /eInvoiceContradicts: eInvoiceContradictsRead\(/,
+      `${f} does not pass it — this door books what the other refuses`,
+    );
+  }
+
+  // And the refusal exists, keyed on `true` only: a PDF with no e-invoice answers null, and a
+  // check that could not run may never read as one that failed.
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(
+    aa, /if \(s\.eInvoiceContradicts === true\)[\s\S]{0,140}?advance: false/,
+    "a contradiction must block the automatic booking",
+  );
+  assert.doesNotMatch(
+    aa, /if \(!s\.eInvoiceContradicts\)[\s\S]{0,80}?advance: false/,
+    "absence of an e-invoice is not a reason to hold anything",
+  );
+
+  // The owner is told the RIGHT NUMBER, not merely that something is wrong. The app already knows
+  // it; making them hunt for what it knows is a riddle, not a check.
+  assert.match(
+    code("src/lib/import-health.ts"),
+    /de leverancier stuurde een e-factuur mee en daarin staat \$\{formatEuroNL\(efact\.totalIncBtw\)\}/,
+    "the sentence must name the supplier's own figure",
+  );
+});
+
+test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", () => {
+  // These figures outrank the model, so the completeness gate is the whole safety of the feature.
+  // A broken document accepted here is worse than never having built it.
+  const m = code("src/lib/e-invoice.ts");
+  assert.match(
+    m, /if \(inc === null \|\| ex === null \|\| btw === null\) return null/,
+    "three figures or nothing",
+  );
+  assert.match(
+    m, /if \(v\.currency !== null && v\.currency\.toUpperCase\(\) !== 'EUR'\) return null/,
+    "1 200 SEK booked as € 1 200 survives every other check in the building",
+  );
+  assert.match(
+    m, /if \(Math\.abs\(round2\(ex \+ btw\) - round2\(inc\)\) > 0\.01\) return null/,
+    "an e-invoice whose own numbers disagree is not a better witness than the model",
+  );
+  // The totals are read from INSIDE the header block: the same element names occur per line and
+  // per tax rate, so a document-wide search can pick up a line's figure.
+  assert.match(
+    m, /firstBlock\(xml, 'SpecifiedTradeSettlementHeaderMonetarySummation'\)/,
+    "CII totals come from the header summation, never a line",
+  );
+  assert.match(m, /firstBlock\(xml, 'LegalMonetaryTotal'\)/, "UBL likewise");
+  // Namespace prefixes are chosen by the producer. Keying on one reads a correct invoice as empty.
+  assert.match(
+    m, /return `\(\?:\[A-Za-z0-9_\.-\]\+:\)\?\$\{name\}`/,
+    "matching must be on the local name, never the prefix",
+  );
+  // Both syntaxes, because both arrive — knowing only one fails silently on the other.
+  assert.match(m, /isCii \? parseCii\(xml\) : parseUbl\(xml\)/, "CII and UBL both");
+});
