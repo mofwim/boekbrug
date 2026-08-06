@@ -1432,15 +1432,20 @@ test("[OVERSLAG-ZICHTBAAR] both e-mail doors record what they refused, not just 
   // rather than the call is a gate that passes after the call is deleted.
   const src = code("src/lib/email-integration.ts");
 
-  // Exactly two gate sites — Gmail and Outlook — and no third copy that could drift.
+  // Exactly three gate sites, and the number is the point: Gmail's parts, Outlook's file
+  // attachments, and [DOORGESTUURD] the attachments read out of a forwarded message. Every route by
+  // which a file can enter the pipeline passes the same gate — a fourth appearing without this
+  // count moving is a copy that will drift, and a route that loses one is a door with no rulebook.
   const gates = src.match(/triageAttachment\(\{/g) ?? [];
-  assert.equal(gates.length, 2, "one gate per fetcher, no more and no fewer");
+  assert.equal(gates.length, 3, "one gate per entry route, no more and no fewer");
 
-  // Each of them must PUSH the refusal onward, not merely compute it.
+  // And each of them must PUSH the refusal onward, not merely compute it. All three are the same
+  // four lines on purpose — a route that "also" reports, in its own shape, is a route whose
+  // reporting can be changed without anyone noticing the other two were left behind.
   const wired = src.match(
-    /const triage = triageAttachment\(\{[\s\S]{0,120}?if \(!triage\.keep\) \{[\s\S]{0,260}?unread\.push\(\{[\s\S]{0,160}?kind: triage\.kind[\s\S]{0,60}?continue/g,
+    /const triage = triageAttachment\(\{[\s\S]{0,160}?if \(!triage\.keep\) \{[\s\S]{0,320}?unread\.push\(\{[\s\S]{0,200}?kind: triage\.kind[\s\S]{0,80}?continue/g,
   ) ?? [];
-  assert.equal(wired.length, 2, "both doors must record the refusal before continuing");
+  assert.equal(wired.length, 3, "every route must record the refusal before continuing");
 
   // The unreadable-MIME branch is the quietest path of all: a .xlsx invoice, an iPhone .heic
   // receipt or a zipped bundle failed normalizeAttachmentMime and vanished leaving nothing.
@@ -1598,5 +1603,78 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
     code("src/app/api/bank/match/route.ts"),
     /receiptIds\.has\(m\.best\.invoiceId\)[\s\S]{0,140}?sig\.includes\("counterpart"\)[\s\S]{0,80}?sig\.includes\("amount"\)[\s\S]{0,80}?sig\.includes\("date"\)/,
     "a paid kassabon must be able to explain its own bank line",
+  );
+});
+
+test("[DOORGESTUURD] an e-mail attached to an e-mail is opened, not dropped", () => {
+  // THE HOLE: Graph returns a forwarded message as an itemAttachment with no contentBytes, and the
+  // Outlook fetcher's first line dropped everything that was not a fileAttachment. So for an
+  // Outlook user the most ordinary way an invoice reaches a bookkeeper produced nothing at all —
+  // no row, no file, no notification, not even a skip-registry entry. Gmail never had it: its
+  // payload nests the forwarded message's parts and the existing walk descends into them.
+  const src = code("src/lib/email-integration.ts");
+
+  // The branch must run BEFORE the fileAttachment test that used to swallow it.
+  const itemAt = src.indexOf("'#microsoft.graph.itemAttachment'");
+  const fileAt = src.indexOf("att['@odata.type'] !== '#microsoft.graph.fileAttachment'");
+  assert.ok(itemAt > 0 && fileAt > itemAt, "the embedded-message branch must come first");
+
+  // It reads the raw MIME Graph offers, which is the only way those bytes are reachable.
+  assert.match(
+    src, /attachments\/\$\{att\.id\}\/\$value/,
+    "the embedded item's MIME must actually be fetched",
+  );
+
+  // Every extracted file goes through the SAME gate as any other attachment. A forwarded mail
+  // carries the original's signature logos too, and its PDF can be over the ceiling — a second
+  // rulebook for one door is how doors drift apart.
+  assert.match(
+    src,
+    /for \(const found of embedded\.items\)[\s\S]{0,400}?triageAttachment\(\{[\s\S]{0,200}?if \(!triage\.keep\)[\s\S]{0,260}?unread\.push/,
+    "extracted attachments must be triaged like every other one",
+  );
+
+  // The supplier's own address, not the forwarder's. The outer mail is often from the owner
+  // themselves; that address on the crediteur is wrong, and a sender rule for the real supplier
+  // would never fire.
+  assert.match(src, /from: embedded\.from \|\| from/, "the inner sender wins where it exists");
+
+  // Two originals in one forward that both call their invoice "factuur.pdf" must stay two
+  // invoices: the import keys on `${messageId}:${filename}`, so one shared name is one dedup key
+  // and the second bill would vanish as already-seen.
+  assert.match(
+    src, /uniqueAttachmentName\(f\.filename, takenNames\)/,
+    "two forwarded bills with one filename must keep separate identities",
+  );
+});
+
+test("[DOORGESTUURD] a failure that will never succeed does not freeze the mailbox", () => {
+  // The distinction the whole thing rests on. Holding the watermark is right for weather and
+  // catastrophic for a permanent error: every NEWER invoice queues behind a message that can never
+  // be read, and the sync goes quiet with no one able to say why.
+  const src = code("src/lib/email-integration.ts");
+  assert.match(
+    src, /const transient = res\.status === 429 \|\| res\.status >= 500/,
+    "only a throttle or a server error may be retried forever",
+  );
+  assert.match(
+    src, /if \(transient\) return \{ \.\.\.none, transient: true \}/,
+    "…and only that case holds the mark",
+  );
+  assert.match(
+    src, /if \(embedded\.transient\) \{[\s\S]{0,200}?ok = false/,
+    "the caller must turn a transient failure into an incomplete fetch",
+  );
+  // A permanent failure reports instead of holding — silence is the one answer not allowed.
+  assert.match(
+    src, /kind: 'unreadable-format',\s*\n\s*reason: 'een doorgestuurd bericht dat wij niet konden openen/,
+    "a permanently unreadable forward must reach the skipped panel",
+  );
+
+  // And the MIME reader may never be reimplemented next to the one that already exists: the
+  // question "which types can we read" must have exactly one answer.
+  assert.match(
+    src, /extractMimeAttachments\(raw, \{ normalizeMime: normalizeAttachmentMime \}\)/,
+    "the type rule is injected, never copied",
   );
 });

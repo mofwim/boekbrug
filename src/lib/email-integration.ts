@@ -7,6 +7,8 @@
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
 import { randomUUID } from 'node:crypto'
+// [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
+import { extractMimeAttachments, mimeHeader, uniqueAttachmentName, type EmbeddedAttachment } from '@/lib/mime-attachments'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
@@ -1339,6 +1341,96 @@ export async function fetchOutlookAttachments(
   return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, unread }
 }
 
+/**
+ * [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
+ *
+ * Returns what was found, anything the owner must be told about, and whether the failure — if there
+ * was one — is worth retrying. That last distinction is the whole safety of this function:
+ *
+ *   · TRANSIENT (throttled, 5xx, network) → hold the watermark and try again next sync. Saying
+ *     anything to the owner now would be guessing about a message nobody has read yet.
+ *   · PERMANENT (404, 403, an item type with no MIME form) → holding the watermark would freeze
+ *     every NEWER invoice behind a message that will never succeed. So it does not hold: it
+ *     reports, and the sync moves on.
+ */
+async function readEmbeddedMessageAttachments(
+  messageId: string,
+  att: { id?: string; name?: string; contentType?: string; size?: number },
+  accessToken: string,
+  takenNames: Set<string>,
+): Promise<{
+  items: EmbeddedAttachment[]
+  from: string | null
+  unread: SkippedAttachmentRef[]
+  transient: boolean
+}> {
+  const none = { items: [] as EmbeddedAttachment[], from: null, unread: [] as SkippedAttachmentRef[], transient: false }
+  const filename = att.name || 'doorgestuurd bericht'
+
+  // An item attachment is not always a message — a contact card or a calendar item comes through
+  // the same door. Only a message has a MIME form worth asking for, and only a message can be
+  // hiding an invoice. Graph stamps an attached mail 'message/rfc822'; an empty contentType is
+  // treated as a maybe (it costs one call), anything else is genuine mail furniture and stays
+  // silent, exactly as it did before.
+  const contentType = (att.contentType || '').toLowerCase().trim()
+  const looksLikeMessage = contentType === '' || contentType.startsWith('message/')
+  if (!looksLikeMessage || !att.id) return none
+
+  // Refuse before downloading. The size is the provider's own number, so nothing is transferred.
+  if ((att.size ?? 0) > MAX_EMBEDDED_MESSAGE_BYTES) {
+    return {
+      ...none,
+      unread: [{
+        messageId, filename, kind: 'oversized',
+        reason: 'een doorgestuurd bericht dat te groot is om automatisch te openen — stuur de ' +
+          'bijlage los door, of voeg hem toe bij Uploaden',
+      }],
+    }
+  }
+
+  const res = await graphFetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments/${att.id}/$value`,
+    accessToken,
+  )
+  if (!res.ok) {
+    // 429/5xx is weather; graphFetch already waited once. Anything else will fail the same way
+    // forever, and a permanent hold on the watermark buries every newer invoice behind it.
+    const transient = res.status === 429 || res.status >= 500
+    console.error('[DOORGESTUURD] could not read an embedded message', {
+      messageId, filename, status: res.status, transient,
+    })
+    if (transient) return { ...none, transient: true }
+    return {
+      ...none,
+      unread: [{
+        messageId, filename, kind: 'unreadable-format',
+        reason: 'een doorgestuurd bericht dat wij niet konden openen — stuur de bijlage los door, ' +
+          'of voeg hem toe bij Uploaden',
+      }],
+    }
+  }
+
+  const raw = Buffer.from(await res.arrayBuffer())
+  // normalizeAttachmentMime is INJECTED, never reimplemented: "which types can we read" must have
+  // exactly one answer, or a file is dropped by one door and accounted for by the other.
+  const found = extractMimeAttachments(raw, { normalizeMime: normalizeAttachmentMime })
+  const items = found.map((f) => ({ ...f, filename: uniqueAttachmentName(f.filename, takenNames) }))
+
+  // Nothing readable inside. Say so only when the paper really was a message: a mis-guessed
+  // contact card would otherwise put a line in the panel about something that was never an
+  // invoice, and a panel full of those is a panel nobody opens.
+  const unread: SkippedAttachmentRef[] =
+    items.length === 0 && contentType.startsWith('message/')
+      ? [{
+          messageId, filename, kind: 'unreadable-format',
+          reason: 'een doorgestuurd bericht zonder bijlage die wij konden lezen — zat de factuur ' +
+            'in de tekst van de mail, stuur hem dan als PDF door',
+        }]
+      : []
+
+  return { items, from: mimeHeader(raw, 'from'), unread, transient: false }
+}
+
 async function fetchOutlookMessageAttachments(
   message: {
     id: string
@@ -1369,6 +1461,9 @@ async function fetchOutlookMessageAttachments(
   const attData = await attRes.json()
   const attachments: Array<{
     '@odata.type'?: string
+    // [DOORGESTUURD] The attachment's own id — needed to ask Graph for the raw MIME of an
+    // embedded message, which is the only way its bytes are reachable at all.
+    id?: string
     name?: string
     contentType?: string
     size?: number
@@ -1386,11 +1481,73 @@ async function fetchOutlookMessageAttachments(
   // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
   const unread: SkippedAttachmentRef[] = []
   const statementSeen = new Set<string>()
+  // [DOORGESTUURD] Flipped when a TRANSIENT failure means this message was not fully read. It
+  // travels out as `ok`, which holds the watermark so the next sync tries again — the same
+  // contract a failed file-byte fetch already has.
+  let ok = true
+
+  // [DOORGESTUURD] Names already claimed by this message, so two forwarded originals that both
+  // call their invoice "factuur.pdf" do not collapse into one dedup key — see uniqueAttachmentName.
+  const takenNames = new Set<string>()
+  for (const a of attachments) if (a.name) takenNames.add(a.name)
 
   for (const att of attachments) {
-    // Only file attachments carry contentBytes. Inline/item attachments (e.g.
-    // embedded emails) have no contentBytes → skip. Same intent as Gmail:
-    // PDFs and images only.
+    // [DOORGESTUURD] An e-mail forwarded as an attachment. Graph returns it as an itemAttachment
+    // with NO contentBytes, and the line below dropped it on that basis — so for an Outlook user
+    // the most ordinary way an invoice reaches a bookkeeper produced nothing at all: no row, no
+    // file, no notification, not even a skip-registry entry. Gmail never had this hole; its payload
+    // nests the forwarded message's parts and the walk above descends into them.
+    //
+    // Graph will hand over the embedded item's raw MIME, so this fetches that and reads the
+    // attachments out of it. Every one of them then goes through the SAME gate as any other
+    // attachment — no shortcut, no second rulebook.
+    if (att['@odata.type'] === '#microsoft.graph.itemAttachment') {
+      const embedded = await readEmbeddedMessageAttachments(message.id, att, accessToken, takenNames)
+      if (embedded.transient) {
+        // A throttle or a server error: hold the watermark and let the next sync try again, exactly
+        // as a failed file fetch does. Never a skip row — nothing is known yet.
+        ok = false
+        continue
+      }
+      for (const found of embedded.items) {
+        // The SAME gate as any other attachment, and it is not decoration: a forwarded mail carries
+        // the original's signature logos too, and its PDF can be over the ceiling. Skipping the
+        // gate here would let a 3 KB logo cost an AI call and a 15 MB file past a limit every other
+        // door enforces — a second rulebook for one door, which is how doors drift apart.
+        const triage = triageAttachment({
+          filename: found.filename, mimeType: found.mimeType, size: found.size,
+        })
+        if (!triage.keep) {
+          if (triage.reason && triage.kind) {
+            unread.push({
+              messageId: message.id, filename: found.filename,
+              reason: triage.reason, kind: triage.kind,
+            })
+          }
+          continue
+        }
+        out.push({
+          messageId: message.id,
+          filename: found.filename,
+          mimeType: found.mimeType,
+          data: found.base64,
+          subject: message.subject || '',
+          // The SENDER of the forwarded message, not the person who forwarded it. The outer mail is
+          // often from the owner's own address; attributing the supplier's invoice to that puts the
+          // wrong e-mail on the crediteur and makes a sender rule for the real supplier miss.
+          from: embedded.from || from,
+          // The OUTER date on purpose: this is when the mail entered the mailbox, which is what the
+          // watermark walk and the import ordering are built on. The invoice's own date comes off
+          // the document.
+          date: message.receivedDateTime || new Date().toISOString(),
+          size: found.size,
+        })
+      }
+      unread.push(...embedded.unread)
+      continue
+    }
+
+    // Only file attachments carry contentBytes. Inline attachments without bytes cannot be read.
     if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue
     if (!att.contentBytes) continue
 
@@ -1447,7 +1604,7 @@ async function fetchOutlookMessageAttachments(
     })
   }
 
-  return { items: out, ok: true, statements, unread }
+  return { items: out, ok, statements, unread }
 }
 
 // ─── AI Classification ────────────────────────────────────────────────────────
@@ -1647,6 +1804,17 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 // emails the owner a large PDF causes an unbounded Storage write + a Claude call —
 // storage-growth / AI-spend DoS from untrusted mail.
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+/**
+ * [DOORGESTUURD] How much raw MIME we are willing to pull down for ONE embedded message.
+ *
+ * Not simply the 10 MB attachment ceiling: MIME carries binaries as base64, which is four bytes on
+ * the wire for every three of file. A forwarded mail holding a 9 MB PDF is about 12 MB of MIME, and
+ * measuring the envelope against the file's limit would refuse an attachment that fits. So the
+ * ceiling is the attachment ceiling grown by that ratio, plus room for headers and a covering note.
+ * Every extracted file is still measured on its OWN decoded size by the ordinary gate.
+ */
+const MAX_EMBEDDED_MESSAGE_BYTES = Math.ceil((MAX_EMAIL_ATTACHMENT_BYTES * 4) / 3) + 256 * 1024
 
 // [H2] A real supplier invoice often arrives with a CORRECT filename but a WRONG or
 // generic MIME type — many mail servers stamp attachments application/octet-stream (or an
