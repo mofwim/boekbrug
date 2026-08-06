@@ -7,6 +7,9 @@
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
 import { randomUUID } from 'node:crypto'
+// [MAILTEKST] De factuur die nooit een bijlage had: het filter en de tekstconversie.
+import { htmlToReadableText, bodyLooksLikeInvoice, bodyDocumentName } from '@/lib/email-body-invoice'
+import { textToPdf } from '@/lib/text-to-pdf'
 // [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
 import { extractMimeAttachments, mimeHeader, uniqueAttachmentName, type EmbeddedAttachment } from '@/lib/mime-attachments'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -606,6 +609,13 @@ export interface GmailAttachment {
   from: string
   date: string
   size: number
+  /**
+   * [MAILTEKST] This "attachment" is the message BODY, rendered to a PDF because the supplier
+   * attached nothing. It is a real invoice document either way, but it is never auto-booked: the
+   * page was assembled by us from ordinary mail, and "is this a bill at all" is a judgement no
+   * mechanical filter should make on its own. Absent on every genuine attachment.
+   */
+  fromBody?: boolean
 }
 
 // [EMAIL→BANK] A machine-readable bank statement (MT940 / CAMT.053 / bank CSV) seen as an
@@ -2391,6 +2401,30 @@ export async function syncUserEmails(
     return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
+  // [MAILTEKST] The invoices that never had an attachment. A separate, bounded pass appended to
+  // the same list, so everything downstream — dedup, classifier, health gates, queue, storage —
+  // treats them exactly like any other attachment and needs no new case.
+  //
+  // Deliberately OUTSIDE the watermark walk: these messages are not added to messageIndex, so the
+  // guarantee that no ATTACHMENT is skipped cannot be weakened by anything that happens here. A
+  // failure in this pass leaves the main import precisely as it was.
+  //
+  // Appended AFTER the fetch-failure return above, so a broken attachment fetch is still reported
+  // as a broken fetch rather than being papered over by whatever the body scan found.
+  let bodyScanned = 0
+  let bodyCapped = false
+  if (accessToken) {
+    const body = await fetchBodyOnlyInvoices(tokens.provider, accessToken, syncAfterMs, tokens.email ?? null)
+    bodyScanned = body.scanned
+    bodyCapped = body.capped
+    if (body.items.length > 0) {
+      console.log('[MAILTEKST] body-only invoice candidates', {
+        scanned: body.scanned, candidates: body.items.length, capped: body.capped,
+      })
+      attachments = [...attachments, ...body.items]
+    }
+  }
+
   // [EMAIL→BANK] Surface any machine-readable bank statements (MT940 / CAMT.053 / bank CSV)
   // seen in this fetch. These are NOT invoices and are NEVER auto-imported — booking bank
   // money stays a reviewed, explicit action on the Bank page (locked constraint #4: money
@@ -3938,7 +3972,14 @@ export async function syncUserEmails(
       // safety bar itself does not move — grounding, placement, the printed BTW split, the
       // arithmetic, the dedup and the health classifier all still decide whether the READ may be
       // trusted; settling only decides which status a trusted read lands in.
-      const autoAdv = !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
+      // [MAILTEKST] A body-rendered invoice never books itself. Every other door starts from a
+      // file somebody deliberately attached; this one starts from ordinary mail, where almost
+      // everything carrying a euro amount is not a bill. The mechanical filter is strict, but "is
+      // this a purchase invoice at all" is the one question it cannot settle — and getting it wrong
+      // creates a cost that never existed, with a voorbelasting claim on it.
+      const autoAdv = attachment.fromBody === true
+        ? { advance: false, reason: 'from_email_body' }
+        : !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,
@@ -3981,6 +4022,13 @@ export async function syncUserEmails(
           _auto_verified: { at: new Date().toISOString(), reason: autoAdv.reason },
         }
       }
+      // [MAILTEKST] Where this document came from, on the row. The queue prints a line about it,
+      // and the accountant can see that the "document" is a rendering of an e-mail rather than the
+      // supplier's own PDF — which changes how much weight it carries in a dispute.
+      if (attachment.fromBody === true) {
+        fieldConfidenceValue = { ...(fieldConfidenceValue ?? {}), _mailtekst: true }
+      }
+
       // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is
       // proven by the paper (settlePlan). Either one alone books something nobody checked.
       const willSettle = autoAdv.advance && settlePlan.settle
@@ -4583,4 +4631,188 @@ function extractSenderName(from: string): string {
   const match = from.match(/^"?([^"<]+)"?\s*</)
   if (match) return match[1].trim()
   return extractEmail(from)
+}
+// ─── [MAILTEKST] The invoice that never had an attachment ─────────────────────
+//
+// Both listings above ask for mail WITH an attachment — Gmail through `has:attachment`, Outlook by
+// dropping `!hasAttachments`. A hosting bill, a phone subscription or a parking app that lays the
+// invoice out in the message body was therefore never even seen: not skipped, not reported, not
+// counted. The cost never entered the books and the voorbelasting was never claimed, every month,
+// for as long as the subscription runs.
+//
+// This is a SEPARATE, bounded pass, and separate on purpose. It never touches messageIndex, so the
+// watermark walk that guarantees no attachment is skipped cannot be corrupted by it: a failure here
+// leaves the main import exactly as it was. It has no watermark of its own either — it re-scans the
+// same window each sync and lets the existing `${messageId}:${filename}` dedup decide what is new,
+// which is self-healing and needs no migration.
+//
+// Every candidate is filtered MECHANICALLY first (see email-body-invoice.ts), then rendered to a
+// PDF and pushed through the ordinary pipeline as an attachment — same dedup, same classifier, same
+// health gates, same queue. Nothing here is ever booked automatically; see the auto-advance refusal.
+
+/** How many messages one run will look at. This is a supplement, not the main path. */
+const MAX_BODY_SCAN = 60
+
+/** The words that make Gmail's own index do the first filtering, for free. */
+const BODY_SEARCH_WORDS = ['factuur', 'invoice', 'faktuur', 'nota', 'rekening', 'rechnung']
+
+/**
+ * Body-only invoice candidates, already rendered as PDFs and shaped like any other attachment.
+ *
+ * Best-effort throughout: every failure returns what was gathered so far rather than throwing, so
+ * this can never take down the sync it is a supplement to.
+ */
+export async function fetchBodyOnlyInvoices(
+  provider: EmailProvider,
+  accessToken: string,
+  syncAfterMs: number,
+  ownEmail: string | null,
+): Promise<{ items: GmailAttachment[]; scanned: number; capped: boolean }> {
+  try {
+    return provider === 'gmail'
+      ? await fetchGmailBodyInvoices(accessToken, syncAfterMs)
+      : await fetchOutlookBodyInvoices(accessToken, syncAfterMs, ownEmail)
+  } catch (e) {
+    console.error('[MAILTEKST] body scan failed (non-fatal — the attachment import is unaffected)', {
+      provider, error: e instanceof Error ? e.message : String(e),
+    })
+    return { items: [], scanned: 0, capped: false }
+  }
+}
+
+/** The text of a message body, HTML preferred (that is where the table with the amounts is). */
+function gmailBodyText(payload: unknown): string {
+  let html = ''
+  let plain = ''
+  const walk = (part: unknown, depth: number) => {
+    if (depth > 8 || !part || typeof part !== 'object') return
+    const p = part as { mimeType?: string; body?: { data?: string }; parts?: unknown[] }
+    if (p.parts) { for (const child of p.parts) walk(child, depth + 1); return }
+    const data = p.body?.data
+    if (!data) return
+    const decoded = Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    if (p.mimeType === 'text/html' && !html) html = decoded
+    else if (p.mimeType === 'text/plain' && !plain) plain = decoded
+  }
+  walk(payload, 0)
+  return htmlToReadableText(html || plain)
+}
+
+async function fetchGmailBodyInvoices(
+  accessToken: string,
+  syncAfterMs: number,
+): Promise<{ items: GmailAttachment[]; scanned: number; capped: boolean }> {
+  const afterDate = new Date(syncAfterMs).toISOString().slice(0, 10).replace(/-/g, '/')
+  // Gmail's own index does the first pass, at no cost to us: only mail WITHOUT an attachment that
+  // mentions an invoice word anywhere in it. Everything expensive happens after this.
+  const q =
+    `-has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats ` +
+    `{${BODY_SEARCH_WORDS.join(' ')}}`
+  const listRes = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=${MAX_BODY_SCAN}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  )
+  if (!listRes.ok) {
+    console.error('[MAILTEKST] Gmail body listing failed', { status: listRes.status })
+    return { items: [], scanned: 0, capped: false }
+  }
+  const listed = (await listRes.json()) as { messages?: Array<{ id: string }>; nextPageToken?: string }
+  const ids = (listed.messages ?? []).slice(0, MAX_BODY_SCAN)
+
+  const items: GmailAttachment[] = []
+  for (const { id } of ids) {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    )
+    if (!res.ok) continue
+    const msg = (await res.json()) as {
+      payload?: { headers?: Array<{ name: string; value: string }> }
+      internalDate?: string
+    }
+    const headers = msg.payload?.headers ?? []
+    const header = (n: string) => headers.find((h) => h.name.toLowerCase() === n)?.value ?? ''
+    const subject = header('subject')
+    const text = gmailBodyText(msg.payload)
+    const built = await buildBodyAttachment({
+      messageId: id, subject, from: header('from'), text,
+      date: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : new Date().toISOString(),
+    })
+    if (built) items.push(built)
+  }
+  return { items, scanned: ids.length, capped: !!listed.nextPageToken }
+}
+
+async function fetchOutlookBodyInvoices(
+  accessToken: string,
+  syncAfterMs: number,
+  ownEmail: string | null,
+): Promise<{ items: GmailAttachment[]; scanned: number; capped: boolean }> {
+  // Graph cannot full-text search and filter by date in one call, so the first pass is on the
+  // SUBJECT. That is a real limitation and it is written down rather than hidden: a body-only
+  // invoice titled "Your monthly statement" is not reached by this pass. It is still a great deal
+  // better than the previous answer, which was that no body invoice was reached at all.
+  const since = new Date(syncAfterMs).toISOString()
+  const subjectFilter = BODY_SEARCH_WORDS.map((w) => `contains(subject,'${w}')`).join(' or ')
+  const filter = `receivedDateTime ge ${since} and hasAttachments eq false and (${subjectFilter})`
+  const url =
+    `https://graph.microsoft.com/v1.0/me/messages?$filter=${encodeURIComponent(filter)}` +
+    `&$select=id,subject,from,receivedDateTime,body&$top=${MAX_BODY_SCAN}`
+  const res = await graphFetch(url, accessToken)
+  if (!res.ok) {
+    console.error('[MAILTEKST] Outlook body listing failed', { status: res.status })
+    return { items: [], scanned: 0, capped: false }
+  }
+  const data = (await res.json()) as {
+    value?: Array<{
+      id: string; subject?: string; receivedDateTime?: string
+      from?: { emailAddress?: { name?: string; address?: string } }
+      body?: { contentType?: string; content?: string }
+    }>
+    '@odata.nextLink'?: string
+  }
+  const messages = data.value ?? []
+  const items: GmailAttachment[] = []
+  for (const m of messages) {
+    const addr = m.from?.emailAddress?.address ?? ''
+    // Mail the owner sent themselves is not a purchase invoice.
+    if (ownEmail && addr && addr.toLowerCase() === ownEmail.toLowerCase()) continue
+    const name = m.from?.emailAddress?.name ?? ''
+    const built = await buildBodyAttachment({
+      messageId: m.id,
+      subject: m.subject ?? '',
+      from: name && addr ? `${name} <${addr}>` : (addr || name),
+      text: htmlToReadableText(m.body?.content ?? ''),
+      date: m.receivedDateTime || new Date().toISOString(),
+    })
+    if (built) items.push(built)
+  }
+  return { items, scanned: messages.length, capped: !!data['@odata.nextLink'] }
+}
+
+/**
+ * One candidate: filtered, rendered, and shaped like any other attachment.
+ *
+ * Returns null for everything the mechanical filter refuses — which is the overwhelming majority of
+ * mail, and the reason this path is affordable at all. Nothing is sent anywhere before that filter
+ * has run.
+ */
+async function buildBodyAttachment(m: {
+  messageId: string; subject: string; from: string; text: string; date: string
+}): Promise<GmailAttachment | null> {
+  const verdict = bodyLooksLikeInvoice(m.text, m.subject)
+  if (!verdict.candidate) return null
+  const pdf = await textToPdf(m.text, { subject: m.subject, from: m.from, date: m.date.slice(0, 10) })
+  if (!pdf) return null
+  return {
+    messageId: m.messageId,
+    filename: bodyDocumentName(m.subject),
+    mimeType: 'application/pdf',
+    data: pdf.toString('base64'),
+    subject: m.subject,
+    from: m.from,
+    date: m.date,
+    size: pdf.length,
+    fromBody: true,
+  }
 }
