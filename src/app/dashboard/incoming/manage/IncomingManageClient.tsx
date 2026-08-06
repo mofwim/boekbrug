@@ -295,6 +295,24 @@ function isAutoVerified(inv: IncomingRow): boolean {
   return !!(fc && typeof fc === 'object' && (fc as Record<string, unknown>)._auto_verified)
 }
 
+// [BON-AUTO] The app did not only BOOK this one, it marked it PAID — because the till printed the
+// tender line on it ("Kontant", "Bankpas"). A payment no human authorised needs its own badge and
+// its own sentence: "Automatisch" alone reads as "booked", and an owner who thinks a bill is still
+// open pays it a second time. The tooltip quotes the WORD ON THE PAPER, not our conclusion, so the
+// claim is one the owner can settle by looking at the bon.
+function autoPaidBasis(inv: IncomingRow): { method: string; date: string; evidence: string } | null {
+  const fc = inv.field_confidence
+  if (!fc || typeof fc !== 'object') return null
+  const ap = (fc as Record<string, unknown>)._auto_paid
+  if (!ap || typeof ap !== 'object') return null
+  const o = ap as Record<string, unknown>
+  return {
+    method: o.method === 'kas' ? 'contant' : 'met de pas',
+    date: typeof o.date === 'string' ? o.date : '',
+    evidence: typeof o.evidence === 'string' ? o.evidence.trim() : '',
+  }
+}
+
 // Pay confirm context — payment fields only (defense in depth: never amounts)
 // [MOVE-PAYMENT] What /api/invoice/payment/move returns: one booked payment plus the invoices it
 // CAN go to. The server ranks them (same supplier first, then an exactly-fitting amount, then the
@@ -2482,6 +2500,28 @@ export default function IncomingManageClient({
                             Automatisch
                           </span>
                         )}
+                        {/* [BON-AUTO] Marked PAID by the app, on the strength of the tender line the
+                            till printed. Its own badge, because "Automatisch" alone reads as
+                            "booked" — and an owner who believes a settled bon is still open pays
+                            it a second time. The tooltip names the word on the paper. */}
+                        {(() => {
+                          const basis = autoPaidBasis(inv)
+                          if (!basis) return null
+                          return (
+                            <span
+                              title={
+                                `Deze bon is automatisch als betaald geboekt (${basis.method}` +
+                                `${basis.date ? `, ${basis.date}` : ''}). ` +
+                                `${basis.evidence ? `Op de bon staat "${basis.evidence}". ` : 'De bon vermeldt de betaalwijze zelf. '}` +
+                                'Klopt het niet? Zet de betaling hieronder terug — er verandert niets aan de factuur zelf.'
+                              }
+                              style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
+                              Bon · al afgerekend
+                            </span>
+                          )
+                        })()}
                         {/* [3b-2] accountant Verwerkt — READ-ONLY badge */}
                         {isVerwerkt && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333' }}>

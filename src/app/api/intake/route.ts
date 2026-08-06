@@ -18,6 +18,7 @@
 // A bank statement is never run through the invoice extractor. SAFECORE Rule 1
 // (arithmetic) still applies on the invoice/receipt write path.
 
+import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
@@ -57,6 +58,8 @@ import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sa
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+// [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
+import { planReceiptSettlement } from "@/lib/receipt-auto-settle"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
@@ -1034,13 +1037,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // [BON-AUTO] Mag deze bon zichzelf afboeken? Een kassabon bestáát omdat er aan de kassa is
+  // betaald — dat is wat hem een bon maakt en geen factuur. De vraag die de soort NIET beantwoordt
+  // is HOE, en dat verschil is niet cosmetisch: 'kas' zet een gedateerde regel in het kasboek en
+  // beweegt de lade, 'bank' niet. Dus alleen wanneer het PAPIER de tenderregel afdrukt. Zie
+  // receipt-auto-settle.ts; hier wordt niets geboekt, alleen besloten.
+  const settlePlan = planReceiptSettlement({
+    documentKind: v.document_kind ?? null,
+    suggestion: {
+      suggestPaid: decision.suggestPaid,
+      paidMethod: decision.paidMethod ?? null,
+      paidMethodZeker: decision.paidMethodZeker === true,
+      paidDate: decision.paidDate ?? null,
+    },
+    invoiceDate,
+    totalIncBtw: v.total_inc_btw ?? null,
+    today: new Date().toISOString().slice(0, 10),
+  });
+
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
-  // directly as 'received' (booked, UNPAID, reversible). Never for a receipt (its "probably paid"
-  // suggestion needs a human pay-confirm), never for a pen-mark paid suggestion, never for a
-  // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
-  // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
+  // directly as 'received' (booked, UNPAID, reversible). Never for a pen-mark paid suggestion,
+  // never for a statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI
+  // number (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the
+  // queue.
+  //
+  // [BON-AUTO] The paid-suggestion block stays, with one hole in it: a bon that will be SETTLED in
+  // the same request. The block exists because auto-advance lands an invoice as 'received' —
+  // booked and UNPAID — which is the one status a settled bon must never get. When the payment is
+  // booked one breath later that objection is gone, and without the hole every receipt fell to a
+  // manual tap: the document class that needs the least judgement got the most of it.
+  //
+  // The safety bar itself is UNCHANGED. A bon still has to clear grounding, placement, the printed
+  // BTW split, the arithmetic, the dedup and the health classifier exactly like any other invoice —
+  // settling only decides the STATUS it lands in, never whether the read may be trusted.
   const autoAdv =
-    decision.destination === "invoice" && !decision.suggestPaid && !multiInvoice && !oneInvoiceUnverified
+    (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
+    (!decision.suggestPaid || settlePlan.settle) && !multiInvoice && !oneInvoiceUnverified
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,
           is_statement: v.is_statement,
@@ -1074,6 +1106,20 @@ btwContradictsDocument: btwContradictionOf(v.field_confidence),
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  }
+  // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is proven
+  // by the paper (settlePlan). Either one alone books something nobody checked.
+  const willSettle = autoAdv.advance && settlePlan.settle;
+  if (willSettle) {
+    // The basis, on the row, in the paper's own words — so "waarom staat deze bon op betaald?" is
+    // answerable a year later without re-reading the document.
+    fieldConfidence._auto_paid = {
+      at: new Date().toISOString(),
+      method: settlePlan.method,
+      date: settlePlan.payDate,
+      reason: settlePlan.reason,
+      evidence: decision.paidEvidence ?? null,
+    };
   }
 
   const { data: invoice, error: dbError } = await pipeline
@@ -1157,15 +1203,70 @@ btwContradictsDocument: btwContradictionOf(v.field_confidence),
       newValue: { status: "received", reason: autoAdv.reason, source: "intake_auto_advance" },
       ipAddress: getClientIP(req),
     }).catch(() => {})
+
+    // [BON-AUTO] The bon pays itself off. Through apply_manual_payment — the SAME audited, atomic,
+    // row-locking call the manual "Markeer als betaald" button makes — and not by writing
+    // status='paid' onto the insert above. That shortcut looks equivalent and is not: the RPC also
+    // writes the bank_tx_invoices instalment row that keeps amount_paid = SUM(amount_applied)
+    // true, and without it recompute_invoice_amount_paid would reset amount_paid to zero on an
+    // invoice that says it is paid. Reusing the ordinary booking also means the ordinary UNDO
+    // button reverses it, with no second code path to keep in step.
+    //
+    // Deliberately AFTER the insert rather than part of it: if this call fails the bon stands as
+    // 'received' — booked, unpaid, one tap from correct — which is exactly where it stood before
+    // this feature existed. The failure direction is the old behaviour, never a half-booking.
+    let settled = false;
+    if (willSettle && settlePlan.method && settlePlan.payDate) {
+      const { error: settleErr } = await pipeline.rpc("apply_manual_payment", {
+        p_user_id: user.id,
+        p_invoice_id: invoice.id,
+        p_amount: null,                     // null = the whole remaining balance
+        p_pay_date: settlePlan.payDate,
+        p_method: settlePlan.method,
+        p_payable_statuses: ["received"],   // it was just inserted as 'received'
+        p_client_key: randomUUID(),
+      });
+      if (settleErr) {
+        // [NO-SILENT-EMPTY] Never swallowed. The invoice is correct either way, but an owner who
+        // was told "automatisch afgehandeld" and finds it in "nog te betalen" needs the trail to
+        // say which half ran.
+        console.error("[BON-AUTO] receipt settlement failed — left as received (unpaid)", {
+          invoiceId: invoice.id, error: settleErr.message,
+        });
+      } else {
+        settled = true;
+        await logAuditAction({
+          userId: user.id,
+          action: "invoice.auto_paid",
+          entityType: "invoice",
+          entityId: invoice.id,
+          oldValue: { status: "received" },
+          newValue: {
+            status: "paid", method: settlePlan.method, payment_date: settlePlan.payDate,
+            reason: settlePlan.reason, evidence: decision.paidEvidence ?? null,
+            source: "intake_receipt_auto_settle",
+          },
+          ipAddress: getClientIP(req),
+        }).catch(() => {});
+      }
+    }
+    // Runs AFTER the settlement above on purpose: a 'kas' booking becomes a dated kasboek entry,
+    // and reconciling before it exists would leave the drawer a pass behind.
     try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
     try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
     try {
       await pipeline.from("notifications").insert({
         user_id: user.id,
-        title: "Factuur automatisch verwerkt",
+        // [BON-AUTO] A settled bon may NOT borrow the invoice sentence. "(nog niet betaald)" on a
+        // receipt the app has just marked paid is the app contradicting itself in the one message
+        // the owner actually reads, and it would send them looking for a payment to make.
+        title: settled ? "Bon automatisch verwerkt en afgeboekt" : "Factuur automatisch verwerkt",
         // .replace with a STRING replaces the first match only; a missing number left a second
         // double space untouched. A regex with /g collapses every run of spaces.
-        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace(/ {2,}/g, " "),
+        body: (settled
+          ? `${v.vendor || "Een leverancier"} — deze bon is gelezen en meteen als betaald geboekt (${settlePlan.method === "kas" ? "contant" : "met de pas"}, ${settlePlan.payDate}). Klopt dat niet, zet hem dan met één tik terug op openstaand.`
+          : `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`
+        ).replace(/ {2,}/g, " "),
         type: "invoice",
         // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
         // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could

@@ -1488,3 +1488,115 @@ test("[OVERSLAG-ZICHTBAAR] the panel gets every refusal, the push only the one i
     "a file that was never a candidate may not inflate the balance",
   );
 });
+
+test("[BON-AUTO] both doors settle a bon through the audited payment path, never by hand", () => {
+  // A kassabon is proof the counter was already paid — that is what makes it a receipt rather than
+  // an invoice. Both doors nevertheless switched auto-advance OFF for every bon, because
+  // auto-advance can only produce 'received' (booked, UNPAID), and that is the one status a
+  // settled bon must never get.
+  //
+  // The pure tests hold WHEN it may settle. This holds HOW, and the how is the dangerous half:
+  // writing status='paid' straight onto the insert looks equivalent and is not — it skips the
+  // bank_tx_invoices instalment row that keeps amount_paid = SUM(amount_applied) true, and
+  // recompute_invoice_amount_paid would then zero amount_paid on an invoice that says it is paid.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    const src = code(f);
+    assert.match(src, /planReceiptSettlement\(\{/, `${f} must ask the shared decision`);
+    // The booking goes through the RPC the manual button uses, with the whole remaining balance
+    // and the payable status it was just inserted with.
+    assert.match(
+      src,
+      /apply_manual_payment[\s\S]{0,400}?p_amount: null[\s\S]{0,300}?p_payable_statuses: \["received"\]|apply_manual_payment[\s\S]{0,400}?p_amount: null[\s\S]{0,300}?p_payable_statuses: \['received'\]/,
+      `${f} must settle through apply_manual_payment, not by writing the columns itself`,
+    );
+    // Both halves, never one: a trustworthy READ (autoAdv) AND a payment the PAPER proves.
+    assert.match(
+      src, /willSettle = autoAdv\.advance && settlePlan\.settle/,
+      `${f}: either half alone books something nobody checked`,
+    );
+    // A failed settlement is never swallowed — the row is right either way, but "automatisch
+    // afgehandeld" followed by a bon in "nog te betalen" needs a trail saying which half ran.
+    assert.match(
+      src, /settleErr[\s\S]{0,200}?console\.error\('?"?\[BON-AUTO\]/,
+      `${f} must report a failed settlement`,
+    );
+  }
+
+  // And nowhere does either door set a paid status on a ROW it writes.
+  //
+  // The first draft of this gate banned the string outright and failed on the audit log's own
+  // `newValue: { status: "paid" }` — a DESCRIPTION of what the RPC did, not a write. That is this
+  // file's own defect class arriving from the other side: a gate that matches a mention. So match
+  // what a write actually looks like — a paid status inside an .insert()/.update() payload — and
+  // let the trail describe the outcome in the words the trail needs.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.doesNotMatch(
+      code(f), /\.(?:insert|update)\(\{[^}]{0,4000}?status: ['"]paid['"]/,
+      `${f} may not write status='paid' onto a row — that skips the instalment row`,
+    );
+    // The audit trail, on the other hand, MUST say what happened.
+    assert.match(
+      code(f), /action: ['"]invoice\.auto_paid['"]/,
+      `${f} must leave a trail for a payment no human authorised`,
+    );
+  }
+});
+
+test("[BON-AUTO] the paid-suggestion block still holds everything it is NOT settling", () => {
+  // The block exists because auto-advance lands an invoice as 'received' — booked and UNPAID. The
+  // hole opened for a settled bon must be exactly that: a pen-marked INVOICE (suggestPaid via a
+  // handwritten mark, never a till line) must still be held, or money already gone stands as a
+  // debt behind an "automatisch geverifieerd" tag.
+  assert.match(
+    code("src/lib/email-integration.ts"),
+    /!classification\.uncertain && \(!pay\.suggestPaid \|\| settlePlan\.settle\)/,
+    "the e-mail door's hole must be settle-shaped, not open",
+  );
+  assert.match(
+    code("src/app/api/intake/route.ts"),
+    /\(!decision\.suggestPaid \|\| settlePlan\.settle\)/,
+    "and the camera door's the same",
+  );
+  // planReceiptSettlement itself refuses anything that is not a receipt, which is what makes that
+  // hole safe. Held here too, because the callers' correctness depends on it.
+  assert.match(
+    code("src/lib/receipt-auto-settle.ts"),
+    /if \(kind !== 'receipt'\) return HOLD\('not_a_receipt'\)/,
+    "a pen mark on an invoice is not a till line",
+  );
+  // And the gate that makes the whole thing defensible: the PAPER named the method.
+  assert.match(
+    code("src/lib/receipt-auto-settle.ts"),
+    /if \(input\.suggestion\.paidMethodZeker !== true\) return HOLD\('method_not_printed'\)/,
+    "guessing kas-vs-bank moves a cash drawer that never moved",
+  );
+});
+
+test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears its bank line", () => {
+  // 'kas' is a dated drawer movement. Settle without reconciling and the payment sits on the
+  // invoice while the kassaldo the accountant reads still holds the money.
+  const email = code("src/lib/email-integration.ts");
+  assert.match(
+    email, /settlePlan\.method === 'kas'\) cashSettledThisRun = true/,
+    "the e-mail loop must remember it settled cash",
+  );
+  assert.match(
+    email, /if \(cashSettledThisRun\)[\s\S]{0,220}?reconcileCashSettlements\(/,
+    "and reconcile the kasboek once after the loop",
+  );
+  // The camera door reconciles in its existing side-effect block — the settlement must come FIRST,
+  // or the drawer is a pass behind.
+  const intake = code("src/app/api/intake/route.ts");
+  const settleAt = intake.indexOf("apply_manual_payment");
+  const reconcileAt = intake.indexOf("reconcileCashSettlements(pipeline");
+  assert.ok(settleAt > 0 && reconcileAt > settleAt, "intake must settle before it reconciles");
+
+  // The other consequence: a card bon becomes 'paid', which hides it from the matcher — and a
+  // till prints neither an invoice number nor an IBAN, so the existing explain rule can never fire
+  // for one. Without this, every pin-paid bon turns its own debit into a "missende inkoopfactuur".
+  assert.match(
+    code("src/app/api/bank/match/route.ts"),
+    /receiptIds\.has\(m\.best\.invoiceId\)[\s\S]{0,140}?sig\.includes\("counterpart"\)[\s\S]{0,80}?sig\.includes\("amount"\)[\s\S]{0,80}?sig\.includes\("date"\)/,
+    "a paid kassabon must be able to explain its own bank line",
+  );
+});
