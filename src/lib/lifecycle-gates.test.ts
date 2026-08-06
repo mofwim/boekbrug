@@ -1421,3 +1421,70 @@ test("[DOCCHECK-SPLIT] the error this whole line of work started from is finally
     "the sentence must name the printed split — that is the answer, not just the problem",
   );
 });
+
+test("[OVERSLAG-ZICHTBAAR] both e-mail doors record what they refused, not just refuse it", () => {
+  // THE DEFECT: three different refusals — te groot, te klein, onleesbaar formaat — all left
+  // through the same silent `continue` as a logo in a signature. The skipped panel then reported
+  // "Niets overgeslagen" about an e-mail that carried a purchase invoice.
+  //
+  // The pure tests hold the SPLIT (which refusal speaks, which stays quiet). This one holds the
+  // WIRING, which is where this file's own defect class lives: a gate that matches a mention
+  // rather than the call is a gate that passes after the call is deleted.
+  const src = code("src/lib/email-integration.ts");
+
+  // Exactly two gate sites — Gmail and Outlook — and no third copy that could drift.
+  const gates = src.match(/triageAttachment\(\{/g) ?? [];
+  assert.equal(gates.length, 2, "one gate per fetcher, no more and no fewer");
+
+  // Each of them must PUSH the refusal onward, not merely compute it.
+  const wired = src.match(
+    /const triage = triageAttachment\(\{[\s\S]{0,120}?if \(!triage\.keep\) \{[\s\S]{0,260}?unread\.push\(\{[\s\S]{0,160}?kind: triage\.kind[\s\S]{0,60}?continue/g,
+  ) ?? [];
+  assert.equal(wired.length, 2, "both doors must record the refusal before continuing");
+
+  // The unreadable-MIME branch is the quietest path of all: a .xlsx invoice, an iPhone .heic
+  // receipt or a zipped bundle failed normalizeAttachmentMime and vanished leaving nothing.
+  const unreadable = src.match(
+    /const unreadableReason = unreadableFormatReason\(filename\)[\s\S]{0,220}?unread\.push\(\{[\s\S]{0,180}?kind: 'unreadable-format'/g,
+  ) ?? [];
+  assert.equal(unreadable.length, 2, "both doors must report a format they cannot open");
+
+  // And it may never sit above the bank-statement branch, which has its own, better answer.
+  for (const half of src.split("looksLikeBankStatementFile(filename)").slice(1)) {
+    const stmt = half.indexOf("statements.push");
+    const fmt = half.indexOf("unreadableFormatReason");
+    assert.ok(stmt >= 0 && fmt > stmt, "a bank statement keeps its own reason, never the generic one");
+  }
+
+  // The old two-step (attachmentSkipReason, then isLikelyInvoiceCandidate) is gone from the doors.
+  // Two implementations of one decision is a file dropped by one and accounted for by the other.
+  assert.doesNotMatch(
+    src, /if \(!isLikelyInvoiceCandidate\(/,
+    "the fetchers must go through the gate that carries its own reason",
+  );
+});
+
+test("[OVERSLAG-ZICHTBAAR] the panel gets every refusal, the push only the one it can describe", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // Every recorded refusal reaches the registry — that is the panel, and it must be complete.
+  assert.match(
+    src, /for \(const ov of unread\)[\s\S]{0,400}?from\('email_skipped_attachments'\)[\s\S]{0,200}?reason: ov\.reason/,
+    "each refusal must become a row with its own reason",
+  );
+
+  // The notification is the exception, and it is keyed on the KIND. Keyed on the filename alone
+  // (the previous rule: "any .pdf") it would announce an 8 KB PDF as "groter dan 10 MB" — a
+  // notification that lies is worse than none, and it lies about the one number it names.
+  assert.match(
+    src, /ov\.kind === 'oversized' && \/\\\.pdf\$\/i\.test\(ov\.filename\)/,
+    "only a genuinely oversized PDF may claim to be one",
+  );
+
+  // Still outside the invoice balance math: these were never candidates, so counting them would
+  // make `fetched` and the reconciliation disagree with each other.
+  assert.doesNotMatch(
+    src, /fetched \+= unread\.length|unread\.length \+ attachments\.length/,
+    "a file that was never a candidate may not inflate the balance",
+  );
+});
