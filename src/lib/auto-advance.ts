@@ -52,6 +52,12 @@ export interface AutoAdvanceSignals {
   // btw_amount is 0 silently zeroes the voorbelasting; we only allow a zero BTW to auto-book when the
   // read EXPLICITLY says 0% (a genuine vrijgesteld / 0-rate invoice), never on a null/absent rate.
   btwRate?: number | null;
+  // [GEGROND] What the DOCUMENT'S OWN TEXT says about the total the reader reported: was that exact
+  // number found in it, is it demonstrably not in it, or was there no text to search (a photo).
+  // Every other signal in this interface is the reader's opinion of the reader; this is the only
+  // one from outside it. Optional — absent means the check did not run, which is treated exactly
+  // like 'unreadable' and blocks nothing.
+  totalGrounding?: "found" | "absent" | "unreadable" | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -95,6 +101,19 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   const btw = s.health?.btw_amount;
   if (typeof btw === "number" && Math.abs(btw) < 0.005 && s.btwRate !== 0) {
     return { advance: false, reason: "zero_btw_not_explicit_zero_rate" };
+  }
+
+  // [GEGROND] The reader reported a total that is NOT printed anywhere in the document's own text.
+  // That is not low confidence and it is not bad arithmetic — the other gates cannot see it at all,
+  // because they only ever compare the read against itself. It is a figure the paper does not
+  // contain, and booking it without a human is how a wrong number becomes a cost, a voorbelasting
+  // claim and a line in an aangifte.
+  //
+  // Only 'absent' holds. 'unreadable' is a photographed receipt — the ordinary case this app exists
+  // for — and refusing to automate those would take the product away in the name of protecting it.
+  // The check adds a way to be CERTAIN; it never adds a way to be stuck.
+  if (s.totalGrounding === "absent") {
+    return { advance: false, reason: "total_not_in_document_text" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

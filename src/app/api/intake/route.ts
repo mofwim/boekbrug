@@ -62,6 +62,8 @@ import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
 // [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
 import { readPdfTextLayer } from "@/lib/pdf-text"
+// [GEGROND] The stored verdict on whether the total is printed on the document.
+import { groundingOf } from '@/lib/amount-grounding'
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -1051,6 +1053,9 @@ export async function POST(req: NextRequest) {
           forcedDuplicate: force === true,
           // [BTW-GATE] a zero btw_amount only auto-books when the read is explicitly a 0% invoice.
           btwRate: v.btw_rate ?? null,
+          // [GEGROND] What the document's own text says about the total the reader reported. The
+          // only signal here that does not come from the reader — see amount-grounding.ts.
+          totalGrounding: groundingOf(v.field_confidence),
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,

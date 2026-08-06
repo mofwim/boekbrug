@@ -253,6 +253,25 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
     )
   }
+  // [GEGROND] Het bedrag dat de lezer opgaf staat NIET in de tekst van het document zelf.
+  //
+  // Dit staat bewust hier, hoog en apart, want het is de ENIGE controle in dit bestand die niet de
+  // lezer naar zijn eigen antwoord vraagt. De rekenkundige poort vergelijkt drie getallen die één
+  // en dezelfde lezing produceerde, en field_confidence is zijn mening over zijn eigen mening — een
+  // lezing die consistent fout is komt daar ongeschonden doorheen. Dat is precies wat er gebeurde
+  // bij de € 0,46-fout, en het is de reden dat een ondernemer de papieren factuur ernaast houdt.
+  //
+  // Alleen 'absent' spreekt. 'unreadable' is een foto of scan — dan is er geen tekst om in te
+  // zoeken, en "staat niet op je factuur" zeggen over een foto is een leugen die ervoor zorgt dat
+  // de échte waarschuwingen ook niet meer gelezen worden.
+  const grounding = (fc as unknown as { _grounding?: { totalIncBtw?: string } } | null)?._grounding
+  if (grounding?.totalIncBtw === 'absent') {
+    flags.arithmetic = true
+    reasons.push(
+      'het totaalbedrag staat niet letterlijk in de tekst van dit document — controleer het aan de factuur zelf',
+    )
+  }
+
   // [IBAN-WISSEL] Een bekende leverancier met een ander rekeningnummer. Dit staat bewust boven de
   // rekenkundige as: bij factuurfraude klopt de rekensom juist wél — het bedrag is overgenomen van
   // een echte factuur. Elke andere poort hier geeft groen, dus als deze zwijgt, zwijgt alles.

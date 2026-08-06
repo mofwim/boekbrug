@@ -38,6 +38,8 @@ import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from '@/lib/multi-invoice-pdf'
 // [PDF-TEXT] The text layer both checks read, shared with the intake door.
 import { readPdfTextLayer } from '@/lib/pdf-text'
+// [GEGROND] The stored verdict on whether the total is printed on the document.
+import { groundingOf } from '@/lib/amount-grounding'
 // [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
@@ -3480,6 +3482,10 @@ export async function syncUserEmails(
             // (the gate holds a zero-BTW invoice UNLESS btwRate === 0). Without it the email path
             // sent undefined → every zero-BTW invoice was held for manual review, unlike intake.
             btwRate: classification.btwRate ?? null,
+            // [GEGROND] What the document's own text says about the total the reader reported —
+            // the only signal here that does not come from the reader. Both auto-booking doors
+            // must ask it: a gate on one door is not a gate.
+            totalGrounding: groundingOf(classification.fieldConfidence),
             health: {
               total_ex_btw: classification.totalExBtw ?? 0,
               btw_amount: classification.btwAmount ?? 0,

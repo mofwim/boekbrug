@@ -1081,3 +1081,54 @@ test("[DAGSTART] the morning message stays silent unless something moved", () =>
     "the morning message writes nothing but a notification",
   );
 });
+
+test("[GEGROND] the only non-self-referential check on a money field is actually wired", () => {
+  // Everything else that judges an amount asks the reader about the reader: the arithmetic gate
+  // compares three numbers ONE read produced, and field_confidence is its opinion of its own
+  // opinion. A read that is wrong consistently passes all of it — which is exactly what produced a
+  // € 0,46 BTW error on a real invoice, and why an owner keeps the paper copy open beside the app.
+  //
+  // A module that computes this and is never called changes nothing at all, so what is gated here
+  // is the WIRING, at every point it has to exist.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /groundMoneyFields\(/, "the extractor must actually run the check");
+  assert.match(
+    ai, /_grounding = grounding/,
+    "and STORE it — a verdict computed and dropped is the defect class this whole file is for",
+  );
+  assert.match(
+    ai, /statementText,\s*\);/,
+    "fed with the document's own extracted text, which is the entire point: any other input makes " +
+      "this the reader checking itself again",
+  );
+
+  // Both auto-booking doors, or neither. A gate on one door is not a gate — that is how the intake
+  // path and the e-mail path came to disagree about the duplicate marker.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(
+      code(f), /totalGrounding: groundingOf\(/,
+      `${f} no longer passes the grounding verdict — this door auto-books a total that the ` +
+        `document does not contain, while the other door refuses it`,
+    );
+  }
+
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(
+    aa, /if \(s\.totalGrounding === "absent"\)[\s\S]{0,120}?advance: false/,
+    "and the gate must REFUSE on it — a signal that is passed in and ignored is decoration",
+  );
+  // 'unreadable' must never block: a photographed receipt is the ordinary case this app exists for,
+  // and refusing to automate those would take the product away in the name of protecting it.
+  assert.doesNotMatch(
+    aa, /totalGrounding === "unreadable"[\s\S]{0,80}?advance: false/,
+    "a photo has no text layer — blocking there turns a certainty feature into a stuck queue",
+  );
+
+  // And the owner has to SEE it, or the app is still asking them to trust it.
+  const health = code("src/lib/import-health.ts");
+  assert.match(
+    health, /_grounding[\s\S]{0,400}?niet letterlijk in de tekst/,
+    "the verify screen must say it in words — that sentence is the difference between checking " +
+      "the invoice yourself and not having to",
+  );
+});

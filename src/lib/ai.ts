@@ -80,6 +80,8 @@ import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 // een tweede keer werd overtreden: de herleesroute zette er zijn eigen model-id naast en ging langs
 // dit hele mechanisme heen. Eén plek, met tests — zie de kop van dat bestand.
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
+// [GEGROND] The independent witness on a money field — see amount-grounding.ts.
+import { groundMoneyFields } from './amount-grounding';
 
 /**
  * Het model waarmee deze app leest. Geëxporteerd zodat een route die een ANDER model wil proberen
@@ -1767,6 +1769,30 @@ Return JSON only.`;
         ? { amount: Math.min(1, Math.max(0, parsed.field_confidence.amount)) }
         : {}),
     };
+
+    // [GEGROND] The one check on a money field that is not the reader checking itself.
+    //
+    // Everything else here asks the same model about its own answer: the arithmetic gate verifies
+    // excl + btw = incl among three numbers ONE read produced, and field_confidence is its opinion
+    // of its own opinion. A read that is wrong consistently passes all of it — the EUR 0,46 BTW
+    // error on a real invoice was exactly that shape, and it is why an owner keeps the paper copy
+    // open beside the app instead of trusting the screen.
+    //
+    // For a text PDF we already hold the document's own characters — we extracted them and fed them
+    // TO the model — so "is this number really printed on the paper?" is answerable with no model at
+    // all. Stored beside _safecore, in three states, because a check that could not RUN (a photo has
+    // no text layer) must never read as one that passed, nor as one that failed.
+    {
+      const grounding = groundMoneyFields(
+        {
+          totalIncBtw: parsed.total_inc_btw,
+          totalExBtw: parsed.total_ex_btw,
+          btwAmount: parsed.btw_amount,
+        },
+        statementText,
+      );
+      (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
+    }
 
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
     // despite the prompt, drop it — the receiver is never the vendor. Loose match
