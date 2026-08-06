@@ -24,6 +24,7 @@ import { DashboardHeader } from '@/app/dashboard/_shared'
 // <DraftQueue /> mount at the bottom of this file.
 // import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
+import type { WorkQueues } from '../work-queues'
 import type { NotificationRow } from '@/types/rows'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
@@ -63,6 +64,12 @@ interface Props {
     role: string | null
   }
   overview: AccountantOverview
+  /**
+   * [WERKVOORRAAD] De cijfers achter de vier werktegels. Optioneel omdat de home ouder is dan
+   * deze regel en er ook zonder hoort te openen — een scherm dat crasht op een ontbrekend getal
+   * is erger dan een scherm zonder dat getal.
+   */
+  workQueues?: WorkQueues
   clients: ClientSummary[]
   todos: TodoItem[]
   notifications: NotificationRow[]
@@ -89,7 +96,7 @@ function timeSalutation(): string {
 // Component
 // ─────────────────────────────────────────────────────────
 
-export default function AccountantHome({ profile, overview, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
+export default function AccountantHome({ profile, overview, workQueues, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
   // [READINESS-P4] overview + todos are now RENDERED (below) — they are backed by
   // honest facts: overview = provable counts (open questions / missing bank), todos
   // = concrete actionable items from getTodoFeed. No "ready" verdict is shown, so
@@ -265,6 +272,70 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           </span>
           <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
         </button>
+
+        {/* ── [WERKVOORRAAD] Wat er op JOU ligt ──────────────────────────────
+            Boven Overzicht, want dit is werk en dat is status. Vier schermen
+            hingen hieronder als tegels zonder getal: je moest ze één voor één
+            openen om te ontdekken dat er twaalf stukken een kwartaal
+            tegenhielden. Werk dat je moet gaan zoeken, is werk dat blijft
+            liggen — zie work-queues.ts.
+
+            Elk blok is een KNOP naar het scherm dat het getal oplost, en een
+            nul is hier nooit stilzwijgend: een nul omdat er niets is en een nul
+            omdat niemand je gemachtigd heeft zijn twee heel verschillende
+            dingen, en de regel eronder zegt welke van de twee het is. */}
+        {workQueues && workQueues.complete && (workQueues.mandatedForInvoices > 0 || workQueues.mandatedForConfirm > 0) && (
+          <div>
+            <SectionLabel>Wat er op jou ligt</SectionLabel>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                onClick={() => router.push('/dashboard/accountant/bevestigen')}
+                style={{
+                  backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '14px 12px',
+                  border: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
+                }}
+              >
+                <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: workQueues.toConfirm > 0 ? '#188038' : '#5F6368' }}>
+                  {workQueues.toConfirm}
+                </p>
+                <p style={{ fontSize: 12.5, color: '#202124', margin: '2px 0 0', fontWeight: 500 }}>
+                  Te bevestigen
+                </p>
+                <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0', lineHeight: 1.4 }}>
+                  {workQueues.mandatedForConfirm === 0
+                    ? 'Nog niemand machtigde je hiervoor'
+                    : workQueues.toConfirm === 0
+                      ? 'Niets houdt een kwartaal tegen'
+                      : 'Houdt een kwartaal tegen'}
+                </p>
+              </button>
+
+              <button
+                onClick={() => router.push('/dashboard/accountant/debiteuren')}
+                style={{
+                  backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '14px 12px',
+                  border: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
+                }}
+              >
+                <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: workQueues.overdueCount > 0 ? '#C5221F' : '#5F6368' }}>
+                  {workQueues.overdueTotal > 0
+                    ? `€ ${Math.round(workQueues.overdueTotal).toLocaleString('nl-NL')}`
+                    : '0'}
+                </p>
+                <p style={{ fontSize: 12.5, color: '#202124', margin: '2px 0 0', fontWeight: 500 }}>
+                  Te laat
+                </p>
+                <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0', lineHeight: 1.4 }}>
+                  {workQueues.mandatedForInvoices === 0
+                    ? 'Nog niemand machtigde je hiervoor'
+                    : workQueues.overdueCount === 0
+                      ? 'Niets te laat'
+                      : `${workQueues.overdueCount} ${workQueues.overdueCount === 1 ? 'factuur' : 'facturen'} · oudste ${workQueues.worstDaysLate} dagen`}
+                </p>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Overzicht — honest counts (the accountant's "where do I stand").
             Same 3-tile snapshot pattern as the ZZP home. ── */}

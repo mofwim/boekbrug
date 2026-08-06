@@ -1258,3 +1258,132 @@ test("[VRAAG-MACHTIGING] with no linked clients at all, the ask stays hidden", a
   assert.doesNotMatch(html, /Vraag toestemming/);
   assert.match(html, /Nog geen enkele klant heeft je gemachtigd/, "the explanation is still there");
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [WERKVOORRAAD] De boekhoudershome — het scherm dat vier tegels een getal geeft
+//
+// Dit is de eerste pagina die een boekhouder opent, en tot vandaag stond er op de vier
+// werktegels niets. De regel die dat oplost rekent met bedragen en dagen, en die twee
+// dingen zijn precies wat er in een lege lijst niet gebeurt: hand hem nul rijen en elke
+// tak blijft ongemoeid. Dus wordt hij hier met ECHTE standen gerenderd — met mandaat en
+// zonder, met werk en zonder — want de nul-zonder-mandaat en de nul-zonder-werk zijn twee
+// verschillende zinnen en het scherm hoort ze allebei te kunnen uitspreken.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const homeProfile = {
+  id: "acc-1", full_name: "Sanne de Vries", company_name: "De Vries Administratie",
+  email: "sanne@devries.nl", role: "accountant",
+};
+const homeOverview = { total_clients: 3, clients_with_open_questions: 1, clients_missing_bank: 0 };
+const homeClients = [
+  { id: "c1", full_name: "Jan Jansen", company_name: "Jansen Bouw", email: "jan@jansenbouw.nl" },
+  { id: "c2", full_name: "Piet Pieters", company_name: null, email: "piet@example.nl" },
+];
+
+test("[WERKVOORRAAD] de home toont de werkvoorraad als getallen, niet als tegels zonder tekst", async () => {
+  const { default: AccountantHome } = await import("../../src/modules/accountant/pages/AccountantHome");
+
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(AccountantHome as any, {
+      profile: homeProfile,
+      overview: homeOverview,
+      workQueues: {
+        toConfirm: 12, overdueCount: 3, overdueTotal: 4231.55, worstDaysLate: 74,
+        mandatedForInvoices: 2, mandatedForConfirm: 2, complete: true,
+      },
+      clients: homeClients,
+      todos: [],
+      notifications: [],
+      unreadMessages: 0,
+    }),
+  );
+
+  assert.ok(html.length > 500, "de home rendert");
+  assert.match(html, /Wat er op jou ligt/);
+  // Het getal zelf moet er staan — een tegel met alleen een label is precies wat hier weg moest.
+  assert.match(html, />12</, "de stapel die een kwartaal tegenhoudt staat er als getal");
+  assert.match(html, /4\.232|4\.231/, "het te late bedrag staat er in Nederlandse notatie");
+  assert.match(html, /oudste 74 dagen/, "hoe oud de oudste schuld is, want dat is het echte signaal");
+  assert.match(html, /3 facturen/);
+});
+
+test("[WERKVOORRAAD] nul-omdat-niets en nul-omdat-geen-machtiging zijn twee verschillende zinnen", async () => {
+  const { default: AccountantHome } = await import("../../src/modules/accountant/pages/AccountantHome");
+
+  // Wél gemachtigd, niets te doen. Dit is een gerustheid en hoort zo te lezen.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rustig = renderToStaticMarkup(React.createElement(AccountantHome as any, {
+    profile: homeProfile, overview: homeOverview, clients: homeClients, todos: [],
+    notifications: [], unreadMessages: 0,
+    workQueues: {
+      toConfirm: 0, overdueCount: 0, overdueTotal: 0, worstDaysLate: 0,
+      mandatedForInvoices: 2, mandatedForConfirm: 2, complete: true,
+    },
+  }));
+  assert.match(rustig, /Niets houdt een kwartaal tegen/);
+  assert.match(rustig, /Niets te laat/);
+  assert.doesNotMatch(rustig, /machtigde je hiervoor/, "wie gemachtigd is hoort daar niet over te lezen");
+
+  // Gekoppeld maar niet gemachtigd voor bevestigen. Dezelfde nul, een heel ander bericht:
+  // hier is niets te zien omdat je niets mág, en dat is oplosbaar — via /vraag-machtiging.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const halfMandaat = renderToStaticMarkup(React.createElement(AccountantHome as any, {
+    profile: homeProfile, overview: homeOverview, clients: homeClients, todos: [],
+    notifications: [], unreadMessages: 0,
+    workQueues: {
+      toConfirm: 0, overdueCount: 1, overdueTotal: 250, worstDaysLate: 5,
+      mandatedForInvoices: 1, mandatedForConfirm: 0, complete: true,
+    },
+  }));
+  assert.match(halfMandaat, /Nog niemand machtigde je hiervoor/);
+  assert.doesNotMatch(halfMandaat, /Niets houdt een kwartaal tegen/,
+    "een nul zonder machtiging mag NOOIT als 'alles is in orde' lezen");
+});
+
+test("[WERKVOORRAAD] een onbekende stand toont geen geruststellende nul", async () => {
+  const { default: AccountantHome } = await import("../../src/modules/accountant/pages/AccountantHome");
+
+  // complete=false betekent: een van de reads faalde. Nul is dan geen feit maar een gebrek aan
+  // feiten, en een werkbord dat dat als "niets te doen" toont, liegt op de plek waar het niet mag.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onbekend = renderToStaticMarkup(React.createElement(AccountantHome as any, {
+    profile: homeProfile, overview: homeOverview, clients: homeClients, todos: [],
+    notifications: [], unreadMessages: 0,
+    workQueues: {
+      toConfirm: 0, overdueCount: 0, overdueTotal: 0, worstDaysLate: 0,
+      mandatedForInvoices: 2, mandatedForConfirm: 2, complete: false,
+    },
+  }));
+  assert.ok(onbekend.length > 500, "de home rendert nog steeds");
+  assert.doesNotMatch(onbekend, /Wat er op jou ligt/, "liever geen regel dan een onware regel");
+
+  // En zonder de prop erbij — de home is ouder dan deze regel en hoort ook zo te openen.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const zonder = renderToStaticMarkup(React.createElement(AccountantHome as any, {
+    profile: homeProfile, overview: homeOverview, clients: homeClients, todos: [],
+    notifications: [], unreadMessages: 0,
+  }));
+  assert.ok(zonder.length > 500);
+  assert.doesNotMatch(zonder, /Wat er op jou ligt/);
+});
+
+test("[WERKVOORRAAD] een boekhouder zonder enige machtiging krijgt geen leeg werkbord te zien", async () => {
+  const { default: AccountantHome } = await import("../../src/modules/accountant/pages/AccountantHome");
+
+  // Nieuwe boekhouder: klanten gekoppeld, nog niets gemachtigd. Twee blokken met nul erin zeggen
+  // hem niets — de weg naar een machtiging loopt via de schermen zelf, waar de knop staat.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(AccountantHome as any, {
+    profile: homeProfile, overview: homeOverview, clients: homeClients, todos: [],
+    notifications: [], unreadMessages: 0,
+    workQueues: {
+      toConfirm: 0, overdueCount: 0, overdueTotal: 0, worstDaysLate: 0,
+      mandatedForInvoices: 0, mandatedForConfirm: 0, complete: true,
+    },
+  }));
+  assert.ok(html.length > 500);
+  assert.doesNotMatch(html, /Wat er op jou ligt/);
+  // De tegels naar die schermen blijven wél staan — daar staat de knop om het te vragen.
+  assert.match(html, /Bevestigen/);
+});

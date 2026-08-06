@@ -13,8 +13,22 @@ import {
   getAccountantOverview,
   getTodoFeed,
 } from '@/modules/accountant/accountant.repository'
+// [WERKVOORRAAD] De cijfers achter de vier tegels. Zie work-queues.ts voor waarom een tegel
+// zonder getal een deur is waar niets op staat.
+import { getAccountantWorkQueues } from '@/modules/accountant/work-queues'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * De klok, één keer gelezen, buiten de render om.
+ *
+ * Zelfde vorm als in /dashboard/accountant/debiteuren: `Date.now()` in het lichaam van een
+ * component wordt door de React-compiler terecht als onzuiver aangemerkt, en "te laat" hoort voor
+ * elke factuur tegen dezelfde klok te worden bepaald.
+ */
+function readClock(): number {
+  return new Date().getTime()
+}
 
 export default async function AccountantPage() {
   const supabase = await createServerSupabaseClient()
@@ -39,9 +53,13 @@ export default async function AccountantPage() {
   // stonden in één Promise.all, en getAccountantOverview haalde de lijst intern nóg een
   // keer op — met de vijf queries per klant eraan vast. Bij 30 klanten was dat 300 queries
   // in plaats van 150 op het traagste scherm dat de boekhouder opent.
-  const [clients, todos] = await Promise.all([
+  // [WERKVOORRAAD] Naast de klantenlijst en de to-do's, want hij hangt van geen van beide af: hij
+  // leest de mandaten en telt in twee query's. Faalt hij, dan komt hij leeg terug en toont de home
+  // de werkregel niet — nooit een foutpagina voor een getal.
+  const [clients, todos, workQueues] = await Promise.all([
     getAccountantClients(profile.id),
     getTodoFeed(profile.id),
+    getAccountantWorkQueues(supabase, profile.id, readClock()),
   ])
   const overview = await getAccountantOverview(profile.id, clients)
 
@@ -71,6 +89,7 @@ export default async function AccountantPage() {
           role: profile.role,
         }}
         overview={overview}
+        workQueues={workQueues}
         clients={clients}
         todos={todos}
         notifications={notifications ?? []}
