@@ -32,6 +32,10 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 import { readingPromptHint } from '@/lib/reading-memory'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+// [EERLIJK-GEBRUIK] De maandteller. Zie de toelichting bij de poort in syncUserEmails: dit was
+// de enige betaalde weg naar Anthropic die er niet langs kwam.
+import { consumeFairUseUpTo, releaseFairUse } from '@/lib/fair-use-usage'
+import { planForUser } from '@/lib/fair-use-gate'
 // [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
@@ -2281,7 +2285,57 @@ export async function syncUserEmails(
     if (Number.isFinite(raw) && raw >= 1 && raw <= 100) return Math.round(raw)
     return 40
   })()
-  const freshAttachments = freshAll.slice(0, SYNC_BATCH_MAX)
+  const batchCandidates = freshAll.slice(0, SYNC_BATCH_MAX)
+
+  // ── [EERLIJK-GEBRUIK] De maandteller telt eindelijk ook hier mee ────────────────────────
+  //
+  // Dit is het open punt dat /api/cron/email-sync in zijn eigen commentaar opschreef, en het
+  // was groter dan het daar klonk. Vijf routes gaan langs gateFairUse — intake, email/upload,
+  // email/reimport, eft/import, bank/attach-invoice — en DEZE weg niet, terwijl dit verreweg
+  // de duurste van allemaal is: tot SYNC_BATCH_MAX classificaties per ronde, vijf ronden per
+  // run, twaalf runs per dag.
+  //
+  // Het gevolg was niet "een gebruiker kwam er soms overheen", maar dat de grens van 50
+  // documenten per maand gold voor wie handmatig uploadt en NIET voor wie zijn mailbox
+  // koppelt — de weg die wij zelf aanraden. De grens stond dus wel op /eerlijk-gebruik en in
+  // de voorwaarden §5, maar de belangrijkste deur zat er niet achter. Een gepubliceerde grens
+  // die de drukste weg niet raakt is geen grens; het is een tekst.
+  //
+  // ── WAAROM "TOT ZOVER" EN NIET ALLES-OF-NIETS ──
+  // consumeFairUseUpTo() reserveert wat er nog past. Passen er nog drie binnen de grens, dan
+  // leest de app er drie en blijft de rest staan — precies wat onExceed belooft: "Nieuwe
+  // documenten worden nog wel bewaard, maar niet meer automatisch gelezen." Ze vallen in
+  // remainingAfterBatch, dus de balans hieronder blijft kloppen, ze verdwijnen niet uit het
+  // watermerk, en volgende maand loopt de sync er gewoon overheen.
+  //
+  // Plus en boekhouder kennen hier geen grens (limitForPlan → 0): die worden geteld, niet
+  // begrensd. Regel 2 uit fair-use.ts blijft ook hier staan — er wordt niets verwijderd en
+  // niets ontoegankelijk; alleen het LEZEN pauzeert, en de bijlage zelf blijft gewoon komen.
+  //
+  // Faalt OPEN. Een onbereikbare teller mag nooit iemands post tegenhouden; de bodem onder de
+  // kosten is en blijft de globale dagzekering in ai-budget.ts.
+  //
+  // En net als bij readingHint hieronder: alleen vragen als er iets te vragen valt. De meeste
+  // syncs vinden geen nieuwe post, en deze cron draait voor elke gekoppelde mailbox de hele
+  // dag door — een profielquery per gebruiker per sync, twaalf keer per dag, voor een antwoord
+  // dat niemand gebruikt, is precies de query die je niet wilt toevoegen.
+  const fairUsePlan = batchCandidates.length > 0 ? await planForUser(supabase, userId) : 'free'
+  const fairUse = await consumeFairUseUpTo({
+    userId,
+    metric: 'aiDocuments',
+    plan: fairUsePlan,
+    wanted: batchCandidates.length,
+  })
+  if (fairUse.granted < batchCandidates.length) {
+    console.warn('[EERLIJK-GEBRUIK] maandgrens bereikt — rest van de batch wordt bewaard, niet gelezen', {
+      userId,
+      wanted: batchCandidates.length,
+      granted: fairUse.granted,
+      plan: fairUsePlan,
+    })
+  }
+
+  const freshAttachments = batchCandidates.slice(0, fairUse.granted)
   const remainingAfterBatch = freshAll.length - freshAttachments.length
 
   // [POISON-PILL] Consecutive-failure guard for the watermark. The mark walks messages oldest-first
@@ -2518,6 +2572,27 @@ export async function syncUserEmails(
   const classifiedTotal = classified.length
   const classifiedFailed = classified.filter((c) => c.classifyFailed).length
   const configOutageAny = classified.some((c) => c.configOutage)
+
+  // [EERLIJK-GEBRUIK] Teruggeven wat niet gelezen ís. Dit maakt de zin op /eerlijk-gebruik
+  // waar: "Een bestand dat wij niet konden lezen telt ook niet mee — mislukte pogingen komen
+  // nooit op jouw rekening." De reservering hierboven gebeurde vóór PHASE 1, want anders zou
+  // een gebruiker over zijn grens heen kunnen lezen; wat daar strandde hoort er weer af.
+  //
+  // Let op het verschil met een LAGE-VERTROUWEN lezing: die is wél een lezing (de app heeft
+  // ervoor betaald en er komt een antwoord uit, ook al is het "kon ik niet lezen"), en die
+  // blijft dus staan. Alleen classifyFailed — een storing, een modeluitval, een netwerkfout —
+  // is een poging die nooit een lezing werd.
+  //
+  // Nooit blokkerend: mislukt de teruggave zelf, dan staat er één document te veel op de
+  // teller en dat is een kleiner onrecht dan een sync die hierop blijft hangen.
+  if (classifiedFailed > 0) {
+    await releaseFairUse({
+      userId,
+      metric: 'aiDocuments',
+      amount: classifiedFailed,
+      period: fairUse.period,
+    })
+  }
   const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
   const outageActive = configOutageAny || transientOutage
 

@@ -12,6 +12,7 @@ import {
   exceededMessage,
   limitForPlan,
   measureUsage,
+  consumeFairUseUpTo,
 } from "./fair-use-usage";
 import { FAIR_USE_LIMITS, evaluateFairUse, fairUseLimit } from "./fair-use";
 
@@ -143,4 +144,119 @@ test("een lege administratie zit netjes binnen elke grens", async () => {
   const status = evaluateFairUse(usage);
   assert.equal(status.withinLimits, true);
   assert.deepEqual(status.nearLimit, []);
+});
+
+// ── Tot zover reserveren ─────────────────────────────────────────────────────
+//
+// De sync krijgt veertig bijlagen binnen terwijl er nog drie binnen de maandgrens passen.
+// Alles-of-niets zou die drie ook weigeren; de gepubliceerde belofte is het omgekeerde. Wat
+// hieronder wordt vastgelegd is precies de fout die dit stuk rekenwerk kan maken: MEER
+// toekennen dan er was. Elke test hier eindigt daarom op een getal, niet op een boolean.
+
+/** Een nagebootste teller met een echte stand en een echte grens. */
+function fakeCounter(opts: { used: number; limit: number; throws?: boolean }) {
+  const calls: number[] = [];
+  let used = opts.used;
+  const consume = async (p: { amount?: number }) => {
+    const amount = Math.max(1, p.amount ?? 1);
+    calls.push(amount);
+    if (opts.throws) {
+      return { allowed: true, used: 0, remaining: -1, reason: "counter_unavailable" as const, period: "2026-08" };
+    }
+    if (opts.limit > 0 && used + amount > opts.limit) {
+      // Precies wat fair_use_consume() doet bij een weigering: niets ophogen, en de ruimte
+      // teruggeven die er nog wél was.
+      return { allowed: false, used, remaining: Math.max(0, opts.limit - used), reason: "exceeded" as const, period: "2026-08" };
+    }
+    used += amount;
+    return { allowed: true, used, remaining: opts.limit > 0 ? opts.limit - used : -1, reason: "within_limit" as const, period: "2026-08" };
+  };
+  return { consume, calls, usedNow: () => used };
+}
+
+test("past de hele batch, dan is er maar één aanroep nodig", async () => {
+  const teller = fakeCounter({ used: 10, limit: 50 });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 40 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 40);
+  assert.deepEqual(teller.calls, [40]);
+  assert.equal(teller.usedNow(), 50);
+});
+
+test("past de batch niet, dan wordt precies de resterende ruimte gereserveerd", async () => {
+  // 47 van de 50 op. Er passen er nog drie, en drie is het antwoord — niet nul en niet veertig.
+  const teller = fakeCounter({ used: 47, limit: 50 });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 40 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 3);
+  assert.deepEqual(teller.calls, [40, 3], "eerst de hele batch geprobeerd, daarna de ruimte");
+  assert.equal(teller.usedNow(), 50, "de teller staat op de grens, nooit erboven");
+});
+
+test("zit de grens vol, dan is het antwoord nul en wordt er niets opgehoogd", async () => {
+  const teller = fakeCounter({ used: 50, limit: 50 });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 12 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 0);
+  assert.equal(r.reason, "exceeded");
+  assert.equal(teller.usedNow(), 50);
+  assert.deepEqual(teller.calls, [12], "geen tweede aanroep als er geen ruimte was");
+});
+
+test("wie betaalt loopt hier tegen niets aan", async () => {
+  // limit 0 = tellen zonder begrenzen (limitForPlan voor plus en boekhouder).
+  const teller = fakeCounter({ used: 4000, limit: 0 });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "plus", wanted: 40 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 40);
+  assert.equal(teller.usedNow(), 4040, "wel geteld");
+});
+
+test("een onbereikbare teller houdt niemands post tegen", async () => {
+  const teller = fakeCounter({ used: 999, limit: 50, throws: true });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 40 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 40, "faalt OPEN — onze storing raakt de gebruiker niet");
+  assert.equal(r.reason, "counter_unavailable");
+});
+
+test("niets willen kost geen enkele aanroep", async () => {
+  // De gewone gang van zaken: de sync vindt geen nieuwe post. Dat mag geen query worden,
+  // want deze cron draait voor elke gekoppelde mailbox de hele dag door.
+  const teller = fakeCounter({ used: 0, limit: 50 });
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 0 },
+    teller.consume,
+  );
+  assert.equal(r.granted, 0);
+  assert.deepEqual(teller.calls, []);
+});
+
+test("een verloren race geeft nul terug, nooit een niet-geboekte reservering", async () => {
+  // Tussen de eerste weigering en de tweede poging is iemand anders erdoorheen gelopen, dus
+  // ook de tweede poging wordt geweigerd. Dan is het antwoord nul: liever een document te
+  // weinig lezen dan er een lezen dat niet op de teller staat.
+  let n = 0;
+  const consume = async () => {
+    n += 1;
+    return n === 1
+      ? { allowed: false, used: 45, remaining: 5, reason: "exceeded" as const, period: "2026-08" }
+      : { allowed: false, used: 50, remaining: 0, reason: "exceeded" as const, period: "2026-08" };
+  };
+  const r = await consumeFairUseUpTo(
+    { userId: "u", metric: "aiDocuments", plan: "free", wanted: 40 },
+    consume,
+  );
+  assert.equal(r.granted, 0);
+  assert.equal(n, 2);
 });
