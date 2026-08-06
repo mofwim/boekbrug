@@ -73,6 +73,19 @@ export interface EInvoiceFigures {
   syntax: 'cii' | 'ubl'
   /** The document's own number, when it states one. Never invented. */
   invoiceNumber: string | null
+  /**
+   * [E-FACTUUR-XML] The rest of what an import needs, so a Peppol invoice arriving on its own can
+   * be booked WITHOUT a model reading anything. Every one of these is null when the document does
+   * not state it — null is a fact here, and a guess would undo the whole point of this file.
+   */
+  vendorName: string | null
+  /** ISO yyyy-mm-dd. */
+  invoiceDate: string | null
+  dueDate: string | null
+  vendorIban: string | null
+  paymentReference: string | null
+  /** A credit note states itself as one in its root element; the amounts are then money coming back. */
+  isCreditNote: boolean
 }
 
 /**
@@ -183,11 +196,32 @@ function parseCii(xml: string): EInvoiceFigures | null {
   const btw = firstAmount(block, 'TaxTotalAmount')
   const currency = firstCurrency(block, 'GrandTotalAmount') ?? firstCurrency(block, 'TaxTotalAmount')
   const header = firstBlock(xml, 'ExchangedDocument')
+  // The seller's own block — scoped, because the buyer's block carries the very same element names
+  // and putting the BUYER on the invoice as the supplier is a mistake nothing downstream can catch.
+  const seller = firstBlock(xml, 'SellerTradeParty')
+  const payee = firstBlock(xml, 'SpecifiedTradeSettlementPaymentMeans')
+  const terms = firstBlock(xml, 'SpecifiedTradePaymentTerms')
   return complete({
     inc, ex, btw, currency, syntax: 'cii',
     invoiceNumber: header ? firstText(header, 'ID') : null,
+    vendorName: seller ? firstText(seller, 'Name') : null,
+    invoiceDate: header ? ciiDate(header) : null,
+    dueDate: terms ? ciiDate(terms) : null,
+    vendorIban: payee ? firstText(payee, 'IBANID') : null,
+    paymentReference: firstText(xml, 'PaymentReference'),
+    isCreditNote: false,
   })
 }
+
+/** CII writes dates as <udt:DateTimeString format="102">20260312</udt:DateTimeString>. */
+function ciiDate(block: string): string | null {
+  const raw = firstText(block, 'DateTimeString')
+  if (!raw) return null
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(raw.trim())
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : (ISO_DAY.test(raw.trim()) ? raw.trim() : null)
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * Peppol / NLCIUS. LegalMonetaryTotal is the header block; the per-rate figures sit in TaxSubtotal
@@ -206,11 +240,30 @@ function parseUbl(xml: string): EInvoiceFigures | null {
   const ex = firstAmount(block, 'TaxExclusiveAmount')
   const currency = firstCurrency(block, 'PayableAmount') ?? firstCurrency(block, 'TaxInclusiveAmount')
   const btw = inc !== null && ex !== null ? round2(inc - ex) : null
+  const head = xml.slice(0, indexOfFirstCac(xml))
+  // Scoped to the SUPPLIER's block: AccountingCustomerParty holds the same element names, and the
+  // buyer booked as the supplier is a mistake nothing downstream can catch.
+  const supplier = firstBlock(xml, 'AccountingSupplierParty')
+  const payment = firstBlock(xml, 'PayeeFinancialAccount')
   return complete({
     inc, ex, btw, currency, syntax: 'ubl',
     // The document-level ID is the first cbc:ID before any cac: block starts.
-    invoiceNumber: firstText(xml.slice(0, indexOfFirstCac(xml)), 'ID'),
+    invoiceNumber: firstText(head, 'ID'),
+    // RegistrationName is the legal name (BT-27); Name is the trading name. Prefer the legal one,
+    // fall back to the other — a supplier that states only one must still be recognisable.
+    vendorName: supplier
+      ? (firstText(supplier, 'RegistrationName') ?? firstText(supplier, 'Name'))
+      : null,
+    invoiceDate: isoDay(firstText(head, 'IssueDate')),
+    dueDate: isoDay(firstText(head, 'DueDate')),
+    vendorIban: payment ? firstText(payment, 'ID') : null,
+    paymentReference: firstText(xml, 'PaymentID'),
+    isCreditNote: /<(?:\w+:)?CreditNote[\s>]/.test(xml.slice(0, 4000)),
   })
+}
+
+function isoDay(v: string | null): string | null {
+  return v && ISO_DAY.test(v.trim()) ? v.trim() : null
 }
 
 /**
@@ -223,6 +276,8 @@ function parseUbl(xml: string): EInvoiceFigures | null {
 function complete(v: {
   inc: number | null; ex: number | null; btw: number | null
   currency: string | null; syntax: 'cii' | 'ubl'; invoiceNumber: string | null
+  vendorName: string | null; invoiceDate: string | null; dueDate: string | null
+  vendorIban: string | null; paymentReference: string | null; isCreditNote: boolean
 }): EInvoiceFigures | null {
   const { inc, ex, btw } = v
   if (inc === null || ex === null || btw === null) return null
@@ -239,7 +294,22 @@ function complete(v: {
     btwAmount: round2(btw),
     syntax: v.syntax,
     invoiceNumber: v.invoiceNumber?.trim() || null,
+    vendorName: v.vendorName?.trim() || null,
+    invoiceDate: v.invoiceDate,
+    dueDate: v.dueDate,
+    // [PAY-SAFE] An IBAN is only carried when it IS one. A malformed value here would reach the
+    // bank matcher and the payment sheet, where a wrong account number is the costliest field
+    // on the whole invoice.
+    vendorIban: normalizedIban(v.vendorIban),
+    paymentReference: v.paymentReference?.trim() || null,
+    isCreditNote: v.isCreditNote,
   }
+}
+
+/** Upper-cased, spaces removed, and only when it has the shape of a real IBAN. */
+function normalizedIban(raw: string | null): string | null {
+  const s = (raw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s) ? s : null
 }
 
 // ─── Tag scanning ─────────────────────────────────────────────────────────────
@@ -326,12 +396,19 @@ export function eInvoiceOf(fieldConfidence: unknown): (EInvoiceFigures & { contr
   const nums = ['totalIncBtw', 'totalExBtw', 'btwAmount'] as const
   if (!nums.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k] as number))) return null
   if (o.syntax !== 'cii' && o.syntax !== 'ubl') return null
+  const str = (k: string): string | null => (typeof o[k] === 'string' ? (o[k] as string) : null)
   return {
     totalIncBtw: o.totalIncBtw as number,
     totalExBtw: o.totalExBtw as number,
     btwAmount: o.btwAmount as number,
     syntax: o.syntax,
-    invoiceNumber: typeof o.invoiceNumber === 'string' ? o.invoiceNumber : null,
+    invoiceNumber: str('invoiceNumber'),
+    vendorName: str('vendorName'),
+    invoiceDate: str('invoiceDate'),
+    dueDate: str('dueDate'),
+    vendorIban: str('vendorIban'),
+    paymentReference: str('paymentReference'),
+    isCreditNote: o.isCreditNote === true,
     contradicts: o.contradicts === true,
   }
 }
@@ -375,6 +452,18 @@ export function eInvoiceContradictsRead(fieldConfidence: unknown): boolean {
 export function eInvoiceSettlesAmounts(fieldConfidence: unknown): boolean {
   const e = eInvoiceOf(fieldConfidence)
   if (e === null) return false
+
+  // ── A CREDIT NOTE SETTLES NOTHING, EVEN WHEN ITS XML IS PERFECT ──
+  // This case did not exist when this function was written; it appeared when [E-FACTUUR-XML]
+  // taught the parser to read `isCreditNote` off the root element, and it is exactly the kind of
+  // gap that opens between two changes that are each correct on their own.
+  //
+  // Auto-advance already refuses a credit note — but on the READER's verdict (is_credit_note,
+  // invoice_type). When the model missed it and only the XML knows, relaxing the money gates on
+  // the strength of that same XML would be using the supplier's file to wave through the one
+  // document whose SIGN it just told us is inverted. Magnitude is not the question on a credit
+  // note; direction is, and this function has no opinion about direction.
+  if (e.isCreditNote) return false
 
   // ── AND WHY THIS DOES NOT SIMPLY READ e.contradicts ──
   // eInvoiceOf normalises with `=== true`, which is right for a gate that only acts on `true`: a
