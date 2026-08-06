@@ -32,6 +32,9 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { readPdfTextLayer } from "@/lib/pdf-text";
+import { sniffReadableMime } from "@/lib/detect-file";
+// [NAREKENEN-FOTO] The same blind transcription the import path uses — exported, never copied.
+import { transcribeStoredDocumentAmounts } from "@/lib/ai";
 import { groundMoneyFields } from "@/lib/amount-grounding";
 import { summarizeAudit, type AuditedInvoice } from "@/lib/books-audit";
 import { requireOwner } from "@/lib/owner-only";
@@ -41,6 +44,9 @@ export const maxDuration = 300;
 
 /** How many documents one run downloads. A whole quarter fits; a whole history is several runs. */
 const MAX_PER_RUN = 300;
+
+/** [NAREKENEN-FOTO] AI reads one run may spend. Each is a real cost; the owner is told the number. */
+const MAX_PHOTOS_PER_RUN = 40;
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -58,6 +64,10 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const year = Number((body as { year?: unknown }).year);
   const scopedYear = Number.isInteger(year) && year > 2000 && year < 2100 ? year : null;
+  // [NAREKENEN-FOTO] Opt-in, never a default. The text-layer half is free; this half is one AI read
+  // per photograph, and a bill the owner did not ask for is not a feature. The screen asks first and
+  // says how many, so the flag arriving here means a human saw the number and said yes.
+  const includePhotos = (body as { includePhotos?: unknown }).includePhotos === true;
 
   const pipeline = createPipelineClient();
 
@@ -110,15 +120,27 @@ export async function POST(req: NextRequest) {
   }
 
   const audited: AuditedInvoice[] = [];
+  // [NAREKENEN-FOTO] photosDone counts the AI reads SPENT (the ceiling), photosChecked counts the
+  // ones that produced a verdict. They differ when a transcription comes back unusable, and the
+  // report needs the second: telling an owner "40 photos checked" when 6 of them answered nothing
+  // is the kind of number that makes the whole report worthless.
+  let photosDone = 0;
+  let photosChecked = 0;
 
   for (const inv of withDoc) {
     const path = inv.document_id ? docPaths.get(inv.document_id) : null;
     let text: string | null = null;
+    // Kept from the SAME download the text layer was read from: fetching the file twice would double
+    // the storage traffic and could see two different objects if one were replaced mid-run.
+    let bytes: Buffer | null = null;
+    let mime: string | null = null;
     if (path) {
       try {
         const { data } = await pipeline.storage.from("documents").download(path);
         if (data) {
           const buf = Buffer.from(await data.arrayBuffer());
+          bytes = buf;
+          mime = sniffReadableMime(buf);
           // Only a PDF has a text layer to read. An image returns null here, which is exactly the
           // 'unreadable' the report counts separately — never a failed check.
           text = (await readPdfTextLayer(buf)).text;
@@ -129,11 +151,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const grounding = groundMoneyFields(
-      { totalIncBtw: inv.total_inc_btw, totalExBtw: inv.total_ex_btw, btwAmount: inv.btw_amount },
-      text,
-      "text",
-    );
+    const amounts = {
+      totalIncBtw: inv.total_inc_btw, totalExBtw: inv.total_ex_btw, btwAmount: inv.btw_amount,
+    };
+    let grounding = groundMoneyFields(amounts, text, "text");
+
+    // [NAREKENEN-FOTO] No text layer: the mechanical witness has nothing to read. With the owner's
+    // consent we ask the blind transcription instead — the same call the import path makes, exported
+    // rather than copied so the two can never drift into measuring different things.
+    //
+    // Capped hard, and the cap is reported. An owner who says yes to "40 foto's" must not discover
+    // afterwards that it read four hundred. Every refusal below is silent about the invoice and
+    // leaves it 'unreadable', which is the honest answer when the check did not run.
+    if (
+      includePhotos &&
+      grounding.totalIncBtw === "unreadable" &&
+      photosDone < MAX_PHOTOS_PER_RUN &&
+      typeof inv.total_inc_btw === "number" && Number.isFinite(inv.total_inc_btw) &&
+      bytes && mime
+    ) {
+      photosDone++;
+      const transcribed = await transcribeStoredDocumentAmounts(bytes.toString("base64"), mime);
+      if (transcribed) grounding = groundMoneyFields(amounts, transcribed, "ocr");
+    }
+    if (grounding.source === "ocr") photosChecked++;
 
     audited.push({
       id: inv.id,
@@ -175,6 +216,10 @@ export async function POST(req: NextRequest) {
     // Named rather than silently dropped: a cap the owner cannot see is a report that claims to
     // cover more than it did.
     truncated,
+    // [NAREKENEN-FOTO] What the photo half actually did. Reported even when zero, so "we did not
+    // look at your photographs" is a statement the owner reads rather than an absence they infer.
+    photosChecked,
+    photosCapped: includePhotos && photosDone >= MAX_PHOTOS_PER_RUN,
     // Invoices with no stored document at all cannot be checked against anything, and that is a
     // different gap with its own fix ([ORIGINEEL] — "Origineel toevoegen").
     withoutDocument: invoices.length - (withDoc.length + truncated),

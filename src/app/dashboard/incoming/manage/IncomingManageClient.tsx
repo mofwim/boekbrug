@@ -501,10 +501,16 @@ export default function IncomingManageClient({
     summary: { confirmed: number; unchecked: number; examined: number; mismatched: AuditedInvoice[] }
     truncated: number
     withoutDocument: number
+    photosChecked: number
+    photosCapped: boolean
   } | null>(null)
+  // [NAREKENEN-FOTO] The ask that stands in front of an AI read per photograph. Holds how many
+  // there are, so the question names the number rather than asking for a blank cheque.
+  const [photoAsk, setPhotoAsk] = useState<number | null>(null)
   // [BACK-CLOSES] The report is a dismissible overlay: on a phone 'back' is how you close one,
   // and without this that tap leaves the whole screen instead.
   useCloseOnBack(!!auditReport, () => setAuditReport(null))
+  useCloseOnBack(photoAsk !== null, () => setPhotoAsk(null))
   const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
   // [DOC-INLINE] Which invoice's document is open. The sheet fetches its own signed url.
   const [docCtx, setDocCtx]             = useState<IncomingRow | null>(null)
@@ -1143,14 +1149,14 @@ export default function IncomingManageClient({
   // the reader checking itself: is the saved amount actually printed there? The route writes only
   // the verdict — never an amount, a date or a status — so this handler has no rows to patch and
   // nothing to undo. It receives a REPORT.
-  async function runBooksAudit() {
+  async function runBooksAudit(includePhotos = false) {
     if (auditBusy) return
     setAuditBusy(true)
     try {
       const res = await fetch('/api/invoice/audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ includePhotos }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -1164,6 +1170,13 @@ export default function IncomingManageClient({
         return
       }
       setAuditReport(json)
+      // [NAREKENEN-FOTO] The free half is done. If photographs were skipped, OFFER the paid half
+      // rather than running it — the offer names the count, so the owner is agreeing to a number and
+      // not to an open tap. Only after a text-only run: a second ask on top of a photo run would be
+      // asking the same question twice.
+      if (!includePhotos && typeof json?.summary?.unchecked === 'number' && json.summary.unchecked > 0) {
+        setPhotoAsk(json.summary.unchecked)
+      }
       // The row-level flags come from the stored verdict, so the list has to be re-read to show them.
       router.refresh()
     } catch {
@@ -3134,6 +3147,28 @@ export default function IncomingManageClient({
         />
       )}
 
+      {/* ── [NAREKENEN-FOTO] The ask that stands in front of an AI read per photograph.
+          The free half checks a PDF's own characters and costs nothing. A photograph has none, so
+          checking one means reading it again — a real cost, per document. Asking is not politeness
+          here: a bill nobody agreed to is not a feature, and the question names the COUNT so the
+          owner is saying yes to a number rather than to an open tap. ── */}
+      {photoAsk !== null && (
+        <BottomSheet
+          title={photoAsk === 1 ? '1 foto ook narekenen?' : `${photoAsk} foto's ook narekenen?`}
+          body={[
+            'Deze facturen zijn een foto of scan, dus er is geen tekst om in te zoeken. Wij kunnen ze wél opnieuw laten uitlezen en het bedrag daarmee vergelijken.',
+            'Dat is een tweede lezing van de afbeelding — iets zekerder dan niets, en niet hetzelfde als de letterlijke tekstcontrole hierboven.',
+            photoAsk > 40
+              ? `Per keer rekenen we er maximaal 40 na. Er blijven er dan ${photoAsk - 40} over voor een volgende ronde.`
+              : 'Er verandert niets aan je facturen — wij rekenen alleen na.',
+          ].join('\n\n')}
+          confirmLabel="Ja, lees de foto's terug"
+          confirmBg={M3.primary}
+          onConfirm={() => { setPhotoAsk(null); setAuditReport(null); void runBooksAudit(true) }}
+          onCancel={() => setPhotoAsk(null)}
+        />
+      )}
+
       {/* ── [NAREKENEN] What the pass found. A REPORT, and it says so: nothing was changed.
           The failing invoices are named first — a reassuring count above a problem is how a
           report gets skimmed past the one line that mattered — and what could NOT be checked is
@@ -3163,7 +3198,7 @@ export default function IncomingManageClient({
         return (
           <BottomSheet
             title={auditTitle(summary)}
-            body={[...auditLines(summary), ...extra].join('\n\n')}
+            body={[...auditLines(summary, auditReport.photosChecked ?? 0), ...extra].join('\n\n')}
             confirmLabel="Sluiten"
             confirmBg={M3.surfaceVariant}
             onConfirm={() => setAuditReport(null)}

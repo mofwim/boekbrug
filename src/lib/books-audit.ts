@@ -90,7 +90,7 @@ export function auditTitle(s: BooksAuditSummary): string {
  * "everything checks out" while silently skipping the photographs is worse than no report: it is a
  * claim about invoices nobody looked at.
  */
-export function auditLines(s: BooksAuditSummary): string[] {
+export function auditLines(s: BooksAuditSummary, photosChecked = 0): string[] {
   const out: string[] = []
   if (s.examined === 0) return out
 
@@ -113,6 +113,16 @@ export function auditLines(s: BooksAuditSummary): string[] {
 
   if (s.confirmed > 0 && s.mismatched.length > 0) {
     out.push(`Van de rest staat het bedrag wél zo op het document (${s.confirmed}).`)
+  }
+
+  // [NAREKENEN-FOTO] What the photo half did, and in its own words. A photo is checked by a second
+  // blind READ, not by the document's characters, so it may never borrow the sentence the text layer
+  // earns — an owner who is told both in the same breath cannot tell which one they are trusting.
+  if (photosChecked > 0) {
+    out.push(
+      `${photosChecked === 1 ? '1 foto is' : `${photosChecked} foto's zijn`} teruggelezen van de ` +
+      'afbeelding zelf. Dat is een tweede lezing en geen letterlijke tekstcontrole — iets zekerder, niet hetzelfde.',
+    )
   }
 
   if (s.unchecked > 0) {

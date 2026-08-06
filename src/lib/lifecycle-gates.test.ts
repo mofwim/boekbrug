@@ -1240,7 +1240,7 @@ test("[NAREKENEN] the audit is reachable, and looks like what it is", () => {
   // The result has to be SHOWN. A pass that reports nothing is a pass that changed nothing and
   // said nothing, which is indistinguishable from not running.
   assert.match(src, /auditTitle\(summary\)/, "the report is rendered");
-  assert.match(src, /auditLines\(summary\)/, "with the sentences under it");
+  assert.match(src, /auditLines\(summary, auditReport\.photosChecked/, "with the sentences under it");
   // And the counts the route reports about its own limits must reach the owner too: a cap they
   // cannot see is a report claiming to cover more than it did.
   // Anchored on the CONDITION, not on the words appearing somewhere. A first version matched the
@@ -1264,4 +1264,57 @@ test("[NAREKENEN] the audit is reachable, and looks like what it is", () => {
     "the audit button is styled as a primary action — it only reports, and looking like it acts " +
       "is how an owner comes to believe their books were corrected",
   );
+});
+
+test("[NAREKENEN-FOTO] the paid half never runs without a human saying yes to a number", () => {
+  // The text-layer half reads a PDF's own characters: free, mechanical. A photograph has none, so
+  // checking one means an AI read — a real cost, per document. A bill nobody agreed to is not a
+  // feature, so this half is opt-in and the question names the COUNT.
+  const route = code("src/app/api/invoice/audit/route.ts");
+  assert.match(
+    route, /includePhotos = \(body as \{ includePhotos\?: unknown \}\)\.includePhotos === true/,
+    "strict true only — a truthy default is how an opt-in becomes a surprise",
+  );
+  assert.match(
+    route, /if \(\s*includePhotos &&[\s\S]{0,320}?photosDone < MAX_PHOTOS_PER_RUN/,
+    "and the flag AND the cap must both gate the call",
+  );
+  assert.match(route, /photosCapped:/, "the cap being hit is reported, never silent");
+  assert.match(
+    route, /photosChecked,/,
+    "and so is what the photo half actually produced — 'we did not look at your photographs' must " +
+      "be a sentence the owner reads, not an absence they infer",
+  );
+
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(
+    client, /setPhotoAsk\(json\.summary\.unchecked\)/,
+    "the screen OFFERS the paid half with the count, rather than running it",
+  );
+  assert.match(
+    client, /if \(!includePhotos &&[\s\S]{0,140}?unchecked > 0\)/,
+    "offered only after a free run, and only when there is something to offer",
+  );
+  assert.match(
+    client, /onConfirm=\{\(\) => \{ setPhotoAsk\(null\); setAuditReport\(null\); void runBooksAudit\(true\) \}\}/,
+    "and it runs ONLY from the confirm — a path that reaches runBooksAudit(true) without the ask " +
+      "spends money the owner never approved",
+  );
+});
+
+test("[NAREKENEN-FOTO] the photo witness never borrows the text layer's sentence", () => {
+  // A photo is checked by a second blind READ, not by the document's characters. An owner told both
+  // in the same breath cannot tell which one they are trusting — and the whole point of this work
+  // is that they can.
+  const mod = code("src/lib/books-audit.ts");
+  assert.match(mod, /photosChecked > 0/, "the photo count gets its own sentence");
+  assert.match(
+    mod, /iets zekerder, niet hetzelfde/,
+    "which says plainly that it is weaker than the literal text check",
+  );
+  // And the import path's transcription is REUSED, not copied: two prompts would drift, and then
+  // the audit and the import would be measuring different things while reporting the same word.
+  const route = code("src/app/api/invoice/audit/route.ts");
+  assert.match(route, /transcribeStoredDocumentAmounts/, "the shared entry is used");
+  assert.doesNotMatch(route, /OCR_AMOUNTS_PROMPT/, "the prompt is not re-declared here");
 });

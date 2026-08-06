@@ -797,6 +797,22 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
  * the grounding check reads as 'unreadable'. A transcription that did not happen is not evidence
  * about the document, and must never harden into "the amount is absent".
  */
+/**
+ * [GEGROND-OCR] Public entry for the same blind transcription, so the books-audit can run it over a
+ * PHOTO that is already stored.
+ *
+ * Exported rather than duplicated: a second copy of this would be a second prompt, and the moment
+ * the two drift the audit stops measuring what the import measures. The independence rule travels
+ * with it — the caller passes a FILE, never anything derived from a read of that file.
+ */
+export async function transcribeStoredDocumentAmounts(
+  fileBase64: string,
+  mediaType: string,
+  model?: string,
+): Promise<string | null> {
+  return transcribeAmountsForGrounding(fileBase64, mediaType, model ?? CLAUDE_MODEL);
+}
+
 async function transcribeAmountsForGrounding(
   fileBase64: string,
   mediaType: string,
