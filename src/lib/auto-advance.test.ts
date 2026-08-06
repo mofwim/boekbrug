@@ -208,5 +208,101 @@ console.log("\n— [CREDIT-PREFIX-GATE] a credit-numbered document never books i
   check("a CAMERA-… bon placeholder is still held (placeholder rule)", bon.advance === false && bon.reason === "needs_review");
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [E-FACTUUR-BESLECHT] Wanneer de leverancier het bedrag zelf meestuurde
+//
+// Drie poorten in deze functie bewaken één ding: dat een BEDRAG van een pagina is GELEZEN en dat
+// een lezing fout kan zijn — de tekstcontrole, de plaatsingscontrole, en de zekerheidsscore van de
+// lezer over zijn eigen geld. Bij een volledige, consistente e-factuur die tot op de cent klopt met
+// de lezing, is er geen pagina die verkeerd gelezen kan zijn. Dan bewaken die drie niets meer.
+//
+// Wat hieronder wordt vastgelegd is vooral wat NIET verandert. Een schrapping die één as sluit is
+// goed; een schrapping die stilletjes een deur opent is de duurste fout die dit bestand kan maken.
+// Elke test hier die met "nog steeds" begint is die deur, op slot.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— [E-FACTUUR-BESLECHT] de leverancier stuurde zijn eigen cijfers mee —");
+{
+  const efact = (over: Record<string, unknown> = {}) => ({
+    totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: "cii", contradicts: false, ...over,
+  });
+
+  // Een lezer die zijn eigen bedrag NIET vertrouwt (0.42), op een foto zonder tekstlaag, met een
+  // totaal dat nergens te vinden is. Zonder e-factuur wacht deze terecht op een mens.
+  const onzeker = {
+    confidence: 0.95,
+    totalGrounding: "absent" as const,
+    health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.42 } },
+  };
+
+  const zonder = shouldAutoAdvanceInvoice(clean(onzeker));
+  check("zonder e-factuur wacht een onzeker gelezen bedrag op een mens", zonder.advance === false);
+
+  const met = shouldAutoAdvanceInvoice(clean({
+    ...onzeker,
+    health: { ...onzeker.health, field_confidence: { ...onzeker.health.field_confidence, _einvoice: efact() } },
+  }));
+  check("mét een kloppende e-factuur boekt dezelfde factuur zichzelf", met.advance === true);
+  check("en wel als 'clean_high_confidence'", met.reason === "clean_high_confidence");
+
+  // De plaatsingspoort — dezelfde redenering, andere as.
+  const plaatsing = shouldAutoAdvanceInvoice(clean({
+    totalPlacement: "present",
+    health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact() } },
+  }));
+  check("een bedrag dat niet staat waar een totaal hoort, maar wél in de e-factuur staat, boekt", plaatsing.advance === true);
+
+  // ── En nu de deuren die dicht MOETEN blijven ──────────────────────────────
+
+  const tegenspraak = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact({ contradicts: true }) } },
+    eInvoiceContradicts: true,
+  }));
+  check("een e-factuur die het gelezen bedrag TEGENSPREEKT blokkeert nog steeds", tegenspraak.advance === false);
+  check("en zegt waarom", tegenspraak.reason === "e_invoice_contradicts_read");
+
+  const aanmaning = shouldAutoAdvanceInvoice(clean({
+    is_reminder: true,
+    health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact() } },
+  }));
+  check("een aanmaning met geldige XML wacht nog steeds op een mens", aanmaning.advance === false && aanmaning.reason === "reminder");
+
+  const credit = shouldAutoAdvanceInvoice(clean({
+    invoice_type: "creditnota",
+    health: { ...clean().health, invoice_type: "creditnota", field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact() } },
+  }));
+  check("een creditnota met geldige XML wacht nog steeds", credit.advance === false && credit.reason === "creditnota");
+
+  const geforceerd = shouldAutoAdvanceInvoice(clean({
+    forcedDuplicate: true,
+    health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact() } },
+  }));
+  check("een doorgedrukte dubbele wacht nog steeds", geforceerd.advance === false && geforceerd.reason === "forced_duplicate");
+
+  // De e-factuur zegt niets over de LEVERANCIER, het NUMMER of de DATUM — parseEInvoice
+  // controleert die niet. Die assen blijven dus precies zo streng als ze waren.
+  const onzekereLeverancier = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { vendor: 0.31, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact() } },
+  }));
+  check("een onzekere LEVERANCIER wacht nog steeds — XML vouwt daar niet voor in", onzekereLeverancier.advance === false);
+
+  const nulBtw = shouldAutoAdvanceInvoice(clean({
+    btwRate: null,
+    health: { ...clean().health, btw_amount: 0, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, _einvoice: efact({ btwAmount: 0 }) } },
+  }));
+  check("nul btw zonder expliciet 0%-tarief wacht nog steeds", nulBtw.advance === false && nulBtw.reason === "zero_btw_not_explicit_zero_rate");
+
+  // Rommel in _einvoice is geen e-factuur. eInvoiceOf valideert; een half object leest als niets,
+  // en "niets" mag nooit als "beslecht" gelden — anders is dit een poort die je kunt omzeilen door
+  // onzin op te slaan.
+  for (const rommel of [{}, { totalIncBtw: 121 }, { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: "xml" }, null, "ja"]) {
+    const d = shouldAutoAdvanceInvoice(clean({
+      ...onzeker,
+      health: { ...onzeker.health, field_confidence: { ...onzeker.health.field_confidence, _einvoice: rommel } },
+    }));
+    check(`onleesbare _einvoice (${JSON.stringify(rommel)}) beslecht niets`, d.advance === false);
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

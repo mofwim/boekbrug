@@ -263,5 +263,43 @@ console.log('\n— [PRINTED-TOTAL] a total that disagrees with the printed one i
   check('_total_derived alone does not hold the invoice', filledIn.level === 'clean')
 }
 
+
+// ── [E-FACTUUR-BESLECHT] "onzeker gelezen" gaat over een lezing ───────────────
+//
+// De waarschuwing "het bedrag is onzeker gelezen" is waar zolang het bedrag GELEZEN is. Stuurde de
+// leverancier zijn cijfers zelf mee en kloppen die met de lezing, dan vraagt die zin de ondernemer
+// om te controleren wat de app al zwart op wit heeft. Zo verliest een waarschuwing haar betekenis:
+// niet door fout te zijn, maar door overbodig te zijn.
+console.log('\n— [E-FACTUUR-BESLECHT] de leverancier stuurde het bedrag zelf mee —')
+{
+  const onzeker = (fc: Record<string, unknown>): HealthInput => ({
+    total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
+    invoice_date: '2026-05-10', invoice_number: '2026-0042', invoice_type: 'factuur',
+    field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.42, ...fc },
+  })
+
+  const zonder = classifyImportHealth(onzeker({}))
+  check('zonder e-factuur blijft "onzeker gelezen" staan',
+    zonder.level === 'needs-review' && zonder.reasons.some((r) => r.includes('onzeker gelezen')))
+
+  const met = classifyImportHealth(onzeker({
+    _einvoice: { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: 'cii', contradicts: false },
+  }))
+  check('mét een kloppende e-factuur verdwijnt die zin', !met.reasons.some((r) => r.includes('onzeker gelezen')))
+  check('en is de rij schoon', met.level === 'clean')
+
+  // De tegenspraak houdt haar eigen, sterkere zin — die noemt het juiste bedrag.
+  const tegen = classifyImportHealth(onzeker({
+    _einvoice: { totalIncBtw: 250, totalExBtw: 206.61, btwAmount: 43.39, syntax: 'ubl', contradicts: true },
+  }))
+  check('een tegensprekende e-factuur blijft alarmeren', tegen.level === 'needs-review')
+  check('en noemt het bedrag uit de e-factuur', tegen.reasons.some((r) => r.includes('250')))
+
+  // Rommel beslecht niets: de oude waarschuwing hoort dan gewoon terug te komen.
+  const rommel = classifyImportHealth(onzeker({ _einvoice: { totalIncBtw: 121 } }))
+  check('onleesbare _einvoice laat "onzeker gelezen" staan',
+    rommel.reasons.some((r) => r.includes('onzeker gelezen')))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

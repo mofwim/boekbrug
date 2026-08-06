@@ -15,6 +15,7 @@ import { PDFDocument } from 'pdf-lib'
 
 import {
   extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, looksLikeInvoiceXml,
+  eInvoiceSettlesAmounts,
 } from './e-invoice'
 
 /** Factur-X / ZUGFeRD. Prefixes deliberately NOT the conventional rsm:/ram: — see below. */
@@ -294,4 +295,50 @@ test('[E-FACTUUR] a non-invoice attachment inside a PDF is not mistaken for one'
     { mimeType: 'text/xml' })
   const bytes = Buffer.from(await doc.save())
   assert.equal(await extractEmbeddedInvoiceXml(bytes), null, 'a CAMT statement is not an e-invoice')
+})
+
+// ── [E-FACTUUR-BESLECHT] Wanneer het bedrag geen lezing meer is ──────────────
+//
+// eInvoiceSettlesAmounts is de enige functie in dit bestand die iets TOESTAAT in plaats van
+// tegenhoudt: hij zet drie poorten uit die alleen bestaan omdat een bedrag van een pagina wordt
+// gelezen. Daarom is elke test hier een poging om hem ten onrechte "ja" te laten zeggen.
+
+test('[E-FACTUUR-BESLECHT] alleen een volledige, kloppende e-factuur beslecht het bedrag', () => {
+  const goed = { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: 'cii', contradicts: false }
+  assert.equal(eInvoiceSettlesAmounts({ _einvoice: goed }), true)
+  assert.equal(eInvoiceSettlesAmounts({ _einvoice: { ...goed, syntax: 'ubl' } }), true)
+
+  // Een tegenspraak beslecht niets — daar hoort juist een mens naar te kijken.
+  assert.equal(eInvoiceSettlesAmounts({ _einvoice: { ...goed, contradicts: true } }), false)
+})
+
+test('[E-FACTUUR-BESLECHT] afwezigheid van bewijs wordt nooit bewijs', () => {
+  // Geen e-factuur, geen field_confidence, of rommel op de plek waar er een hoort te staan.
+  // Elk van deze is "de vraag kon niet gesteld worden" en dat is niet hetzelfde als "het antwoord
+  // was goed". Zonder deze regel kan de poort worden omzeild door onzin op te slaan.
+  const nietBeslecht: unknown[] = [
+    null, undefined, {}, 'nee', 42, [],
+    { _einvoice: null },
+    { _einvoice: {} },
+    { _einvoice: { totalIncBtw: 121 } },
+    { _einvoice: { totalIncBtw: 121, totalExBtw: 100 } },
+    { _einvoice: { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21 } },                    // geen syntax
+    { _einvoice: { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: 'xml' } },      // onbekende syntax
+    { _einvoice: { totalIncBtw: '121', totalExBtw: 100, btwAmount: 21, syntax: 'cii' } },    // tekst, geen getal
+    { _einvoice: { totalIncBtw: NaN, totalExBtw: 100, btwAmount: 21, syntax: 'cii' } },
+    { _einvoice: { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: 'cii', contradicts: 'nee' } },
+  ]
+  for (const fc of nietBeslecht) {
+    assert.equal(eInvoiceSettlesAmounts(fc), false, `beslecht niets: ${JSON.stringify(fc)}`)
+  }
+})
+
+test('[E-FACTUUR-BESLECHT] contradicts moet EXPLICIET false zijn, niet alleen niet-true', () => {
+  // eInvoiceOf leest contradicts als `o.contradicts === true`, dus een ontbrekende sleutel wordt
+  // false. Dat is hier bewust: de lezer schrijft het veld altijd mee (ai.ts), dus een rij zonder
+  // dat veld komt uit een oudere lezing waarin de vergelijking wél gedaan is met dezelfde functie.
+  // Vastgelegd omdat het de enige plek is waar "afwezig" als "goed" leest, en dat hoort zichtbaar
+  // te zijn in plaats van te worden ontdekt.
+  const zonderVeld = { _einvoice: { totalIncBtw: 121, totalExBtw: 100, btwAmount: 21, syntax: 'cii' } }
+  assert.equal(eInvoiceSettlesAmounts(zonderVeld), true)
 })

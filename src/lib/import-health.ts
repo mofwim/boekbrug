@@ -30,7 +30,7 @@
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 // [E-FACTUUR] De cijfers die de leverancier zelf meestuurde — sterker dan elke lezing.
-import { eInvoiceOf } from '@/lib/e-invoice'
+import { eInvoiceOf, eInvoiceSettlesAmounts } from '@/lib/e-invoice'
 // [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
 import { formatEuroNL } from './format-nl'
 // [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
@@ -142,6 +142,17 @@ export interface FieldConfidence {
   // overgeslagen — anders krijgt élke bon een amberen "Aandacht nodig" voor iets wat er niet
   // hoort te staan, en verdrinkt het echte signaal in ruis waar niemand meer naar kijkt.
   _intake_kind?: string
+  /**
+   * [E-FACTUUR] Wat de leverancier zelf over het geld zei, in machinevorm — geschreven door de
+   * lezer (ai.ts) wanneer er Factur-X/ZUGFeRD/Peppol-XML in het bestand zat.
+   *
+   * Hier alleen GEDECLAREERD, niet uitgelezen: elke lezer gaat door eInvoiceOf() /
+   * eInvoiceSettlesAmounts() in e-invoice.ts, want dit is jsonb en een veld dat je zonder
+   * validatie gelooft is een veld dat je kunt vervalsen door onzin op te slaan. Het staat in deze
+   * interface omdat het er in de database echt is, en een type dat een bestaande sleutel verzwijgt
+   * dwingt elke aanroeper tot een cast — en een cast is precies waar de validatie verdwijnt.
+   */
+  _einvoice?: unknown
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -491,7 +502,17 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // low score means the reader itself was unsure about the money — surface that
   // loudly instead of presenting a confident-looking total. We under-claim: only
   // flag when a score is actually present and low (never fabricate doubt).
-  if (fc) {
+  //
+  // [E-FACTUUR-BESLECHT] Behalve wanneer de leverancier het bedrag zelf heeft meegestuurd en dat
+  // klopt met wat er is gelezen. Dan is "de lezer was onzeker" een uitspraak over een lezing die
+  // niet meer het bewijs is: het bedrag staat in machinevorm in hetzelfde bestand, tot op de cent
+  // gelijk. De ondernemer waarschuwen dat een getal onzeker gelezen is terwijl de leverancier het
+  // zwart op wit heeft meegeleverd, is hem laten controleren wat de app al zeker weet — en dat is
+  // precies hoe een waarschuwing haar betekenis verliest.
+  //
+  // Alleen deze as. Een e-factuur zegt niets over of dit een aanmaning, een overzicht of een
+  // creditnota is, dus alles daarover blijft staan. Zie eInvoiceSettlesAmounts().
+  if (fc && !eInvoiceSettlesAmounts(fc)) {
     const amountScores = [fc.amount, fc.total, fc.total_inc_btw].filter(
       (n): n is number => typeof n === 'number'
     )

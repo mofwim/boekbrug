@@ -22,6 +22,8 @@
 // and undo any one. Pure + testable (run: npx tsx src/lib/auto-advance.test.ts).
 
 import { classifyImportHealth, type HealthInput } from "./import-health";
+// [E-FACTUUR-BESLECHT] The one witness that is not a reading. See the gate below.
+import { eInvoiceSettlesAmounts } from "./e-invoice";
 
 // Auto-booking bar — stricter than import-health's 0.7 review line. A present per-field score
 // below this keeps the invoice in the queue for a human, even if it isn't otherwise "flagged".
@@ -125,7 +127,25 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // Only 'absent' holds. 'unreadable' is a photographed receipt — the ordinary case this app exists
   // for — and refusing to automate those would take the product away in the name of protecting it.
   // The check adds a way to be CERTAIN; it never adds a way to be stuck.
-  if (s.totalGrounding === "absent") {
+  // [E-FACTUUR-BESLECHT] Read this line before the three gates below it.
+  //
+  // Those three — grounding, placement, and the money's own confidence score — exist for exactly
+  // one reason: the amount was READ off a page and a reading can be wrong. When the supplier sent
+  // his figures along in machine form and they match what was read to the cent, that reason is
+  // gone. Not smaller. Gone. There is no page to have misread.
+  //
+  // This is where the app had it backwards. The strongest witness it will ever have was wired in
+  // as a SIXTH check on the reading, when it is the thing that makes the reading unnecessary. An
+  // invoice held out of the queue because the model was 0.72 sure of a number the supplier already
+  // stated is a human being asked to verify something nobody is uncertain about.
+  //
+  // NARROW ON PURPOSE. It settles the money and nothing else. Everything above this line still
+  // applies without exception — a statement, a reminder, a creditnota and a forced duplicate can
+  // all carry perfectly valid XML — and so does every gate below it about the vendor, the number
+  // and the date, which parseEInvoice does not vouch for. One axis, closed properly.
+  const amountsSettled = eInvoiceSettlesAmounts(s.health.field_confidence);
+
+  if (!amountsSettled && s.totalGrounding === "absent") {
     return { advance: false, reason: "total_not_in_document_text" };
   }
 
@@ -136,7 +156,7 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   //
   // Only 'present' is added here; 'absent' is already held one line up, and 'unreadable' still holds
   // nothing.
-  if (s.totalPlacement === "present") {
+  if (!amountsSettled && s.totalPlacement === "present") {
     return { advance: false, reason: "total_not_where_a_total_is_printed" };
   }
 
@@ -189,10 +209,14 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   const moneyScores = fc
     ? [fc.amount, fc.total, fc.total_inc_btw].filter((n): n is number => typeof n === "number")
     : [];
-  if (moneyScores.length > 0) {
-    if (Math.min(...moneyScores) < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
-  } else if (!(typeof s.confidence === "number" && s.confidence >= VERY_HIGH_OVERALL)) {
-    return { advance: false, reason: "no_amount_confidence_and_overall_not_very_high" };
+  // [E-FACTUUR-BESLECHT] Skipped entirely when the supplier settled the amounts — this whole
+  // block is the model grading its own reading of the money, and there is no reading to grade.
+  if (!amountsSettled) {
+    if (moneyScores.length > 0) {
+      if (Math.min(...moneyScores) < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
+    } else if (!(typeof s.confidence === "number" && s.confidence >= VERY_HIGH_OVERALL)) {
+      return { advance: false, reason: "no_amount_confidence_and_overall_not_very_high" };
+    }
   }
 
   // Every OTHER present per-field score must also clear the HIGH bar.
