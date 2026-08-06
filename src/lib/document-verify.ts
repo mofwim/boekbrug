@@ -65,6 +65,11 @@ export interface DocumentCheck {
   invoiceNumber: FieldVerdict
   /** The BTW amount, by the same grounding rule as before. */
   btw: GroundingVerdict
+  /**
+   * The split the DOCUMENT prints, when it prints one that the read contradicts. Null when the paper
+   * asserts no split, or when the read matches the one it does. This is the € 0,46 shape.
+   */
+  btwContradiction: PrintedSplit | null
 }
 
 // ── Anchors ───────────────────────────────────────────────────────────────────
@@ -248,6 +253,77 @@ export function verifyInvoiceNumber(num: string | null | undefined, text: string
   return t.replace(/[^a-z0-9]/gi, '').toLowerCase().includes(n) ? 'found' : 'absent'
 }
 
+// ── The printed split ─────────────────────────────────────────────────────────
+
+/** The Dutch rates. A split that does not land on one of these is not a BTW split. */
+const RATES = [21, 9, 0]
+
+/** A split the DOCUMENT prints: an ex-BTW amount and a BTW amount that add up to the total. */
+export interface PrintedSplit {
+  excl: number
+  btw: number
+  rate: number
+}
+
+/**
+ * Does the document print a valid BTW split for this total, and is it the one that was read?
+ *
+ * ── WHY THIS HAD TO BE BUILT ──
+ * Measured after everything above was in place: the original € 0,46 error still booked. The total
+ * was right and anchored, the arithmetic was consistent (21,91 + 4,04 = 25,95), and only the SPLIT
+ * was invented — and the split blocks nothing, because the total is the only field that holds an
+ * invoice. So the first error this whole line of work started from was still getting through.
+ *
+ * The naive fix — "hold whenever the BTW is not printed" — would fire on every receipt that prints
+ * a rate and a total and leaves the split to be computed, which is a large and legitimate class.
+ * That is a false alarm on correct documents, and those are what get a safety feature switched off.
+ *
+ * So the question is narrower and it is answerable: does the paper print a DIFFERENT valid split?
+ * Two printed amounts that add to the total at a legal rate are a split the document is asserting.
+ * If one exists and the read does not match it, the read contradicts the paper — and that is the
+ * € 0,46 shape exactly. If the paper prints no split at all, nothing is claimed and nothing is held.
+ */
+export function findPrintedSplit(
+  total: number | null | undefined,
+  text: string | null | undefined,
+): PrintedSplit | null {
+  if (typeof total !== 'number' || !Number.isFinite(total) || Math.abs(total) < CENT) return null
+  const t = (text ?? '').trim()
+  if (t.length === 0) return null
+
+  const amounts = amountsIn(t).map((a) => Math.abs(a))
+  const goal = Math.abs(total)
+  for (const excl of amounts) {
+    if (excl >= goal) continue
+    const btw = Math.round((goal - excl) * 100) / 100
+    // The complement must ALSO be printed. One printed number plus arithmetic is not the document
+    // asserting a split; it is us inventing one, which is the very thing being guarded against.
+    if (!amounts.some((a) => Math.abs(a - btw) < CENT)) continue
+    const rate = excl > 0 ? (btw / excl) * 100 : 0
+    const hit = RATES.find((r) => Math.abs(rate - r) < 0.6)
+    if (hit === undefined || hit === 0) continue
+    return { excl, btw, rate: hit }
+  }
+  return null
+}
+
+/**
+ * Does the read's BTW contradict a split the document prints?
+ *
+ * Only ever true when BOTH are known: a printed split exists AND the read has a BTW that differs
+ * from it. Absence of a printed split is not evidence, and neither is a missing read.
+ */
+export function btwContradictsDocument(
+  read: { totalIncBtw?: number | null; btwAmount?: number | null },
+  text: string | null | undefined,
+): PrintedSplit | null {
+  const printed = findPrintedSplit(read.totalIncBtw, text)
+  if (!printed) return null
+  const b = read.btwAmount
+  if (typeof b !== 'number' || !Number.isFinite(b)) return null
+  return Math.abs(Math.abs(b) - printed.btw) < CENT ? null : printed
+}
+
 // ── The whole check ───────────────────────────────────────────────────────────
 
 export function verifyDocument(
@@ -264,6 +340,7 @@ export function verifyDocument(
     date: verifyDate(read.invoiceDate, text),
     invoiceNumber: verifyInvoiceNumber(read.invoiceNumber, text),
     btw: groundAmount(read.btwAmount, text),
+    btwContradiction: btwContradictsDocument(read, text),
   }
 }
 
@@ -282,7 +359,11 @@ export function verifyDocument(
  * how a safety feature gets switched off.
  */
 export function documentCheckBlocks(c: DocumentCheck): boolean {
-  return c.total === 'absent' || c.total === 'present'
+  // [DOCCHECK-SPLIT] And a BTW that contradicts a split the paper prints. Measured: without this,
+  // the original € 0,46 error still booked — right total, consistent arithmetic, invented split.
+  // Narrow on purpose: it fires only when the document ASSERTS a different split, never merely
+  // because the BTW was not printed (which every receipt-with-a-rate would trip).
+  return c.total === 'absent' || c.total === 'present' || c.btwContradiction !== null
 }
 
 /**
@@ -303,4 +384,18 @@ export function placementOf(fieldConfidence: unknown): TotalVerdict | null {
   return v === 'anchored' || v === 'largest' || v === 'present' || v === 'absent' || v === 'unreadable'
     ? v
     : null
+}
+
+/**
+ * Read the stored split-contradiction out of a field_confidence blob.
+ *
+ * Same one-reader rule as placementOf and groundingOf: each door reaching into the jsonb its own way
+ * is how two import paths came to disagree about a marker, invisibly, until it double-booked.
+ */
+export function btwContradictionOf(fieldConfidence: unknown): boolean {
+  if (!fieldConfidence || typeof fieldConfidence !== 'object') return false
+  const c = (fieldConfidence as Record<string, unknown>)._doccheck
+  if (!c || typeof c !== 'object') return false
+  const v = (c as Record<string, unknown>).btwContradiction
+  return !!v && typeof v === 'object'
 }

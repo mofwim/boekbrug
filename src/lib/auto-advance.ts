@@ -62,6 +62,9 @@ export interface AutoAdvanceSignals {
   // largest amount on the page ('largest'), or merely printed somewhere ('present') — which is the
   // subtotal-read-as-total shape. Optional; absent means the check did not run and blocks nothing.
   totalPlacement?: "anchored" | "largest" | "present" | "absent" | "unreadable" | null;
+  // [DOCCHECK-SPLIT] True when the document prints a valid BTW split that differs from the one read.
+  // Optional; absent means the check did not run and blocks nothing.
+  btwContradictsDocument?: boolean | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -129,6 +132,17 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // nothing.
   if (s.totalPlacement === "present") {
     return { advance: false, reason: "total_not_where_a_total_is_printed" };
+  }
+
+  // [DOCCHECK-SPLIT] And the shape the whole line of work started from. The € 0,46 error had a
+  // RIGHT total, consistent arithmetic and an invented split — so every gate above it, including the
+  // two new ones, waved it through. This holds when the document prints a DIFFERENT valid split than
+  // the one that was read: the paper contradicts the reader, in the reader's own units.
+  //
+  // Never merely because the BTW was not printed: a receipt stating a rate and a total leaves the
+  // split to be computed, and holding those would fill the queue with correct documents.
+  if (s.btwContradictsDocument === true) {
+    return { advance: false, reason: "btw_contradicts_printed_split" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

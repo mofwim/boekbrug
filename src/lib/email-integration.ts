@@ -40,7 +40,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 import { readPdfTextLayer } from '@/lib/pdf-text'
 // [GEGROND] The stored verdict on whether the total is printed on the document.
 import { groundingOf } from '@/lib/amount-grounding'
-import { placementOf } from '@/lib/document-verify'
+import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 // [BON-EMAIL] The payment question, answered in ONE place for every door. The camera path and this
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
@@ -3489,6 +3489,8 @@ export async function syncUserEmails(
             totalGrounding: groundingOf(classification.fieldConfidence),
             // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
             totalPlacement: placementOf(classification.fieldConfidence),
+            // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
+            btwContradictsDocument: btwContradictionOf(classification.fieldConfidence),
             health: {
               total_ex_btw: classification.totalExBtw ?? 0,
               btw_amount: classification.btwAmount ?? 0,

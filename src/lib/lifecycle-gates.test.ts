@@ -1378,3 +1378,46 @@ test("[DOCCHECK] an excl-label must never anchor the total it is not", () => {
     "and it is checked on BOTH sides: 'subtotaal' puts it before the word, 'totaal excl.' after",
   );
 });
+
+test("[DOCCHECK-SPLIT] the error this whole line of work started from is finally held", () => {
+  // Measured with the total-placement check already shipped: the € 0,46 error STILL booked. Right
+  // total, anchored; consistent arithmetic; only the split invented — and the split held nothing,
+  // because the total was the only field that could hold an invoice.
+  const mod = code("src/lib/document-verify.ts");
+  assert.match(mod, /export function findPrintedSplit\(/, "the printed split is found");
+  assert.match(
+    mod, /if \(!amounts\.some\(\(a\) => Math\.abs\(a - btw\) < CENT\)\) continue/,
+    "and BOTH numbers must be on the paper — one printed number plus arithmetic is us inventing a " +
+      "split and then holding an invoice against our own invention",
+  );
+  assert.match(
+    mod, /c\.btwContradiction !== null/,
+    "the block rule must include it, or the original error books again",
+  );
+
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(
+    aa, /if \(s\.btwContradictsDocument === true\)[\s\S]{0,140}?advance: false/,
+    "and auto-advance must refuse on it",
+  );
+  // Never on a merely-unprinted BTW: a receipt stating a rate and a total leaves the split to be
+  // computed, and holding those would fill the queue with correct documents.
+  assert.doesNotMatch(
+    aa, /btw === "absent"[\s\S]{0,80}?advance: false/,
+    "holding on an unprinted BTW would fire on every receipt that prints only a rate",
+  );
+
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(
+      code(f), /btwContradictsDocument: btwContradictionOf\(/,
+      `${f} no longer passes it — this door books a contradicted split the other door refuses`,
+    );
+  }
+
+  // And the owner is told what the PAPER says, not just that something is wrong.
+  const health = code("src/lib/import-health.ts");
+  assert.match(
+    health, /op het document staat \$\{formatEuroNL\(contra\.excl\)\} \+ \$\{formatEuroNL\(contra\.btw\)\}/,
+    "the sentence must name the printed split — that is the answer, not just the problem",
+  );
+});

@@ -29,6 +29,8 @@
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
+// [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
+import { formatEuroNL } from './format-nl'
 // [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
 import { ibanChangeReason } from '@/lib/iban-change'
 // [CREDIT-PREFIX-GATE] One shared list of credit prefixes. A second copy here would drift from the
@@ -277,7 +279,9 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // is niet het hoogste bedrag op de pagina. Dat is precies hoe een SUBTOTAAL, een REGELBEDRAG en
   // het BTW-bedrag eruitzien, en gemeten op een echte factuur kwamen alle drie die foute lezingen
   // hierboven als 'gevonden' door.
-  const doccheck = (fc as unknown as { _doccheck?: { total?: string; date?: string } } | null)?._doccheck
+  const doccheck = (fc as unknown as {
+    _doccheck?: { total?: string; date?: string; btwContradiction?: { excl: number; btw: number; rate: number } | null }
+  } | null)?._doccheck
   if (doccheck?.total === 'present') {
     flags.arithmetic = true
     reasons.push(
@@ -290,6 +294,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // blijven hangen — maar wél gezegd.
   if (doccheck?.date === 'absent') {
     reasons.push('de factuurdatum staat niet zo op het document — controleer of de datum klopt')
+  }
+  // [DOCCHECK-SPLIT] Het document drukt een ANDERE btw-splitsing af dan er gelezen is. Dit is de
+  // vorm van de allereerste fout die dit hele spoor begon (€ 0,46): het totaal klopte, de rekensom
+  // klopte, en alleen de splitsing was verzonnen — waardoor geen enkele poort hem tegenhield.
+  // De zin noemt wat er OP HET PAPIER staat, want dat is het antwoord en niet alleen het probleem.
+  const contra = doccheck?.btwContradiction
+  if (contra) {
+    flags.arithmetic = true
+    reasons.push(
+      `op het document staat ${formatEuroNL(contra.excl)} + ${formatEuroNL(contra.btw)} btw (${contra.rate}%) — ` +
+      'dat is een andere btw dan hier is gelezen. Neem het bedrag van de factuur over.',
+    )
   }
 
   // [IBAN-WISSEL] Een bekende leverancier met een ander rekeningnummer. Dit staat bewust boven de

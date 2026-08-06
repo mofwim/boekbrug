@@ -15,10 +15,10 @@ import assert from 'node:assert/strict'
 
 import {
   verifyTotal, verifyDate, verifyInvoiceNumber, verifyDocument, documentCheckBlocks,
-  amountsIn, anchoredAmounts,
+  amountsIn, anchoredAmounts, findPrintedSplit,
 } from './document-verify'
 
-const clean = { date: 'found' as const, invoiceNumber: 'found' as const, btw: 'found' as const }
+const clean = { date: 'found' as const, invoiceNumber: 'found' as const, btw: 'found' as const, btwContradiction: null }
 const blocks = (total: ReturnType<typeof verifyTotal>) => documentCheckBlocks({ total, ...clean })
 
 // The layout every earlier example came from.
@@ -113,13 +113,23 @@ test('[DOCCHECK] the invoice number too, and punctuation does not divide it', ()
   assert.equal(verifyInvoiceNumber('7', FACTUUR), 'unreadable')
 })
 
-test('[DOCCHECK] only the total holds the invoice — the rest is reported', () => {
+test('[DOCCHECK] the total and a contradicted split hold — the rest is reported', () => {
   // A date or a number that could not be found is worth SAYING. Holding an invoice for it would
   // fire on every document printing a date in a format nobody predicted, and a queue full of
   // correct invoices is how a safety feature gets switched off.
-  assert.equal(documentCheckBlocks({ total: 'anchored', date: 'absent', invoiceNumber: 'absent', btw: 'absent' }), false)
-  assert.equal(documentCheckBlocks({ total: 'largest', date: 'absent', invoiceNumber: 'absent', btw: 'absent' }), false)
+  //
+  // A BTW that is merely NOT PRINTED is in that same category and holds nothing — every receipt
+  // that prints a rate and a total leaves the split to be computed. What holds is a BTW that
+  // contradicts a split the paper actually asserts; see [DOCCHECK-SPLIT].
+  const noSplit = { btwContradiction: null }
+  assert.equal(documentCheckBlocks({ total: 'anchored', date: 'absent', invoiceNumber: 'absent', btw: 'absent', ...noSplit }), false)
+  assert.equal(documentCheckBlocks({ total: 'largest', date: 'absent', invoiceNumber: 'absent', btw: 'absent', ...noSplit }), false)
   assert.equal(documentCheckBlocks({ total: 'present', ...clean }), true)
+  assert.equal(
+    documentCheckBlocks({ total: 'anchored', date: 'found', invoiceNumber: 'found', btw: 'absent', btwContradiction: { excl: 21.45, btw: 4.5, rate: 21 } }),
+    true,
+    'a split the document contradicts holds the invoice, whatever the total says',
+  )
 })
 
 test('[DOCCHECK] amountsIn reads money and ignores everything else', () => {
@@ -137,13 +147,58 @@ test('[DOCCHECK] the whole check composes without inventing anything', () => {
     { totalIncBtw: 2265.41, btwAmount: 393.17, invoiceDate: '2026-06-01', invoiceNumber: '26302050' },
     FACTUUR,
   )
-  assert.deepEqual(c, { total: 'anchored', date: 'found', invoiceNumber: 'found', btw: 'found' })
+  assert.deepEqual(c, { total: 'anchored', date: 'found', invoiceNumber: 'found', btw: 'found', btwContradiction: null })
 
   // No text: every field says the check did not run. Not one of them says 'absent'.
   const blind = verifyDocument(
     { totalIncBtw: 2265.41, btwAmount: 393.17, invoiceDate: '2026-06-01', invoiceNumber: '26302050' },
     null,
   )
-  assert.deepEqual(blind, { total: 'unreadable', date: 'unreadable', invoiceNumber: 'unreadable', btw: 'unreadable' })
+  assert.deepEqual(blind, { total: 'unreadable', date: 'unreadable', invoiceNumber: 'unreadable', btw: 'unreadable', btwContradiction: null })
   assert.equal(documentCheckBlocks(blind), false)
+})
+
+test('[DOCCHECK-SPLIT] the original € 0,46 error, which everything above still let through', () => {
+  // Measured with the total-placement check already in place: it STILL booked. The total was right
+  // and anchored, the arithmetic was consistent (21,91 + 4,04 = 25,95), and only the split was
+  // invented — and the split held nothing, because the total was the only field that could hold an
+  // invoice. The first error this whole line of work started from was still getting through.
+  const paper = 'Subtotaal 21,45\nBTW 21% 4,50\nTotaal te betalen 25,95'
+
+  const wrong = verifyDocument({ totalIncBtw: 25.95, btwAmount: 4.04 }, paper)
+  assert.equal(wrong.total, 'anchored', 'the total was read correctly — nothing above this fires')
+  assert.ok(Math.abs(21.91 + 4.04 - 25.95) <= 0.02, 'and the arithmetic gate passes too')
+  assert.deepEqual(wrong.btwContradiction, { excl: 21.45, btw: 4.5, rate: 21 }, 'the paper says otherwise')
+  assert.equal(documentCheckBlocks(wrong), true, 'and it is finally held')
+
+  const right = verifyDocument({ totalIncBtw: 25.95, btwAmount: 4.5 }, paper)
+  assert.equal(right.btwContradiction, null)
+  assert.equal(documentCheckBlocks(right), false)
+})
+
+test('[DOCCHECK-SPLIT] "hold whenever the BTW is not printed" would have been the wrong fix', () => {
+  // That naive rule fires on every receipt printing a rate and a total and leaving the split to be
+  // computed — a large, legitimate class. A false alarm on correct documents is what gets a safety
+  // feature switched off, so the question is narrower: does the paper print a DIFFERENT split?
+  const CORRECT: Array<[string, { totalIncBtw: number; btwAmount: number | null }, string]> = [
+    ['receipt: rate only, split computed', { totalIncBtw: 121, btwAmount: 21 }, 'Bon\nTotaal 121,00\n21% btw inbegrepen'],
+    ['split printed, read matches',        { totalIncBtw: 25.95, btwAmount: 4.5 }, 'Subtotaal 21,45\nBTW 21% 4,50\nTotaal 25,95'],
+    ['9% invoice',                         { totalIncBtw: 109, btwAmount: 9 }, 'Subtotaal 100,00\nBTW 9% 9,00\nTotaal 109,00'],
+    ['0% / vrijgesteld',                   { totalIncBtw: 100, btwAmount: 0 }, 'Bedrag 100,00\nBTW 0% 0,00\nTotaal 100,00'],
+    ['multi-rate, two splits printed',     { totalIncBtw: 1210, btwAmount: 150 }, 'Regel 9% 500,00\nRegel 21% 500,00\nBTW 9% 45,00\nBTW 21% 105,00\nSubtotaal 1.000,00\nTotaal 1.210,00'],
+    ['a photo — no text at all',           { totalIncBtw: 25.95, btwAmount: 4.04 }, ''],
+    ['no BTW read at all',                 { totalIncBtw: 25.95, btwAmount: null }, 'Subtotaal 21,45\nBTW 21% 4,50\nTotaal 25,95'],
+  ]
+  const flagged = CORRECT.filter(([, r, t]) => documentCheckBlocks(verifyDocument(r, t))).map(([n]) => n)
+  assert.deepEqual(flagged, [], 'these correct reads were held for a human')
+})
+
+test('[DOCCHECK-SPLIT] a printed split needs BOTH numbers on the paper', () => {
+  // One printed number plus arithmetic is not the document asserting anything — it is us inventing a
+  // split and then holding an invoice against our own invention.
+  assert.equal(findPrintedSplit(121, 'Totaal 121,00'), null, 'nothing else printed → no assertion')
+  assert.equal(findPrintedSplit(121, 'Subtotaal 100,00\nTotaal 121,00'), null, 'the BTW is not printed')
+  assert.deepEqual(findPrintedSplit(121, 'Subtotaal 100,00\nBTW 21,00\nTotaal 121,00'), { excl: 100, btw: 21, rate: 21 })
+  // And the pair must land on a real Dutch rate — two amounts that merely add up are not a split.
+  assert.equal(findPrintedSplit(121, 'Regel A 60,00\nRegel B 61,00\nTotaal 121,00'), null)
 })
