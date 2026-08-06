@@ -623,6 +623,23 @@ export interface GmailAttachment {
  * dezelfde stille weigering als een logo in een handtekening. Het overgeslagen-paneel meldde dan
  * "Niets overgeslagen" over een mail waar wel degelijk een factuur in zat.
  */
+/**
+ * [ONBEREIKBAAR] Wat één bijlage-ophaal opleverde. Het onderscheid dat hier gemaakt wordt is dat
+ * tussen WEER en BLIJVEND, en het gaat over de hele mailbox: bij weer houdt de watermerk-stand
+ * stil en probeert de volgende sync het opnieuw; bij een blijvende fout zou datzelfde stilhouden
+ * élke nieuwere factuur achter één onbereikbaar bestand opsluiten — en dan valt de import stil
+ * zonder dat iemand kan zeggen waarom. Eén bestand luid verliezen is beter dan alle stil.
+ */
+type AttachmentFetchResult =
+  | { kind: 'item'; item: GmailAttachment }
+  | { kind: 'transient' }
+  | { kind: 'permanent'; filename: string }
+
+/** Eén zin voor beide deuren: dezelfde situatie hoort niet twee verschillende uitleggen te krijgen. */
+const UNREACHABLE_ATTACHMENT_REASON =
+  'de bijlage stond wel in de mail maar kon niet worden opgehaald — stuur hem opnieuw door, of ' +
+  'voeg hem toe bij Uploaden'
+
 export interface SkippedAttachmentRef {
   messageId: string
   filename: string
@@ -1013,7 +1030,7 @@ async function fetchMessageAttachments(
   // [BOEK-011] Resolve each attachment — fetch by ID or use inline data
   // Gmail always returns base64url → convert to standard base64 exactly once
   const resolved = await Promise.all(
-    pending.map(async (att): Promise<GmailAttachment | null> => {
+    pending.map(async (att): Promise<AttachmentFetchResult> => {
       let base64url: string | undefined
 
       if (att.attachmentId) {
@@ -1023,39 +1040,71 @@ async function fetchMessageAttachments(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.attachmentId}`,
             { headers: { Authorization: `Bearer ${accessToken}` } }
           )
-          if (!attRes.ok) return null
+          if (!attRes.ok) {
+            // [ONBEREIKBAAR] Weather or permanence — and the difference is the whole mailbox.
+            // Holding the watermark is right for a throttle or a 5xx: the next sync re-lists the
+            // same mail and gets the bytes. It is catastrophic for a 404 or a 403, which will fail
+            // identically forever: the mark then never advances, and EVERY newer invoice queues
+            // behind one attachment nobody can reach — the import goes quiet with no one able to
+            // say why. Losing one file loudly beats losing all of them silently.
+            const transient = attRes.status === 429 || attRes.status >= 500
+            console.error('[ONBEREIKBAAR] Gmail attachment bytes could not be fetched', {
+              messageId, filename: att.filename, status: attRes.status, transient,
+            })
+            return transient ? { kind: 'transient' } : { kind: 'permanent', filename: att.filename }
+          }
           const attData = await attRes.json()
           base64url = attData.data as string
-        } catch {
-          return null
+        } catch (e) {
+          // A network error is weather by definition — nothing was learned about the file.
+          console.error('[ONBEREIKBAAR] Gmail attachment fetch threw', {
+            messageId, filename: att.filename, error: e instanceof Error ? e.message : String(e),
+          })
+          return { kind: 'transient' }
         }
       } else {
         base64url = att.inlineData
       }
 
-      if (!base64url) return null
+      // Listed with neither an id nor inline data. Re-asking cannot produce bytes that were never
+      // offered, so this is permanent rather than something to hold the mailbox for.
+      if (!base64url) return { kind: 'permanent', filename: att.filename }
 
       // [BOEK-011] base64url → standard base64 — done exactly once, here
       const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
 
       return {
-        messageId,
-        filename: att.filename,
-        mimeType: att.mimeType,
-        data: base64,
-        subject,
-        from,
-        date,
-        size: att.size,
+        kind: 'item',
+        item: {
+          messageId,
+          filename: att.filename,
+          mimeType: att.mimeType,
+          data: base64,
+          subject,
+          from,
+          date,
+          size: att.size,
+        },
       }
     })
   )
 
-  // [BOEK-011 throttle×watermark] Every null in `resolved` is a failed
-  // attachment fetch (filters already ran in walkParts) — one failure marks
-  // this email incomplete so the watermark holds this round.
-  const items = resolved.filter((a): a is GmailAttachment => a !== null)
-  return { items, ok: items.length === resolved.length, statements, unread }
+  // [BOEK-011 throttle×watermark] A TRANSIENT failure marks this email incomplete so the watermark
+  // holds this round and the next sync tries again.
+  // [ONBEREIKBAAR] A PERMANENT one does not hold it — see above — but it is never silent either:
+  // it becomes a row in the skipped panel naming the file, so "waar is die factuur gebleven" has an
+  // answer instead of an empty list.
+  const items: GmailAttachment[] = []
+  let allReachable = true
+  for (const r of resolved) {
+    if (r.kind === 'item') { items.push(r.item); continue }
+    if (r.kind === 'transient') { allReachable = false; continue }
+    unread.push({
+      messageId, filename: r.filename, kind: 'unreachable',
+      reason: UNREACHABLE_ATTACHMENT_REASON,
+    })
+  }
+  return { items, ok: allReachable, statements, unread }
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
@@ -1342,6 +1391,42 @@ export async function fetchOutlookAttachments(
 }
 
 /**
+ * [ONBEREIKBAAR] The raw bytes of ONE Graph attachment, and an honest answer when there are none.
+ *
+ * Used by both paths that need bytes Graph did not inline: a forwarded message (whose MIME is the
+ * only way in) and a file attachment large enough that the collection left contentBytes empty.
+ * One implementation, so "is this failure worth retrying" cannot be answered two different ways.
+ *
+ * graphFetch has already waited once on a throttle, so a 429 still standing here is a real one.
+ */
+async function fetchGraphAttachmentValue(
+  messageId: string,
+  attachmentId: string,
+  accessToken: string,
+): Promise<{ ok: true; bytes: Buffer } | { ok: false; transient: boolean; status: number }> {
+  let res: Response
+  try {
+    res = await graphFetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments/${attachmentId}/$value`,
+      accessToken,
+    )
+  } catch {
+    // A network error taught us nothing about the file — weather, by definition.
+    return { ok: false, transient: true, status: 0 }
+  }
+  if (!res.ok) {
+    // 429/5xx is weather. Anything else (404 gone, 403 scope, 400 unsupported) fails identically
+    // forever, and holding the watermark for it buries every newer invoice behind one file.
+    return { ok: false, transient: res.status === 429 || res.status >= 500, status: res.status }
+  }
+  try {
+    return { ok: true, bytes: Buffer.from(await res.arrayBuffer()) }
+  } catch {
+    return { ok: false, transient: true, status: res.status }
+  }
+}
+
+/**
  * [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
  *
  * Returns what was found, anything the owner must be told about, and whether the failure — if there
@@ -1388,18 +1473,12 @@ async function readEmbeddedMessageAttachments(
     }
   }
 
-  const res = await graphFetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments/${att.id}/$value`,
-    accessToken,
-  )
-  if (!res.ok) {
-    // 429/5xx is weather; graphFetch already waited once. Anything else will fail the same way
-    // forever, and a permanent hold on the watermark buries every newer invoice behind it.
-    const transient = res.status === 429 || res.status >= 500
+  const value = await fetchGraphAttachmentValue(messageId, att.id, accessToken)
+  if (!value.ok) {
     console.error('[DOORGESTUURD] could not read an embedded message', {
-      messageId, filename, status: res.status, transient,
+      messageId, filename, status: value.status, transient: value.transient,
     })
-    if (transient) return { ...none, transient: true }
+    if (value.transient) return { ...none, transient: true }
     return {
       ...none,
       unread: [{
@@ -1410,7 +1489,7 @@ async function readEmbeddedMessageAttachments(
     }
   }
 
-  const raw = Buffer.from(await res.arrayBuffer())
+  const raw = value.bytes
   // normalizeAttachmentMime is INJECTED, never reimplemented: "which types can we read" must have
   // exactly one answer, or a file is dropped by one door and accounted for by the other.
   const found = extractMimeAttachments(raw, { normalizeMime: normalizeAttachmentMime })
@@ -1547,9 +1626,8 @@ async function fetchOutlookMessageAttachments(
       continue
     }
 
-    // Only file attachments carry contentBytes. Inline attachments without bytes cannot be read.
+    // Only file attachments carry contentBytes.
     if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue
-    if (!att.contentBytes) continue
 
     const rawMime = att.contentType || ''
     const filename = att.name || ''
@@ -1592,11 +1670,42 @@ async function fetchOutlookMessageAttachments(
       continue
     }
 
+    // [ONBEREIKBAAR] Graph does not always inline the bytes: a large attachment comes back with
+    // its name, type and size, and contentBytes empty. This used to be `if (!att.contentBytes)
+    // continue` at the very top of the loop — a purchase invoice listed in full and dropped for
+    // the one field the provider chose not to send, leaving nothing anywhere in the app.
+    //
+    // The bytes are one call away, and it is the same call the forwarded-message path makes. It
+    // sits HERE, below every filter, on purpose: fetching before them would download the logos and
+    // the oversized files we are about to refuse — the pre-filter exists precisely to avoid that.
+    let contentBytes = att.contentBytes
+    if (!contentBytes) {
+      if (!att.id) {
+        unread.push({
+          messageId: message.id, filename,
+          kind: 'unreachable', reason: UNREACHABLE_ATTACHMENT_REASON,
+        })
+        continue
+      }
+      const value = await fetchGraphAttachmentValue(message.id, att.id, accessToken)
+      if (!value.ok) {
+        // Weather holds the watermark; permanence reports and lets the mail move on. Holding for a
+        // 404 would freeze every newer invoice behind one file nobody can reach.
+        if (value.transient) { ok = false; continue }
+        unread.push({
+          messageId: message.id, filename,
+          kind: 'unreachable', reason: UNREACHABLE_ATTACHMENT_REASON,
+        })
+        continue
+      }
+      contentBytes = value.bytes.toString('base64')
+    }
+
     out.push({
       messageId: message.id,
       filename,
       mimeType,
-      data: att.contentBytes, // already standard base64 — no conversion needed
+      data: contentBytes, // already standard base64 — no conversion needed
       subject: message.subject || '',
       from,
       date: message.receivedDateTime || new Date().toISOString(),
@@ -1870,6 +1979,12 @@ export type AttachmentSkipKind =
   | 'too-small'
   /** Een bestandstype waar in deze app geen lezer voor bestaat (.xlsx, .docx, .zip, .eml …). */
   | 'unreadable-format'
+  /**
+   * [ONBEREIKBAAR] De provider liet de bijlage zien maar gaf de bytes niet — en zal dat blijven
+   * doen (404/403). Anders dan de rest is dit geen oordeel OVER het bestand: wij hebben het nooit
+   * gezien. Precies daarom moet het gemeld worden en niet stil de wachtrij blokkeren.
+   */
+  | 'unreachable'
 
 export interface AttachmentTriage {
   /** Ophalen en door de classificatie halen. */
