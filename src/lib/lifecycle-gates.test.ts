@@ -1181,3 +1181,48 @@ test("[GEGROND-OCR] the weaker witness never borrows the stronger one's words", 
       "part of a bigger number, and it has broken in BOTH directions before",
   );
 });
+
+test("[NAREKENEN] the audit writes evidence and never a figure", () => {
+  // [GEGROND] verifies at IMPORT, so it says nothing about the invoices already in the books —
+  // which is exactly the set an owner doubts. This pass covers those. And the single property that
+  // makes it safe to run over a whole administration is that it cannot change one: an audit that
+  // also "fixes" what it finds is an audit whose results cannot be checked, and on a booked invoice
+  // a silent correction moves a figure that may already sit in a filed aangifte.
+  const src = code("src/app/api/invoice/audit/route.ts");
+  const updates = [...src.matchAll(/\.from\("invoices"\)\s*\.update\(([^)]*)\)/g)];
+  assert.equal(updates.length, 1, `expected exactly one invoices update, found ${updates.length}`);
+  assert.match(
+    updates[0][1], /^\{ field_confidence: merged \}/,
+    "the audit's only invoice write must be the verdict — any money, date or status field here " +
+      "turns a report into a silent correction",
+  );
+  // No blanket ban on money words in the file. That was tried, on the [ORIGINEEL] route, and it
+  // failed on `invoice_date: string | null` inside a TYPE ANNOTATION over a read — a gate that
+  // cannot tell a read from a write teaches people to loosen it. The exactly-one-update assertion
+  // above is the real claim, and it is checkable.
+  // And it must be the owner's own books only.
+  assert.match(src, /\.eq\("receiver_id", user\.id\)/, "scoped to the caller");
+});
+
+test("[NAREKENEN] what it could not check is never counted as fine", () => {
+  // The failure that would make the whole report worthless: "everything checks out" while silently
+  // skipping every photograph. That is a claim about documents nobody opened, and it is worse than
+  // running nothing at all.
+  const mod = code("src/lib/books-audit.ts");
+  assert.match(mod, /unchecked: rows\.filter\(\(r\) => r\.verdict === 'unreadable'\)\.length/);
+  assert.match(mod, /foto of scan/, "the report says it in words");
+  assert.match(
+    mod, /daar zeggen deze cijfers dus niets over/,
+    "and says plainly that the other numbers do not cover them",
+  );
+  // A problem leads the headline; a reassuring count above it is how a report gets skimmed.
+  assert.match(
+    mod, /if \(s\.mismatched\.length > 0\)[\s\S]{0,200}?klopt niet met het document/,
+    "the failing count must come before the confirming one in the title",
+  );
+
+  const route = code("src/app/api/invoice/audit/route.ts");
+  // A cap the owner cannot see is a report claiming to cover more than it did.
+  assert.match(route, /truncated,/, "the per-run cap is reported");
+  assert.match(route, /withoutDocument:/, "and so are the invoices with nothing to check against");
+});
