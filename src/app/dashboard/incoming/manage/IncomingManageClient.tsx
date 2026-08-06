@@ -2845,33 +2845,75 @@ export default function IncomingManageClient({
                           because a query failed is worse than no switch — the owner would turn it
                           on again and be told they already had. */}
                       {!incassoUnknown && inv.direction === 'incoming' && (inv.client_name ?? '').trim() !== '' && (
-                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${M3.surfaceVariant}` }}>
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${M3.surfaceVariant}`, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                          {/* [INCASSO-SWITCH-TRAILING] The switch sits AFTER the sentence, on the
+                              trailing edge, where every switch on a phone lives — the label says
+                              what it controls and the control is where the thumb reaches. Leading
+                              it also made the two lines of explanation hang off a 20px column,
+                              so the paragraph started a third of the way across the card.
+
+                              [INCASSO-SWITCH-TARGET] The text is NOT part of the control. This whole
+                              block used to be one <button>, so reading the explanation — three lines
+                              about money leaving your account by itself — and touching it anywhere
+                              flipped the setting. The most consequential switch on this screen had
+                              the largest possible accidental hit area, and it was made of the very
+                              sentence that asks you to think about it. */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface }}>
+                              {inv.client_name} schrijft automatisch af
+                            </div>
+                            <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 2, lineHeight: 1.45 }}>
+                              {isIncassoRow(inv)
+                                ? 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.'
+                                : 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.'}
+                            </div>
+                          </div>
+                          {/* A drawn switch rather than an icon glyph: the icon was 26px of ink with
+                              no defined touch area, on a control whose two states must be readable
+                              across the room. This is 52×32 of track inside a 48px-tall target —
+                              the size a switch is supposed to be — and the state is carried by
+                              POSITION and COLOUR together, so it survives being looked at quickly. */}
                           <button
+                            role="switch"
+                            aria-checked={isIncassoRow(inv)}
+                            aria-label={`${inv.client_name ?? 'Deze leverancier'} schrijft automatisch af`}
                             onClick={e => { e.stopPropagation(); setIncassoAsk({ inv, on: !isIncassoRow(inv) }) }}
                             disabled={incassoBusy === inv.id}
                             style={{
-                              display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left',
-                              background: 'transparent', border: 'none', padding: 0, fontFamily: FONT,
-                              cursor: incassoBusy === inv.id ? 'default' : 'pointer',
+                              flexShrink: 0, background: 'transparent', border: 'none', padding: '8px 0 8px 8px',
+                              cursor: incassoBusy === inv.id ? 'default' : 'pointer', fontFamily: FONT,
+                              display: 'flex', alignItems: 'center', minHeight: 48,
                             }}
                           >
-                            {/* [INCASSO-SWITCH-TRAILING] The switch sits AFTER the sentence, on the
-                                trailing edge, where every switch on a phone lives — the label says
-                                what it controls and the control is where the thumb reaches. Leading
-                                it also made the two lines of explanation hang off a 20px column,
-                                so the paragraph started a third of the way across the card. */}
-                            <span style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: M3.onSurface }}>
-                                {inv.client_name} schrijft automatisch af
+                            <span
+                              style={{
+                                position: 'relative', display: 'inline-block', width: 52, height: 32,
+                                borderRadius: 16, flexShrink: 0,
+                                background: isIncassoRow(inv) ? M3.primary : '#E6E0E9',
+                                border: isIncassoRow(inv) ? '2px solid transparent' : '2px solid #79747E',
+                                boxSizing: 'border-box',
+                                transition: 'background 0.18s ease, border-color 0.18s ease',
+                                opacity: incassoBusy === inv.id ? 0.6 : 1,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+                                  left: isIncassoRow(inv) ? 22 : 4,
+                                  width: isIncassoRow(inv) ? 24 : 16,
+                                  height: isIncassoRow(inv) ? 24 : 16,
+                                  borderRadius: '50%',
+                                  background: isIncassoRow(inv) ? '#FFFFFF' : '#79747E',
+                                  transition: 'left 0.18s ease, width 0.18s ease, height 0.18s ease, background 0.18s ease',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}
+                              >
+                                {incassoBusy === inv.id && (
+                                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: isIncassoRow(inv) ? M3.primary : '#FFFFFF' }}>
+                                    hourglass_empty
+                                  </span>
+                                )}
                               </span>
-                              <span style={{ display: 'block', fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 2, lineHeight: 1.45 }}>
-                                {isIncassoRow(inv)
-                                  ? 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.'
-                                  : 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.'}
-                              </span>
-                            </span>
-                            <span className="material-symbols-outlined" style={{ fontSize: 26, color: isIncassoRow(inv) ? M3.primary : '#9AA0A6', flexShrink: 0, marginTop: -2 }}>
-                              {incassoBusy === inv.id ? 'hourglass_empty' : isIncassoRow(inv) ? 'toggle_on' : 'toggle_off'}
                             </span>
                           </button>
                         </div>

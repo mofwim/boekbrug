@@ -336,19 +336,43 @@ test("[INCASSO-CONFIRM] the switch that can settle a year of invoices asks first
   );
 });
 
-test("[INCASSO-CONFIRM] the switch sits after the sentence it controls", () => {
+test("[INCASSO-CONFIRM] the switch sits after the sentence, and IS the whole control", () => {
   // Trailing edge, where a switch lives on a phone: the label says what it controls and the
   // control is where the thumb reaches. Leading it also made the two lines of explanation hang off
   // a 20px column, starting the paragraph a third of the way across the card.
+  //
+  // [INCASSO-SWITCH-TARGET] And the sentence is NOT part of the control. The whole block used to be
+  // a single <button>, so reading the explanation — three lines about money leaving your account by
+  // itself — and touching it anywhere flipped the setting. The most consequential switch on this
+  // screen had the largest possible accidental hit area, made of the very sentence asking you to
+  // think about it.
   //
   // Held here rather than in the render gate because this block only exists inside the EXPANDED
   // card, and that gate renders the collapsed list — an assertion there would match nothing and
   // pass forever, which is the shape of half the defects in this file.
   const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   const label = src.indexOf("schrijft automatisch af");
-  const toggle = src.indexOf("'toggle_on' : 'toggle_off'");
+  const toggle = src.indexOf('role="switch"');
   assert.ok(label > 0 && toggle > 0, "both the label and the switch must still be there");
   assert.ok(label < toggle, "the switch renders after its label, not in front of it");
+
+  // The onClick belongs to the switch and to nothing wider. A wrapper carrying it means the
+  // paragraph is a button again, whatever it looks like.
+  const openers = [...src.matchAll(/setIncassoAsk\(\{ inv, on: !isIncassoRow\(inv\) \}\)/g)];
+  assert.equal(openers.length, 1, "exactly one thing opens the incasso confirm");
+  const before = src.slice(0, openers[0].index ?? 0);
+  const lastButton = before.lastIndexOf("<button");
+  const lastSwitch = before.lastIndexOf('role="switch"');
+  assert.ok(
+    lastSwitch > lastButton - 200 && lastSwitch !== -1,
+    "the handler must sit on the element carrying role=\"switch\" — not on a wrapper that also " +
+      "contains the explanation, which is how the text became tappable in the first place",
+  );
+
+  // A real switch, not a glyph: it needs a state a screen reader can read and a target a thumb can
+  // hit. The icon it replaced was 26px of ink with no defined touch area.
+  assert.match(src, /aria-checked=\{isIncassoRow\(inv\)\}/, "the switch reports its own state");
+  assert.match(src, /minHeight: 48/, "and carries a real touch target");
 });
 
 test("[BULK-UNDO] undoing payments in bulk goes through the audited single route", () => {
