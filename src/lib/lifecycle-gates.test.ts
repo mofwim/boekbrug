@@ -1619,9 +1619,15 @@ test("[DOORGESTUURD] an e-mail attached to an e-mail is opened, not dropped", ()
   const fileAt = src.indexOf("att['@odata.type'] !== '#microsoft.graph.fileAttachment'");
   assert.ok(itemAt > 0 && fileAt > itemAt, "the embedded-message branch must come first");
 
-  // It reads the raw MIME Graph offers, which is the only way those bytes are reachable.
+  // It reads the raw MIME Graph offers, which is the only way those bytes are reachable — through
+  // the ONE helper that also decides whether a failure is worth retrying. Exactly one place builds
+  // that URL: a second would be a second answer to "is this weather or permanence".
+  assert.equal(
+    (src.match(/\/\$value/g) ?? []).length, 1,
+    "one $value fetcher, shared by the forwarded-message and large-attachment paths",
+  );
   assert.match(
-    src, /attachments\/\$\{att\.id\}\/\$value/,
+    src, /const value = await fetchGraphAttachmentValue\(messageId, att\.id, accessToken\)/,
     "the embedded item's MIME must actually be fetched",
   );
 
@@ -1654,11 +1660,11 @@ test("[DOORGESTUURD] a failure that will never succeed does not freeze the mailb
   // be read, and the sync goes quiet with no one able to say why.
   const src = code("src/lib/email-integration.ts");
   assert.match(
-    src, /const transient = res\.status === 429 \|\| res\.status >= 500/,
+    src, /transient: res\.status === 429 \|\| res\.status >= 500, status: res\.status/,
     "only a throttle or a server error may be retried forever",
   );
   assert.match(
-    src, /if \(transient\) return \{ \.\.\.none, transient: true \}/,
+    src, /if \(value\.transient\) return \{ \.\.\.none, transient: true \}/,
     "…and only that case holds the mark",
   );
   assert.match(
@@ -1677,4 +1683,141 @@ test("[DOORGESTUURD] a failure that will never succeed does not freeze the mailb
     src, /extractMimeAttachments\(raw, \{ normalizeMime: normalizeAttachmentMime \}\)/,
     "the type rule is injected, never copied",
   );
+});
+
+test("[ONBEREIKBAAR] a byte fetch that will never succeed must not freeze the mailbox", () => {
+  // THE WORST FAILURE MODE IN THE IMPORT, and it was silent in both directions.
+  //
+  // Gmail's per-attachment byte fetch answered `return null` for every failure, and one null marks
+  // the whole email incomplete — which HOLDS the watermark. That is right for a throttle: the next
+  // sync re-lists the same mail and gets the bytes. For a 404 (Gmail rotates attachment ids when a
+  // message is modified) or a 403 it is catastrophic: the mark never advances, EVERY newer invoice
+  // queues behind one unreachable file, and the import goes quiet with nothing on any screen
+  // saying why. Losing one file loudly beats losing all of them silently.
+  const src = code("src/lib/email-integration.ts");
+
+  assert.match(
+    src, /const transient = attRes\.status === 429 \|\| attRes\.status >= 500/,
+    "Gmail must sort weather from permanence",
+  );
+  // The permanent one reports and lets the mark move; the transient one holds it. Both, not either.
+  assert.match(
+    src, /return transient \? \{ kind: 'transient' \} : \{ kind: 'permanent', filename: att\.filename \}/,
+    "…and act on the difference",
+  );
+  assert.match(
+    src, /if \(r\.kind === 'transient'\) \{ allReachable = false; continue \}[\s\S]{0,200}?unread\.push\(\{[\s\S]{0,120}?kind: 'unreachable'/,
+    "only weather holds the watermark; permanence becomes a row the owner can read",
+  );
+  assert.match(
+    src, /return \{ items, ok: allReachable, statements, unread \}/,
+    "the fetch reports itself incomplete ONLY for the retryable case",
+  );
+  // The old rule counted every failure the same way. If it comes back, so does the frozen mailbox.
+  assert.doesNotMatch(
+    src, /ok: items\.length === resolved\.length/,
+    "counting nulls treats a permanent failure as something to retry forever",
+  );
+
+  // Outlook's mirror: Graph does not always inline the bytes, and the old line dropped a listed
+  // purchase invoice for the one field the provider chose not to send.
+  assert.doesNotMatch(
+    src, /if \(!att\.contentBytes\) continue/,
+    "an attachment listed without inline bytes is fetchable, not disposable",
+  );
+  assert.match(
+    src, /let contentBytes = att\.contentBytes[\s\S]{0,600}?fetchGraphAttachmentValue\(message\.id, att\.id, accessToken\)/,
+    "Outlook must fetch the bytes Graph withheld",
+  );
+  // …and it must sit BELOW the filters, or we download the logos we are about to refuse.
+  const triageAt = src.indexOf("const triage = triageAttachment({ filename, mimeType, size: att.size || 0 })");
+  const lazyAt = src.indexOf("let contentBytes = att.contentBytes");
+  assert.ok(triageAt > 0 && lazyAt > triageAt, "bytes are fetched after the filters, never before");
+
+  // One sentence for the same situation at both doors.
+  assert.equal(
+    (src.match(/UNREACHABLE_ATTACHMENT_REASON/g) ?? []).length, 4,
+    "one definition, used at each of the three places it can happen",
+  );
+});
+
+test("[E-FACTUUR] the supplier's own figures are read, and they outrank the reading", () => {
+  // A Factur-X or ZUGFeRD PDF carries the invoice a SECOND time as XML the supplier produced, and
+  // the app was photographing it like any other page while the exact figures sat unread inside the
+  // same bytes. NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for
+  // everyone from 2028, so this arrives now and will only arrive more.
+  const ai = code("src/lib/ai.ts");
+  assert.match(
+    ai, /extractEmbeddedInvoiceXml\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
+    "the reader must look inside the PDF for it",
+  );
+  assert.match(
+    ai, /_einvoice = \{[\s\S]{0,160}?contradicts: eInvoiceContradicts\(eInvoice, parsed\.total_inc_btw\)/,
+    "…and record whether it disagrees with what was read",
+  );
+  // Never pay for an OCR second-reading when the document itself already answered.
+  assert.match(
+    ai, /grounding\.totalIncBtw === 'unreadable' &&[\s\S]{0,400}?!eInvoice &&/,
+    "the OCR pass must stand down when structured figures are in hand",
+  );
+
+  // BOTH auto-booking doors ask it — a gate on one door is not a gate.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(
+      code(f), /eInvoiceContradicts: eInvoiceContradictsRead\(/,
+      `${f} does not pass it — this door books what the other refuses`,
+    );
+  }
+
+  // And the refusal exists, keyed on `true` only: a PDF with no e-invoice answers null, and a
+  // check that could not run may never read as one that failed.
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(
+    aa, /if \(s\.eInvoiceContradicts === true\)[\s\S]{0,140}?advance: false/,
+    "a contradiction must block the automatic booking",
+  );
+  assert.doesNotMatch(
+    aa, /if \(!s\.eInvoiceContradicts\)[\s\S]{0,80}?advance: false/,
+    "absence of an e-invoice is not a reason to hold anything",
+  );
+
+  // The owner is told the RIGHT NUMBER, not merely that something is wrong. The app already knows
+  // it; making them hunt for what it knows is a riddle, not a check.
+  assert.match(
+    code("src/lib/import-health.ts"),
+    /de leverancier stuurde een e-factuur mee en daarin staat \$\{formatEuroNL\(efact\.totalIncBtw\)\}/,
+    "the sentence must name the supplier's own figure",
+  );
+});
+
+test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", () => {
+  // These figures outrank the model, so the completeness gate is the whole safety of the feature.
+  // A broken document accepted here is worse than never having built it.
+  const m = code("src/lib/e-invoice.ts");
+  assert.match(
+    m, /if \(inc === null \|\| ex === null \|\| btw === null\) return null/,
+    "three figures or nothing",
+  );
+  assert.match(
+    m, /if \(v\.currency !== null && v\.currency\.toUpperCase\(\) !== 'EUR'\) return null/,
+    "1 200 SEK booked as € 1 200 survives every other check in the building",
+  );
+  assert.match(
+    m, /if \(Math\.abs\(round2\(ex \+ btw\) - round2\(inc\)\) > 0\.01\) return null/,
+    "an e-invoice whose own numbers disagree is not a better witness than the model",
+  );
+  // The totals are read from INSIDE the header block: the same element names occur per line and
+  // per tax rate, so a document-wide search can pick up a line's figure.
+  assert.match(
+    m, /firstBlock\(xml, 'SpecifiedTradeSettlementHeaderMonetarySummation'\)/,
+    "CII totals come from the header summation, never a line",
+  );
+  assert.match(m, /firstBlock\(xml, 'LegalMonetaryTotal'\)/, "UBL likewise");
+  // Namespace prefixes are chosen by the producer. Keying on one reads a correct invoice as empty.
+  assert.match(
+    m, /return `\(\?:\[A-Za-z0-9_\.-\]\+:\)\?\$\{name\}`/,
+    "matching must be on the local name, never the prefix",
+  );
+  // Both syntaxes, because both arrive — knowing only one fails silently on the other.
+  assert.match(m, /isCii \? parseCii\(xml\) : parseUbl\(xml\)/, "CII and UBL both");
 });

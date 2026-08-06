@@ -29,6 +29,8 @@
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
+// [E-FACTUUR] De cijfers die de leverancier zelf meestuurde — sterker dan elke lezing.
+import { eInvoiceOf } from '@/lib/e-invoice'
 // [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
 import { formatEuroNL } from './format-nl'
 // [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
@@ -305,6 +307,23 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     reasons.push(
       `op het document staat ${formatEuroNL(contra.excl)} + ${formatEuroNL(contra.btw)} btw (${contra.rate}%) — ` +
       'dat is een andere btw dan hier is gelezen. Neem het bedrag van de factuur over.',
+    )
+  }
+
+  // [E-FACTUUR] De leverancier stuurde zijn cijfers ZELF mee, in machinevorm (Factur-X / ZUGFeRD /
+  // Peppol), en die spreken het gelezen bedrag tegen. Dit is de enige controle in het hele bestand
+  // die niet naar de lezing kijkt maar naar de factuur zelf: rekensom, plaatsing, zekerheid en
+  // splitsing kunnen alle vier kloppen terwijl het gewoon het verkeerde getal is.
+  //
+  // De zin noemt het juiste bedrag. Wij passen het niet zelf aan — dat blijft aan de ondernemer —
+  // maar hem laten zoeken naar iets wat de app al weet, is geen controle maar een raadsel.
+  const efact = eInvoiceOf(fc)
+  if (efact?.contradicts) {
+    flags.arithmetic = true
+    reasons.push(
+      `de leverancier stuurde een e-factuur mee en daarin staat ${formatEuroNL(efact.totalIncBtw)} ` +
+      `(${formatEuroNL(efact.totalExBtw)} + ${formatEuroNL(efact.btwAmount)} btw) — ` +
+      'dat is een ander bedrag dan hier is gelezen. Neem het bedrag uit de e-factuur over.',
     )
   }
 

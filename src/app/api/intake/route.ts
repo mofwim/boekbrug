@@ -68,6 +68,7 @@ import { readPdfTextLayer } from "@/lib/pdf-text"
 // [GEGROND] The stored verdict on whether the total is printed on the document.
 import { groundingOf } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
+import { eInvoiceContradictsRead } from '@/lib/e-invoice'
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -1093,6 +1094,9 @@ export async function POST(req: NextRequest) {
 totalPlacement: placementOf(v.field_confidence),
 // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
 btwContradictsDocument: btwContradictionOf(v.field_confidence),
+// [E-FACTUUR] And whether the supplier's OWN structured figures disagree with the read. Both
+// auto-booking doors must ask it: a gate on one door is not a gate.
+eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,

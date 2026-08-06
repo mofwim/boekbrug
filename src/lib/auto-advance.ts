@@ -65,6 +65,12 @@ export interface AutoAdvanceSignals {
   // [DOCCHECK-SPLIT] True when the document prints a valid BTW split that differs from the one read.
   // Optional; absent means the check did not run and blocks nothing.
   btwContradictsDocument?: boolean | null;
+  /**
+   * [E-FACTUUR] The supplier's own structured figures disagree with what was read off the page.
+   * Only `true` blocks — a document with no e-invoice in it answers null, and a check that could
+   * not run must never read as one that failed.
+   */
+  eInvoiceContradicts?: boolean | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -143,6 +149,20 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // split to be computed, and holding those would fill the queue with correct documents.
   if (s.btwContradictsDocument === true) {
     return { advance: false, reason: "btw_contradicts_printed_split" };
+  }
+
+  // [E-FACTUUR] The strongest refusal in this function, and the one no other gate could reach.
+  //
+  // A Factur-X or ZUGFeRD PDF carries the invoice a second time as XML the SUPPLIER produced. When
+  // that disagrees with what was read off the page, every check above is satisfied: the arithmetic
+  // is consistent, the figure is printed, it sits exactly where a total belongs, the model is
+  // confident. They are all examining the same reading. Only the supplier's own file can say the
+  // reading is of the wrong number.
+  //
+  // Nothing is corrected here. The figure the document states is recorded on the row and named to
+  // the owner, so the fix is one look instead of a hunt — see import-health.ts.
+  if (s.eInvoiceContradicts === true) {
+    return { advance: false, reason: "e_invoice_contradicts_read" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

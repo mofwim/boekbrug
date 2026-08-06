@@ -82,6 +82,9 @@ import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 // [GEGROND] The independent witness on a money field — see amount-grounding.ts.
 import { groundMoneyFields } from './amount-grounding';
+// [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
+// factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
+import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts } from './e-invoice';
 // [DOCCHECK] The sharper check on the same text — see document-verify.ts.
 import { verifyDocument } from './document-verify';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
@@ -1850,6 +1853,28 @@ Return JSON only.`;
       };
       let grounding = groundMoneyFields(amounts, statementText, 'text');
 
+      // [E-FACTUUR] Before any of the reading checks: does this PDF carry the invoice a SECOND
+      // time, as structured XML the supplier produced? Factur-X and ZUGFeRD are ordinary-looking
+      // PDFs that do exactly that, and NL makes Peppol e-invoicing mandatory over €800k turnover
+      // from 2027 and for everyone from 2028 — so this arrives now and will only arrive more.
+      //
+      // It is not another way of reading the page. Everything else here checks a READING; this is
+      // the supplier's own statement of the money, in a form with nothing to interpret. When it is
+      // present and self-consistent, it is the best witness the app will ever have — and when it
+      // DISAGREES with what was read, that is an error no other gate in the building could catch:
+      // the arithmetic would be perfect, the figure printed, and its placement exactly right.
+      let eInvoice: ReturnType<typeof parseEInvoice> = null;
+      if (mimeType === 'application/pdf') {
+        const xml = await extractEmbeddedInvoiceXml(Buffer.from(cleanBase64(fileBase64), 'base64'));
+        if (xml) eInvoice = parseEInvoice(xml);
+      }
+      if (eInvoice) {
+        (parsed.field_confidence as unknown as Record<string, unknown>)._einvoice = {
+          ...eInvoice,
+          contradicts: eInvoiceContradicts(eInvoice, parsed.total_inc_btw),
+        };
+      }
+
       // [GEGROND-OCR] No text layer means no characters to search, so the check above says
       // 'unreadable' — honest, and useless, because a photographed receipt is the ordinary case this
       // app exists for. Most of what comes in would get no independent check at all.
@@ -1864,6 +1889,10 @@ Return JSON only.`;
       // own characters already proved would be paying for a worse answer.
       if (
         grounding.totalIncBtw === 'unreadable' &&
+        // [E-FACTUUR] Never when the supplier's own structured figures are already in hand. OCR is
+        // a second READING and this is the document itself — paying an API call to get a weaker
+        // answer to a question already settled is spending money to be less sure.
+        !eInvoice &&
         typeof parsed.total_inc_btw === 'number' &&
         Number.isFinite(parsed.total_inc_btw)
       ) {
