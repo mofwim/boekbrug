@@ -130,10 +130,41 @@ BEGIN
 
   -- What this line already gave to OTHER invoices — read under the tx lock,
   -- so it is exact, not a snapshot a concurrent confirm can invalidate.
-  SELECT coalesce(sum(coalesce(amount_applied, 0)), 0) INTO v_elsewhere
-  FROM public.bank_tx_invoices
-  WHERE transaction_id = p_tx_id AND user_id = p_user_id
-    AND invoice_id <> p_invoice_id;
+  --
+  -- [CREDITNOTA] SIGNED. amount_applied is a MAGNITUDE per invoice — a EUR 150 credit really was
+  -- settled by EUR 150, which is what recompute_invoice_amount_paid and the unlink reversal both
+  -- read. But the LINE's budget is not a sum of magnitudes: a credit in the same batch GAVE money
+  -- to the line rather than taking it, so a EUR 850 debit carrying a EUR 150 credit has EUR 1.000
+  -- to give, not EUR 700.
+  --
+  -- Read as magnitudes this function capped a EUR 1.000 invoice at EUR 700 and reported success —
+  -- the same defect allocate_bank_payment had, in the sibling that /api/bank/confirm actually calls
+  -- for a single invoice. The realistic path is not exotic: /api/bank/allocate books the credit,
+  -- the owner then confirms the invoice on the ordinary bank screen, and this function decides.
+  --
+  -- The sign is NOT "is it a creditnota". A creditnota is not inherently one or the other: a
+  -- supplier credit gives EUR 150 back to a DEBIT, and SPENDS a EUR 150 credit line that is the
+  -- supplier actually refunding it. Signed by type alone, two credit notes settled from one refund
+  -- would each count negative and the second be measured against a budget that does not exist.
+  -- What decides is whether the invoice moves money the same way this line did -- identical to
+  -- bank-line-budget.ts's spendsTheLine, so the database and the screen answer alike.
+  SELECT coalesce(sum(
+           -- Does this link SPEND the line, or give money back to it? Not "is it a creditnota" —
+           -- a supplier credit gives €150 back to a DEBIT, and spends a €150 CREDIT that is the
+           -- supplier actually refunding it. What decides is whether the invoice moves money the
+           -- same way this line did. Same rule as bank-line-budget.ts's spendsTheLine.
+           CASE WHEN ((i.direction = 'incoming')
+                       <> (coalesce(i.invoice_type, 'factuur') = 'creditnota'
+                           OR coalesce(i.total_inc_btw, 0) < 0))
+                     = (coalesce(t.amount, 0) < 0)
+                THEN  abs(coalesce(l.amount_applied, 0))
+                ELSE -abs(coalesce(l.amount_applied, 0)) END
+         ), 0) INTO v_elsewhere
+  FROM public.bank_tx_invoices l
+  JOIN public.invoices i ON i.id = l.invoice_id
+  JOIN public.bank_transactions t ON t.id = l.transaction_id
+  WHERE l.transaction_id = p_tx_id AND l.user_id = p_user_id
+    AND l.invoice_id <> p_invoice_id;
 
   v_available := v_tx_amount - v_elsewhere;
   IF v_available <= v_eps THEN

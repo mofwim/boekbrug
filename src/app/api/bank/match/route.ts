@@ -207,18 +207,25 @@ export async function GET() {
     const priced = appliedRows.filter((r) => r.transaction_id && r.amount_applied != null);
     if (priced.length > 0) {
       try {
-        const linkedInvoices = await fetchAllRowsForIds<{ id: string; invoice_type: string | null; total_inc_btw: number | null }, string>(
+        const linkedInvoices = await fetchAllRowsForIds<{ id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null }, string>(
           [...new Set(priced.map((r) => r.invoice_id))],
           (chunk, from, to) =>
             pipeline
               .from("invoices")
-              .select("id, invoice_type, total_inc_btw")
+              .select("id, direction, invoice_type, total_inc_btw")
               .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
               .in("id", chunk)
               .order("id", { ascending: true })
               .range(from, to),
         );
-        const { byTransaction, unknownByTransaction } = allocatedByTransaction(priced, linkedInvoices);
+        // Each line's own signed amount. Which way a link counts depends on the DIRECTION of the
+        // line it sits on — the same creditnota gives money back to a debit and spends a credit —
+        // so a screen measuring many lines at once has to say which is which. These rows are
+        // already in hand (txRows), so this costs nothing.
+        const txAmountById = new Map(
+          (txRows ?? []).map((r) => [(r as BankTransactionDbRow).id, Number((r as BankTransactionDbRow).amount) || 0]),
+        );
+        const { byTransaction, unknownByTransaction } = allocatedByTransaction(priced, linkedInvoices, txAmountById);
         for (const [txId, total] of byTransaction) appliedByTx.set(txId, total);
         // A link to an invoice we could not read makes the total a guess, exactly like a missing
         // amount does — same set, same conservative outcome.

@@ -236,10 +236,10 @@ export async function POST(req: NextRequest) {
         // under its lock, which is the point of it living in one file.
         const { data: linkedInvoices } = await pipeline
           .from("invoices")
-          .select("id, invoice_type, total_inc_btw")
+          .select("id, direction, invoice_type, total_inc_btw")
           .in("id", priced.map((r) => r.invoice_id))
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-        const sum = allocatedOnLine(priced, linkedInvoices ?? []);
+        const sum = allocatedOnLine(priced, linkedInvoices ?? [], Number(tx.amount) || 0);
         // A sibling link whose invoice this user cannot read is the same situation as a missing
         // amount: the total is not measurable, so we say so rather than under-count it.
         if (sum.unknownInvoiceIds.length > 0) appliedElsewhereKnown = false;

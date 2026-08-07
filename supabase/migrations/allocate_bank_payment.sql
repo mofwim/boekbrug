@@ -62,11 +62,18 @@
 --
 -- Two things fix it, and both are needed:
 --
---   · THIS FUNCTION IS NOW SIGN-AWARE. It reads the invoice's own type, sums the line's OTHER
---     links SIGNED (a creditnota link counts negative), and lets a creditnota line RAISE what the
---     line has left instead of consuming it. The magnitude on bank_tx_invoices.amount_applied does
---     not change -- per invoice the link still means "this much of it was settled" -- the sign is
---     derived where the line's budget is computed, exactly as money-invariants.ts does.
+--   · THIS FUNCTION IS NOW SIGN-AWARE. It sums the line's OTHER links SIGNED, and lets a line that
+--     gives money back RAISE what the line has left instead of consuming it. The magnitude on
+--     bank_tx_invoices.amount_applied does not change -- per invoice the link still means "this much
+--     of it was settled" -- the sign is derived where the line's BUDGET is computed.
+--
+--     And the sign is not "is it a creditnota", which is what this file said in its first round.
+--     A creditnota is not inherently one or the other: a supplier credit gives EUR 150 back to a
+--     DEBIT, and SPENDS a EUR 150 credit line that is the supplier actually refunding it. Signed by
+--     type alone, two credit notes settled from one refund would each have counted negative and the
+--     second would have been measured against a budget of EUR 300 that does not exist. What decides
+--     is whether the invoice moves money the same way the line did -- identical to
+--     bank-line-budget.ts's spendsTheLine, so the database and the screen answer alike.
 --
 --   · THE ROUTE APPLIES CREDIT LINES FIRST. Order matters and cannot not matter: a credit that
 --     arrives after the debits has nothing left to raise. /api/bank/allocate sorts negative lines
@@ -100,6 +107,8 @@ DECLARE
   v_acc_status  text;
   v_inv_type    text;
   v_inv_total   numeric;   -- SIGNED, as stored: a creditnota is negative
+  v_inv_direction text;
+  v_tx_signed   numeric;   -- SIGNED: negative is money OUT. Decides which way each link counts.
   v_sign        integer;   -- +1 this invoice takes money from the line, -1 it gives money back
   v_total       numeric;
   v_paid        numeric;
@@ -143,7 +152,8 @@ BEGIN
 
   -- The line, locked. 'pending' is the only state that may still be spent; anything else means
   -- another booking already claimed it, and an empty result tells the caller to stop.
-  SELECT status, abs(coalesce(amount, 0)) INTO v_tx_status, v_tx_amount
+  SELECT status, abs(coalesce(amount, 0)), coalesce(amount, 0)
+    INTO v_tx_status, v_tx_amount, v_tx_signed
   FROM public.bank_transactions
   WHERE id = p_tx_id AND user_id = p_user_id
   FOR UPDATE;
@@ -157,9 +167,9 @@ BEGIN
   -- The invoice, locked and re-verified under that lock. Every refusal here is one the caller
   -- also checks before writing anything; they are repeated because a plan proven a second ago is
   -- not a plan proven now.
-  SELECT i.status, i.accountant_status, i.invoice_type, coalesce(i.total_inc_btw, 0),
+  SELECT i.status, i.accountant_status, i.invoice_type, i.direction, coalesce(i.total_inc_btw, 0),
          abs(coalesce(i.total_inc_btw, 0)), abs(coalesce(i.amount_paid, 0))
-    INTO v_inv_status, v_acc_status, v_inv_type, v_inv_total, v_total, v_paid
+    INTO v_inv_status, v_acc_status, v_inv_type, v_inv_direction, v_inv_total, v_total, v_paid
   FROM public.invoices i
   WHERE i.id = p_invoice_id
     AND (i.sender_id = p_user_id OR i.receiver_id = p_user_id)
@@ -168,12 +178,21 @@ BEGIN
     RAISE EXCEPTION '[BETAALPLAN] invoice not found / not owned' USING ERRCODE = '55000';
   END IF;
 
-  -- [CREDITNOTA] Which way this invoice moves the line's money. Same rule as payment-plan.ts's
-  -- isCreditnota and money-invariants.ts's creditnotaIds, deliberately word for word: the type
-  -- OR a negative total, because both are how a credit reaches this table (the type is what the
-  -- app writes; a negative total is what an import can leave behind).
-  v_sign := CASE WHEN coalesce(v_inv_type, 'factuur') = 'creditnota' OR v_inv_total < 0
-                 THEN -1 ELSE 1 END;
+  -- [CREDITNOTA] Which way this invoice moves the line's money.
+  --
+  -- NOT "is it a creditnota", which is what this line said first. A creditnota is not inherently
+  -- one or the other: a supplier credit gives €150 back to a DEBIT, and SPENDS a €150 credit line
+  -- that is the supplier actually refunding it. What decides is whether the invoice moves money the
+  -- same way this bank line did — identical to bank-line-budget.ts's spendsTheLine, and to the CASE
+  -- in the sibling sum below.
+  --
+  -- The credit test itself is unchanged from everywhere else in this app (payment-plan.ts's
+  -- isCreditnota, money-invariants.ts's creditnotaIds): the type OR a negative total, because both
+  -- are how a credit reaches this table.
+  v_sign := CASE WHEN ((v_inv_direction = 'incoming')
+                        <> (coalesce(v_inv_type, 'factuur') = 'creditnota' OR v_inv_total < 0))
+                      = (v_tx_signed < 0)
+                 THEN 1 ELSE -1 END;
   IF v_inv_status = 'paid' THEN
     RAISE EXCEPTION '[BETAALPLAN] invoice already fully paid' USING ERRCODE = '55000';
   END IF;
@@ -201,13 +220,20 @@ BEGIN
   -- as money-invariants.ts does for the same sum. Read as magnitudes this returned 150 where the
   -- truth is −150 — a €300 error on one small credit, in the direction that books too little.
   SELECT coalesce(sum(
-           CASE WHEN coalesce(i.invoice_type, 'factuur') = 'creditnota'
-                  OR coalesce(i.total_inc_btw, 0) < 0
-                THEN -abs(coalesce(l.amount_applied, 0))
-                ELSE  abs(coalesce(l.amount_applied, 0)) END
+           -- Does this link SPEND the line, or give money back to it? Not "is it a creditnota" —
+           -- a supplier credit gives €150 back to a DEBIT, and spends a €150 CREDIT that is the
+           -- supplier actually refunding it. What decides is whether the invoice moves money the
+           -- same way this line did. Same rule as bank-line-budget.ts's spendsTheLine.
+           CASE WHEN ((i.direction = 'incoming')
+                       <> (coalesce(i.invoice_type, 'factuur') = 'creditnota'
+                           OR coalesce(i.total_inc_btw, 0) < 0))
+                     = (coalesce(t.amount, 0) < 0)
+                THEN  abs(coalesce(l.amount_applied, 0))
+                ELSE -abs(coalesce(l.amount_applied, 0)) END
          ), 0) INTO v_elsewhere
   FROM public.bank_tx_invoices l
   JOIN public.invoices i ON i.id = l.invoice_id
+  JOIN public.bank_transactions t ON t.id = l.transaction_id
   WHERE l.transaction_id = p_tx_id AND l.user_id = p_user_id
     AND l.invoice_id <> p_invoice_id;
 

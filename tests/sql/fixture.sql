@@ -29,6 +29,12 @@ CREATE TABLE public.invoices (
   receiver_id       uuid,
   status            text,
   accountant_status text,
+  -- [CREDITNOTA] Which way this invoice moves money — 'incoming' is a bill you pay, 'outgoing' a
+  -- sale you are paid for. Together with the creditnota test and the LINE's own sign it decides
+  -- whether a link spends a bank line or gives money back to it. Not optional colour: without it
+  -- the sign is guessed from the invoice type alone, which is right for a batch and wrong for a
+  -- refund.
+  direction         text NOT NULL DEFAULT 'incoming',
   invoice_type      text,
   total_inc_btw     numeric,   -- SIGNED: a creditnota is negative
   amount_paid       numeric DEFAULT 0,

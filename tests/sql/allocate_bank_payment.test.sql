@@ -279,4 +279,45 @@ BEGIN
 END $$;
 
 \echo ''
+\echo '— [CREDITNOTA] the SAME credit note spends a refund line and gives back to a debit —'
+DO $$
+DECLARE u uuid := '11111111-1111-1111-1111-111111111111';
+        tx uuid := '22222222-2222-2222-2222-222222222222';
+        a uuid := 'aaaaaaaa-0000-0000-0000-00000000000a';
+        b uuid := 'aaaaaaaa-0000-0000-0000-00000000000b';
+        r record;
+BEGIN
+  -- The case a type-only sign gets wrong, and the reason this rule is about DIRECTION.
+  --
+  -- A supplier refunds EUR 250 in ONE credit line, covering two credit notes of EUR 150 and
+  -- EUR 100. Both are incoming creditnotas — and here they SPEND the line, because the refund IS
+  -- the money. Signed "creditnota → gives back", the first would have counted as -150 and the
+  -- second been measured against a budget of EUR 400 that does not exist.
+  PERFORM public.t_reset();
+  INSERT INTO public.bank_transactions VALUES (tx, u, 250, DATE '2026-08-07', 'pending', NULL);
+  INSERT INTO public.invoices (id, receiver_id, direction, status, invoice_type, total_inc_btw, amount_paid)
+  VALUES (a, u, 'incoming', 'received', 'creditnota', -150, 0),
+         (b, u, 'incoming', 'received', 'creditnota', -100, 0);
+
+  SELECT * INTO r FROM public.allocate_bank_payment(u, tx, a, 150, DATE '2026-08-07');
+  PERFORM public.t_eq('the first credit note settles', r.applied, 150);
+  PERFORM public.t_eq('and it SPENT the refund — 100 left, not 400', r.line_remaining, 100);
+  SELECT * INTO r FROM public.allocate_bank_payment(u, tx, b, 100, DATE '2026-08-07');
+  PERFORM public.t_eq('the second takes the rest', r.applied, 100);
+  PERFORM public.t_is('and the line is finished', r.line_done::text, 'true');
+
+  -- Same creditnota shape, opposite line: on a DEBIT it gives money back. Both readings are
+  -- correct; only the line tells you which.
+  PERFORM public.t_reset();
+  INSERT INTO public.bank_transactions VALUES (tx, u, -850, DATE '2026-08-07', 'pending', NULL);
+  INSERT INTO public.invoices (id, receiver_id, direction, status, invoice_type, total_inc_btw, amount_paid)
+  VALUES (a, u, 'incoming', 'received', 'creditnota', -150, 0),
+         (b, u, 'incoming', 'received', 'factuur',    1000, 0);
+  SELECT * INTO r FROM public.allocate_bank_payment(u, tx, a, 150, DATE '2026-08-07');
+  PERFORM public.t_eq('on a debit the very same credit RAISES the line', r.line_remaining, 1000);
+  SELECT * INTO r FROM public.allocate_bank_payment(u, tx, b, 1000, DATE '2026-08-07');
+  PERFORM public.t_eq('so the invoice settles in full', r.applied, 1000);
+END $$;
+
+\echo ''
 \echo '✅ allocate_bank_payment: every assertion held against a real PostgreSQL.'

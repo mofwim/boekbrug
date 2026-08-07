@@ -2344,21 +2344,46 @@ test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the i
     "the apply loop must iterate the SORTED lines, not plan.lines",
   );
 
-  // The database half of the same fact. Read the migration rather than trusting the comment: the
-  // route's sort is only correct because allocate_bank_payment counts a credit as negative when it
-  // computes what the line has left.
-  const sql = readFileSync("supabase/migrations/allocate_bank_payment.sql", "utf8");
+  // The database half of the same fact, in BOTH functions that spend a bank line. Read the
+  // migrations rather than trusting the comments: the route's sort is only correct because the
+  // function counts a credit against the line's own direction when it computes what is left.
+  //
+  // confirm_bank_payment is in this list because leaving it out is how the defect survived once
+  // already: allocate_bank_payment was fixed, its header explained the reasoning at length, and the
+  // sibling carrying the identical line was not touched — nothing ran either of them.
+  for (const file of [
+    "supabase/migrations/allocate_bank_payment.sql",
+    "supabase/migrations/bank_confirm_atomic.sql",
+  ]) {
+    const sql = readFileSync(file, "utf8");
+    // The sign is about DIRECTION, not about the invoice type. A supplier credit gives money back
+    // to a DEBIT and SPENDS a refund line that is the supplier paying that credit out — signed by
+    // type alone, two credit notes settled from one refund are measured against a budget that does
+    // not exist. `<>` on the two booleans is the XOR this rule is built from.
+    assert.match(
+      sql,
+      /\(i\.direction = 'incoming'\)\s*\n?\s*<>/,
+      `${file} must sign each link by whether its invoice moves money the same way the LINE did — ` +
+        "a creditnota is not inherently one or the other",
+    );
+    assert.match(
+      sql,
+      /=\s*\(coalesce\(t\.amount, 0\) < 0\)/,
+      `${file} must compare that against the bank line's OWN sign, joined from bank_transactions`,
+    );
+  }
+
+  const alloc = readFileSync("supabase/migrations/allocate_bank_payment.sql", "utf8");
   assert.match(
-    sql,
+    alloc,
     /v_sign\s*\*\s*v_applied/,
-    "allocate_bank_payment must subtract a credit's amount with its sign when it computes the " +
-      "line's remainder — added as a magnitude, booking a €150 credit LOWERS the €850 line to €700",
+    "allocate_bank_payment must apply this line's own sign when it computes the remainder — added " +
+      "as a magnitude, booking a €150 credit LOWERS the €850 line to €700",
   );
   assert.match(
-    sql,
-    /THEN -abs\(coalesce\(l\.amount_applied, 0\)\)/,
-    "the sum of the line's other links must be SIGNED per linked invoice — amount_applied is " +
-      "stored as a magnitude, so the sign has to be re-derived exactly as money-invariants.ts does",
+    alloc,
+    /=\s*\(v_tx_signed < 0\)/,
+    "…and that sign must come from the line's direction too, not from the invoice type alone",
   );
 });
 

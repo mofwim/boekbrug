@@ -123,10 +123,10 @@ export async function POST(req: NextRequest) {
     if (rows.length > 0) {
       const { data: linked } = await pipeline
         .from("invoices")
-        .select("id, invoice_type, total_inc_btw")
+        .select("id, direction, invoice_type, total_inc_btw")
         .in("id", rows.map((r) => r.invoice_id))
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-      const sum = allocatedOnLine(rows, linked ?? []);
+      const sum = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0);
       // A link whose invoice this user cannot read means the read is incomplete, not that the link
       // gave nothing. Counting it as zero makes the budget too large, which is the one direction
       // this sum may never err in — so the route refuses instead of booking against a number it

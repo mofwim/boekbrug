@@ -56,10 +56,10 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
     if (rows.length > 0) {
       const { data: linked } = await pipeline
         .from('invoices')
-        .select('id, invoice_type, total_inc_btw')
+        .select('id, direction, invoice_type, total_inc_btw')
         .in('id', rows.map((r) => r.invoice_id))
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      alreadyAllocated = allocatedOnLine(rows, linked ?? []).allocated
+      alreadyAllocated = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0).allocated
     }
   } catch {
     /* zonder deze telling is het scherm ruimer dan nodig; de route weigert alsnog */
