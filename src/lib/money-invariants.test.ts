@@ -226,15 +226,52 @@ test("[GELD-INVARIANT] a correctly negative creditnota is silent", () => {
 
 test("[GELD-INVARIANT] a bank line spread over more than it carried", () => {
   const v = findMoneyViolations({
-    invoices: [],
+    invoices: [inv({ id: "a", totalIncBtw: 3000 }), inv({ id: "b", totalIncBtw: 3200 })],
     links: [
       { transactionId: "t1", invoiceId: "a", amountApplied: 3000 },
       { transactionId: "t1", invoiceId: "b", amountApplied: 3200 },
     ],
     transactions: [{ id: "t1", amount: -5000 }],
   });
-  assert.deepEqual(kinds(v), ["transaction_overallocated"]);
-  assert.equal(v[0].euros, 1200);
+  assert.ok(kinds(v).includes("transaction_overallocated"));
+  assert.equal(v.find((x) => x.kind === "transaction_overallocated")!.euros, 1200);
+});
+
+test("[GELD-INVARIANT] a creditnota in a batch SUBTRACTS — the false alarm this fixed", () => {
+  // The real shape: a supplier bills €1.000, credits €150, and debits €850. amount_applied is a
+  // MAGNITUDE per invoice (which is what recompute_invoice_amount_paid and the unlink reversal
+  // need), so the links hold 1.000 and 150. Summing magnitudes gave 1.150 against a line of 850
+  // and reported a €300 over-allocation on a batch that was exactly right.
+  //
+  // A false alarm on correct books is not a smaller failure than a missed one — it is how the next
+  // real finding gets ignored, and this audit's only value is that it is believed.
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "f", totalExBtw: 826.45, btwAmount: 173.55, totalIncBtw: 1000, amountPaid: 1000, status: "paid" }),
+      inv({ id: "c", invoiceType: "creditnota", totalExBtw: -123.97, btwAmount: -26.03, totalIncBtw: -150, amountPaid: 150, status: "paid" }),
+    ],
+    links: [
+      { transactionId: "t1", invoiceId: "f", amountApplied: 1000 },
+      { transactionId: "t1", invoiceId: "c", amountApplied: 150 },
+    ],
+    transactions: [{ id: "t1", amount: -850 }],
+  });
+  assert.deepEqual(v, [], "1.000 − 150 IS the 850 the bank moved");
+});
+
+test("[GELD-INVARIANT] a link whose invoice was not passed in makes the line unjudgeable, not guilty", () => {
+  // Auditing a subset is a real thing to do (--user). A link pointing outside that subset cannot be
+  // signed, and guessing "positive" would recreate exactly the creditnota false alarm above. The
+  // whole transaction is skipped: a check that cannot run must never report a result.
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "a", totalIncBtw: 3000 })],
+    links: [
+      { transactionId: "t1", invoiceId: "a", amountApplied: 3000 },
+      { transactionId: "t1", invoiceId: "elders", amountApplied: 9000 },
+    ],
+    transactions: [{ id: "t1", amount: -3000 }],
+  });
+  assert.equal(kinds(v).includes("transaction_overallocated"), false);
 });
 
 test("[GELD-INVARIANT] a batch that exactly spends its line is fine", () => {

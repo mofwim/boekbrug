@@ -239,14 +239,40 @@ export function findMoneyViolations(input: {
   }
 
   // ── A payment cannot give more than it moved ──
-  // The database enforces this under a lock at booking time (apply_bank_payment reads Σ of the
+  // The database enforces this under a lock at booking time (allocate_bank_payment reads Σ of the
   // line's other links). This finds anything that predates that guard, or slipped past it.
+  //
+  // ── AND THE SIGN MATTERS HERE, WHERE IT DID NOT ABOVE ──
+  //
+  // amount_applied is stored as a MAGNITUDE, because per INVOICE that is what it means: this much
+  // of it was settled, and a creditnota is settled by a positive amount just like anything else.
+  // recompute_invoice_amount_paid and the unlink reversal both depend on that.
+  //
+  // Per TRANSACTION the question is different — how much of this payment went out — and there a
+  // creditnota goes the other way. A supplier bills €1.000, credits €150, and debits €850; the
+  // links hold 1.000 and 150, and summing their magnitudes gives 1.150 against a line of 850. That
+  // reported a €300 over-allocation on a batch that was exactly right.
+  //
+  // A false alarm on correct books is not a smaller failure than a missed one. It is how the next
+  // real finding gets ignored, and this audit's only value is that it is believed. So the sign is
+  // re-derived here from the invoice the link points at.
   if (input.transactions) {
+    const creditnotaIds = new Set(invoices.filter(isCreditnota).map((i) => i.id));
     const byTx = new Map<string, number>();
+    const unknownInvoice = new Set<string>();
     for (const l of links) {
       if (l.amountApplied == null) continue;
-      byTx.set(l.transactionId, (byTx.get(l.transactionId) ?? 0) + Math.abs(num(l.amountApplied)));
+      // A link to an invoice that was not passed in cannot be signed, and guessing "positive"
+      // would recreate the same false alarm for anyone auditing a subset. Mark the transaction as
+      // unsignable and skip it entirely — a check that cannot run must not report a result.
+      const known = invoices.some((i) => i.id === l.invoiceId);
+      if (!known) { unknownInvoice.add(l.transactionId); continue; }
+      const signed = creditnotaIds.has(l.invoiceId)
+        ? -Math.abs(num(l.amountApplied))
+        : Math.abs(num(l.amountApplied));
+      byTx.set(l.transactionId, (byTx.get(l.transactionId) ?? 0) + signed);
     }
+    for (const id of unknownInvoice) byTx.delete(id);
     for (const t of input.transactions) {
       const spent = byTx.get(t.id);
       if (spent == null) continue;

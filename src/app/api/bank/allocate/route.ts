@@ -10,15 +10,15 @@
 //
 // So the plan is validated as a WHOLE first (payment-plan.ts, 22 tests), and only then applied.
 //
-// That pre-flight check is NOT the last line of defence, and saying so matters. apply_bank_payment
+// That pre-flight check is NOT the last line of defence, and saying so matters. allocate_bank_payment
 // re-reads Σ amount_applied of the line's other links UNDER the transaction lock and refuses there
 // too — atomically, which nothing in TypeScript can be. The check here exists to tell the owner
 // what is wrong BEFORE half a batch is booked; the database is what makes it true.
 //
 // ── WHAT "ATOMIC" MEANS HERE, HONESTLY ──
-// Every line goes through apply_bank_payment, the same audited RPC confirm uses — one call per
-// line, because that function is where the per-invoice locking, the amount_paid recompute and the
-// 'verwerkt' guard live, and reimplementing that here would be a second source of truth for money.
+// Every line goes through allocate_bank_payment — one call per line, because that function is where
+// the per-invoice locking, the amount_paid recompute and the 'verwerkt' guard live, and
+// reimplementing that here would be a second source of truth for money.
 //
 // That means the loop is not one database transaction. The whole-plan validation runs BEFORE any
 // write precisely because of that: by the time the first line is applied, the plan is known to fit
@@ -166,12 +166,25 @@ export async function POST(req: NextRequest) {
   // ── Apply, line by line, stopping honestly ────────────────────────────────
   const applied: Array<{ invoiceId: string; amount: number; fullyPaid: boolean }> = [];
   for (const line of plan.lines) {
-    const { data: rows, error } = await supabase.rpc("apply_bank_payment", {
+    // [BETAALPLAN] allocate_bank_payment, NOT apply_bank_payment.
+    //
+    // apply_bank_payment ends by setting the transaction to 'matched' unconditionally — its own
+    // comment says "instalment semantics: one tx → one invoice, so the tx is fully consumed" — and
+    // it opens by refusing any transaction that is not 'pending'. Looping it meant the first
+    // invoice booked, the line locked itself, and every line after it returned empty. EVERY
+    // multi-invoice allocation failed after its first invoice.
+    //
+    // allocate_bank_payment (allocate_bank_payment.sql) is that function's amount control joined to
+    // confirm_bank_payment's line accounting: it flips the line to 'matched' only when the line is
+    // spent to the cent, so the next line of the same plan can still reach it.
+    const { data: rows, error } = await supabase.rpc("allocate_bank_payment", {
       p_user_id: user.id,
       p_tx_id: transactionId,
       p_invoice_id: line.invoiceId,
-      // apply_bank_payment settles a MAGNITUDE; the creditnota's sign is the plan's arithmetic,
-      // and it is preserved on the link below so the reversal gives back exactly this.
+      // A MAGNITUDE. The creditnota's minus lives in the plan's arithmetic, not on the link: per
+      // INVOICE the link means "this much of it was settled", which is positive for a creditnota
+      // too — that is what recompute_invoice_amount_paid and the unlink reversal both need. The
+      // sign is re-derived where it is needed (money-invariants.ts) from the invoice's own type.
       p_amount: Math.abs(line.amount),
       p_pay_date: tx.date ?? null,
     });
@@ -195,7 +208,7 @@ export async function POST(req: NextRequest) {
     const row = rows[0] as { applied: number; amount_paid: number; total: number; is_paid: boolean };
     applied.push({ invoiceId: line.invoiceId, amount: line.amount, fullyPaid: row.is_paid === true });
 
-    // [BETAALPLAN] Nothing is written to the link here, on purpose. apply_bank_payment already
+    // [BETAALPLAN] Nothing is written to the link here, on purpose. allocate_bank_payment already
     // records amount_applied itself and accumulates it on conflict, which is also what the unlink
     // reversal reads. Writing a second column beside it was this route's first version and it was
     // dead on arrival — bank_tx_invoices_amount.sql now removes it and says why.

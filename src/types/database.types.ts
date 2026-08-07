@@ -2192,6 +2192,33 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      /**
+       * [BETAALPLAN] One line of a multi-invoice allocation — allocate_bank_payment.sql.
+       *
+       * Deliberately NOT apply_bank_payment: that one consumes the whole transaction on its first
+       * call ("instalment semantics: one tx → one invoice"), so looping it booked the first invoice
+       * of a batch and returned empty for every line after it. This one flips the line to 'matched'
+       * only once it is spent to the cent, which is what lets a plan reach its second invoice.
+       */
+      allocate_bank_payment: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_id: string
+          p_amount: number
+          p_pay_date: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+          /** True once this call spent the line to the cent — the tx is now 'matched'. */
+          line_done: boolean
+          /** What the line still has left to give after this call. */
+          line_remaining: number
+        }[]
+      }
       apply_bank_payment: {
         Args: {
           p_user_id: string
