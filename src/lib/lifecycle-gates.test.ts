@@ -2450,6 +2450,46 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
   }
 });
 
+// ── [DEP-VEILIG] The two overrides that are not decoration ───────────────────
+//
+// Next 16.2.12 fixes all nine of its own advisories — a middleware/proxy bypass, two SSRFs, cache
+// confusion, and an unauthenticated disclosure of internal Server Function endpoints among them —
+// but it NESTS its own postcss and sharp, both of which are still vulnerable. The sharp one is the
+// live surface: it is libvips behind the Image Optimization API, which any visitor can reach.
+//
+// npm's own answer was to take Next to 16.3.0, a minor bump this repo does not need for security
+// and which AGENTS.md warns is exactly where this framework breaks things. Two overrides get the
+// same result inside the 16.2 line.
+//
+// They look removable. `npm install <anything>` regenerates the lockfile happily without them, and
+// nothing in a diff says what they were for — so this test says it instead.
+test("[DEP-VEILIG] the nested postcss and sharp stay overridden", () => {
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+    dependencies?: Record<string, string>;
+    overrides?: Record<string, string>;
+  };
+
+  for (const [name, why] of [
+    ["postcss", "sourceMappingURL path traversal reads arbitrary .map files at build time"],
+    ["sharp", "libvips CVE-2026-33327/33328/35590/35591 — reachable through the Image Optimization API"],
+  ] as const) {
+    assert.ok(
+      pkg.overrides?.[name],
+      `package.json must override ${name}: Next nests its own vulnerable copy (${why}). ` +
+        "Removing this override reintroduces it silently — npm audit is the only thing that says so.",
+    );
+  }
+
+  // And the reason the overrides exist at all: staying inside the 16.2 patch line. If Next is ever
+  // moved to 16.3+ deliberately, its own postcss/sharp are fixed and these overrides can go — but
+  // that is a decision to make on purpose, not to arrive at through `npm audit fix`.
+  assert.match(
+    pkg.dependencies?.next ?? "",
+    /^[~^]?16\.2\./,
+    "next is pinned to the 16.2 line; a minor bump is a deliberate decision (AGENTS.md), not an audit side effect",
+  );
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:

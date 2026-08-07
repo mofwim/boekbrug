@@ -21,7 +21,7 @@
     "@vercel/analytics": "^2.0.1",
     "gray-matter": "^4.0.3",
     "jszip": "^3.10.1",
-    "next": "^16.2.6",
+    "next": "~16.2.12",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
@@ -52,5 +52,9 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.3"
   }
 }
