@@ -40,6 +40,7 @@ type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 import { requireOwner } from '@/lib/owner-only'
 // [FILED-QUARTER] "the table is not there yet" vs "the read failed" — see pg-missing.ts.
 import { isMissingRelation } from '@/lib/pg-missing'
+import { notifyRow } from "@/lib/notifications"
 
 export const dynamic = "force-dynamic";
 
@@ -248,7 +249,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   if (notices.length > 0) {
     try {
-      await pipeline.from("notifications").insert({
+      await notifyRow({
         user_id: user.id,
         title: "Factuur verwijderd — let op",
         body: notices.join(" "),

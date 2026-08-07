@@ -43,6 +43,7 @@ import { fetchSupplierIbans, withSupplierIbans } from "./supplier-known-iban";
 import { isMissingRelation } from "./pg-missing";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+import { notifyRow } from "./notifications"
 
 // [SUPPLIER-IBAN] One invoice row as this module handles it: what the matcher needs, plus the two
 // fields only this file reads (the instalment balance and the registry link). Named because it is
@@ -492,7 +493,7 @@ export async function runBankAutoConfirm(args: {
           "herkend (geen factuurnummer in de omschrijving) — controleer die even."
         : "");
     try {
-      const { error } = await pipeline.from("notifications").insert({
+      const notified = await notifyRow({
         user_id: userId,
         title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
         body,
@@ -504,7 +505,7 @@ export async function runBankAutoConfirm(args: {
         // link is listed and reversible with one tap.
         link: "/dashboard/bank?tab=done",
       });
-      if (error) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId, error: error.message });
+      if (!notified) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId });
     } catch (e) {
       console.error("[JET-GAP0] auto-confirm notification threw", { userId, error: e instanceof Error ? e.message : String(e) });
     }

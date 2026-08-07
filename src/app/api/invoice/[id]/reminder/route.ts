@@ -29,6 +29,7 @@ import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canRemindInvoice } from '@/lib/acting-for'
 import { canRemind, nextManualOffset, outstandingAmount } from '@/lib/sales-overview'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -221,7 +222,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     // geworden zonder dat hij erbij was. Best-effort: de mail is al weg.
     if (acting.role === 'boekhouder') {
       try {
-        await pipeline.from('notifications').insert({
+        await notifyRow({
           user_id: ownerId,
           title: 'Je boekhouder heeft een herinnering gestuurd',
           body: `${inv.client_name?.trim() || 'Je klant'} is herinnerd aan factuur ${inv.invoice_number?.trim() || '—'}. Dit was herinnering ${geslaagd.length + 1}.`,

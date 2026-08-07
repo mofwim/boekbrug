@@ -32,6 +32,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { canConfirmForClientServer } from '@/lib/acting-for-server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,7 +144,7 @@ export async function POST(request: NextRequest) {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       })
-      await pipeline.from('notifications').insert({
+      await notifyRow({
         user_id: klantId,
         title: 'Je boekhouder heeft een inkoopfactuur bevestigd',
         body: `${naam} heeft de factuur van ${factuur.client_name || 'een leverancier'} (€ ${bedrag}) gecontroleerd en geboekt. Je blijft er zelf verantwoordelijk voor — kijk hem gerust na.`,

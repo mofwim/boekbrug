@@ -22,7 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { notifyRow } from '@/lib/notifications'
 
 const VALID_STATUS = ['te_verwerken', 'in_behandeling', 'verwerkt', 'vraag'] as const
 type Status = (typeof VALID_STATUS)[number]
@@ -113,8 +113,9 @@ export async function POST(req: NextRequest) {
   // Best-effort — a notification failure must not undo the saved status.
   if (status === 'vraag') {
     try {
-      const pipeline = createPipelineClient()
-      await pipeline.from('notifications').insert({
+      // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+      // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
+      await notifyRow({
         user_id: doc.user_id,
         title: 'Vraag van je boekhouder',
         body: vraagText

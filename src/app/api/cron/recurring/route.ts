@@ -29,6 +29,7 @@ import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from
 import { amsterdamToday } from "@/lib/format-nl";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { notifyRow } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -249,7 +250,7 @@ export async function GET(req: NextRequest) {
       // The whole point is that the owner finds it waiting, so say so — with the customer's name,
       // which is how they recognise it, and a link straight to the concept.
       try {
-        await pipeline.from("notifications").insert({
+        await notifyRow({
           user_id: s.user_id,
           title: "Terugkerende factuur staat klaar",
           body: `Het concept voor ${src.client_name ?? "je klant"} (${CADENCE_LABEL[s.cadence]}) staat klaar. Controleer en verstuur wanneer je wilt.`,

@@ -30,6 +30,7 @@ import { appUrl } from '@/lib/app-origin'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { buildDocumentRequest, requestSummary, type RequestItem } from '@/lib/document-request'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -129,9 +130,7 @@ export async function POST(request: NextRequest) {
     const kop = requestSummary(items.length, typeof body.quarterLabel === 'string' ? body.quarterLabel : '')
 
     // notifications heeft geen INSERT-policy voor een sessie — via service_role, zoals overal.
-    await pipeline
-      .from('notifications')
-      .insert({
+    await notifyRow({
         user_id: klantId,
         title: kop,
         // De eerste regels van het bericht zelf: de klant ziet meteen waar het over gaat in plaats
@@ -141,8 +140,8 @@ export async function POST(request: NextRequest) {
         read: false,
         link: `/dashboard/messages/${user.id}`,
       })
-      .then(({ error }) => {
-        if (error) console.error('[OPVRAGEN] melding mislukt', { error })
+      .then((ok) => {
+        if (!ok) console.error('[OPVRAGEN] melding mislukt', { klantId })
       })
 
     // De e-mail is niet blokkerend: het bericht staat al in zijn inbox in de app.

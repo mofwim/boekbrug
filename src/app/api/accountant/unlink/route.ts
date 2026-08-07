@@ -7,6 +7,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendClientUnlinkedNotification } from '@/lib/email'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
 
   // In-app notification to client — via service role
   try {
-    await pipeline.from('notifications').insert({
+    await notifyRow({
       user_id: clientId,
       title: 'Koppeling beeindigd',
       body: accountantName + ' heeft de koppeling met jou beeindigd. Je gegevens blijven van jou.',

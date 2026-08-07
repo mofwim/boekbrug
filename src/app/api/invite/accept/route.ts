@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { notifyRow } from '@/lib/notifications'
 
 // قبول دعوة — يعمل مع نوعين: ZZP'er يدعو محاسب، أو محاسب يدعو ZZP'er
 export async function POST(request: NextRequest) {
@@ -154,9 +155,7 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
         || accountantProfile?.full_name
         || invitation.accountant_email
 
-      await pipeline
-        .from('notifications')
-        .insert({
+      await notifyRow({
           user_id: zzperId,
           title: 'Boekhouder heeft uitnodiging geaccepteerd',
           body: `${accountantName} heeft jouw uitnodiging geaccepteerd en is nu jouw boekhouder.`,

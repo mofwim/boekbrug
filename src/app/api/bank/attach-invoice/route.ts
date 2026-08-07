@@ -43,6 +43,7 @@ import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
+import { notifyRow } from "@/lib/notifications"
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -632,7 +633,7 @@ export async function POST(req: NextRequest) {
 
   // 11. Notification (non-blocking) — service_role by rule.
   try {
-    await pipeline.from("notifications").insert({
+    await notifyRow({
       user_id: user.id,
       title: "Factuur gekoppeld",
       body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,

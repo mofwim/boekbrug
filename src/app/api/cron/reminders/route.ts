@@ -46,6 +46,7 @@ import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+import { notifyRow } from "@/lib/notifications"
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -375,11 +376,21 @@ export async function GET(req: NextRequest) {
         // Releasing the claim lets tomorrow's run try the same tier again.
         if (!delivery.delivered) {
           failed += 1;
-          try {
-            await pipeline.from("invoice_reminders").delete().eq("id", claimId);
-          } catch {
-            // Could not release it — then it stays claimed, which is the old behaviour. Say so.
-            console.error("[CRON-REMINDERS] could not release a rejected claim", { invoiceId: inv.id, tier });
+          // [LINKS-WRITE-HONEST] The error is READ. This block already meant to say something when
+          // the release failed — and could not: supabase-js reports a query error in the RESULT, it
+          // does not throw, so that catch never fired and the delete's error was discarded. The
+          // release silently not happening puts this invoice back in exactly the state the comment
+          // above describes as the bug being fixed: the claim stays, the pre-read counts every
+          // invoice_reminders row whatever its status, and the tier can NEVER be tried again. On
+          // the last tier that is the statutory WIK aanmaning never reaching the customer while the
+          // owner believes it went out — and with it the basis for charging incassokosten.
+          const { error: releaseErr } = await pipeline
+            .from("invoice_reminders").delete().eq("id", claimId);
+          if (releaseErr) {
+            console.error(
+              "[CRON-REMINDERS] could NOT release a rejected claim — this tier can never be retried",
+              { invoiceId: inv.id, tier, finalTier, error: releaseErr.message },
+            );
           }
           console.error("[CRON-REMINDERS] reminder rejected by the mail provider — tier released for retry", {
             invoiceId: inv.id, tier, wik: !!wik,
@@ -398,7 +409,7 @@ export async function GET(req: NextRequest) {
           // [WIK] After the statutory letter the owner has something they did not have before:
           // the RIGHT to charge collection costs once the term passes. That right is invisible
           // unless it is said — and unsaid, the letter's whole purpose is lost on them.
-          await pipeline.from("notifications").insert({
+          const notified = await notifyRow({
             user_id: ownerId,
             title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
             body: wik
@@ -409,6 +420,7 @@ export async function GET(req: NextRequest) {
             read: false,
             link: `/dashboard/invoice/${inv.id}`,
           });
+          if (!notified) console.error("[STIL-BELLETJE] melding niet opgeslagen", { invoiceId: inv.id, tier });
         } catch {
           /* low severity — the reminder itself already succeeded */
         }
@@ -423,13 +435,23 @@ export async function GET(req: NextRequest) {
         // matters most on the final tier, where the letter is what makes incassokosten claimable.
         failed += 1;
         console.error("[CRON-REMINDERS] reminder send threw (non-fatal)", { invoiceId: inv.id, tier, error: sendErr instanceof Error ? sendErr.message : String(sendErr) });
-        try {
-          await pipeline.from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
-        } catch {
-          /* best-effort */
+        // [LINKS-WRITE-HONEST] The error is READ, same reason. invoice_reminders IS the send log:
+        // a claim left on 'sent' after a send that may never have happened records a dunning letter
+        // that was not demonstrably sent — and on the final tier that log is the basis on which
+        // incassokosten are claimed. The tier stays unretryable either way (that is deliberate
+        // after a throw: a second letter to someone who already got one is the worse harm), so
+        // this failure costs the RECORD rather than the send, which is exactly why it may not
+        // disappear.
+        const { error: markErr } = await pipeline
+          .from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
+        if (markErr) {
+          console.error(
+            "[CRON-REMINDERS] could NOT mark a claim failed — the send log still reads 'sent'",
+            { invoiceId: inv.id, tier, finalTier, error: markErr.message },
+          );
         }
         try {
-          await pipeline.from("notifications").insert({
+          const notified = await notifyRow({
             user_id: ownerId,
             title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
             body:
@@ -443,8 +465,18 @@ export async function GET(req: NextRequest) {
             read: false,
             link: `/dashboard/invoice/${inv.id}`,
           });
-        } catch {
-          /* best-effort */
+          // [REMINDER-TRUTH] This bell is the whole point of the branch: the app cannot resolve
+          // the ambiguity, so it hands it to the person who can. Its own failure being silent
+          // defeats it exactly — the owner is never told the statutory aanmaning may not have gone
+          // out, and may charge incassokosten with nothing behind them.
+          if (!notified) {
+            console.error(
+              "[REMINDER-TRUTH] the owner was NOT warned about a possibly-unsent reminder",
+              { invoiceId: inv.id, ownerId, tier, finalTier },
+            );
+          }
+        } catch (e) {
+          console.error("[REMINDER-TRUTH] warning the owner threw", { invoiceId: inv.id, tier, error: e });
         }
       }
     }

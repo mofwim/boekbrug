@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
   // weet waar hij vandaan komt. Best-effort: het mandaat staat er al.
   try {
     const klantNaam = await naamVan(pipeline, user.id, 'Een klant')
-    await pipeline.from('notifications').insert({
+    await notifyRow({
       user_id: doel,
       title:
         soort === 'bevestigen'
@@ -196,7 +197,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const naam = await naamVan(pipeline, user.id, 'De andere partij')
       const naarKlant = anderId === m.zzper_id
-      await pipeline.from('notifications').insert({
+      await notifyRow({
         user_id: anderId,
         title: naarKlant ? 'Je boekhouder factureert niet meer namens jou' : 'Machtiging ingetrokken',
         body: naarKlant

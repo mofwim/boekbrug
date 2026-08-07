@@ -29,6 +29,7 @@ import { planAccountantDay } from "@/lib/accountant-daily";
 import { getAangifteDeadline } from "@/modules/accountant/accountant.service";
 import { lastCompletedQuarter } from "@/lib/quarter";
 import { amsterdamToday } from "@/lib/format-nl";
+import { notifyRow } from "@/lib/notifications"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -140,7 +141,7 @@ export async function GET(req: NextRequest) {
       const message = planAccountantDay({ newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled });
       if (!message) { quiet++; continue; }
 
-      const { error } = await pipeline.from("notifications").insert({
+      const notified = await notifyRow({
         user_id: accountantId,
         title: message.title,
         body: message.body,
@@ -148,8 +149,8 @@ export async function GET(req: NextRequest) {
         read: false,
         link: message.link,
       });
-      if (error) {
-        console.error("[CRON-DAGSTART] notification insert failed", { accountantId, error: error.message });
+      if (!notified) {
+        console.error("[CRON-DAGSTART] notification insert failed", { accountantId });
         continue;
       }
       sent++;

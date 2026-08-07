@@ -50,6 +50,8 @@ import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canSendInvoice } from '@/lib/acting-for'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
+import { notifyRows } from '@/lib/notifications'
+import { notifyRow } from '@/lib/notifications'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
 // TODO(M): verify this bucket name in Supabase Storage before deploy —
@@ -526,7 +528,8 @@ export async function POST(request: NextRequest) {
       // "verstuurd" state is corrected by an explicit "opnieuw versturen" prompt (recoverable via
       // resend once the cause is fixed). Service-role insert (notifications has no authed INSERT).
       try {
-        const notifPipeline = createPipelineClient()
+        // [BEL-BEREIKT-NIEMAND] notifyRows maakt zijn eigen service_role-client — vandaar dat de
+        // losse client hier weg is. (notifications heeft geen INSERT-policy voor authenticated.)
         // [ACTING-FOR] Naar de eigenaar ÉN naar wie hem verstuurde, als dat twee mensen zijn.
         //
         // Alleen de eigenaar waarschuwen is hier niet goed genoeg: het nummer is verbruikt, de
@@ -534,7 +537,7 @@ export async function POST(request: NextRequest) {
         // die anders zijn scherm sluit in de overtuiging dat het gelukt is. En alleen de
         // medewerker waarschuwen evenmin: het is de factuur van de eigenaar, met zijn nummer.
         const ontvangers = Array.from(new Set([ownerId, acting.actorId]))
-        await notifPipeline.from('notifications').insert(
+        await notifyRows(
           ontvangers.map((uid) => ({
             user_id: uid,
             title: 'Factuur niet verzonden',
@@ -639,9 +642,8 @@ export async function POST(request: NextRequest) {
       // Same recipients and the same reasoning as the PDF path: the owner owns the invoice, and
       // whoever pressed send is the only one who knows it happened at all.
       try {
-        const mailNotifPipeline = createPipelineClient()
         const mailOntvangers = Array.from(new Set([ownerId, acting.actorId]))
-        await mailNotifPipeline.from('notifications').insert(
+        await notifyRows(
           mailOntvangers.map((uid) => ({
             user_id: uid,
             title: 'Factuur niet aangekomen',
@@ -671,9 +673,7 @@ export async function POST(request: NextRequest) {
         // Best-effort, net als het bericht hieronder: de factuur is al uitgegeven en gaat niet
         // terug omdat een melding niet lukt. Wat wél gebeurt is dat het in de log staat.
         if (acting.role === 'boekhouder') {
-          const { error: klantNotifError } = await pipelineClient
-            .from('notifications')
-            .insert({
+          const klantNotifOk = await notifyRow({
               user_id: ownerId,
               title: 'Je boekhouder heeft een factuur verstuurd',
               body: `Factuur ${finalNumber} is namens jou verstuurd naar ${invoice.client_name || 'je klant'} — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. De factuur staat op jouw naam en in jouw nummerreeks.`,
@@ -681,8 +681,8 @@ export async function POST(request: NextRequest) {
               read: false,
               link: '/dashboard/facturen',
             })
-          if (klantNotifError) {
-            console.error('[MANDAAT] melding aan de klant mislukt', { invoiceId, klantNotifError })
+          if (!klantNotifOk) {
+            console.error('[MANDAAT] melding aan de klant mislukt', { invoiceId })
           }
         }
 
@@ -694,9 +694,7 @@ export async function POST(request: NextRequest) {
 
         // Niet aan zichzelf melden dat hij zojuist zelf op de knop drukte.
         if (accountantLink?.accountant_id && accountantLink.accountant_id !== acting.actorId) {
-          const { error: notifError } = await pipelineClient
-            .from('notifications')
-            .insert({
+          const notifOk = await notifyRow({
               user_id: accountantLink.accountant_id,
               title: 'Nieuwe factuur verzonden',
               // [FACTUUR-A] Dutch comma in the notification too — one rule everywhere
@@ -706,8 +704,8 @@ export async function POST(request: NextRequest) {
               link: `/dashboard/clients/${ownerId}`,
             })
 
-          if (notifError) {
-            console.error('[FACTUUR-A] Notification insert failed', { invoiceId, notifError })
+          if (!notifOk) {
+            console.error('[FACTUUR-A] Notification insert failed', { invoiceId })
             // Low severity — don't bother Sentry
           }
         }

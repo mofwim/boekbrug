@@ -26,6 +26,7 @@ import { appUrl } from '@/lib/app-origin'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { canRequestMandate, buildMandateRequest } from '@/lib/mandate-request'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -127,9 +128,7 @@ export async function POST(request: NextRequest) {
     // De melding wijst NIET naar het gesprek maar rechtstreeks naar de schakelaar. Dat is het hele
     // verschil tussen "hij las het" en "hij deed het": het staat op regel 831 van een scherm van
     // duizend regels, en niemand scrollt daarheen op zoek naar iets waarvan hij net hoorde.
-    await pipeline
-      .from('notifications')
-      .insert({
+    await notifyRow({
         user_id: klantId,
         title: tekst.title,
         body: tekst.body.slice(0, 160),
@@ -137,8 +136,8 @@ export async function POST(request: NextRequest) {
         read: false,
         link: '/dashboard/settings#boekhouder',
       })
-      .then(({ error }) => {
-        if (error) console.error('[VRAAG-MACHTIGING] melding mislukt', { error })
+      .then((ok) => {
+        if (!ok) console.error('[VRAAG-MACHTIGING] melding mislukt', { klantId })
       })
 
     const { data: klant } = await pipeline

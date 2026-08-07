@@ -225,8 +225,12 @@ test("[SEND-EMAIL-DURABLE] a failed e-mail leaves a durable trace, not only a re
   // PDF eventually shows up in the closing package. Here everything looks perfect.
   const src = readFileSync("src/app/api/invoice/send/route.ts", "utf8");
   const emailCatch = src.slice(src.indexOf("catch (emailErr)"), src.indexOf("── 15."));
+  // [BEL-BEREIKT-NIEMAND] Retargeted: this named the raw table write. That was the mechanism, not
+  // the rule — and it was the WEAKER mechanism, because a direct insert reaches the app only. The
+  // notification now goes through notifications.ts, which also delivers a push, so the durable
+  // trace this test exists for is more durable than when the test was written.
   assert.ok(
-    /from\('notifications'\)\s*\.insert/.test(emailCatch),
+    /notifyRows?\(|createNotification\(/.test(emailCatch),
     "the e-mail failure branch must write a notification, not only set the response warning",
   );
   assert.ok(

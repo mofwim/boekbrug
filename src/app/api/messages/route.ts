@@ -3,9 +3,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendMessageNotification } from '@/lib/email'
 import { appUrl } from "@/lib/app-origin"
+import { notifyRow } from '@/lib/notifications'
 
 // ── GET: جلب رسائل المحادثة ───────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
@@ -104,8 +104,9 @@ export async function POST(request: NextRequest) {
     // [CONTROL] notifications has NO authenticated INSERT policy (verified via
     // live pg_policies) → an anon insert 42501s silently and the recipient never
     // gets the in-app notification. Write it via service_role.
-    const pipeline = createPipelineClient()
-    await pipeline.from('notifications').insert({
+    // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+    // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
+    await notifyRow({
       user_id: receiver_id,
       title: 'Nieuw bericht',
       body: content.trim().slice(0, 80),

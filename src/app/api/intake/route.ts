@@ -101,6 +101,7 @@ import { deriveDueDate } from "@/lib/safecore"
 import type { Database } from "@/types/database.types"
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
 import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
+import { notifyRow } from "@/lib/notifications"
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -1277,7 +1278,7 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
     try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
     try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
     try {
-      await pipeline.from("notifications").insert({
+      await notifyRow({
         user_id: user.id,
         // [BON-AUTO] A settled bon may NOT borrow the invoice sentence. "(nog niet betaald)" on a
         // receipt the app has just marked paid is the app contradicting itself in the one message

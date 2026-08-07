@@ -31,6 +31,7 @@ import { correctedFields } from "@/lib/reading-memory";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
 import type { Database } from "@/types/database.types";
+import { notifyRow } from "@/lib/notifications"
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 // ── POST — verify or pay an incoming invoice ──────────────────────────────────
@@ -428,7 +429,8 @@ export async function POST(
     .limit(1)
     .maybeSingle();
 
-  const pipeline = createPipelineClient();
+  // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+  // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
 
   // ── [BRIDGE-NOTIF] Notification enrichment ──────────────────────────────────
   // A senior accountant wants WHO + WHAT + amount + a click that lands on the row.
@@ -482,7 +484,7 @@ export async function POST(
   const clientLink = `/dashboard/incoming/manage?focus=${id}`;
 
   if (link?.accountant_id) {
-    const { error: accNotifErr } = await pipeline.from("notifications").insert({
+    const accNotified = await notifyRow({
       user_id: link.accountant_id,
       title: action === "pay" ? "Factuur betaald gemarkeerd" : "Nieuwe crediteur ter inzage",
       body:
@@ -494,14 +496,14 @@ export async function POST(
       // [BRIDGE-NOTIF] deep-link: lands on the client's quarter and focuses the row.
       link: accountantLink,
     });
-    if (accNotifErr) {
-      console.error("[BRIDGE-B] accountant notification failed", accNotifErr);
+    if (!accNotified) {
+      console.error("[BRIDGE-B] accountant notification failed");
       // Non-fatal — the confirmation already succeeded.
     }
   }
 
   // Notify the user themselves — confirmation
-  const { error: userNotifErr } = await pipeline.from("notifications").insert({
+  const userNotified = await notifyRow({
     user_id: user.id,
     title: action === "pay" ? "Factuur betaald" : "Factuur geverifieerd",
     body:
@@ -513,8 +515,8 @@ export async function POST(
     // [BRIDGE-NOTIF] deep-link: management surface, focused on this row.
     link: clientLink,
   });
-  if (userNotifErr) {
-    console.error("[BRIDGE-B] user notification failed", userNotifErr);
+  if (!userNotified) {
+    console.error("[BRIDGE-B] user notification failed");
   }
 
   // [SUPPLIER-ALIAS] The SAME lesson the pay screen's correction sheet learns. Both doors correct a

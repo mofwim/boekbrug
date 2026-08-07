@@ -103,6 +103,7 @@ export function vendorsAreDifferent(a: string | null | undefined, b: string | nu
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
 import type { Database } from '@/types/database.types'
+import { notifyRow } from './notifications'
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -4629,7 +4630,8 @@ export async function syncUserEmails(
   // in this function is explicitly scoped by the passed userId), so this whole
   // function is session-independent and callable from the scheduled cron.
   if (saved > 0) {
-    const pipeline = createPipelineClient()
+    // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+    // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
     // [BOEK-011] Provider-aware copy — Outlook users shouldn't read "Gmail".
     const providerLabel = tokens.provider === 'outlook' ? 'Outlook' : 'Gmail'
     // [BOEK-SAFECORE] Honest copy: when some invoices are HELD for review, say
@@ -4674,7 +4676,7 @@ export async function syncUserEmails(
       body = `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. Bevestig ze in Inkomend.`
     }
 
-    const { error: notifErr } = await pipeline.from('notifications').insert({
+    const notified = await notifyRow({
       user_id: userId,
       title: `${saved} nieuwe ${saved === 1 ? 'factuur' : 'facturen'} geïmporteerd`,
       body,
@@ -4685,8 +4687,8 @@ export async function syncUserEmails(
         ? '/dashboard/incoming/manage?filter=auto'
         : '/dashboard/incoming',
     })
-    if (notifErr) {
-      console.error('[BOEK-011] Failed to write notification', notifErr)
+    if (!notified) {
+      console.error('[BOEK-011] Failed to write notification')
       // Non-fatal — the import itself succeeded, the user just won't get a bell.
     }
   }

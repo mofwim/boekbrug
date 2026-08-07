@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { notifyRow } from '@/lib/notifications'
 
 const VALID_TYPES = ['invoice', 'payment', 'message', 'invite', 'status']
 
@@ -65,8 +65,9 @@ export async function POST(req: NextRequest) {
 
   // ── Write the notification for the client (service_role) ──
   try {
-    const pipeline = createPipelineClient()
-    const { error } = await pipeline.from('notifications').insert({
+    // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+    // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
+    const notified = await notifyRow({
       user_id: clientId,            // the client — verified linked above
       title,
       body: notifBody ?? null,
@@ -75,8 +76,8 @@ export async function POST(req: NextRequest) {
       link: link ?? null,
     })
 
-    if (error) {
-      console.error('[notify-client] insert failed:', error)
+    if (!notified) {
+      console.error('[notify-client] insert failed')
       return NextResponse.json({ error: 'Aanmaken mislukt' }, { status: 500 })
     }
 

@@ -46,6 +46,7 @@ import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } 
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
+import { notifyRow } from "@/lib/notifications"
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -341,7 +342,7 @@ export async function POST(req: NextRequest) {
       const remaining = Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0));
       const unassigned = row.all_covered ? 0 : Math.max(0, row.line_remaining ?? 0);
       try {
-        await pipeline.from("notifications").insert({
+        await notifyRow({
           user_id: user.id,
           title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
           body: isPaid
@@ -350,7 +351,7 @@ export async function POST(req: NextRequest) {
           type: "payment",
         });
         if (unassigned > 0.01) {
-          await pipeline.from("notifications").insert({
+          await notifyRow({
             user_id: user.id,
             title: "Nog een deel van deze betaling open",
             body: `Van deze betaling is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
@@ -471,7 +472,7 @@ export async function POST(req: NextRequest) {
     // [BANK-TX-INVOICES] The RPC already wrote the join row (with amount_applied) inside its
     // transaction — no recordPaymentLinks needed here.
     try {
-      await pipeline.from("notifications").insert({
+      await notifyRow({
         user_id: user.id,
         title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
         body: isPaid
@@ -488,7 +489,7 @@ export async function POST(req: NextRequest) {
           : `/dashboard/invoice/${invoiceId}`,
       });
       if (hasResidue) {
-        await pipeline.from("notifications").insert({
+        await notifyRow({
           user_id: user.id,
           title: "Er bleef een bedrag over",
           body: `Van de betaling van € ${payAvailable.toFixed(2)} is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${residue.toFixed(2)} bleef over — controleer of deze betaling ook een andere factuur betreft.`,
@@ -757,7 +758,7 @@ export async function POST(req: NextRequest) {
         entityId: transactionId,
         newValue: { transaction_amount: payAmount, applied_sum: Math.round(appliedSum * 100) / 100, invoice_id: invoiceId },
       });
-      await pipeline.from("notifications").insert({
+      await notifyRow({
         user_id: user.id,
         title: "Controleer deze betaling",
         body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
@@ -772,7 +773,7 @@ export async function POST(req: NextRequest) {
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   const unassigned = appliedElsewhereKnown && !allCovered ? Math.max(0, moneyRemaining) : 0;
   try {
-    await pipeline.from("notifications").insert({
+    await notifyRow({
       user_id: user.id,
       title: "Factuur betaald",
       body: `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`,
@@ -787,7 +788,7 @@ export async function POST(req: NextRequest) {
     // stays in "Te bevestigen" so the next invoice can take it — say so, so the owner knows the
     // line is not stuck but waiting. (Before, that money was silently declared spent.)
     if (unassigned > 0.01) {
-      await pipeline.from("notifications").insert({
+      await notifyRow({
         user_id: user.id,
         title: "Nog een deel van deze betaling open",
         body: `Van deze betaling van € ${payAmount.toFixed(2)} is € ${settledByThisBooking.toFixed(2)} op facturen geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,

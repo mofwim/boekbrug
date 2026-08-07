@@ -32,10 +32,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction } from '@/lib/audit'
 import { VRAAG_STATUS, vraagTekst } from '@/lib/vragen'
+import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -108,7 +108,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Deze factuur hoort niet bij deze klant' }, { status: 403 })
   }
 
-  const pipeline = createPipelineClient()
+  // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
+  // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
 
   // ── (1) De TEKST eerst ───────────────────────────────────────────────────────
   // Als deze faalt gaat de status niet om, en dat is de goede volgorde: een 'vraag' zonder tekst is
@@ -155,7 +156,7 @@ export async function POST(request: NextRequest) {
   try {
     const label = [inv.client_name?.trim(), inv.invoice_number ? `factuur ${inv.invoice_number}` : null]
       .filter(Boolean).join(' · ')
-    await pipeline.from('notifications').insert({
+    await notifyRow({
       user_id: clientId,
       title: 'Vraag van je boekhouder',
       body: `${label ? `${label} — ` : ''}${question.slice(0, 120)}`,
