@@ -1,68 +1,65 @@
 -- =====================================================================
--- [BETAALPLAN] How MUCH of a payment went to each invoice.
+-- [BETAALPLAN] CORRECTION — this migration adds nothing. It undoes a mistake.
 -- BoekBrug · August 2026
 -- =====================================================================
--- bank_tx_invoices already records WHICH invoices a bank payment settled — that is what makes a
--- reversal safe by id instead of by invoice number. What it never recorded is HOW MUCH went to
--- each one, because until now a link only ever meant "this payment settled this invoice in full".
+-- WHAT THIS FILE ORIGINALLY DID, AND WHY IT WAS WRONG
 --
--- That assumption breaks the moment a real batch arrives. A wholesaler debits €5.000 for a week of
--- deliveries and the last invoice is short-paid by €200. A supplier deducts a €150 creditnota
--- before paying. Both are ordinary, and neither can be expressed by a link with no amount on it.
+-- It added a column `bank_tx_invoices.amount` to record how much of a payment went to each
+-- invoice, on the reasoning that without it a per-invoice unlink cannot give back the right
+-- number. That reasoning is correct. The column was already there.
 --
--- ── WHY THE COLUMN MATTERS FOR THE REVERSAL, NOT ONLY THE BOOKING ──
+-- It is called `amount_applied`, it arrived with invoice_partial_payments.sql, and everything
+-- already uses it:
+--   · apply_bank_payment WRITES it (bank_confirm_atomic.sql), accumulating on conflict;
+--   · it reads Σ amount_applied of the line's OTHER links UNDER the transaction lock, which is
+--     the same sum guard payment-plan.ts performs in TypeScript — only atomically, and therefore
+--     stronger;
+--   · /api/bank/unlink READS it to reverse the exact amount, falling back to the transaction
+--     magnitude only for pre-migration links;
+--   · recompute_invoice_amount_paid derives invoices.amount_paid from Σ amount_applied.
 --
--- Booking a partial allocation without storing it is survivable — invoices.amount_paid carries the
--- result. UNDOING it is not. To detach one invoice from a batch you have to give back exactly what
--- that invoice received, and if the link does not say, the only options are to guess (give back the
--- invoice's full total, un-paying money that is still gone) or to refuse. The first is a wrong
--- number in someone's BTW return; the second is a button that does not work.
+-- So the new column was never read by anything, and worse, the code that wrote it also READ it
+-- when working out how much of a payment was already spent. It was always NULL, which that code
+-- treats as "this link settled its invoice in full" — so it added the invoice's whole total
+-- instead. On any transaction with existing links the screen would then refuse perfectly valid
+-- allocations, with a message about money that was never spent.
 --
--- So the amount is stored on the link that caused it, signed, with the creditnota's minus intact:
--- a €1.000 invoice and a −€150 creditnota against one €850 debit reverse to exactly the two figures
--- that were booked.
+-- ── THE LESSON, WRITTEN DOWN BECAUSE IT WILL REPEAT ──
+-- The gap was found by reading the join table's own migration, which does not mention
+-- amount_applied — it was added later, by a different file. A schema is not one file, and
+-- "the column is not there" is a claim about every migration, not about the one that created
+-- the table. Grep the column name before adding it.
 --
--- ── NULL IS NOT ZERO HERE EITHER ──
---
--- Rows written before this migration have no amount and get NULL, not 0. NULL means "this link
--- predates the column and settled its invoice in full" — which is what every old link meant by
--- construction. Defaulting them to 0 would tell every reversal path that these payments moved no
--- money at all, silently turning the entire payment history into unpaid invoices.
---
--- APPLY: run in the Supabase SQL editor. No data deleted. Idempotent.
--- Depends on bank_tx_invoices.sql.
+-- APPLY: safe whether or not the original version was ever run. If it was, this removes the dead
+-- column. If it was not, this does nothing at all. No data is lost either way: nothing ever wrote
+-- a value into it.
 -- =====================================================================
 
 BEGIN;
 
-ALTER TABLE public.bank_tx_invoices
-  ADD COLUMN IF NOT EXISTS amount numeric;
+ALTER TABLE public.bank_tx_invoices DROP COLUMN IF EXISTS amount;
+DROP INDEX IF EXISTS idx_bank_tx_invoices_tx_amount;
 
-COMMENT ON COLUMN public.bank_tx_invoices.amount IS
-  '[BETAALPLAN] Signed euros of THIS transaction applied to THIS invoice (negative for a creditnota). NULL = a link written before this column existed, which by construction settled its invoice in full.';
-
--- The plan is written as one batch per transaction, so reversal and re-booking both read every
--- line of a payment at once.
-CREATE INDEX IF NOT EXISTS idx_bank_tx_invoices_tx_amount
-  ON public.bank_tx_invoices (transaction_id) INCLUDE (invoice_id, amount);
+COMMENT ON COLUMN public.bank_tx_invoices.amount_applied IS
+  '[PARTIAL-PAY] Euros of THIS transaction applied to THIS invoice. Written by apply_bank_payment / book_bank_batch, read by the unlink reversal and by recompute_invoice_amount_paid. NULL = a link from before the column existed, which settled its invoice in full.';
 
 COMMIT;
 
 -- =====================================================================
 -- VERIFY (run separately after applying):
 --
--- 1. The column is there and old rows are NULL, not 0:
---      select count(*) filter (where amount is null)  as pre_migration_links,
---             count(*) filter (where amount is not null) as with_amount
---        from public.bank_tx_invoices;
+-- 1. The dead column is gone and the real one is intact:
+--      select column_name from information_schema.columns
+--       where table_name = 'bank_tx_invoices' order by column_name;
+--    Expect: amount_applied, created_at, id, invoice_id, transaction_id, user_id — and NO 'amount'.
 --
--- 2. After booking a batch from the bank screen, its lines add up to the payment:
---      select t.id, t.amount as bank_line, sum(bti.amount) as allocated
+-- 2. The check that is actually worth keeping — payments whose allocation does not match the
+--    money that moved. An empty result is the healthy state; anything listed is worth looking at
+--    BEFORE a quarter is filed:
+--      select t.id, t.amount as bank_line, sum(bti.amount_applied) as allocated
 --        from public.bank_transactions t
 --        join public.bank_tx_invoices bti on bti.transaction_id = t.id
---       where bti.amount is not null
+--       where bti.amount_applied is not null
 --       group by t.id, t.amount
---      having abs(abs(t.amount) - abs(sum(bti.amount))) > 0.01;
---    Rows here are payments whose allocation does not match the money that moved. An empty
---    result is the healthy state; anything listed is worth looking at BEFORE a quarter is filed.
+--      having abs(abs(t.amount)) < abs(sum(bti.amount_applied)) - 0.01;
 -- =====================================================================

@@ -8,7 +8,12 @@
 // left the account. Nothing downstream — the P&L, the BTW return, the accountant's package — can
 // tell that it did not.
 //
-// So the plan is validated as a WHOLE first (payment-plan.ts, 18 tests), and only then applied.
+// So the plan is validated as a WHOLE first (payment-plan.ts, 22 tests), and only then applied.
+//
+// That pre-flight check is NOT the last line of defence, and saying so matters. apply_bank_payment
+// re-reads Σ amount_applied of the line's other links UNDER the transaction lock and refuses there
+// too — atomically, which nothing in TypeScript can be. The check here exists to tell the owner
+// what is wrong BEFORE half a batch is booked; the database is what makes it true.
 //
 // ── WHAT "ATOMIC" MEANS HERE, HONESTLY ──
 // Every line goes through apply_bank_payment, the same audited RPC confirm uses — one call per
@@ -91,20 +96,25 @@ export async function POST(req: NextRequest) {
   if (txErr || !tx) return NextResponse.json({ error: "transaction_not_found" }, { status: 404 });
 
   // ── What this line already gave away ──────────────────────────────────────
-  // Existing links with a NULL amount predate bank_tx_invoices_amount.sql and, by construction,
-  // settled their invoice in full — so their invoice total is what they took. Reading them as 0
-  // would let the same euros be spent twice.
+  // amount_applied, NOT a column of our own: it is what apply_bank_payment itself writes, what the
+  // unlink reversal reads, and what recompute_invoice_amount_paid derives amount_paid from. A
+  // second column for the same fact was written here first and read by nothing — see the header of
+  // bank_tx_invoices_amount.sql for how that happened and what it cost.
+  //
+  // NULL means a link from before that column existed, which by construction settled its invoice
+  // in full — so the invoice's total is what it took. Reading NULL as 0 would let the same euros
+  // be spent twice.
   let alreadyAllocated = 0;
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: links } = await (pipeline as any)
       .from("bank_tx_invoices")
-      .select("invoice_id, amount")
+      .select("invoice_id, amount_applied")
       .eq("transaction_id", transactionId)
       .eq("user_id", user.id);
-    const rows = (links ?? []) as Array<{ invoice_id: string; amount: number | null }>;
-    const unpriced = rows.filter((r) => r.amount == null).map((r) => r.invoice_id);
-    for (const r of rows) if (r.amount != null) alreadyAllocated += Math.abs(Number(r.amount) || 0);
+    const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>;
+    const unpriced = rows.filter((r) => r.amount_applied == null).map((r) => r.invoice_id);
+    for (const r of rows) if (r.amount_applied != null) alreadyAllocated += Math.abs(Number(r.amount_applied) || 0);
     if (unpriced.length > 0) {
       const { data: olds } = await pipeline
         .from("invoices")
@@ -185,22 +195,10 @@ export async function POST(req: NextRequest) {
     const row = rows[0] as { applied: number; amount_paid: number; total: number; is_paid: boolean };
     applied.push({ invoiceId: line.invoiceId, amount: line.amount, fullyPaid: row.is_paid === true });
 
-    // [BETAALPLAN] The signed amount on the link. apply_bank_payment writes the link itself; this
-    // records how much of THIS payment it represents, which is the only thing that makes a later
-    // per-invoice unlink give back the right number instead of the invoice's whole total.
-    // Best-effort: without the column (migration not yet applied) the booking still stands and
-    // only the exactness of a future reversal is reduced to what it already was.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (pipeline as any)
-        .from("bank_tx_invoices")
-        .update({ amount: line.amount })
-        .eq("transaction_id", transactionId)
-        .eq("invoice_id", line.invoiceId)
-        .eq("user_id", user.id);
-    } catch {
-      /* non-fatal — see above */
-    }
+    // [BETAALPLAN] Nothing is written to the link here, on purpose. apply_bank_payment already
+    // records amount_applied itself and accumulates it on conflict, which is also what the unlink
+    // reversal reads. Writing a second column beside it was this route's first version and it was
+    // dead on arrival — bank_tx_invoices_amount.sql now removes it and says why.
   }
 
   await logAuditAction({

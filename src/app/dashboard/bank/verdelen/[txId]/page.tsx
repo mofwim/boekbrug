@@ -35,20 +35,21 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
     .maybeSingle()
   if (!tx) redirect('/dashboard/bank')
 
-  // Wat eerdere koppelingen al van deze regel namen. Een koppeling zonder bedrag stamt van vóór
-  // bank_tx_invoices_amount.sql en verrekende per definitie de hele factuur — als 0 lezen zou
-  // dezelfde euro's twee keer laten uitgeven.
+  // Wat eerdere koppelingen al van deze regel namen. amount_applied is de bestaande kolom die
+  // apply_bank_payment zelf schrijft; een koppeling zonder waarde stamt van vóór die kolom en
+  // verrekende per definitie de hele factuur — als 0 lezen zou dezelfde euro's twee keer laten
+  // uitgeven.
   let alreadyAllocated = 0
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: links } = await (pipeline as any)
       .from('bank_tx_invoices')
-      .select('invoice_id, amount')
+      .select('invoice_id, amount_applied')
       .eq('transaction_id', txId)
       .eq('user_id', user.id)
-    const rows = (links ?? []) as Array<{ invoice_id: string; amount: number | null }>
-    const unpriced = rows.filter((r) => r.amount == null).map((r) => r.invoice_id)
-    for (const r of rows) if (r.amount != null) alreadyAllocated += Math.abs(Number(r.amount) || 0)
+    const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>
+    const unpriced = rows.filter((r) => r.amount_applied == null).map((r) => r.invoice_id)
+    for (const r of rows) if (r.amount_applied != null) alreadyAllocated += Math.abs(Number(r.amount_applied) || 0)
     if (unpriced.length > 0) {
       const { data: olds } = await pipeline
         .from('invoices')

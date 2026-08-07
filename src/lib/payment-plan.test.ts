@@ -255,3 +255,58 @@ test("[BETAALPLAN] cents survive a long batch", () => {
   assert.equal(r.allocated, 1, "ten times 0.1 is 1.00, not 0.9999999999999999");
   assert.equal(r.remainder, 0);
 });
+
+// ── The net must be positive — the hole the creditnota's minus sign opened ────
+//
+// The sign that makes a real batch expressible also lets a plan describe something that cannot
+// have happened. Both shapes below passed every per-line check and every sum check, because their
+// arithmetic is internally fine — it is simply about a world that does not exist.
+
+test("[BETAALPLAN] a creditnota ALONE cannot be settled by a payment", () => {
+  // What this used to return: ok, allocated −1.000, and "€1.850 left to divide" out of a payment
+  // that moved €850. It also marked the creditnota settled by a payment unrelated to it.
+  const r = resolvePaymentPlan({
+    txAmount: -850,
+    invoices: [credit("cn", 1000)],
+    lines: [{ invoiceId: "cn", amount: 1000 }],
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.equal(r.reason, "not_positive");
+    assert.match(r.message, /factuur bij staan die groter is/);
+  }
+});
+
+test("[BETAALPLAN] an invoice cancelled out by an equal creditnota books nothing", () => {
+  // Used to book BOTH as settled out of a payment that gave neither of them a cent.
+  const r = resolvePaymentPlan({
+    txAmount: -850,
+    invoices: [purchase("f", 1000), credit("cn", 1000)],
+    lines: [{ invoiceId: "f", amount: 1000 }, { invoiceId: "cn", amount: 1000 }],
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, "not_positive");
+});
+
+test("[BETAALPLAN] offsetting a creditnota WITHOUT a bank line is a real act — just not this screen", () => {
+  // Stated as a test so the refusal is not mistaken for a gap. An entrepreneur really does settle a
+  // creditnota against an invoice with no money moving; it belongs on the invoice, not on a bank
+  // payment, because here there is no line to hang it on.
+  const r = resolvePaymentPlan({
+    txAmount: 0,
+    invoices: [purchase("f", 1000), credit("cn", 1000)],
+    lines: [{ invoiceId: "f", amount: 1000 }, { invoiceId: "cn", amount: 1000 }],
+  });
+  assert.equal(r.ok, false);
+});
+
+test("[BETAALPLAN] and the ordinary batch with a credit still works exactly as before", () => {
+  // The guard must not cost the case it was built around.
+  const r = resolvePaymentPlan({
+    txAmount: -850,
+    invoices: [purchase("f", 1000), credit("cn", 150)],
+    lines: [{ invoiceId: "f", amount: 1000 }, { invoiceId: "cn", amount: 150 }],
+  });
+  assert.ok(r.ok);
+  assert.equal(r.allocated, 850);
+});

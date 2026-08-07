@@ -220,6 +220,32 @@ export function resolvePaymentPlan(input: PlanInput): PlanVerdict {
     });
   }
 
+  // ── The net must be POSITIVE, and this is not a formality ────────────────────────────────────
+  //
+  // The creditnota's minus sign is what makes a real batch expressible, and it is also the thing
+  // that lets a plan describe something that cannot have happened. Two shapes got through every
+  // check above:
+  //
+  //   · a creditnota ALONE against a debit — allocated −1.000 on a payment of 850, which then
+  //     reported €1.850 "left to divide" out of money that moved €850, and settled a creditnota
+  //     with a payment that had nothing to do with it;
+  //   · an invoice and an equal creditnota — allocated 0, booking BOTH as settled out of a
+  //     payment that gave neither of them a cent.
+  //
+  // Both are arithmetic that is internally fine and about a world that does not exist. A bank line
+  // MOVED money in one direction; a plan that nets to zero or backwards is not a payment. Offsetting
+  // a creditnota against an invoice with no money involved is a real thing an entrepreneur does —
+  // it is simply not this screen, because there is no bank line to hang it on.
+  if (allocated <= CENT_EPSILON) {
+    return {
+      ok: false,
+      reason: "not_positive",
+      message:
+        "Zo betaalt deze betaling per saldo niets. Een creditnota gaat eraf, dus er moet ook een " +
+        "factuur bij staan die groter is.",
+    };
+  }
+
   // The sum guard. Everything above is per-line and each line can be perfectly reasonable while the
   // total books money that does not exist — this is the check that only a whole plan can make.
   if (allocated > payAvailable + CENT_EPSILON) {
