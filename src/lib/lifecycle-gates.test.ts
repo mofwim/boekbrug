@@ -2353,3 +2353,48 @@ test("[REGEL-AFRONDING] the draft route rounds line_total, like the PUT route do
     "the draft route must round line_total — an unrounded value is stored verbatim and the document stops adding up",
   );
 });
+
+// ── [CI-PARITEIT] CI must run the gates it claims to run ─────────────────────
+//
+// The one difference from `npm run gates` is deliberate and documented: eslint is not blocking,
+// because the repo carries known pre-existing findings. Everything else has to match, and until now
+// it did not.
+//
+// `npm run test:render` was never in CI at all — the ONLY gate that catches a screen which throws
+// on render. tsc, eslint and next build never call a component, and the public-surface smoke sweeps
+// only what the middleware lets through without a session, so every /dashboard/* screen sat outside
+// all four gates CI did run. AGENTS.md documents the incident it exists for.
+//
+// And the unit step carried its own COPY of the glob, under a comment warning that "adding a
+// directory of tests means adding it here too — silence is what this step is supposed to make
+// impossible". It became that silence: package.json grew src/lib/*/*.test.ts, ci.yml did not.
+//
+// So this test does not check for a glob. It checks that CI calls the SCRIPTS, because two copies
+// of a glob is the mechanism, not the symptom.
+test("[CI-PARITEIT] CI invokes the package.json scripts, so it cannot drift from the local gates", () => {
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+
+  for (const script of ["test:unit", "test:render"]) {
+    assert.ok(
+      pkg.scripts[script],
+      `package.json must define ${script} — CI now calls it by name`,
+    );
+    assert.match(
+      ci,
+      new RegExp(`run:\\s*npm run ${script.replace(":", ":")}`),
+      `ci.yml must run "npm run ${script}" rather than repeating its glob — a duplicated glob drifts, and it drifts silently`,
+    );
+  }
+
+  // The gates the local script runs, minus the one documented exception.
+  const gates = pkg.scripts.gates ?? "";
+  for (const part of ["test:unit", "test:render", "test:e2e"]) {
+    assert.ok(gates.includes(part), `npm run gates must still include ${part}`);
+  }
+  // e2e is present in CI under its own command (playwright), and tsc/build likewise — assert the
+  // work happens, not the exact spelling.
+  assert.match(ci, /tsc --noEmit/, "CI must type-check");
+  assert.match(ci, /next build/, "CI must build");
+  assert.match(ci, /playwright test tests\/public-surface\.spec\.ts/, "CI must run the public smoke");
+});

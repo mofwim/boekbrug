@@ -1,11 +1,14 @@
 # [CI] BoekBrug continuous integration.
 # Runs the same hard gates the project uses locally before every merge:
-#   1. `tsc --noEmit`  — full TypeScript type-check.
-#   2. `tsx --test`    — the unit-test suite: src/lib plus src/content/legal.
-#   3. `next build`    — the production build, WITHOUT any secrets.
-#   4. the public-surface smoke test — the first gate that SERVES A REQUEST.
+#   1. `tsc --noEmit`     — full TypeScript type-check.
+#   2. `npm run test:unit`   — the unit-test suite.
+#   3. `npm run test:render` — the money screens, actually RENDERED.
+#   4. `next build`       — the production build, WITHOUT any secrets.
+#   5. the public-surface smoke test — the first gate that SERVES A REQUEST.
 # Lint is intentionally NOT a blocking gate here (the repo carries known
-# pre-existing eslint findings).
+# pre-existing eslint findings). That is the ONE deliberate difference from
+# `npm run gates`; everything else must match, and steps 2 and 3 now call the
+# package.json scripts by name so they cannot drift apart again.
 #
 # [PUBLIC-SMOKE] Why a fourth gate. The first three are all STATIC: none of them ever starts the
 # app. They therefore share one blind spot, and it is not theoretical — /eerlijk-gebruik was
@@ -59,12 +62,33 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
-      # The glob used to be src/lib/*.test.ts only, so a test written anywhere else was green by
-      # never running. src/content/legal is the second place with real invariants (the legal pages
-      # must render no unfilled [PLACEHOLDER]), hence both paths. Adding a directory of tests means
-      # adding it here too — silence is what this step is supposed to make impossible.
+      # [GLOB-DRIFT] `npm run test:unit`, NOT a glob written out again here.
+      #
+      # This step used to carry its own copy — `src/lib/*.test.ts src/content/legal/*.test.ts` —
+      # with a comment warning that "adding a directory of tests means adding it here too; silence
+      # is what this step is supposed to make impossible". It then became exactly that silence:
+      # package.json grew `src/lib/*/*.test.ts`, this file did not, and
+      # src/lib/design/sheet-bottom-gates.test.ts has never run on a pull request.
+      #
+      # One test is a small loss. The mechanism is not: a glob duplicated in two files drifts, and
+      # it drifts SILENTLY — the step stays green because the missing tests never report anything.
+      # Calling the script by name makes the two impossible to disagree.
       - name: Unit tests
-        run: npx tsx --test src/lib/*.test.ts src/content/legal/*.test.ts
+        run: npm run test:unit
+
+      # [RENDER-GATE] The gate CI never ran at all, and the only one that can catch its class.
+      #
+      # tsc, eslint and next build never CALL a component, and the public-surface smoke sweeps only
+      # what the middleware lets through without a session — so every /dashboard/* screen is outside
+      # all four of the other gates. AGENTS.md documents the incident: /dashboard/incoming/manage
+      # shipped with a const read seventy lines before its declaration, inside a .filter() callback
+      # that runs during render. It type-checked, it built, the smoke test never logged in, and the
+      # screen would have been white.
+      #
+      # 48 assertions, ~2 seconds, no browser and no database — and not one of them has executed on
+      # a pull request until now.
+      - name: Render tests
+        run: npm run test:render
 
       # No env is provided on purpose — see [BUILD-NO-SECRETS] above. If this step ever needs a
       # secret again, something started building a client at render time; fix that rather than
