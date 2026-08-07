@@ -17,9 +17,11 @@
 //      correct their numbering BEFORE the first issued invoice. A locked
 //      *change* => audit numbering_change_blocked + 409.
 //   4. apply (not locked): write profiles.template/padding (session), seed
-//      invoice_counters.last_seq = MAX(startSeq-1, existing) FORWARD-ONLY
-//      (service_role — the counter table denies session writes), audit
-//      numbering_configured. Returns the ACTUAL resulting first/next numbers.
+//      invoice_counters via seed_invoice_counter — GREATEST(existing, startSeq-1)
+//      evaluated UNDER the ON CONFLICT lock, so a concurrent next_invoice_seq
+//      cannot be undone (service_role — the counter table denies session
+//      writes), audit numbering_configured. Returns the ACTUAL first/next
+//      numbers, taken from what the function says landed.
 //
 // GET  -> current numbering state for the Settings card
 //   { template, isCustom, padding, yearlyReset, locked, next, nextSeq }
@@ -177,21 +179,37 @@ export async function POST(req: NextRequest) {
     const current = typeof cur?.last_seq === 'number' ? cur.last_seq : 0
 
     // 3. effective start sequence (forward-only seed; never collide / go back)
+    //
+    // [FACTUUR-B] The forward-only rule lives in seed_invoice_counter, not here, and that is the
+    // whole of this change. It used to be `Math.max(startSeq - 1, current)` followed by an
+    // unconditional upsert — a maximum taken against a value read a few lines earlier, written as
+    // a plain SET. next_invoice_seq is atomic precisely because two invoices can be numbered at
+    // the same instant, so it can allocate inside that window; the upsert then wrote a SMALLER
+    // last_seq than the counter had, and the next invoice reused a sequence.
+    //
+    // Article 35 Wet OB 1968 wants sequential numbers. The UNIQUE constraint on
+    // (sender_id, invoice_number) turns most duplicates into a retry, but only while BOTH invoices
+    // still exist — archive the earlier one and the number is simply reissued, with two different
+    // documents having carried it and nothing recording that.
+    //
+    // GREATEST inside the ON CONFLICT is evaluated under the lock, against the row as it is at
+    // write time. And the function returns what LANDED, which is what the owner is now shown:
+    // reporting `target + 1` meant that on the one occasion the seed was clamped, the confirmation
+    // named a number the next invoice would not carry.
     let effectiveStartSeq: number
     if (!locked && desired.startSeq != null) {
-      const target = Math.max(desired.startSeq - 1, current) // >= current => forward-only
       const pipeline = createPipelineClient() // service_role — counter table denies session writes
-      const { error: seedErr } = await pipeline
-        .from('invoice_counters')
-        .upsert(
-          { user_id: user.id, year: counterYear, type: 'factuur', last_seq: target },
-          { onConflict: 'user_id,year,type' }
-        )
-      if (seedErr) {
+      const { data: seeded, error: seedErr } = await pipeline.rpc('seed_invoice_counter', {
+        p_user_id: user.id,
+        p_year: counterYear,
+        p_type: 'factuur',
+        p_last_seq: Math.max(0, desired.startSeq - 1),
+      })
+      if (seedErr || typeof seeded !== 'number') {
         console.error('[FACTUUR-B] counter seed failed', { userId: user.id, counterYear, seedErr })
         return NextResponse.json({ ok: false, error: 'Kon de nummering niet instellen.' }, { status: 500 })
       }
-      effectiveStartSeq = target + 1
+      effectiveStartSeq = seeded + 1
     } else {
       effectiveStartSeq = current + 1
     }

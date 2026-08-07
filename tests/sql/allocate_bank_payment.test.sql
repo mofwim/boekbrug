@@ -1,3 +1,4 @@
+-- migrations: allocate_bank_payment.sql
 -- =====================================================================
 -- [SEAM] allocate_bank_payment, against a real PostgreSQL.
 -- Run: npm run test:sql   (see scripts/sql-seam-test.sh)

@@ -55,13 +55,33 @@ for test_file in "$here"/tests/sql/*.test.sql; do
   name="$(basename "$test_file")"
   echo ""
   echo "══ $name ══════════════════════════════════════════════"
-  # Fixture first (a clean schema per file), then every migration the test needs, then the test.
-  # The migrations are loaded from supabase/migrations so the file under test is the one that ships
-  # — a copy inside tests/ would be a second source of truth for money.
-  if ! "${psql_base[@]}" \
-        -f "$here/tests/sql/fixture.sql" \
-        -f "$here/supabase/migrations/allocate_bank_payment.sql" \
-        -f "$test_file" 2>&1; then
+
+  # Which migrations this test needs, declared in its own header:
+  #   -- migrations: allocate_bank_payment.sql, factuur_b_numbering.sql
+  # They are loaded from supabase/migrations so the file under test is the one that SHIPS — a copy
+  # inside tests/ would be a second source of truth for money.
+  migrations="$(sed -n 's/^-- migrations:[[:space:]]*//p' "$test_file" | head -1 | tr ',' ' ')"
+  if [ -z "$migrations" ]; then
+    echo "✗ $name declares no '-- migrations:' header — it would test nothing." >&2
+    failed=1
+    continue
+  fi
+
+  args=(-f "$here/tests/sql/fixture.sql")   # a clean schema per file
+  missing=""
+  for m in $migrations; do
+    path="$here/supabase/migrations/$m"
+    if [ ! -f "$path" ]; then missing="$missing $m"; continue; fi
+    args+=(-f "$path")
+  done
+  if [ -n "$missing" ]; then
+    echo "✗ $name names migrations that do not exist:$missing" >&2
+    failed=1
+    continue
+  fi
+  args+=(-f "$test_file")
+
+  if ! "${psql_base[@]}" "${args[@]}" 2>&1; then
     echo "✗ $name FAILED" >&2
     failed=1
   fi

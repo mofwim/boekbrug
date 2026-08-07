@@ -45,6 +45,16 @@ CREATE TABLE public.bank_tx_invoices (
   PRIMARY KEY (transaction_id, invoice_id)
 );
 
+-- [FACTUUR-B] The live invoice-number counter. Written ONLY by next_invoice_seq and
+-- seed_invoice_counter — there are no INSERT/UPDATE/DELETE policies for the session client.
+CREATE TABLE public.invoice_counters (
+  user_id  uuid NOT NULL,
+  year     int  NOT NULL,   -- a calendar year, or 0 for continuous numbering
+  type     text NOT NULL,
+  last_seq int  NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, year, type)
+);
+
 -- The two roles the migration GRANTs to. Created only if absent so a real Supabase-like database
 -- can run this file too.
 DO $$ BEGIN
