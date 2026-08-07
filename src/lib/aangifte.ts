@@ -241,13 +241,22 @@ export function buildAangifte(
         "bovendien een herzieningstermijn die dit concept niet bijhoudt.",
       );
     }
-    const geblokkeerd = euro(input.voorbelastingGeblokkeerd ?? 0);
-    if (geblokkeerd > 0) {
-      notes.push(
-        `€${geblokkeerd.toLocaleString("nl-NL")} BTW op inkopen die je volledig aan je VRIJGESTELDE werk hebt ` +
-        "toegewezen is NIET in 5b meegeteld. Dat is geen fout: bij vrijgestelde omzet bestaat er geen recht op aftrek.",
-      );
-    }
+  }
+  // [VRIJGESTELD] Deliberately OUTSIDE the `vrijgesteld !== 0` block above, where it used to sit.
+  //
+  // Blocked voorbelasting and exempt turnover are two different facts about two different sides of
+  // the ledger, and they do not have to occur in the same quarter. A physio who buys a EUR 3.000
+  // treatment table in January and treats their first patient in April has EUR 630 withheld from
+  // 5b in Q1 with no exempt turnover to pair it with; so does a dentist in a quarter that happens
+  // to hold only taxed whitening. Nested, the only sentence explaining why 5b is EUR 630 lower
+  // than the purchase invoices say never appeared — the figure was right and looked like a bug.
+  // (Rounding made it worse: EUR 0,40 of exempt turnover rounds to 0 and took the note with it.)
+  const geblokkeerd = euro(input.voorbelastingGeblokkeerd ?? 0);
+  if (geblokkeerd > 0) {
+    notes.push(
+      `€${geblokkeerd.toLocaleString("nl-NL")} BTW op inkopen die je volledig aan je VRIJGESTELDE werk hebt ` +
+      "toegewezen is NIET in 5b meegeteld. Dat is geen fout: bij vrijgestelde omzet bestaat er geen recht op aftrek.",
+    );
   }
   // [VRIJGESTELD] The boundary of this feature, in the concept the owner actually reads — not
   // only in a migration header they never will. A till Z-report has no exempt column and a cash

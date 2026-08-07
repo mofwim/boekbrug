@@ -588,6 +588,43 @@ console.log("\n— [RUBRIEK-SPLIT][KASSTELSEL] a payment carries a share of EVER
   check("…with the same totals", near(plain.omzet, r.omzet) && near(plain.btwVerschuldigd, r.btwVerschuldigd));
 }
 
+console.log("\n— [VRIJGESTELD][KASSTELSEL] a part-exempt settlement keeps the rate it was CHARGED —");
+{
+  // A dentist invoices €100 exempt care (art. 11) next to €100 whitening at 21% (BTW €21), and the
+  // patient pays it in full. The settlement's rate comes off the FULL header — 21 ÷ 200 = 10,5% —
+  // which snaps to 9% and books a 21% supply into rubriek 1b. All of that BTW belongs to the taxed
+  // half, so it has to be divided by the taxed half. The accrual branch already did this; the cash
+  // branch was still on the header.
+  const hdr = { invoiceId: "tand1", direction: "outgoing" as const, totalEx: 200, totalBtw: 21, totalInc: 221 };
+  const events = buildSettlementEvents(hdr, 0, [{ payDate: "2026-05-04", amountApplied: 221, estimated: false }]);
+  const r = computeResult([], [], [], [], undefined, 0, undefined, {
+    scheme: "kas", settlements: events, exemptRegime: true,
+    exemptShareByInvoice: new Map([["tand1", 0.5]]),
+  });
+  check("the exempt half reaches no rubriek at all", near(r.vrijgesteldeOmzet, 100));
+  check("the taxed half is declared at 21%, not 9%", !!r.salesByRate.find((x) => x.rate === 21 && near(x.omzet, 100)));
+  check("nothing lands in 1b", !r.salesByRate.find((x) => x.rate === 9));
+  check("and the BTW is untouched — only its rubriek moved", near(r.btwVerschuldigd, 21));
+  check("Σ salesByRate.btw === btwVerschuldigd", near(r.salesByRate.reduce((s, x) => s + x.btw, 0), r.btwVerschuldigd));
+
+  // With nothing exempt the header derivation is still exactly what it was.
+  const plain = computeResult([], [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: events });
+  check("no exempt part → the header-derived rate is unchanged", plain.salesByRate.length === 1 && plain.salesByRate[0].rate === 9);
+}
+{
+  // A WHOLLY exempt settlement: nothing to derive a rate from, and nothing to declare. It must not
+  // fall through to a €0 0%-bucket — an empty "1e" row on a fully exempt practice's concept.
+  const hdr = { invoiceId: "fysio1", direction: "outgoing" as const, totalEx: 900, totalBtw: 0, totalInc: 900 };
+  const events = buildSettlementEvents(hdr, 0, [{ payDate: "2026-05-06", amountApplied: 900, estimated: false }]);
+  const r = computeResult([], [], [], [], undefined, 0, undefined, {
+    scheme: "kas", settlements: events, exemptRegime: true,
+    exemptShareByInvoice: new Map([["fysio1", 1]]),
+  });
+  check("wholly exempt → all 900 in vrijgesteldeOmzet", near(r.vrijgesteldeOmzet, 900));
+  check("wholly exempt → no rubriek row at all", r.salesByRate.length === 0);
+  check("wholly exempt → the omzet is still in the result", near(r.omzet, 900));
+}
+
 console.log("\n— [CASH-DIRECTION] a refund goes the other way, in every figure —");
 {
   const cash = (over: Partial<ResultCashEntry>): ResultCashEntry => ({

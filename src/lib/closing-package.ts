@@ -70,7 +70,7 @@ import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
 import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
-import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
+import { resolveSchemeSettlements, mergeSchemeOpts } from "./kas-payment-events-fetch";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — the same helper the aangifte
 // and the result engine use, so the accountant's package cannot show different rubrieken.
 import { fetchRateShares } from "./btw-rate-split-fetch";
@@ -1790,12 +1790,23 @@ export async function buildClosingPackageZip(args: {
   // a few hundred lines up, so "the triangle is computed but not passed on" looks exactly like a
   // bug. It is not — but it WOULD become one the day this package starts reporting kosten or
   // winst. If that day comes, this argument has to change with it.
+  // [RUBRIEK-SPLIT · SCHEME-MERGE] MERGE, never overwrite — identical to /api/aangifte:185-197.
+  //
+  // The three maps below cover the invoices DATED in this quarter; kasResolution.opts carries the
+  // ones its SETTLEMENTS point at, which under kas routinely includes invoices from earlier
+  // quarters that were paid in this one. Spreading kasResolution.opts and then assigning the three
+  // keys REPLACED the settled half of each map, so the ZIP and the app disagreed on the same
+  // quarter: a sale invoiced last quarter and paid in this one lost its rate split (whole omzet
+  // into one rubriek), lost its exempt share (vrijgestelde omzet declared as taxed), and lost its
+  // cost attribution (an attributed cost falling back to the pro-rata bucket). The accountant's
+  // package is the document a human signs — it may not be the one that is wrong.
   const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, {
-    ...kasResolution.opts,
-    rateSharesByInvoice,
+    ...mergeSchemeOpts(kasResolution.opts, {
+      rateSharesByInvoice,
+      exemptShareByInvoice: exemptShareOf(typedAll, exemptExByInvoice),
+      deductionByInvoice: exemption.deductionByInvoice,
+    }),
     exemptRegime: exemption.active,
-    deductionByInvoice: exemption.deductionByInvoice,
-    exemptShareByInvoice: exemptShareOf(typedAll, exemptExByInvoice),
   });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,

@@ -16,6 +16,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { mergeSchemeOpts } from './kas-payment-events-fetch'
 
@@ -103,4 +105,61 @@ test('[SCHEME-MERGE] under factuur there is nothing to merge and nothing is inve
   const onlyLocal = mergeSchemeOpts({}, { exemptShareByInvoice: new Map([['a', 1]]) })
   assert.equal(onlyLocal.exemptShareByInvoice?.get('a'), 1)
   assert.equal(onlyLocal.rateSharesByInvoice, undefined, 'a map nobody supplied stays absent')
+})
+
+// ── THE CLASS GATE ────────────────────────────────────────────────────────────
+// Everything above proves mergeSchemeOpts is correct. That is not the same as proving it is USED,
+// and the difference cost a third call site: /api/aangifte and /api/readiness were both fixed and
+// buildClosingPackage was not, so the accountant's ZIP and the owner's own concept disagreed about
+// the same quarter — the ZIP being the one a human signs.
+//
+// The antipattern is a single character of syntax: `{ ...resolution.opts, rateSharesByInvoice }`.
+// It reads like a merge and is a replacement, because the later key wins in an object literal. So
+// the rule is mechanical: in any file that resolves a scheme, the resolution's opts may only be
+// spread THROUGH mergeSchemeOpts. A new money route added next year fails this the day it is
+// written, which is the only moment the fix is cheap.
+
+/** Every .ts/.tsx under src/, minus the test files that would match their own subject matter. */
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry.startsWith('.')) continue
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) { sourceFiles(full, out); continue }
+    if (!/\.tsx?$/.test(entry) || /\.test\.tsx?$/.test(entry)) continue
+    out.push(full)
+  }
+  return out
+}
+
+test('[SCHEME-MERGE] no money route spreads a scheme resolution without merging it', () => {
+  const callers = sourceFiles('src').filter((f) => {
+    const src = readFileSync(f, 'utf8')
+    // The definition itself is not a caller; every other file that names the resolver is.
+    return src.includes('resolveSchemeSettlements(') && !src.includes('export async function resolveSchemeSettlements')
+  })
+
+  assert.ok(
+    callers.length >= 3,
+    `expected the three known money readers (aangifte, readiness, closing package), found ${callers.length} — ` +
+      'if the resolver was renamed this gate is now sweeping for a name nothing uses',
+  )
+
+  const RAW_SPREAD = /\.\.\.\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.opts\b/g
+  for (const file of callers) {
+    const src = readFileSync(file, 'utf8')
+    const raw = src.match(RAW_SPREAD) ?? []
+    assert.equal(
+      raw.length, 0,
+      `${file} spreads a scheme resolution's opts directly (${raw.join(', ')}). Under kas the invoices a ` +
+        'quarter SETTLES are mostly not the ones it DATES, so the keys assigned after that spread ' +
+        'delete the settled half of each map — a sale invoiced last quarter and paid in this one ' +
+        'loses its rate split, its exempt share and its cost attribution, silently and on a filed ' +
+        'document. Wrap it: ...mergeSchemeOpts(x.opts, { rateSharesByInvoice, exemptShareByInvoice, deductionByInvoice }).',
+    )
+    assert.ok(
+      src.includes('mergeSchemeOpts('),
+      `${file} resolves a VAT scheme but never calls mergeSchemeOpts — if it passes the resolution on ` +
+        'at all, it has to pass it on merged',
+    )
+  }
 })
