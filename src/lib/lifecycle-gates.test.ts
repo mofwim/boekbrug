@@ -2781,82 +2781,107 @@ test("[GEEN-STILLE-KAP] the skipped panel admits its caps and never invents an a
 //
 // Now the lines are learned as they are written. Two things have to stay true about that, and
 // neither is visible in the pure tests:
-test("[ARTIKEL-LEREN] learning happens after the invoice is safe, and never guesses an empty catalog", () => {
-  const src = code("src/app/api/invoice/draft/route.ts");
+test("[ARTIKEL-LEREN] every door a human types lines through teaches the catalog, and none pays for it", () => {
+  // Retargeted once already. The first version asserted things about a learnFromLines declared
+  // INSIDE /api/invoice/draft, under the belief — written into its own message — that the draft is
+  // "the one door where a human types invoice lines for the first time". It is not: PUT
+  // /api/invoice/[id] replaces a draft's lines wholesale, so every line added on the edit screen is
+  // newly typed text, and for many owners that is the ordinary route. The rule was never about a
+  // file; it is about every door that takes typed lines.
+  const store = code("src/lib/article-learning-store.ts");
 
-  // 1. ORDER. The learning runs only once the lines are written and the rollback branch is behind
-  //    us. Before that guard, an exception from a side table would land in the outer catch — which
-  //    answers 500 for an invoice that was in fact created, or worse, skips the rollback that keeps
-  //    a header from existing with no lines.
-  const guard = src.indexOf("if (lineErr) {");
-  const learn = src.indexOf("await learnFromLines({");
-  assert.ok(guard > 0, "the line-write rollback guard is still there");
-  assert.ok(learn > 0, "the draft route must teach the catalog — this is the one door where a " +
-    "human types invoice lines for the first time");
-  assert.ok(
-    learn > guard,
-    "the catalog is taught AFTER the invoice's own lines are safe. Learning is a convenience " +
-      "beside the invoice; it may never be a reason one fails or half-exists",
+  // ONE module. Two copies of this rule would drift without a single test turning red — the defect
+  // this codebase keeps digging out of ai_doc_type and the skipped panel.
+  assert.doesNotMatch(
+    code("src/app/api/invoice/draft/route.ts"),
+    /async function learnFromLines\(/,
+    "the writing half lives in article-learning-store.ts, not copied back into a route",
   );
 
-  // 2. THE READ IS NOT ALLOWED TO GUESS. supabase-js does not throw: `const { data }` on a failed
-  //    read gives null, `?? []` reads as "the catalog is empty", and then EVERY line looks new —
-  //    inserting a duplicate of the owner's entire catalog on one bad connection. This is the one
-  //    failure here that damages data rather than merely skipping a nicety.
+  // Both doors, each AFTER its own lines are safe. Before that point an exception from a side table
+  // lands in the outer catch — answering 500 for a document that was in fact written, or skipping a
+  // rollback that keeps a header from existing with no lines.
+  for (const [file, guard] of [
+    ["src/app/api/invoice/draft/route.ts", "if (lineErr) {"],
+    ["src/app/api/invoice/[id]/route.ts", "if (insErr) {"],
+  ] as const) {
+    const src = code(file);
+    const g = src.indexOf(guard);
+    const learn = src.indexOf("await learnFromLines({");
+    assert.ok(g > 0, `${file}: the line-write failure branch is still there`);
+    assert.ok(learn > 0, `${file}: this door takes typed invoice lines and must teach the catalog`);
+    assert.ok(
+      learn > g,
+      `${file}: the catalog is taught AFTER the document's own lines are safe. Learning is a ` +
+        "convenience beside an invoice; it may never be a reason one fails or half-exists",
+    );
+  }
+
+  // THE READ IS NOT ALLOWED TO GUESS. supabase-js does not throw: `const { data }` on a failed read
+  // gives null, `?? []` reads as "the catalog is empty", and then EVERY line looks new — inserting
+  // a duplicate of the owner's ENTIRE catalog on one bad connection. The one failure here that
+  // damages data rather than merely skipping a nicety.
   assert.match(
-    src,
-    /const \{ data: catalog, error: catalogErr \} = await pipeline[\s\S]{0,200}?from\('articles'\)/,
+    store,
+    /const \{ data: catalog, error: catalogErr \} = await db[\s\S]{0,200}?from\("articles"\)/,
     "the catalog read must keep its error",
   );
   assert.match(
-    src,
-    /if \(catalogErr\) \{[\s\S]{0,220}?return\b/,
+    store, /if \(catalogErr\) \{[\s\S]{0,220}?return\b/,
     "…and a failed read must give up, not treat 'no rows' as 'no catalog' and re-insert everything",
   );
 
-  // 3. It cannot break the request. Every give-up is a return, the whole thing is wrapped, and no
-  //    failure from it is turned into an answer to the browser.
-  //    Scoped to the function BODY, and the slice proves itself before anything is asserted about
-  //    it. The first version of this check searched for `[ARTIKEL-LEREN]` followed by an error
-  //    response — a marker that only ever appears in COMMENTS, which code() strips. It matched
-  //    nothing in either direction and tested nothing at all; the negative control is what said so.
-  const start = src.indexOf("async function learnFromLines(");
-  const end = src.indexOf("export async function POST(", start);
-  assert.ok(start > 0, "learnFromLines is still declared here");
-  assert.ok(end > start, "…ahead of the handler, so this slice is its body");
-  const body = src.slice(start, end);
+  // It cannot break either request. Asserted over the whole module, which is nothing BUT this work.
   assert.ok(
-    body.includes("planCatalogLearning(") && body.includes("catch"),
-    "the slice really is the function body — without this, everything below passes vacuously",
+    store.includes("planCatalogLearning(") && store.includes("catch"),
+    "the module really is the learning writer — without this the check below passes vacuously",
   );
   assert.doesNotMatch(
-    body,
-    /NextResponse/,
-    "learnFromLines may not answer the browser at all. The invoice exists by the time it runs, so " +
-      "turning a catalog failure into an error would report a failure for work that succeeded",
+    store, /NextResponse/,
+    "the learning writer may not answer the browser at all. The document exists by the time it " +
+      "runs, so turning a catalog failure into an error would report a failure for work that " +
+      "succeeded",
   );
   assert.match(
-    body, /\} catch \(e\) \{[\s\S]{0,200}?console\.error\(/,
-    "…and its failures end in a log, not in a throw the outer handler would answer 500 to",
+    store, /\} catch \(e\) \{[\s\S]{0,200}?console\.error\(/,
+    "…and its failures end in a log, not in a throw the route's outer handler answers 500 to",
   );
 
-  // 4. The decision itself lives in the tested module, not inline here. An `if` about which
-  //    documents teach, written in a route, is an `if` nobody runs a test against.
+  // Ownership is applied HERE, on every statement, rather than trusted to whichever client a caller
+  // happened to pass. The edit route hands it a service-role client whenever a verkoopmedewerker is
+  // acting, because `articles` carries no policy for an employee.
+  // Three statements, three ways of being scoped — a count would have said "3 eq() calls" and been
+  // wrong about the insert, which carries the owner in the ROW. Assert the property per statement.
   assert.match(
-    src, /documentTeachesCatalog\(soort\)/,
-    "which documents teach the catalog is decided in article-learning.ts, where it is tested",
+    store, /select\("id, description, usage_count, active"\)\s*\.eq\("user_id", ownerId\)/,
+    "the READ must be the owner's catalog, or a plan is computed against someone else's",
   );
   assert.match(
-    src, /planCatalogLearning\(lines, catalog \?\? \[\]\)/,
-    "and so is what to insert versus bump",
+    store, /\.insert\(plan\.toInsert\.map\(\(a\) => \(\{ user_id: ownerId, \.\.\.a \}\)\)\)/,
+    "every INSERTED row must carry the owner — articles has no default for it",
+  );
+  assert.match(
+    store, /\.update\(\{ usage_count[\s\S]{0,80}?\.eq\("id", b\.id\)\.eq\("user_id", ownerId\)/,
+    "the BUMP must be owner-scoped as well as id-scoped: it runs on a service-role client whenever " +
+      "a verkoopmedewerker is acting, where an id alone reaches any row in the table",
+  );
+  assert.match(
+    code("src/app/api/invoice/[id]/route.ts"),
+    /db: isActingForOther\(acting\) \? createPipelineClient\(\) : supabase/,
+    "the edit screen of a verkoopmedewerker must write with a client that CAN write articles, or " +
+      "it silently learns nothing for the person a filled picker helps most",
   );
 
-  // 5. What is learned is what the LINE said. Deriving the description a second way here is how the
-  //    catalog and the invoice come to disagree about the same words.
-  const lineWrite = /description: String\(bron\[i\]\?\.description \?\? ''\)\.trim\(\)/g;
+  // The decision stays in the tested module. An `if` about which documents teach, written in a
+  // route, is an `if` nobody runs a test against.
+  assert.match(store, /documentTeachesCatalog\(documentKind\)/, "which documents teach is decided in article-learning.ts");
+  assert.match(store, /planCatalogLearning\(lines, catalog \?\? \[\]\)/, "and so is what to insert versus bump");
+
+  // What is learned is what the LINE said. Deriving the description a second way is how the catalog
+  // and the invoice come to disagree about the same words.
+  const draft = code("src/app/api/invoice/draft/route.ts");
   assert.equal(
-    [...src.matchAll(lineWrite)].length, 2,
-    "the invoice line and the catalog entry must read the description the same way — one " +
-      "expression, used in both places",
+    [...draft.matchAll(/description: String\(bron\[i\]\?\.description \?\? ''\)\.trim\(\)/g)].length, 2,
+    "the invoice line and the catalog entry must read the description the same way",
   );
 });

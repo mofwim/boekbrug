@@ -25,7 +25,11 @@ import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-tota
 // blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
 // canAccessInvoice() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
 import { getActingFor } from '@/lib/acting-for-server'
-import { invoiceOwnerId, canAccessInvoice } from '@/lib/acting-for'
+import { invoiceOwnerId, canAccessInvoice, isActingForOther } from '@/lib/acting-for'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [ARTIKEL-LEREN] Deze PUT vervangt de regels VOLLEDIG, dus alles wat hier langskomt is getypte
+// tekst — ook de regels die op dit scherm zijn toegevoegd. Eén module, gedeeld met /api/invoice/draft.
+import { learnFromLines } from '@/lib/article-learning-store'
 import { readWithTrail } from '@/lib/created-by'
 // [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
 import { isKnownUnit } from '@/lib/units'
@@ -99,16 +103,21 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
     total_ex_btw: number | null
     btw_amount: number | null
     total_inc_btw: number | null
+    /** [ARTIKEL-LEREN] Bepaalt of dit document de catalogus iets mag leren. Staat in BEIDE
+     *  kolomlijsten hieronder: hij hoort bij de basistabel (database.sql), niet bij een migratie,
+     *  dus de terugval mag hem niet kwijtraken — dan leerde een installatie zonder created_by
+     *  stilletjes niets. */
+    invoice_type?: string | null
   }>(
-     
+
     (kolommen: string) => supabase
       .from('invoices')
       .select(kolommen)
       .eq('id', id)
       .eq('sender_id', userId)
       .single(),
-    'id, status, sender_id, created_by, total_ex_btw, btw_amount, total_inc_btw',
-    'id, status, sender_id, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, created_by, invoice_type, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, invoice_type, total_ex_btw, btw_amount, total_inc_btw',
   )
 }
 
@@ -318,6 +327,28 @@ export async function PUT(
       .eq('status', 'draft')
     return NextResponse.json({ error: 'Opslaan mislukt (regels)' }, { status: 500 })
   }
+
+  // [ARTIKEL-LEREN] Ook dit scherm. Toen het leren werd gebouwd stond er dat /api/invoice/draft
+  // "de enige plek is waar een mens voor het eerst factuurregels typt". Dat was niet waar: deze
+  // PUT vervangt de regels VOLLEDIG, dus elke regel die iemand op het bewerkscherm toevoegt is
+  // nieuw getypte tekst — en die weg is voor veel ondernemers de gewone weg (snel een concept, dan
+  // rustig afmaken). Zonder deze aanroep leerde de catalogus juist van de regels waar het meeste
+  // over is nagedacht niets.
+  await learnFromLines({
+    // [ACTING-FOR] Dezelfde keuze als /api/articles maakt: `articles` heeft geen RLS-policy voor
+    // een medewerker, dus namens iemand anders schrijven kan alleen met de pipeline-client. Zonder
+    // dit leerde het bewerkscherm van een verkoopmedewerker stil niets — precies de persoon voor
+    // wie een gevulde suggestielijst het meeste scheelt.
+    db: isActingForOther(acting) ? createPipelineClient() : supabase,
+    ownerId,
+    documentKind: existing.invoice_type ?? 'factuur',
+    lines: lines.map((l) => ({
+      description: l.description,
+      unit_price: l.unit_price,
+      btw_rate: l.btw_rate,
+      unit: l.unit,
+    })),
+  })
 
   return NextResponse.json({ success: true })
 }

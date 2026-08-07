@@ -127,3 +127,12 @@ test("a creditnota does not teach the catalog; an invoice and a quote do", () =>
   assert.equal(documentTeachesCatalog("offerte"), true);
   assert.equal(documentTeachesCatalog("creditnota"), false, "a correction is not work anyone sells");
 });
+
+test("a quote is recognised under BOTH the words the app stores it as", () => {
+  // /api/invoice/draft speaks 'offerte' and stores 'pro_forma' (DB_TYPE); invoices.invoice_type
+  // accepts both, so rows exist under either. The edit route asks with the STORED value. If this
+  // function only knew the UI word, every quote edited after creation would silently teach nothing
+  // — and nothing would turn red, because both spellings are legitimate.
+  assert.equal(documentTeachesCatalog("pro_forma"), true);
+  assert.equal(documentTeachesCatalog("offerte"), true);
+});

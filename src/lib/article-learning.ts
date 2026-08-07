@@ -167,7 +167,15 @@ export function planCatalogLearning(
  *
  * An `offerte` does count: it is the owner describing real work, often before the first invoice
  * exists, and the second quote should already suggest what the first one said.
+ *
+ * WHY THIS TAKES THREE SPELLINGS FOR TWO THINGS
+ * A quote is `offerte` in the UI and in /api/invoice/draft's own vocabulary, but that route stores
+ * it as `pro_forma` (DB_TYPE) — and invoices.invoice_type accepts BOTH, so rows exist under either
+ * word. The edit route asks this question with the stored value, the draft route with the UI one.
+ * Letting each caller translate is how one truth comes to be spelled two ways in two files, which
+ * is the exact defect the skipped-import panel was built to survive. It is one rule, so it lives
+ * in one function, and the function knows every word its callers actually have.
  */
 export function documentTeachesCatalog(kind: string): boolean {
-  return kind === "factuur" || kind === "offerte";
+  return kind === "factuur" || kind === "offerte" || kind === "pro_forma";
 }
