@@ -84,7 +84,7 @@ import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 import { groundMoneyFields } from './amount-grounding';
 // [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
 // factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
-import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts } from './e-invoice';
+import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
 // [DOCCHECK] The sharper check on the same text — see document-verify.ts.
 import { verifyDocument } from './document-verify';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
@@ -1217,6 +1217,45 @@ export function isAiApiError(error: unknown): boolean {
   return /\bapi error\b/i.test(msg);
 }
 
+/**
+ * [E-FACTUUR-XML] The supplier's own statement, in the shape every caller of the reader expects.
+ *
+ * confidence is 1, and that is a fact about provenance rather than flattery: not one value here was
+ * inferred. A lower score would make the gates downstream hold the most certain document this app
+ * can receive.
+ *
+ * `_einvoice` is written exactly as the PDF path writes it, with contradicts:false — a fact, not an
+ * assumption, because the stored figures ARE the XML and there is no reading for them to disagree
+ * with. [E-FACTUUR-BESLECHT] reads that key to stand the money gates down, and without it the
+ * invoice nobody read would be trusted LESS than one a model had read.
+ */
+function eInvoiceVerification(f: EInvoiceFigures): VerifyInvoiceResult {
+  return {
+    is_invoice: true,
+    confidence: 1,
+    vendor: f.vendorName ?? undefined,
+    invoice_number: f.invoiceNumber ?? undefined,
+    // normalizeToIso accepts ISO as well as the Dutch notation, so the ISO day travels unchanged.
+    invoice_date: f.invoiceDate ?? undefined,
+    due_date: f.dueDate ?? undefined,
+    total_inc_btw: f.totalIncBtw,
+    total_ex_btw: f.totalExBtw,
+    btw_amount: f.btwAmount,
+    amount: f.totalIncBtw,
+    vendor_iban: f.vendorIban ?? undefined,
+    payment_reference: f.paymentReference ?? undefined,
+    is_credit_note: f.isCreditNote,
+    is_statement: false,
+    is_reminder: false,
+    document_kind: 'invoice',
+    reason: `e-factuur (${f.syntax === 'ubl' ? 'Peppol/UBL' : 'Factur-X/CII'}) — bedragen door de leverancier zelf meegestuurd`,
+    field_confidence: {
+      vendor: 1, invoice_number: 1, invoice_date: 1, amount: 1,
+      _einvoice: { ...f, contradicts: false },
+    },
+  } as VerifyInvoiceResult;
+}
+
 export async function verifyInvoiceFromPdf(
   fileBase64: string,
   mimeType: string,
@@ -1637,6 +1676,26 @@ Return JSON only.`;
   // Haiku) and the cheap text path. The manual re-read passes a stronger model and preferRawPdf.
   const model = opts?.model;
   const preferRawPdf = opts?.preferRawPdf === true;
+
+  // [E-FACTUUR-XML] A Peppol / NLCIUS invoice that arrived as XML on its own — no page, no picture,
+  // nothing to read. The supplier states the number, both dates, their own legal name, their
+  // account and all three amounts in a structured form they produced. There is no model that could
+  // improve on that, so none is asked, and no API call is made.
+  //
+  // It sits in THIS function, not at one of the doors, because both doors call this one: the e-mail
+  // sync used to intercept it for itself, which made it the only door that could read a Peppol
+  // invoice — the identical file uploaded by hand was filed as "a format we cannot read". A reader
+  // on one door is not a reader; it is an inconsistency nobody can explain to the owner.
+  //
+  // A file that does not parse COMPLETELY is NOT booked. It comes back as not-an-invoice with
+  // confidence 0, which is the ordinary could-not-read path: the file is kept, counted and named to
+  // the owner. Half an e-invoice would be trusted above the model, which is worse than none.
+  if (isEInvoiceXmlMime(mimeType)) {
+    const figures = parseEInvoice(Buffer.from(cleanBase64(fileBase64), 'base64').toString('utf8'));
+    return figures
+      ? eInvoiceVerification(figures)
+      : { is_invoice: false, confidence: 0, reason: 'e-factuur XML kon niet volledig worden gelezen' };
+  }
 
   try {
     let result: string;
