@@ -60,6 +60,14 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
 
   const geld = Math.abs(transactie.amount)
   const beschikbaar = Math.max(0, geld - Math.abs(transactie.alreadyAllocated))
+  // [BETAALPLAN] Deze betaling is al helemaal verdeeld.
+  //
+  // Zonder deze regel opende het scherm gewoon: een lijst facturen, invulvelden, een knop — en elk
+  // plan dat je maakte werd geweigerd met "je verdeelt X terwijl deze betaling nog € 0,00 te
+  // vergeven heeft". Dat is waar, en het is het antwoord op de verkeerde vraag: je hebt niets fout
+  // gedaan, er is hier niets meer te doen. Een doodlopende weg die pas na het typen zichtbaar wordt
+  // is erger dan een dichte deur, want je bent er al doorheen gelopen.
+  const helemaalVerdeeld = beschikbaar <= 0.005
 
   const regels = useMemo(
     () =>
@@ -127,6 +135,34 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
     } finally {
       setBezig(false)
     }
+  }
+
+  if (helemaalVerdeeld) {
+    return (
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
+          Betaling verdelen
+        </h1>
+        <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: R.lg, boxShadow: EL1, padding: 20 }}>
+          <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
+            Deze betaling van {formatEuroNL(geld)} is al helemaal verdeeld over facturen.
+          </p>
+          <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
+            Er valt hier niets meer toe te wijzen. Klopt de verdeling niet, ontkoppel dan eerst een
+            factuur op de bankpagina — dan komt dat bedrag hier weer vrij.
+          </p>
+          <a
+            href="/dashboard/bank"
+            style={{
+              display: 'inline-block', padding: '10px 20px', borderRadius: R.full,
+              background: M3.primary, color: M3.onPrimary, textDecoration: 'none', fontSize: 15, fontWeight: 500,
+            }}
+          >
+            Terug naar de bank
+          </a>
+        </div>
+      </main>
+    )
   }
 
   const kaart: React.CSSProperties = {

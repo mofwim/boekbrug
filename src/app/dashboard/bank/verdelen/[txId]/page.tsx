@@ -68,7 +68,25 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
     .select('id, direction, invoice_type, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status')
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .eq('direction', richting)
-    .in('status', richting === 'incoming' ? ['received', 'overdue', 'partial'] : ['sent', 'overdue', 'partial'])
+    // [BETAALPLAN] UITSLUITEN, niet opsommen — en dat verschil is hier een fout waard.
+    //
+    // Hier stond een lijst met toegestane statussen, waaronder 'partial'. Die status bestaat niet:
+    // de CHECK op invoices.status kent draft, sent, paid, overdue, received, processing, processed,
+    // unclear en archived, en een deels betaalde factuur HOUDT gewoon zijn status — alleen
+    // amount_paid verschuift (apply_bank_payment zet pas 'paid' als het bedrag rond is). De lijst
+    // beschreef dus een toestand die niet kan bestaan, en dat viel niet op omdat een IN-filter met
+    // een onbekende waarde niet klaagt: hij vindt hem gewoon nooit.
+    //
+    // Erger is wat een opsomming stilzwijgend WEGLAAT. Elke status die iemand later toevoegt valt
+    // er buiten, en het gevolg is geen foutmelding maar een factuur die de eigenaar niet kan
+    // aanwijzen terwijl hij hem wel moet betalen. Uitsluiten faalt de andere kant op: een nieuwe
+    // status verschijnt in de lijst en valt op, in plaats van te verdwijnen en niet op te vallen.
+    //
+    // Wat hier NIET thuishoort is precies te benoemen: een concept is nog geen schuld, betaald is
+    // geen schuld meer, gearchiveerd is uit beeld, en 'processing'/'unclear' zijn stukken die de
+    // eigenaar nog moet bevestigen — daar geld op boeken zou een bedrag vastleggen dat nog niet
+    // eens is nagekeken.
+    .not('status', 'in', '(draft,paid,archived,processing,unclear)')
     .order('invoice_date', { ascending: true })
     .limit(300)
 

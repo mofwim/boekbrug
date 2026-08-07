@@ -1494,3 +1494,16 @@ test("[BETAALPLAN] geld dat BINNENKWAM zegt dat ook, en toont het al gekoppelde 
   assert.match(html, /Geld dat binnenkwam/);
   assert.match(html, /was al gekoppeld/, "wat een eerdere koppeling nam, is weg — dat hoort te blijken");
 });
+
+test("[BETAALPLAN] een al volledig verdeelde betaling is een dichte deur, geen doodlopende weg", async () => {
+  // Zonder deze tak opende het scherm gewoon: lijst, invulvelden, knop — en elk plan werd daarna
+  // geweigerd met "nog € 0,00 te vergeven". Waar, en het antwoord op de verkeerde vraag.
+  const { default: VerdeelClient } = await import("../../src/app/dashboard/bank/verdelen/[txId]/VerdeelClient");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(VerdeelClient as any, {
+    transactie: { ...verdeelTx, alreadyAllocated: 850 }, facturen: verdeelFacturen,
+  }));
+  assert.match(html, /al helemaal verdeeld/);
+  assert.doesNotMatch(html, /Nog te verdelen/, "geen invulvelden voor een verdeling die niet kan");
+  assert.match(html, /ontkoppel dan eerst/, "en het zegt hoe je er wél weer bij komt");
+});
