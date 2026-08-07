@@ -78,6 +78,16 @@ const GATES: Record<string, string> = {
   field_confidence_below_high_bar: 'vendor/number/date confidence below 0.8',
 }
 
+/**
+ * Refusals that depend on the overall AI confidence, which is not persisted (see signalsOf).
+ * They cannot be replayed and must never appear as a yield — a gate this script cannot see is
+ * not a gate that did nothing.
+ */
+const UNMEASURABLE = new Set([
+  'overall_confidence_missing_or_low',
+  'no_amount_confidence_and_overall_not_very_high',
+])
+
 /** The row shape this needs. Anything absent reads as "the check did not run". */
 interface Row {
   id: string
@@ -111,9 +121,24 @@ function signalsOf(row: Row): AutoAdvanceSignals {
   const fc = (row.field_confidence ?? null) as HealthInput['field_confidence']
   const raw = (row.field_confidence ?? {}) as Record<string, unknown>
 
+  // ── [NIET-HERSPEELBAAR] The overall AI confidence is NOT stored anywhere ──
+  //
+  // The real caller passes `confidence: classification.confidence` straight from the classifier's
+  // return value; it never reaches the database. There is no `confidence` column on invoices and
+  // no such key inside field_confidence — only the PER-FIELD scores are persisted.
+  //
+  // The first version of this script read it from field_confidence anyway, got null on every row,
+  // and shouldAutoAdvanceInvoice is fail-closed on a missing overall confidence. The result was a
+  // report claiming 404 of 512 invoices (78.9%) were held by 'overall_confidence_missing_or_low'
+  // and that NOTHING in the administration would ever auto-book. Both were artefacts of this file.
+  //
+  // A measurement that invents its own top finding is worse than no measurement. So the value is
+  // pinned above every threshold here, which lets the gates that CAN be replayed — the ones built
+  // on stored document evidence, which is what this script exists to weigh — be measured honestly.
+  // The confidence gates are then reported separately as unmeasurable rather than as findings.
   return {
     invoice_type: row.invoice_type,
-    confidence: typeof raw.confidence === 'number' ? raw.confidence : null,
+    confidence: 1,
     totalIncBtw: row.total_inc_btw,
     btwRate: typeof raw.btw_rate === 'number' ? raw.btw_rate : null,
     totalGrounding: groundingOf(fc) ?? null,
@@ -174,6 +199,7 @@ async function main() {
       advanced += 1
       continue
     }
+    if (UNMEASURABLE.has(d.reason)) continue
     firstRefusal.set(d.reason, (firstRefusal.get(d.reason) ?? 0) + 1)
 
     // Which OTHER gates would have caught it. Re-run with this refusal's cause neutralised, as
@@ -191,9 +217,13 @@ async function main() {
   const pct = (n: number) => `${((n / rows.length) * 100).toFixed(1)}%`
 
   console.log(`\n══ [POORT-OPBRENGST] ${rows.length} incoming invoices, last ${days} days ══\n`)
-  console.log(`  would auto-book with no human      ${String(advanced).padStart(5)}  ${pct(advanced)}`)
-  console.log(`  held for a human                   ${String(rows.length - advanced).padStart(5)}  ${pct(rows.length - advanced)}`)
+  console.log(`  cleared every gate this can replay ${String(advanced).padStart(5)}  ${pct(advanced)}`)
+  console.log(`  held by a replayable gate          ${String(rows.length - advanced).padStart(5)}  ${pct(rows.length - advanced)}`)
   console.log(`  carried a settling e-invoice       ${String(settledByEInvoice).padStart(5)}  ${pct(settledByEInvoice)}`)
+  console.log(``)
+  console.log(`  NOT "would auto-book": the overall AI confidence is not stored, so the confidence`)
+  console.log(`  gates cannot be replayed and are pinned open here. This measures the gates built on`)
+  console.log(`  stored document evidence — which is what the question was.`)
 
   console.log(`\n── The number that matters: how often was this gate the ONLY thing holding it ──\n`)
   const ranked = [...firstRefusal.entries()].sort((a, b) => b[1] - a[1])
@@ -202,7 +232,7 @@ async function main() {
     console.log(`         ${GATES[reason] ?? '(unknown reason — a gate was added without updating this script)'}`)
   }
 
-  const never = Object.keys(GATES).filter((g) => !firstRefusal.has(g))
+  const never = Object.keys(GATES).filter((g) => !firstRefusal.has(g) && !UNMEASURABLE.has(g))
   if (never.length > 0) {
     console.log(`\n── Never the only thing holding an invoice, in this window ──\n`)
     for (const g of never) console.log(`         ${g}\n           ${GATES[g]}`)
@@ -217,6 +247,12 @@ async function main() {
       console.log(`  ${String(n).padStart(5)}          ${reason}`)
     }
   }
+
+  console.log(`\n── Cannot be measured from a stored row, and therefore not judged ──\n`)
+  for (const g of UNMEASURABLE) console.log(`         ${g}\n           ${GATES[g]}`)
+  console.log(`\n  The overall AI confidence lives only in memory at import time. Whether these gates`)
+  console.log(`  earn their keep is a real question; this script is simply not the instrument that`)
+  console.log(`  can answer it. Persisting the score would make them measurable.`)
 
   console.log(`\n  Caveat, stated rather than hidden: the document-KIND flags (statement / reminder /`)
   console.log(`  credit note) are not all recoverable from a stored row, so their gates are`)

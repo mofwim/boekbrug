@@ -318,11 +318,13 @@ export async function GET() {
   // saldo that disagreed with the Kas page.
   const [cashRows, tillRows, { data: kasProf, error: kasProfErr }] = await Promise.all([
     fetchAllRows((from, to) => pipeline
-      .from("cash_entries").select("direction, amount").eq("user_id", user.id)
+      // [KAS-DUBBELTELLING] entry_date + category: het saldo moet een omzetregel kunnen overslaan op
+      // een dag die de kassa al telde, anders staat dezelfde euro er twee keer in.
+      .from("cash_entries").select("direction, amount, entry_date, category").eq("user_id", user.id)
       .order("id", { ascending: true }).range(from, to)
     ).catch(() => null),
     fetchAllRows((from, to) => pipeline
-      .from("daily_turnover").select("cash_amount").eq("user_id", user.id)
+      .from("daily_turnover").select("turnover_date, cash_amount").eq("user_id", user.id)
       .order("id", { ascending: true }).range(from, to)
     ).catch(() => null),
     pipeline.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle(),
@@ -343,13 +345,18 @@ export async function GET() {
     });
   }
   const cash = cashRows ?? [];
-  const till = (tillRows ?? []) as { cash_amount: number | null }[];
+  const till = (tillRows ?? []) as { turnover_date: string | null; cash_amount: number | null }[];
   const kasOpening = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
   const tillCashTotal = till.reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
   const kasBalance = computeDrawerBalance({
     openingBalance: kasOpening,
-    entries: cash.map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
-    tillCashAmounts: till.map((t) => t.cash_amount),
+    entries: cash.map((e) => ({
+      direction: e.direction === "in" ? "in" : "out",
+      amount: e.amount,
+      date: (e as { entry_date?: string | null }).entry_date ?? null,
+      category: (e as { category?: string | null }).category ?? null,
+    })),
+    tillDays: till.map((t) => ({ date: t.turnover_date, cash_amount: t.cash_amount })),
   });
   // A shop with till-cash takings (or an opening float) handles cash even without manual entries, so
   // the home surfaces the drawer whenever ANY of the three sources is present — matching the Kas page.

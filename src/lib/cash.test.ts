@@ -360,18 +360,109 @@ check("entries + till cash + opening → the true drawer (the −41 vs 59 bug)",
   computeDrawerBalance({
     openingBalance: 0,
     entries: [{ direction: "out", amount: 150 }, { direction: "in", amount: 109 }],
-    tillCashAmounts: [100],
+    tillDays: [{ cash_amount: 100 }],
   }) === 59);
 check("cash_entries alone (no till, no opening) still matches computeCashBalance",
-  computeDrawerBalance({ openingBalance: 0, entries: [{ direction: "in", amount: 40 }], tillCashAmounts: [] }) === 40);
+  computeDrawerBalance({ openingBalance: 0, entries: [{ direction: "in", amount: 40 }], tillDays: [] }) === 40);
 check("opening float is included",
-  computeDrawerBalance({ openingBalance: 25, entries: [], tillCashAmounts: [] }) === 25);
+  computeDrawerBalance({ openingBalance: 25, entries: [], tillDays: [] }) === 25);
 check("null/empty inputs → 0 (no NaN)",
-  computeDrawerBalance({ openingBalance: null, entries: [], tillCashAmounts: [null, null] }) === 0);
+  computeDrawerBalance({ openingBalance: null, entries: [], tillDays: [{ cash_amount: null }, { cash_amount: null }] }) === 0);
 check("till-only shop (no manual entries) shows its drawer",
-  computeDrawerBalance({ openingBalance: 0, entries: [], tillCashAmounts: [200, 50] }) === 250);
+  computeDrawerBalance({ openingBalance: 0, entries: [], tillDays: [{ cash_amount: 200 }, { cash_amount: 50 }] }) === 250);
 check("rounds to the cent",
-  computeDrawerBalance({ openingBalance: 0.1, entries: [{ direction: "in", amount: 0.2 }], tillCashAmounts: [] }) === 0.3);
+  computeDrawerBalance({ openingBalance: 0.1, entries: [{ direction: "in", amount: 0.2 }], tillDays: [] }) === 0.3);
+
+
+// ── [KAS-DUBBELTELLING] The drawer must not count a day's takings twice ──────
+//
+// A till shop's cash revenue reaches the drawer from two sources, by design of the data model:
+// daily_turnover.cash_amount (what the Z-report counted) and a cash_entries row with direction
+// 'in' and category 'omzet' — which is what the Kas page's default category makes the natural way
+// to record the counted drawer. Summing both put a shop taking EUR 500 a day about EUR 45.000 above
+// what the drawer physically held, by the end of one quarter.
+//
+// That figure is not decorative: it is the Kasboek the closing package hands the accountant, and it
+// feeds the drawer witness that refuses a filing on a negative drawer. An inflated balance masks
+// exactly the signal the gate exists to catch.
+console.log("\n— [KAS-DUBBELTELLING] dezelfde kasomzet uit twee bronnen —");
+{
+  const dag = "2026-04-03";
+
+  // The shape that was wrong: the till counted 500 and the owner also wrote it in the kasboek.
+  check(
+    "een gedekte dag telt de omzetregel niet nog een keer",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 500, date: dag, category: "omzet" }],
+      tillDays: [{ date: dag, cash_amount: 500 }],
+    }) === 500,
+  );
+
+  // And what must NOT be suppressed on that same day: a cash purchase, a bank deposit, a private
+  // withdrawal. Those are separate movements, not the same money.
+  check(
+    "een contante inkoop op diezelfde dag telt wél",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [
+        { direction: "in", amount: 500, date: dag, category: "omzet" },
+        { direction: "out", amount: 120, date: dag, category: "kosten" },
+      ],
+      tillDays: [{ date: dag, cash_amount: 500 }],
+    }) === 380,
+  );
+
+  // A day the till did NOT count is ordinary cash revenue and must still be added — otherwise the
+  // fix trades one wrong number for another.
+  check(
+    "een dag zonder kassabon telt de omzetregel gewoon mee",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 500, date: "2026-04-04", category: "omzet" }],
+      tillDays: [{ date: dag, cash_amount: 500 }],
+    }) === 1000,
+  );
+
+  // A till row of 0 does not make the day "counted" — an empty Z-report must never hide real cash.
+  check(
+    "een kassabon van nul dekt niets af",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 500, date: dag, category: "omzet" }],
+      tillDays: [{ date: dag, cash_amount: 0 }],
+    }) === 500,
+  );
+
+  // A ZZP with no till at all: nothing is covered, so nothing is suppressed.
+  check(
+    "zonder kassa blijft alle contante omzet staan",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 250, date: dag, category: "omzet" }],
+      tillDays: [],
+    }) === 250,
+  );
+
+  // Fail-SAFE on a missing date, mirroring financial-result.ts: a shop that USES a till has its
+  // cash sales inside the Z-report, so a dateless omzet entry is treated as covered.
+  check(
+    "een omzetregel zonder datum telt bij een kassa-winkel als al geteld",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 500, category: "omzet" }],
+      tillDays: [{ date: dag, cash_amount: 500 }],
+    }) === 500,
+  );
+  check(
+    "maar bij een ZZP zonder kassa telt diezelfde regel wél",
+    computeDrawerBalance({
+      openingBalance: 0,
+      entries: [{ direction: "in", amount: 500, category: "omzet" }],
+      tillDays: [],
+    }) === 500,
+  );
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

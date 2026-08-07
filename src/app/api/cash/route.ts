@@ -64,7 +64,9 @@ export async function GET() {
   // history (allEntries above) — a truncated balance is itself a wrong number.
   const allMoves = allEntries;
   const tillRows = await fetchAllRows((from, to) =>
-    supabase.from("daily_turnover").select("cash_amount").eq("user_id", user.id).order("turnover_date", { ascending: true }).range(from, to),
+    // [KAS-DUBBELTELLING] turnover_date hoort erbij: zonder de datum kan het saldo niet zien welke
+    // dag de kassa al heeft geteld, en telt het diezelfde omzet nog een keer uit cash_entries.
+    supabase.from("daily_turnover").select("turnover_date, cash_amount").eq("user_id", user.id).order("turnover_date", { ascending: true }).range(from, to),
   );
   // [KAS-OPENING] Add the drawer's starting float (beginsaldo) so the saldo matches reality from
   // day one — a shop that began with cash in the till isn't understated by that amount.
@@ -86,8 +88,10 @@ export async function GET() {
   // can never diverge: opening float + cash_entries net + till daily-cash takings.
   const balance = computeDrawerBalance({
     openingBalance: opening,
-    entries: (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
-    tillCashAmounts: (tillRows as { cash_amount: number | null }[]).map((t) => t.cash_amount),
+    entries: (allMoves as { direction: string; amount: number | null; entry_date?: string | null; category?: string | null }[])
+      .map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount, date: e.entry_date ?? null, category: e.category ?? null })),
+    tillDays: (tillRows as { turnover_date: string | null; cash_amount: number | null }[])
+      .map((t) => ({ date: t.turnover_date, cash_amount: t.cash_amount })),
   });
 
   return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length });

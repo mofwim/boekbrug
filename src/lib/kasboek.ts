@@ -128,11 +128,15 @@ export function buildKasboek(args: {
     return x;
   };
 
+  // Days the till already counted. Kept as a set because the entry loop below needs it to avoid
+  // booking the same takings a second time — see [KAS-DUBBELTELLING] there.
+  const tellByTill = new Set<string>();
   for (const t of turnover) {
     const d = isoDay(t.turnover_date);
     if (!d || d < start || d > end) continue;
     const cash = Number(t.cash_amount) || 0;
     if (cash === 0) continue;
+    tellByTill.add(d);
     get(d).in += cash;
     // (daily takings need no per-line description — it's the day's kassa-omzet)
   }
@@ -141,6 +145,26 @@ export function buildKasboek(args: {
     if (!d || d < start || d > end) continue;
     const amt = Number(e.amount) || 0;
     if (amt === 0) continue;
+
+    // ── [KAS-DUBBELTELLING] The same takings, from two sources ──
+    //
+    // A till shop's cash revenue reaches this function twice, and by design of the data model
+    // rather than by mistake: once as daily_turnover.cash_amount (what the Z-report counted) and
+    // once as a cash_entries row with direction 'in' and category 'omzet', which is what the Kas
+    // page's default category makes the natural way to write down the counted drawer.
+    //
+    // Adding both put a shop taking EUR 500 a day roughly EUR 45.000 above reality by the end of a
+    // quarter — in THIS sheet, the Kasboek the closing package hands to the accountant, which is
+    // the cash administration the Belastingdienst reads. The same inflated eindsaldo also feeds the
+    // drawer witness that /api/btw/file and readiness.ts use to refuse a filing on a negative
+    // drawer, so a drawer that really dipped to -300 showed as +700 and the quarter filed with the
+    // strongest naheffing signal masked.
+    //
+    // financial-result.ts has always known this and skips the entry when computing REVENUE. Only
+    // the drawer summed both. Same rule here, and only for 'omzet': a cash purchase, a bank deposit
+    // or a private withdrawal on that same day are separate movements and still count.
+    if (e.direction === "in" && (e.category ?? "") === "omzet" && tellByTill.has(d)) continue;
+
     const day = get(d);
     if (e.direction === "in") day.in += amt;
     else day.out += amt;

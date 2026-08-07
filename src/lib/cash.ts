@@ -358,6 +358,15 @@ export function computeCashSettlementSync(
 export interface CashMovement {
   direction: "in" | "out";
   amount: number | null;
+  /**
+   * [KAS-DUBBELTELLING] The two fields the drawer needs to avoid counting a day's takings twice.
+   *
+   * Optional on the type because computeCashBalance (the plain running total) does not need them,
+   * and a movement without them is simply never suppressed — the safe direction for a figure that
+   * would otherwise be silently reduced.
+   */
+  date?: string | null;
+  category?: string | null;
 }
 
 /**
@@ -386,10 +395,49 @@ export function computeCashBalance(entries: CashMovement[]): number {
 export function computeDrawerBalance(input: {
   openingBalance?: number | null;
   entries: CashMovement[];
-  tillCashAmounts: Array<number | null>;
+  /**
+   * The till's daily rows, WITH their date. Dated on purpose: the date is what makes the
+   * double-count below detectable, and a caller that cannot supply it cannot avoid the bug — so
+   * the type refuses to let it be omitted rather than failing open on money.
+   */
+  tillDays: Array<{ date?: string | null; cash_amount: number | null }>;
 }): number {
   const opening = Number(input.openingBalance) || 0;
-  const entriesBalance = computeCashBalance(input.entries);
-  const tillCashIn = input.tillCashAmounts.reduce<number>((s, v) => s + (Number(v) || 0), 0);
-  return Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
+  const tillCashIn = input.tillDays.reduce<number>((s, t) => s + (Number(t.cash_amount) || 0), 0);
+
+  // ── [KAS-DUBBELTELLING] The same money, counted from two sources ──
+  //
+  // A till shop's cash takings arrive here twice by design of the data model, not by mistake:
+  //   · daily_turnover.cash_amount — what the Z-report counted;
+  //   · a cash_entries row, direction 'in', category 'omzet' — which the Kas page's default
+  //     category makes the natural way to record the same counted drawer.
+  //
+  // computeResult already knows this: financial-result.ts skips a cash 'omzet' entry on a day the
+  // turnover covers, so REVENUE was right. The drawer summed both, so a shop taking €500 a day in
+  // cash ended a quarter roughly €45.000 above what the drawer physically held.
+  //
+  // That figure is not decorative. It goes into the Kasboek sheet the closing package hands the
+  // accountant — the cash administration the Belastingdienst reads — and it feeds the drawer
+  // witness that /api/btw/file and readiness.ts use to REFUSE a filing on a negative drawer. A
+  // drawer that really dipped to −300 showed as +700, and the quarter filed with the single
+  // strongest naheffing signal masked.
+  //
+  // So on a day the till already counted, a cash 'omzet' entry is the SAME money and is skipped.
+  // Only 'omzet': a cash purchase, a bank deposit or a private withdrawal on that day are real
+  // separate movements and still count.
+  const coveredDays = new Set(
+    input.tillDays
+      .filter((t) => (Number(t.cash_amount) || 0) !== 0 && typeof t.date === "string" && t.date)
+      .map((t) => t.date as string),
+  );
+
+  const counted = input.entries.filter((e) => {
+    if ((e.category ?? "") !== "omzet") return true;
+    // Fail-SAFE on a missing date, mirroring financial-result.ts: a shop that USES a till has its
+    // cash sales inside the Z-report, so a dateless cash omzet is treated as covered rather than
+    // double-counted; a ZZP with no till (no covered days at all) still counts it.
+    return e.date ? !coveredDays.has(e.date) : coveredDays.size === 0;
+  });
+
+  return Math.round((opening + computeCashBalance(counted) + tillCashIn) * 100) / 100;
 }
