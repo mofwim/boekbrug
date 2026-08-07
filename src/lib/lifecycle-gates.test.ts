@@ -2605,3 +2605,66 @@ test("[PRULLENBAK] a file in the bin is not counted, not offered, and not readab
     "…in words that say what to do about it",
   );
 });
+
+// ── [BIJLAGE-TERUGWEG] The skipped panel does not send the owner down a road that is closed ──
+//
+// The panel lists every attachment the classifier judged "leek geen factuur" and, underneath,
+// offered one remedy: "Mis je hier een echte factuur? Gebruik 'Oudere e-mails opnieuw ophalen'."
+//
+// That remedy cannot work for anything IN the list. Measured, three ways:
+//   · PHASE 0 of the sync loads email_skipped_attachments into knownKeys, unconditionally — there
+//     is no backfill branch around it;
+//   · `notKnown = attachments.filter(a => !knownKeys.has(...))` drops them before any fetch;
+//   · a backfill only moves `syncAfterMs`. It re-LISTS the message and PHASE 0 filters the
+//     attachment straight back out.
+// And nothing in the codebase ever DELETEs from that table, so the block is permanent.
+//
+// So an owner reading "leek geen factuur" beside a real invoice followed the app's own advice, was
+// told "0 nieuw", and concluded the invoice had never arrived. Worse than silence: the app made a
+// wrong call and then confirmed it with guidance it could not honour.
+//
+// The bytes of a not-an-invoice attachment are discarded on purpose — a mailbox of signature images
+// is not worth storing — so the honest way back is the mailbox, and a filename alone does not find
+// an e-mail. The rows carry their date for that reason.
+test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually honour", () => {
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const sync = code("src/lib/email-integration.ts");
+
+  // The premise. If either of these stops holding, the advice below is free to change back — and
+  // this gate should be the thing that says so, rather than the owner finding out.
+  assert.match(
+    sync,
+    // 400, measured at 274 on the stripped source. The other knownKeys.add (the invoices one) sits
+    // BEFORE this query, and the match only looks forward, so a wide window cannot borrow it.
+    /from\('email_skipped_attachments'\)[\s\S]{0,400}?knownKeys\.add/,
+    "PHASE 0 still folds the skip registry into knownKeys — the reason a backfill cannot reach a " +
+      "listed attachment. If this is gone, re-read the panel's wording below",
+  );
+  assert.doesNotMatch(
+    sync,
+    /from\('email_skipped_attachments'\)\s*\.delete\(/,
+    "nothing clears the skip registry, so the block is permanent — the panel may not imply otherwise",
+  );
+
+  // The wording. The old sentence named the backfill as the remedy for a row IN the list; the two
+  // situations now have their own answers, and the backfill keeps only the one it can serve.
+  assert.match(
+    ui,
+    /Die bijlage halen wij niet nog een keer op/,
+    "the panel must say plainly that a listed attachment will not be fetched again — that is the " +
+      "fact the old advice contradicted",
+  );
+  assert.match(
+    ui,
+    /niet<\/em> tussen staat\? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen/,
+    "…and keep the backfill only for the case it can serve: an invoice that is NOT in this list",
+  );
+
+  // The date, because "open de e-mail" is advice an owner can only follow if they can find it.
+  assert.match(
+    ui,
+    /\{s\.filename\}[\s\S]{0,300}?formatDate\(s\.createdAt\)/,
+    "each skipped row must show its date beside the filename — the API has always returned " +
+      "createdAt, and without it the only remedy the app can offer is unfollowable",
+  );
+});
