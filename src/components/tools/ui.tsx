@@ -240,6 +240,45 @@ export function Segmented<T extends string>({
   );
 }
 
+export function CopyButton({
+  text,
+  label = "Kopiëren",
+  copiedLabel = "Gekopieerd",
+  className = "btn btn-quiet",
+}: {
+  text: string;
+  label?: string;
+  copiedLabel?: string;
+  className?: string;
+}) {
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!done) return undefined;
+    const timer = setTimeout(() => setDone(false), 1800);
+    return () => clearTimeout(timer);
+  }, [done]);
+
+  return (
+    <button
+      type="button"
+      className={className}
+      disabled={!text}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+        } catch {
+          // Clipboard permission refused — the text is on screen to select.
+        }
+      }}
+    >
+      <Icon name={done ? "check" : "file"} size={15} />
+      {done ? copiedLabel : label}
+    </button>
+  );
+}
+
 /** A file that came out of a tool: preview, size, and a way to keep it. */
 export function ResultFile({
   name,

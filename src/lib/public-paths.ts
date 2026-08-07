@@ -40,6 +40,18 @@ export const PUBLIC_PATHS = [
   "/pdf-naar-afbeelding",
   "/afbeeldingen-naar-pdf",
   "/afbeelding-verkleinen",
+  "/pdf-naar-tekst",
+  "/afbeeldingen-uit-pdf",
+  "/pdf-eigenschappen",
+  "/pdf-watermerk",
+  "/afbeelding-formaat",
+  "/afbeelding-omzetten",
+  "/watermerk-op-foto",
+  "/favicon-maken",
+  "/pdf-samenvoegen",
+  "/pdf-splitsen",
+  "/pdf-paginas-ordenen",
+  "/pdf-ondertekenen",
   // [EN-TOOLS] English versions of the public calculators, targeting expat /
   // English search demand ("Dutch VAT calculator", etc). Same tool engines,
   // English UI — must be reachable without a session, like their NL originals.
