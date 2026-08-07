@@ -164,6 +164,37 @@ function stripBom(s: string): string {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s
 }
 
+/**
+ * [E-FACTUUR-XML] The media type an e-invoice XML travels under, and the test for it.
+ *
+ * The REAL one, not an invented marker: this value is written to Storage as the object's
+ * content-type and to documents.file_type, where a made-up media type would follow the file
+ * around for seven years and confuse every viewer that opens it.
+ *
+ * It lives HERE rather than beside one door, because both doors need it. That is not tidiness —
+ * the e-mail sync could read a Peppol invoice and the camera/upload door could not, so the same
+ * file was an exact booking through one door and "a format we cannot read" through the other.
+ */
+export const E_INVOICE_XML_MIME = 'application/xml'
+
+export function isEInvoiceXmlMime(mimeType: string): boolean {
+  return (mimeType || '').split(';')[0].trim().toLowerCase() === E_INVOICE_XML_MIME
+}
+
+/**
+ * Do these bytes look like an invoice XML?
+ *
+ * Asked of the CONTENT, never of the media type a browser or a mail server supplied. A .xml
+ * uploaded from a phone arrives with an empty type, "text/xml", "application/xml" or
+ * "application/octet-stream" depending on nothing in particular, and a document this exact must
+ * not be lost to whichever string the client happened to send.
+ */
+export function looksLikeInvoiceXmlBytes(bytes: Buffer): boolean {
+  if (bytes.length < 32 || bytes.length > 8 * 1024 * 1024) return false
+  // Only the head: enough to see the root element, cheap on a large file.
+  return looksLikeInvoiceXml(bytes.subarray(0, 8192).toString('utf8'))
+}
+
 /** Cheap shape test, so an unrelated .xml attachment is not parsed as an invoice. */
 export function looksLikeInvoiceXml(xml: string): boolean {
   const head = xml.slice(0, 4000)
