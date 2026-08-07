@@ -27,9 +27,15 @@ export async function GET() {
   // into an empty list, and this panel then reports "niets overgeslagen" — on the ONE surface whose
   // entire purpose is that nothing is lost silently. An owner looking for an invoice that never
   // arrived would be told, in writing, that nothing was skipped, and stop looking.
-  const { data: skippedRows, error: skippedError } = await supabase
+  //
+  // [GEEN-STILLE-KAP] `count: 'exact'` naast de rijen, uit DEZELFDE query. De limiet is nodig — een
+  // paneel van 300 regels helpt niemand — maar hij was ONZICHTBAAR: er kwamen 100 rijen terug en
+  // niets zei dat er meer waren. En de sortering is nieuwste-eerst, dus wat wegvalt is altijd het
+  // OUDSTE: precies de bijlagen die tegen een aangiftetermijn aan liggen en waar iemand naar zoekt.
+  // Op dit paneel is een stille afkapping dezelfde leugen als een stille lege lijst.
+  const { data: skippedRows, error: skippedError, count: skippedTotal } = await supabase
     .from('email_skipped_attachments')
-    .select('filename, reason, created_at')
+    .select('filename, reason, created_at', { count: 'exact' })
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -65,39 +71,47 @@ export async function GET() {
   // dit paneel iets waar de ondernemer niet bij kan. Verandert bestanden de zijne, verander deze
   // mee; er staat een gate op. (Geen tweede voorbeeld in commentaar: een grep hoort alleen echte
   // filters te vinden.)
-  const { count: couldNotReadCount, error: couldNotReadError } = await supabase
+  //
+  // [TWEEDE-KANS] The files themselves, not just how many. The panel used to say "ze staan in je
+  // bestanden, controleer ze even" and there was nothing to do there: the sync filters a given-up
+  // attachment out of every future run, reprocess covers spreadsheets only, and re-uploading the
+  // same bytes is refused by the byte-hash gate. Naming them is what lets the owner ask for a
+  // second reading of a file the app already has.
+  //
+  // [GEEN-STILLE-KAP] ÉÉN query voor het getal én de lijst. Het waren er twee, met verschillende
+  // filters: de teller telde alles, de lijst liet alleen `invoice_id is null` zien en stopte bij 50.
+  // Bij 60 onleesbare bestanden zei dit paneel dus "60 bestanden konden we niet lezen" en zette er
+  // 50 knoppen onder — twee getallen die elkaar tegenspreken op het scherm dat eerlijk hoort te
+  // zijn, en tien bestanden zonder weg terug waar niets over gezegd werd.
+  //
+  // Nu onmogelijk: hetzelfde filter levert de rijen en de `count`, dus ze KUNNEN niet uit elkaar
+  // lopen. `invoice_id is null` hoort er ook in het getal bij — een bestand dat al een factuur is
+  // geworden, is niet iets om "nog even te controleren".
+  const { data: unreadRows, error: unreadError, count: couldNotReadCount } = await supabase
     .from('documents')
-    .select('id', { count: 'exact', head: true })
+    .select('id, file_name, created_at', { count: 'exact' })
     .eq('user_id', user.id)
+    // [PRULLENBAK] "Lees opnieuw" aanbieden op een bestand dat de ondernemer zelf heeft weggegooid,
+    // boekt een kostenpost uit de prullenbak.
     .eq('trashed', false)
     .in('ai_doc_type', SKIPPED_DOC_TYPES)
-  if (couldNotReadError) {
+    .is('invoice_id', null)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  // [SKIPPED-READ-HONEST] De fout wordt gelezen. Dit stond er niet, en dat was de stilte zelf:
+  // supabase-js gooit niet, dus een mislukte read gaf `null`, `?? []` maakte er een lege lijst van
+  // en het paneel meldde "Niets overgeslagen — alles wat binnenkwam is verwerkt" over een factuur
+  // die nog lag te wachten. Precies de zin waar een ondernemer van ophoudt met zoeken.
+  if (unreadError) {
     return NextResponse.json(
       {
-        error: 'We konden de onleesbare bestanden nu niet tellen. Probeer het zo meteen opnieuw — ' +
+        error: 'We konden de onleesbare bestanden nu niet ophalen. Probeer het zo meteen opnieuw — ' +
           'dit zegt niets over of er iets is overgeslagen.',
         code: 'skipped_unavailable',
       },
       { status: 503 },
     )
   }
-
-  // [TWEEDE-KANS] The files themselves, not just how many. The panel used to say "ze staan in je
-  // bestanden, controleer ze even" and there was nothing to do there: the sync filters a given-up
-  // attachment out of every future run, reprocess covers spreadsheets only, and re-uploading the
-  // same bytes is refused by the byte-hash gate. Naming them is what lets the owner ask for a
-  // second reading of a file the app already has.
-  const { data: unreadRows } = await supabase
-    .from('documents')
-    .select('id, file_name, created_at')
-    .eq('user_id', user.id)
-    // [PRULLENBAK] Zelfde filter als de teller hierboven. "Lees opnieuw" aanbieden op een bestand
-    // dat de ondernemer zelf heeft weggegooid, boekt een kostenpost uit de prullenbak.
-    .eq('trashed', false)
-    .in('ai_doc_type', SKIPPED_DOC_TYPES)
-    .is('invoice_id', null)
-    .order('created_at', { ascending: false })
-    .limit(50)
 
   const skipped = (skippedRows ?? []).map((r) => ({
     filename: r.filename ?? '(zonder naam)',
@@ -107,9 +121,13 @@ export async function GET() {
 
   return NextResponse.json({
     skipped,
-    couldNotReadCount: couldNotReadCount ?? 0,
+    // [GEEN-STILLE-KAP] Het totaal naast de lijst, zodat het scherm kan zeggen hoeveel het NIET
+    // laat zien. Zonder dit getal kan het dat niet eens weten.
+    skippedTotal: skippedTotal ?? skipped.length,
     // Only the ones that can still BECOME an invoice: a document already linked to one is not
-    // waiting for anything, and offering a re-read there would invite a double booking.
+    // waiting for anything, and offering a re-read there would invite a double booking. Same
+    // filter as the count above — one query, so the two cannot disagree.
+    couldNotReadCount: couldNotReadCount ?? 0,
     unread: (unreadRows ?? []).map((r) => ({
       id: r.id, fileName: r.file_name ?? '(zonder naam)', createdAt: r.created_at,
     })),

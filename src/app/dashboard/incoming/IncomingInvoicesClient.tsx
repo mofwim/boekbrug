@@ -281,6 +281,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     { filename: string; reason: string; createdAt: string }[] | null
   >(null);
   const [couldNotReadCount, setCouldNotReadCount] = useState(0);
+  // [GEEN-STILLE-KAP] How many rows exist, not how many we drew. Both lists are capped and ordered
+  // newest-first, so what falls off is always the OLDEST — the attachments nearest a deadline and
+  // likeliest to be the one being hunted. A cap this panel does not admit to is the same lie as an
+  // empty list it does not admit to.
+  const [skippedTotal, setSkippedTotal] = useState(0);
+  // [SKIPPED-READ-HONEST] Held apart from the list. A failed lookup leaves skippedItems null so a
+  // reopen retries, and this sentence is what the panel shows instead of an all-clear it cannot back.
+  const [skippedError, setSkippedError] = useState<string | null>(null);
   // [TWEEDE-KANS] The unread files themselves, so the panel can offer a second reading instead of
   // only counting them.
   const [unreadDocs, setUnreadDocs] = useState<Array<{ id: string; fileName: string }>>([]);
@@ -463,14 +471,28 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       const res = await fetch("/api/email/skipped");
       const data = await res.json();
       if (res.ok) {
+        setSkippedError(null);
         setSkippedItems(data.skipped ?? []);
+        setSkippedTotal(typeof data.skippedTotal === "number" ? data.skippedTotal : (data.skipped ?? []).length);
         setCouldNotReadCount(data.couldNotReadCount ?? 0);
         setUnreadDocs(Array.isArray(data.unread) ? data.unread : []);
       } else {
-        setSkippedItems([]);
+        // [SKIPPED-READ-HONEST] A failed read is NOT an empty list. Both branches used to answer
+        // setSkippedItems([]), and an empty list renders "Niets overgeslagen — alles wat binnenkwam
+        // is verwerkt." The route goes to some length NOT to say that: it returns 503 with a
+        // sentence saying the lookup failed and that this tells you nothing about what was skipped.
+        // The screen threw that away and printed the false all-clear anyway — the server refusing
+        // to lie is worth nothing if the client lies on its behalf.
+        setSkippedError(
+          typeof data?.error === "string" && data.error
+            ? data.error
+            : "We konden deze lijst nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er iets is overgeslagen.",
+        );
       }
     } catch {
-      setSkippedItems([]);
+      setSkippedError(
+        "We konden deze lijst nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er iets is overgeslagen.",
+      );
     } finally {
       setSkippedLoading(false);
     }
@@ -690,6 +712,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               </div>
               {skippedLoading ? (
                 <div style={{ fontSize: 13, color: "#5f6368" }}>Laden…</div>
+              ) : skippedError ? (
+                /* [SKIPPED-READ-HONEST] The failure, in words, INSTEAD of the list. Not beside it:
+                   an all-clear next to an error is still an all-clear, and "Niets overgeslagen" is
+                   the sentence that makes an owner stop looking for the invoice they came for. */
+                <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", lineHeight: 1.5 }}>
+                  {skippedError}
+                </div>
               ) : (
                 <>
                   {couldNotReadCount > 0 && (
@@ -724,6 +753,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                           </div>
                         ))}
                       </div>
+                      {/* [GEEN-STILLE-KAP] The cap, said out loud. The list stops at 50 and sorts
+                          newest-first, so the ones it drops are the OLDEST — nearest a deadline,
+                          likeliest to be the one being looked for. */}
+                      {couldNotReadCount > unreadDocs.length && (
+                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 6, lineHeight: 1.5 }}>
+                          Dit zijn de {unreadDocs.length} nieuwste van {couldNotReadCount}. De rest vind je bij je bestanden.
+                        </div>
+                      )}
                       {rereadMessage && (
                         <div style={{ fontSize: 12.5, color: "#202124", background: "#E8F0FE", borderRadius: 8, padding: "8px 10px", marginTop: 8, lineHeight: 1.5 }}>
                           {rereadMessage}
@@ -754,6 +791,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                           </span>
                         </div>
                       ))}
+                      {/* [GEEN-STILLE-KAP] Same for this list: 100 rows, newest first, and until now
+                          nothing said there were more. An owner scrolling to the bottom of a
+                          truncated list concludes their invoice is not there. */}
+                      {skippedTotal > (skippedItems?.length ?? 0) && (
+                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 2, lineHeight: 1.5 }}>
+                          Dit zijn de {skippedItems?.length ?? 0} nieuwste van {skippedTotal} overgeslagen bijlagen.
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* [BIJLAGE-TERUGWEG] Two situations, two answers — this said one thing and it was

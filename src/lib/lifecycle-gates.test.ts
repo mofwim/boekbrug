@@ -295,9 +295,24 @@ test("[SKIPPED-READ-HONEST] the panel that explains a missing invoice cannot ans
   // database failure with an empty result — `const { data }` → null → `?? []`, and a failed COUNT
   // → 0 — so the panel would report "niets overgeslagen" to the one person actively looking for
   // something that IS missing, and they would stop looking.
+  //
+  // Retargeted: this named the two error VARIABLES it expected. That is weaker than it looks — it
+  // passed for months while a THIRD read (the [TWEEDE-KANS] unread list) destructured no error at
+  // all, because a gate that knows two names cannot notice a name that was never there. It then
+  // went red on a refactor that merged two reads into one and renamed the survivor, while the
+  // property it exists for held better than before.
+  //
+  // So: EVERY supabase read in this route keeps its error. No names, no count.
   const src = code("src/app/api/email/skipped/route.ts");
-  assert.match(src, /error: skippedError/, "the skip-registry read must keep its error");
-  assert.match(src, /error: couldNotReadError/, "and so must the unreadable-files count");
+  const reads = [...src.matchAll(/const \{([^}]*)\} = await supabase/g)];
+  assert.ok(reads.length >= 2, "this route still reads more than one source");
+  const blind = reads.map((m) => m[1].trim()).filter((d) => !/\berror\b/.test(d));
+  assert.deepEqual(
+    blind, [],
+    "these reads drop the error, which supabase-js does not throw — so a database failure becomes " +
+      `null, then \`?? []\`, then "niets overgeslagen" to the one person actively looking for an ` +
+      "invoice that IS missing:\n" + blind.map((b) => `  · const {${b}} = await supabase`).join("\n"),
+  );
   assert.match(src, /code: 'skipped_unavailable'/, "a failed read must refuse, not report zero");
 });
 
@@ -2722,15 +2737,26 @@ test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcod
 test("[PRULLENBAK] a file in the bin is not counted, not offered, and not readable", () => {
   const api = code("src/app/api/email/skipped/route.ts");
 
-  // Both queries, not one. The count is the sentence the owner reads first; the list is what they
-  // can act on. A filter on only one of them makes the panel disagree with itself.
-  const trashFilters = [...api.matchAll(/\.eq\('trashed', false\)/g)].length;
-  assert.equal(
-    trashFilters, 2,
-    "both the could-not-read COUNT and the [TWEEDE-KANS] unread LIST must exclude trashed " +
-      `documents — found ${trashFilters} filter(s). The panel tells the owner these files are in ` +
-      "bestanden; counting one they threw away points them at something that is not there.",
-  );
+  // Retargeted: this counted TWO `.eq('trashed', false)` filters, because the count and the list
+  // were two queries. [GEEN-STILLE-KAP] merged them into one — the property held strictly better
+  // (one filter set cannot be applied to one half and not the other) and the gate went red anyway.
+  // A gate on the shape of the code, not on the rule.
+  //
+  // The rule: wherever this route asks for skipped documents, it excludes the bin. However many
+  // queries that turns out to be.
+  const skippedQueries = [...api.matchAll(/\.in\('ai_doc_type', SKIPPED_DOC_TYPES\)/g)];
+  assert.ok(skippedQueries.length >= 1, "this route still reads the skipped documents");
+  for (const m of skippedQueries) {
+    // The filters of one query — from its `.from(` back-anchor is overkill; the surrounding 400
+    // characters cover a supabase chain comfortably and cannot span two of them here.
+    const around = api.slice(Math.max(0, m.index - 400), m.index + 200);
+    assert.match(
+      around, /\.eq\('trashed', false\)/,
+      "every query for skipped documents must exclude trashed ones. The panel tells the owner " +
+        "these files are in bestanden; counting one they threw away points them at something " +
+        "that is not there, and the counter can then never reach zero.",
+    );
+  }
 
   // The SAME spelling as the place the panel points at. This is the [OBSERVABILITY] lesson applied
   // to a second column: `trashed` is `boolean DEFAULT false` and NULLABLE (database.sql), so
@@ -2821,5 +2847,81 @@ test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually hon
     /\{s\.filename\}[\s\S]{0,300}?formatDate\(s\.createdAt\)/,
     "each skipped row must show its date beside the filename — the API has always returned " +
       "createdAt, and without it the only remedy the app can offer is unfollowable",
+  );
+});
+
+// ── [GEEN-STILLE-KAP] The panel that exists so nothing is lost silently, losing things silently ──
+//
+// Two defects in the same surface, both the same shape: a truth the server took care to produce,
+// thrown away before it reached the owner.
+//
+// 1. TWO CAPS, NEITHER ADMITTED. The skip list stops at 100 rows and the unread list at 50, both
+//    ordered created_at DESC — so what falls off is always the OLDEST, which is exactly the
+//    attachment nearest an aangifte deadline and likeliest to be the one being hunted. Worse, the
+//    unread list and its counter were separate queries with DIFFERENT filters: at 60 unreadable
+//    files the panel printed "60 bestanden konden we niet lezen" above 50 buttons. Two numbers
+//    contradicting each other on the one screen whose job is to be believed.
+//
+// 2. THE CLIENT SPOKE THE SENTENCE THE SERVER REFUSED TO. /api/email/skipped goes out of its way
+//    not to answer an empty list on a failed read — it 503s with "dit zegt niets over of er iets is
+//    overgeslagen", because supabase-js does not throw and `?? []` would turn a database hiccup
+//    into "Niets overgeslagen — alles wat binnenkwam is verwerkt". Both failure branches in the
+//    screen then did `setSkippedItems([])`, and an empty list renders exactly that sentence. A
+//    server that refuses to lie is worth nothing while the client lies on its behalf.
+test("[GEEN-STILLE-KAP] the skipped panel admits its caps and never invents an all-clear", () => {
+  const api = code("src/app/api/email/skipped/route.ts");
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  // ONE query for the unread rows and their count. Two queries can drift; the same filter set
+  // cannot disagree with itself.
+  assert.match(
+    api,
+    /const \{ data: unreadRows, error: unreadError, count: couldNotReadCount \} = await supabase[\s\S]{0,200}?\{ count: 'exact' \}/,
+    "the unread list and its counter must come from one query — separate ones drifted apart and " +
+      "the panel printed a count above a shorter list",
+  );
+  assert.doesNotMatch(
+    api,
+    /count: 'exact', head: true/,
+    "…so the old head-only counter, which carried its own filter set, may not come back",
+  );
+  // Every capped list reports its total, or the screen cannot know what it is hiding.
+  assert.match(
+    api, /\{ count: 'exact' \}[\s\S]{0,400}?\.limit\(100\)/,
+    "the skip registry list is capped at 100 and must return its true total alongside",
+  );
+  assert.match(api, /skippedTotal/, "…and hand that total to the screen");
+  // A failed read of EITHER source answers with the failure, never with rows.
+  assert.match(
+    api, /if \(unreadError\) \{[\s\S]{0,400}?status: 503/,
+    "a failed unread lookup must 503 — it was not read at all, so `?? []` made a database hiccup " +
+      "look like an empty waiting list",
+  );
+
+  // The screen says what it is not showing, on BOTH lists.
+  assert.match(
+    ui, /couldNotReadCount > unreadDocs\.length &&/,
+    "the unread list must say how many of the total it is showing",
+  );
+  assert.match(
+    ui, /skippedTotal > \(skippedItems\?\.length \?\? 0\) &&/,
+    "and so must the skip list — a truncated list read to the bottom says 'not here'",
+  );
+
+  // And a failure is shown as a failure. This is the load-bearing one: `setSkippedItems([])` on an
+  // error path is not a neutral default, it is the false all-clear.
+  assert.doesNotMatch(
+    ui, /catch \{\s*setSkippedItems\(\[\]\);/,
+    "a failed fetch may not answer with an empty list — that renders 'Niets overgeslagen — alles " +
+      "wat binnenkwam is verwerkt', the sentence the route 503s specifically to avoid",
+  );
+  assert.match(
+    ui, /\} catch \{\s*setSkippedError\(/,
+    "…it must set the error instead",
+  );
+  assert.match(
+    ui, /: skippedError \? \([\s\S]{0,400}?\{skippedError\}/,
+    "and the panel must render that error INSTEAD of the list — an all-clear beside an error is " +
+      "still an all-clear",
   );
 });
