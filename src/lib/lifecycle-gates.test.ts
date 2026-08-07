@@ -2141,3 +2141,55 @@ test("[E-FACTUUR-XML] attaching a Peppol invoice to a bank line goes to the same
     "…and actually be given it",
   );
 });
+
+test("[E-FACTUUR-NAREKENEN] the books audit asks the supplier's own file before reading a page", () => {
+  // The report's blind spot pointed at exactly the wrong document. A Peppol XML has no PDF text
+  // layer, so readPdfTextLayer answered null and the invoice landed in "we could not check this
+  // one" — the same bucket as a blurry photograph — for the ONE class this app can verify exactly,
+  // mechanically, at no cost. The owner was told the app could not look at the invoice it knows
+  // best.
+  const src = code("src/app/api/invoice/audit/route.ts");
+
+  // Both shapes: the XML on its own, and the XML carried inside a Factur-X PDF — and REACHABLY.
+  // The first version matched only the body, so `if (false)` around the whole block left it green:
+  // the code was present and could never run, which is indistinguishable from deleted at runtime
+  // and looks like a passing test on the page.
+  assert.match(
+    src,
+    /if \(bytes\) \{\s*\n\s*const xml = mime === null && looksLikeInvoiceXmlBytes\(bytes\)[\s\S]{0,200}?extractEmbeddedInvoiceXml\(bytes\)/,
+    "a standalone XML and an embedded one must both be consulted, and the block must be reachable",
+  );
+  // Direct comparison, not a text search: the file STATES the total, so equality to the cent is
+  // the whole question.
+  assert.match(
+    src, /Math\.abs\(Math\.abs\(stored\) - Math\.abs\(stated\)\) <= 0\.01/,
+    "the stored figure is compared with the stated one, to the cent",
+  );
+  assert.match(src, /source: "e-invoice"/, "and the verdict records which witness spoke");
+
+  // A disagreement is a MISMATCH, never an "unchecked" — it is the strongest finding the report can
+  // produce, and it was invisible.
+  assert.match(
+    src, /agrees\(inv\.total_inc_btw, figures\.totalIncBtw\) \? "found" : "absent"/,
+    "the supplier's own file contradicting the books must read as a mismatch",
+  );
+
+  // It runs BEFORE the OCR half, which costs an API call — paying a model to re-read a document
+  // whose figures are already stated is spending money to be less sure.
+  //
+  // The first version of this compared against indexOf("transcribeStoredDocumentAmounts"), which
+  // matched the IMPORT at the top of the file and reported the order backwards. A gate that finds
+  // a mention instead of the call is this file's own defect class, arriving for the sixth time.
+  const eInvoiceAt = src.indexOf("looksLikeInvoiceXmlBytes(bytes)");
+  const ocrCallAt = src.indexOf("await transcribeStoredDocumentAmounts(");
+  assert.ok(eInvoiceAt > 0 && ocrCallAt > 0, "both must be present at all");
+  assert.ok(ocrCallAt > eInvoiceAt, "the free exact check precedes the paid one");
+
+  // And the report keeps the two claims apart: characters on a page is not the supplier's own file.
+  assert.match(
+    code("src/lib/books-audit.ts"),
+    /vergeleken met de e-factuur die de leverancier zelf meestuurde/,
+    "the stronger claim needs its own sentence",
+  );
+  assert.match(src, /confirmedByEInvoice: summary\.confirmedByEInvoice/, "…and reaches the client");
+});
