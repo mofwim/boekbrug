@@ -73,6 +73,9 @@ interface Props {
   clients: ClientSummary[]
   todos: TodoItem[]
   notifications: NotificationRow[]
+  // [NO-SILENT-EMPTY] De serverpagina leest de meldingen; kon dat niet, dan zegt de bel dat in
+  // plaats van "Geen meldingen".
+  notificationsError?: string | null
   unreadMessages: number
 }
 
@@ -96,7 +99,7 @@ function timeSalutation(): string {
 // Component
 // ─────────────────────────────────────────────────────────
 
-export default function AccountantHome({ profile, overview, workQueues, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
+export default function AccountantHome({ profile, overview, workQueues, clients, todos, notifications: initialNotifs, notificationsError, unreadMessages: initialUnread }: Props) {
   // [READINESS-P4] overview + todos are now RENDERED (below) — they are backed by
   // honest facts: overview = provable counts (open questions / missing bank), todos
   // = concrete actionable items from getTodoFeed. No "ready" verdict is shown, so
@@ -164,11 +167,19 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
   }
 
   async function markAllRead() {
-    await supabase
+    // Het scherm mag pas "gelezen" tonen als het ook echt is opgeslagen. De uitkomst werd hier
+    // genegeerd — precies de fout die de ZZP-home al had opgelost, en die op deze home was blijven
+    // staan: de bel ging op nul, en bij de volgende keer openen stonden dezelfde meldingen er weer
+    // ongelezen bij, zonder dat iets uitlegde waarom.
+    const { error } = await supabase
       .from('notifications')
       .update({ read: true })
       .eq('user_id', profile.id)
       .eq('read', false)
+    if (error) {
+      console.error('[BOEKHOUDER-HOME] meldingen als gelezen markeren mislukt:', error.message)
+      return
+    }
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
   }
 
@@ -216,8 +227,6 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
   // Render
   // ─────────────────────────────────────────────────────────
 
-  const unreadNotifCount = notifications.filter(n => !n.read).length
-
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
@@ -226,7 +235,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         profile={profile}
         notifications={notifications}
         showNotifications={showNotifications}
-        unreadNotifCount={unreadNotifCount}
+        notificationsError={notificationsError}
         unreadMessages={unreadMessages}
         onToggleNotifications={() => {
           setShowNotifications(prev => !prev)

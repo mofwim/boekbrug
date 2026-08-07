@@ -32,7 +32,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction } from '@/lib/audit'
 import { VRAAG_STATUS, vraagTekst } from '@/lib/vragen'
@@ -108,8 +108,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Deze factuur hoort niet bij deze klant' }, { status: 403 })
   }
 
-  const pipeline = createPipelineClient()
-
   // ── (1) De TEKST eerst ───────────────────────────────────────────────────────
   // Als deze faalt gaat de status niet om, en dat is de goede volgorde: een 'vraag' zonder tekst is
   // precies het probleem dat deze route oplost. Geschreven met de SESSIE-client — RLS-policy
@@ -152,19 +150,20 @@ export async function POST(request: NextRequest) {
   // Best-effort: een mislukte melding mag een opgeslagen vraag nooit terugdraaien. De link wijst
   // naar /dashboard/vragen — het scherm met de vraag, de factuur erbij en één veld om te antwoorden
   // — en niet naar een lijst waar de klant zelf mag zoeken wat er bedoeld werd.
-  try {
-    const label = [inv.client_name?.trim(), inv.invoice_number ? `factuur ${inv.invoice_number}` : null]
-      .filter(Boolean).join(' · ')
-    await pipeline.from('notifications').insert({
-      user_id: clientId,
-      title: 'Vraag van je boekhouder',
-      body: `${label ? `${label} — ` : ''}${question.slice(0, 120)}`,
-      type: 'status',
-      read: false,
-      link: '/dashboard/vragen',
-    })
-  } catch (e) {
-    console.error('[FACTUURVRAAG] melding mislukt', { clientId, error: e instanceof Error ? e.message : String(e) })
+  const label = [inv.client_name?.trim(), inv.invoice_number ? `factuur ${inv.invoice_number}` : null]
+    .filter(Boolean).join(' · ')
+  const melding = await createNotification({
+    userId: clientId,
+    title: 'Vraag van je boekhouder',
+    body: `${label ? `${label} — ` : ''}${question.slice(0, 120)}`,
+    type: 'status',
+    link: '/dashboard/vragen',
+  })
+  // [NOTIFY-EERLIJK] Dit stond in een try/catch. supabase-js gooit niet bij een geweigerde
+  // schrijfactie, dus die catch is nooit één keer gevallen: de melding kon stilletjes mislukken en
+  // de boekhouder kreeg "vraag verstuurd" te zien voor een vraag die zijn klant nooit zag.
+  if (!melding.ok) {
+    console.error('[FACTUURVRAAG] melding mislukt', { clientId, error: melding.error })
   }
 
   await logAuditAction({

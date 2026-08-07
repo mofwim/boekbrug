@@ -37,6 +37,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
@@ -526,7 +527,6 @@ export async function POST(request: NextRequest) {
       // "verstuurd" state is corrected by an explicit "opnieuw versturen" prompt (recoverable via
       // resend once the cause is fixed). Service-role insert (notifications has no authed INSERT).
       try {
-        const notifPipeline = createPipelineClient()
         // [ACTING-FOR] Naar de eigenaar ÉN naar wie hem verstuurde, als dat twee mensen zijn.
         //
         // Alleen de eigenaar waarschuwen is hier niet goed genoeg: het nummer is verbruikt, de
@@ -534,16 +534,15 @@ export async function POST(request: NextRequest) {
         // die anders zijn scherm sluit in de overtuiging dat het gelukt is. En alleen de
         // medewerker waarschuwen evenmin: het is de factuur van de eigenaar, met zijn nummer.
         const ontvangers = Array.from(new Set([ownerId, acting.actorId]))
-        await notifPipeline.from('notifications').insert(
-          ontvangers.map((uid) => ({
-            user_id: uid,
+        for (const uid of ontvangers) {
+          await createNotification({
+            userId: uid,
             title: 'Factuur niet verzonden',
             body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
             type: 'invoice',
-            read: false,
             link: uid === ownerId ? '/dashboard/facturen' : actorLink,
-          })),
-        )
+          })
+        }
       } catch { /* non-blocking — the warning field below is the primary signal */ }
       return NextResponse.json({
         success: true,
@@ -639,18 +638,16 @@ export async function POST(request: NextRequest) {
       // Same recipients and the same reasoning as the PDF path: the owner owns the invoice, and
       // whoever pressed send is the only one who knows it happened at all.
       try {
-        const mailNotifPipeline = createPipelineClient()
         const mailOntvangers = Array.from(new Set([ownerId, acting.actorId]))
-        await mailNotifPipeline.from('notifications').insert(
-          mailOntvangers.map((uid) => ({
-            user_id: uid,
+        for (const uid of mailOntvangers) {
+          await createNotification({
+            userId: uid,
             title: 'Factuur niet aangekomen',
             body: `Factuur ${finalNumber} is genummerd en opgeslagen, maar de e-mail naar de klant is niet verstuurd — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
             type: 'invoice',
-            read: false,
             link: uid === ownerId ? '/dashboard/facturen' : actorLink,
-          })),
-        )
+          })
+        }
       } catch { /* non-blocking — the warning in the response stays the primary signal */ }
     }
 
@@ -671,18 +668,15 @@ export async function POST(request: NextRequest) {
         // Best-effort, net als het bericht hieronder: de factuur is al uitgegeven en gaat niet
         // terug omdat een melding niet lukt. Wat wél gebeurt is dat het in de log staat.
         if (acting.role === 'boekhouder') {
-          const { error: klantNotifError } = await pipelineClient
-            .from('notifications')
-            .insert({
-              user_id: ownerId,
-              title: 'Je boekhouder heeft een factuur verstuurd',
-              body: `Factuur ${finalNumber} is namens jou verstuurd naar ${invoice.client_name || 'je klant'} — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. De factuur staat op jouw naam en in jouw nummerreeks.`,
-              type: 'invoice',
-              read: false,
-              link: '/dashboard/facturen',
-            })
-          if (klantNotifError) {
-            console.error('[MANDAAT] melding aan de klant mislukt', { invoiceId, klantNotifError })
+          const klantMelding = await createNotification({
+            userId: ownerId,
+            title: 'Je boekhouder heeft een factuur verstuurd',
+            body: `Factuur ${finalNumber} is namens jou verstuurd naar ${invoice.client_name || 'je klant'} — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. De factuur staat op jouw naam en in jouw nummerreeks.`,
+            type: 'invoice',
+            link: '/dashboard/facturen',
+          })
+          if (!klantMelding.ok) {
+            console.error('[MANDAAT] melding aan de klant mislukt', { invoiceId, error: klantMelding.error })
           }
         }
 
@@ -694,20 +688,17 @@ export async function POST(request: NextRequest) {
 
         // Niet aan zichzelf melden dat hij zojuist zelf op de knop drukte.
         if (accountantLink?.accountant_id && accountantLink.accountant_id !== acting.actorId) {
-          const { error: notifError } = await pipelineClient
-            .from('notifications')
-            .insert({
-              user_id: accountantLink.accountant_id,
-              title: 'Nieuwe factuur verzonden',
-              // [FACTUUR-A] Dutch comma in the notification too — one rule everywhere
-              body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-              type: 'invoice',
-              read: false,
-              link: `/dashboard/clients/${ownerId}`,
-            })
+          const accountantMelding = await createNotification({
+            userId: accountantLink.accountant_id,
+            title: 'Nieuwe factuur verzonden',
+            // [FACTUUR-A] Dutch comma in the notification too — one rule everywhere
+            body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            type: 'invoice',
+            link: `/dashboard/clients/${ownerId}`,
+          })
 
-          if (notifError) {
-            console.error('[FACTUUR-A] Notification insert failed', { invoiceId, notifError })
+          if (!accountantMelding.ok) {
+            console.error('[FACTUUR-A] Notification insert failed', { invoiceId, error: accountantMelding.error })
             // Low severity — don't bother Sentry
           }
         }

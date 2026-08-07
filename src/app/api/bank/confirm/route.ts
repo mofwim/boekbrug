@@ -36,6 +36,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 // [BANK-MULTI-LINK-PERSIST] Coverage logic (parseReferenceNumbers + isFullyCovered)
 // now lives in bank-matching.ts so this confirm path and the match path share ONE
 // definition — no drift between "is this tx done?" answered in two places.
@@ -340,26 +341,24 @@ export async function POST(req: NextRequest) {
       const isPaid = row.is_paid === true;
       const remaining = Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0));
       const unassigned = row.all_covered ? 0 : Math.max(0, row.line_remaining ?? 0);
-      try {
-        await pipeline.from("notifications").insert({
-          user_id: user.id,
-          title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
-          body: isPaid
-            ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
-            : `Deelbetaling van € ${(row.applied ?? 0).toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+      // [NOTIFY-EERLIJK] createNotification is zelf non-blocking: hij gooit niet en geeft de fout
+      // terug. De try/catch die hier stond ving iets wat supabase-js nooit gooide.
+      await createNotification({
+        userId: user.id,
+        title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
+        body: isPaid
+          ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
+          : `Deelbetaling van € ${(row.applied ?? 0).toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+        type: "payment",
+      });
+      if (unassigned > 0.01) {
+        await createNotification({
+          userId: user.id,
+          title: "Nog een deel van deze betaling open",
+          body: `Van deze betaling is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
           type: "payment",
+          link: "/dashboard/bank",
         });
-        if (unassigned > 0.01) {
-          await pipeline.from("notifications").insert({
-            user_id: user.id,
-            title: "Nog een deel van deze betaling open",
-            body: `Van deze betaling is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
-            type: "payment",
-            link: "/dashboard/bank",
-          });
-        }
-      } catch {
-        /* non-blocking */
       }
       await logAuditAction({
         userId: user.id,
@@ -470,34 +469,30 @@ export async function POST(req: NextRequest) {
     const hasResidue = residue > 0.01;
     // [BANK-TX-INVOICES] The RPC already wrote the join row (with amount_applied) inside its
     // transaction — no recordPaymentLinks needed here.
-    try {
-      await pipeline.from("notifications").insert({
-        user_id: user.id,
-        title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
-        body: isPaid
-          ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
-          : `Deelbetaling van € ${row.applied.toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+    await createNotification({
+      userId: user.id,
+      title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
+      body: isPaid
+        ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
+        : `Deelbetaling van € ${row.applied.toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+      type: "payment",
+      // [NOTIF-DEADEND] This bell announces a booking on ONE invoice but carried no
+      // link, so the only notification about the owner's money was the one you could
+      // not open — while its own sibling below ("Er bleef een bedrag over") did link.
+      // Route by direction, exactly like the other invoice deep links in the app:
+      // an inkoopfactuur lives on Inkoopfacturen, a sales invoice on its detail page.
+      link: inv.direction === "incoming"
+        ? `/dashboard/incoming/manage?focus=${invoiceId}`
+        : `/dashboard/invoice/${invoiceId}`,
+    });
+    if (hasResidue) {
+      await createNotification({
+        userId: user.id,
+        title: "Er bleef een bedrag over",
+        body: `Van de betaling van € ${payAvailable.toFixed(2)} is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${residue.toFixed(2)} bleef over — controleer of deze betaling ook een andere factuur betreft.`,
         type: "payment",
-        // [NOTIF-DEADEND] This bell announces a booking on ONE invoice but carried no
-        // link, so the only notification about the owner's money was the one you could
-        // not open — while its own sibling below ("Er bleef een bedrag over") did link.
-        // Route by direction, exactly like the other invoice deep links in the app:
-        // an inkoopfactuur lives on Inkoopfacturen, a sales invoice on its detail page.
-        link: inv.direction === "incoming"
-          ? `/dashboard/incoming/manage?focus=${invoiceId}`
-          : `/dashboard/invoice/${invoiceId}`,
+        link: "/dashboard/bank",
       });
-      if (hasResidue) {
-        await pipeline.from("notifications").insert({
-          user_id: user.id,
-          title: "Er bleef een bedrag over",
-          body: `Van de betaling van € ${payAvailable.toFixed(2)} is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${residue.toFixed(2)} bleef over — controleer of deze betaling ook een andere factuur betreft.`,
-          type: "payment",
-          link: "/dashboard/bank",
-        });
-      }
-    } catch {
-      /* non-blocking */
     }
     if (hasResidue) {
       await logAuditAction({
@@ -757,8 +752,8 @@ export async function POST(req: NextRequest) {
         entityId: transactionId,
         newValue: { transaction_amount: payAmount, applied_sum: Math.round(appliedSum * 100) / 100, invoice_id: invoiceId },
       });
-      await pipeline.from("notifications").insert({
-        user_id: user.id,
+      await createNotification({
+        userId: user.id,
         title: "Controleer deze betaling",
         body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
         type: "payment",
@@ -771,32 +766,28 @@ export async function POST(req: NextRequest) {
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   const unassigned = appliedElsewhereKnown && !allCovered ? Math.max(0, moneyRemaining) : 0;
-  try {
-    await pipeline.from("notifications").insert({
-      user_id: user.id,
-      title: "Factuur betaald",
-      body: `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`,
+  await createNotification({
+    userId: user.id,
+    title: "Factuur betaald",
+    body: `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`,
+    type: "payment",
+    // [NOTIF-DEADEND] Same fix as the partial-payment branch above: link to the
+    // invoice this bell is about, by direction.
+    link: inv.direction === "incoming"
+      ? `/dashboard/incoming/manage?focus=${invoiceId}`
+      : `/dashboard/invoice/${invoiceId}`,
+  });
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] Money of this payment is still unassigned. The bank line
+  // stays in "Te bevestigen" so the next invoice can take it — say so, so the owner knows the
+  // line is not stuck but waiting. (Before, that money was silently declared spent.)
+  if (unassigned > 0.01) {
+    await createNotification({
+      userId: user.id,
+      title: "Nog een deel van deze betaling open",
+      body: `Van deze betaling van € ${payAmount.toFixed(2)} is € ${settledByThisBooking.toFixed(2)} op facturen geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
       type: "payment",
-      // [NOTIF-DEADEND] Same fix as the partial-payment branch above: link to the
-      // invoice this bell is about, by direction.
-      link: inv.direction === "incoming"
-        ? `/dashboard/incoming/manage?focus=${invoiceId}`
-        : `/dashboard/invoice/${invoiceId}`,
+      link: "/dashboard/bank",
     });
-    // [BANK-ONE-PAYMENT-MANY-INVOICES] Money of this payment is still unassigned. The bank line
-    // stays in "Te bevestigen" so the next invoice can take it — say so, so the owner knows the
-    // line is not stuck but waiting. (Before, that money was silently declared spent.)
-    if (unassigned > 0.01) {
-      await pipeline.from("notifications").insert({
-        user_id: user.id,
-        title: "Nog een deel van deze betaling open",
-        body: `Van deze betaling van € ${payAmount.toFixed(2)} is € ${settledByThisBooking.toFixed(2)} op facturen geboekt. € ${unassigned.toFixed(2)} is nog niet toegewezen — koppel de volgende factuur.`,
-        type: "payment",
-        link: "/dashboard/bank",
-      });
-    }
-  } catch {
-    /* non-blocking */
   }
 
   await logAuditAction({

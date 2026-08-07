@@ -4,7 +4,6 @@
 // BOEK-007: قائمة المحادثات — مع skeleton loading
 
 import { useState, useEffect, useMemo } from 'react'
-import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 import { COLUMN } from '@/lib/design/tokens';
@@ -36,59 +35,37 @@ function ConversationSkeleton() {
 
 export default function MessagesPage() {
   const router = useRouter()
-  const supabase = createClient()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
+  // [NO-SILENT-EMPTY] Een mislukte lezing is geen lege inbox. Zonder deze stand toonde dit scherm
+  // "Nog geen berichten" zodra er iets misging — een uitspraak over de post van de ondernemer die
+  // op dat moment niemand kon doen.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // [GEEN-STILLE-KAP] De server scant een begrensd aantal berichten; als hij de bodem niet haalde,
+  // hoort dat hier te staan in plaats van stilzwijgend een half lijstje.
+  const [truncated, setTruncated] = useState(false)
   const [search, setSearch] = useState('')
 
   useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-
-      const { data: messages } = await supabase
-        .from('messages')
-        .select('id, sender_id, receiver_id, content, read, created_at')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .order('created_at', { ascending: false })
-
-      if (!messages) { setLoading(false); return }
-
-      // تجميع المحادثات — شخص واحد = محادثة واحدة
-      const seen = new Set<string>()
-      const convMap: Record<string, Conversation> = {}
-
-      for (const msg of messages) {
-        const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id
-        if (!seen.has(otherId)) {
-          seen.add(otherId)
-          convMap[otherId] = {
-            otherId,
-            lastMessage: msg.content,
-            lastAt: msg.created_at,
-            unread: !msg.read && msg.receiver_id === user.id ? 1 : 0
-          }
-        } else if (!msg.read && msg.receiver_id === user.id) {
-          convMap[otherId].unread++
+      // [NAAM-TEGENPARTIJ] Namen komen van de server: RLS op profiles laat een zzp'er zijn
+      // boekhouder niet zien, dus de browser kon deze lijst nooit compleet maken.
+      try {
+        const res = await fetch('/api/messages/conversations')
+        if (res.status === 401) { router.push('/login'); return }
+        const data = await res.json().catch(() => null)
+        if (!res.ok) {
+          setLoadError(data?.error || 'We konden je berichten nu niet ophalen. Probeer het zo meteen opnieuw.')
+          return
         }
+        setConversations(data?.conversations ?? [])
+        setTruncated(data?.truncated === true)
+      } catch {
+        setLoadError('We konden je berichten nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er berichten voor je zijn.')
+      } finally {
+        setLoading(false)
       }
-
-      // جلب أسماء الأشخاص
-      const otherIds = Object.keys(convMap)
-      if (otherIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, full_name, company_name')
-          .in('id', otherIds)
-
-        profiles?.forEach(p => {
-          if (convMap[p.id]) convMap[p.id].name = p.company_name || p.full_name
-        })
-      }
-
-      setConversations(Object.values(convMap))
-      setLoading(false)
     }
     load()
   }, [])
@@ -134,6 +111,19 @@ export default function MessagesPage() {
               <ConversationSkeleton />
               <ConversationSkeleton />
               <ConversationSkeleton />
+            </div>
+          ) : loadError ? (
+            /* De fout IN PLAATS VAN de lijst — een lege lijst hier zegt "je hebt geen berichten",
+               en dat is precies wat we op dit moment niet weten. */
+            <div className="text-center py-16 px-6">
+              <p className="text-2xl mb-2">⚠️</p>
+              <p className="text-gray-700 text-sm font-medium">{loadError}</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+              >
+                Opnieuw proberen
+              </button>
             </div>
           ) : conversations.length === 0 ? (
             <div className="text-center py-16">
@@ -187,6 +177,13 @@ export default function MessagesPage() {
           )}
 
         </div>
+
+        {/* [GEEN-STILLE-KAP] Zeg het als de lijst niet alles kon nalopen. */}
+        {!loading && !loadError && truncated && (
+          <p className="text-xs text-gray-400 text-center mt-3">
+            We tonen je meest recente gesprekken — oudere berichten staan er nog, maar passen niet in dit overzicht.
+          </p>
+        )}
       </div>
     </div>
   )

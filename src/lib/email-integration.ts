@@ -4629,7 +4629,6 @@ export async function syncUserEmails(
   // in this function is explicitly scoped by the passed userId), so this whole
   // function is session-independent and callable from the scheduled cron.
   if (saved > 0) {
-    const pipeline = createPipelineClient()
     // [BOEK-011] Provider-aware copy — Outlook users shouldn't read "Gmail".
     const providerLabel = tokens.provider === 'outlook' ? 'Outlook' : 'Gmail'
     // [BOEK-SAFECORE] Honest copy: when some invoices are HELD for review, say
@@ -4674,19 +4673,18 @@ export async function syncUserEmails(
       body = `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. Bevestig ze in Inkomend.`
     }
 
-    const { error: notifErr } = await pipeline.from('notifications').insert({
-      user_id: userId,
+    const melding = await createNotification({
+      userId,
       title: `${saved} nieuwe ${saved === 1 ? 'factuur' : 'facturen'} geïmporteerd`,
       body,
       type: 'invoice',
-      read: false,
       // [AUTO-ADVANCE-HONESTY] Land the owner where the work (or the result) is.
       link: queued === 0 && autoAdvanced > 0
         ? '/dashboard/incoming/manage?filter=auto'
         : '/dashboard/incoming',
     })
-    if (notifErr) {
-      console.error('[BOEK-011] Failed to write notification', notifErr)
+    if (!melding.ok) {
+      console.error('[BOEK-011] Failed to write notification', melding.error)
       // Non-fatal — the import itself succeeded, the user just won't get a bell.
     }
   }
