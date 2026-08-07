@@ -2770,3 +2770,93 @@ test("[GEEN-STILLE-KAP] the skipped panel admits its caps and never invents an a
       "still an all-clear",
   );
 });
+
+// ── [ARTIKEL-LEREN] The catalog fills itself from the first invoice, and never at the invoice's cost ──
+//
+// The line-item catalog could only be filled by someone who already knew it existed: by typing an
+// article on /dashboard/artikelen, or by pressing the small "bewaar in catalogus" button beside a
+// line. So the first invoice taught the app nothing, the second was typed out by hand again, and
+// the picker an owner meets on invoice twenty is still empty. A catalog that only fills when you
+// remember to fill it is a catalog for the people who least need one.
+//
+// Now the lines are learned as they are written. Two things have to stay true about that, and
+// neither is visible in the pure tests:
+test("[ARTIKEL-LEREN] learning happens after the invoice is safe, and never guesses an empty catalog", () => {
+  const src = code("src/app/api/invoice/draft/route.ts");
+
+  // 1. ORDER. The learning runs only once the lines are written and the rollback branch is behind
+  //    us. Before that guard, an exception from a side table would land in the outer catch — which
+  //    answers 500 for an invoice that was in fact created, or worse, skips the rollback that keeps
+  //    a header from existing with no lines.
+  const guard = src.indexOf("if (lineErr) {");
+  const learn = src.indexOf("await learnFromLines({");
+  assert.ok(guard > 0, "the line-write rollback guard is still there");
+  assert.ok(learn > 0, "the draft route must teach the catalog — this is the one door where a " +
+    "human types invoice lines for the first time");
+  assert.ok(
+    learn > guard,
+    "the catalog is taught AFTER the invoice's own lines are safe. Learning is a convenience " +
+      "beside the invoice; it may never be a reason one fails or half-exists",
+  );
+
+  // 2. THE READ IS NOT ALLOWED TO GUESS. supabase-js does not throw: `const { data }` on a failed
+  //    read gives null, `?? []` reads as "the catalog is empty", and then EVERY line looks new —
+  //    inserting a duplicate of the owner's entire catalog on one bad connection. This is the one
+  //    failure here that damages data rather than merely skipping a nicety.
+  assert.match(
+    src,
+    /const \{ data: catalog, error: catalogErr \} = await pipeline[\s\S]{0,200}?from\('articles'\)/,
+    "the catalog read must keep its error",
+  );
+  assert.match(
+    src,
+    /if \(catalogErr\) \{[\s\S]{0,220}?return\b/,
+    "…and a failed read must give up, not treat 'no rows' as 'no catalog' and re-insert everything",
+  );
+
+  // 3. It cannot break the request. Every give-up is a return, the whole thing is wrapped, and no
+  //    failure from it is turned into an answer to the browser.
+  //    Scoped to the function BODY, and the slice proves itself before anything is asserted about
+  //    it. The first version of this check searched for `[ARTIKEL-LEREN]` followed by an error
+  //    response — a marker that only ever appears in COMMENTS, which code() strips. It matched
+  //    nothing in either direction and tested nothing at all; the negative control is what said so.
+  const start = src.indexOf("async function learnFromLines(");
+  const end = src.indexOf("export async function POST(", start);
+  assert.ok(start > 0, "learnFromLines is still declared here");
+  assert.ok(end > start, "…ahead of the handler, so this slice is its body");
+  const body = src.slice(start, end);
+  assert.ok(
+    body.includes("planCatalogLearning(") && body.includes("catch"),
+    "the slice really is the function body — without this, everything below passes vacuously",
+  );
+  assert.doesNotMatch(
+    body,
+    /NextResponse/,
+    "learnFromLines may not answer the browser at all. The invoice exists by the time it runs, so " +
+      "turning a catalog failure into an error would report a failure for work that succeeded",
+  );
+  assert.match(
+    body, /\} catch \(e\) \{[\s\S]{0,200}?console\.error\(/,
+    "…and its failures end in a log, not in a throw the outer handler would answer 500 to",
+  );
+
+  // 4. The decision itself lives in the tested module, not inline here. An `if` about which
+  //    documents teach, written in a route, is an `if` nobody runs a test against.
+  assert.match(
+    src, /documentTeachesCatalog\(soort\)/,
+    "which documents teach the catalog is decided in article-learning.ts, where it is tested",
+  );
+  assert.match(
+    src, /planCatalogLearning\(lines, catalog \?\? \[\]\)/,
+    "and so is what to insert versus bump",
+  );
+
+  // 5. What is learned is what the LINE said. Deriving the description a second way here is how the
+  //    catalog and the invoice come to disagree about the same words.
+  const lineWrite = /description: String\(bron\[i\]\?\.description \?\? ''\)\.trim\(\)/g;
+  assert.equal(
+    [...src.matchAll(lineWrite)].length, 2,
+    "the invoice line and the catalog entry must read the description the same way — one " +
+      "expression, used in both places",
+  );
+});

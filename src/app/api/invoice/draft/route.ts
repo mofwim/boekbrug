@@ -31,10 +31,73 @@ import { isKnownUnit } from '@/lib/units'
 // de INSERT hieronder met PGRST204 op een installatie waar de migratie nog open staat — en dan
 // kan er GEEN FACTUUR MEER WORDEN AANGEMAAKT. Zie de kop van created-by.ts.
 import { writeWithTrail } from '@/lib/created-by'
+// [ARTIKEL-LEREN] De beslissing staat apart en is getest; hieronder staat alleen het schrijven.
+import { planCatalogLearning, documentTeachesCatalog, type LearnableLine } from '@/lib/article-learning'
 
 export const dynamic = 'force-dynamic'
 
 type Soort = 'factuur' | 'creditnota' | 'offerte'
+
+/**
+ * [ARTIKEL-LEREN] Teach the line-item catalog what this document just said.
+ *
+ * Best-effort by construction: every failure path here is a `return`, never a throw. The invoice
+ * and its lines are already written when this runs, and a catalog is a convenience beside them —
+ * there is nothing left that a failure could usefully abort.
+ *
+ * Silence is not the same as safety, though, so each give-up logs WHY. The one that would be
+ * genuinely damaging is the catalog read: supabase-js does not throw, so `const { data }` on a
+ * failed read gives null, `?? []` reads as "the catalog is empty", and every line then looks new —
+ * which would insert a duplicate of the owner's ENTIRE catalog on one bad connection. That is why
+ * the error is read and a failed read gives up instead of guessing.
+ */
+async function learnFromLines(args: {
+  pipeline: ReturnType<typeof createPipelineClient>
+  ownerId: string
+  soort: Soort
+  lines: LearnableLine[]
+}): Promise<void> {
+  const { pipeline, ownerId, soort, lines } = args
+  try {
+    if (!documentTeachesCatalog(soort)) return
+
+    const { data: catalog, error: catalogErr } = await pipeline
+      .from('articles')
+      .select('id, description, usage_count, active')
+      .eq('user_id', ownerId)
+    if (catalogErr) {
+      console.error('[ARTIKEL-LEREN] catalogus niet gelezen — niets geleerd van deze factuur', catalogErr)
+      return
+    }
+
+    const plan = planCatalogLearning(lines, catalog ?? [])
+    if (plan.dropped > 0) {
+      // A cap the owner cannot see reads as "everything was remembered". It should never fire on an
+      // invoice a human typed; if it does, that is worth knowing rather than absorbing.
+      console.warn('[ARTIKEL-LEREN] regels buiten de limiet gevallen', { dropped: plan.dropped, ownerId })
+    }
+
+    if (plan.toInsert.length > 0) {
+      const { error: insErr } = await pipeline
+        .from('articles')
+        .insert(plan.toInsert.map((a) => ({ user_id: ownerId, ...a })))
+      if (insErr) console.error('[ARTIKEL-LEREN] nieuwe artikelen niet opgeslagen', insErr)
+    }
+
+    // The bump is what makes "meest gebruikt eerst" mean anything. There is no atomic increment
+    // available here, and a lost race only misorders a suggestion list — so a read-modify-write is
+    // the right trade, exactly as PATCH /api/articles/[id] already does it.
+    await Promise.allSettled(
+      plan.toBump.map((b) =>
+        pipeline.from('articles')
+          .update({ usage_count: (b.usage_count ?? 0) + 1 })
+          .eq('id', b.id).eq('user_id', ownerId),
+      ),
+    )
+  } catch (e) {
+    console.error('[ARTIKEL-LEREN] onverwacht — de factuur zelf staat er gewoon', e)
+  }
+}
 
 /**
  * De eenheid van één regel, of null.
@@ -243,6 +306,24 @@ export async function POST(request: NextRequest) {
       console.error('[ACTING-FOR] regels wegschrijven mislukt — concept teruggedraaid', { lineErr })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
     }
+
+    // [ARTIKEL-LEREN] Wat de ondernemer hier typt, onthoudt de catalogus — vanaf de EERSTE factuur.
+    // Tot nu toe vulde die catalogus zich alleen als je hem al kende: via /dashboard/artikelen, of
+    // via het kleine "bewaar in catalogus"-knopje naast een regel. Wie dat niet wist, typte regel
+    // twintig nog steeds met de hand en trof een lege suggestielijst aan.
+    //
+    // Nooit een reden om de factuur te laten mislukken: de factuur en haar regels staan hier al, en
+    // de catalogus is een hulplijst ernaast. Vandaar de eigen try/catch en de log in plaats van een
+    // foutmelding — er is op dit punt niets meer aan de factuur dat nog kan misgaan.
+    await learnFromLines({
+      pipeline, ownerId, soort,
+      lines: gecontroleerd.lines.map((l, i) => ({
+        description: String(bron[i]?.description ?? '').trim(),
+        unit_price: l.unit_price,
+        btw_rate: l.btw_rate,
+        unit: schoonEenheid(bron[i]?.unit),
+      })),
+    })
 
     return NextResponse.json({ ok: true, invoiceId: factuur.id, clientId })
   } catch (e) {
