@@ -725,7 +725,15 @@ export async function POST(req: NextRequest) {
   // (invOpen, read before the write above) — the same figure book_bank_batch records. Without it
   // the link counts as zero in recompute_invoice_amount_paid and a later unlink of any OTHER
   // payment on this invoice erases the money this one really settled.
-  await recordPaymentLinks(pipeline, user.id, transactionId, [invoiceId], { [invoiceId]: invOpen });
+  // [LINKS-WRITE-HONEST] Whether it landed is reported, not assumed. This row is what
+  // /api/bank/match measures "is this line finished?" from ([BANK-COVERAGE-BY-MONEY]); without it
+  // the route falls back to counting invoice numbers in the reference, and a line carrying any
+  // token that is not a paid invoice number never leaves "Te bevestigen" — confirming it again
+  // returns 409, the client reads that as done and re-fetches, and the card comes straight back.
+  // The write used to swallow its error entirely, so that loop began in total silence.
+  const linkRecorded = await recordPaymentLinks(
+    pipeline, user.id, transactionId, [invoiceId], { [invoiceId]: invOpen },
+  );
 
   // [BANK-OVERAPPLIED-LOUD] Two overlapping confirms of DIFFERENT invoices against the SAME bank
   // line can each read the sibling links before either has written — both then believe they have
@@ -810,5 +818,12 @@ export async function POST(req: NextRequest) {
   // [BANK-MULTI-CONFIRM] Return allCovered so the UI knows whether this transaction
   // is now fully done (→ Gekoppeld) or still has open numbers (→ stays in Te bevestigen).
   // `unassigned` is what is still waiting on this bank line after this booking.
-  return NextResponse.json({ ok: true, allCovered, applied: invOpen, unassigned });
+  // [LINKS-WRITE-HONEST] The money is booked and the invoice is paid — so this is `ok`, not an
+  // error. But if the index row did not land, this line may keep coming back to "Te bevestigen"
+  // with nothing the owner can do about it. Answering a bare "Bevestigd ✓" over that is the app
+  // knowing something the person in front of it does not.
+  return NextResponse.json({
+    ok: true, allCovered, applied: invOpen, unassigned,
+    ...(linkRecorded ? {} : { warning: "payment_link_not_recorded" }),
+  });
 }

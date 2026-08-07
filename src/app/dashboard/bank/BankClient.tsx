@@ -675,7 +675,17 @@ export default function BankClient() {
         showToast(
           json?.warning === 'transaction_link_failed'
             ? 'Factuur betaald (koppeling volgt later).'
-            : isPartial
+            // [LINKS-WRITE-HONEST] De factuur IS betaald — maar de regel waaruit de bankpagina
+            // afleest of deze banktransactie klaar is, is niet weggeschreven. Zonder die regel valt
+            // /api/bank/match terug op het tellen van factuurnummers in de omschrijving, en een
+            // betaling met een klant- of ordernummer erin verdwijnt dan nooit uit "Te bevestigen":
+            // nog een keer bevestigen levert 409, dit scherm leest dat als klaar en haalt opnieuw
+            // op, en de kaart staat er meteen weer. Dat is precies de lus waar dit bericht voor is.
+            // Zeggen dat het gelukt is en de ondernemer die lus in laten lopen, is het ergste van
+            // de twee: hij tikt dan tien keer op een knop die niets meer kan doen.
+            : json?.warning === 'payment_link_not_recorded'
+              ? 'Betaald ✓ — maar deze bankregel is niet volledig vastgelegd. Blijft hij terugkomen, ververs de pagina; lukt dat niet, gebruik Negeren.'
+              : isPartial
               ? (remainingOpen != null
                   ? `Deelbetaling geboekt · nog ${eur.format(remainingOpen)} open`
                   : 'Deelbetaling geboekt · factuur blijft openstaan')
