@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
@@ -104,8 +105,8 @@ export async function POST(req: NextRequest) {
   // weet waar hij vandaan komt. Best-effort: het mandaat staat er al.
   try {
     const klantNaam = await naamVan(pipeline, user.id, 'Een klant')
-    await pipeline.from('notifications').insert({
-      user_id: doel,
+    const melding = await createNotification({
+      userId: doel,
       title:
         soort === 'bevestigen'
           ? 'Je mag inkoopfacturen bevestigen voor een klant'
@@ -115,9 +116,9 @@ export async function POST(req: NextRequest) {
           ? `${klantNaam} heeft je gemachtigd om zijn inkoopfacturen te bevestigen, zodat zijn kwartaal kan sluiten. Hij blijft er zelf verantwoordelijk voor — bij elke bevestiging staat jouw naam.`
           : `${klantNaam} heeft je gemachtigd om facturen op zijn naam uit te reiken. De facturen krijgen zijn nummerreeks en zijn BTW-nummer.`,
       type: 'invoice',
-      read: false,
       link: soort === 'bevestigen' ? '/dashboard/accountant/bevestigen' : '/dashboard/accountant/factuur',
     })
+    if (!melding.ok) console.error('[MANDAAT] melding aan de boekhouder mislukt', melding.error)
   } catch (e) {
     console.error('[MANDAAT] melding aan de boekhouder mislukt', e)
   }
@@ -196,16 +197,16 @@ export async function DELETE(req: NextRequest) {
     try {
       const naam = await naamVan(pipeline, user.id, 'De andere partij')
       const naarKlant = anderId === m.zzper_id
-      await pipeline.from('notifications').insert({
-        user_id: anderId,
+      const melding = await createNotification({
+        userId: anderId,
         title: naarKlant ? 'Je boekhouder factureert niet meer namens jou' : 'Machtiging ingetrokken',
         body: naarKlant
           ? `${naam} verstuurt geen facturen meer op jouw naam. Je maakt ze weer zelf.`
           : `${naam} heeft de machtiging om facturen op zijn naam te versturen ingetrokken. Je kunt zijn administratie nog gewoon inzien.`,
         type: 'invoice',
-        read: false,
         link: naarKlant ? '/dashboard/settings' : `/dashboard/clients/${m.zzper_id}`,
       })
+      if (!melding.ok) console.error('[MANDAAT] melding bij intrekken mislukt', melding.error)
     } catch (e) {
       console.error('[MANDAAT] melding bij intrekken mislukt', e)
     }

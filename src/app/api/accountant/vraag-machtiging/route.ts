@@ -21,6 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendMessageNotification } from '@/lib/email'
 import { appUrl } from '@/lib/app-origin'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -127,19 +128,14 @@ export async function POST(request: NextRequest) {
     // De melding wijst NIET naar het gesprek maar rechtstreeks naar de schakelaar. Dat is het hele
     // verschil tussen "hij las het" en "hij deed het": het staat op regel 831 van een scherm van
     // duizend regels, en niemand scrollt daarheen op zoek naar iets waarvan hij net hoorde.
-    await pipeline
-      .from('notifications')
-      .insert({
-        user_id: klantId,
-        title: tekst.title,
-        body: tekst.body.slice(0, 160),
-        type: 'message',
-        read: false,
-        link: '/dashboard/settings#boekhouder',
-      })
-      .then(({ error }) => {
-        if (error) console.error('[VRAAG-MACHTIGING] melding mislukt', { error })
-      })
+    const melding = await createNotification({
+      userId: klantId,
+      title: tekst.title,
+      body: tekst.body.slice(0, 160),
+      type: 'message',
+      link: '/dashboard/settings#boekhouder',
+    })
+    if (!melding.ok) console.error('[VRAAG-MACHTIGING] melding mislukt', { error: melding.error })
 
     const { data: klant } = await pipeline
       .from('profiles')

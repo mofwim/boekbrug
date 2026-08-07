@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import {
@@ -394,24 +395,19 @@ export async function GET(req: NextRequest) {
         sentByInvoice.set(inv.id, arr);
 
         // Notify the owner (best-effort) — visible proof the app acted for them.
-        try {
-          // [WIK] After the statutory letter the owner has something they did not have before:
-          // the RIGHT to charge collection costs once the term passes. That right is invisible
-          // unless it is said — and unsaid, the letter's whole purpose is lost on them.
-          await pipeline.from("notifications").insert({
-            user_id: ownerId,
-            title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
-            body: wik
-              ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
-                `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
-              : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
-            type: "invoice",
-            read: false,
-            link: `/dashboard/invoice/${inv.id}`,
-          });
-        } catch {
-          /* low severity — the reminder itself already succeeded */
-        }
+        // [WIK] After the statutory letter the owner has something they did not have before:
+        // the RIGHT to charge collection costs once the term passes. That right is invisible
+        // unless it is said — and unsaid, the letter's whole purpose is lost on them.
+        await createNotification({
+          userId: ownerId,
+          title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
+          body: wik
+            ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
+              `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
+            : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
+          type: "invoice",
+          link: `/dashboard/invoice/${inv.id}`,
+        });
       } catch (sendErr) {
         // A THROW is the ambiguous case: the request may have reached the provider before the
         // connection died, so we cannot know whether the customer got a demand. The claim STAYS
@@ -428,24 +424,19 @@ export async function GET(req: NextRequest) {
         } catch {
           /* best-effort */
         }
-        try {
-          await pipeline.from("notifications").insert({
-            user_id: ownerId,
-            title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
-            body:
-              `Het versturen van ${finalTier ? "de laatste aanmaning" : "een herinnering"} voor factuur ${inv.invoice_number ?? ""} ` +
-              `aan ${inv.client_name ?? "je klant"} is misgegaan. We proberen het niet automatisch opnieuw — een dubbele ` +
-              `aanmaning naar iemand die er al een kreeg is erger. ` +
-              (finalTier
-                ? "Let op: zonder deze aanmaning mag je (nog) geen incassokosten in rekening brengen. Stuur hem zelf, of neem contact op."
-                : "Stuur hem zelf als je dat wilt."),
-            type: "invoice",
-            read: false,
-            link: `/dashboard/invoice/${inv.id}`,
-          });
-        } catch {
-          /* best-effort */
-        }
+        await createNotification({
+          userId: ownerId,
+          title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
+          body:
+            `Het versturen van ${finalTier ? "de laatste aanmaning" : "een herinnering"} voor factuur ${inv.invoice_number ?? ""} ` +
+            `aan ${inv.client_name ?? "je klant"} is misgegaan. We proberen het niet automatisch opnieuw — een dubbele ` +
+            `aanmaning naar iemand die er al een kreeg is erger. ` +
+            (finalTier
+              ? "Let op: zonder deze aanmaning mag je (nog) geen incassokosten in rekening brengen. Stuur hem zelf, of neem contact op."
+              : "Stuur hem zelf als je dat wilt."),
+          type: "invoice",
+          link: `/dashboard/invoice/${inv.id}`,
+        });
       }
     }
   }

@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { refuseArchive, restoreStatus, type RemovalInvoice } from "@/lib/invoice-removal";
 import { quarterKeyOf } from "@/lib/quarter";
 import { logAuditAction } from "@/lib/audit";
@@ -247,27 +248,23 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   });
 
   if (notices.length > 0) {
-    try {
-      await pipeline.from("notifications").insert({
-        user_id: user.id,
-        title: "Factuur verwijderd — let op",
-        body: notices.join(" "),
-        type: "invoice",
-        // [NOTIF-LINK-REAL] Was "/dashboard/btw", a route that does not exist. It then became
-        // "/dashboard/aangifte" — a real page, but the wrong one for the sentence above it:
-        // Aangifte recomputes a CONCEPT and holds no filing to compare against, so an owner sent
-        // there to "bekijk het verschil" could not find one. The comparison against the frozen
-        // btw_filings snapshot lives on Waarheid, so a filed-quarter notice deep-links to that
-        // quarter there; the other notices (betaallink/bundel) keep the concept page, which is
-        // where their effect on the figures shows.
-        // A link stored in a notifications ROW outlives any code change, so a wrong one here is
-        // a dead tap for as long as the row exists; scripts/nav-audit.mjs only reads href= and
-        // router.push, so it could not see this one.
-        link: filedQuarterLink ?? "/dashboard/aangifte",
-      });
-    } catch {
-      /* non-blocking */
-    }
+    await createNotification({
+      userId: user.id,
+      title: "Factuur verwijderd — let op",
+      body: notices.join(" "),
+      type: "invoice",
+      // [NOTIF-LINK-REAL] Was "/dashboard/btw", a route that does not exist. It then became
+      // "/dashboard/aangifte" — a real page, but the wrong one for the sentence above it:
+      // Aangifte recomputes a CONCEPT and holds no filing to compare against, so an owner sent
+      // there to "bekijk het verschil" could not find one. The comparison against the frozen
+      // btw_filings snapshot lives on Waarheid, so a filed-quarter notice deep-links to that
+      // quarter there; the other notices (betaallink/bundel) keep the concept page, which is
+      // where their effect on the figures shows.
+      // A link stored in a notifications ROW outlives any code change, so a wrong one here is
+      // a dead tap for as long as the row exists; scripts/nav-audit.mjs only reads href= and
+      // router.push, so it could not see this one.
+      link: filedQuarterLink ?? "/dashboard/aangifte",
+    });
   }
 
   return NextResponse.json({ ok: true, ...(notices.length ? { notices } : {}) });

@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
+import { createNotification } from "@/lib/notifications"
 import {
   verifyInvoiceFromPdf,
   // [STATEMENT-RECONCILE] herkenning + lezer van een leveranciersoverzicht
@@ -1276,27 +1277,25 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
     // and reconciling before it exists would leave the drawer a pass behind.
     try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
     try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
-    try {
-      await pipeline.from("notifications").insert({
-        user_id: user.id,
-        // [BON-AUTO] A settled bon may NOT borrow the invoice sentence. "(nog niet betaald)" on a
-        // receipt the app has just marked paid is the app contradicting itself in the one message
-        // the owner actually reads, and it would send them looking for a payment to make.
-        title: settled ? "Bon automatisch verwerkt en afgeboekt" : "Factuur automatisch verwerkt",
-        // .replace with a STRING replaces the first match only; a missing number left a second
-        // double space untouched. A regex with /g collapses every run of spaces.
-        body: (settled
-          ? `${v.vendor || "Een leverancier"} — deze bon is gelezen en meteen als betaald geboekt (${settlePlan.method === "kas" ? "contant" : "met de pas"}, ${settlePlan.payDate}). Klopt dat niet, zet hem dan met één tik terug op openstaand.`
-          : `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`
-        ).replace(/ {2,}/g, " "),
-        type: "invoice",
-        // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
-        // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
-        // tap for nothing: it announces a booking and then leaves the owner to find
-        // the invoice by hand — on a surface the notification never names.
-        link: `/dashboard/incoming/manage?focus=${invoice.id}`,
-      })
-    } catch { /* non-essential */ }
+    await createNotification({
+      userId: user.id,
+      // [BON-AUTO] A settled bon may NOT borrow the invoice sentence. "(nog niet betaald)" on a
+      // receipt the app has just marked paid is the app contradicting itself in the one message
+      // the owner actually reads, and it would send them looking for a payment to make.
+      title: settled ? "Bon automatisch verwerkt en afgeboekt" : "Factuur automatisch verwerkt",
+      // .replace with a STRING replaces the first match only; a missing number left a second
+      // double space untouched. A regex with /g collapses every run of spaces.
+      body: (settled
+        ? `${v.vendor || "Een leverancier"} — deze bon is gelezen en meteen als betaald geboekt (${settlePlan.method === "kas" ? "contant" : "met de pas"}, ${settlePlan.payDate}). Klopt dat niet, zet hem dan met één tik terug op openstaand.`
+        : `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`
+      ).replace(/ {2,}/g, " "),
+      type: "invoice",
+      // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
+      // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
+      // tap for nothing: it announces a booking and then leaves the owner to find
+      // the invoice by hand — on a surface the notification never names.
+      link: `/dashboard/incoming/manage?focus=${invoice.id}`,
+    })
   }
 
   // [INTAKE-AUTO-FEEDBACK] Where the FILE itself was filed. The document path already
