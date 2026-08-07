@@ -68,11 +68,33 @@ export async function GET() {
     )
   }
 
+  // [TWEEDE-KANS] The files themselves, not just how many. The panel used to say "ze staan in je
+  // bestanden, controleer ze even" and there was nothing to do there: the sync filters a given-up
+  // attachment out of every future run, reprocess covers spreadsheets only, and re-uploading the
+  // same bytes is refused by the byte-hash gate. Naming them is what lets the owner ask for a
+  // second reading of a file the app already has.
+  const { data: unreadRows } = await supabase
+    .from('documents')
+    .select('id, file_name, created_at')
+    .eq('user_id', user.id)
+    .in('ai_doc_type', SKIPPED_DOC_TYPES)
+    .is('invoice_id', null)
+    .order('created_at', { ascending: false })
+    .limit(50)
+
   const skipped = (skippedRows ?? []).map((r) => ({
     filename: r.filename ?? '(zonder naam)',
     reason: r.reason ?? 'onbekend',
     createdAt: r.created_at,
   }))
 
-  return NextResponse.json({ skipped, couldNotReadCount: couldNotReadCount ?? 0 })
+  return NextResponse.json({
+    skipped,
+    couldNotReadCount: couldNotReadCount ?? 0,
+    // Only the ones that can still BECOME an invoice: a document already linked to one is not
+    // waiting for anything, and offering a re-read there would invite a double booking.
+    unread: (unreadRows ?? []).map((r) => ({
+      id: r.id, fileName: r.file_name ?? '(zonder naam)', createdAt: r.created_at,
+    })),
+  })
 }
