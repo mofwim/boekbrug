@@ -758,7 +758,12 @@ function NewInvoicePageContent() {
     try {
       const res = await fetch('/api/articles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: line.description, unit_price: line.unit_price, btw_rate: line.btw_rate, code: '', unit: '' }),
+        // [UNIT] De eenheid van de REGEL, niet leeg. Deze knop schreef altijd unit: '' — dus een
+        // artikel dat je hier bewaarde kwam terug zonder eenheid, en pickArticle zette hem daarna
+        // op null. "2 uur" werd bij de volgende factuur weer "2" (C62 = stuk) in de e-factuur:
+        // precies de fout die de [UNIT]-regel in pickArticle hierboven al een keer heeft opgelost,
+        // alleen langs de andere kant van dezelfde catalogus.
+        body: JSON.stringify({ description: line.description, unit_price: line.unit_price, btw_rate: line.btw_rate, code: '', unit: line.unit ?? '' }),
       })
       if (res.ok) {
         const j = await res.json()
