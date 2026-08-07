@@ -2193,3 +2193,27 @@ test("[E-FACTUUR-NAREKENEN] the books audit asks the supplier's own file before 
   );
   assert.match(src, /confirmedByEInvoice: summary\.confirmedByEInvoice/, "…and reaches the client");
 });
+
+test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () => {
+  // The app was loud about problems and silent about its strongest certainty. Every warning on the
+  // pay screen exists because a number MIGHT be wrong; nothing said the opposite when it cannot be.
+  // For an owner who keeps the paper invoice open beside the app — the reason this whole line of
+  // work exists — that is exactly the wrong way round.
+  const ui = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Read through the shared validator, never by poking at the jsonb directly: field_confidence is
+  // untyped at the database and a screen that trusts it is a screen that renders whatever is there.
+  assert.match(
+    ui, /const e = eInvoiceOf\(inv\.field_confidence\)/,
+    "the row must read the marker through the one validator",
+  );
+  // Only when the supplier's file AGREES. A contradiction already earns its own warning, and a
+  // reassuring badge beside it would be the screen arguing with itself.
+  assert.match(
+    ui, /if \(!e \|\| e\.contradicts\) return null/,
+    "a contradicted e-invoice may never wear the reassuring badge",
+  );
+  // And the sentence tells the owner what it MEANS, not merely that it happened.
+  assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
+  assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
+});
