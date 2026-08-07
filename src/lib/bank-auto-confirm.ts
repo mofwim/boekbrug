@@ -34,6 +34,7 @@ import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
+import { createNotification } from "./notifications";
 import { getVatScheme } from "./vat-scheme";
 // [KAS-AUTO-BOOK] When a kasstelsel owner's amount-only match may book itself — see kas-auto-book.ts.
 import { decideKasAutoBook, filingStateOf, filingKey } from "./kas-auto-book";
@@ -43,7 +44,6 @@ import { fetchSupplierIbans, withSupplierIbans } from "./supplier-known-iban";
 import { isMissingRelation } from "./pg-missing";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
-import { notifyRow } from "./notifications"
 
 // [SUPPLIER-IBAN] One invoice row as this module handles it: what the matcher needs, plus the two
 // fields only this file reads (the instalment balance and the registry link). Named because it is
@@ -492,22 +492,21 @@ export async function runBankAutoConfirm(args: {
         ? ` Let op: ${amountOnly === 1 ? "1 koppeling is" : `${amountOnly} koppelingen zijn`} alleen op bedrag ` +
           "herkend (geen factuurnummer in de omschrijving) — controleer die even."
         : "");
-    try {
-      const notified = await notifyRow({
-        user_id: userId,
-        title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
-        body,
-        type: "payment",
-        // [NOTIF-DEADEND] The body says "bekijk ze onder Bevestigd" — so the bell must
-        // actually go there. It carried no link at all, which made the one notification
-        // about money the app moved by itself the one you could not open. ?tab=done
-        // opens the Bevestigd tab directly (BankClient reads it), where every automatic
-        // link is listed and reversible with one tap.
-        link: "/dashboard/bank?tab=done",
-      });
-      if (!notified) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId });
-    } catch (e) {
-      console.error("[JET-GAP0] auto-confirm notification threw", { userId, error: e instanceof Error ? e.message : String(e) });
+    const melding = await createNotification({
+      userId,
+      title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
+      body,
+      type: "payment",
+      // [NOTIF-DEADEND] The body says "bekijk ze onder Bevestigd" — so the bell must
+      // actually go there. It carried no link at all, which made the one notification
+      // about money the app moved by itself the one you could not open. ?tab=done
+      // opens the Bevestigd tab directly (BankClient reads it), where every automatic
+      // link is listed and reversible with one tap.
+      link: "/dashboard/bank?tab=done",
+    });
+    // createNotification never throws — it reports. The catch that stood here could not fire.
+    if (!melding.ok) {
+      console.error("[JET-GAP0] auto-confirm notification insert failed", { userId, error: melding.error });
     }
   }
 

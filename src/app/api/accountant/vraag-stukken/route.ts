@@ -25,12 +25,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendMessageNotification } from '@/lib/email'
 import { appUrl } from '@/lib/app-origin'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { buildDocumentRequest, requestSummary, type RequestItem } from '@/lib/document-request'
 import { logAuditAction, getClientIP } from '@/lib/audit'
-import { notifyRow } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -130,19 +130,16 @@ export async function POST(request: NextRequest) {
     const kop = requestSummary(items.length, typeof body.quarterLabel === 'string' ? body.quarterLabel : '')
 
     // notifications heeft geen INSERT-policy voor een sessie — via service_role, zoals overal.
-    await notifyRow({
-        user_id: klantId,
-        title: kop,
-        // De eerste regels van het bericht zelf: de klant ziet meteen waar het over gaat in plaats
-        // van "Nieuw bericht".
-        body: opgebouwd.text.slice(0, 140),
-        type: 'message',
-        read: false,
-        link: `/dashboard/messages/${user.id}`,
-      })
-      .then((ok) => {
-        if (!ok) console.error('[OPVRAGEN] melding mislukt', { klantId })
-      })
+    const melding = await createNotification({
+      userId: klantId,
+      title: kop,
+      // De eerste regels van het bericht zelf: de klant ziet meteen waar het over gaat in plaats
+      // van "Nieuw bericht".
+      body: opgebouwd.text.slice(0, 140),
+      type: 'message',
+      link: `/dashboard/messages/${user.id}`,
+    })
+    if (!melding.ok) console.error('[OPVRAGEN] melding mislukt', { error: melding.error })
 
     // De e-mail is niet blokkerend: het bericht staat al in zijn inbox in de app.
     const { data: klantProfiel } = await pipeline

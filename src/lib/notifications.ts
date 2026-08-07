@@ -9,88 +9,93 @@
 import { createPipelineClient } from './supabase-pipeline'
 import { sendPushToUser } from './push'
 
-type NotifType = 'invoice' | 'payment' | 'message' | 'invite' | 'status'
+/**
+ * The five values the `type` CHECK constraint on public.notifications allows.
+ * This is the ONE list. The routes that accept a type from the network validate
+ * against it (see isNotificationType) — they used to keep their own literal copy,
+ * which is how a sixth type gets accepted by a route and rejected by Postgres.
+ */
+export const NOTIFICATION_TYPES = ['invoice', 'payment', 'message', 'invite', 'status'] as const
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number]
+
+/** Narrow an untrusted value (request body) to a type the table will accept. */
+export function isNotificationType(value: unknown): value is NotificationType {
+  return typeof value === 'string' && (NOTIFICATION_TYPES as readonly string[]).includes(value)
+}
 
 interface CreateNotifOptions {
   userId: string
   title: string
-  body?: string
-  type: NotifType
-  link?: string
+  body?: string | null
+  type: NotificationType
+  link?: string | null
 }
 
-/** كتابة إشعار واحد للمستخدم — عبر service_role دائماً */
+/**
+ * The outcome of one write. Callers that branch on failure (the cron rounds count
+ * what they sent; the bridge routes log which side was not reached) get a value
+ * instead of an exception — this function never throws, so a notification can
+ * never take down the operation that triggered it.
+ */
+export interface NotificationResult {
+  ok: boolean
+  error: string | null
+}
+
+/** Write one notification for a user — always via service_role — and push it. */
 export async function createNotification({
   userId,
   title,
   body,
   type,
   link,
-}: CreateNotifOptions): Promise<boolean> {
-  return notifyRows([{ user_id: userId, title, body: body ?? null, type, read: false, link: link ?? null }])
-}
-
-/**
- * A notification row exactly as the table holds it.
- *
- * [BEL-BEREIKT-NIEMAND] This shape exists so the thirty call sites that were writing the table
- * DIRECTLY could be moved here without touching a single field. That mattered: their bodies are
- * long Dutch template literals, and rewriting them into the named-argument form above is a
- * thirty-way opportunity to change a sentence by accident. The prefix changes, the object does not.
- */
-export interface NotificationRow {
-  user_id: string
-  title: string
-  body?: string | null
-  type: string
-  read?: boolean
-  link?: string | null
-}
-
-/**
- * [BEL-BEREIKT-NIEMAND] Write notification rows — the ONE place that does.
- *
- * This file has called itself "the canonical notification writer" from the day it was made, and it
- * was not: 30 of the app's 39 notification writes went straight to the table. Measured, and the
- * split was not random — the direct ones are the urgent ones, because urgency is written where the
- * event happens: "Laatste aanmaning verstuurd", "Laatste aanmaning mogelijk NIET verstuurd",
- * "Controleer deze betaling", "Terugkerende factuur staat klaar".
- *
- * What bypassing cost, and neither half was visible:
- *
- *   · NO PUSH. Only this file calls sendPushToUser, so a row written directly appears in the app
- *     and never on the owner's phone. An owner who turned push on to be told when something needs
- *     them was, for 30 of 39 messages, told nothing until they next opened the app themselves.
- *   · NO ERROR. supabase-js does not throw, and every one of those sites discarded `{ error }` —
- *     several inside a `catch {}` that could not fire. A bell that was never written looked
- *     exactly like a bell that rang.
- *
- * Returns whether the ROW landed. The push is deliberately not part of that answer: it is a second
- * delivery of something already recorded, and a phone that is offline is not a failure to notify.
- */
-export async function notifyRows(rows: NotificationRow[]): Promise<boolean> {
-  if (rows.length === 0) return true
-  const pipeline = createPipelineClient()
-  const { error } = await pipeline.from('notifications').insert(rows)
-  if (error) {
-    // Never thrown: a caller is always mid-way through something that already succeeded, and the
-    // bell is the report of it. But never swallowed either — see the header.
-    console.error('[BEL-BEREIKT-NIEMAND] melding NIET opgeslagen', {
-      count: rows.length, titles: rows.map((r) => r.title), message: error.message,
+}: CreateNotifOptions): Promise<NotificationResult> {
+  try {
+    const pipeline = createPipelineClient()
+    // [NO-SILENT-EMPTY] The error was not read here at all. supabase-js does not
+    // throw on a rejected write, so an RLS refusal, a CHECK violation on `type` or
+    // a dead connection all left this function returning normally — and the caller,
+    // which had just done the work the notification is about, went on believing the
+    // owner had been told. Every insert in the app now runs through this one line,
+    // so this was the single blind spot that covered all of them.
+    const { error } = await pipeline.from('notifications').insert({
+      user_id: userId,
+      title,
+      body: body ?? null,
+      type,
+      read: false,
+      link: link ?? null,
     })
-    return false
+
+    if (error) {
+      console.error('[NOTIFY] notification insert failed', {
+        userId,
+        type,
+        error: error.message,
+      })
+      // [PUSH] Deliberately NO push on a failed write. The push is a pointer to the
+      // row: it repeats the title and, on tap, opens `link`. Sending it anyway
+      // produces a phone notification for a notification that does not exist — the
+      // owner taps it, lands on the screen, finds nothing, and the bell that is
+      // supposed to be the record is empty. A missed push is a silence; a push
+      // without its row is a claim the app cannot back up.
+      return { ok: false, error: error.message }
+    }
+
+    // [PUSH] Also deliver to the user's devices as a system notification. Strictly
+    // best-effort: sendPushToUser never throws and no-ops when push is unconfigured
+    // or the user has no subscribed device — the in-app row above is the source of
+    // truth and must never be held hostage by a push delivery.
+    await sendPushToUser(userId, { title, body, type, link })
+    return { ok: true, error: null }
+  } catch (err) {
+    // createPipelineClient() THROWS when the service-role env vars are missing, and
+    // that throw used to land in the caller — in the middle of a route that had
+    // already booked a payment or issued an invoice number. The notification is the
+    // last step of every one of those; it reports, it does not decide.
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[NOTIFY] notification write threw', { userId, type, error: message })
+    return { ok: false, error: message }
   }
-
-  // [PUSH] Also deliver to the user's devices. Strictly best-effort: sendPushToUser never throws
-  // and no-ops when push is unconfigured or the user has no subscribed device — the row above is
-  // the source of truth and must never be held hostage by a delivery.
-  await Promise.allSettled(
-    rows.map((r) => sendPushToUser(r.user_id, { title: r.title, body: r.body, type: r.type, link: r.link })),
-  )
-  return true
-}
-
-/** One row. The shape 29 call sites already had, so moving them changed only the call. */
-export async function notifyRow(row: NotificationRow): Promise<boolean> {
-  return notifyRows([row])
 }

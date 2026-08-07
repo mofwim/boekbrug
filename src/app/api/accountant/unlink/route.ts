@@ -5,9 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendClientUnlinkedNotification } from '@/lib/email'
 import { logAuditAction, getClientIP } from '@/lib/audit'
-import { notifyRow } from '@/lib/notifications'
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
@@ -84,17 +84,15 @@ export async function POST(req: NextRequest) {
   }
 
   // In-app notification to client — via service role
-  try {
-    await notifyRow({
-      user_id: clientId,
-      title: 'Koppeling beeindigd',
-      body: accountantName + ' heeft de koppeling met jou beeindigd. Je gegevens blijven van jou.',
-      type: 'invite',
-      read: false,
-      link: '/dashboard/settings',
-    })
-  } catch (err) {
-    console.error('[accountant/unlink] notification failed:', err)
+  const melding = await createNotification({
+    userId: clientId,
+    title: 'Koppeling beeindigd',
+    body: accountantName + ' heeft de koppeling met jou beeindigd. Je gegevens blijven van jou.',
+    type: 'invite',
+    link: '/dashboard/settings',
+  })
+  if (!melding.ok) {
+    console.error('[accountant/unlink] notification failed:', melding.error)
   }
 
   // Audit log — legal record

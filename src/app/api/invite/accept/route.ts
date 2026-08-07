@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
-import { notifyRow } from '@/lib/notifications'
+import { createNotification } from '@/lib/notifications'
 
 // قبول دعوة — يعمل مع نوعين: ZZP'er يدعو محاسب، أو محاسب يدعو ZZP'er
 export async function POST(request: NextRequest) {
@@ -155,14 +155,14 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
         || accountantProfile?.full_name
         || invitation.accountant_email
 
-      await notifyRow({
-          user_id: zzperId,
-          title: 'Boekhouder heeft uitnodiging geaccepteerd',
-          body: `${accountantName} heeft jouw uitnodiging geaccepteerd en is nu jouw boekhouder.`,
-          type: 'invite',
-          read: false,
-          link: '/dashboard/settings',
-        })
+      const melding = await createNotification({
+        userId: zzperId,
+        title: 'Boekhouder heeft uitnodiging geaccepteerd',
+        body: `${accountantName} heeft jouw uitnodiging geaccepteerd en is nu jouw boekhouder.`,
+        type: 'invite',
+        link: '/dashboard/settings',
+      })
+      if (!melding.ok) console.error('[invite/accept] notification failed:', melding.error)
     } catch (notifErr) {
       console.error('[invite/accept] notification failed:', notifErr)
       // non-blocking — don't fail the accept

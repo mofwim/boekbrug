@@ -12,6 +12,7 @@ import { paymentDateOutOfWindow, PAYMENT_DATE_REFUSAL } from "@/lib/payment-date
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 // [CASH-SETTLE] keep the kasboek in sync when an invoice is paid/undone in cash
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
@@ -31,7 +32,6 @@ import { correctedFields } from "@/lib/reading-memory";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
 import type { Database } from "@/types/database.types";
-import { notifyRow } from "@/lib/notifications"
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 // ── POST — verify or pay an incoming invoice ──────────────────────────────────
@@ -429,9 +429,6 @@ export async function POST(
     .limit(1)
     .maybeSingle();
 
-  // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
-  // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
-
   // ── [BRIDGE-NOTIF] Notification enrichment ──────────────────────────────────
   // A senior accountant wants WHO + WHAT + amount + a click that lands on the row.
   // All values are best-effort; every piece degrades gracefully if missing.
@@ -484,39 +481,37 @@ export async function POST(
   const clientLink = `/dashboard/incoming/manage?focus=${id}`;
 
   if (link?.accountant_id) {
-    const accNotified = await notifyRow({
-      user_id: link.accountant_id,
+    const accNotif = await createNotification({
+      userId: link.accountant_id,
       title: action === "pay" ? "Factuur betaald gemarkeerd" : "Nieuwe crediteur ter inzage",
       body:
         action === "pay"
           ? `${clientName} markeerde ${invNr}${vendor}${amountLabel} als betaald.`
           : `${clientName} verifieerde ${invNr}${vendor}${amountLabel} — nieuwe crediteur.`,
       type: "invoice",
-      read: false,
       // [BRIDGE-NOTIF] deep-link: lands on the client's quarter and focuses the row.
       link: accountantLink,
     });
-    if (!accNotified) {
-      console.error("[BRIDGE-B] accountant notification failed");
+    if (!accNotif.ok) {
+      console.error("[BRIDGE-B] accountant notification failed", accNotif.error);
       // Non-fatal — the confirmation already succeeded.
     }
   }
 
   // Notify the user themselves — confirmation
-  const userNotified = await notifyRow({
-    user_id: user.id,
+  const userNotif = await createNotification({
+    userId: user.id,
     title: action === "pay" ? "Factuur betaald" : "Factuur geverifieerd",
     body:
       action === "pay"
         ? `${invNr.charAt(0).toUpperCase() + invNr.slice(1)}${vendor}${amountLabel} — betaald en doorgezet naar je boekhouder.`
         : `${invNr.charAt(0).toUpperCase() + invNr.slice(1)}${vendor}${amountLabel} — geverifieerd en doorgezet naar je boekhouder.`,
     type: action === "pay" ? "payment" : "invoice",
-    read: false,
     // [BRIDGE-NOTIF] deep-link: management surface, focused on this row.
     link: clientLink,
   });
-  if (!userNotified) {
-    console.error("[BRIDGE-B] user notification failed");
+  if (!userNotif.ok) {
+    console.error("[BRIDGE-B] user notification failed", userNotif.error);
   }
 
   // [SUPPLIER-ALIAS] The SAME lesson the pay screen's correction sheet learns. Both doors correct a

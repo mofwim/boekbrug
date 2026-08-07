@@ -225,12 +225,13 @@ test("[SEND-EMAIL-DURABLE] a failed e-mail leaves a durable trace, not only a re
   // PDF eventually shows up in the closing package. Here everything looks perfect.
   const src = readFileSync("src/app/api/invoice/send/route.ts", "utf8");
   const emailCatch = src.slice(src.indexOf("catch (emailErr)"), src.indexOf("── 15."));
-  // [BEL-BEREIKT-NIEMAND] Retargeted: this named the raw table write. That was the mechanism, not
-  // the rule — and it was the WEAKER mechanism, because a direct insert reaches the app only. The
-  // notification now goes through notifications.ts, which also delivers a push, so the durable
-  // trace this test exists for is more durable than when the test was written.
+  // [NOTIFY-EEN-DEUR] This named the WRITE SHAPE — `from('notifications').insert` — and so it went
+  // red the moment the branch started calling the canonical writer instead, which holds the
+  // property strictly better (it also reaches the owner's phone, and it reports a refused insert
+  // instead of dropping it). The rule is "this branch tells a person", so that is what it asks for
+  // now: a call to createNotification, the one door.
   assert.ok(
-    /notifyRows?\(|createNotification\(/.test(emailCatch),
+    /createNotification\(/.test(emailCatch),
     "the e-mail failure branch must write a notification, not only set the response warning",
   );
   assert.ok(

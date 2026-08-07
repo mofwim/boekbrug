@@ -64,7 +64,9 @@ export default async function AccountantPage() {
   const overview = await getAccountantOverview(profile.id, clients)
 
   // Notifications — fetched server-side, passed as initial state to client
-  const { data: notifications } = await supabase
+  // [NO-SILENT-EMPTY] `?? []` op een mislukte lezing zet "Geen meldingen" in de bel. Dat is een
+  // uitspraak over wat er voor deze boekhouder klaarstaat, en een gefaalde lezing weet dat niet.
+  const { data: notifications, error: notifErr } = await supabase
     .from('notifications')
     .select('*')
     .eq('user_id', profile.id)
@@ -93,6 +95,11 @@ export default async function AccountantPage() {
         clients={clients}
         todos={todos}
         notifications={notifications ?? []}
+        notificationsError={
+          notifErr
+            ? 'We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.'
+            : null
+        }
         unreadMessages={unreadMessages ?? 0}
       />
     

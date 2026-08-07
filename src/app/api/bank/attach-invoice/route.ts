@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
@@ -43,7 +44,6 @@ import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
-import { notifyRow } from "@/lib/notifications"
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -632,22 +632,18 @@ export async function POST(req: NextRequest) {
   });
 
   // 11. Notification (non-blocking) — service_role by rule.
-  try {
-    await notifyRow({
-      user_id: user.id,
-      title: "Factuur gekoppeld",
-      body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
-      type: "payment",
-      // [NOTIF-DEADEND] This route CREATES a paid invoice out of a bank line — the one
-      // row the owner is most likely to want to check — and the bell announcing it had
-      // no link. Point at the new invoice, by direction.
-      link: isOutgoing
-        ? `/dashboard/invoice/${invoice.id}`
-        : `/dashboard/incoming/manage?focus=${invoice.id}`,
-    });
-  } catch {
-    /* non-blocking */
-  }
+  await createNotification({
+    userId: user.id,
+    title: "Factuur gekoppeld",
+    body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
+    type: "payment",
+    // [NOTIF-DEADEND] This route CREATES a paid invoice out of a bank line — the one
+    // row the owner is most likely to want to check — and the bell announcing it had
+    // no link. Point at the new invoice, by direction.
+    link: isOutgoing
+      ? `/dashboard/invoice/${invoice.id}`
+      : `/dashboard/incoming/manage?focus=${invoice.id}`,
+  });
 
   return NextResponse.json({
     ok: true,

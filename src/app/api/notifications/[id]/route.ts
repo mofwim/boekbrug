@@ -1,10 +1,12 @@
 // src/app/api/notifications/[id]/route.ts
 // [BOEK-028] PATCH → mark notification as read — May 2026
-// createServerSupabaseClient وليس createServerClient
-// Next.js 15: params هو Promise
+// createServerSupabaseClient, not createServerClient
+// Next.js 15: params is a Promise
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function PATCH(
   req: NextRequest,
@@ -17,6 +19,12 @@ export async function PATCH(
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // A non-UUID id makes Postgres raise 22P02, which used to come back as a 500 carrying the
+    // database's own message. Refuse it here: it is a bad request, not a server failure.
+    if (!UUID.test(id)) {
+      return NextResponse.json({ error: 'Ongeldige melding' }, { status: 400 })
     }
 
     const body = await req.json()
@@ -34,11 +42,14 @@ export async function PATCH(
       .eq('user_id', user.id)  // security: user can only update their own
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      // The raw Postgres message was returned to the browser here. It says nothing a user can act
+      // on and everything an attacker would like about the schema.
+      console.error('[notifications/:id] update failed', { id, error: error.message })
+      return NextResponse.json({ error: 'Bijwerken mislukt' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true })
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

@@ -16,9 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { notifyRow } from '@/lib/notifications'
-
-const VALID_TYPES = ['invoice', 'payment', 'message', 'invite', 'status']
+import { createNotification, isNotificationType } from '@/lib/notifications'
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
@@ -40,7 +38,9 @@ export async function POST(req: NextRequest) {
 
   const { clientId, title, body: notifBody, type, link } = body
 
-  if (!clientId || !title || !type || !VALID_TYPES.includes(type)) {
+  // [CONTROL] One accepted list, in notifications.ts — the same one the table's CHECK
+  // constraint enforces. The literal copy that stood here could drift from it silently.
+  if (!clientId || !title || !isNotificationType(type)) {
     return NextResponse.json({ error: 'Ongeldige gegevens' }, { status: 400 })
   }
 
@@ -64,26 +64,18 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Write the notification for the client (service_role) ──
-  try {
-    // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
-    // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
-    const notified = await notifyRow({
-      user_id: clientId,            // the client — verified linked above
-      title,
-      body: notifBody ?? null,
-      type,
-      read: false,
-      link: link ?? null,
-    })
+  const result = await createNotification({
+    userId: clientId,            // the client — verified linked above
+    title,
+    body: notifBody ?? null,
+    type,
+    link: link ?? null,
+  })
 
-    if (!notified) {
-      console.error('[notify-client] insert failed')
-      return NextResponse.json({ error: 'Aanmaken mislukt' }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('[notify-client] error:', err)
-    return NextResponse.json({ error: 'Server fout' }, { status: 500 })
+  if (!result.ok) {
+    console.error('[notify-client] insert failed:', result.error)
+    return NextResponse.json({ error: 'Aanmaken mislukt' }, { status: 500 })
   }
+
+  return NextResponse.json({ success: true })
 }

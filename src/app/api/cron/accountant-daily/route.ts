@@ -22,6 +22,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
@@ -29,7 +30,6 @@ import { planAccountantDay } from "@/lib/accountant-daily";
 import { getAangifteDeadline } from "@/modules/accountant/accountant.service";
 import { lastCompletedQuarter } from "@/lib/quarter";
 import { amsterdamToday } from "@/lib/format-nl";
-import { notifyRow } from "@/lib/notifications"
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -141,16 +141,15 @@ export async function GET(req: NextRequest) {
       const message = planAccountantDay({ newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled });
       if (!message) { quiet++; continue; }
 
-      const notified = await notifyRow({
-        user_id: accountantId,
+      const melding = await createNotification({
+        userId: accountantId,
         title: message.title,
         body: message.body,
         type: "status",
-        read: false,
         link: message.link,
       });
-      if (!notified) {
-        console.error("[CRON-DAGSTART] notification insert failed", { accountantId });
+      if (!melding.ok) {
+        console.error("[CRON-DAGSTART] notification insert failed", { accountantId, error: melding.error });
         continue;
       }
       sent++;

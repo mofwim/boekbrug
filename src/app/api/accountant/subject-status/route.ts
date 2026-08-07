@@ -22,7 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { notifyRow } from '@/lib/notifications'
+import { createNotification } from '@/lib/notifications'
 
 const VALID_STATUS = ['te_verwerken', 'in_behandeling', 'verwerkt', 'vraag'] as const
 type Status = (typeof VALID_STATUS)[number]
@@ -112,25 +112,21 @@ export async function POST(req: NextRequest) {
   // ── (5) [READINESS-P3 vraag loop] Notify the client on a question ──
   // Best-effort — a notification failure must not undo the saved status.
   if (status === 'vraag') {
-    try {
-      // [BEL-BEREIKT-NIEMAND] Geen eigen client meer: notifyRow maakt de service_role-client zelf,
-      // zodat niemand hier per ongeluk een anon-client kan doorgeven (notifications heeft geen INSERT-policy).
-      await notifyRow({
-        user_id: doc.user_id,
-        title: 'Vraag van je boekhouder',
-        body: vraagText
-          ? vraagText.slice(0, 120)
-          : 'Je boekhouder heeft een vraag over een document.',
-        type: 'status',
-        read: false,
-        // [BRUG-RETOUR] Wees naar de vraag, niet naar de map. /dashboard/bestanden toonde
-        // een bestandenlijst zonder vraag, zonder tekst en zonder antwoordknop — waarna het
-        // gesprek naar WhatsApp verhuisde. /dashboard/vragen toont de vraag zelf, het
-        // document erbij en één veld om te antwoorden.
-        link: '/dashboard/vragen',
-      })
-    } catch (err) {
-      console.error('[subject-status] vraag notification failed:', err)
+    const melding = await createNotification({
+      userId: doc.user_id,
+      title: 'Vraag van je boekhouder',
+      body: vraagText
+        ? vraagText.slice(0, 120)
+        : 'Je boekhouder heeft een vraag over een document.',
+      type: 'status',
+      // [BRUG-RETOUR] Wees naar de vraag, niet naar de map. /dashboard/bestanden toonde
+      // een bestandenlijst zonder vraag, zonder tekst en zonder antwoordknop — waarna het
+      // gesprek naar WhatsApp verhuisde. /dashboard/vragen toont de vraag zelf, het
+      // document erbij en één veld om te antwoorden.
+      link: '/dashboard/vragen',
+    })
+    if (!melding.ok) {
+      console.error('[subject-status] vraag notification failed:', melding.error)
     }
   }
 
