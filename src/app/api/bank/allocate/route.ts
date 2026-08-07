@@ -164,8 +164,21 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Apply, line by line, stopping honestly ────────────────────────────────
+  //
+  // [CREDITNOTA-VOLGORDE] Credit lines FIRST, and this is not a preference — the batch is wrong
+  // without it. A credit does not spend the bank line, it raises what the line has to give: on a
+  // €850 debit made of a €1.000 invoice and a €150 credit, the line is worth €850 until the credit
+  // is booked and €1.000 after. Apply the invoice first and allocate_bank_payment caps it at the
+  // €850 it can see — booking a €1.000 invoice as €850 paid, spending the line to the cent so it
+  // flips to 'matched', and leaving the credit to return empty against a line that is no longer
+  // pending. One ordinary supplier payment, wrong in three places.
+  //
+  // Sorting by the SIGNED amount puts every negative line in front. The database is sign-aware too
+  // (allocate_bank_payment reads each linked invoice's own type), so this ordering makes the batch
+  // possible rather than making it correct — correctness is the function's, as it has to be.
+  const ordered = [...plan.lines].sort((a, b) => a.amount - b.amount);
   const applied: Array<{ invoiceId: string; amount: number; fullyPaid: boolean }> = [];
-  for (const line of plan.lines) {
+  for (const line of ordered) {
     // [BETAALPLAN] allocate_bank_payment, NOT apply_bank_payment.
     //
     // apply_bank_payment ends by setting the transaction to 'matched' unconditionally — its own

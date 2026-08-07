@@ -2296,6 +2296,57 @@ test("[BETAALPLAN] every money RPC that takes p_user_id checks the caller agains
   );
 });
 
+// ── [CREDITNOTA-VOLGORDE] A credit is applied BEFORE the invoices it reduces ──
+//
+// This one is held here because it was measured against a real PostgreSQL and it is the rare case
+// where ORDER, not arithmetic, decides whether an ordinary supplier payment books correctly.
+//
+// A supplier bills €1.000, credits €150 for a return, and debits €850. A credit does not spend the
+// bank line — it RAISES what the line has to give: worth €850 until the credit is booked, €1.000
+// after. Send the invoice first and allocate_bank_payment measures €1.000 against the €850 it can
+// see. The database now refuses that rather than shaving it (tests/sql/allocate_bank_payment.test.sql
+// pins both halves), so the wrong order no longer books a wrong number — but it does turn a
+// perfectly valid batch into "de verdeling is halverwege gestopt" for no reason the owner can act
+// on. The sort is what makes the feature work; the refusal is what makes it safe.
+//
+// Sorting by the SIGNED amount puts every negative line in front, which is why resolvePaymentPlan
+// returns signed amounts at all.
+test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the invoices", () => {
+  const src = code("src/app/api/bank/allocate/route.ts");
+
+  assert.match(
+    src,
+    /\.sort\(\(a, b\) => a\.amount - b\.amount\)/,
+    "the plan's lines must be sorted by SIGNED amount before they are applied — a credit that " +
+      "arrives after the invoices has nothing left to raise",
+  );
+  // And the loop has to walk the sorted copy. Sorting into a variable nothing reads is a change
+  // that looks right in a diff and does nothing at all, which is the exact shape of bug this file
+  // exists to catch.
+  assert.match(
+    src,
+    /const ordered = \[\.\.\.plan\.lines\]\.sort\([\s\S]{0,80}?\)[\s\S]{0,600}?for \(const line of ordered\)/,
+    "the apply loop must iterate the SORTED lines, not plan.lines",
+  );
+
+  // The database half of the same fact. Read the migration rather than trusting the comment: the
+  // route's sort is only correct because allocate_bank_payment counts a credit as negative when it
+  // computes what the line has left.
+  const sql = readFileSync("supabase/migrations/allocate_bank_payment.sql", "utf8");
+  assert.match(
+    sql,
+    /v_sign\s*\*\s*v_applied/,
+    "allocate_bank_payment must subtract a credit's amount with its sign when it computes the " +
+      "line's remainder — added as a magnitude, booking a €150 credit LOWERS the €850 line to €700",
+  );
+  assert.match(
+    sql,
+    /THEN -abs\(coalesce\(l\.amount_applied, 0\)\)/,
+    "the sum of the line's other links must be SIGNED per linked invoice — amount_applied is " +
+      "stored as a magnitude, so the sign has to be re-derived exactly as money-invariants.ts does",
+  );
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:
@@ -2458,6 +2509,22 @@ test("[CI-PARITEIT] CI invokes the package.json scripts, so it cannot drift from
   assert.match(ci, /tsc --noEmit/, "CI must type-check");
   assert.match(ci, /next build/, "CI must build");
   assert.match(ci, /playwright test tests\/public-surface\.spec\.ts/, "CI must run the public smoke");
+
+  // [SEAM] The sixth gate, and the only one that can read a plpgsql contract. It is deliberately
+  // NOT in `npm run gates` — it needs a database, and the local gates are worth keeping runnable on
+  // a bare checkout with an empty environment. That makes CI its only home, so CI is where it has
+  // to be held.
+  assert.ok(pkg.scripts["test:sql"], "package.json must define test:sql");
+  assert.match(ci, /sql-seam-test\.sh/, "CI must run the SQL seam gate");
+  // The line that decides whether the gate proves anything. Without it the runner SKIPS when no
+  // database is reachable — correct on a laptop, a lie in CI: a green check that ran nothing. This
+  // is the same failure the render gate had (never wired up) and the unit glob had (drifted), both
+  // of which stayed green the whole time they were broken.
+  assert.match(
+    ci,
+    /SQL_SEAM_REQUIRED:\s*'?1'?/,
+    "CI must set SQL_SEAM_REQUIRED=1, or a missing database turns the SQL gate into a silent skip",
+  );
 });
 
 // ── [OBSERVABILITY] The kept-but-unread marker lives in ONE file, on both sides ──
