@@ -38,6 +38,14 @@ export const TOOLS: PublicTool[] = [
     priority: 0.85,
   },
   {
+    slug: '/pdf-verkleinen',
+    emoji: '\U0001F4C9',
+    title: 'PDF verkleinen',
+    tagline: 'Te groot voor de upload? Alleen de afbeeldingen gaan omlaag — je tekst blijft tekst.',
+    keywords: ['pdf verkleinen', 'pdf comprimeren', 'pdf kleiner maken', 'pdf te groot'],
+    priority: 0.85,
+  },
+  {
     slug: '/btw-berekenen',
     emoji: '🧮',
     title: 'BTW berekenen',

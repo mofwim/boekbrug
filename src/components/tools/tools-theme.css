@@ -1,0 +1,111 @@
+/* ==========================================================================
+   Shared surface
+   --------------------------------------------------------------------------
+   One palette for every tool in the market, so a new tool inherits the look
+   instead of re-inventing it. Values are Apple's system colours; dark sits
+   behind a single `data-theme` attribute that a script in each page sets
+   before the first paint.
+
+   Names are all `--ios-*` so nothing collides with InvoiceFast's own tokens.
+   ========================================================================== */
+
+:root {
+  --ios-bg: #f2f2f7;            /* systemGroupedBackground */
+  --ios-card: #ffffff;          /* secondarySystemGroupedBackground */
+  --ios-raised: #ffffff;
+  --ios-label: #000000;
+  /* iOS ships secondaryLabel at 0.6, which measures 3.3:1 on this page's grey
+     — under the 4.5:1 line. It carries the description under every tool card
+     and every hint under every field, so it is body text, not chrome, and this
+     is read on a phone outdoors. Darkened until it measures; dark mode already
+     cleared 5.5:1 and is left alone. */
+  --ios-label-2: rgba(60, 60, 67, 0.78);
+  --ios-label-3: rgba(60, 60, 67, 0.45);
+  --ios-separator: rgba(60, 60, 67, 0.2);
+  --ios-fill: rgba(118, 118, 128, 0.12);
+  --ios-fill-2: rgba(118, 118, 128, 0.08);
+
+  /* Deeper than systemBlue's #007aff, which is tuned for large tinted controls
+     rather than for words. As link text it measured 3.3:1 here, and as a fill
+     under white button text 3.4:1 — both under the line, and it is used for
+     both in twenty-odd places. One darker blue fixes every one of them, and
+     fixes them in the same direction. Dark mode's #0a84ff already measures. */
+  --ios-blue: #0066cc;
+  /* The same blue, for the case where white sits on top of it. In light mode
+     the two coincide; in dark they cannot, because blue-as-text needs to be
+     lighter against the page while blue-as-fill needs to be darker under white
+     text. One token cannot move both ways, so there are two. */
+  --ios-blue-fill: #0066cc;
+  --ios-red: #ff3b30;
+  --ios-green: #34c759;
+  --ios-orange: #ff9500;
+  --ios-purple: #af52de;
+  --ios-teal: #30b0c7;
+  --ios-indigo: #5856d6;
+  --ios-pink: #ff2d55;
+  --ios-gray: #8e8e93;
+
+  --ios-blur: saturate(180%) blur(20px);
+  --ios-pill: #ffffff;
+  --ios-pill-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
+
+  /* Bigger than iOS's own, because these are cards on a page rather than
+     rows in a list, and a 12px corner on a 300px card reads as a 2016 panel. */
+  --ios-radius: 18px;
+  --ios-radius-sm: 12px;
+
+  /* Depth in two layers: a tight contact shadow that grounds the surface, and
+     a wide soft one that lifts it. One shadow alone reads as either a sticker
+     or a smudge. */
+  --ios-lift: 0 1px 2px rgba(17, 24, 39, 0.05), 0 8px 24px -12px rgba(17, 24, 39, 0.12);
+  --ios-lift-hover: 0 2px 4px rgba(17, 24, 39, 0.06), 0 18px 40px -16px rgba(17, 24, 39, 0.22);
+
+  /* The type scale. Four steps, each far enough from the last to be a
+     decision rather than an accident. */
+  --step-display: clamp(2.25rem, 1.6rem + 2.6vw, 3.25rem);
+  --step-title: clamp(1.6rem, 1.3rem + 1.2vw, 2.1rem);
+  --step-head: 1.0625rem;
+  --step-body: 0.9375rem;
+
+  /* iOS-ish spring: overshoots a hair, settles fast */
+  --ios-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* How much of a status colour survives when it is used for words on a tinted
+     plate — `color-mix(in srgb, var(--ios-green) var(--tint-ink), var(--ios-label))`.
+     It has to differ by theme: mixing toward black darkens, mixing toward white
+     lightens, and both need to move away from their backdrop. At a single 68%
+     the green pill measured 3.7:1 in light and 9.8:1 in dark. */
+  --tint-ink: 55%;
+}
+
+[data-theme="dark"] {
+  /* Not pure black: a near-black with a trace of blue reads as a material
+     rather than as a hole, and lets a raised surface actually look raised. */
+  --ios-bg: #0b0b0f;
+  --ios-card: #17171c;
+  --ios-raised: #1e1e24;
+  --ios-label: #ffffff;
+  --ios-label-2: rgba(235, 235, 245, 0.6);
+  --ios-label-3: rgba(235, 235, 245, 0.45);
+  --ios-separator: rgba(84, 84, 88, 0.6);
+  --ios-fill: rgba(118, 118, 128, 0.24);
+  --ios-fill-2: rgba(118, 118, 128, 0.16);
+  --ios-lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --ios-lift-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 18px 40px -16px rgba(0, 0, 0, 0.75);
+
+  --ios-blue: #0a84ff;
+  --ios-blue-fill: #0a6fd8;
+  --ios-red: #ff453a;
+  --ios-green: #30d158;
+  --ios-orange: #ff9f0a;
+  --ios-purple: #bf5af2;
+  --ios-teal: #40c8e0;
+  --ios-indigo: #5e5ce6;
+  --ios-pink: #ff375f;
+  --ios-gray: #98989f;
+
+  --ios-pill: #636366;
+  --ios-pill-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+
+  --tint-ink: 72%;
+}
