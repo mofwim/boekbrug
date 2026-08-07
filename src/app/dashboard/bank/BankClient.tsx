@@ -3007,6 +3007,32 @@ function TxCard({
                   ? 'Verwerken…'
                   : slotNumbers.length > 1 ? `Facturen koppelen (${slotNumbers.length})` : 'Factuur koppelen'}
               </label>
+              {/* [BETAALPLAN] De derde uitweg, die er niet was.
+                  Er waren er twee: koppel een BESTAND, of negeer de regel. Beide gaan uit van de
+                  aanname dat één betaling bij één factuur hoort. Een groothandel schrijft één bedrag
+                  af voor een week leveringen; een klant maakt één som over voor vier facturen en
+                  houdt op de laatste twaalf euro in; een leverancier trekt eerst een creditnota van
+                  de partij af. Niets daarvan paste, dus werd het opgelost door iets anders in te
+                  vullen dan wat er gebeurde — of door de regel te negeren, waarna hij in geen enkel
+                  cijfer meer voorkomt.
+
+                  Dit scherm laat de eigenaar de facturen die er AL staan zelf aanwijzen, met een
+                  bedrag per factuur. Bewust een aparte pagina: er is ruimte nodig voor een lijst,
+                  een bedragveld per regel en één getal dat bovenaan meeloopt — "nog te verdelen" —
+                  en dat past niet in een kaartje van 300 pixels. */}
+              <a
+                href={`/dashboard/bank/verdelen/${s.transactionId}`}
+                style={{
+                  marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  padding: '9px', borderRadius: R.full, border: `1px solid ${M3.outline}`,
+                  background: '#ffffff', textDecoration: 'none',
+                  fontSize: 13.5, fontWeight: 600, color: M3.primary, fontFamily: FONT, boxSizing: 'border-box',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>call_split</span>
+                Verdelen over facturen
+              </a>
+
               {/* [BANK-IGNORE] Hide a transaction that needs no invoice (rent, a
                   loan instalment, a personal transfer). Goes to Genegeerd. */}
               <button

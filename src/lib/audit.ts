@@ -46,6 +46,11 @@ export type AuditAction =
   | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment
   | 'bank.confirmed'                  // ← [BANK-CONFIRM] owner confirmed a bank↔invoice match (invoice fully paid)
   | 'bank.partial_payment'            // ← [PARTIAL-PAY] a deelbetaling booked against an invoice (still openstaand)
+  // [BETAALPLAN] One payment deliberately spread by the OWNER over several invoices, with an
+  // amount per invoice. Distinct from bank.auto_confirmed_batch, which is the app booking a batch
+  // it could prove: this one is a human decision about which invoice got which euros, and when a
+  // quarter is questioned that difference is the whole question.
+  | 'bank.payment_allocated'
   | 'bank.overpayment_residue'        // ← [PARTIAL-PAY-RESIDUE] payment exceeded the balance; the excess was NOT booked
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)

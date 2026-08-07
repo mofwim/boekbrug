@@ -1387,3 +1387,66 @@ test("[WERKVOORRAAD] een boekhouder zonder enige machtiging krijgt geen leeg wer
   // De tegels naar die schermen blijven wél staan — daar staat de knop om het te vragen.
   assert.match(html, /Bevestigen/);
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [BETAALPLAN] Het verdeelscherm — één betaling over meerdere facturen
+//
+// Dit scherm rekent tijdens het typen: elk bedrag dat de eigenaar intikt verschuift "nog te
+// verdelen" en kan het plan omslaan van kan naar kan-niet. Precies het soort tak dat in een lege
+// lijst nooit wordt aangeraakt, dus krijgt het echte facturen — inclusief een creditnota, want
+// diens minteken is het detail waar een echte batch op klapt.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const verdeelTx = {
+  id: "tx-1", amount: -850, date: "2026-07-28",
+  description: "SEPA overboeking", counterpartName: "Aardappelgroothandel Altena B.V.",
+  alreadyAllocated: 0,
+};
+const verdeelFacturen = [
+  { id: "f1", direction: "incoming" as const, invoiceType: "factuur", totalIncBtw: 1000, amountPaid: 0,
+    invoiceNumber: "2026-441", partyName: "Aardappelgroothandel Altena B.V.", invoiceDate: "2026-07-01", open: 1000 },
+  { id: "f2", direction: "incoming" as const, invoiceType: "creditnota", totalIncBtw: -150, amountPaid: 0,
+    invoiceNumber: "CR-88", partyName: "Aardappelgroothandel Altena B.V.", invoiceDate: "2026-07-10", open: 150 },
+  { id: "f3", direction: "incoming" as const, invoiceType: "factuur", totalIncBtw: 320, amountPaid: 120,
+    invoiceNumber: "2026-python", partyName: "Hano Groothandel", invoiceDate: "2026-06-02", open: 200 },
+];
+
+test("[BETAALPLAN] het verdeelscherm opent met echte facturen en noemt het bedrag dat te verdelen is", async () => {
+  const { default: VerdeelClient } = await import("../../src/app/dashboard/bank/verdelen/[txId]/VerdeelClient");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(VerdeelClient as any, {
+    transactie: verdeelTx, facturen: verdeelFacturen,
+  }));
+  assert.ok(html.length > 800, "het scherm rendert");
+  assert.match(html, /Betaling verdelen/);
+  assert.match(html, /Geld dat wegging/, "de richting staat er, want die bepaalt welke facturen mogen");
+  assert.match(html, /Nog te verdelen/);
+  assert.match(html, /850,00/, "het bedrag van de betaling zelf");
+  // De creditnota moet als zodanig herkenbaar zijn VOOR je hem aanvinkt — anders vink je hem aan
+  // in de verwachting dat hij optelt.
+  assert.match(html, /creditnota — gaat eraf/);
+  // Een half betaalde factuur toont wat er NOG open staat, niet zijn totaal.
+  assert.match(html, /200,00/);
+});
+
+test("[BETAALPLAN] zonder openstaande facturen wijst het scherm de weg in plaats van leeg te zijn", async () => {
+  const { default: VerdeelClient } = await import("../../src/app/dashboard/bank/verdelen/[txId]/VerdeelClient");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(VerdeelClient as any, {
+    transactie: verdeelTx, facturen: [],
+  }));
+  assert.ok(html.length > 500);
+  assert.match(html, /voeg hem dan eerst toe/, "een lege lijst die niets zegt is een doodlopende weg");
+});
+
+test("[BETAALPLAN] geld dat BINNENKWAM zegt dat ook, en toont het al gekoppelde deel", async () => {
+  const { default: VerdeelClient } = await import("../../src/app/dashboard/bank/verdelen/[txId]/VerdeelClient");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html = renderToStaticMarkup(React.createElement(VerdeelClient as any, {
+    transactie: { ...verdeelTx, amount: 2420, alreadyAllocated: 605 },
+    facturen: [{ ...verdeelFacturen[0], direction: "outgoing" as const }],
+  }));
+  assert.match(html, /Geld dat binnenkwam/);
+  assert.match(html, /was al gekoppeld/, "wat een eerdere koppeling nam, is weg — dat hoort te blijken");
+});
