@@ -97,6 +97,36 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
     manageRow({ id: "cn", client_name: "Vlees", invoice_number: "CN9", invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109 }),
     // A paid invoice, so the paid tab and the settled-amount paths are exercised too.
     manageRow({ id: "paid", client_name: "Energie", invoice_number: "E-1", status: "paid", amount_paid: 871.4, payment_date: "2026-03-20" }),
+    // [E-FACTUUR-ZICHTBAAR] A supplier's Peppol invoice: the figures are the supplier's own, so the
+    // row must say the owner never has to check this one. Its badge only renders for a row that
+    // carries a non-contradicting _einvoice, so without this row the assertion below would pass
+    // over markup that was never produced.
+    manageRow({
+      id: "ubl", client_name: "Groothandel Noord B.V.", invoice_number: "2026-0418",
+      field_confidence: {
+        _einvoice: {
+          totalIncBtw: 871.4, totalExBtw: 799.45, btwAmount: 71.95, syntax: "ubl",
+          invoiceNumber: "2026-0418", vendorName: "Groothandel Noord B.V.",
+          invoiceDate: "2026-03-12", dueDate: null, vendorIban: null, paymentReference: null,
+          isCreditNote: false, contradicts: false,
+        },
+      },
+    }),
+    // …and one the supplier's own file CONTRADICTS. That already earns a warning, so the
+    // reassuring badge must NOT appear beside it — a screen that argues with itself is worse than
+    // one that says nothing.
+    manageRow({
+      id: "ublbad", client_name: "Tegenspraak B.V.", invoice_number: "2026-0999",
+      total_inc_btw: 87.14,
+      field_confidence: {
+        _einvoice: {
+          totalIncBtw: 871.4, totalExBtw: 799.45, btwAmount: 71.95, syntax: "ubl",
+          invoiceNumber: "2026-0999", vendorName: "Tegenspraak B.V.",
+          invoiceDate: "2026-03-12", dueDate: null, vendorIban: null, paymentReference: null,
+          isCreditNote: false, contradicts: true,
+        },
+      },
+    }),
     // [BON-AUTO] A kassabon the app marked PAID by itself, on the strength of the tender line the
     // till printed. Its badge only renders for a row that carries _auto_paid, so without this row
     // the assertion below would pass over markup that was never produced.
@@ -158,6 +188,20 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // The four payable affordances are gone from the LIST. The sentence explaining how a credit note
   // resolves lives in the opened card, where the detail belongs — the chip carries it here.
   assert.doesNotMatch(html, /Heb je betaald\?[\s\S]{0,40}CR0300343/, "no pay prompt beside a credit note");
+  // [E-FACTUUR-ZICHTBAAR] The app was loud about problems and silent about its strongest certainty.
+  // An owner who keeps the paper invoice open beside the screen could see which rows to doubt and
+  // not which ones they never have to check again.
+  assert.match(html, /Cijfers van de leverancier/, "the supplier's own figures are named on the row");
+  assert.match(
+    html, /Deze hoef je niet na te kijken/,
+    "…and it says what that means, not merely that it happened",
+  );
+  // Exactly ONE row earns it: the contradicting one must not, or the screen argues with itself.
+  assert.equal(
+    (html.match(/Cijfers van de leverancier/g) ?? []).length, 1,
+    "a contradicted e-invoice may never wear the reassuring badge",
+  );
+
   // [BON-AUTO] A bon the app both booked AND paid needs its own badge. "Automatisch" alone reads
   // as "booked", and an owner who believes a settled bon is still open pays it a second time.
   assert.match(html, /Bon · al afgerekend/, "an auto-settled bon says so on the row");

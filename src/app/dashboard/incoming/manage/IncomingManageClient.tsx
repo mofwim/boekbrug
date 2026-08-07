@@ -24,6 +24,9 @@
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
+// [E-FACTUUR-ZICHTBAAR] De cijfers die de leverancier zelf meestuurde — het sterkste bewijs dat
+// deze app heeft, en het enige waar het scherm nog niets over zei.
+import { eInvoiceOf } from '@/lib/e-invoice'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
@@ -293,6 +296,24 @@ function payToggleReason(status: number, json: { detail?: string; error?: string
 function isAutoVerified(inv: IncomingRow): boolean {
   const fc = inv.field_confidence
   return !!(fc && typeof fc === 'object' && (fc as Record<string, unknown>)._auto_verified)
+}
+
+/**
+ * [E-FACTUUR-ZICHTBAAR] Did these figures come from the supplier's own e-invoice?
+ *
+ * The app is loud about problems and was silent about its strongest certainty. Every warning on
+ * this screen exists because a number MIGHT be wrong; nothing said the opposite when it cannot be.
+ * For an owner who keeps the paper invoice open beside the app — the reason this whole line of work
+ * exists — that is exactly the wrong way round: they can see which rows to doubt and not which ones
+ * they never have to check again.
+ *
+ * Only when the file does NOT contradict the booking. A contradiction already earns its own
+ * warning, and a reassuring badge beside it would be the screen arguing with itself.
+ */
+function eInvoiceBadge(inv: IncomingRow): { syntax: string } | null {
+  const e = eInvoiceOf(inv.field_confidence)
+  if (!e || e.contradicts) return null
+  return { syntax: e.syntax === 'ubl' ? 'Peppol/UBL' : 'Factur-X' }
 }
 
 // [BON-AUTO] The app did not only BOOK this one, it marked it PAID — because the till printed the
@@ -2519,6 +2540,27 @@ export default function IncomingManageClient({
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
                               Bon · al afgerekend
+                            </span>
+                          )
+                        })()}
+                        {/* [E-FACTUUR-ZICHTBAAR] The one row on this screen that needs no checking:
+                            the supplier sent these figures themselves, in machine form. Nothing was
+                            read off a page, so there is nothing that could have been misread. */}
+                        {(() => {
+                          const e = eInvoiceBadge(inv)
+                          if (!e) return null
+                          return (
+                            <span
+                              title={
+                                `De bedragen op deze factuur komen uit de e-factuur die de leverancier ` +
+                                `zelf heeft meegestuurd (${e.syntax}). Er is niets van een pagina ` +
+                                `gelezen en niets geïnterpreteerd — dit is exact wat de leverancier ` +
+                                `heeft opgegeven. Deze hoef je niet na te kijken.`
+                              }
+                              style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>verified</span>
+                              Cijfers van de leverancier
                             </span>
                           )
                         })()}
