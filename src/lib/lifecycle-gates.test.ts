@@ -1994,3 +1994,71 @@ test("[E-FACTUUR-XML] a free read never spends the monthly AI allowance", () => 
     "free reads always pass; paid ones stop at the grant",
   );
 });
+
+test("[E-FACTUUR-BESLECHT] the invoice NO model read gets at least the trust of one a model did", () => {
+  // A seam between two changes that were each correct alone, and it pointed the wrong way.
+  //
+  // [E-FACTUUR-BESLECHT] taught auto-advance to stand three money gates down when a complete
+  // e-invoice agrees with the read — grounding, placement and the money's own confidence exist
+  // only because an amount was read off a page, and when the supplier states it there is no page
+  // to have misread. It decides that by reading `_einvoice` off the row.
+  //
+  // [E-FACTUUR-XML] books a standalone Peppol invoice with NO MODEL READING ANYTHING, and never
+  // wrote that key. So a Factur-X PDF — where a model DID read the page and the XML merely agrees
+  // — had its gates waived, and the invoice nobody read did not. The more certain document got
+  // the less trust.
+  const src = code("src/lib/email-integration.ts");
+  assert.match(
+    src, /_einvoice: \{ \.\.\.f, contradicts: false \}/,
+    "the standalone-XML path must record where its figures came from",
+  );
+  // contradicts:false is a FACT here, not an assumption: the stored figures ARE the XML, so there
+  // is no reading for them to disagree with. Asserted so nobody later "fixes" it to true/undefined.
+  const cls = src.slice(src.indexOf("function eInvoiceClassification"));
+  assert.match(
+    cls.slice(0, 2000), /contradicts: false/,
+    "a value that cannot contradict anything must say so, or the gate silently stops firing",
+  );
+});
+
+test("[POORT-OPBRENGST] the yield script cannot silently miss a gate", () => {
+  // scripts/gate-yield.ts answers "which gate still earns its keep", and its GATES map is a
+  // hand-kept copy of the refusals auto-advance can return. The script warns about an unknown
+  // reason only when that reason FIRES in the sample, and its "never fired" list is derived from
+  // GATES itself — so a gate missing from the map is invisible in BOTH directions. It would be
+  // reported as never firing when it fires constantly, or not reported at all.
+  //
+  // That is the measurement this project added because nobody could say which gates still pay for
+  // themselves. A measurement with a blind spot is the one thing worse than no measurement: it
+  // gets believed.
+  const aa = code("src/lib/auto-advance.ts");
+  const script = code("scripts/gate-yield.ts");
+
+  const reasons = new Set(
+    [...aa.matchAll(/reason: "([a-z_0-9]+)"/g)].map((m) => m[1]),
+  );
+  // Not every refusal is a literal. One is COMPUTED — `reason: \`kind_${kind}\`` — over the exact
+  // document kinds the guard above it tests for. The first version of this test scanned only for
+  // quoted strings and accused the script of four phantom entries that are in fact returned every
+  // day. An extraction that cannot see a whole family of refusals is not a drift check; it is a
+  // second place for the same drift to hide.
+  const kindGuard = aa.slice(aa.indexOf("const kind ="), aa.indexOf("reason: `kind_${kind}`"));
+  for (const m of kindGuard.matchAll(/kind === "([a-z_]+)"/g)) reasons.add(`kind_${m[1]}`);
+
+  // The one reason that is not a refusal — it is what advance:true carries.
+  reasons.delete("clean_high_confidence");
+  assert.ok(reasons.size >= 15, `expected the full refusal set, found ${reasons.size}`);
+
+  const registry = script.slice(script.indexOf("const GATES"), script.indexOf("interface Row"));
+  const missing = [...reasons].filter((r) => !new RegExp(`(?:^|\\s)${r}:`, "m").test(registry));
+  assert.deepEqual(
+    missing, [],
+    `gate-yield.ts cannot report on refusals it does not know about: ${missing.join(", ")}`,
+  );
+
+  // And the other direction: a name in the map that auto-advance can never return would be
+  // reported as "never fired", which reads as a gate that could be deleted.
+  const listed = [...registry.matchAll(/^\s{2}([a-z_0-9]+):/gm)].map((m) => m[1]);
+  const phantom = listed.filter((g) => !reasons.has(g));
+  assert.deepEqual(phantom, [], `these are in the map but cannot be returned: ${phantom.join(", ")}`);
+});

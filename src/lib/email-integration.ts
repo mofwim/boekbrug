@@ -1830,6 +1830,12 @@ export interface AttachmentClassification {
     _btw_rows?: { rate: number; base: number; btw: number }[]
     _total_printed?: number | null
     _total_derived?: 'total' | 'excl'
+    /**
+     * [E-FACTUUR-XML] The supplier's own structured figures, when the document carried them.
+     * Declared rather than cast in: a type that hides a key the database already holds pushes
+     * every caller into a cast, and a cast is where validation stops happening.
+     */
+    _einvoice?: Record<string, unknown>
   }
 }
 
@@ -1877,6 +1883,20 @@ function eInvoiceClassification(f: NonNullable<ReturnType<typeof parseEInvoice>>
     reason: `e-factuur (${f.syntax === 'ubl' ? 'Peppol/UBL' : 'Factur-X/CII'}) — bedragen door de leverancier zelf meegestuurd`,
     fieldConfidence: {
       vendor: 1, invoice_number: 1, invoice_date: 1, amount: 1,
+      // ── THE SEAM, AND IT WAS THE WRONG WAY ROUND ──
+      // [E-FACTUUR-BESLECHT] taught auto-advance to stand three money gates down when a complete
+      // e-invoice agrees with the read: grounding, placement and the money's own confidence exist
+      // only because an amount was read off a page, and when the supplier states it there is no
+      // page to have misread. Correct — and it reads `_einvoice` off the row to decide.
+      //
+      // This path never wrote that key. So a Factur-X PDF, where a model DID read the page and the
+      // XML merely agrees, had its gates waived; while a standalone Peppol invoice — where NO
+      // MODEL READ ANYTHING and every figure is the supplier's own — did not. The more certain
+      // document got the less trust, and neither change was wrong on its own.
+      //
+      // contradicts is false as a fact, not as an assumption: contradiction means the XML disagrees
+      // with a reading, and here the stored figures ARE the XML. There is nothing to disagree with.
+      _einvoice: { ...f, contradicts: false },
     },
   }
 }
