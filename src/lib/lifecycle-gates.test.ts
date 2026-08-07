@@ -2391,6 +2391,50 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
   }
 });
 
+// ── [BTW-ROUND] One summation for the three legal amounts on an invoice ──────
+//
+// invoice-totals.ts exists because there were two, and its own header says so. Then there were
+// three: draft-totals.ts kept a per-line, UNROUNDED version, and both invoice editors computed a
+// fourth for the screen the same way.
+//
+// The differences are small and they are the wrong kind of small:
+//   · a mixed-rate invoice comes out a cent apart (measured: 23,88 vs 23,89), so the amount in the
+//     editor is not the amount on the PDF — /api/invoice/send recomputes at issue;
+//   · unrounded, a draft of 3 × 33,33 at 21% was STORED as total_inc_btw = 120,9879. Four decimals
+//     in a money column, on a row an accountant reads;
+//   · and the same route rounds each line to cents, so the stored header did not equal the sum of
+//     the stored lines it came from.
+//
+// The rule is mechanical: anything that computes an invoice's BTW from a rate calls
+// computeInvoiceTotals. `quantity * unit_price * (rate / 100)` summed per line is the shape all
+// three copies had.
+test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
+  const owners = [
+    "src/lib/draft-totals.ts",
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ];
+  for (const file of owners) {
+    const src = code(file);
+    assert.match(
+      src,
+      /computeInvoiceTotals/,
+      `${file} states an invoice's totals and must take them from invoice-totals.ts — that file ` +
+        "exists precisely because two summations of the same legal amount disagreed",
+    );
+    // The per-line BTW multiplication, in the shape all three copies used. The per-RATE version
+    // inside computeInvoiceTotals looks different (it multiplies a grouped ex-amount), so this
+    // pattern does not catch the legitimate one.
+    assert.doesNotMatch(
+      src,
+      /unit_price\s*\*\s*\(?\s*(?:l|line)\.btw_rate\s*\/\s*100/,
+      `${file} multiplies a LINE by its own rate. The Belastingdienst and Peppol method — which the ` +
+        "PDF's btwBreakdown and the UBL export already use — groups the ex-amount per rate and " +
+        "rounds each rate's BTW. Summing per line is a cent apart on a mixed-rate invoice.",
+    );
+  }
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:

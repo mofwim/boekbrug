@@ -18,6 +18,8 @@ import { COLUMN } from '@/lib/design/tokens';
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BTW-ROUND] De wettelijke totalen, dezelfde functie als de PUT van dit scherm.
+import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 
@@ -174,9 +176,15 @@ export default function InvoiceEditPage() {
   }
 
   // ── Totalen — realtime ────────────────────────────────────────────────────
-  const totalEx = lines.reduce((sum, l) => sum + l.quantity * l.unit_price, 0)
-  const btwAmount = lines.reduce((sum, l) => sum + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
-  const totalInc = totalEx + btwAmount
+  // [BTW-ROUND] Via computeInvoiceTotals, dezelfde functie die de PUT van deze pagina en
+  // /api/invoice/send gebruiken. Hier stond de BTW per regel opgeteld en ongerond; dat wijkt op
+  // een factuur met gemengde tarieven een cent af van wat er wordt opgeslagen en verstuurd, en dan
+  // toont dit scherm een ander bedrag dan de PDF die eruit komt.
+  const { total_ex_btw: totalEx, btw_amount: btwAmount, total_inc_btw: totalInc } =
+    computeInvoiceTotals(lines.map((l) => ({
+      line_total: round2(l.quantity * l.unit_price),
+      btw_rate: l.btw_rate,
+    })))
 
   // ── Opslaan — PUT ─────────────────────────────────────────────────────────
   async function handleSave() {

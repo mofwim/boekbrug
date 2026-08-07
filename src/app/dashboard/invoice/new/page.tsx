@@ -32,6 +32,8 @@ import {
 } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BTW-ROUND] De wettelijke totalen, dezelfde functie als de server.
+import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 
@@ -795,25 +797,45 @@ function NewInvoicePageContent() {
 
   // [BOEK-031] Credit: user enters positive — system saves negative
   const sign      = invoiceType === 'creditnota' ? -1 : 1
-  const totalEx   = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
-  const btwAmount = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
-  const totalInc  = totalEx + btwAmount
+  // [BTW-ROUND] Dezelfde som als de server, en dat was hij niet.
+  //
+  // Hier stond de BTW PER REGEL opgeteld, ongerond. De server (invoice-totals.ts) groepeert het
+  // excl.-bedrag PER TARIEF, rondt de BTW van elk tarief af en telt die op — de methode die de
+  // Belastingdienst en Peppol voorschrijven, en die de PDF en de UBL-export óók gebruiken. Op een
+  // factuur met gemengde tarieven schelen die twee een cent, en dan is het bedrag dat de
+  // ondernemer op dit scherm ziet niet het bedrag dat hij verstuurt.
+  //
+  // Één cent, en toch de moeite: dit is het scherm waar hij besluit dat het klopt.
+  const { total_ex_btw: totalEx, total_inc_btw: totalInc } =
+    computeInvoiceTotals(lines.map((l) => ({
+      line_total: round2(l.quantity * l.unit_price),
+      btw_rate: l.btw_rate,
+    })))
 
   // [ACTING-FOR] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
-  // Die som woont nu op de server, in src/lib/draft-totals.ts — letterlijk dezelfde formule,
-  // inclusief het niet afronden, zodat er voor een bestaande eigenaar geen cent verandert. De
-  // reden voor de verhuizing is niet netheid: zodra een tweede mens facturen mag maken onder
-  // hetzelfde BTW-nummer, hoort de server te bepalen wat er in de boeken komt, niet de pagina.
-  //
-  // De drie getallen hierboven (totalEx/btwAmount/totalInc) blijven — die zijn alleen voor wat
-  // je op het scherm ziet terwijl je typt, en raken de database niet.
+  // Die som woont nu op de server, in src/lib/draft-totals.ts — die op zijn beurt computeInvoiceTotals
+  // aanroept, precies zoals de twee regels hierboven. De reden voor de verhuizing is niet netheid:
+  // zodra een tweede mens facturen mag maken onder hetzelfde BTW-nummer, hoort de server te bepalen
+  // wat er in de boeken komt, niet de pagina. De getallen hierboven zijn alleen voor wat je op het
+  // scherm ziet terwijl je typt — maar ze moeten wél dezelfde getallen zijn.
 
-  // BTW breakdown per rate
+  // BTW-uitsplitsing per tarief — de regels die op het scherm onder het subtotaal staan.
+  //
+  // [BTW-ROUND] Per tarief afgerond, net als in computeInvoiceTotals, want deze regels moeten
+  // OPTELLEN tot het totaal eronder. Ongerond opgeteld toonde dit blokje bijvoorbeeld "BTW 21%
+  // € 20,9979" en een totaal van € 120,99 — twee getallen die elkaar tegenspreken op hetzelfde
+  // kaartje, over dezelfde factuur.
   const btwByRate: Record<number, number> = {}
-  lines.forEach(l => {
-    const rate = l.btw_rate
-    btwByRate[rate] = (btwByRate[rate] ?? 0) + l.quantity * l.unit_price * (rate / 100)
-  })
+  {
+    const exByRate: Record<number, number> = {}
+    lines.forEach(l => {
+      const rate = l.btw_rate
+      exByRate[rate] = (exByRate[rate] ?? 0) + round2(l.quantity * l.unit_price)
+    })
+    for (const [rate, ex] of Object.entries(exByRate)) {
+      btwByRate[Number(rate)] = round2((ex * Number(rate)) / 100)
+    }
+  }
 
   // [COHERENCE-CREDITNOTA] The standalone credit-submit flow that lived here was
   // removed: a creditnota is now created only from its original invoice via the detail

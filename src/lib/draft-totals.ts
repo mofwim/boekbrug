@@ -9,13 +9,31 @@
 // the books under their employer's VAT number, and then the server should do the arithmetic, not
 // the page.
 //
-// THE ARITHMETIC IS LITERALLY THE SAME AS THE ONE IN THE PAGE, including NOT rounding. That is
-// deliberate: this must not make a cent of difference for an existing owner. Were rounding added
-// here, the same invoice would give a different result today than yesterday — a silent change in
-// the bookkeeping, and exactly what this product does not do.
+// WHY THE ARITHMETIC MOVED AGAIN
+// This file used to hold its own summation, with a note explaining that it was "LITERALLY THE SAME
+// AS THE ONE IN THE PAGE, including NOT rounding" so that no existing owner would see a cent
+// change. That was written before invoice-totals.ts, which exists to be the ONE place these three
+// legal amounts are computed — and which had already made, and won, exactly the opposite argument:
+// group the ex-amount PER RATE, round each rate's BTW, sum those. That is the method the
+// Belastingdienst and Peppol prescribe, and the one the PDF's btwBreakdown and the UBL export
+// already use.
+//
+// So there were three algorithms for one number, and this one was the odd one out in two ways.
+//
+//   · It did not round AT ALL. Three lines of 3 × 33,33 at 21% were stored as
+//     total_inc_btw = 120,9879 — four decimals, in a money column, on a row an accountant reads.
+//   · The same route rounds each LINE to cents (line_total = round2(quantity × price)), so the
+//     stored header did not even equal the sum of the stored lines it was computed from.
+//
+// And it was never the number that got issued: /api/invoice/send recomputes at issue via
+// computeInvoiceTotals. The only thing the third algorithm achieved was that the amount in the
+// editor was not the amount on the PDF — measured at a cent on a mixed-rate invoice, and at a
+// tenth of a cent of nonsense on a plain one.
 //
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
+
+import { computeInvoiceTotals, round2 } from "./invoice-totals";
 
 export interface DraftLine {
   quantity: number;
@@ -32,15 +50,25 @@ export interface DraftTotals {
 /**
  * Summing. `sign` is -1 for a credit note: that sits negative in the books, and that sign should
  * be set in one place rather than by every caller again.
+ *
+ * The arithmetic itself is computeInvoiceTotals — the same function /api/invoice/[id] PUT and
+ * /api/invoice/send call, so a draft's stored amounts are the amounts it will be issued with.
+ * What stays here is the SIGN, which is this route's own concern and not the summation's.
+ *
+ * The sign is applied to each LINE rather than to the three results, so the per-rate grouping and
+ * rounding inside computeInvoiceTotals happen on the numbers that will actually be stored. Rounding
+ * is symmetric (round2), so this is the same magnitude either way — but doing it on the way in
+ * keeps one rule instead of two, and a creditnota then rounds identically to the invoice it credits.
  */
 export function computeDraftTotals(lines: readonly DraftLine[], sign: 1 | -1 = 1): DraftTotals {
-  const ex = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0);
-  const btw = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0);
-  return {
-    total_ex_btw: sign * ex,
-    btw_amount: sign * btw,
-    total_inc_btw: sign * (ex + btw),
-  };
+  return computeInvoiceTotals(
+    lines.map((l) => ({
+      // round2 per line, matching what /api/invoice/draft writes into line_total — so the stored
+      // header is the sum of the stored lines rather than of slightly different ones.
+      line_total: round2(sign * (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)),
+      btw_rate: l.btw_rate,
+    })),
+  );
 }
 
 /** The BTW rate must be a rate that exists in the Netherlands — not a number someone typed. */

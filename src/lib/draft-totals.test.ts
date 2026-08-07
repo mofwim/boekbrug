@@ -3,29 +3,52 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { computeDraftTotals, validateDraftLines, ALLOWED_BTW_RATES } from "./draft-totals";
+import { computeInvoiceTotals, round2 } from "./invoice-totals";
 
 const r = (quantity: number, unit_price: number, btw_rate: number, description = "werk") =>
   ({ quantity, unit_price, btw_rate, description });
 
-test("the arithmetic is LITERALLY the same as the one in the browser", () => {
-  // This is the whole assignment of this file: the computation moves to the server without a
-  // single cent changing for an existing owner. The expectations below are the outcome of the
-  // old computeTotals(), not of a tidier variant.
+test("the arithmetic is the one every other route uses — computeInvoiceTotals", () => {
   const lines = [r(2, 100, 21), r(1, 50, 9)];
   assert.deepEqual(computeDraftTotals(lines), {
     total_ex_btw: 250,
-    btw_amount: 2 * 100 * 0.21 + 1 * 50 * 0.09,
-    total_inc_btw: 250 + (2 * 100 * 0.21 + 1 * 50 * 0.09),
+    btw_amount: 46.5, // 200 @ 21% = 42,00 · 50 @ 9% = 4,50 — per rate, each rounded
+    total_inc_btw: 296.5,
   });
+  // Not merely equal by coincidence: the draft must produce EXACTLY what the same lines produce
+  // through the shared function, because /api/invoice/send recomputes with it at issue.
+  assert.deepEqual(
+    computeDraftTotals(lines),
+    computeInvoiceTotals([
+      { line_total: 200, btw_rate: 21 },
+      { line_total: 50, btw_rate: 9 },
+    ]),
+  );
 });
 
-test("there is NO rounding — rounding here would silently change the bookkeeping", () => {
-  // 3 × 33.33 at 21% gives an amount with more than two decimals. The old code left that alone;
-  // were it rounded here, the same invoice would come out differently today than yesterday.
+test("a draft is stored in CENTS, not in whatever the multiplication produced", () => {
+  // 3 × 33,33 at 21%. This file used to leave that alone on purpose — "rounding here would
+  // silently change the bookkeeping" — and the result was total_inc_btw = 120,9879 written into a
+  // money column, four decimals, on a row an accountant reads. It was never the issued number
+  // either: /api/invoice/send recomputes at issue, so the only effect was that the editor showed
+  // an amount the PDF would not.
   const t = computeDraftTotals([r(3, 33.33, 21)]);
   assert.equal(t.total_ex_btw, 99.99);
-  assert.equal(t.btw_amount, 3 * 33.33 * 0.21);
-  assert.notEqual(t.btw_amount, Number(t.btw_amount.toFixed(2)), "the raw value stays raw");
+  assert.equal(t.btw_amount, 21, "20,9979 is not an amount of money");
+  assert.equal(t.total_inc_btw, 120.99);
+  for (const v of [t.total_ex_btw, t.btw_amount, t.total_inc_btw]) {
+    assert.equal(v, Number(v.toFixed(2)), "every stored total lands on a cent");
+  }
+});
+
+test("the stored header equals the sum of the stored lines", () => {
+  // /api/invoice/draft writes line_total = round2(quantity × price) per line. The header used to
+  // be computed from the UNROUNDED products, so the invoice disagreed with its own lines — the
+  // one inconsistency nothing downstream can explain, because both numbers came from us.
+  const lines = [r(3, 33.335, 21), r(7, 1.115, 9)];
+  const t = computeDraftTotals(lines);
+  const storedLineSum = lines.reduce((s, l) => s + round2(l.quantity * l.unit_price), 0);
+  assert.equal(t.total_ex_btw, round2(storedLineSum));
 });
 
 test("a credit note sits negative in the books, and the sign is set in one place", () => {
