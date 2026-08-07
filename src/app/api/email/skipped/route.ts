@@ -52,10 +52,24 @@ export async function GET() {
   // functie die de schrijvers gebruiken, zodat de twee kanten niet opnieuw uit elkaar lopen.
   // [SKIPPED-READ-HONEST] Same rule for the second source. A failed COUNT reads as 0, which on
   // this panel means "no unreadable files" — the other half of the same false reassurance.
+  // [PRULLENBAK] Niet wat weggegooid is. Dit paneel zegt één ding: "ze staan in je bestanden, kijk
+  // er even naar" — dus het hoort precies te tellen wat bestanden LAAT ZIEN, en /api/bestanden
+  // filtert `.eq("trashed", false)`. Zonder dat filter bleef een onleesbaar bestand dat de
+  // ondernemer zelf had weggegooid (een logo, een reclame-pdf) meegeteld: het paneel wees naar
+  // bestanden, daar stond het niet meer, en de teller kon nooit meer op nul komen. Een teller die
+  // nooit nul wordt is ruis, en ruis wordt genegeerd — dat is dezelfde stilte als "Niets
+  // overgeslagen" boven een ongelezen factuur, alleen van de andere kant.
+  //
+  // Dezelfde schrijfwijze als bestanden, met opzet: `trashed` is nullable (database.sql), dus een
+  // IS-NOT-TRUE-variant hier en een gelijkheidstest daar lopen bij een NULL uit elkaar — dan telt
+  // dit paneel iets waar de ondernemer niet bij kan. Verandert bestanden de zijne, verander deze
+  // mee; er staat een gate op. (Geen tweede voorbeeld in commentaar: een grep hoort alleen echte
+  // filters te vinden.)
   const { count: couldNotReadCount, error: couldNotReadError } = await supabase
     .from('documents')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', user.id)
+    .eq('trashed', false)
     .in('ai_doc_type', SKIPPED_DOC_TYPES)
   if (couldNotReadError) {
     return NextResponse.json(
@@ -77,6 +91,9 @@ export async function GET() {
     .from('documents')
     .select('id, file_name, created_at')
     .eq('user_id', user.id)
+    // [PRULLENBAK] Zelfde filter als de teller hierboven. "Lees opnieuw" aanbieden op een bestand
+    // dat de ondernemer zelf heeft weggegooid, boekt een kostenpost uit de prullenbak.
+    .eq('trashed', false)
     .in('ai_doc_type', SKIPPED_DOC_TYPES)
     .is('invoice_id', null)
     .order('created_at', { ascending: false })

@@ -2548,3 +2548,60 @@ test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcod
     "…and takes it from the canonical file rather than declaring its own",
   );
 });
+
+// ── [PRULLENBAK] The skipped panel counts what bestanden shows, and no more ──
+//
+// The panel "Overgeslagen bij import (en waarom)" makes one promise in words: these files are in
+// your bestanden, go and look. It filtered nothing on `trashed`.
+//
+// So: an unreadable attachment arrives, is kept, and is named. The owner opens bestanden, sees it
+// is a supplier's logo or a reclame-pdf, and throws it away — a soft delete, `trashed = true`, gone
+// from bestanden. The panel keeps counting it and keeps pointing at bestanden, where it is not.
+// The counter can never reach zero again, and a counter that never reaches zero is ruis; ruis gets
+// ignored. That is the same silence as "Niets overgeslagen" over an unread invoice, reached from
+// the other end — this panel is the one surface that admits a loss, and an owner who has learned to
+// ignore it is an owner who will not see the next real one.
+//
+// [TWEEDE-KANS] made it worse than cosmetic: the panel offered "Lees opnieuw" on the binned file,
+// and the route would download it, read it, and book the cost with its voorbelasting.
+test("[PRULLENBAK] a file in the bin is not counted, not offered, and not readable", () => {
+  const api = code("src/app/api/email/skipped/route.ts");
+
+  // Both queries, not one. The count is the sentence the owner reads first; the list is what they
+  // can act on. A filter on only one of them makes the panel disagree with itself.
+  const trashFilters = [...api.matchAll(/\.eq\('trashed', false\)/g)].length;
+  assert.equal(
+    trashFilters, 2,
+    "both the could-not-read COUNT and the [TWEEDE-KANS] unread LIST must exclude trashed " +
+      `documents — found ${trashFilters} filter(s). The panel tells the owner these files are in ` +
+      "bestanden; counting one they threw away points them at something that is not there.",
+  );
+
+  // The SAME spelling as the place the panel points at. This is the [OBSERVABILITY] lesson applied
+  // to a second column: `trashed` is `boolean DEFAULT false` and NULLABLE (database.sql), so
+  // `.eq('trashed', false)` and `IS NOT TRUE` differ on a NULL row. Two surfaces that must agree
+  // may not spell the same truth two ways — one would count a file the other refuses to show.
+  const bestanden = code("src/app/api/bestanden/route.ts");
+  assert.match(
+    bestanden, /\.eq\("trashed", false\)/,
+    "bestanden filters trashed with .eq(\"trashed\", false) — the skipped panel copies that " +
+      "spelling on purpose. If this changed, change the panel with it (and read the NULL note above)",
+  );
+
+  // And the door refuses on its own. The panel is a snapshot: an id from a tab that loaded before
+  // the file went in the bin still reaches this route.
+  const route = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  assert.match(
+    route, /\.select\("[^"]*\btrashed\b[^"]*"\)/,
+    "the re-read route must fetch `trashed` — a guard over a column it never selected reads " +
+      "undefined and passes",
+  );
+  assert.match(
+    route, /if \(doc\.trashed === true\) \{[\s\S]{0,300}?status: 409/,
+    "…and refuse a document the owner deleted, rather than booking a cost out of the prullenbak",
+  );
+  assert.match(
+    route, /prullenbak/,
+    "…in words that say what to do about it",
+  );
+});
