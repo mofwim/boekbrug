@@ -53,6 +53,8 @@ import { docTypeForStoredFile, DOC_TYPE_UNSUPPORTED } from "@/lib/skipped-import
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
 import { looksLikeSpreadsheetBinary, sniffReadableMime } from "@/lib/detect-file"
+// [E-FACTUUR-XML] Een Peppol-factuur die met de hand wordt geüpload — zelfde lezer als de mail.
+import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice"
 import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest"
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report"
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
@@ -98,7 +100,7 @@ import { deriveDueDate } from "@/lib/safecore"
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
-import { gateFairUse } from "@/lib/fair-use-gate";
+import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -228,19 +230,30 @@ export async function POST(req: NextRequest) {
   // IMG_1234.jpg with no type dead-ends in the opaque document bin and its voorbelasting is never
   // read (and the owner is told, dishonestly, that we "couldn't read this file type"). Sniff the
   // leading magic bytes and use that as the effective type for BOTH the okForAi guard and the reader.
-  const effectiveType = sniffReadableMime(buffer) ?? file.type
+  // [E-FACTUUR-XML] A Peppol / NLCIUS invoice, asked of the CONTENT and never of the media type
+  // the client supplied — a .xml uploaded from a phone arrives as "text/xml", "application/xml",
+  // "application/octet-stream" or nothing at all, depending on nothing in particular.
+  //
+  // The comment below used to name "an XML/UBL e-invoice" first among the things the extractor
+  // cannot read, and filing it in bestanden was the right answer for as long as that was true. It
+  // no longer is: verifyInvoiceFromPdf reads one exactly, with no model and no API call. Leaving
+  // this door alone would have meant the e-mail sync could book a Peppol invoice and the upload
+  // button — the one an owner reaches for when a supplier portal hands them the file — could not.
+  const isEInvoice = looksLikeInvoiceXmlBytes(buffer)
+  const effectiveType = isEInvoice ? E_INVOICE_XML_MIME : (sniffReadableMime(buffer) ?? file.type)
 
-  // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
+  // ── Type guard for the AI path: pdf/image go to the extractor, and so does an e-invoice ──────
   const okForAi =
     effectiveType === "application/pdf" ||
     effectiveType.startsWith("image/") ||
+    isEInvoice ||
     file.name.toLowerCase().endsWith(".pdf")
 
   // [INTAKE-KEEP-ALL] Never hard-reject a plausible document. A file the extractor can't read —
-  // an XML/UBL e-invoice, a Word/Excel document, a .csv that isn't a bank export — must NOT be
-  // lost: store it in bestanden so the accountant still receives it and the owner can act on it.
-  // Only the automatic EXTRACTION is skipped; the file itself is kept and visible. This upholds
-  // "no missing invoice" for every format.
+  // a Word/Excel document, a .csv that isn't a bank export — must NOT be lost: store it in
+  // bestanden so the accountant still receives it and the owner can act on it. Only the automatic
+  // EXTRACTION is skipped; the file itself is kept and visible. This upholds "no missing invoice"
+  // for every format.
   if (!okForAi) {
     const hash = computeContentHash(buffer)
     const { data: dupDoc } = await supabase
@@ -387,7 +400,12 @@ export async function POST(req: NextRequest) {
   // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
   // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
   // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  // [E-FACTUUR-GRATIS] An e-invoice is read mechanically — no model, no cost — so it may not spend
+  // a document from the month's allowance. Charging for it would make the owner pay for something
+  // free AND push a real invoice, one that does need reading, out of the month.
+  const gate = await gateFairUseForRead({
+    client: supabase, userId: user.id, metric: "aiDocuments", costsAiCall: !isEInvoice,
+  });
   if (!gate.allowed) return gate.response!;
 
   const { data: me } = await supabase

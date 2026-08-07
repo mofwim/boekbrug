@@ -1909,46 +1909,63 @@ test("[MAILTEKST] the text conversion keeps table cells apart", () => {
   }
 });
 
-test("[E-FACTUUR-XML] a Peppol invoice arriving on its own is booked, and no model reads it", () => {
+test("[E-FACTUUR-XML] ONE reader books a Peppol invoice, and BOTH doors reach it", () => {
   // NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for everyone from
   // 2028, and suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
-  // read one: a .xml attachment fell to "a format we cannot open" and was reported rather than
-  // booked — while it is the most exact invoice this app will ever receive.
-  const src = code("src/lib/email-integration.ts");
-
-  // Intercepted at classifyAttachment: the ONE door every attachment goes through, so dedup,
-  // health, queue, storage and the grounding gates all see an ordinary classification.
+  // read one.
+  //
+  // It is read in verifyInvoiceFromPdf — the reader BOTH doors call — and not at a door. The first
+  // version of this lived in the e-mail sync, which made that the only door able to book a Peppol
+  // invoice: the identical file uploaded by hand was filed as "a format we cannot read". A reader
+  // on one door is not a reader; it is an inconsistency nobody can explain to the owner.
+  const ai = code("src/lib/ai.ts");
   assert.match(
-    src,
-    /if \(isEInvoiceXmlMime\(mimeType\)\) \{[\s\S]{0,300}?parseEInvoice\(Buffer\.from\(base64Data, 'base64'\)\.toString\('utf8'\)\)[\s\S]{0,200}?if \(parsed\) return eInvoiceClassification\(parsed\)/,
-    "an e-invoice XML must be read from its own structure, never sent to the model",
+    ai,
+    /if \(isEInvoiceXmlMime\(mimeType\)\) \{[\s\S]{0,400}?parseEInvoice\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\.toString\('utf8'\)\)/,
+    "the shared reader must read it from its own structure",
   );
-  // …and it must be intercepted BEFORE the model import, or the call happens anyway.
-  const guardAt = src.indexOf("if (isEInvoiceXmlMime(mimeType))");
-  const aiAt = src.indexOf("const { verifyInvoiceFromPdf } = await import('@/lib/ai')");
-  assert.ok(guardAt > 0 && aiAt > guardAt, "the interception precedes the AI import");
+  // …and BEFORE anything that could reach the model, or the API call happens anyway.
+  const guardAt = ai.indexOf("if (isEInvoiceXmlMime(mimeType))");
+  const tryAt = ai.indexOf("try {", ai.indexOf("const preferRawPdf ="));
+  assert.ok(guardAt > 0 && tryAt > guardAt, "the interception precedes the read path");
 
-  // Half an e-invoice is never booked: an incomplete parse falls through to the ordinary
-  // could-not-read path, which stores the file and tells the owner.
+  // Half an e-invoice is never booked: it falls through to the ordinary could-not-read path,
+  // which keeps the file, counts it and names it to the owner.
   assert.match(
-    src, /return \{ isInvoice: false, confidence: 0, reason: 'e-factuur XML kon niet volledig worden gelezen' \}/,
+    ai, /reason: 'e-factuur XML kon niet volledig worden gelezen'/,
     "an XML that does not parse completely must not become an invoice",
   );
+  // It records where its figures came from, so [E-FACTUUR-BESLECHT] can stand the money gates
+  // down. contradicts:false is a FACT — the stored figures ARE the XML.
+  assert.match(ai, /_einvoice: \{ \.\.\.f, contradicts: false \}/, "provenance on the row");
+  assert.match(ai, /confidence: 1,/, "nothing here was inferred");
 
-  // Both doors let it through, and Outlook — which already holds the bytes — checks the CONTENT so
-  // a CAMT statement that survived the name test still falls out.
-  assert.match(src, /pending\.push\(\{ filename, mimeType: E_INVOICE_XML_MIME/, "Gmail lets it through");
+  // BOTH doors. The e-mail fetchers let the file through…
+  const mail = code("src/lib/email-integration.ts");
+  assert.match(mail, /pending\.push\(\{ filename, mimeType: E_INVOICE_XML_MIME/, "Gmail lets it through");
   assert.match(
-    src, /looksLikeInvoiceXml\(xml\)\) \{[\s\S]{0,240}?mimeType: E_INVOICE_XML_MIME/,
+    mail, /looksLikeInvoiceXml\(xml\)\) \{[\s\S]{0,240}?mimeType: E_INVOICE_XML_MIME/,
     "Outlook checks the content, not just the extension",
   );
-
-  // The media type is a REAL one. A fabricated marker would be written to Storage and to
-  // documents.file_type, following the file for seven years.
+  // …and the upload/camera door stops filing it as unreadable.
+  const intake = code("src/app/api/intake/route.ts");
   assert.match(
-    src, /export const E_INVOICE_XML_MIME = 'application\/xml'/,
+    intake, /const isEInvoice = looksLikeInvoiceXmlBytes\(buffer\)/,
+    "the upload door must recognise a Peppol invoice by its CONTENT",
+  );
+  assert.match(
+    intake, /effectiveType\.startsWith\("image\/"\) \|\|\s*\n\s*isEInvoice \|\|/,
+    "…and send it to the reader instead of the unreadable bin",
+  );
+
+  // One definition of the media type, shared. A fabricated marker would be written to Storage and
+  // to documents.file_type and follow the file for seven years.
+  assert.match(
+    code("src/lib/e-invoice.ts"), /export const E_INVOICE_XML_MIME = 'application\/xml'/,
     "no invented media type may be stored on a document",
   );
+  // And exactly one place decides it — a second copy is a second answer.
+  assert.doesNotMatch(mail, /export const E_INVOICE_XML_MIME/, "the constant lives in e-invoice.ts");
 });
 
 test("[E-FACTUUR-XML] the supplier's party is read from the SUPPLIER's block", () => {
@@ -2007,16 +2024,16 @@ test("[E-FACTUUR-BESLECHT] the invoice NO model read gets at least the trust of 
   // wrote that key. So a Factur-X PDF — where a model DID read the page and the XML merely agrees
   // — had its gates waived, and the invoice nobody read did not. The more certain document got
   // the less trust.
-  const src = code("src/lib/email-integration.ts");
+  const ai = code("src/lib/ai.ts");
+  const mapper = ai.slice(ai.indexOf("function eInvoiceVerification"));
   assert.match(
-    src, /_einvoice: \{ \.\.\.f, contradicts: false \}/,
+    mapper.slice(0, 2000), /_einvoice: \{ \.\.\.f, contradicts: false \}/,
     "the standalone-XML path must record where its figures came from",
   );
   // contradicts:false is a FACT here, not an assumption: the stored figures ARE the XML, so there
   // is no reading for them to disagree with. Asserted so nobody later "fixes" it to true/undefined.
-  const cls = src.slice(src.indexOf("function eInvoiceClassification"));
-  assert.match(
-    cls.slice(0, 2000), /contradicts: false/,
+  assert.doesNotMatch(
+    mapper.slice(0, 2000), /contradicts: (?:true|undefined|null)/,
     "a value that cannot contradict anything must say so, or the gate silently stops firing",
   );
 });
@@ -2061,4 +2078,142 @@ test("[POORT-OPBRENGST] the yield script cannot silently miss a gate", () => {
   const listed = [...registry.matchAll(/^\s{2}([a-z_0-9]+):/gm)].map((m) => m[1]);
   const phantom = listed.filter((g) => !reasons.has(g));
   assert.deepEqual(phantom, [], `these are in the map but cannot be returned: ${phantom.join(", ")}`);
+});
+
+test("[E-FACTUUR-GRATIS] no door charges the month's allowance for a read that costs nothing", () => {
+  // The allowance is called `aiDocuments` and it counts AI READS. An e-invoice is not read by a
+  // model at all. Charging one makes the owner pay for something free — and does worse: it pushes
+  // a real invoice, one that DOES need reading, out of the month.
+  //
+  // The rule was made once already, in the e-mail sync's batch reservation, and it did not travel
+  // to the single-file doors. That is why it lives in ONE function now: a rule that has to be
+  // remembered at four call sites is a rule that is right in one of them.
+  const gate = code("src/lib/fair-use-gate.ts");
+  assert.match(
+    gate, /if \(!params\.costsAiCall\) \{\s*\n\s*return \{ allowed: true, response: null, release: async \(\) => \{\} \};/,
+    "a free read must allow, and its release must be a no-op — nothing was taken",
+  );
+
+  // Every door that can receive an e-invoice asks the question. A door that calls the old gate
+  // directly is a door that charges for it.
+  const doors: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "!isEInvoice"],
+    ["src/app/api/bank/attach-invoice/route.ts", "!isEInvoice"],
+    ["src/app/api/email/reimport/[id]/route.ts", "!isEInvoiceXmlMime(mimeType)"],
+  ];
+  for (const [f, expr] of doors) {
+    const src = code(f);
+    assert.match(
+      src,
+      new RegExp(`gateFairUseForRead\\(\\{[\\s\\S]{0,220}?costsAiCall: ${expr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      `${f} must not charge for a mechanical read`,
+    );
+    assert.doesNotMatch(
+      src, /await gateFairUse\(\{/,
+      `${f} still calls the unconditional gate — every read there costs a document`,
+    );
+  }
+});
+
+test("[E-FACTUUR-XML] attaching a Peppol invoice to a bank line goes to the same reader", () => {
+  // BankClient's "hang the invoice on this line" is a live flow, and it refused the most exact
+  // document the app can read on the strength of a media type the browser guessed.
+  const src = code("src/app/api/bank/attach-invoice/route.ts");
+  // Admitted on the NAME here — the bytes are not in hand yet, because the size guard must run
+  // first on untrusted input…
+  assert.match(src, /const maybeEInvoice =[\s\S]{0,200}?endsWith\("\.xml"\)/, "admitted by name");
+  // …and SETTLED on the content, with the same refusal as before for a .xml that is not an invoice.
+  assert.match(
+    src, /const isEInvoice = maybeEInvoice && looksLikeInvoiceXmlBytes\(buffer\)/,
+    "the widened guard must be settled on the bytes, not left open",
+  );
+  assert.match(
+    src, /if \(maybeEInvoice && !isEInvoice\) \{[\s\S]{0,160}?Alleen PDF of afbeelding toegestaan/,
+    "a .xml that is not an invoice is refused exactly as it always was",
+  );
+  // The reader picks its branch by media type, and a .xml arrives with whatever the client sent.
+  assert.match(
+    src, /const readerMime = isEInvoice \? E_INVOICE_XML_MIME : file\.type/,
+    "the reader must be handed the type the content actually is",
+  );
+  assert.match(
+    src, /verifyInvoiceFromPdf\(base64, readerMime,/,
+    "…and actually be given it",
+  );
+});
+
+test("[E-FACTUUR-NAREKENEN] the books audit asks the supplier's own file before reading a page", () => {
+  // The report's blind spot pointed at exactly the wrong document. A Peppol XML has no PDF text
+  // layer, so readPdfTextLayer answered null and the invoice landed in "we could not check this
+  // one" — the same bucket as a blurry photograph — for the ONE class this app can verify exactly,
+  // mechanically, at no cost. The owner was told the app could not look at the invoice it knows
+  // best.
+  const src = code("src/app/api/invoice/audit/route.ts");
+
+  // Both shapes: the XML on its own, and the XML carried inside a Factur-X PDF — and REACHABLY.
+  // The first version matched only the body, so `if (false)` around the whole block left it green:
+  // the code was present and could never run, which is indistinguishable from deleted at runtime
+  // and looks like a passing test on the page.
+  assert.match(
+    src,
+    /if \(bytes\) \{\s*\n\s*const xml = mime === null && looksLikeInvoiceXmlBytes\(bytes\)[\s\S]{0,200}?extractEmbeddedInvoiceXml\(bytes\)/,
+    "a standalone XML and an embedded one must both be consulted, and the block must be reachable",
+  );
+  // Direct comparison, not a text search: the file STATES the total, so equality to the cent is
+  // the whole question.
+  assert.match(
+    src, /Math\.abs\(Math\.abs\(stored\) - Math\.abs\(stated\)\) <= 0\.01/,
+    "the stored figure is compared with the stated one, to the cent",
+  );
+  assert.match(src, /source: "e-invoice"/, "and the verdict records which witness spoke");
+
+  // A disagreement is a MISMATCH, never an "unchecked" — it is the strongest finding the report can
+  // produce, and it was invisible.
+  assert.match(
+    src, /agrees\(inv\.total_inc_btw, figures\.totalIncBtw\) \? "found" : "absent"/,
+    "the supplier's own file contradicting the books must read as a mismatch",
+  );
+
+  // It runs BEFORE the OCR half, which costs an API call — paying a model to re-read a document
+  // whose figures are already stated is spending money to be less sure.
+  //
+  // The first version of this compared against indexOf("transcribeStoredDocumentAmounts"), which
+  // matched the IMPORT at the top of the file and reported the order backwards. A gate that finds
+  // a mention instead of the call is this file's own defect class, arriving for the sixth time.
+  const eInvoiceAt = src.indexOf("looksLikeInvoiceXmlBytes(bytes)");
+  const ocrCallAt = src.indexOf("await transcribeStoredDocumentAmounts(");
+  assert.ok(eInvoiceAt > 0 && ocrCallAt > 0, "both must be present at all");
+  assert.ok(ocrCallAt > eInvoiceAt, "the free exact check precedes the paid one");
+
+  // And the report keeps the two claims apart: characters on a page is not the supplier's own file.
+  assert.match(
+    code("src/lib/books-audit.ts"),
+    /vergeleken met de e-factuur die de leverancier zelf meestuurde/,
+    "the stronger claim needs its own sentence",
+  );
+  assert.match(src, /confirmedByEInvoice: summary\.confirmedByEInvoice/, "…and reaches the client");
+});
+
+test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () => {
+  // The app was loud about problems and silent about its strongest certainty. Every warning on the
+  // pay screen exists because a number MIGHT be wrong; nothing said the opposite when it cannot be.
+  // For an owner who keeps the paper invoice open beside the app — the reason this whole line of
+  // work exists — that is exactly the wrong way round.
+  const ui = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Read through the shared validator, never by poking at the jsonb directly: field_confidence is
+  // untyped at the database and a screen that trusts it is a screen that renders whatever is there.
+  assert.match(
+    ui, /const e = eInvoiceOf\(inv\.field_confidence\)/,
+    "the row must read the marker through the one validator",
+  );
+  // Only when the supplier's file AGREES. A contradiction already earns its own warning, and a
+  // reassuring badge beside it would be the screen arguing with itself.
+  assert.match(
+    ui, /if \(!e \|\| e\.contradicts\) return null/,
+    "a contradicted e-invoice may never wear the reassuring badge",
+  );
+  // And the sentence tells the owner what it MEANS, not merely that it happened.
+  assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
+  assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
 });

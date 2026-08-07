@@ -24,7 +24,7 @@
 // UNCHECKED rather than as fine. "We could not look at 40 of these" is the honest sentence, and it
 // is the one that keeps the other numbers worth reading.
 
-import type { GroundingVerdict } from './amount-grounding'
+import type { GroundingVerdict, GroundingSource } from './amount-grounding'
 
 /** One invoice's outcome. */
 export interface AuditedInvoice {
@@ -33,11 +33,20 @@ export interface AuditedInvoice {
   clientName: string | null
   totalIncBtw: number | null
   verdict: GroundingVerdict
+  /** Which witness spoke. Absent on rows from before this was recorded — read as the text layer. */
+  source?: GroundingSource
 }
 
 export interface BooksAuditSummary {
   /** Invoices whose stored total was found, verbatim, in their own document. */
   confirmed: number
+  /**
+   * [E-FACTUUR-NAREKENEN] Of those, the ones confirmed against the supplier's OWN structured file
+   * rather than against characters on a page. Counted separately because it is a different and
+   * stronger claim, and because these used to land in `unchecked` — the app told the owner it
+   * could not look at the one document class it can verify exactly, mechanically, for nothing.
+   */
+  confirmedByEInvoice: number
   /** Invoices whose stored total is NOT in the document text. These need a human. */
   mismatched: AuditedInvoice[]
   /** No text layer to search — a photo or a scan. Not an outcome, an absence of one. */
@@ -51,6 +60,7 @@ export function summarizeAudit(rows: readonly AuditedInvoice[]): BooksAuditSumma
   const mismatched = rows.filter((r) => r.verdict === 'absent')
   return {
     confirmed: rows.filter((r) => r.verdict === 'found').length,
+    confirmedByEInvoice: rows.filter((r) => r.verdict === 'found' && r.source === 'e-invoice').length,
     mismatched,
     unchecked: rows.filter((r) => r.verdict === 'unreadable').length,
     examined: rows.length,
@@ -113,6 +123,18 @@ export function auditLines(s: BooksAuditSummary, photosChecked = 0): string[] {
 
   if (s.confirmed > 0 && s.mismatched.length > 0) {
     out.push(`Van de rest staat het bedrag wél zo op het document (${s.confirmed}).`)
+  }
+
+  // [E-FACTUUR-NAREKENEN] The strongest sentence this report can carry, and it gets its own line.
+  // "Het bedrag staat zo op het document" is about characters on a page; this is the supplier's own
+  // structured file. Merging them would let the weaker claim borrow the stronger one's certainty,
+  // which is the whole reason the source is tracked at all.
+  if (s.confirmedByEInvoice > 0) {
+    out.push(
+      `${s.confirmedByEInvoice === 1 ? '1 factuur is' : `${s.confirmedByEInvoice} facturen zijn`} ` +
+      'vergeleken met de e-factuur die de leverancier zelf meestuurde. Daar is niets aan gelezen of ' +
+      'geïnterpreteerd — de bedragen zijn exact wat de leverancier heeft opgegeven.',
+    )
   }
 
   // [NAREKENEN-FOTO] What the photo half did, and in its own words. A photo is checked by a second

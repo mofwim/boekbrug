@@ -28,7 +28,8 @@ import { readingPromptHint } from "@/lib/reading-memory";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
-import { gateFairUse } from "@/lib/fair-use-gate";
+import { gateFairUseForRead } from "@/lib/fair-use-gate";
+import { isEInvoiceXmlMime } from "@/lib/e-invoice";
 // [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
 import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
 // [REREAD-CONFIRMED] Who may be read again, and what happens to the one that is — one rule.
@@ -248,7 +249,12 @@ export async function POST(
   //
   // Het staat hier en niet bovenaan: dit is de laatste regel vóór de enige handeling die ons per
   // stuk geld kost. Zie [FAIR-USE-TE-VROEG] boven.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  // [E-FACTUUR-GRATIS] Re-reading an e-invoice costs no AI call — verifyInvoiceFromPdf answers it
+  // from the XML. It must not spend a document from the month's allowance either.
+  const gate = await gateFairUseForRead({
+    client: supabase, userId: user.id, metric: "aiDocuments",
+    costsAiCall: !isEInvoiceXmlMime(mimeType),
+  });
   if (!gate.allowed) return gate.response!;
 
   // [READING-MEMORY] The manual re-read is exactly the moment this matters most: the owner asked
