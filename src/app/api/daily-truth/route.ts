@@ -22,6 +22,8 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { needsDocument } from "@/lib/bank-identity";
+// [BANK-SALDO] Het getal dat het scherm nooit toonde terwijl het al in de database stond.
+import { bankBalanceOf } from "@/lib/bank-balance";
 import { computeDrawerBalance } from "@/lib/cash";
 // [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows. The
 // home totals promise EXACT stored sums ("a wrong number breaks trust"), and a
@@ -228,6 +230,46 @@ export async function GET() {
   }
   const txs = txRows ?? [];
 
+  // [BANK-SALDO] Het saldo dat de afschriften ZELF verklaren (MT940 :62F: / CAMT CLBD).
+  //
+  // bank-ingest.ts leest dit al bij elke upload — het heeft het nodig om te bewijzen dat een
+  // bestand compleet is — en schrijft het weg in bank_statement_periods. Het werd gelezen,
+  // gecontroleerd, opgeslagen, en aan niemand getoond. Dit haalt het op.
+  //
+  // Deze lezing MAG degraderen, net als de transactielezing hierboven: bij een fout — of bij een
+  // database waar de migratie voor deze tabel nog niet gedraaid is — komt er `null` uit
+  // bankBalanceOf() en toont het scherm de tegel simpelweg niet. Een onbekend saldo is nooit een
+  // reden om een kloppend facturenoverzicht blanco te maken.
+  type PeriodRow = { iban: string | null; period_end: string | null; closing_balance: number | null };
+  const periodRows: PeriodRow[] | null = await (async () => {
+    try {
+      // bank_statement_periods komt uit een losse migratie en staat niet in de gegenereerde
+      // typen → ontspannen client, net als elders in dit bestand.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (pipeline as any)
+        .from("bank_statement_periods")
+        .select("iban, period_end, closing_balance")
+        .eq("user_id", user.id)
+        .order("period_end", { ascending: false })
+        .limit(400);
+      return error ? null : ((data ?? []) as PeriodRow[]);
+    } catch {
+      return null;
+    }
+  })();
+
+  if (periodRows == null) {
+    console.error("[DAILY-TRUTH] bank balance read failed — tegel verdwijnt, totalen ongemoeid", { userId: user.id });
+  }
+
+  const bankBalance = bankBalanceOf(
+    (periodRows ?? []).map((r) => ({
+      iban: r.iban,
+      periodEnd: r.period_end,
+      closingBalance: r.closing_balance,
+    })),
+  );
+
   let lastBankDate: string | null = null;
   let undocumented = 0;
   for (const t of txs) {
@@ -324,7 +366,18 @@ export async function GET() {
       total: differences.total,
       note: paymentDifferenceNote(differences),
     },
-    bank: { lastDate: lastBankDate, undocumented },
+    // [BANK-SALDO] `balance` is null zodra we het niet WETEN — nooit 0. Een € 0,00 tonen aan
+    // iemand met EUR 58.000 aan schuld omdat zijn bank CSV exporteert, is het meest alarmerende
+    // verkeerde getal dat deze app kan produceren. En `asOf` hoort onlosmakelijk bij het bedrag:
+    // dit is het slotsaldo van het LAATST GEUPLOADE afschrift, exact en oud tegelijk.
+    bank: {
+      lastDate: lastBankDate,
+      undocumented,
+      balance: bankBalance.balance,
+      balanceAsOf: bankBalance.asOf,
+      accounts: bankBalance.accounts,
+      partial: bankBalance.partial,
+    },
     kas: { used: kasUsed, balance: kasBalance },
     attention: attentionAll.slice(0, 3),
     attentionCount: attentionAll.length,
