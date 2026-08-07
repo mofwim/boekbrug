@@ -778,3 +778,48 @@ export async function sendRetentionWarning({
   })
   await deliverEmail(__sendResult, { label: 'retention-warning', critical: true })
 }
+
+/**
+ * [FEEDBACK] Tell the operator an owner reported a problem.
+ *
+ * BEST-EFFORT ON PURPOSE, and the direction matters: the ROW in `feedback` is the truth. A report
+ * that existed only as an e-mail would be lost the moment Resend rejected it or the key was
+ * missing — which is exactly the silence this whole feature exists to end. So the route stores
+ * first, sends second, and a failure here changes nothing about whether the report was received.
+ *
+ * Returns whether it was delivered, so the caller can log the difference instead of assuming.
+ */
+export async function sendFeedbackNotification({
+  toEmail,
+  fromEmail,
+  message,
+  pagePath,
+  hasImage,
+}: {
+  toEmail: string
+  fromEmail: string
+  message: string
+  pagePath: string | null
+  hasImage: boolean
+}): Promise<boolean> {
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    // The reporter's address as reply-to, so answering is one tap and does not need a lookup.
+    replyTo: fromEmail,
+    subject: `Feedback${pagePath ? ` — ${pagePath}` : ''}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">Nieuwe melding</h2>
+        <p style="color:#555; margin:0 0 4px;"><strong>Van:</strong> ${escapeHtml(fromEmail)}</p>
+        <p style="color:#555; margin:0 0 4px;"><strong>Pagina:</strong> ${escapeHtml(pagePath ?? 'onbekend')}</p>
+        <p style="color:#555; margin:0 0 16px;"><strong>Schermafbeelding:</strong> ${hasImage ? 'ja' : 'nee'}</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; border-left:3px solid #1a73e8;">
+          <p style="margin:0; color:#202124; white-space:pre-wrap;">${escapeHtml(message)}</p>
+        </div>
+        <p style="color:#aaa; font-size:12px; margin-top:32px;">De melding staat ook in de tabel <code>feedback</code>.</p>
+      </div>
+    `
+  })
+  return deliverEmail(__sendResult, { label: 'feedback-notification', critical: false })
+}
