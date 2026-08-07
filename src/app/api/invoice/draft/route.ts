@@ -31,10 +31,14 @@ import { isKnownUnit } from '@/lib/units'
 // de INSERT hieronder met PGRST204 op een installatie waar de migratie nog open staat — en dan
 // kan er GEEN FACTUUR MEER WORDEN AANGEMAAKT. Zie de kop van created-by.ts.
 import { writeWithTrail } from '@/lib/created-by'
+// [ARTIKEL-LEREN] Eén module voor beide deuren (deze en het bewerkscherm) — twee kopieën van
+// dezelfde regel lopen uit elkaar zonder dat er iets rood wordt.
+import { learnFromLines } from '@/lib/article-learning-store'
 
 export const dynamic = 'force-dynamic'
 
 type Soort = 'factuur' | 'creditnota' | 'offerte'
+
 
 /**
  * De eenheid van één regel, of null.
@@ -243,6 +247,24 @@ export async function POST(request: NextRequest) {
       console.error('[ACTING-FOR] regels wegschrijven mislukt — concept teruggedraaid', { lineErr })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
     }
+
+    // [ARTIKEL-LEREN] Wat de ondernemer hier typt, onthoudt de catalogus — vanaf de EERSTE factuur.
+    // Tot nu toe vulde die catalogus zich alleen als je hem al kende: via /dashboard/artikelen, of
+    // via het kleine "bewaar in catalogus"-knopje naast een regel. Wie dat niet wist, typte regel
+    // twintig nog steeds met de hand en trof een lege suggestielijst aan.
+    //
+    // Nooit een reden om de factuur te laten mislukken: de factuur en haar regels staan hier al, en
+    // de catalogus is een hulplijst ernaast. Vandaar de eigen try/catch en de log in plaats van een
+    // foutmelding — er is op dit punt niets meer aan de factuur dat nog kan misgaan.
+    await learnFromLines({
+      db: pipeline, ownerId, documentKind: soort,
+      lines: gecontroleerd.lines.map((l, i) => ({
+        description: String(bron[i]?.description ?? '').trim(),
+        unit_price: l.unit_price,
+        btw_rate: l.btw_rate,
+        unit: schoonEenheid(bron[i]?.unit),
+      })),
+    })
 
     return NextResponse.json({ ok: true, invoiceId: factuur.id, clientId })
   } catch (e) {
