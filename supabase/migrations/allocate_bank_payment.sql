@@ -73,6 +73,34 @@ DECLARE
   v_is_paid     boolean;
   v_line_rest   numeric;
 BEGIN
+  -- ── CALLER GUARD — the one line this function was written without ──
+  --
+  -- Same contract as apply_bank_payment, confirm_bank_payment and book_bank_batch: with the session
+  -- client auth.uid() is the caller, so it must equal p_user_id; with service-role it is NULL and
+  -- the call is pinned by p_user_id alone.
+  --
+  -- Its absence was not theoretical. This function is SECURITY DEFINER, so RLS does not apply to
+  -- anything it touches, and it is GRANTed to `authenticated` — and PostgREST exposes every such
+  -- function directly at /rest/v1/rpc/, with the anon key that ships in the browser bundle. Both
+  -- scoping predicates below match on the ARGUMENT (`user_id = p_user_id`, `sender_id = p_user_id
+  -- OR receiver_id = p_user_id`), never on the session. So any registered user could name a
+  -- stranger's uuid, transaction and invoice and have this function read and lock them.
+  --
+  -- The money write was blocked today by prevent_accountant_amount_changes, whose deny list
+  -- includes amount_paid — but that is a trigger on a DIFFERENT table whose exception list other
+  -- migrations edit, so the protection was accidental and one edit from gone. What was reachable
+  -- without any trigger help was a cross-tenant oracle: the distinct exceptions below ("invoice not
+  -- found / not owned" vs "already fully paid" vs "locked by accountant" vs "already covered") tell
+  -- a stranger whether a named invoice of a named user exists, is paid, is locked, and still owes.
+  --
+  -- The file header claims every refusal was copied from the two functions this one was built from.
+  -- This is the one that was not, and it is why a sweep for "SECURITY DEFINER + p_user_id + GRANT
+  -- authenticated + no auth.uid()" over every migration returned exactly one hit: this file.
+  IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
+    RAISE EXCEPTION '[BETAALPLAN] caller % may not allocate for %', auth.uid(), p_user_id
+      USING ERRCODE = '42501';
+  END IF;
+
   -- The line, locked. 'pending' is the only state that may still be spent; anything else means
   -- another booking already claimed it, and an empty result tells the caller to stop.
   SELECT status, abs(coalesce(amount, 0)) INTO v_tx_status, v_tx_amount

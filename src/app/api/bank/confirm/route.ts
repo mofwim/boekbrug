@@ -273,19 +273,48 @@ export async function POST(req: NextRequest) {
   }
 
   {
-    // confirm_bank_payment is added by bank_confirm_atomic.sql and not yet in the generated
-    // types — same convention as auto_match_reason. Regenerate types after applying.
+    // ── [DEEL-BEDRAG] Which function, and why it is not always the same one ──
+    //
+    // confirm_bank_payment takes NO amount. It computes LEAST(available, open) and books that.
+    // For the ordinary "this payment settles this invoice" tap that is exactly right, and it is
+    // what this route did for every request — including the ones carrying an explicit amount.
+    //
+    // Which silently threw the owner's number away. The split sheet ("Alleen dit deel boeken")
+    // opens only from the declared_invoice_missing 409, and that 409 requires payAvailable <=
+    // invoiceOpen — under precisely that precondition LEAST(available, open) IS the whole
+    // remaining line. So typing €1.000 on a €2.265,41 line booked €2.265,41, flipped the invoice
+    // to 'paid' and answered "Bevestigd en gemarkeerd als betaald". "Alleen dit deel boeken" and
+    // "Toch het hele bedrag" were the same button.
+    //
+    // The damage is not the wrong amount_paid. That guard exists for the ATAPACK case: a payment
+    // whose description names TWO invoices of which only one is imported yet. The money meant for
+    // the missing invoice was spent on the present one, and when the missing one arrived it read
+    // fully open, got dunned, and would be paid a second time — by the escape hatch built to
+    // prevent exactly that.
+    //
+    // allocate_bank_payment (allocate_bank_payment.sql) is the same atomic decision WITH an amount:
+    // LEAST(requested, available, open), and it leaves the line 'pending' when money remains — so
+    // the rest of this payment stays available for the invoice it was actually for.
+    const withAmount = requestedAmount != null;
+    const atomicFn = withAmount ? "allocate_bank_payment" : "confirm_bank_payment";
+    // Neither function is in the generated types yet — same convention as auto_match_reason.
+    // Regenerate after applying.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: atomicRows, error: atomicErr } = await (supabase.rpc as any)("confirm_bank_payment", {
+    const { data: atomicRows, error: atomicErr } = await (supabase.rpc as any)(atomicFn, {
       p_user_id: user.id,
       p_tx_id: transactionId,
       p_invoice_id: invoiceId,
       p_pay_date: tx.date ?? null,
+      ...(withAmount ? { p_amount: requestedAmount } : {}),
     }) as { data: unknown; error: { code?: string; message?: string } | null };
+    // Either name may be absent on a database where its migration has not run. Falling through is
+    // the SAFE direction here and doubly so for the amount path: the older detector-guarded path
+    // below is the one place that already honours resolveAllocation, so a missing function costs
+    // atomicity, never the owner's stated number.
     const fnMissing =
       atomicErr &&
       ((atomicErr as { code?: string }).code === "42883" ||
-        /confirm_bank_payment/i.test(atomicErr.message ?? "") &&
+        /confirm_bank_payment|allocate_bank_payment/i.test(atomicErr.message ?? "") &&
           /(does not exist|not find|schema cache)/i.test(atomicErr.message ?? ""));
     if (atomicErr && !fnMissing) {
       const msg = (atomicErr.message ?? "").toLowerCase();

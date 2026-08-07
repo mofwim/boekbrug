@@ -540,7 +540,9 @@ test("[DECLARED-INVOICE] the refusal runs before EVERY booking path, not just th
   const src = code("src/app/api/bank/confirm/route.ts");
 
   const guard = src.indexOf("declared_invoice_missing");
-  const atomic = src.search(/rpc as any\)\("confirm_bank_payment"|rpc\("confirm_bank_payment"/);
+  // The atomic call is chosen by name at runtime since [DEEL-BEDRAG], so this anchors on the
+  // dispatch as well as the literal names.
+  const atomic = src.search(/rpc as any\)\(atomicFn|rpc as any\)\("confirm_bank_payment"|rpc\("confirm_bank_payment"/);
   const legacy = src.indexOf('rpc("apply_bank_payment"');
 
   assert.ok(guard > 0, "the declared-invoice refusal is gone entirely");
@@ -2216,4 +2218,80 @@ test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () 
   // And the sentence tells the owner what it MEANS, not merely that it happened.
   assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
   assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
+});
+
+// ── [DEEL-BEDRAG] The stated amount must REACH the database ──────────────────
+//
+// The [DECLARED-INVOICE] test above pins that the refusal runs BEFORE the booking. It says nothing
+// about what the booking then books — and that was the hole.
+//
+// confirm_bank_payment has no amount parameter at all; it computes LEAST(available, open). The
+// route read the owner's "Alleen dit deel boeken" number into requestedAmount, used it only to SKIP
+// the guard, and then called a function that could not receive it.
+//
+// The split sheet opens ONLY from the declared_invoice_missing 409, and that 409 requires
+// payAvailable <= invoiceOpen — under exactly that precondition LEAST(available, open) IS the whole
+// remaining line. So every partial amount an owner ever typed booked the full line, marked the
+// invoice paid, and answered "Bevestigd en gemarkeerd als betaald". "Alleen dit deel boeken" and
+// "Toch het hele bedrag op deze factuur" were behaviourally one button.
+//
+// A position test cannot see that. This one follows the VALUE.
+test("[DEEL-BEDRAG] a stated amount reaches the RPC, and picks the function that can accept it", () => {
+  const src = code("src/app/api/bank/confirm/route.ts");
+
+  // 1. An amount stated ⇒ the function that HAS an amount parameter.
+  assert.match(
+    src,
+    /const atomicFn\s*=\s*withAmount\s*\?\s*"allocate_bank_payment"\s*:\s*"confirm_bank_payment"/,
+    "an explicit amount must select allocate_bank_payment — confirm_bank_payment cannot take one",
+  );
+
+  // 2. And it is actually PASSED. The absence of this single assertion is what let the bug ship.
+  assert.match(
+    src,
+    /\.\.\.\(withAmount \? \{ p_amount: requestedAmount \} : \{\}\)/,
+    "p_amount must travel with the call, not merely be read into a variable",
+  );
+
+  // 3. No amount ⇒ unchanged. The ordinary confirm must not start behaving differently.
+  assert.ok(
+    src.includes('"confirm_bank_payment"'),
+    "a request without an amount still books through confirm_bank_payment",
+  );
+
+  // 4. Both names survive the missing-function fall-through — the ONE path that already honours
+  //    resolveAllocation. A database without the migration then loses atomicity, never the number.
+  assert.match(
+    src,
+    /confirm_bank_payment\|allocate_bank_payment/,
+    "the fnMissing detector must recognise both names",
+  );
+});
+
+// [BETAALPLAN] And the guard that was missing from the function this route now calls.
+//
+// allocate_bank_payment is SECURITY DEFINER and GRANTed to `authenticated`, and PostgREST exposes
+// every such function at /rest/v1/rpc/ with the anon key that ships in the browser bundle. Both its
+// scoping predicates match on the ARGUMENT p_user_id, never on the session — so without this guard
+// any registered user could name a stranger's uuid, transaction and invoice.
+//
+// A sweep of every migration for "SECURITY DEFINER + p_user_id + GRANT authenticated + no
+// auth.uid()" returned exactly one hit: this file, written as a copy of two functions that both
+// have the guard. That is the failure this test exists to make impossible to repeat.
+test("[BETAALPLAN] every money RPC that takes p_user_id checks the caller against it", () => {
+  const dir = "supabase/migrations";
+  const offenders: string[] = [];
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".sql")) continue;
+    const sql = readFileSync(`${dir}/${name}`, "utf8");
+    const definer = /SECURITY\s+DEFINER/i.test(sql);
+    const takesUser = /p_user_id\s+uuid/i.test(sql);
+    const grantsAuth = /GRANT\s+EXECUTE[\s\S]{0,200}?\bauthenticated\b/i.test(sql);
+    if (definer && takesUser && grantsAuth && !/auth\.uid\(\)/.test(sql)) offenders.push(name);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `these SECURITY DEFINER functions take p_user_id and are callable by authenticated, but never compare it to auth.uid(): ${offenders.join(", ")}`,
+  );
 });
