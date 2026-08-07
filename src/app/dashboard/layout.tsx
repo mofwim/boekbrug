@@ -8,6 +8,7 @@ import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
+import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
 import { isActingForOther } from '@/lib/acting-for'
 
@@ -72,6 +73,16 @@ export default async function DashboardLayout({
       {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
           links that hide below 640px. Role-aware destinations; see the component. */}
       {profile && !isMedewerker && <BottomNav role={subnavRole} />}
+      {/* [FEEDBACK] "Er ging iets mis" — op ELKE /dashboard/*-pagina, hier één keer gemonteerd.
+          Per pagina toevoegen betekent na een half jaar op de helft van de pagina's, en dan juist
+          niet op het scherm waar iets misging: dat is meestal het minst bezochte.
+
+          Wél voor een verkoopmedewerker, anders dan de navigatie hierboven. Die wordt voor hem
+          verborgen omdat de links hem terugwerpen — een menu vol doodlopende wegen. Hier is het
+          omgekeerd: hij werkt in dezelfde app en loopt tegen dezelfde dingen aan, en juist bij hem
+          is de weg terug naar de eigenaar het langst. Hem als enige het meldkanaal ontzeggen zou
+          betekenen dat precies de problemen die hij tegenkomt niemand bereiken. */}
+      {profile && <FeedbackButton />}
     </>
   )
 }
