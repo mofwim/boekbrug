@@ -37,13 +37,29 @@ CREATE TABLE public.invoices (
   payment_date      date
 );
 
+-- The link table, shaped as bank_tx_invoices.sql + invoice_manual_payments.sql leave it.
+--
+-- Two details here are load-bearing and were wrong in the first version of this fixture, which is
+-- the fixture's own lesson: a surrogate `id` primary key with a UNIQUE INDEX on the pair, NOT a
+-- composite primary key. A PRIMARY KEY column cannot be NULL, and apply_manual_payment writes
+-- transaction_id NULL on purpose — a manual instalment belongs to no bank line. Declared as a
+-- composite PK, every manual payment is rejected by the fixture and the test blames the function.
+--
+-- UNIQUE treats NULLs as distinct, so several manual instalments on one invoice coexist while
+-- allocate_bank_payment's ON CONFLICT (transaction_id, invoice_id) still finds its row.
 CREATE TABLE public.bank_tx_invoices (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id        uuid NOT NULL,
-  transaction_id uuid NOT NULL,
+  transaction_id uuid,          -- NULL = a manual payment, not a bank line
   invoice_id     uuid NOT NULL,
-  amount_applied numeric,      -- MAGNITUDE, per invoice — the sign is derived, never stored
-  PRIMARY KEY (transaction_id, invoice_id)
+  amount_applied numeric,       -- MAGNITUDE, per invoice — the sign is derived, never stored
+  paid_on        date,
+  method         text,
+  client_key     uuid,
+  created_at     timestamptz DEFAULT now()
 );
+CREATE UNIQUE INDEX bank_tx_invoices_unique_pair
+  ON public.bank_tx_invoices (transaction_id, invoice_id);
 
 -- [FACTUUR-B] The live invoice-number counter. Written ONLY by next_invoice_seq and
 -- seed_invoice_counter — there are no INSERT/UPDATE/DELETE policies for the session client.
