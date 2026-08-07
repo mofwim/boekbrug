@@ -85,7 +85,17 @@ console.log("\n— [KASSTELSEL] a payment settles a FRACTION of every rate on th
   const half = splitSliceByShares(mix, 1000, 150);
   check("half the invoice → half of each bucket",
     at(half, 21)?.ex === 500 && at(half, 9)?.ex === 500);
-  check("the BTW halves with it", at(half, 21)?.btw === 75 && at(half, 9)?.btw === 75);
+  // [BTW-EIGEN-GEWICHT] 105 en 45, niet 75 en 75.
+  //
+  // Deze regel stond hier als 75/75 en legde daarmee de fout vast in plaats van hem te vangen. De
+  // omzet splitst netjes half-half (ex 1000 tegen 1000), maar de BTW niet: het 21%-deel draagt
+  // EUR 210 van de EUR 300 en het 9%-deel EUR 90. Een halve betaling neemt dus 105 en 45 mee.
+  //
+  // Met 75/75 declareerde de aangifte rubriek 1a als EUR 500 omzet met EUR 75 btw — een tarief van
+  // 15% in het vakje voor 21% — en 1b hetzelfde de andere kant op. EUR 30 in de verkeerde rubriek
+  // aan beide kanten, van een factuur waar niets mis mee was.
+  check("de BTW volgt het EIGEN btw-aandeel, niet het omzetaandeel",
+    at(half, 21)?.btw === 105 && at(half, 9)?.btw === 45);
   check("the slice is preserved exactly", sum(half, "ex") === 1000 && sum(half, "btw") === 150);
 
   // An awkward fraction: the residue is absorbed, never dropped.
@@ -103,6 +113,46 @@ console.log("\n— [KASSTELSEL] a payment settles a FRACTION of every rate on th
   const mix: RateShare[] = [{ rate: 21, ex: -100, btw: -21 }, { rate: 9, ex: -100, btw: -9 }];
   const s = splitSliceByShares(mix, -200, -30);
   check("a refund splits negative too", sum(s, "ex") === -200 && sum(s, "btw") === -30);
+}
+
+
+// ── [BTW-EIGEN-GEWICHT] Een 0%-regel maakt het erger, niet kleiner ───────────
+//
+// Bij een even omzetverdeling kost de oude fout EUR 30. Bij een grote 0%-regel kost hij bijna
+// alles: EUR 10.000 intracommunautair @0% naast EUR 1.000 binnenlands @21% is 91% van de omzet en
+// 0% van de btw — dus absorbeerde het 0%-vakje ook 91% van de btw. Echte btw geboekt in een
+// rubriek die er per definitie geen draagt, en het belaste vakje leeg achtergelaten.
+console.log("\n— [BTW-EIGEN-GEWICHT] een 0%-regel draagt geen btw —");
+{
+  const mixed0: RateShare[] = [
+    { rate: 0, ex: 10000, btw: 0 },
+    { rate: 21, ex: 1000, btw: 210 },
+  ];
+  // De helft betaald: slice ex 5.500, btw 105.
+  const half = splitSliceByShares(mixed0, 5500, 105);
+  check("het 0%-vakje krijgt GEEN btw", at(half, 0)?.btw === 0);
+  check("alle btw gaat naar het 21%-vakje", at(half, 21)?.btw === 105);
+  check("de omzet splitst nog steeds naar rato van de omzet",
+    at(half, 0)?.ex === 5000 && at(half, 21)?.ex === 500);
+  check("en de slice blijft exact behouden",
+    sum(half, "ex") === 5500 && sum(half, "btw") === 105);
+
+  // Alles 0%: er is geen btw te verdelen, dus de omzetweging is het enige zinnige antwoord —
+  // en elk vakje krijgt hoe dan ook nul.
+  const alle0: RateShare[] = [
+    { rate: 0, ex: 600, btw: 0 },
+    { rate: 0, ex: 400, btw: 0 },
+  ];
+  const nul = splitSliceByShares(alle0, 500, 0);
+  check("een volledig 0%-mix valt terug op de omzetweging zonder te breken",
+    sum(nul, "ex") === 500 && sum(nul, "btw") === 0);
+
+  // Het afrondingsrestje mag nooit op een 0%-vakje landen: dat zou precies de fout zijn die deze
+  // functie zojuist stopte, één cent groot.
+  const raar = splitSliceByShares(mixed0, 3333.33, 33.33);
+  check("het btw-restje landt op het btw-dragende vakje", at(raar, 0)?.btw === 0);
+  check("en de slice klopt nog steeds tot op de cent",
+    sum(raar, "ex") === 3333.33 && sum(raar, "btw") === 33.33);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
