@@ -41,6 +41,11 @@ export type AuditAction =
   | 'invoice.status_changed'
   | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
   | 'invoice.auto_paid'               // ← [BON-AUTO] app settled a kassabon whose PAPER printed the tender line ("Kontant"/"Bankpas")
+  // [TWEEDE-KANS] The owner asked the app to read a stored file again — one it had kept because it
+  // could not read it. Its own action because it is the only way an invoice enters the books from a
+  // document that was already filed as unreadable, and an auditor asking "where did this cost come
+  // from, and why did it appear months after the file did" has no other answer.
+  | 'invoice.reread_from_document'
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment

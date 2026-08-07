@@ -281,6 +281,38 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     { filename: string; reason: string; createdAt: string }[] | null
   >(null);
   const [couldNotReadCount, setCouldNotReadCount] = useState(0);
+  // [TWEEDE-KANS] The unread files themselves, so the panel can offer a second reading instead of
+  // only counting them.
+  const [unreadDocs, setUnreadDocs] = useState<Array<{ id: string; fileName: string }>>([]);
+  const [rereadingId, setRereadingId] = useState<string | null>(null);
+  const [rereadMessage, setRereadMessage] = useState<string | null>(null);
+
+  /**
+   * [TWEEDE-KANS] Ask the app to read a stored file again with the reader it has now.
+   *
+   * Nothing is booked by this: a recognised invoice lands in the verify queue, where the owner
+   * confirms it like any other. The answer is always a sentence — a silent button on a panel whose
+   * whole purpose is honesty about what went missing would be the wrong thing twice over.
+   */
+  const rereadDocument = async (docId: string) => {
+    setRereadingId(docId);
+    setRereadMessage(null);
+    try {
+      const res = await fetch(`/api/documents/${docId}/read-as-invoice`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRereadMessage(typeof json?.error === "string" ? json.error : "Dat lukte niet — probeer het zo meteen opnieuw.");
+        return;
+      }
+      setRereadMessage(typeof json?.message === "string" ? json.message : "Klaar.");
+      // Booked → it left the unread list; drop it here too rather than making the owner reload.
+      if (json?.booked) setUnreadDocs((prev) => prev.filter((d) => d.id !== docId));
+    } catch {
+      setRereadMessage("Dat lukte niet — controleer je verbinding en probeer het opnieuw.");
+    } finally {
+      setRereadingId(null);
+    }
+  };
 
   // [BOEK-011] One tap = full import. The server caps each call at 25 new
   // invoices (function time limit); it reports `remaining` and we simply call
@@ -433,6 +465,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       if (res.ok) {
         setSkippedItems(data.skipped ?? []);
         setCouldNotReadCount(data.couldNotReadCount ?? 0);
+        setUnreadDocs(Array.isArray(data.unread) ? data.unread : []);
       } else {
         setSkippedItems([]);
       }
@@ -662,6 +695,40 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   {couldNotReadCount > 0 && (
                     <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
                       {couldNotReadCount} {couldNotReadCount === 1 ? "bestand konden" : "bestanden konden"} we niet lezen — {couldNotReadCount === 1 ? "het staat" : "ze staan"} in je bestanden, controleer {couldNotReadCount === 1 ? "het" : "ze"} even.
+                    </div>
+                  )}
+                  {/* [TWEEDE-KANS] The sentence above said "ze staan in je bestanden" and there was
+                      nothing to do there: the sync filters a given-up attachment out of every future
+                      run, and re-uploading the same bytes is refused as a duplicate. So the file was
+                      visible, unusable, and its voorbelasting unclaimed. Now the reader we have TODAY
+                      can be pointed at the file we already have. */}
+                  {(unreadDocs?.length ?? 0) > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 6, lineHeight: 1.5 }}>
+                        Wij lezen inmiddels meer bestandstypes dan toen deze binnenkwamen. Laat het opnieuw proberen —
+                        er verandert niets aan je boekhouding tot je het in de wachtrij bevestigt.
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(unreadDocs ?? []).map((d) => (
+                          <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                            <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                              {d.fileName}
+                            </span>
+                            <button
+                              onClick={() => void rereadDocument(d.id)}
+                              disabled={rereadingId === d.id}
+                              style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, border: "1px solid #dadce0", background: "#fff", color: "#0B57D0", borderRadius: 999, padding: "5px 12px", cursor: rereadingId === d.id ? "default" : "pointer", minHeight: 32 }}
+                            >
+                              {rereadingId === d.id ? "Bezig…" : "Lees opnieuw"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {rereadMessage && (
+                        <div style={{ fontSize: 12.5, color: "#202124", background: "#E8F0FE", borderRadius: 8, padding: "8px 10px", marginTop: 8, lineHeight: 1.5 }}>
+                          {rereadMessage}
+                        </div>
+                      )}
                     </div>
                   )}
                   {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
