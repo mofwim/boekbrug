@@ -50,8 +50,14 @@ export type GroundingVerdict = 'found' | 'absent' | 'unreadable'
  *            question with different failure modes — "write down what you see" fails locally on a
  *            smudged digit, where "what is the total?" fails semantically by computing a figure
  *            that is not on the paper. Corroboration, not proof.
+ *   'e-invoice' — the supplier's own structured file (Factur-X / ZUGFeRD / Peppol UBL). Not a
+ *            witness to a reading at all: there was no page to read. It is the strongest of the
+ *            three by a distance, and it is named separately because the report must not present
+ *            "the characters of the PDF say so" and "the supplier's own file says so" as the same
+ *            sentence — an owner who is told both in one breath cannot tell which one they are
+ *            trusting.
  */
-export type GroundingSource = 'text' | 'ocr'
+export type GroundingSource = 'text' | 'ocr' | 'e-invoice'
 
 export interface MoneyGrounding {
   totalIncBtw: GroundingVerdict

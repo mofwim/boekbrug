@@ -36,6 +36,9 @@ import { sniffReadableMime } from "@/lib/detect-file";
 // [NAREKENEN-FOTO] The same blind transcription the import path uses — exported, never copied.
 import { transcribeStoredDocumentAmounts } from "@/lib/ai";
 import { groundMoneyFields } from "@/lib/amount-grounding";
+// [E-FACTUUR-NAREKENEN] De leverancier stuurde zijn eigen cijfers mee — die zijn na te rekenen
+// zonder iets te lezen. Zonder dit belandde juist die factuur in "konden wij niet controleren".
+import { extractEmbeddedInvoiceXml, parseEInvoice, looksLikeInvoiceXmlBytes } from "@/lib/e-invoice";
 import { summarizeAudit, type AuditedInvoice } from "@/lib/books-audit";
 import { requireOwner } from "@/lib/owner-only";
 
@@ -156,6 +159,38 @@ export async function POST(req: NextRequest) {
     };
     let grounding = groundMoneyFields(amounts, text, "text");
 
+    // [E-FACTUUR-NAREKENEN] Ask the supplier's own file first, when the document is one.
+    //
+    // This was the report's blind spot, and it pointed at exactly the wrong document. A Peppol XML
+    // has no PDF text layer, so readPdfTextLayer answered null and the invoice landed in
+    // "we could not check this one" — the same bucket as a blurry photograph — for the ONE class
+    // this app can verify exactly, mechanically, at no cost. The owner was told the app could not
+    // look at the invoice it knows best.
+    //
+    // Direct comparison, not a search: the file STATES the total, so "does the stored figure equal
+    // it to the cent" is the whole question. A disagreement here is the strongest finding this
+    // report can produce — the supplier's own file contradicts what is in the books — and it was
+    // invisible until now.
+    if (bytes) {
+      const xml = mime === null && looksLikeInvoiceXmlBytes(bytes)
+        ? bytes.toString("utf8")
+        : mime === "application/pdf"
+          ? await extractEmbeddedInvoiceXml(bytes)
+          : null;
+      const figures = xml ? parseEInvoice(xml) : null;
+      if (figures) {
+        const agrees = (stored: number | null, stated: number) =>
+          typeof stored === "number" && Number.isFinite(stored) &&
+          Math.abs(Math.abs(stored) - Math.abs(stated)) <= 0.01;
+        grounding = {
+          totalIncBtw: agrees(inv.total_inc_btw, figures.totalIncBtw) ? "found" : "absent",
+          totalExBtw: agrees(inv.total_ex_btw, figures.totalExBtw) ? "found" : "absent",
+          btwAmount: agrees(inv.btw_amount, figures.btwAmount) ? "found" : "absent",
+          source: "e-invoice",
+        };
+      }
+    }
+
     // [NAREKENEN-FOTO] No text layer: the mechanical witness has nothing to read. With the owner's
     // consent we ask the blind transcription instead — the same call the import path makes, exported
     // rather than copied so the two can never drift into measuring different things.
@@ -182,6 +217,9 @@ export async function POST(req: NextRequest) {
       clientName: inv.client_name,
       totalIncBtw: inv.total_inc_btw,
       verdict: grounding.totalIncBtw,
+      // Which witness spoke. The report may not present "the characters say so" and "the supplier's
+      // own file says so" in one sentence — they are not the same claim.
+      source: grounding.source,
     });
 
     // The ONLY write, and it is evidence: the verdict, merged into field_confidence beside whatever
@@ -209,6 +247,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     summary: {
       confirmed: summary.confirmed,
+      confirmedByEInvoice: summary.confirmedByEInvoice,
       unchecked: summary.unchecked,
       examined: summary.examined,
       mismatched: summary.mismatched,

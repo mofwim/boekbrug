@@ -90,3 +90,46 @@ test('[NAREKENEN] nothing to check says exactly that', () => {
   assert.match(auditTitle(s), /geen facturen om na te rekenen/)
   assert.deepEqual(auditLines(s), [], 'and claims nothing else')
 })
+
+test('[E-FACTUUR-NAREKENEN] the supplier\'s own file gets its own sentence, never the page\'s', () => {
+  // This was the report's blind spot, and it pointed at exactly the wrong document: a Peppol XML
+  // has no PDF text layer, so it landed in "we could not check this one" — beside a blurry photo —
+  // for the ONE class the app can verify exactly, mechanically, at no cost.
+  const s = summarizeAudit([
+    row({ id: 'pdf' }),                                  // confirmed off the page's characters
+    row({ id: 'ubl', source: 'e-invoice' }),             // confirmed against the supplier's file
+    row({ id: 'cii', source: 'e-invoice' }),
+  ])
+  assert.equal(s.confirmed, 3, 'all three are confirmed')
+  assert.equal(s.confirmedByEInvoice, 2, 'and two of them by the strongest witness there is')
+
+  const lines = auditLines(s)
+  assert.ok(
+    lines.some((l) => /2 facturen zijn vergeleken met de e-factuur/.test(l)),
+    'the e-invoice claim is made out loud',
+  )
+  assert.ok(
+    lines.some((l) => /niets aan gelezen of geïnterpreteerd/.test(l)),
+    'and says WHY it is stronger, not merely that it is',
+  )
+})
+
+test('[E-FACTUUR-NAREKENEN] a page-confirmed invoice never borrows the stronger claim', () => {
+  // "Het bedrag staat zo op het document" is about characters. Merging the two would let the weaker
+  // claim take the stronger one's certainty — which is the whole reason the source is tracked.
+  const s = summarizeAudit([row({ id: 'a' }), row({ id: 'b' })])
+  assert.equal(s.confirmedByEInvoice, 0)
+  assert.ok(
+    !auditLines(s).some((l) => /e-factuur/.test(l)),
+    'no e-invoice sentence when no e-invoice spoke',
+  )
+})
+
+test('[E-FACTUUR-NAREKENEN] a supplier file that disagrees with the books is a mismatch', () => {
+  // The strongest finding the report can produce, and it was invisible: the supplier's OWN file
+  // contradicts what was booked. It must read as a mismatch, not as "unchecked".
+  const s = summarizeAudit([row({ id: 'bad', verdict: 'absent', source: 'e-invoice' })])
+  assert.equal(s.mismatched.length, 1)
+  assert.equal(s.unchecked, 0, 'never filed under "we could not look"')
+  assert.match(auditTitle(s), /^1 factuur klopt niet/)
+})
