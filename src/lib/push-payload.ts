@@ -28,9 +28,18 @@ export function buildPushPayload(n: {
   // dashboard so a bad/absolute link can never send the user off-app.
   const link = (n.link ?? "").trim();
   const url = link.startsWith("/") ? link : "/dashboard";
-  // Tag by type so a second notification of the same kind REPLACES the first on
-  // the device instead of stacking — the app's "one clear signal" principle.
-  const tag = (n.type ?? "").trim() || "boekbrug";
+  // The service worker shows notifications with the same tag ON TOP OF each other: a second one
+  // REPLACES the first. That is right for a repeat about the SAME thing and wrong for two different
+  // ones, so the tag is the kind PLUS where it points.
+  //
+  // It used to be the kind alone, and that quietly threw away news. Two clients messaging one
+  // accountant both tagged "message", so the second wiped the first off the device — the accountant
+  // never saw that the first client had written at all. Same shape on the bank side: "Factuur
+  // betaald" and "Nog een deel van deze betaling open" are both type `payment` and say different
+  // things about the same money. Notifications that point at the same screen still collapse, which
+  // is the case the original rule was after.
+  const kind = (n.type ?? "").trim() || "boekbrug";
+  const tag = url === "/dashboard" ? kind : `${kind}:${url}`;
   return { title, body, url, tag };
 }
 

@@ -22,6 +22,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from "@/lib/recurring";
 // [TZ] One definition of "today in Amsterdam", shared with the screens — a cron and a form that
@@ -248,18 +249,13 @@ export async function GET(req: NextRequest) {
 
       // The whole point is that the owner finds it waiting, so say so — with the customer's name,
       // which is how they recognise it, and a link straight to the concept.
-      try {
-        await pipeline.from("notifications").insert({
-          user_id: s.user_id,
-          title: "Terugkerende factuur staat klaar",
-          body: `Het concept voor ${src.client_name ?? "je klant"} (${CADENCE_LABEL[s.cadence]}) staat klaar. Controleer en verstuur wanneer je wilt.`,
-          type: "invoice",
-          read: false,
-          link: `/dashboard/invoice/${draft.id}`,
-        });
-      } catch {
-        /* the concept exists; the bell is a courtesy */
-      }
+      await createNotification({
+        userId: s.user_id,
+        title: "Terugkerende factuur staat klaar",
+        body: `Het concept voor ${src.client_name ?? "je klant"} (${CADENCE_LABEL[s.cadence]}) staat klaar. Controleer en verstuur wanneer je wilt.`,
+        type: "invoice",
+        link: `/dashboard/invoice/${draft.id}`,
+      });
     } catch (e) {
       failed += 1;
       console.error("[CRON-RECURRING] schedule threw (non-fatal)", { schedule: s.id, error: e instanceof Error ? e.message : String(e) });

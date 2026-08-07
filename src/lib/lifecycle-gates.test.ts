@@ -3117,3 +3117,162 @@ test("[ARTIKEL-LEREN] every door a human types lines through teaches the catalog
     "the invoice line and the catalog entry must read the description the same way",
   );
 });
+
+// ── [LINKS-WRITE-HONEST] The write that decides whether a bank line is finished may not be silent ──
+//
+// An owner reported confirming the same bank transaction over and over: it kept coming back to
+// "Te bevestigen". bank-matching.ts already names that loop — "confirming it again can only return
+// 409, the client treats that as done and re-fetches, and the card comes straight back — an
+// unbreakable loop" — and [BANK-COVERAGE-BY-MONEY] closed it by measuring the line's applied total
+// from bank_tx_invoices instead of counting invoice numbers in the bank reference.
+//
+// The measurement's precondition was written by a function that could not report failure:
+//
+//     try { await client.from("bank_tx_invoices").upsert(rows, …) } catch { /* non-fatal */ }
+//
+// supabase-js does NOT throw on a query error — it returns `{ error }` — so that catch never fired
+// and the error object was dropped. The read half of the same file was fixed for exactly this
+// reason, with the reasoning written out above it. The write half was not.
+//
+// What a lost row costs, both of which the file's own comments establish elsewhere:
+//   · recompute_invoice_amount_paid re-derives invoices.amount_paid as SUM(amount_applied) over
+//     the surviving links, on every unlink and undo. A link never written counts as ZERO, so an
+//     invoice this payment really settled re-opens at its full total.
+//   · /api/bank/match cannot measure the line, falls back to the reference-token rule, and any
+//     token that is not a paid invoice number (a customer number, an order number, a POS batch
+//     counter) keeps the line in "Te bevestigen" forever. The loop, restarted — in total silence.
+test("[LINKS-WRITE-HONEST] a lost payment link is logged, returned, and said out loud", () => {
+  const links = code("src/lib/bank-tx-links.ts");
+
+  // Both writers read the error. supabase-js reports it in the RESULT, so a try/catch alone is
+  // not error handling here — it is the appearance of it.
+  // Bounded by the NEXT declaration, never by a character count. A fixed 1400-char window ran past
+  // recordPaymentLinks into clearPaymentLinks, whose correct code then satisfied every assertion
+  // while the function under test was reverted to the bare swallow — both negative controls passed
+  // green. A window that can reach its neighbour is not a window.
+  for (const fn of ["recordPaymentLinks", "clearPaymentLinks"]) {
+    const start = links.indexOf(`export async function ${fn}(`);
+    assert.ok(start > 0, `${fn} is still here`);
+    const nextDecl = links.indexOf("\nexport ", start + 1);
+    const body = links.slice(start, nextDecl > start ? nextDecl : undefined);
+    assert.ok(
+      body.includes("bank_tx_invoices") && body.length < 1400,
+      `the ${fn} slice must be that function alone — it is ${body.length} chars`,
+    );
+    assert.match(
+      body, /const \{ error \} = await client/,
+      `${fn} must read the query error — supabase-js returns it, it does not throw it`,
+    );
+    assert.match(
+      // The log must be the FIRST statement in the guard, not merely somewhere after it: a
+      // permissive window matched the catch clause BELOW and passed while the guard logged nothing.
+      body, /if \(error\) \{\s*console\.error\(/,
+      `${fn} must log the query failure inside the guard that detects it`,
+    );
+    assert.match(body, /Promise<boolean>/, `${fn} must report whether the write landed`);
+  }
+  assert.doesNotMatch(
+    links, /\} catch \{\s*\/\* non-fatal[^\n]*\n\s*\}/,
+    "the bare swallow may not come back — it is what made the loop start in silence",
+  );
+
+  // The confirm route is where an owner is standing and waiting, so it is where the failure has to
+  // surface. Not as an error — the money IS booked — but not as a bare tick either.
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+  assert.match(
+    confirm, /const linkRecorded = await recordPaymentLinks\(/,
+    "the confirm route must keep the answer rather than discarding it",
+  );
+  assert.match(
+    confirm, /linkRecorded \? \{\} : \{ warning: "payment_link_not_recorded" \}/,
+    "…and pass it to the screen, so a booking that may keep coming back is not reported as done",
+  );
+
+  // And the screen says it in words. A warning nobody renders is the same silence one layer up.
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(
+    ui, /json\?\.warning === 'payment_link_not_recorded'/,
+    "the bank screen must handle the warning",
+  );
+  assert.match(
+    ui, /niet volledig vastgelegd/,
+    "…and tell the owner in Dutch, with something to do about it — telling them 'Bevestigd ✓' and " +
+      "letting them walk into the loop is the worse of the two failures",
+  );
+});
+
+// ── [FEEDBACK] The channel out, and the one thing it may never do ──
+//
+// Everything in this app is built so nothing fails silently: the skipped panel admits what it could
+// not read, the bank screen says when a line may keep coming back, a failed lookup refuses instead
+// of answering "niets". All of that honesty stopped at the screen. The owner was told something
+// went wrong and there was no way for that to reach anyone who could fix it — so from the outside,
+// the app's own alarms were indistinguishable from silence.
+//
+// This adds the way out. Which makes ONE failure worse than having no button at all: thanking
+// someone for a report that was never stored. They stop worrying about a problem nobody will see.
+test("[FEEDBACK] the report is on every page, and a failed one is never thanked for", () => {
+  const lib = code("src/lib/feedback.ts");
+  const route = code("src/app/api/feedback/route.ts");
+  const ui = code("src/components/feedback/FeedbackButton.tsx");
+  const layout = code("src/app/dashboard/layout.tsx");
+
+  // ONE mount point. A button added per page is on half the pages within a year — and not on the
+  // screen where something broke, because that is usually the least visited one.
+  assert.match(layout, /<FeedbackButton \/>/, "the button is mounted in the dashboard layout");
+  assert.doesNotMatch(
+    layout, /!isMedewerker && <FeedbackButton/,
+    "a verkoopmedewerker keeps it. The navigation is hidden from them because its links throw them " +
+      "back; this is the opposite — they hit the same problems and their route back to the owner " +
+      "is the longest",
+  );
+
+  // The order of writes IS the design: row first, notification second. A report that existed only
+  // as an e-mail is lost the moment Resend rejects it — the exact silence this feature ends.
+  const insertAt = route.indexOf('.from("feedback").insert(');
+  const notifyAt = route.indexOf("sendFeedbackNotification(");
+  assert.ok(insertAt > 0 && notifyAt > insertAt, "the row is stored BEFORE any mail is attempted");
+
+  // [NO-SILENT-EMPTY] supabase-js does not throw, so an unchecked insert lets this route answer
+  // "bedankt" over a row that was never written. THE defect for this feature.
+  assert.match(route, /const \{ error: insErr \} = await/, "the insert error is read");
+  assert.match(
+    route, /if \(insErr\) \{[\s\S]{0,600}?status: 503/,
+    "…and a failed store REFUSES, in words",
+  );
+  assert.doesNotMatch(
+    route, /if \(insErr\)[\s\S]{0,300}?ok: true/,
+    "a failed store may never answer ok",
+  );
+  // The mail may fail freely — it is a notification about a row that already exists.
+  assert.match(
+    route, /catch \(e\) \{[\s\S]{0,160}?the report IS stored/,
+    "a notification failure may not undo a stored report",
+  );
+
+  // The screen keeps the words when sending failed. Clearing the box on failure loses the report a
+  // second time, and this time the owner watched it happen.
+  const okBranch = ui.indexOf("if (res.ok) {");
+  const clearAt = ui.indexOf("setMessage('')", okBranch);
+  const elseAt = ui.indexOf("} else {", okBranch);
+  assert.ok(okBranch > 0 && clearAt > okBranch && clearAt < elseAt,
+    "the message is cleared only inside the success branch");
+
+  // The image type is decided by the BYTES. This file lands in the bucket the owner's own documents
+  // live in, so trusting a declared type is how a non-image gets stored there under a good name.
+  assert.match(lib, /sniffReadableMime\(bytes\)/, "the image type comes from its content");
+  assert.match(
+    lib, /bytes\.length > FEEDBACK_MAX_IMAGE_BYTES/,
+    "…and the size cap is on the DECODED bytes — base64 is ~33% larger, so a cap on the string " +
+      "would be a different and wrong number",
+  );
+  assert.match(
+    route, /\$\{user\.id\}\/feedback\//,
+    "the screenshot goes under the owner's own folder, which the bucket policy already scopes on",
+  );
+  // A failed upload must not cost the words.
+  assert.match(
+    route, /imageFailed = true/,
+    "an upload failure keeps the report and is reported, rather than failing the whole thing",
+  );
+});

@@ -11,7 +11,7 @@ function eq(name: string, got: unknown, want: unknown) {
 console.log("\n— buildPushPayload —");
 eq("full row maps straight through",
   buildPushPayload({ title: "Factuur betaald", body: "€ 121,00", link: "/dashboard/facturen", type: "payment" }),
-  { title: "Factuur betaald", body: "€ 121,00", url: "/dashboard/facturen", tag: "payment" });
+  { title: "Factuur betaald", body: "€ 121,00", url: "/dashboard/facturen", tag: "payment:/dashboard/facturen" });
 
 eq("empty title falls back to BoekBrug",
   buildPushPayload({ title: "   ", type: "status" }),
@@ -32,6 +32,22 @@ eq("relative link is kept",
 eq("missing type -> default tag",
   buildPushPayload({ title: "X" }).tag,
   "boekbrug");
+
+// The tag decides what REPLACES what on the device. Two conversations must not collapse into one.
+eq("two conversations keep separate tags",
+  buildPushPayload({ title: "Nieuw bericht", type: "message", link: "/dashboard/messages/aaa" }).tag ===
+  buildPushPayload({ title: "Nieuw bericht", type: "message", link: "/dashboard/messages/bbb" }).tag,
+  false);
+
+eq("the same conversation collapses onto itself",
+  buildPushPayload({ title: "Nieuw bericht", type: "message", link: "/dashboard/messages/aaa" }).tag ===
+  buildPushPayload({ title: "Nieuw bericht", type: "message", link: "/dashboard/messages/aaa" }).tag,
+  true);
+
+eq("two payment notifications about different screens keep separate tags",
+  buildPushPayload({ title: "Factuur betaald", type: "payment", link: "/dashboard/invoice/x" }).tag ===
+  buildPushPayload({ title: "Nog een deel open", type: "payment", link: "/dashboard/bank" }).tag,
+  false);
 
 console.log("\n— isGoneStatus (prune decision) —");
 eq("404 -> prune", isGoneStatus(404), true);
