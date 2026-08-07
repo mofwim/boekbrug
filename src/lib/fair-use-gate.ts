@@ -104,6 +104,35 @@ export type FairUseGate = {
  * Het antwoord bevat nooit een verwijt en altijd een uitweg — de `onExceed`-zin komt
  * letterlijk uit fair-use.ts, dus wat het scherm zegt is wat wij hebben gepubliceerd.
  */
+/**
+ * [E-FACTUUR-GRATIS] The same gate, for a read that may cost nothing.
+ *
+ * The allowance is called `aiDocuments` and it counts AI READS. A Peppol / UBL / Factur-X invoice
+ * is not read by a model at all — the supplier states the figures in structured form and the
+ * parser is arithmetic. Charging a document for it makes the owner pay for something free, and
+ * does worse than that: it pushes a real invoice, one that DOES need reading, out of the month.
+ *
+ * The rule was already made once, in the e-mail sync's batch reservation, and it did not travel to
+ * the four single-file doors. It lives here now so it cannot be got right in one place and wrong
+ * in the others — which is precisely how it stood before this function existed.
+ *
+ * `costsAiCall: false` returns a gate that allows and whose release is a no-op: nothing was taken,
+ * so there is nothing to give back.
+ */
+export async function gateFairUseForRead(params: {
+  client: ProfileReader;
+  userId: string;
+  metric: FairUseKey;
+  plan?: UsagePlan;
+  /** false when the reader answers this file mechanically — see the header. */
+  costsAiCall: boolean;
+}): Promise<FairUseGate> {
+  if (!params.costsAiCall) {
+    return { allowed: true, response: null, release: async () => {} };
+  }
+  return gateFairUse(params);
+}
+
 export async function gateFairUse(params: {
   client: ProfileReader;
   userId: string;

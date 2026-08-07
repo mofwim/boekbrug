@@ -29,7 +29,9 @@ import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { gateFairUse } from "@/lib/fair-use-gate";
+import { gateFairUseForRead } from "@/lib/fair-use-gate";
+// [E-FACTUUR-XML] Een Peppol-factuur aan een bankregel hangen — zelfde lezer als elke andere deur.
+import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
@@ -99,9 +101,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Geen transactie opgegeven" }, { status: 400 });
   }
 
+  // [E-FACTUUR-XML] A supplier's Peppol/UBL invoice may be attached to a bank line like any other
+  // document — and it is the most exact one this app can read. Admitted on the NAME/type here
+  // because the bytes are not in hand yet (the size guard below must run first, on untrusted
+  // input), and CONFIRMED on the content once they are: a .xml that turns out not to be an invoice
+  // is refused with the same sentence as before.
+  const baseType = (file.type || "").toLowerCase().split(";")[0].trim();
+  const maybeEInvoice =
+    baseType === "application/xml" || baseType === "text/xml" ||
+    file.name.toLowerCase().endsWith(".xml");
   const okType =
     file.type === "application/pdf" ||
     file.type.startsWith("image/") ||
+    maybeEInvoice ||
     file.name.toLowerCase().endsWith(".pdf");
   if (!okType) {
     return NextResponse.json({ error: "Alleen PDF of afbeelding toegestaan" }, { status: 400 });
@@ -149,6 +161,17 @@ export async function POST(req: NextRequest) {
   const base64 = buffer.toString("base64");
   const contentHash = computeContentHash(buffer);
 
+  // [E-FACTUUR-XML] Now the bytes are in hand, the name-based admission above is settled on the
+  // CONTENT. A .xml that is not an invoice gets the same refusal it always got — the widened guard
+  // let it reach this line, it does not let it through the door.
+  const isEInvoice = maybeEInvoice && looksLikeInvoiceXmlBytes(buffer);
+  if (maybeEInvoice && !isEInvoice) {
+    return NextResponse.json({ error: "Alleen PDF of afbeelding toegestaan" }, { status: 400 });
+  }
+  // The reader picks its branch by media type, and a .xml arrives with whatever the client felt
+  // like sending — often nothing at all. Hand it the type the content actually is.
+  const readerMime = isEInvoice ? E_INVOICE_XML_MIME : file.type;
+
   const { data: existingDoc } = await supabase
     .from("documents")
     .select("id, file_name, folder_id, trashed")
@@ -192,7 +215,11 @@ export async function POST(req: NextRequest) {
   // per stuk geld kost. Alles wat de route eerder kan weigeren (leeg formulier, verkeerd
   // bestandstype, te groot bestand, een al-verwerkte transactie, een byte-hash duplicaat) is
   // dan al geweigerd zonder iemands maandtegoed aan te raken. Zie [FAIR-USE-TE-VROEG] boven.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  // [E-FACTUUR-GRATIS] An e-invoice is read mechanically — no model, no cost — so it may not spend
+  // a document from the month's allowance.
+  const gate = await gateFairUseForRead({
+    client: supabase, userId: user.id, metric: "aiDocuments", costsAiCall: !isEInvoice,
+  });
   if (!gate.allowed) return gate.response!;
 
   // 6. AI extraction. We do NOT hard-reject a non-invoice here: a rent/lease
@@ -203,7 +230,7 @@ export async function POST(req: NextRequest) {
   // maandtegoed kost — dezelfde belofte als op de andere vijf AI-routes.
   let verification: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>;
   try {
-    verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
+    verification = await verifyInvoiceFromPdf(base64, readerMime, file.name, receiverName, {
       // [READING-MEMORY] Fields only, never amounts — see readingPromptHint. This path books
       // straight to 'paid', so a better first read is worth more here than anywhere else.
       readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
