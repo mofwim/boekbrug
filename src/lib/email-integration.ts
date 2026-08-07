@@ -7,6 +7,8 @@
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
 import { randomUUID } from 'node:crypto'
+// [OBSERVABILITY] De waarde die de lezer telt — één plek, zie skipped-import.ts.
+import { DOC_TYPE_COULD_NOT_READ } from '@/lib/skipped-import'
 // [MAILTEKST] De factuur die nooit een bijlage had: het filter en de tekstconversie.
 import { htmlToReadableText, bodyLooksLikeInvoice, bodyDocumentName } from '@/lib/email-body-invoice'
 import { textToPdf } from '@/lib/text-to-pdf'
@@ -2961,7 +2963,12 @@ export async function syncUserEmails(
             folder_id: folderId,
             source: 'email',
             ai_processed: false,          // we did NOT read it — never claim we did
-            ai_doc_type: 'could_not_read',
+            // [OBSERVABILITY] The shared constant, not the string. skipped-import.ts exists because
+            // the WRITER and the READER of this column once used different values, and a kept file
+            // then counted as nothing: the panel said "Niets overgeslagen" over an unread invoice.
+            // That file promises "een test die faalt zodra iemand er één verplaatst" — and this
+            // writer was still typing the literal, so the promise held for every door but this one.
+            ai_doc_type: DOC_TYPE_COULD_NOT_READ,
             content_hash: hash,
           })
           if (docErr) await supabase.storage.from('documents').remove([storagePath])

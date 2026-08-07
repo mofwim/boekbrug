@@ -2459,3 +2459,92 @@ test("[CI-PARITEIT] CI invokes the package.json scripts, so it cannot drift from
   assert.match(ci, /next build/, "CI must build");
   assert.match(ci, /playwright test tests\/public-surface\.spec\.ts/, "CI must run the public smoke");
 });
+
+// ── [OBSERVABILITY] The kept-but-unread marker lives in ONE file, on both sides ──
+//
+// src/lib/skipped-import.ts exists because the WRITER and the READER of `ai_doc_type` once used
+// different values: intake wrote `v.document_kind ?? "other"` over a file it knew it had not read,
+// and /api/email/skipped counted `.eq('ai_doc_type', 'could_not_read')`. A photographed receipt
+// that could not be read landed neatly in bestanden and was counted by nothing, so the one panel
+// that exists to admit a loss reported "Niets overgeslagen — alles wat binnenkwam is verwerkt".
+// That is the sentence that makes an entrepreneur stop looking.
+//
+// The file closes it by holding both sides together, and promises, in its own header, "een test die
+// faalt zodra iemand er één verplaatst". No such test existed. The promise held for every door but
+// one: saveUnreadableAttachment in the e-mail path was still typing the literal `'could_not_read'`.
+// Equal to the constant today, so nothing was broken — and silently divergent the day the constant
+// changes, at which point every attachment that door stores disappears from the skipped panel AND
+// from the second-chance list, which is exactly the original bug with a new writer.
+//
+// So the gate reads the values OUT of skipped-import.ts rather than repeating them. Add a third
+// reason there and this test guards it the same minute, without anyone remembering to come here.
+test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcoded literal", () => {
+  const CANON = "src/lib/skipped-import.ts";
+
+  // The marker values, taken from the one file that is allowed to spell them.
+  const skippedValues = [...readFileSync(CANON, "utf8").matchAll(
+    /export const DOC_TYPE_\w+\s*=\s*["']([^"']+)["']/g,
+  )].map((m) => m[1]);
+  assert.ok(
+    skippedValues.length >= 2,
+    `${CANON} must still declare the DOC_TYPE_* constants — this gate reads them from there ` +
+      "rather than repeating them, so that the list stays in one place",
+  );
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  // Only where the column itself is named. `saveUnreadableAttachment(att, 'could_not_read')` passes
+  // a REASON, and IncomingInvoicesClient maps that same reason to a Dutch sentence — neither is
+  // this column, and neither drifts with it. A gate that flagged those would be about the string,
+  // not about the two sides of one truth.
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    if (file === CANON || file.startsWith(`${CANON.slice(0, -3)}.test`)) continue;
+    if (file.endsWith("lifecycle-gates.test.ts")) continue;
+    const src = code(file);
+    for (const m of src.matchAll(/ai_doc_type[\s\S]{0,160}/g)) {
+      const window = m[0];
+      // As a WORD, not as a whole quoted string. supabase-js spells a filter value INSIDE a larger
+      // string — `.or('ai_doc_type.eq.could_not_read')`, `.filter('ai_doc_type', 'eq', …)` — so a
+      // rule that required `'could_not_read'` with its own quotes missed the reader shape that
+      // caused the original bug. Measured: it did miss it, on the first negative control.
+      const hit = skippedValues.find((v) => new RegExp(`(^|[^\\w-])${v}([^\\w-]|$)`).test(window));
+      // No line number: code() collapses each comment to a space, so a line counted here points
+      // somewhere else in the real file. A greppable snippet is always right.
+      if (hit) offenders.push(`${file} — '${hit}' near: ${window.slice(0, 70).replace(/\s+/g, " ")}`);
+    }
+  }
+
+  assert.deepEqual(
+    offenders, [],
+    "these places spell a skipped ai_doc_type value by hand instead of using the constants from " +
+      `${CANON}:\n` + offenders.map((o) => `  · ${o}`).join("\n") +
+      `\n\nImport DOC_TYPE_COULD_NOT_READ / DOC_TYPE_UNSUPPORTED / SKIPPED_DOC_TYPES from ` +
+      "@/lib/skipped-import. A writer and a reader that spell the same truth separately go apart " +
+      "without a single test turning red, and a kept file then counts as nothing.",
+  );
+
+  // And the door that carried the drift keeps the constant, named. Absence of the literal alone
+  // would also be satisfied by a door that stopped writing the column at all — which loses the file
+  // in the same way, from the other side.
+  const email = code("src/lib/email-integration.ts");
+  assert.match(
+    email,
+    /const saveUnreadableAttachment[\s\S]{0,2600}?ai_doc_type: DOC_TYPE_COULD_NOT_READ/,
+    "the e-mail door stores an unreadable attachment under the shared constant, so the skipped " +
+      "panel and the second-chance list both see it",
+  );
+  assert.match(
+    email,
+    /import \{[^}]*DOC_TYPE_COULD_NOT_READ[^}]*\} from '@\/lib\/skipped-import'/,
+    "…and takes it from the canonical file rather than declaring its own",
+  );
+});
