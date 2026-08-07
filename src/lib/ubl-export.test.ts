@@ -108,3 +108,118 @@ test("[UBL-CREDIT] the sign rule applies to the creditnota and to nothing else",
     "a negative line on an ordinary invoice must keep its minus — flipping it charges the customer for a credit",
   );
 });
+
+// ── [E-FACTUUR] Three different supplies, all stored as 0% ────────────────────────────────────
+//
+// UBL has a separate code for each, and this exporter sent every one of them as Z (zero rated):
+//
+//   Z   a supply that IS taxed, at 0% — an export, an intracommunautaire levering;
+//   E   exempt, art. 11 Wet OB — care, education, insurance. Not a rate at all;
+//   AE  reverse charge — the buyer owes the BTW.
+//
+// Z is the one that tells the receiving system "taxable, rate zero". For an exempt physio or a
+// reverse-charged subcontractor that is a different legal fact about the same money, and it is the
+// fact the receiver has to book differently. Peppol also REFUSES E and AE without a reason
+// (BR-E-10 / BR-AE-10), so this is not only a mis-statement — after the 2027/2028 mandate it is a
+// document that never arrives.
+
+test("[E-FACTUUR] an exempt line is category E with a reason, not Z", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 900, btw_amount: 0, total_inc_btw: 900 }),
+    [line({ description: "Fysiotherapie", quantity: 1, unit_price: 900, line_total: 900, btw_rate: 0, vat_treatment: "exempt" })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>E<\/cbc:ID>/, "art. 11 is an exemption, not a zero rate");
+  assert.doesNotMatch(xml, /<cbc:ID>Z<\/cbc:ID>/, "and it must NOT also appear as zero-rated");
+  assert.match(
+    xml, /<cbc:TaxExemptionReason>Vrijgesteld van btw op grond van artikel 11 Wet OB 1968<\/cbc:TaxExemptionReason>/,
+    "BR-E-10 requires a reason — without it a Peppol validator rejects the whole document",
+  );
+  // The order inside cac:TaxCategory is part of the schema, not a preference.
+  assert.match(
+    xml, /<cbc:Percent>0<\/cbc:Percent>\s*<cbc:TaxExemptionReason>[\s\S]*?<\/cbc:TaxExemptionReason>\s*<cac:TaxScheme>/,
+    "TaxExemptionReason sits between Percent and TaxScheme",
+  );
+});
+
+test("[E-FACTUUR] a reverse-charged line is AE, read from the owner's own words", () => {
+  // Art. 35a lid 1 sub k Wet OB requires the invoice to SAY "btw verlegd". So an invoice that is
+  // reverse-charged says so, and one that does not is not one — reading that is evidence, while
+  // inferring it from a 0% rate would be a guess. Same regex as the aangifte's regime flag.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 5000, btw_amount: 0, total_inc_btw: 5000 }),
+    [line({ description: "Metselwerk — btw verlegd", quantity: 1, unit_price: 5000, line_total: 5000, btw_rate: 0 })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>AE<\/cbc:ID>/);
+  assert.match(xml, /<cbc:TaxExemptionReason>Btw verlegd — artikel 12 lid 5 Wet OB 1968<\/cbc:TaxExemptionReason>/);
+});
+
+test("[E-FACTUUR] a genuine 0% line is still Z, and carries no reason", () => {
+  // The untouched path. An export or an intracommunautaire levering IS taxed, at 0%, and BR-Z-*
+  // has no exemption reason — adding one there would fail validation just as hard.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000 }),
+    [line({ description: "Levering naar Duitsland", quantity: 1, unit_price: 1000, line_total: 1000, btw_rate: 0 })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>Z<\/cbc:ID>/);
+  assert.doesNotMatch(xml, /TaxExemptionReason/, "a zero-rated supply has nothing to explain");
+});
+
+test("[E-FACTUUR] an ordinary taxed line is S — nothing about this changed", () => {
+  const { xml } = buildInvoiceUbl(header(), [line()], supplier);
+  assert.match(xml, /<cbc:ID>S<\/cbc:ID>/);
+  assert.doesNotMatch(xml, /TaxExemptionReason/);
+});
+
+test("[E-FACTUUR] exempt and zero-rated on ONE invoice are two subtotals, not one merged 0%", () => {
+  // Grouping per RATE merged these into a single €1.000 subtotal in whichever category came last,
+  // and half the money landed under a code it does not belong to. BR-Z-08 and BR-E-08 each require
+  // their category's taxable amount to equal the sum of the lines carrying it, so the merged
+  // version is rejected as well as wrong.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000 }),
+    [
+      line({ description: "Fysiotherapie", quantity: 1, unit_price: 500, line_total: 500, btw_rate: 0, vat_treatment: "exempt" }),
+      line({ description: "Levering naar Duitsland", quantity: 1, unit_price: 500, line_total: 500, btw_rate: 0 }),
+    ],
+    supplier,
+  );
+  const subtotals = [...xml.matchAll(/<cac:TaxSubtotal>[\s\S]*?<\/cac:TaxSubtotal>/g)].map((m) => m[0]);
+  assert.equal(subtotals.length, 2, "one subtotal per (rate, category), not per rate");
+  const byCat = new Map(subtotals.map((s) => [/<cbc:ID>(\w+)<\/cbc:ID>/.exec(s)?.[1] ?? "", s]));
+  assert.ok(byCat.has("E") && byCat.has("Z"), "both categories are present");
+  for (const cat of ["E", "Z"]) {
+    assert.match(
+      byCat.get(cat)!, /<cbc:TaxableAmount[^>]*>500\.00<\/cbc:TaxableAmount>/,
+      `${cat} carries exactly the €500 of its own lines`,
+    );
+  }
+  // And the totals are untouched by the split — the same money, described correctly.
+  assert.match(xml, /<cbc:TaxExclusiveAmount[^>]*>1000\.00<\/cbc:TaxExclusiveAmount>/);
+  assert.match(xml, /<cbc:PayableAmount[^>]*>1000\.00<\/cbc:PayableAmount>/);
+});
+
+test("[E-FACTUUR] a line that charged BTW is never re-read as exempt or reverse-charged", () => {
+  // "btw verlegd" in a description next to a 21% rate is a note about something else, or a
+  // mistake. A line that charged BTW cannot also have shifted it.
+  const { xml } = buildInvoiceUbl(
+    header(),
+    [line({ description: "Advies (zie ook: btw verlegd op de vorige factuur)", btw_rate: 21, vat_treatment: "exempt" })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>S<\/cbc:ID>/);
+  assert.doesNotMatch(xml, /<cbc:ID>(E|AE)<\/cbc:ID>/);
+});
+
+test("[E-FACTUUR] a deployment without the vat_treatment column behaves exactly as before", () => {
+  // The route falls back to a narrower SELECT when the column does not exist, so lines arrive with
+  // the field absent. Absent is not exempt.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 500, btw_amount: 0, total_inc_btw: 500 }),
+    [{ description: "Dienst", quantity: 1, unit_price: 500, line_total: 500, btw_rate: 0 }],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>Z<\/cbc:ID>/);
+});

@@ -61,7 +61,12 @@ export interface RegimeSignals {
 //    (consultation/meeting) and of "verleggen" (to relocate) — an unanchored gate false-flags a
 //    consultancy line like "Juridisch overleg" as reverse charge, which erodes trust.
 //  - margin scheme: the named regelingen only — NOT the bare word "marge" (winstmarge is common).
-const RE_REVERSE = /btw[-\s]*verleg|verleggingsregeling|reverse[-\s]*charge/i;
+// [E-FACTUUR] Exported, because the UBL builder has to answer the same question about the same
+// text: is this supply reverse-charged? A second regex somewhere else would be a second definition
+// of a legal fact, and the two would drift — the aangifte would flag an invoice that the e-invoice
+// exported as an ordinary 0% supply, about one document.
+export const RE_REVERSE_CHARGE = /btw[-\s]*verleg|verleggingsregeling|reverse[-\s]*charge/i;
+const RE_REVERSE = RE_REVERSE_CHARGE;
 const RE_MARGIN = /margeregeling|marge[-\s]?regeling|globalisatieregeling|inkoopverklaring/i;
 
 /**

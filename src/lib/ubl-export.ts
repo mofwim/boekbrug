@@ -24,6 +24,8 @@ import { create } from "xmlbuilder2";
 // [UNIT] De enige plek waar een eenheid een UN/ECE Rec 20-code wordt. Zie units.ts voor
 // waarom de terugval C62 blijft: geen bestaande factuur mag van betekenis veranderen.
 import { toUnitCode } from "./units";
+// [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
+import { RE_REVERSE_CHARGE } from "./regime-flags";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
 
@@ -67,6 +69,13 @@ export interface UblInvoiceLine {
    * regel zonder eenheid valt de export terug op C62, precies zoals hij dat altijd al deed.
    */
   unit?: string | null;
+  /**
+   * [E-FACTUUR] 'exempt' = art. 11 Wet OB. The same flag the aangifte reads to keep this turnover
+   * out of every rubriek — and the reason it must reach the UBL: an exempt supply is category E,
+   * not the Z that every 0% line used to get. Optional, and absent on a deployment where the
+   * column has not been added yet, which then behaves exactly as before.
+   */
+  vat_treatment?: string | null;
 }
 
 // ─── Errors (stable codes — UI/route maps to Dutch copy) ───────────────────────
@@ -134,12 +143,72 @@ function invoiceTypeCode(invoiceType: string | null): "380" | "381" | "325" {
 }
 
 /**
- * UBL tax category code per VAT rate.
- *  S = standard rated (>0%), Z = zero rated (0%).
- * (E/AE for exempt/reverse-charge are out of scope for v1 single-invoice export.)
+ * UBL tax category code (UNCL 5305) for one line or rate group.
+ *
+ * ── WHY A 0% LINE IS NOT AUTOMATICALLY "Z" ──
+ * Three legally different things are all stored as btw_rate 0 in this app, and UBL has a separate
+ * code for each:
+ *
+ *   Z   zero rated        — a supply that IS taxed, at 0%;
+ *   E   exempt from VAT   — art. 11 Wet OB: care, education, insurance. Not a rate at all;
+ *   AE  VAT reverse charge — art. 12 lid 5 / the construction sector: the BUYER owes the BTW.
+ *
+ * Sending E as Z tells the receiver's system it may treat the supply as taxable at 0%, which is
+ * what it does with an export — and E and AE are the ones a receiver has to book differently.
+ * Under BR-E-* and BR-AE-* of Peppol BIS Billing 3.0 both codes also REQUIRE a reason on the
+ * TaxSubtotal (TaxExemptionReason), so a validator rejects the document rather than mis-reading
+ * it. That is why this was worth fixing before the 2027/2028 Dutch e-invoicing mandate rather
+ * than after: an invoice that fails validation is an invoice that was never delivered.
+ *
+ * A line says which one it is via vat_treatment ('exempt') — the same flag the aangifte reads to
+ * keep that turnover out of every rubriek. Reverse charge is not a column in this app; it is read
+ * off the owner's own line text, see lineVatKind().
  */
-function taxCategoryId(rate: number): "S" | "Z" {
+export type UblTaxCategory = "S" | "Z" | "E" | "AE";
+
+export function taxCategoryId(rate: number, treatment?: VatKind): UblTaxCategory {
+  if (treatment === "reverse_charge") return "AE";
+  if (treatment === "exempt") return "E";
   return rate > 0 ? "S" : "Z";
+}
+
+/** What kind of supply a line is, beyond its rate. */
+export type VatKind = "taxed" | "exempt" | "reverse_charge";
+
+/**
+ * The reason text BR-E-10 / BR-AE-10 require next to an E or AE category. Dutch, because it is
+ * printed on a document a Dutch counterparty reads — and because naming the article is what makes
+ * the claim checkable.
+ */
+export function taxExemptionReason(category: UblTaxCategory): string | null {
+  if (category === "E") return "Vrijgesteld van btw op grond van artikel 11 Wet OB 1968";
+  if (category === "AE") return "Btw verlegd — artikel 12 lid 5 Wet OB 1968";
+  return null;
+}
+
+/**
+ * Is this supply reverse-charged to the buyer?
+ *
+ * Deliberately evidence-based: this app has no per-line reverse-charge flag, so the only honest
+ * signal is the one the law itself requires the seller to put on the invoice. Article 226 point
+ * 11a of the VAT Directive (art. 35a lid 1 sub k Wet OB) says a reverse-charged invoice must carry
+ * the words "btw verlegd" — so an invoice that IS reverse-charged says so, and one that does not
+ * is not one. Reading the owner's own words is not a guess; inferring it from a 0% rate would be.
+ *
+ * RE_REVERSE_CHARGE comes from regime-flags.ts, which is the module that already asks this exact
+ * question of this exact text to warn the accountant. A second regex here would be a second
+ * definition of a legal fact about one document, and the aangifte would flag an invoice the
+ * e-invoice exported as an ordinary 0% supply.
+ *
+ * Requires zero BTW on the line as well: a line that charged BTW cannot also have reverse-charged
+ * it, whatever the description says.
+ */
+export function lineVatKind(line: UblInvoiceLine): VatKind {
+  const rate = Number(line.btw_rate ?? 0);
+  if (rate > 0) return "taxed";
+  if (line.vat_treatment === "exempt") return "exempt";
+  if (RE_REVERSE_CHARGE.test(line.description ?? "")) return "reverse_charge";
+  return "taxed"; // a genuine 0% supply — Z
 }
 
 const NS = {
@@ -209,23 +278,40 @@ export function validateUblInputs(
 
 interface TaxGroup {
   rate: number; // e.g. 21, 9, 0
-  taxable: number; // Σ line ex-btw at this rate
+  category: UblTaxCategory;
+  taxable: number; // Σ line ex-btw at this rate AND category
   tax: number; // round2(taxable * rate/100)
 }
 
+/**
+ * One TaxSubtotal per (rate, category) pair — not per rate.
+ *
+ * [E-FACTUUR] It used to be per rate, which silently merged three different supplies. An invoice
+ * with €500 of exempt care and €500 of genuinely 0%-rated export came out as ONE 0% subtotal of
+ * €1.000 in category Z, and the €500 that is exempt vanished into a category it does not belong
+ * to. BR-S-08 / BR-Z-08 / BR-E-08 / BR-AE-08 each require the taxable amount of their category to
+ * equal the sum of the lines carrying it, so the merged version is not only wrong in meaning, it
+ * fails validation as soon as both appear on one invoice.
+ */
 function groupByRate(lines: UblInvoiceLine[]): TaxGroup[] {
-  const map = new Map<number, number>(); // rate -> taxable
+  const map = new Map<string, { rate: number; category: UblTaxCategory; taxable: number }>();
   for (const l of lines) {
     const rate = Number(l.btw_rate ?? 0);
+    const category = taxCategoryId(rate, lineVatKind(l));
+    const key = `${rate}|${category}`;
     const ex = Number(l.line_total ?? 0);
-    map.set(rate, (map.get(rate) ?? 0) + ex);
+    const cur = map.get(key);
+    if (cur) cur.taxable += ex;
+    else map.set(key, { rate, category, taxable: ex });
   }
-  return [...map.entries()]
-    .sort((a, b) => b[0] - a[0]) // 21 before 9 before 0
-    .map(([rate, taxable]) => ({
-      rate,
-      taxable: round2(taxable),
-      tax: round2(taxable * (rate / 100)),
+  return [...map.values()]
+    // 21 before 9 before 0; within one rate, a stable order by category so the XML is reproducible.
+    .sort((a, b) => b.rate - a.rate || a.category.localeCompare(b.category))
+    .map((g) => ({
+      rate: g.rate,
+      category: g.category,
+      taxable: round2(g.taxable),
+      tax: round2(g.taxable * (g.rate / 100)),
     }));
 }
 
@@ -363,8 +449,14 @@ export function buildInvoiceUbl(
     sub.ele(NS.cbc, "TaxableAmount", { currencyID: EUR }).txt(money(g.taxable));
     sub.ele(NS.cbc, "TaxAmount", { currencyID: EUR }).txt(money(g.tax));
     const cat = sub.ele(NS.cac, "TaxCategory");
-    cat.ele(NS.cbc, "ID").txt(taxCategoryId(g.rate));
+    cat.ele(NS.cbc, "ID").txt(g.category);
     cat.ele(NS.cbc, "Percent").txt(String(g.rate));
+    // [E-FACTUUR] BR-E-10 / BR-AE-10: an exempt or reverse-charged subtotal MUST carry a reason.
+    // The element order matters — cbc:TaxExemptionReason sits between Percent and cac:TaxScheme in
+    // the UBL sequence, and a document with the right content in the wrong order is rejected just
+    // as hard as one with the wrong content.
+    const reason = taxExemptionReason(g.category);
+    if (reason) cat.ele(NS.cbc, "TaxExemptionReason").txt(reason);
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
   }
 
@@ -397,7 +489,9 @@ export function buildInvoiceUbl(
     item.ele(NS.cbc, "Description").txt(desc);
     item.ele(NS.cbc, "Name").txt(desc);
     const cat = item.ele(NS.cac, "ClassifiedTaxCategory");
-    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate));
+    // [E-FACTUUR] The LINE's own category, so it matches the subtotal its amount was counted into.
+    // ClassifiedTaxCategory carries no exemption reason — that lives on the TaxSubtotal above.
+    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate, lineVatKind(l)));
     cat.ele(NS.cbc, "Percent").txt(String(rate));
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
     line

@@ -39,8 +39,12 @@ const INVOICE_SELECT =
 // [UNIT] `unit` komt uit migratie invoice_line_unit.sql. Selecteren van een kolom die nog
 // niet bestaat laat de HELE query falen (42703) — en dan zou een boekhouder geen enkele UBL meer
 // kunnen ophalen. Vandaar twee lijsten en de terugval hieronder; zelfde les als created_by.
+// [E-FACTUUR] vat_treatment hoort in dezelfde optionele groep als `unit`: het is de vlag waaraan
+// een vrijgestelde regel (art. 11 Wet OB) te herkennen is, en zonder die vlag exporteert de UBL
+// hem als categorie Z — een 0%-BELASTE levering. Dat is een ander juridisch feit dan vrijgesteld,
+// en het is precies het feit dat de ontvanger anders moet boeken.
 const LINES_SELECT =
-  "description, quantity, unit_price, btw_rate, line_total, unit" as const;
+  "description, quantity, unit_price, btw_rate, line_total, unit, vat_treatment" as const;
 const LINES_SELECT_ZONDER_EENHEID =
   "description, quantity, unit_price, btw_rate, line_total" as const;
 
@@ -163,13 +167,18 @@ export async function GET(req: NextRequest) {
     .eq("invoice_id", invoiceId)
     .order("id", { ascending: true });
 
-  const { data: lineRows, error: linesErr } = isUnknownColumn(eersteLezing.error, "unit")
-    ? await supabase
-        .from("invoice_lines")
-        .select(LINES_SELECT_ZONDER_EENHEID)
-        .eq("invoice_id", invoiceId)
-        .order("id", { ascending: true })
-    : eersteLezing;
+  // [E-FACTUUR] De terugval geldt nu voor twee optionele kolommen. Eén 42703 op ÓF `unit` ÓF
+  // `vat_treatment` laat de hele query falen, en dan kan een boekhouder geen enkele e-factuur meer
+  // ophalen — dezelfde vorm van fout als created_by. De smalle lijst laat beide vallen, wat de
+  // export terugbrengt naar precies het gedrag van vóór deze twee kolommen.
+  const { data: lineRows, error: linesErr } =
+    isUnknownColumn(eersteLezing.error, "unit") || isUnknownColumn(eersteLezing.error, "vat_treatment")
+      ? await supabase
+          .from("invoice_lines")
+          .select(LINES_SELECT_ZONDER_EENHEID)
+          .eq("invoice_id", invoiceId)
+          .order("id", { ascending: true })
+      : eersteLezing;
 
   if (linesErr) {
     return NextResponse.json({ error: linesErr.message }, { status: 500 });
