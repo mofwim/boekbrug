@@ -310,3 +310,40 @@ test("[BETAALPLAN] and the ordinary batch with a credit still works exactly as b
   assert.ok(r.ok);
   assert.equal(r.allocated, 850);
 });
+
+test("[CREDITNOTA] a credit ALREADY on the line raises its budget, it does not lower it", () => {
+  // alreadyAllocated is what earlier links took from this payment, and it is SIGNED for the same
+  // reason `lines` are: a credit gave money TO the line. It was documented as a magnitude and read
+  // through Math.abs, which is right for every ordinary link and backwards for a credit.
+  //
+  // The owner books the €150 credit of an €850 debit, closes the screen, and comes back to book
+  // the €1.000 invoice. The line has €1.000 to give — 850 face plus the 150 the credit returned.
+  const withCredit = resolvePaymentPlan({
+    txAmount: -850,
+    alreadyAllocated: -150,       // the credit, booked in an earlier visit
+    invoices: [purchase("f", 1000)],
+    lines: [{ invoiceId: "f", amount: 1000 }],
+  });
+  assert.ok(withCredit.ok, "the invoice must fit — read as +150 this refused a plan that is exactly right");
+  assert.equal(withCredit.allocated, 1000);
+  assert.equal(withCredit.remainder, 0, "and the line is then fully explained");
+
+  // Read as a magnitude the budget came out at 700, so the same plan was refused by €300 — the
+  // credit counted against the line twice.
+  const asMagnitude = resolvePaymentPlan({
+    txAmount: -850,
+    alreadyAllocated: 150,
+    invoices: [purchase("f", 1000)],
+    lines: [{ invoiceId: "f", amount: 1000 }],
+  });
+  assert.equal(asMagnitude.ok, false, "a POSITIVE 150 still means 150 was taken — that budget really is 700");
+
+  // An ordinary earlier link is unchanged: positive, and it lowers the budget.
+  const ordinary = resolvePaymentPlan({
+    txAmount: -5000,
+    alreadyAllocated: 4500,
+    invoices: [purchase("f", 600)],
+    lines: [{ invoiceId: "f", amount: 600 }],
+  });
+  assert.equal(ordinary.ok, false, "600 does not fit in the 500 this line has left");
+});

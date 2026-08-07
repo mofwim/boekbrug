@@ -545,6 +545,22 @@ export async function POST(req: NextRequest) {
       status: "paid", // attached to a real, visible bank payment
       payment_method: "bank",
       marked_paid_at: new Date().toISOString(),
+      // [PARTIAL-PAY] The MONEY side of 'paid', written here rather than left to a reversal.
+      //
+      // status said paid and amount_paid stayed at its 0 default, and the two are read by
+      // different things. recompute_invoice_amount_paid re-derives amount_paid from Σ
+      // amount_applied — but it runs on UNLINK, so until someone undid this attachment the row
+      // claimed to be settled and showed nothing settled. Every reader that asks "what does this
+      // invoice still owe" answers with the full total: payment-plan.ts's openOf (total − paid),
+      // the money invariants, and any screen offering it up to be paid AGAIN out of a second bank
+      // line. The one that matters most is the last: this invoice exists because a payment was
+      // already seen on the statement.
+      //
+      // Set to the invoice's own total, which is exactly what this route writes on the link row a
+      // few dozen lines down — same number, same reason, and now they agree from the first moment
+      // instead of only after a reversal.
+      amount_paid: Math.abs(totalIncBtw),
+      payment_date: normalizeToIso(tx.date) ?? invoiceDate,
       source: "upload",
       client_name: verification.vendor || (isOutgoing ? "Onbekende klant" : "Onbekende afzender"),
       invoice_date: invoiceDate,

@@ -26,6 +26,7 @@ import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
+import { allocatedByTransaction } from "@/lib/bank-line-budget";
 // [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
 import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 
@@ -170,14 +171,14 @@ export async function GET() {
     // to show the owner nothing: it has a documented fallback (measuredAllCovered returns null →
     // isFullyCovered's token rule), which is conservative and keeps every line visible. Leaving
     // hasLinkRow empty is exactly that fallback, so the page degrades instead of dying.
-    let appliedRows: { transaction_id: string | null; amount_applied: number | null }[] = [];
+    let appliedRows: { transaction_id: string | null; invoice_id: string; amount_applied: number | null }[] = [];
     try {
-      appliedRows = await fetchAllRowsForIds<{ transaction_id: string | null; amount_applied: number | null }, string>(
+      appliedRows = await fetchAllRowsForIds<{ transaction_id: string | null; invoice_id: string; amount_applied: number | null }, string>(
         linkedTxRows.map((r) => (r as BankTransactionDbRow).id),
         (chunk, from, to) =>
           pipeline
             .from("bank_tx_invoices")
-            .select("transaction_id, amount_applied")
+            .select("transaction_id, invoice_id, amount_applied")
             .eq("user_id", user.id)
             .in("transaction_id", chunk)
             .order("id", { ascending: true }) // bank_tx_invoices.id is the PK — invoice_id is NOT unique (two payments can settle one invoice), so paging on it could repeat or skip a link row
@@ -190,8 +191,45 @@ export async function GET() {
       const txId = r.transaction_id;
       if (!txId) continue;
       hasLinkRow.add(txId);
-      if (r.amount_applied == null) { amountUnknown.add(txId); continue; } // pre-[PARTIAL-PAY] link: amount unknown, don't guess
-      appliedByTx.set(txId, (appliedByTx.get(txId) ?? 0) + Math.max(0, Number(r.amount_applied)));
+      if (r.amount_applied == null) amountUnknown.add(txId); // pre-[PARTIAL-PAY] link: amount unknown, don't guess
+    }
+
+    // [CREDITNOTA] The sum is SIGNED, and on this screen the magnitude version does not merely
+    // report a wrong number — it makes money disappear from the owner's to-do list.
+    //
+    // An €850 debit made of a €150 supplier credit and a €700 invoice still has €300 to assign.
+    // Counted as magnitudes that is 150 + 700 = 850, bankLineFullyApplied answers "every euro is
+    // booked", and the line leaves "te bevestigen" with €300 nobody will look at again. Signed it
+    // is 700 − 150 = 550 against 850, and the line stays where the owner can see it.
+    //
+    // The extra read is the invoice TYPES of the links we just found — one chunked query on a
+    // screen that already runs several, and the alternative is a screen that hides money.
+    const priced = appliedRows.filter((r) => r.transaction_id && r.amount_applied != null);
+    if (priced.length > 0) {
+      try {
+        const linkedInvoices = await fetchAllRowsForIds<{ id: string; invoice_type: string | null; total_inc_btw: number | null }, string>(
+          [...new Set(priced.map((r) => r.invoice_id))],
+          (chunk, from, to) =>
+            pipeline
+              .from("invoices")
+              .select("id, invoice_type, total_inc_btw")
+              .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+              .in("id", chunk)
+              .order("id", { ascending: true })
+              .range(from, to),
+        );
+        const { byTransaction, unknownByTransaction } = allocatedByTransaction(priced, linkedInvoices);
+        for (const [txId, total] of byTransaction) appliedByTx.set(txId, total);
+        // A link to an invoice we could not read makes the total a guess, exactly like a missing
+        // amount does — same set, same conservative outcome.
+        for (const txId of unknownByTransaction.keys()) amountUnknown.add(txId);
+      } catch (e) {
+        // Same degradation as the read above: unmeasured, never mis-measured. Marking every line
+        // unknown sends measuredAllCovered to null and the reference-token rule takes over, which
+        // keeps lines VISIBLE — the safe direction for a screen whose job is to show what is left.
+        console.error("[BANK-COVERAGE-BY-MONEY] invoice-type read failed — falling back to the reference-token rule", e);
+        for (const r of priced) if (r.transaction_id) amountUnknown.add(r.transaction_id);
+      }
     }
   }
   /** Is every euro of this bank line sitting on an invoice? Measured, not guessed —

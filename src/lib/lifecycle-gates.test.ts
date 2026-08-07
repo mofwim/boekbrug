@@ -2347,6 +2347,50 @@ test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the i
   );
 });
 
+// ── [LIJN-BUDGET] One sum for "what has this bank line already given away" ────
+//
+// Four places need it: the screen that offers a payment to be divided, the route that books the
+// division, the route that confirms a single invoice, and the bank page that decides which lines
+// are still open. It was written four times, with Math.abs around each, and the four then meant
+// four different things the moment a creditnota was involved:
+//
+//   · /api/bank/allocate  — the pre-flight refused plans the database would have accepted;
+//   · /api/bank/confirm   — capped the next invoice at a budget €300 too small and booked THAT;
+//   · the verdelen screen — showed "al helemaal verdeeld" with €1.000 still to divide;
+//   · /api/bank/match     — an €850 line made of a €150 credit and a €700 invoice summed to 850,
+//                           read as fully covered, and left "te bevestigen" with €300 on it that
+//                           nobody will look at again.
+//
+// The last one is the one to remember: the others report a wrong number, that one makes money
+// disappear from the owner's to-do list. bank_tx_invoices.amount_applied is a MAGNITUDE by design
+// — per invoice a credit really was settled by €150 — so every per-LINE reader has to re-derive
+// the sign, and re-deriving it four times is how they came to disagree.
+test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one shared sum", () => {
+  const readers = [
+    "src/app/api/bank/allocate/route.ts",
+    "src/app/api/bank/confirm/route.ts",
+    "src/app/api/bank/match/route.ts",
+    "src/app/dashboard/bank/verdelen/[txId]/page.tsx",
+  ];
+  for (const file of readers) {
+    const src = code(file);
+    assert.match(
+      src,
+      /from ['"]@\/lib\/bank-line-budget['"]/,
+      `${file} sums a bank line's applied total and must take it from bank-line-budget.ts — a ` +
+        "second copy of this sum is how the four readers came to disagree about the same line",
+    );
+    // The mechanism, not the symptom: an inlined `+= Math.abs(... amount_applied ...)` is the exact
+    // shape all four had, and it is sign-blind by construction.
+    assert.doesNotMatch(
+      src,
+      /\+=\s*Math\.(abs|max)\([^)]*amount_applied/,
+      `${file} accumulates amount_applied itself. Per INVOICE that magnitude is right; per LINE it ` +
+        "is not — a credit gives money back to the line. Use allocatedOnLine/allocatedByTransaction.",
+    );
+  }
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:
