@@ -17,6 +17,8 @@
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [REGEL-AFRONDING] Dezelfde afronding als de PUT-route — zie de regel hieronder.
+import { round2 } from '@/lib/invoice-totals'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
@@ -200,7 +202,22 @@ export async function POST(request: NextRequest) {
           quantity: sign * l.quantity,
           unit_price: l.unit_price,
           btw_rate: l.btw_rate,
-          line_total: sign * l.quantity * l.unit_price,
+          // [REGEL-AFRONDING] Afgerond, net als de PUT-route en de gratis generator.
+          //
+          // Zonder dit staat 1,5 uur x EUR 33,33 als 49,995 in de kolom (invoice_lines.line_total
+          // is numeric ZONDER schaal, dus het wordt letterlijk zo bewaard). De PDF drukt dan twee
+          // regels van EUR 50,00 met een subtotaal van EUR 99,99: de klant telt 50 + 50 op en de
+          // factuur zegt iets anders.
+          //
+          // In de UBL-export is het erger dan lelijk. Elke InvoiceLine krijgt round2(line_total) =
+          // 50,00 terwijl LegalMonetaryTotal de som van de RUWE waarden afrondt tot 99,99. Peppol
+          // BIS 3.0 regel BR-CO-10 eist dat die twee gelijk zijn, dus het e-factuurbestand wordt
+          // bij het ontvangende access point geweigerd — de factuur komt niet aan.
+          //
+          // En het bedrag hing af van de route: dezelfde factuur via het bewerkscherm opgeslagen
+          // kwam er wél op EUR 121,00 uit, omdat de PUT per regel afrondt. Twee wegen naar hetzelfde
+          // document met twee verschillende totalen is precies wat een boekhouder niet kan uitleggen.
+          line_total: round2(sign * l.quantity * l.unit_price),
           // De eenheid hoort bij de regel, dus per regel — niet één keer voor de hele factuur.
           ...(Object.keys(spoor).length
             ? {

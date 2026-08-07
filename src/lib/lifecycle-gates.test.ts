@@ -2356,3 +2356,62 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
   assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
   assert.match(ui, /setRereadMessage\(typeof json\?\.error === "string"/, "and so does failure");
 });
+
+// ── [VRIJGESTELD-KOPIE] Every route that COPIES invoice lines carries the exemption flag ──
+//
+// Four routes duplicate invoice_lines: the creditnota, the recurring cron, the duplicate action and
+// the edit PUT (which deletes every line and re-inserts it). All four already carried `unit`,
+// because a "2 uur arbeid" that leaves as "2 stuks" is visible on the PDF. None carried
+// vat_treatment, because losing it is invisible — and far more expensive.
+//
+// A copied exempt line without the flag is classified as TAXED turnover at 0%. On a creditnota that
+// means the correction does not cancel the original: the original stays +EUR 1.000 vrijgestelde
+// omzet and the credit lands as -EUR 1.000 in the 0%/verlegd rubriek. Two rubrieken wrong at once,
+// while 5a and 5b still balance — so no screen shows it. A recurring exempt invoice silently becomes
+// taxed from its second month.
+//
+// This is a CLASS test on purpose. Fixing four sites does not stop the fifth.
+test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_treatment", () => {
+  const copiers = [
+    "src/app/api/invoice/creditnota/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/invoice/[id]/route.ts",
+  ];
+  for (const path of copiers) {
+    const src = code(path);
+    assert.match(
+      src,
+      /vat_treatment/,
+      `${path} copies invoice lines but never mentions vat_treatment — a copied exempt line becomes taxed 0% turnover in the aangifte`,
+    );
+    // And it must HARDEN, not pass through: only the literal 'exempt' may mean exempt. An unknown
+    // value reaching the column would claim an exemption nobody declared.
+    assert.match(
+      src,
+      /vat_treatment === 'exempt' \? 'exempt' : null/,
+      `${path} must harden vat_treatment the same way every other writer does`,
+    );
+  }
+});
+
+// [REGEL-AFRONDING] The draft route rounds its line totals, like every other writer.
+//
+// invoice_lines.line_total is `numeric` with NO scale, so an unrounded value is stored verbatim.
+// 1,5 uur x EUR 33,33 became 49,995; the PDF printed two lines of EUR 50,00 above a subtotal of
+// EUR 99,99, and the customer's own addition disagreed with the invoice. The UBL export was worse:
+// each InvoiceLine rounds to 50,00 while LegalMonetaryTotal rounds the sum of the raw values to
+// 99,99, and Peppol BIS 3.0 rule BR-CO-10 requires those to be equal — the e-invoice is rejected at
+// the receiving access point.
+//
+// The same invoice saved once through the edit screen came out a cent higher, because the PUT
+// rounds per line. Two routes to one document with two totals.
+test("[REGEL-AFRONDING] the draft route rounds line_total, like the PUT route does", () => {
+  const draft = code("src/app/api/invoice/draft/route.ts");
+  assert.match(
+    draft,
+    /line_total: round2\(/,
+    "the draft route must round line_total — an unrounded value is stored verbatim and the document stops adding up",
+  );
+});
+
