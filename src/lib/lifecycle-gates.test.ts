@@ -2296,6 +2296,67 @@ test("[BETAALPLAN] every money RPC that takes p_user_id checks the caller agains
   );
 });
 
+test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
+  // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
+  // nothing could be done with it. Measured before this route existed:
+  //   · the sync loads email_skipped_attachments into knownKeys and filters the attachment out of
+  //     EVERY future run, backfill included;
+  //   · /api/documents/reprocess covers spreadsheets and daily-sales reports, never an invoice;
+  //   · every invoice-reading route starts from an UPLOAD or an existing INVOICE;
+  //   · and re-uploading the same bytes is refused by the byte-hash gate, which is deliberately
+  //     NOT forceable — "an unreadable file carries no invoice to add again". True when written,
+  //     and the sentence that traps the file.
+  // Honest about the failure, no way out of it, cost unbooked and voorbelasting unclaimed.
+  const src = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+
+  // Only files that were kept BECAUSE they could not be read, and only while they are still
+  // waiting. Reading an ordinary document as an invoice on request is how a cost that never
+  // existed enters the books.
+  assert.match(
+    src, /if \(doc\.invoice_id\) \{[\s\S]{0,200}?status: 409/,
+    "a document already behind an invoice may not be read again",
+  );
+  assert.match(
+    src, /if \(!isSkippedDocType\(doc\.ai_doc_type\)\) \{/,
+    "only a file the app filed as unreadable qualifies",
+  );
+
+  // The type comes from the CONTENT. A file that arrived with a wrong or empty media type is
+  // exactly the kind that failed the first read.
+  assert.match(
+    src, /const isEInvoice = looksLikeInvoiceXmlBytes\(buffer\)/,
+    "the second reading must not repeat the first one's mistake about the type",
+  );
+  // …and an e-invoice costs nothing, which is the case that matters most here: every UBL invoice
+  // filed as 'unsupported_type' before the app could read one is recoverable for free.
+  assert.match(
+    src, /gateFairUseForRead\(\{[\s\S]{0,160}?costsAiCall: !isEInvoice/,
+    "a mechanical re-read may not spend a document from the month",
+  );
+  // A failed READ is not a reading — give the allowance back.
+  assert.match(src, /await gate\.release\(\)/, "a transient failure must not cost a document");
+
+  // The same semantic duplicate gate the upload door applies: the invoice may have been booked
+  // another way since. Booking it again is a double cost and a double voorbelasting claim.
+  assert.match(src, /await findSemanticDuplicate\(/, "a re-read must not double-book");
+
+  // Never straight into the books. This file failed a reading once already.
+  assert.match(src, /status: "processing"/, "a second chance lands in the verify queue");
+  assert.doesNotMatch(src, /status: "received"/, "…never booked outright");
+
+  // And the panel that names these files now offers the action, instead of telling the owner to go
+  // look at something they cannot act on.
+  const api = code("src/app/api/email/skipped/route.ts");
+  assert.match(api, /\.is\('invoice_id', null\)/, "only files still waiting are offered");
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(ui, /\/api\/documents\/\$\{docId\}\/read-as-invoice/, "the panel must call it");
+  assert.match(ui, /Lees opnieuw/, "and offer it in words");
+  // The answer is always a sentence. A silent button on the one panel whose purpose is honesty
+  // about what went missing would be the wrong thing twice over.
+  assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
+  assert.match(ui, /setRereadMessage\(typeof json\?\.error === "string"/, "and so does failure");
+});
+
 // ── [VRIJGESTELD-KOPIE] Every route that COPIES invoice lines carries the exemption flag ──
 //
 // Four routes duplicate invoice_lines: the creditnota, the recurring cron, the duplicate action and
