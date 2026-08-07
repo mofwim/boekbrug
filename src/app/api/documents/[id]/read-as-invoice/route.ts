@@ -67,7 +67,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // tell the owner their evidence is gone.
   const { data: doc, error: docErr } = await supabase
     .from("documents")
-    .select("id, file_url, file_name, file_type, ai_doc_type, invoice_id")
+    .select("id, file_url, file_name, file_type, ai_doc_type, invoice_id, trashed")
     .eq("id", id).eq("user_id", user.id).maybeSingle();
   if (docErr) {
     console.error("[TWEEDE-KANS] document lookup failed", { id, error: docErr.message });
@@ -80,6 +80,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // reading it as one on request is how an owner books a cost that never existed.
   if (doc.invoice_id) {
     return NextResponse.json({ error: "Dit bestand hoort al bij een factuur." }, { status: 409 });
+  }
+  // [PRULLENBAK] The owner threw this away. Filtering it out of the panel is not enough — a panel
+  // is a snapshot, and this route is reachable with an id from a tab that loaded before the file
+  // went in the bin. Booking a cost (and claiming voorbelasting) from a document its owner deleted
+  // is a decision the app may not make on its own, so the door refuses and says what to do.
+  if (doc.trashed === true) {
+    return NextResponse.json({
+      error: "Dit bestand staat in je prullenbak. Zet het eerst terug als je het toch wilt laten lezen.",
+    }, { status: 409 });
   }
   if (!isSkippedDocType(doc.ai_doc_type)) {
     return NextResponse.json({

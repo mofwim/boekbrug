@@ -2615,3 +2615,123 @@ test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcod
     "…and takes it from the canonical file rather than declaring its own",
   );
 });
+
+// ── [PRULLENBAK] The skipped panel counts what bestanden shows, and no more ──
+//
+// The panel "Overgeslagen bij import (en waarom)" makes one promise in words: these files are in
+// your bestanden, go and look. It filtered nothing on `trashed`.
+//
+// So: an unreadable attachment arrives, is kept, and is named. The owner opens bestanden, sees it
+// is a supplier's logo or a reclame-pdf, and throws it away — a soft delete, `trashed = true`, gone
+// from bestanden. The panel keeps counting it and keeps pointing at bestanden, where it is not.
+// The counter can never reach zero again, and a counter that never reaches zero is ruis; ruis gets
+// ignored. That is the same silence as "Niets overgeslagen" over an unread invoice, reached from
+// the other end — this panel is the one surface that admits a loss, and an owner who has learned to
+// ignore it is an owner who will not see the next real one.
+//
+// [TWEEDE-KANS] made it worse than cosmetic: the panel offered "Lees opnieuw" on the binned file,
+// and the route would download it, read it, and book the cost with its voorbelasting.
+test("[PRULLENBAK] a file in the bin is not counted, not offered, and not readable", () => {
+  const api = code("src/app/api/email/skipped/route.ts");
+
+  // Both queries, not one. The count is the sentence the owner reads first; the list is what they
+  // can act on. A filter on only one of them makes the panel disagree with itself.
+  const trashFilters = [...api.matchAll(/\.eq\('trashed', false\)/g)].length;
+  assert.equal(
+    trashFilters, 2,
+    "both the could-not-read COUNT and the [TWEEDE-KANS] unread LIST must exclude trashed " +
+      `documents — found ${trashFilters} filter(s). The panel tells the owner these files are in ` +
+      "bestanden; counting one they threw away points them at something that is not there.",
+  );
+
+  // The SAME spelling as the place the panel points at. This is the [OBSERVABILITY] lesson applied
+  // to a second column: `trashed` is `boolean DEFAULT false` and NULLABLE (database.sql), so
+  // `.eq('trashed', false)` and `IS NOT TRUE` differ on a NULL row. Two surfaces that must agree
+  // may not spell the same truth two ways — one would count a file the other refuses to show.
+  const bestanden = code("src/app/api/bestanden/route.ts");
+  assert.match(
+    bestanden, /\.eq\("trashed", false\)/,
+    "bestanden filters trashed with .eq(\"trashed\", false) — the skipped panel copies that " +
+      "spelling on purpose. If this changed, change the panel with it (and read the NULL note above)",
+  );
+
+  // And the door refuses on its own. The panel is a snapshot: an id from a tab that loaded before
+  // the file went in the bin still reaches this route.
+  const route = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  assert.match(
+    route, /\.select\("[^"]*\btrashed\b[^"]*"\)/,
+    "the re-read route must fetch `trashed` — a guard over a column it never selected reads " +
+      "undefined and passes",
+  );
+  assert.match(
+    route, /if \(doc\.trashed === true\) \{[\s\S]{0,300}?status: 409/,
+    "…and refuse a document the owner deleted, rather than booking a cost out of the prullenbak",
+  );
+  assert.match(
+    route, /prullenbak/,
+    "…in words that say what to do about it",
+  );
+});
+
+// ── [BIJLAGE-TERUGWEG] The skipped panel does not send the owner down a road that is closed ──
+//
+// The panel lists every attachment the classifier judged "leek geen factuur" and, underneath,
+// offered one remedy: "Mis je hier een echte factuur? Gebruik 'Oudere e-mails opnieuw ophalen'."
+//
+// That remedy cannot work for anything IN the list. Measured, three ways:
+//   · PHASE 0 of the sync loads email_skipped_attachments into knownKeys, unconditionally — there
+//     is no backfill branch around it;
+//   · `notKnown = attachments.filter(a => !knownKeys.has(...))` drops them before any fetch;
+//   · a backfill only moves `syncAfterMs`. It re-LISTS the message and PHASE 0 filters the
+//     attachment straight back out.
+// And nothing in the codebase ever DELETEs from that table, so the block is permanent.
+//
+// So an owner reading "leek geen factuur" beside a real invoice followed the app's own advice, was
+// told "0 nieuw", and concluded the invoice had never arrived. Worse than silence: the app made a
+// wrong call and then confirmed it with guidance it could not honour.
+//
+// The bytes of a not-an-invoice attachment are discarded on purpose — a mailbox of signature images
+// is not worth storing — so the honest way back is the mailbox, and a filename alone does not find
+// an e-mail. The rows carry their date for that reason.
+test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually honour", () => {
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const sync = code("src/lib/email-integration.ts");
+
+  // The premise. If either of these stops holding, the advice below is free to change back — and
+  // this gate should be the thing that says so, rather than the owner finding out.
+  assert.match(
+    sync,
+    // 400, measured at 274 on the stripped source. The other knownKeys.add (the invoices one) sits
+    // BEFORE this query, and the match only looks forward, so a wide window cannot borrow it.
+    /from\('email_skipped_attachments'\)[\s\S]{0,400}?knownKeys\.add/,
+    "PHASE 0 still folds the skip registry into knownKeys — the reason a backfill cannot reach a " +
+      "listed attachment. If this is gone, re-read the panel's wording below",
+  );
+  assert.doesNotMatch(
+    sync,
+    /from\('email_skipped_attachments'\)\s*\.delete\(/,
+    "nothing clears the skip registry, so the block is permanent — the panel may not imply otherwise",
+  );
+
+  // The wording. The old sentence named the backfill as the remedy for a row IN the list; the two
+  // situations now have their own answers, and the backfill keeps only the one it can serve.
+  assert.match(
+    ui,
+    /Die bijlage halen wij niet nog een keer op/,
+    "the panel must say plainly that a listed attachment will not be fetched again — that is the " +
+      "fact the old advice contradicted",
+  );
+  assert.match(
+    ui,
+    /niet<\/em> tussen staat\? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen/,
+    "…and keep the backfill only for the case it can serve: an invoice that is NOT in this list",
+  );
+
+  // The date, because "open de e-mail" is advice an owner can only follow if they can find it.
+  assert.match(
+    ui,
+    /\{s\.filename\}[\s\S]{0,300}?formatDate\(s\.createdAt\)/,
+    "each skipped row must show its date beside the filename — the API has always returned " +
+      "createdAt, and without it the only remedy the app can offer is unfollowable",
+  );
+});

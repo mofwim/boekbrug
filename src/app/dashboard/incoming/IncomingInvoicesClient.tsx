@@ -737,10 +737,17 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                     </div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {/* [BIJLAGE-TERUGWEG] The date, not only the name. The one thing an owner can
+                          actually do with a misjudged attachment is open the e-mail it came in and
+                          add it by hand — and "sepa-01.pdf" alone does not find that e-mail. The
+                          API has returned createdAt all along; the row dropped it. */}
                       {(skippedItems ?? []).map((s, i) => (
                         <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
                           <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
                             {s.filename}
+                            {s.createdAt && (
+                              <span style={{ color: "#a0a0a5" }}> · {formatDate(s.createdAt)}</span>
+                            )}
                           </span>
                           <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {friendlySkipReason(s.reason)}
@@ -749,8 +756,23 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                       ))}
                     </div>
                   )}
+                  {/* [BIJLAGE-TERUGWEG] Two situations, two answers — this said one thing and it was
+                      false for the case an owner is most likely in.
+
+                      "Oudere e-mails opnieuw ophalen" cannot bring back an attachment that is IN
+                      this list. PHASE 0 of the sync loads email_skipped_attachments into knownKeys
+                      and filters those attachments out of EVERY run, backfill included — measured,
+                      and stated in the [TWEEDE-KANS] gate. So an owner reading "leek geen factuur"
+                      next to a real invoice followed this advice, got "0 nieuw", and concluded the
+                      invoice was never there. A wrong answer the app then confirmed.
+
+                      The bytes of a not-an-invoice attachment are deliberately discarded (a mailbox
+                      full of signature images is not worth storing), so the honest route back is the
+                      mailbox itself — which is why the rows above now carry their date. */}
                   <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
-                    Mis je hier een echte factuur? Gebruik &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven, of voeg hem toe met een foto.
+                    Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op. Open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.
+                    <br />
+                    Mis je een factuur die hier <em>niet</em> tussen staat? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven.
                   </div>
                 </>
               )}
