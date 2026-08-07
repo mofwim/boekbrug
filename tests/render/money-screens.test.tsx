@@ -671,6 +671,15 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
       })),
   );
   assert.ok(html.length > 500, "Vandaag rendered its lists");
+
+  // [PARTIAL-PAY] Not just "it rendered" — the number it rendered. v2 is EUR 872 with EUR 400 paid,
+  // so the amount on the card is the EUR 472 that is still owed. Showing the invoice total there
+  // tells an owner to pay money they already paid, and this list is the one they work from.
+  assert.ok(html.includes("€ 472,00"), "the partly-paid card must show what is still OPEN");
+  assert.ok(
+    html.includes("deels betaald") && html.includes("€ 872,00"),
+    "…with the full total named beside it, so the smaller number is never a mystery",
+  );
 });
 
 test("[RENDER-GATE] the sales overview renders", async () => {

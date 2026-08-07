@@ -2490,6 +2490,43 @@ test("[DEP-VEILIG] the nested postcss and sharp stay overridden", () => {
   );
 });
 
+// ── [PARTIAL-PAY] A money confirmation names the money ────────────────────────
+//
+// /vandaag lets an owner tick an invoice off without leaving the page, and the panel that does it
+// said: "Betaald met — vandaag, het hele bedrag:". No amount in it, and on a partly-paid invoice
+// not true either — the card directly above showed €4.662,80 open of €6.662,80, and the panel
+// underneath offered to book "het hele bedrag".
+//
+// The WRITE was right the whole time: apply_manual_payment reads an absent amount as "the rest",
+// so €4.662,80 is what landed. That is what makes it worth a gate rather than a fix — the defect
+// is entirely in what the owner was told, so nothing downstream disagrees, no total is off, and
+// the only place it exists is a sentence. He hesitates over a correct action, or he presses it
+// and believes €2.000 more left his account than did.
+test("[PARTIAL-PAY] the /vandaag confirm panel states the amount it will actually book", () => {
+  const src = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+
+  assert.doesNotMatch(
+    src,
+    /vandaag, het hele bedrag:/,
+    "the confirm panel promises 'het hele bedrag' with no amount — on a partly-paid invoice that " +
+      "is the invoice total, and what gets booked is the remainder",
+  );
+  // It must say a number, and that number must be the one derived from amount_paid.
+  assert.match(
+    src,
+    /formatEuroNL\(openstaand\)/,
+    "the panel must name the amount it books, taken from the same `openstaand` the card shows",
+  );
+  // One derivation, not two. The card and the panel disagreeing is exactly how this happened, and
+  // an IIFE recomputing it inside the JSX is what let them.
+  assert.equal(
+    (src.match(/const openstaand\b/g) ?? []).length,
+    1,
+    "`openstaand` is computed once for the whole card — a second copy is how the amount shown and " +
+      "the amount booked came apart in the first place",
+  );
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:
