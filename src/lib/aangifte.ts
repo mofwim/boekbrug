@@ -87,7 +87,33 @@ export interface ConceptAangifte {
   isConcept: true;
 }
 
-const euro = (n: number) => Math.round(n); // Belastingdienst rounds to whole euros
+/**
+ * Whole euros, the way the Belastingdienst rounds — and SYMMETRICALLY around zero.
+ *
+ * ── WHY NOT Math.round ──
+ * Math.round breaks ties toward +∞, not away from zero. So `Math.round(1.5)` is 2 while
+ * `Math.round(-1.5)` is −1: the same half-euro rounds up in one direction and down in the other.
+ *
+ * On a normal quarter that is invisible, because every rubriek is positive. It stops being
+ * invisible on a quarter that nets NEGATIVE — a business that issued a large creditnota, a
+ * refunded season, a corrected invoice from an earlier period. Those are exactly the quarters
+ * where a figure is already unusual and least likely to be double-checked, and there the bias runs
+ * one way every time: consistently toward zero, which on a reclaim is consistently against the
+ * owner.
+ *
+ * The amount is at most €1 per rubriek, and it is still worth fixing for a reason that has nothing
+ * to do with the euro: this figure is copied into an aangifte. A number that cannot be reproduced
+ * by the person checking it — because their calculator rounds −1,50 to −2 and ours said −1 — costs
+ * far more in trust than it ever could in tax.
+ *
+ * `-0` is normalised to `0`: JavaScript keeps them distinct, and a rubriek printed as "−0" on a
+ * concept an accountant reads is a question nobody should have to ask.
+ */
+const euro = (n: number): number => {
+  if (!Number.isFinite(n)) return 0;
+  const rounded = Math.sign(n) * Math.round(Math.abs(n));
+  return rounded === 0 ? 0 : rounded;
+};
 
 const RATE_LABEL: Record<string, string> = {
   "1a": "Leveringen/diensten belast met hoog tarief (21%)",

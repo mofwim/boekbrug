@@ -374,5 +374,50 @@ console.log("\n— [VRIJGESTELD] and an ordinary owner with a till is never warn
   check("off-regime: no exemption sentence of any kind", !/vrijgesteld/i.test(notes));
 }
 
+// ── [AFRONDING] Whole euros, symmetrically around zero ───────────────────────
+//
+// Math.round breaks ties toward +infinity, so 1,50 becomes 2 but -1,50 becomes -1. Invisible on a
+// normal quarter, where every rubriek is positive. It appears on a quarter that nets NEGATIVE — a
+// large creditnota, a refunded season, a correction from an earlier period — which is exactly the
+// quarter that is already unusual and least likely to be double-checked. There the bias ran one
+// way every time: toward zero, which on a reclaim is against the owner.
+console.log("\n— [AFRONDING] hele euro's, symmetrisch rond nul —");
+{
+  const neg = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: -1000.5, btw: -210.5 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q3 2026",
+  );
+  const n1a = neg.rows.find((r) => r.code === "1a")!;
+  check("-210,50 wordt -211, niet -210", n1a.btw === -211);
+  check("-1000,50 wordt -1001, niet -1000", n1a.omzet === -1001);
+
+  // De positieve kant mag NIET bewegen: deze correctie hoort een gewoon kwartaal niet te raken.
+  const pos = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: 1000.5, btw: 210.5 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q3 2026",
+  );
+  const p1a = pos.rows.find((r) => r.code === "1a")!;
+  check("210,50 blijft 211", p1a.btw === 211);
+  check("1000,50 blijft 1001", p1a.omzet === 1001);
+
+  // JavaScript houdt -0 en 0 uit elkaar, en een "-0" op een concept dat een boekhouder leest is
+  // een vraag die niemand hoort te hoeven stellen.
+  const nul = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: -0.4, btw: -0.2 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q3 2026",
+  );
+  const z1a = nul.rows.find((r) => r.code === "1a")!;
+  check("een rubriek staat nooit als -0", Object.is(z1a.btw, 0) && Object.is(z1a.omzet, 0));
+
+  // 5b en 5g lopen door dezelfde afronding — een teruggaaf hoort net zo symmetrisch te zijn.
+  const teruggaaf = buildAangifte(
+    { salesByRate: [], btwVoorbelasting: 210.5, cashOmzetZonderBtw: 0 },
+    compl(), "Q3 2026",
+  );
+  check("voorbelasting 210,50 wordt 211", teruggaaf.voorbelasting === 211);
+  check("en het saldo is dan -211", teruggaaf.saldo === -211);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+
