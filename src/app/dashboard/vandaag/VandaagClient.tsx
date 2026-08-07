@@ -26,7 +26,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
-import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
+import { formatEuroNL, formatDateNL, amsterdamToday } from "@/lib/format-nl";
 import { FONT, COLUMN } from "@/lib/design/tokens";
 import { rowMatchesQuery } from "@/lib/search";
 // [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
@@ -162,16 +162,63 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         : `/dashboard/invoice/${id}`
     );
 
-  // [TODAY-UX-CLARITY] "Al betaald?" — the owner confirms a payment they already
-  // made (paid-but-unrecorded is the #1 cause of a scary "overdue"). Vandaag stays
-  // READ-ONLY: this routes to the manage surface AND asks it to open the existing
-  // mark-as-paid dialog (?action=pay), so the owner lands directly on Bank/Contant
-  // + date. The write itself still happens only in IncomingManageClient (one
-  // source of truth) — Vandaag merely passes the intent via the URL.
-  // [NAV-FROM] &from=vandaag so Terug on the manage surface returns to Vandaag, not to the
-  // verification list this visitor never opened.
-  const confirmPaid = (id: string) =>
+  // [VANDAAG-DOEN] "Al betaald?" — nu HIER, in plaats van een reis naar een ander scherm.
+  //
+  // WAAROM DIT VERANDERDE
+  // Deze pagina had vier knoppen en alle vier brachten je ergens anders heen. Hij las daardoor als
+  // een lijst waar je naar kijkt in plaats van een werkblad waarop je werkt: 89 inkoopfacturen,
+  // EUR 58.000 te betalen, en geen enkele handeling die je hier kon afmaken.
+  //
+  // De oude regel hierboven — "Vandaag stays READ-ONLY, one source of truth" — verwarde twee
+  // dingen. Eén bron van waarheid gaat over de SCHRIJVER, niet over het SCHERM. Die schrijver is
+  // /api/invoice/pay-toggle: server-authoritative, geaudit, en het ongedaan maken koppelt ook de
+  // banktransactie los. Dat blijft precies zo. Alleen roept deze pagina hem nu zelf aan, in plaats
+  // van de eigenaar erheen te sturen om dezelfde knop daar te vinden.
+  //
+  // WAT HIER NADRUKKELIJK NIET KAN
+  // Een deelbetaling, of een andere datum dan vandaag. Dat zijn de gevallen waarin het bedrag of
+  // het moment ter discussie staat, en die horen op het scherm dat ze volledig kan tonen — de link
+  // ernaast blijft er dus staan. Deze knop doet alleen het geval dat de eigenaar tientallen keren
+  // per kwartaal heeft: die is helemaal betaald, vandaag, van de bank.
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [payBusy, setPayBusy] = useState<string | null>(null);
+  const [payError, setPayError] = useState<Record<string, string>>({});
+  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
+
+  const confirmPaid = (id: string) => setPayingId((cur) => (cur === id ? null : id));
+
+  // [NAV-FROM] &from=vandaag zodat Terug op het beheerscherm hier terugkomt, niet in de
+  // verificatielijst die deze bezoeker nooit opende.
+  const openFullPayDialog = (id: string) =>
     router.push(`/dashboard/incoming/manage?focus=${id}&action=pay&from=vandaag`);
+
+  const payNow = useCallback(async (id: string, paymentMethod: "bank" | "kas") => {
+    setPayBusy(id);
+    setPayError((e) => ({ ...e, [id]: "" }));
+    try {
+      const res = await fetch("/api/invoice/pay-toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: id,
+          action: "pay",
+          paymentMethod,
+          paymentDate: amsterdamToday(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Afboeken is niet gelukt.");
+      setPaidIds((prev) => new Set(prev).add(id));
+      setPayingId(null);
+    } catch (err) {
+      setPayError((e) => ({
+        ...e,
+        [id]: err instanceof Error ? err.message : "Er ging iets mis.",
+      }));
+    } finally {
+      setPayBusy(null);
+    }
+  }, []);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");
@@ -356,7 +403,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         ) : (
           <>
             <ListSection title="Te betalen" subtitle="Facturen die jij moet betalen"
-              invoices={displayPayable} onOpen={open} onConfirmPaid={confirmPaid} onDismiss={dismiss} />
+              invoices={displayPayable} onOpen={open} onConfirmPaid={confirmPaid} onDismiss={dismiss} payingId={payingId} payBusyId={payBusy} paidIds={paidIds} payError={payError} onPayNow={payNow} onOpenFullPay={openFullPayDialog} />
             <ListSection title="Herinner je klant" subtitle="Verstuurde facturen die nog niet betaald zijn"
               invoices={displayRemind} onOpen={open} onConfirmPaid={null} onDismiss={dismiss} />
           </>
@@ -371,6 +418,12 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             invoices={visiblePayable}
             onOpen={open}
             onConfirmPaid={confirmPaid}
+            payingId={payingId}
+            payBusyId={payBusy}
+            paidIds={paidIds}
+            payError={payError}
+            onPayNow={payNow}
+            onOpenFullPay={openFullPayDialog}
             onDismiss={dismiss}
           />
           <ListSection
@@ -413,6 +466,14 @@ function ListSection({
   onOpen,
   onConfirmPaid,
   onDismiss,
+  // [VANDAAG-DOEN] Doorgegeven, niet hier bedacht: de sectie weet niets van betalen, hij geeft
+  // alleen door wat de kaart nodig heeft om de handeling ter plekke af te maken.
+  payingId = null,
+  payBusyId = null,
+  paidIds,
+  payError,
+  onPayNow,
+  onOpenFullPay,
 }: {
   title: string;
   subtitle: string;
@@ -421,6 +482,12 @@ function ListSection({
   // null when the list is outgoing (no "Al betaald?" — that is the client's job).
   onConfirmPaid: ((id: string) => void) | null;
   onDismiss: (id: string) => void;
+  payingId?: string | null;
+  payBusyId?: string | null;
+  paidIds?: Set<string>;
+  payError?: Record<string, string>;
+  onPayNow?: (id: string, paymentMethod: "bank" | "kas") => void;
+  onOpenFullPay?: (id: string) => void;
 }) {
   if (invoices.length === 0) return null;
 
@@ -477,6 +544,12 @@ function ListSection({
             onOpen={onOpen}
             onConfirmPaid={onConfirmPaid}
             onDismiss={onDismiss}
+            payOpen={payingId === inv.id}
+            payBusy={payBusyId === inv.id}
+            justPaid={paidIds?.has(inv.id) ?? false}
+            payErrorText={payError?.[inv.id] ?? ""}
+            onPayNow={onPayNow}
+            onOpenFullPay={onOpenFullPay}
           />
         ))}
       </div>
@@ -494,11 +567,25 @@ function InvoiceCard({
   onOpen,
   onConfirmPaid,
   onDismiss,
+  // [VANDAAG-DOEN] Alles hieronder is nieuw: de handeling gebeurt op deze kaart in plaats van
+  // op een ander scherm. Optioneel getypt zodat de kaart ook zonder blijft werken.
+  payOpen = false,
+  payBusy = false,
+  justPaid = false,
+  payErrorText = "",
+  onPayNow,
+  onOpenFullPay,
 }: {
   invoice: VandaagInvoice;
   onOpen: (id: string, direction: string) => void;
   onConfirmPaid: ((id: string) => void) | null;
   onDismiss: (id: string) => void;
+  payOpen?: boolean;
+  payBusy?: boolean;
+  justPaid?: boolean;
+  payErrorText?: string;
+  onPayNow?: (id: string, paymentMethod: "bank" | "kas") => void;
+  onOpenFullPay?: (id: string) => void;
 }) {
   const due = invoice.due_date as string;
   const accent = accentOf(due);
@@ -656,17 +743,18 @@ function InvoiceCard({
           {primaryLabel}
         </button>
 
-        {isIncoming && !isCredit && onConfirmPaid && (
+        {isIncoming && !isCredit && onConfirmPaid && !justPaid && (
           <button
             type="button"
             onClick={() => onConfirmPaid(invoice.id)}
+            aria-expanded={payOpen}
             style={{
               flexShrink: 0,
               padding: "10px 16px",
               borderRadius: 20,
               border: `1px solid ${M3.primary}`,
-              background: "#ffffff",
-              color: M3.primary,
+              background: payOpen ? M3.primary : "#ffffff",
+              color: payOpen ? "#ffffff" : M3.primary,
               fontSize: 15,
               fontWeight: 600,
               cursor: "pointer",
@@ -676,6 +764,71 @@ function InvoiceCard({
           </button>
         )}
       </div>
+
+      {/* [VANDAAG-DOEN] De handeling zelf, hier. Waarmee is de enige vraag die overblijft:
+          het bedrag is bekend en de datum is vandaag. Twee knoppen, geen formulier.
+
+          De ontsnappingsroute staat er altijd bij en is geen sierlijk detail: een deelbetaling
+          of een andere datum hoort op het scherm dat ze volledig kan tonen. Deze twee knoppen
+          doen bewust alleen het geval dat tientallen keren per kwartaal voorkomt. */}
+      {payOpen && !justPaid && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #E8EAED" }}>
+          <div style={{ fontSize: 13.5, color: "#3c4043", marginBottom: 8 }}>
+            Betaald met — vandaag, het hele bedrag:
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(["bank", "kas"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                disabled={payBusy}
+                onClick={() => onPayNow?.(invoice.id, m)}
+                style={{
+                  padding: "9px 18px",
+                  borderRadius: 20,
+                  border: `1px solid ${M3.primary}`,
+                  background: "#ffffff",
+                  color: M3.primary,
+                  fontSize: 14.5,
+                  fontWeight: 600,
+                  cursor: payBusy ? "default" : "pointer",
+                  opacity: payBusy ? 0.5 : 1,
+                }}
+              >
+                {payBusy ? "Bezig…" : m === "bank" ? "Bank" : "Contant"}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => onOpenFullPay?.(invoice.id)}
+              style={{
+                padding: "9px 6px",
+                border: "none",
+                background: "none",
+                color: "#5f6368",
+                fontSize: 13.5,
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+            >
+              Deelbetaling of andere datum
+            </button>
+          </div>
+          {payErrorText && (
+            <p role="alert" style={{ margin: "8px 0 0", fontSize: 13, color: "#B3261E", lineHeight: 1.5 }}>
+              {payErrorText}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Geboekt. De regel blijft staan tot de lijst opnieuw laadt — hem meteen laten verdwijnen
+          leest als "weg", en de eigenaar hoort te ZIEN dat zijn handeling is aangekomen. */}
+      {justPaid && (
+        <div style={{ marginTop: 10, fontSize: 13.5, color: "#188038", fontWeight: 600 }}>
+          ✓ Afgeboekt als betaald
+        </div>
+      )}
     </div>
   );
 }

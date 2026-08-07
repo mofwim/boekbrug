@@ -40,7 +40,16 @@ interface TruthData {
   // restjes van een paar euro die al een maand stilstaan (bankkosten, een afronding).
   // Optioneel getypt zodat een oudere API-respons dit scherm niet breekt.
   paymentDifferences?: { count: number; total: number; note: string | null }
-  bank: { lastDate: string | null; undocumented: number }
+  bank: {
+    lastDate: string | null
+    undocumented: number
+    // [BANK-SALDO] Het slotsaldo van het laatst geuploade afschrift. Optioneel getypt zodat een
+    // oudere API-respons dit scherm niet breekt — en `null` betekent ONBEKEND, nooit nul.
+    balance?: number | null
+    balanceAsOf?: string | null
+    accounts?: number
+    partial?: boolean
+  }
   kas?: { used: boolean; balance: number }
   attention: AttentionItem[]
   attentionCount: number
@@ -210,6 +219,49 @@ export default function DailyTruth() {
           the "give every transaction a category" flow was more busywork than truth. The
           page + API still exist (reachable by URL) if we ever re-enable it; the readiness
           screen still flags genuinely unexplained INCOME (money in with no invoice). */}
+
+      {/* ── [BANK-SALDO] Wat er op de bank staat ─────────────────────────────
+          Dit scherm heet "Waar je staat" en toonde wat je MOET betalen, wat je krijgt, en het geld
+          in je kassa — en geen woord over de bank. Juist het getal waarmee je "kan ik dit betalen?"
+          beantwoordt, ontbrak, terwijl het kleinere potje er direct onder stond. Twee van de drie
+          potjes noemen leest als alle drie: EUR 58.000 schuld tegenover EUR 24.000 zichtbaar is een
+          schrik die de bankstand in één oogopslag had kunnen wegnemen.
+
+          Het getal stond al in de database. bank-ingest.ts leest bij elke upload het saldo dat het
+          afschrift ZELF verklaart — het heeft dat nodig om te bewijzen dat het bestand compleet is
+          — en bewaart het. Het werd gelezen, gecontroleerd, opgeslagen en aan niemand getoond.
+
+          Boven Kas, want bij vrijwel iedereen is dit het grotere bedrag.
+
+          En de datum staat ERIN, niet eronder: dit is het slotsaldo van het laatste afschrift dat
+          jij hebt geüpload. Exact én oud tegelijk — allebei waar, en het tweede weglaten is hoe een
+          exact getal een leugen wordt. Daarom nooit "saldo", altijd "saldo op 28 jul.". */}
+      {typeof data.bank.balance === 'number' && (
+        <button
+          onClick={() => router.push('/dashboard/bank')}
+          style={{
+            width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+            marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
+            background: M3.surface, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
+              {(data.bank.accounts ?? 1) > 1 ? `Bank — ${data.bank.accounts} rekeningen` : 'Bank — op de rekening'}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#70757a', marginTop: 2, lineHeight: 1.45 }}>
+              saldo op {formatDate(data.bank.balanceAsOf ?? null)}
+              {/* Een deeltotaal dat als het geheel leest, is dezelfde fout als een nul — alleen
+                  stiller: je leest minder geld dan je hebt en kunt niet zien waarom. */}
+              {data.bank.partial && ' · van één rekening is geen saldo bekend'}
+            </div>
+          </div>
+          <span style={{ fontFamily: FONT_NUM, fontSize: 18, fontWeight: 700, color: data.bank.balance < 0 ? '#B3261E' : M3.onSurface, flexShrink: 0 }}>
+            {eur.format(data.bank.balance)}
+          </span>
+        </button>
+      )}
 
       {/* [CASH-LEDGER] Kas line — only when the owner actually uses cash. */}
       {data.kas?.used && (
