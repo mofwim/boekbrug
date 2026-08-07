@@ -2079,3 +2079,65 @@ test("[POORT-OPBRENGST] the yield script cannot silently miss a gate", () => {
   const phantom = listed.filter((g) => !reasons.has(g));
   assert.deepEqual(phantom, [], `these are in the map but cannot be returned: ${phantom.join(", ")}`);
 });
+
+test("[E-FACTUUR-GRATIS] no door charges the month's allowance for a read that costs nothing", () => {
+  // The allowance is called `aiDocuments` and it counts AI READS. An e-invoice is not read by a
+  // model at all. Charging one makes the owner pay for something free — and does worse: it pushes
+  // a real invoice, one that DOES need reading, out of the month.
+  //
+  // The rule was made once already, in the e-mail sync's batch reservation, and it did not travel
+  // to the single-file doors. That is why it lives in ONE function now: a rule that has to be
+  // remembered at four call sites is a rule that is right in one of them.
+  const gate = code("src/lib/fair-use-gate.ts");
+  assert.match(
+    gate, /if \(!params\.costsAiCall\) \{\s*\n\s*return \{ allowed: true, response: null, release: async \(\) => \{\} \};/,
+    "a free read must allow, and its release must be a no-op — nothing was taken",
+  );
+
+  // Every door that can receive an e-invoice asks the question. A door that calls the old gate
+  // directly is a door that charges for it.
+  const doors: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "!isEInvoice"],
+    ["src/app/api/bank/attach-invoice/route.ts", "!isEInvoice"],
+    ["src/app/api/email/reimport/[id]/route.ts", "!isEInvoiceXmlMime(mimeType)"],
+  ];
+  for (const [f, expr] of doors) {
+    const src = code(f);
+    assert.match(
+      src,
+      new RegExp(`gateFairUseForRead\\(\\{[\\s\\S]{0,220}?costsAiCall: ${expr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      `${f} must not charge for a mechanical read`,
+    );
+    assert.doesNotMatch(
+      src, /await gateFairUse\(\{/,
+      `${f} still calls the unconditional gate — every read there costs a document`,
+    );
+  }
+});
+
+test("[E-FACTUUR-XML] attaching a Peppol invoice to a bank line goes to the same reader", () => {
+  // BankClient's "hang the invoice on this line" is a live flow, and it refused the most exact
+  // document the app can read on the strength of a media type the browser guessed.
+  const src = code("src/app/api/bank/attach-invoice/route.ts");
+  // Admitted on the NAME here — the bytes are not in hand yet, because the size guard must run
+  // first on untrusted input…
+  assert.match(src, /const maybeEInvoice =[\s\S]{0,200}?endsWith\("\.xml"\)/, "admitted by name");
+  // …and SETTLED on the content, with the same refusal as before for a .xml that is not an invoice.
+  assert.match(
+    src, /const isEInvoice = maybeEInvoice && looksLikeInvoiceXmlBytes\(buffer\)/,
+    "the widened guard must be settled on the bytes, not left open",
+  );
+  assert.match(
+    src, /if \(maybeEInvoice && !isEInvoice\) \{[\s\S]{0,160}?Alleen PDF of afbeelding toegestaan/,
+    "a .xml that is not an invoice is refused exactly as it always was",
+  );
+  // The reader picks its branch by media type, and a .xml arrives with whatever the client sent.
+  assert.match(
+    src, /const readerMime = isEInvoice \? E_INVOICE_XML_MIME : file\.type/,
+    "the reader must be handed the type the content actually is",
+  );
+  assert.match(
+    src, /verifyInvoiceFromPdf\(base64, readerMime,/,
+    "…and actually be given it",
+  );
+});

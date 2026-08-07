@@ -100,7 +100,7 @@ import { deriveDueDate } from "@/lib/safecore"
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
-import { gateFairUse } from "@/lib/fair-use-gate";
+import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -400,7 +400,12 @@ export async function POST(req: NextRequest) {
   // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
   // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
   // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
-  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  // [E-FACTUUR-GRATIS] An e-invoice is read mechanically — no model, no cost — so it may not spend
+  // a document from the month's allowance. Charging for it would make the owner pay for something
+  // free AND push a real invoice, one that does need reading, out of the month.
+  const gate = await gateFairUseForRead({
+    client: supabase, userId: user.id, metric: "aiDocuments", costsAiCall: !isEInvoice,
+  });
   if (!gate.allowed) return gate.response!;
 
   const { data: me } = await supabase
