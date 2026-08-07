@@ -43,6 +43,8 @@ type NormLine = {
   unit_price: number
   btw_rate: number
   line_total: number
+  /** [VRIJGESTELD-ROUNDTRIP] Meegedragen zodat een bewerking hem niet wist. */
+  vat_treatment?: string | null
   /** [UNIT] Alleen een eenheid die de app kent, of null. */
   unit: string | null
 }
@@ -57,6 +59,23 @@ function schoonRegel(invoiceId: string, l: NormLine): Record<string, unknown> {
     line_total: l.line_total,
   }
   if (l.unit) regel.unit = l.unit
+  // [VRIJGESTELD-ROUNDTRIP] De vrijstellingsvlag hoort bij de regel, niet bij het scherm.
+  //
+  // Zonder deze regel wiste elke bewerking hem. Het bewerkscherm leest maar vier kolommen
+  // (description, quantity, unit_price, btw_rate) en stuurt die terug; de PUT verwijdert ALLE
+  // regels en zet ze opnieuw. Wie een vrijgestelde factuur opende om de vervaldatum te wijzigen,
+  // sloeg hem op als btw_rate 0 met vat_treatment NULL.
+  //
+  // Dat is geen cosmetisch verlies. fetchRateShares herkent een vrijgestelde regel aan die vlag;
+  // zonder haar verhuist de omzet uit de vrijgestelde pot naar de 0%/verlegd-rubriek van de
+  // aangifte — EUR 1.000 in de verkeerde rubriek van een ingediende aangifte, en de vrijgestelde
+  // share verdwijnt uit het pro-rata beeld van de voorbelasting.
+  //
+  // Dezelfde harding als bij het schrijven elders: alleen de letterlijke waarde 'exempt' telt,
+  // al het andere wordt NULL. Een onbekende waarde mag nooit als vrijstelling gelden.
+  if (l.vat_treatment !== undefined) {
+    regel.vat_treatment = l.vat_treatment === 'exempt' ? 'exempt' : null
+  }
   return regel
 }
 

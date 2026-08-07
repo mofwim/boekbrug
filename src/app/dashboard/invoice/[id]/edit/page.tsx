@@ -26,6 +26,12 @@ type InvoiceLine = {
   quantity: number
   unit_price: number
   btw_rate: number
+  // [VRIJGESTELD-ROUNDTRIP] Niet bewerkbaar op dit scherm, wél meegedragen. De PUT vervangt alle
+  // regels door wat hier wordt teruggestuurd, dus een veld dat deze twee regels niet noemt bestaat
+  // na het opslaan niet meer. vat_treatment is de vlag waaraan de aangifte vrijgestelde omzet
+  // herkent; een vervaldatum wijzigen mag geen omzet naar een andere rubriek verhuizen.
+  unit?: string | null
+  vat_treatment?: string | null
 }
 
 export default function InvoiceEditPage() {
@@ -94,7 +100,10 @@ export default function InvoiceEditPage() {
       // جلب الـ lines
       const { data: linesData } = await supabase
         .from('invoice_lines')
-        .select('description, quantity, unit_price, btw_rate')
+        // [VRIJGESTELD-ROUNDTRIP] unit en vat_treatment horen erbij, want dit scherm PUT terug wat het
+        // leest en de PUT vervangt alle regels. Wat hier niet wordt gelezen, bestaat na het opslaan
+        // niet meer — en vat_treatment is de vlag waaraan de aangifte vrijgestelde omzet herkent.
+        .select('description, quantity, unit_price, btw_rate, unit, vat_treatment')
         .eq('invoice_id', invoiceId)
 
       // تعبئة الـ state بالبيانات الموجودة

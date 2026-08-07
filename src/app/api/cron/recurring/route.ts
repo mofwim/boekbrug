@@ -215,6 +215,18 @@ export async function GET(req: NextRequest) {
             btw_rate: l.btw_rate,
             line_total: l.line_total,
             ...(l.unit !== undefined ? { unit: l.unit ?? null } : {}),
+            // [VRIJGESTELD-KOPIE] En de vrijstellingsvlag reist mee, om precies dezelfde reden als
+            // de eenheid — maar met een duurder gevolg als hij dat niet doet.
+            //
+            // Zonder haar wordt een gekopieerde vrijgestelde regel geclassificeerd als BELASTE omzet
+            // tegen 0%. Bij een creditnota betekent dat dat de correctie het origineel niet opheft:
+            // het origineel blijft +EUR 1.000 vrijgestelde omzet en de creditnota landt als -EUR 1.000
+            // in de 0%/verlegd-rubriek. Twee rubrieken tegelijk fout, en 5a/5b blijven kloppen — dus
+            // geen enkel scherm laat het zien.
+            //
+            // Dezelfde harding als overal waar deze vlag wordt geschreven: alleen de letterlijke
+            // waarde 'exempt' telt. Een onbekende waarde wordt NULL, nooit een vrijstelling.
+            ...(l.vat_treatment !== undefined ? { vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null } : {}),
           })),
         );
         if (lineErr) {
