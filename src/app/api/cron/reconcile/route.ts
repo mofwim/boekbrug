@@ -115,6 +115,40 @@ export async function GET(req: NextRequest) {
     Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "reconcile", phase: "incasso-discovery" } });
   }
 
+  // [DD-SIGNAL] A fifth reason to visit an owner, and the one the other four systematically miss.
+  //
+  // proposeIncassoMandates reads bank lines of ANY status — that is the point of it: the evidence
+  // for "this supplier collects automatically" is a HISTORY of collections, and a collection the
+  // owner already confirmed is still evidence. But the four signals above are all about work left
+  // undone: a pending line, a cash-paid invoice, a drawer entry, an existing mandate.
+  //
+  // So the owner who keeps their bank tidy has none of them, is never visited, and is never told
+  // that four of their suppliers have been collecting for months. That is exactly backwards. The
+  // owner who books diligently is the one this proposal helps most — they are the one still being
+  // asked to pay invoices the bank has already taken — and they were the one it could never reach.
+  //
+  // Cheap to add: the same predicate the partial index on bank_transactions was built for, and
+  // tolerant like the block above, because these columns arrive with bank_tx_direct_debit.sql. A
+  // run without this pass is a reduced run; failing the reconcile for every owner over a missing
+  // column would be the reporting causing a bigger outage than the thing reported.
+  let ddUsers = 0;
+  try {
+    const rows = await fetchAllRows<{ user_id: string | null }>((from, to) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pipeline.from("bank_transactions").select("user_id") as any)
+        .or("mandate_id.not.is.null,creditor_id.not.is.null,type_code.not.is.null")
+        .order("id", { ascending: true }).range(from, to));
+    for (const r of rows) if (r.user_id && !userIds.has(r.user_id)) { userIds.add(r.user_id); ddUsers += 1; }
+  } catch (e) {
+    // 42703 is "that column does not exist yet", which is a database that cannot answer the
+    // question rather than a failure to read it — same distinction proposeIncassoMandates makes.
+    const code = (e as { code?: string })?.code;
+    if (code !== "42703") {
+      console.error("[DD-SIGNAL] statement-marker discovery failed — owners with no other pending work are not visited this run", { error: e instanceof Error ? e.message : String(e) });
+      Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "reconcile", phase: "dd-discovery" } });
+    }
+  }
+
   let usersProcessed = 0;
   let bookedTotal = 0;
   let failed = 0;
@@ -237,7 +271,7 @@ export async function GET(req: NextRequest) {
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked, incassoProposed } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, ddUsers, incassoBooked, incassoProposed } });
 
-  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, incassoBooked, incassoProposed });
+  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated, incassoUsers, ddUsers, incassoBooked, incassoProposed });
 }

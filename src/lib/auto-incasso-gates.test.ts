@@ -169,3 +169,37 @@ test("[DD-SIGNAL] a proposal is a question, never a decision", () => {
     "the cron is switching the mandate on by itself — a proposal became a decision the owner never made",
   );
 });
+
+test("[DD-SIGNAL] the owner who keeps their bank tidy is still visited", () => {
+  // The reconcile only visits owners it discovers, and four of the five signals are about work
+  // left UNDONE: a pending bank line, a cash-paid invoice, a drawer entry, an existing mandate.
+  //
+  // proposeIncassoMandates is the odd one out — it reads bank lines of ANY status, because the
+  // evidence for "this supplier collects automatically" is a HISTORY of collections and a
+  // collection the owner already confirmed is still evidence. So the owner who confirms everything
+  // has none of the four signals, is never visited, and is never told that four of their suppliers
+  // have been collecting for months.
+  //
+  // That is backwards: the diligent owner is the one still being asked to pay invoices the bank has
+  // already taken, and they were the one the proposal could never reach. The fifth signal is the
+  // statement's own markers — the predicate the partial index was built for.
+  const src = code(CRON);
+  assert.match(
+    src,
+    /mandate_id\.not\.is\.null,creditor_id\.not\.is\.null,type_code\.not\.is\.null/,
+    "the reconcile must also discover owners from the direct-debit markers on their statement, " +
+      "or proposeIncassoMandates never runs for anyone whose bank is already tidy",
+  );
+  // Tolerant, like the mandate discovery above it and unlike the three that decide who is
+  // reconciled at all: these columns arrive with bank_tx_direct_debit.sql, and a run without this
+  // pass is a reduced run rather than a broken one.
+  // Position, not a regex across the file: the predicate must sit AFTER the try/catch that aborts
+  // the run, not inside the Promise.all it guards.
+  const fatalEnd = src.indexOf("user discovery failed");
+  const ddAt = src.indexOf("mandate_id.not.is.null,creditor_id");
+  assert.ok(fatalEnd > 0 && ddAt > fatalEnd,
+    "a missing direct-debit column must not abort the whole reconcile for every owner — the " +
+      "discovery belongs after the fatal block, with the tolerant mandate read");
+  // And it is counted, so a run that discovers nobody this way is visible rather than assumed.
+  assert.match(src, /ddUsers/, "the count belongs in the run's result, like incassoUsers");
+});
