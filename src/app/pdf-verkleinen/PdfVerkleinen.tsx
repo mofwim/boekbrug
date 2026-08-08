@@ -17,7 +17,7 @@ import {
   formatBytes,
 } from "@/components/tools/ui";
 import { describeError } from "@/lib/tools/errors";
-import { rasterise, restructure } from "@/lib/tools/pdf";
+import { describe, rasterise, restructure } from "@/lib/tools/pdf";
 import { compressImages } from "@/lib/tools/pdfcompress";
 
 /**
@@ -66,10 +66,25 @@ export default function PdfVerkleinen() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
 
-  const take = useCallback((picked: File[]) => {
+  /**
+   * Check the file is readable while somebody is still looking at the drop
+   * zone.
+   *
+   * This used to accept anything and only fail on the button, so a file that
+   * was never a PDF got a panel with its name and size on it, three settings
+   * to choose, and the bad news afterwards. Every other tool here refuses it
+   * on the spot; this one was the exception.
+   */
+  const take = useCallback(async (picked: File[]) => {
     setError("");
     setResult(null);
-    setFile(picked[0]);
+    try {
+      await describe(picked[0]);
+      setFile(picked[0]);
+    } catch (err) {
+      setFile(null);
+      setError(describeError(err));
+    }
   }, []);
 
   const run = useCallback(async () => {
