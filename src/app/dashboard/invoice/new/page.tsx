@@ -24,6 +24,10 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
+import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
+import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+// [BTW-ROUND] Alleen round2: de totalen komen uit applyDiscount, deze uitsplitsing rondt mee.
+import { round2 } from '@/lib/invoice-totals'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -32,8 +36,6 @@ import {
 } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
-// [BTW-ROUND] De wettelijke totalen, dezelfde functie als de server.
-import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 
@@ -386,8 +388,11 @@ function DateField({
 // ─── [FACTUUR-A] Payment-term presets — June 2026 ────────────────────────────
 // Quick chips that compute Vervaldatum = Factuurdatum + N days. Manual editing
 // stays fully available via the DateField. 30 days is the Dutch default.
-const BETALINGSTERMIJNEN = [14, 30, 60] as const
-const DEFAULT_TERMIJN = 30
+// [BETAALTERMIJN] De lijst en de standaard staan nu in payment-term.ts, samen met de rekenregels
+// en de zin die het bewerkscherm eruit opbouwt. Twee schermen met elk hun eigen kopie van "wat is
+// een termijn" is precies hoe die twee uit elkaar gaan lopen.
+const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS
+const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM
 function addDaysISO(iso: string, days: number): string {
   // String-based to stay timezone-proof on date-only values.
   const [y, m, d] = iso.split('-').map(Number)
@@ -743,6 +748,21 @@ function NewInvoicePageContent() {
   const [catalog, setCatalog] = useState<Article[]>([])
   const [pickerLine, setPickerLine] = useState<number | null>(null)
   const [savedToCatalog, setSavedToCatalog] = useState<number | null>(null)
+  // [ARTIKEL-CODE] De code die je later intikt om deze regel terug te halen.
+  //
+  // De catalogus KENT codes: matchArticles zet een exacte code bovenaan ("22" → dat artikel), en
+  // het omschrijvingsveld nodigt er zelfs toe uit ("Omschrijving of code (bijv. 22)"). Maar de
+  // knop hieronder stuurde altijd `code: ''`. Je kon dus wel op code ZOEKEN en nooit een code
+  // TOEKENNEN — behalve door naar /dashboard/artikelen te lopen en het artikel daar te openen.
+  // Voor een ondernemer die "22" intikt en niets vindt, is de functie er simpelweg niet.
+  // [KORTING] Percentage of bedrag, op de hele factuur — en op een offerte net zo goed: daar is
+  // korting juist het gesprek. De verdeling over de btw-tarieven staat in invoice-discount.ts; hier
+  // wordt alleen ingevuld en getoond.
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>('percent')
+  const [discountValue, setDiscountValue] = useState('')
+  const [codeForLine, setCodeForLine] = useState<number | null>(null)
+  const [codeDraft, setCodeDraft] = useState('')
+  const [codeError, setCodeError] = useState('')
   useEffect(() => {
     fetch('/api/articles').then(r => r.ok ? r.json() : null).then(j => { if (j?.articles) setCatalog(j.articles) }).catch(() => {})
   }, [])
@@ -755,8 +775,9 @@ function NewInvoicePageContent() {
     // Bump usage so the picker learns the owner's most-used lines. Best-effort.
     fetch(`/api/articles/${a.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bump: true }) }).catch(() => {})
   }
-  async function saveLineToCatalog(i: number, line: InvoiceLine) {
+  async function saveLineToCatalog(i: number, line: InvoiceLine, code: string) {
     if (!line.description.trim()) return
+    setCodeError('')
     try {
       const res = await fetch('/api/articles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -765,14 +786,23 @@ function NewInvoicePageContent() {
         // op null. "2 uur" werd bij de volgende factuur weer "2" (C62 = stuk) in de e-factuur:
         // precies de fout die de [UNIT]-regel in pickArticle hierboven al een keer heeft opgelost,
         // alleen langs de andere kant van dezelfde catalogus.
-        body: JSON.stringify({ description: line.description, unit_price: line.unit_price, btw_rate: line.btw_rate, code: '', unit: line.unit ?? '' }),
+        body: JSON.stringify({ description: line.description, unit_price: line.unit_price, btw_rate: line.btw_rate, code, unit: line.unit ?? '' }),
       })
+      const j = await res.json().catch(() => null)
       if (res.ok) {
-        const j = await res.json()
-        if (j.article) setCatalog(prev => [j.article, ...prev])
+        if (j?.article) setCatalog(prev => [j.article, ...prev])
+        setCodeForLine(null); setCodeDraft('')
         setSavedToCatalog(i); setTimeout(() => setSavedToCatalog(cur => cur === i ? null : cur), 2000)
+      } else {
+        // [ARTIKEL-CODE] UNIQUE(user_id, code): een code die al bij een ander artikel hoort wordt
+        // geweigerd, en de route zegt WELKE. Dat stil laten verdwijnen zou betekenen dat de
+        // ondernemer denkt dat "22" nu bij deze regel hoort terwijl het bij een andere staat —
+        // en dan haalt hij later de verkeerde regel binnen.
+        setCodeError(typeof j?.error === 'string' && j.error ? j.error : 'Opslaan in de catalogus lukte niet.')
       }
-    } catch { /* silent */ }
+    } catch {
+      setCodeError('Opslaan in de catalogus lukte niet.')
+    }
   }
 
   // [BOEK-031] AI translation per line — via API route (client-safe) — May 2026
@@ -802,20 +832,17 @@ function NewInvoicePageContent() {
 
   // [BOEK-031] Credit: user enters positive — system saves negative
   const sign      = invoiceType === 'creditnota' ? -1 : 1
-  // [BTW-ROUND] Dezelfde som als de server, en dat was hij niet.
-  //
-  // Hier stond de BTW PER REGEL opgeteld, ongerond. De server (invoice-totals.ts) groepeert het
-  // excl.-bedrag PER TARIEF, rondt de BTW van elk tarief af en telt die op — de methode die de
-  // Belastingdienst en Peppol voorschrijven, en die de PDF en de UBL-export óók gebruiken. Op een
-  // factuur met gemengde tarieven schelen die twee een cent, en dan is het bedrag dat de
-  // ondernemer op dit scherm ziet niet het bedrag dat hij verstuurt.
-  //
-  // Één cent, en toch de moeite: dit is het scherm waar hij besluit dat het klopt.
-  const { total_ex_btw: totalEx, total_inc_btw: totalInc } =
-    computeInvoiceTotals(lines.map((l) => ({
-      line_total: round2(l.quantity * l.unit_price),
-      btw_rate: l.btw_rate,
-    })))
+  // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
+  // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
+  const korting = parseDiscount(discountType, discountValue)
+  const kortingTotalen = applyDiscount(
+    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    sign === 1 ? korting : null,
+  )
+  const subtotalEx = kortingTotalen.subtotal_ex_btw
+  const totalEx   = kortingTotalen.total_ex_btw
+  const btwAmount = kortingTotalen.btw_amount
+  const totalInc  = kortingTotalen.total_inc_btw
 
   // [ACTING-FOR] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
   // Die som woont nu op de server, in src/lib/draft-totals.ts — die op zijn beurt computeInvoiceTotals
@@ -826,10 +853,14 @@ function NewInvoicePageContent() {
 
   // BTW-uitsplitsing per tarief — de regels die op het scherm onder het subtotaal staan.
   //
-  // [BTW-ROUND] Per tarief afgerond, net als in computeInvoiceTotals, want deze regels moeten
-  // OPTELLEN tot het totaal eronder. Ongerond opgeteld toonde dit blokje bijvoorbeeld "BTW 21%
-  // € 20,9979" en een totaal van € 120,99 — twee getallen die elkaar tegenspreken op hetzelfde
-  // kaartje, over dezelfde factuur.
+  // [BTW-ROUND] Per tarief afgerond, en NA aftrek van de korting die aan dat tarief is toegewezen.
+  // Twee dingen gingen hier mis en het is dezelfde fout: deze regels moeten OPTELLEN tot het totaal
+  // eronder. Ongerond per regel opgeteld toonde dit blokje "BTW 21% € 20,9979" boven een totaal van
+  // € 120,99; en zonder de korting eraf toont het de btw over een bedrag dat de klant niet betaalt.
+  // Twee getallen die elkaar tegenspreken op hetzelfde kaartje, over dezelfde factuur.
+  //
+  // applyDiscount deelt de korting al per tarief uit (allowances) — diezelfde verdeling gebruiken
+  // betekent dat dit blokje en het totaal per definitie dezelfde som zijn.
   const btwByRate: Record<number, number> = {}
   {
     const exByRate: Record<number, number> = {}
@@ -837,8 +868,13 @@ function NewInvoicePageContent() {
       const rate = l.btw_rate
       exByRate[rate] = (exByRate[rate] ?? 0) + round2(l.quantity * l.unit_price)
     })
+    const aftrekPerTarief: Record<number, number> = {}
+    for (const a of kortingTotalen.allowances) {
+      aftrekPerTarief[a.rate] = (aftrekPerTarief[a.rate] ?? 0) + a.amount
+    }
     for (const [rate, ex] of Object.entries(exByRate)) {
-      btwByRate[Number(rate)] = round2((ex * Number(rate)) / 100)
+      const r = Number(rate)
+      btwByRate[r] = round2(((ex - (aftrekPerTarief[r] ?? 0)) * r) / 100)
     }
   }
 
@@ -1035,6 +1071,10 @@ function NewInvoicePageContent() {
         client_btw_number: clientBtw,
         // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
         replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
+        // [KORTING] Ruwe invoer; de server valideert opnieuw met dezelfde parseDiscount. Het scherm
+        // is de kant die je niet in de hand hebt.
+        discount_type: invoiceType === 'creditnota' ? null : discountType,
+        discount_value: invoiceType === 'creditnota' ? null : discountValue,
         // Het teken (credit = negatief) zet de server, op één plek — zie draft-totals.ts.
         lines: lines.map(l => ({
           description: l.description,
@@ -1437,6 +1477,31 @@ function NewInvoicePageContent() {
                       </button>
                     )
                   })}
+                  {/* [BETAALTERMIJN] Elk heel getal, niet alleen 14/30/60. Een termijn spreek je
+                      per klant af — "jij krijgt 45 dagen" — en drie vaste chips maakten dat
+                      onmogelijk zonder de vervaldatum uit te rekenen en met de hand in te tikken.
+                      De bovengrens in payment-term.ts is een tikfoutgrens (300 in plaats van 30 zet
+                      de vervaldatum bijna een jaar vooruit en laat elke herinnering net zo lang
+                      wachten), geen uitspraak over wat een ondernemer mag afspreken. */}
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: '#70757a' }}>of</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={MAX_PAYMENT_TERM_DAYS}
+                      inputMode="numeric"
+                      placeholder="dagen"
+                      value={betalingstermijn ?? ''}
+                      onChange={e => {
+                        const days = parsePaymentTerm(e.target.value)
+                        if (days == null) { setBetalingstermijn(null); return }
+                        setBetalingstermijn(days)
+                        if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
+                      }}
+                      style={{ width: 78, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 14, outline: 'none' }}
+                      aria-label="Betalingstermijn in dagen"
+                    />
+                  </label>
                   {betalingstermijn === null && (
                     <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
                   )}
@@ -1554,8 +1619,33 @@ function NewInvoicePageContent() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#70757a' }}>
+                    {/* [ARTIKEL-CODE] Bewaren MET een code, zodat je deze regel later terughaalt
+                        door "22" in het omschrijvingsveld te tikken. De code is optioneel: wie er
+                        geen wil, laat het veld leeg en bewaart zoals voorheen. */}
                     {line.description.trim()
-                      ? <button type="button" onClick={() => saveLineToCatalog(i, line)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>
+                      ? (codeForLine === i
+                          ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <input
+                                value={codeDraft}
+                                onChange={e => { setCodeDraft(e.target.value.slice(0, 20)); setCodeError('') }}
+                                placeholder="code (bijv. 22)"
+                                aria-label="Artikelcode"
+                                autoFocus
+                                style={{ width: 120, minHeight: 32, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 8px', fontSize: 13, outline: 'none' }}
+                              />
+                              <button type="button" onClick={() => void saveLineToCatalog(i, line, codeDraft)}
+                                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: '#1A73E8', fontWeight: 600 }}>
+                                Bewaar
+                              </button>
+                              <button type="button" onClick={() => { setCodeForLine(null); setCodeDraft(''); setCodeError('') }}
+                                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: '#70757a' }}>
+                                Annuleer
+                              </button>
+                              {codeError && <span style={{ fontSize: 11.5, color: '#B3261E' }}>{codeError}</span>}
+                            </span>
+                          )
+                          : <button type="button" onClick={() => { setCodeForLine(i); setCodeDraft(''); setCodeError('') }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>)
                       : <span>{priceMode === 'incl' ? 'Totaal incl.' : 'Totaal excl.'}</span>}
                     {/* [PRIJS-MODUS] Het regeltotaal in dezelfde stand als het veld erboven: een rij
                         die "10,00" in het prijsveld toont en "8,26" als totaal bij aantal 1, leest
@@ -1582,13 +1672,69 @@ function NewInvoicePageContent() {
               </button>
             </div>
 
+            {/* [KORTING] Op de factuur én op de offerte. Niet op een creditnota: dat document is
+                al een correctie, en "korting op een terugbetaling" is arithmetiek die niemand met
+                het blote oog kan controleren. */}
+            {invoiceType !== ('creditnota' as InvoiceType) && (
+              <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 500, color: '#202124' }}>Korting</span>
+                <div style={{ display: 'inline-flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden' }}>
+                  {(['percent', 'amount'] as const).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setDiscountType(t)}
+                      style={{
+                        fontSize: 13, fontWeight: 500, padding: '7px 14px', border: 'none', cursor: 'pointer',
+                        backgroundColor: discountType === t ? cfg.activeBg : 'white',
+                        color: discountType === t ? cfg.activeColor : '#5F6368',
+                      }}
+                    >
+                      {t === 'percent' ? '%' : '€'}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder={discountType === 'percent' ? 'bijv. 10' : 'bijv. 50,00'}
+                  value={discountValue}
+                  onChange={e => setDiscountValue(e.target.value)}
+                  aria-label={discountType === 'percent' ? 'Kortingspercentage' : 'Kortingsbedrag'}
+                  style={{ width: 120, minHeight: 40, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 15, outline: 'none' }}
+                />
+                {discountValue.trim() !== '' && !korting && (
+                  <span style={{ fontSize: 12.5, color: '#B3261E' }}>
+                    {discountType === 'percent' ? 'Vul een percentage tussen 0 en 100 in.' : 'Vul een bedrag boven 0 in.'}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* [DS] Totalen */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                   <span>Subtotaal excl. BTW</span>
-                  <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalEx)}</span>
+                  <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * subtotalEx)}</span>
                 </div>
+                {/* [KORTING] Het BEDRAG dat er echt af gaat, niet het percentage dat is ingetikt.
+                    Bij een korting groter dan de factuur is dat het factuurbedrag zelf — capped,
+                    zodat een tikfout geen negatief totaal maakt. */}
+                {kortingTotalen.discount_ex_btw > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#137333' }}>
+                    <span>{discountLabel(korting)}</span>
+                    <span style={{ fontFamily: 'Roboto Mono, monospace' }}>−{NL_NUMBER.format(kortingTotalen.discount_ex_btw)}</span>
+                  </div>
+                )}
+                {kortingTotalen.discount_ex_btw > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
+                    <span>Na korting excl. BTW</span>
+                    <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalEx)}</span>
+                  </div>
+                )}
                 {Object.entries(btwByRate).filter(([, v]) => v > 0).map(([rate, val]) => (
                   <div key={rate} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                     <span>BTW {rate}%</span>

@@ -26,6 +26,7 @@ import { create } from "xmlbuilder2";
 import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
+import { applyDiscount, parseDiscount } from "./invoice-discount";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
 
@@ -361,10 +362,40 @@ export function buildInvoiceUbl(
     : effLinesRaw;
 
   // Derive totals from lines (internal consistency over stored header).
-  const groups = groupByRate(effLines);
-  const lineExtensionTotal = round2(groups.reduce((s, g) => s + g.taxable, 0));
+  const rawGroups = groupByRate(effLines);
+  const lineExtensionTotal = round2(rawGroups.reduce((s, g) => s + g.taxable, 0));
+
+  // [KORTING] Een korting op de hele factuur is in Peppol BIS 3.0 GEEN aftrek van het totaal maar
+  // een cac:AllowanceCharge — en elke AllowanceCharge draagt precies ÉÉN TaxCategory. Een factuur
+  // met 21%- en 9%-regels heeft er dus één per tarief, met de korting pro rata verdeeld. Dat is
+  // ook fiscaal de enige juiste vorm: btw is per tarief verschuldigd, dus een korting die niet
+  // wordt verdeeld zet allebei de aangifterubrieken fout, in tegengestelde richting.
+  //
+  // Verdeling en afronding komen uit invoice-discount.ts, dezelfde module als het scherm en de PDF
+  // gebruiken. Drie plekken die hetzelfde uitrekenen moeten hetzelfde antwoord geven — en hier is
+  // dat geen nettigheid: wijkt LegalMonetaryTotal een cent af van de som van de regels en de
+  // toeslagen, dan weigert het ontvangende access point het bestand (BR-CO-10).
+  const korting = parseDiscount(
+    (header as { discount_type?: unknown }).discount_type,
+    (header as { discount_value?: unknown }).discount_value,
+  );
+  const kortingUitkomst = applyDiscount(
+    rawGroups.map((g) => ({ line_total: g.taxable, btw_rate: g.rate })),
+    korting,
+  );
+  const allowanceByRate = new Map<number, number>();
+  for (const a of kortingUitkomst.allowances) allowanceByRate.set(a.rate, a.amount);
+  const allowanceTotal = kortingUitkomst.discount_ex_btw;
+
+  const groups = rawGroups.map((g) => {
+    const off = allowanceByRate.get(g.rate) ?? 0;
+    if (off === 0) return g;
+    const taxable = round2(g.taxable - off);
+    return { ...g, taxable, tax: round2((taxable * g.rate) / 100) };
+  });
+  const taxExclusive = round2(lineExtensionTotal - allowanceTotal);
   const totalTax = round2(groups.reduce((s, g) => s + g.tax, 0));
-  const taxInclusive = round2(lineExtensionTotal + totalTax);
+  const taxInclusive = round2(taxExclusive + totalTax);
 
   // Cross-check against stored header totals (warn only). Compare magnitudes so
   // a creditnota's negative header doesn't false-alarm against positive lines.
@@ -441,6 +472,20 @@ export function buildInvoiceUbl(
     pm.ele(NS.cac, "PayeeFinancialAccount").ele(NS.cbc, "ID").txt(supplier.iban.trim());
   }
 
+  // ── AllowanceCharge (document-level discount, one per BTW rate) ──
+  // [KORTING] Volgorde is niet vrij in UBL: AllowanceCharge staat vóór TaxTotal. Op de verkeerde
+  // plek is het bestand niet schemavalide en komt het niet door de eerste poort heen.
+  for (const a of kortingUitkomst.allowances) {
+    const ac = root.ele(NS.cac, "AllowanceCharge");
+    ac.ele(NS.cbc, "ChargeIndicator").txt("false"); // false = korting, true = toeslag
+    ac.ele(NS.cbc, "AllowanceChargeReason").txt("Korting");
+    ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(a.amount));
+    const acCat = ac.ele(NS.cac, "TaxCategory");
+    acCat.ele(NS.cbc, "ID").txt(taxCategoryId(a.rate));
+    acCat.ele(NS.cbc, "Percent").txt(String(a.rate));
+    acCat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  }
+
   // ── TaxTotal (one TaxSubtotal per rate) ──
   const taxTotal = root.ele(NS.cac, "TaxTotal");
   taxTotal.ele(NS.cbc, "TaxAmount", { currencyID: EUR }).txt(money(totalTax));
@@ -463,8 +508,13 @@ export function buildInvoiceUbl(
   // ── LegalMonetaryTotal ──
   const lmt = root.ele(NS.cac, "LegalMonetaryTotal");
   lmt.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(lineExtensionTotal));
-  lmt.ele(NS.cbc, "TaxExclusiveAmount", { currencyID: EUR }).txt(money(lineExtensionTotal));
+  // [KORTING] TaxExclusiveAmount = regels − kortingen. Zonder AllowanceTotalAmount ernaast klopt
+  // de optelling van het bestand niet met zichzelf en wordt het geweigerd (BR-CO-10, BR-CO-13).
+  lmt.ele(NS.cbc, "TaxExclusiveAmount", { currencyID: EUR }).txt(money(taxExclusive));
   lmt.ele(NS.cbc, "TaxInclusiveAmount", { currencyID: EUR }).txt(money(taxInclusive));
+  if (allowanceTotal > 0) {
+    lmt.ele(NS.cbc, "AllowanceTotalAmount", { currencyID: EUR }).txt(money(allowanceTotal));
+  }
   lmt.ele(NS.cbc, "PayableAmount", { currencyID: EUR }).txt(money(taxInclusive));
 
   // ── InvoiceLine (1..n) ──

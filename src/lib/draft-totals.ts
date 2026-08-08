@@ -33,7 +33,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
-import { computeInvoiceTotals, round2 } from "./invoice-totals";
+import { round2 } from "./invoice-totals";
+import { applyDiscount, type Discount } from "./invoice-discount";
 
 export interface DraftLine {
   quantity: number;
@@ -60,15 +61,37 @@ export interface DraftTotals {
  * is symmetric (round2), so this is the same magnitude either way — but doing it on the way in
  * keeps one rule instead of two, and a creditnota then rounds identically to the invoice it credits.
  */
-export function computeDraftTotals(lines: readonly DraftLine[], sign: 1 | -1 = 1): DraftTotals {
-  return computeInvoiceTotals(
+export function computeDraftTotals(
+  lines: readonly DraftLine[],
+  sign: 1 | -1 = 1,
+  // [KORTING] Optioneel, en met opzet als LAATSTE argument: elke bestaande aanroep rekent zonder
+  // korting precies dezelfde bedragen uit als voorheen, tot op de cent.
+  discount: Discount | null = null,
+): DraftTotals {
+  // [BTW-ROUND] ÉÉN pad, ook zonder korting. Hier stond een tweede som — btw per REGEL opgeteld en
+  // helemaal niet afgerond — die alleen liep als er geen korting was. Dat is precies de kant die
+  // misgaat: een concept van 3 × 33,33 tegen 21% werd opgeslagen als total_inc_btw = 120,9879, vier
+  // decimalen in een geldkolom op een regel die een boekhouder leest, en op een factuur met
+  // gemengde tarieven week hij een cent af van wat /api/invoice/send bij uitgifte opnieuw uitrekent.
+  //
+  // applyDiscount groepeert per tarief, rondt de btw van elk tarief af en telt die op — dezelfde
+  // methode als computeInvoiceTotals, en met discount = null is het diezelfde som zonder aftrek. Zo
+  // kan het bedrag in de editor niet verschillen van het bedrag op de PDF, en kan het conceptpad
+  // niet verschillen van het uitgiftepad.
+  //
+  // Het teken is wél van deze route: het wordt per REGEL toegepast, zodat het groeperen en afronden
+  // gebeurt op de getallen die ook echt worden opgeslagen. round2 is symmetrisch, dus een
+  // creditnota rondt identiek aan de factuur die hij crediteert.
+  const d = applyDiscount(
     lines.map((l) => ({
-      // round2 per line, matching what /api/invoice/draft writes into line_total — so the stored
-      // header is the sum of the stored lines rather than of slightly different ones.
       line_total: round2(sign * (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)),
       btw_rate: l.btw_rate,
     })),
+    // Een korting op een creditnota is een toeslag op een teruggave — applyDiscount weigert hem
+    // ook zelf (`positive`), en hier al niet meegeven zegt hetzelfde op de plek waar het besluit valt.
+    sign === 1 ? discount : null,
   );
+  return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw };
 }
 
 /** The BTW rate must be a rate that exists in the Netherlands — not a number someone typed. */

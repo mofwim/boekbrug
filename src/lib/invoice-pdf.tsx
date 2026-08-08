@@ -32,6 +32,7 @@ import { reverseChargeNotice } from './icp'
 import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
 import { unitLabel } from './units'
+import { applyDiscount, parseDiscount, discountLabel } from './invoice-discount'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -274,9 +275,34 @@ export function InvoicePDF({
   // up: Subtotaal + Σ(per-rate BTW) === Totaal, to the cent, for single- and
   // mixed-rate alike. (Previously Subtotaal/Totaal came from stored fields while
   // the BTW rows were re-derived, which could disagree by a cent.)
+  // [KORTING] Een korting op de hele factuur staat op de FACTUURRIJ, en dit document rekent zijn
+  // totalen uit de REGELS. Zonder deze stap drukt de PDF het onverlaagde bedrag terwijl de
+  // opgeslagen totalen (en de aangifte, en de betaallink) het verlaagde bedrag dragen — een
+  // document dat niet klopt met zichzelf, wat de regels hierboven juist bestaan om te voorkomen.
+  //
+  // De verdeling over de tarieven komt uit dezelfde module als het scherm en de UBL-export, want
+  // die drie moeten per definitie hetzelfde antwoord geven.
+  const korting = parseDiscount(
+    (invoice as { discount_type?: unknown }).discount_type,
+    (invoice as { discount_value?: unknown }).discount_value,
+  )
+  const kortingUitkomst = applyDiscount(
+    rateLines.map((g) => ({ line_total: g.ex, btw_rate: g.rate })),
+    korting,
+  )
+  const afgetrokken = new Map<number, number>()
+  for (const a of kortingUitkomst.allowances) afgetrokken.set(a.rate, a.amount)
+  const netRateLines = rateLines.map((g) => {
+    const off = afgetrokken.get(g.rate) ?? 0
+    const ex = round2(g.ex - off)
+    return { ...g, ex, btw: off > 0 ? round2((ex * g.rate) / 100) : g.btw }
+  })
+
   const displaySubtotal = round2(rateLines.reduce((a, g) => a + g.ex, 0))
-  const displayBtwTotal = round2(rateLines.reduce((a, g) => a + round2(g.btw), 0))
-  const displayTotal = round2(displaySubtotal + displayBtwTotal)
+  const displayDiscount = kortingUitkomst.discount_ex_btw
+  const displayNetSubtotal = round2(netRateLines.reduce((a, g) => a + g.ex, 0))
+  const displayBtwTotal = round2(netRateLines.reduce((a, g) => a + round2(g.btw), 0))
+  const displayTotal = round2(displayNetSubtotal + displayBtwTotal)
 
   const paymentText = `Wij verzoeken u vriendelijk het bovenstaande bedrag van ${formatEuroNL(
     displayTotal
@@ -402,7 +428,21 @@ export function InvoicePDF({
               <Text style={styles.totalLabel}>Subtotaal</Text>
               <Text style={styles.totalValue}>{formatEuroNL(displaySubtotal)}</Text>
             </View>
-            {rateLines.map((g, i) => (
+            {/* [KORTING] Genoemd, met het percentage erbij als dat is afgesproken. Een verlaagd
+                totaal zonder regel die het uitlegt, is een factuur die de klant niet kan narekenen. */}
+            {displayDiscount > 0 && (
+              <>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{discountLabel(korting)}</Text>
+                  <Text style={styles.totalValue}>{`- ${formatEuroNL(displayDiscount)}`}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Subtotaal na korting</Text>
+                  <Text style={styles.totalValue}>{formatEuroNL(displayNetSubtotal)}</Text>
+                </View>
+              </>
+            )}
+            {netRateLines.map((g, i) => (
               <View key={i} style={styles.totalRow}>
                 <Text style={styles.totalLabel}>{rateLabel(g.rate, g.ex)}</Text>
                 <Text style={styles.totalValue}>{formatEuroNL(round2(g.btw))}</Text>

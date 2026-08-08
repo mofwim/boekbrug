@@ -1,0 +1,1300 @@
+@import "./tools-theme.css";
+
+/* ==========================================================================
+   The market, and the shell every tool sits in.
+   Same surface as Mijn Afspraken, so a new tool looks like it belongs from
+   the first line of its own code.
+   ========================================================================== */
+
+.tp-page {
+  min-height: 100vh;
+  background: var(--ios-bg);
+  color: var(--ios-label);
+}
+
+.tp {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 24px calc(72px + env(safe-area-inset-bottom));
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif;
+  color: var(--ios-label);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tp *,
+.tp *::before,
+.tp *::after { box-sizing: border-box; }
+
+.tp .icon { flex: none; }
+.tp :focus-visible { outline: 2.5px solid var(--ios-blue); outline-offset: 1px; border-radius: 6px; }
+
+.tp .sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --------------------------------------------------------------- headers */
+
+.tp-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding-top: calc(18px + env(safe-area-inset-top));
+  margin-bottom: 10px;
+}
+.tp-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: -6px;
+  padding: 8px 6px;
+  border-radius: 8px;
+  color: var(--ios-blue);
+  font-size: 17px;
+  text-decoration: none;
+}
+.tp-back:active { opacity: 0.5; }
+/* The chevron is drawn pointing forward; back is the same shape, turned. */
+.tp-back-icon { transform: rotate(180deg); }
+[dir="rtl"] .tp-back-icon { transform: none; }
+
+.tp-nav-spacer { flex: 1; }
+
+/* Language links, not a dropdown — a crawler should be able to follow them. */
+.tp-langs { display: inline-flex; gap: 2px; margin-inline-start: auto; padding: 3px; border-radius: 999px; background: var(--ios-fill); }
+.tp-langs a {
+  padding: 6px 13px;
+  border-radius: 999px;
+  color: var(--ios-label-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+.tp-langs a[aria-current="true"] { background: var(--ios-pill); box-shadow: var(--ios-pill-shadow); color: var(--ios-label); }
+.tp-langs a:active { opacity: 0.5; }
+
+/* The search is the hub's primary action, so it is sized like one. */
+.tp-search {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 54px;
+  padding: 0 18px;
+  margin-bottom: 40px;
+  max-width: 560px;
+  border-radius: 999px;
+  background: var(--ios-card);
+  box-shadow: var(--ios-lift);
+  color: var(--ios-label-2);
+  transition: box-shadow 0.2s, transform 0.2s var(--ios-ease);
+}
+.tp-search:focus-within { box-shadow: var(--ios-lift-hover), 0 0 0 2px var(--ios-blue); }
+.tp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ios-label);
+}
+/* Stated rather than left to the browser, which derives a placeholder by
+   fading the input's own colour — white at the UA's opacity measured 3.88:1 in
+   dark. "Zoeken" is this field's only label. */
+.tp-search input::placeholder { color: var(--ios-label-2); opacity: 1; }
+.tp-search .icon { color: var(--ios-label-3); }
+.tp-search input:focus { outline: none; }
+.tp-search input::-webkit-search-cancel-button { display: none; }
+.tp-search button {
+  display: inline-flex;
+  width: 22px; height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ios-label-3);
+  cursor: pointer;
+}
+
+.tp-empty { margin: 0; padding: 34px 20px; border-radius: var(--ios-radius); background: var(--ios-card); box-shadow: var(--ios-lift); text-align: center; font-size: 15px; color: var(--ios-label-2); }
+.tp-related { margin-top: 44px; padding-top: 28px; border-top: 0.5px solid var(--ios-separator); }
+.tp-related h2 { font-size: 17px; }
+
+.tp-title {
+  margin: 8px 0 12px;
+  font-size: var(--step-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.03;
+  /* Optical alignment: a big weight sits visibly right of the text under it
+     without this, because its left sidebearing is proportionally smaller. */
+  margin-inline-start: -0.02em;
+}
+.tp-sub {
+  margin: 0 0 26px;
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ios-label-2);
+  /* The page is wide; a line of text is not. Two different measurements. */
+  max-width: 58ch;
+}
+
+/* A tool page is a workbench: the work leads and the words introduce it. */
+.tp-tool { max-width: 860px; }
+.tp-tool .tp-title { font-size: var(--step-title); margin-bottom: 8px; }
+.tp-tool .tp-sub { font-size: 16px; margin-bottom: 26px; }
+
+/* ------------------------------------------------------------ the market */
+
+.tp-hero { padding: 26px 0 8px; }
+
+/* The promise, stated once and prominently, instead of whispered on every
+   one of twenty-nine cards. Repetition is not reassurance; it is noise. */
+.tp-promise {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 18px;
+  padding: 6px 14px 6px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ios-green) 13%, transparent);
+  color: color-mix(in srgb, var(--ios-green) var(--tint-ink), var(--ios-label));
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.tp-promise .icon { color: var(--ios-green); }
+
+.tp-group { margin-bottom: 44px; }
+.tp-group h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0 0 14px;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--ios-label);
+  text-transform: none;
+}
+.tp-group h2 small {
+  font-size: 14px;
+  font-weight: 400;
+  /* How many tools are in the category — a fact worth reading, not a flourish,
+     so it takes the secondary label rather than the faint one. */
+  color: var(--ios-label-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+  gap: 14px;
+}
+
+.tp-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Every card the same height, so a row never leaves a ragged hole. */
+  min-height: 132px;
+  padding: 18px;
+  border-radius: var(--ios-radius);
+  background: var(--ios-card);
+  box-shadow: var(--ios-lift);
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  transition: transform 0.2s var(--ios-ease), box-shadow 0.2s var(--ios-ease);
+}
+
+/* A wash of the card's own tint, from the corner its icon sits in. Barely
+   visible on its own; what it does is stop twenty-nine white rectangles from
+   reading as one grey field. */
+.tp-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 90% at var(--wash-x, 0%) 0%,
+    color-mix(in srgb, var(--tint, var(--ios-blue)) 12%, transparent),
+    transparent 62%
+  );
+  opacity: 0.85;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.tp-card > * { position: relative; }
+
+.tp-card:hover { transform: translateY(-3px); box-shadow: var(--ios-lift-hover); }
+.tp-card:hover::before { opacity: 1; }
+.tp-card:active { transform: translateY(-1px) scale(0.99); }
+
+.tp-card-top { display: flex; flex-direction: column; align-items: flex-start; gap: 13px; }
+
+/* The icon is a tinted plate rather than a saturated block: at 44px a solid
+   gradient shouts, and twenty-nine of them shouting at once is a toy shop. */
+.tp-badge {
+  display: grid;
+  place-items: center;
+  width: 44px; height: 44px;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--tint, var(--ios-blue)) 15%, var(--ios-card));
+  color: var(--tint, var(--ios-blue));
+  flex: none;
+  transition: transform 0.22s var(--ios-ease);
+}
+.tp-card:hover .tp-badge { transform: scale(1.06) rotate(-2deg); }
+
+.tp-card[data-tint="blue"],   .tp-badge[data-tint="blue"]   { --tint: var(--ios-blue); }
+.tp-card[data-tint="teal"],   .tp-badge[data-tint="teal"]   { --tint: var(--ios-teal); }
+.tp-card[data-tint="indigo"], .tp-badge[data-tint="indigo"] { --tint: var(--ios-indigo); }
+.tp-card[data-tint="purple"], .tp-badge[data-tint="purple"] { --tint: var(--ios-purple); }
+.tp-card[data-tint="orange"], .tp-badge[data-tint="orange"] { --tint: var(--ios-orange); }
+.tp-card[data-tint="pink"],   .tp-badge[data-tint="pink"]   { --tint: var(--ios-pink); }
+
+.tp-card-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tp-card-name strong { font-size: var(--step-head); font-weight: 600; letter-spacing: -0.021em; }
+.tp-card-name span { font-size: 13.5px; line-height: 1.4; color: var(--ios-label-2); }
+
+/* The full description is in the page's metadata, where a search engine reads
+   it. On the card it was a wall of text between the reader and the click. */
+.tp-card p { display: none; }
+.tp-card-foot { display: none; }
+
+/* An arrow that only leans in on approach. */
+.tp-card-go {
+  position: absolute;
+  inset-block-start: 18px;
+  inset-inline-end: 16px;
+  color: var(--ios-label-3);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.2s, transform 0.2s var(--ios-ease);
+}
+.tp-card:hover .tp-card-go { opacity: 1; transform: none; color: var(--tint, var(--ios-blue)); }
+[dir="rtl"] .tp-card-go { transform: translateX(4px) rotate(180deg); }
+[dir="rtl"] .tp-card:hover .tp-card-go { transform: rotate(180deg); }
+
+/* ---------------------------------------------------------------- shell */
+
+.tp-panel {
+  padding: 20px;
+  border-radius: var(--ios-radius);
+  background: var(--ios-card);
+  box-shadow: var(--ios-lift);
+  margin-bottom: 16px;
+}
+.tp-panel h3 {
+  margin: 0 0 14px;
+  font-size: var(--step-head);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* The one thing a tool page is for. It was the palest box on the screen;
+   now it is the loudest, which is the correct order of importance. */
+.tp-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 52px 24px;
+  margin-bottom: 16px;
+  border: 2px dashed color-mix(in srgb, var(--ios-blue) 32%, transparent);
+  border-radius: var(--ios-radius);
+  background:
+    radial-gradient(140% 100% at 50% 0%, color-mix(in srgb, var(--ios-blue) 9%, transparent), transparent 68%),
+    var(--ios-card);
+  color: var(--ios-label-2);
+  font-size: 15px;
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s var(--ios-ease), box-shadow 0.2s;
+}
+.tp-drop:hover { border-color: var(--ios-blue); box-shadow: var(--ios-lift); }
+.tp-drop:active { transform: scale(0.995); }
+
+/* Dragging a file over it: the whole target answers, not just its border. */
+.tp-drop.is-dragging {
+  border-color: var(--ios-blue);
+  border-style: solid;
+  transform: scale(1.008);
+  box-shadow: var(--ios-lift-hover);
+}
+.tp-drop.is-dragging::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--ios-blue) 10%, transparent);
+}
+
+.tp-drop .icon {
+  color: var(--ios-blue);
+  transition: transform 0.28s var(--ios-ease);
+}
+.tp-drop:hover .icon { transform: translateY(-3px); }
+.tp-drop.is-dragging .icon { transform: translateY(-6px) scale(1.1); }
+.tp-drop strong { color: var(--ios-label); font-size: 19px; font-weight: 600; letter-spacing: -0.015em; }
+.tp-drop small { font-size: 13.5px; }
+
+.tp-textarea {
+  width: 100%;
+  min-height: 150px;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: var(--ios-radius);
+  background: var(--ios-card);
+  color: var(--ios-label);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.tp-textarea:focus { outline: 2px solid var(--ios-blue); outline-offset: -2px; }
+
+.tp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.tp .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 12px 22px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 0.15s, transform 0.15s var(--ios-ease);
+}
+.tp .btn:active { opacity: 0.55; transform: scale(0.97); }
+.tp .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+.tp .btn-sm { min-height: 34px; padding: 8px 15px; font-size: 15px; border-radius: 999px; }
+.tp .btn-primary {
+  background: var(--ios-blue-fill);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 8px 20px -10px color-mix(in srgb, var(--ios-blue) 70%, transparent);
+}
+.tp .btn-quiet { background: var(--ios-fill); color: var(--ios-blue); }
+
+/* --------------------------------------------------------------- results */
+
+.tp-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: var(--ios-radius);
+  font-size: 14px;
+  line-height: 1.45;
+  margin-bottom: 14px;
+}
+.tp-note .icon { margin-top: 2px; flex: none; }
+.tp-note-ok { background: color-mix(in srgb, var(--ios-green) 14%, transparent); color: color-mix(in srgb, var(--ios-green) var(--tint-ink), var(--ios-label)); }
+.tp-note-warn { background: color-mix(in srgb, var(--ios-orange) 16%, transparent); color: color-mix(in srgb, var(--ios-orange) var(--tint-ink), var(--ios-label)); }
+.tp-note-error { background: color-mix(in srgb, var(--ios-red) 14%, transparent); color: var(--ios-red); }
+
+.tp-rows { list-style: none; margin: 0; padding: 0; border-radius: var(--ios-radius); background: var(--ios-card); overflow: hidden; }
+.tp-rows li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 11px 14px;
+}
+.tp-rows li + li::before {
+  content: "";
+  position: absolute;
+  top: 0; inset-inline-start: 14px; inset-inline-end: 0;
+  height: 0.5px;
+  background: var(--ios-separator);
+}
+.tp-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.tp-row-text strong { font-size: 16px; font-weight: 400; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-row-text span { font-size: 13px; color: var(--ios-label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-rows .icon { color: var(--ios-blue); }
+
+.tp-table-wrap { overflow-x: auto; border-radius: var(--ios-radius); background: var(--ios-card); }
+.tp-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+.tp-table th,
+.tp-table td { padding: 9px 12px; text-align: start; white-space: nowrap; border-bottom: 0.5px solid var(--ios-separator); }
+.tp-table th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ios-label-2); }
+.tp-table tr:last-child td { border-bottom: 0; }
+.tp-table td { color: var(--ios-label-2); }
+.tp-table td:first-child { color: var(--ios-label); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+.tp-mail-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.tp-mail-head h3 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.tp-mail-head span { font-size: 14px; color: var(--ios-label-2); }
+
+.tp-body {
+  margin: 0;
+  padding: 14px;
+  border-radius: var(--ios-radius);
+  background: var(--ios-fill-2);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.tp-seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--ios-fill); margin-bottom: 14px; }
+.tp-seg button {
+  min-height: 32px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tp-seg button[aria-pressed="true"] { background: var(--ios-pill); box-shadow: var(--ios-pill-shadow); font-weight: 600; }
+
+/* ------------------------------------------------------- shared controls */
+
+.tp-field {
+  display: flex;
+  /* The control takes the width it needs and the label takes the rest — but on
+     a phone a three-option segmented control needs nearly all of it, and the
+     label used to shrink to whatever was left. Measured on an iPhone 13: the
+     hint under "Resolutie" rendered 25px wide and 312px tall, four characters
+     to a line for seventeen lines. Wrapping means a control that cannot fit
+     beside a readable label drops to its own line instead of crushing it. */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 9px 0;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.tp-field + .tp-field { border-top: 0.5px solid var(--ios-separator); }
+.tp-field-label { display: flex; flex-direction: column; gap: 1px; flex: 1 1 13rem; min-width: 13rem; }
+.tp-field-label small { font-size: 13px; color: var(--ios-label-2); }
+
+.tp-field select,
+.tp-field input[type="text"],
+.tp-field input[type="number"],
+.tp-field input[type="color"] {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--ios-fill);
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 16px;
+}
+.tp-field input[type="number"] { width: 104px; text-align: end; font-variant-numeric: tabular-nums; }
+.tp-field input[type="text"] { flex: 1; min-width: 0; max-width: 320px; }
+.tp-field input[type="color"] { width: 52px; padding: 3px; cursor: pointer; }
+.tp-field select:focus,
+.tp-field input:focus { outline: 2px solid var(--ios-blue); outline-offset: -2px; }
+
+.tp-slider { display: flex; align-items: center; gap: 12px; flex: 1; max-width: 320px; }
+.tp-slider input[type="range"] { flex: 1; accent-color: var(--ios-blue); min-width: 0; }
+.tp-slider output {
+  min-width: 52px;
+  text-align: end;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ios-label-2);
+}
+
+.tp-check { display: flex; align-items: center; gap: 10px; }
+.tp-check input { width: 20px; height: 20px; accent-color: var(--ios-blue); }
+
+.tp-thumb {
+  width: 40px; height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--ios-fill);
+  flex: none;
+}
+
+.tp-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 340px;
+  margin: 0 auto;
+  border-radius: var(--ios-radius);
+  background:
+    linear-gradient(45deg, var(--ios-fill-2) 25%, transparent 25%, transparent 75%, var(--ios-fill-2) 75%) 0 0 / 18px 18px,
+    linear-gradient(45deg, var(--ios-fill-2) 25%, transparent 25%, transparent 75%, var(--ios-fill-2) 75%) 9px 9px / 18px 18px;
+}
+
+.tp-stat { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 4px; }
+.tp-stat div { display: flex; flex-direction: column; gap: 1px; }
+.tp-stat dt { font-size: 12px; color: var(--ios-label-2); }
+.tp-stat dd { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tp-stat .tp-win { color: var(--ios-green); }
+
+.tp-out {
+  width: 100%;
+  min-height: 130px;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: var(--ios-radius);
+  background: var(--ios-fill-2);
+  color: var(--ios-label);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tp-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 0.5px solid var(--ios-separator);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ios-label-2);
+}
+.tp-privacy .icon { margin-top: 2px; color: var(--ios-green); flex: none; }
+
+.tp-foot { margin-top: 34px; font-size: 13px; color: var(--ios-label-2); text-align: center; }
+.tp-foot a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  color: var(--ios-blue);
+  text-decoration: none;
+}
+
+@media (max-width: 600px) {
+  .tp { padding-inline: 18px; }
+  .tp-cards { grid-template-columns: 1fr; }
+  .tp-actions .btn { flex: 1; }
+  .tp-hero { padding-top: 14px; }
+  .tp-search { height: 50px; margin-bottom: 30px; }
+  .tp-drop { padding: 40px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp *, .tp *::before, .tp *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------- page tiles */
+
+.tp-row-actions { display: flex; gap: 4px; flex: none; align-items: center; }
+.tp-row-actions .btn { min-width: 34px; padding: 8px 9px; }
+
+/* A page stands in for itself — a number and an orientation is all that has
+   to be right, and drawing the real thing would mean shipping a renderer. */
+.tp-pages {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 12px;
+}
+.tp-pages li { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.tp-pages li[data-dropped] { opacity: 0.4; }
+
+.tp-page-tile {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1 / 1.414;
+  border: 1px solid var(--ios-separator);
+  border-radius: 8px;
+  background: var(--ios-fill-2);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ios-label-2);
+  transition: transform 0.25s var(--ios-ease);
+}
+.tp-pages li[data-dropped] .tp-page-tile { border-style: dashed; text-decoration: line-through; }
+
+.tp-page-tools { display: flex; gap: 2px; }
+.tp-page-tools button {
+  width: 28px; height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ios-fill);
+  color: var(--ios-label-2);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tp-page-tools button:hover:not(:disabled) { background: var(--ios-fill); color: var(--ios-label); }
+.tp-page-tools button[data-danger]:hover { color: var(--ios-red); }
+.tp-page-tools button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ------------------------------------------------------------ text tools */
+
+.tp-text {
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: var(--ios-radius);
+  background: var(--ios-fill-2);
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.55;
+  resize: vertical;
+  margin-bottom: 4px;
+}
+.tp-text:focus { outline: 2px solid var(--ios-blue); outline-offset: -2px; }
+.tp-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.tp-break { overflow-wrap: anywhere; }
+.tp-clip { max-height: 180px; overflow: auto; }
+.tp-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.tp-hint { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--ios-label-2); }
+
+.tp-tabs { margin-bottom: 4px; }
+.tp-stat-wide { gap: 14px 26px; }
+.tp-stat .tp-big { font-size: 27px; letter-spacing: -0.03em; }
+
+/* An iOS switch, from a checkbox — the control people expect for a setting
+   that takes effect immediately rather than on a Save button. */
+.tp-switch {
+  appearance: none;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: var(--ios-fill);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.2s var(--ios-ease);
+}
+.tp-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px; inset-inline-start: 2px;
+  width: 27px; height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  transition: transform 0.2s var(--ios-ease);
+}
+.tp-switch:checked { background: var(--ios-green); }
+.tp-switch:checked::after { transform: translateX(20px); }
+[dir="rtl"] .tp-switch:checked::after { transform: translateX(-20px); }
+.tp-switch:focus-visible { outline: 2px solid var(--ios-blue); outline-offset: 2px; }
+
+.tp-set { border: 0; margin: 0; padding: 0; }
+.tp-set legend { padding: 0; font-size: 13px; color: var(--ios-label-2); }
+
+/* ----------------------------------------------------------- word count */
+
+.tp-limits { list-style: none; margin: 0; padding: 0; }
+.tp-limits li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 7px 0;
+}
+.tp-limits li + li { border-top: 0.5px solid var(--ios-separator); }
+/* A verdict pill — "still fits", "was", "becomes". Named apart from
+   .tp-badge, which is the tinted icon plate on a card: they had shared a
+   name, and the later rule was painting every tool icon green. */
+.tp-chip {
+  flex: none;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ios-green) 15%, transparent);
+  color: color-mix(in srgb, var(--ios-green) var(--tint-ink), var(--ios-label));
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.tp-chip-over { background: color-mix(in srgb, var(--ios-red) 14%, transparent); color: var(--ios-red); }
+
+/* ------------------------------------------------------------ comparing */
+
+.tp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.tp-pair .tp-panel { margin-bottom: 14px; }
+
+.tp-diff {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--ios-radius);
+  background: var(--ios-fill-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+.tp-diff li { display: flex; gap: 0; padding: 1px 10px 1px 0; }
+.tp-diff-no {
+  flex: none;
+  width: 42px;
+  padding-inline-end: 8px;
+  text-align: end;
+  color: var(--ios-label-3, var(--ios-label-2));
+  opacity: 0.6;
+  user-select: none;
+}
+.tp-diff-sign { flex: none; width: 18px; text-align: center; user-select: none; }
+.tp-diff-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tp-diff-added { background: color-mix(in srgb, var(--ios-green) 13%, transparent); }
+.tp-diff-added .tp-diff-sign { color: var(--ios-green); }
+.tp-diff-removed { background: color-mix(in srgb, var(--ios-red) 11%, transparent); }
+.tp-diff-removed .tp-diff-sign { color: var(--ios-red); }
+.tp-diff-fold {
+  padding: 5px 14px;
+  color: var(--ios-label-2);
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--ios-fill);
+}
+
+/* ------------------------------------------------------------ generators */
+
+.tp-qr { display: grid; place-items: center; padding: 8px 0 14px; }
+.tp-qr svg { max-width: 100%; height: auto; border-radius: 8px; }
+
+.tp-passwords { list-style: none; margin: 0 0 14px; padding: 0; }
+.tp-passwords li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 6px 0;
+}
+.tp-passwords li + li { border-top: 0.5px solid var(--ios-separator); }
+.tp-passwords code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.tp-strength {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--ios-label-2);
+}
+.tp-strength strong { font-size: 16px; }
+.tp-strength small { font-variant-numeric: tabular-nums; }
+.tp-strength-weak strong { color: var(--ios-red); }
+.tp-strength-fair strong { color: var(--ios-orange); }
+.tp-strength-strong strong,
+.tp-strength-excellent strong { color: var(--ios-green); }
+
+@media (max-width: 600px) {
+  .tp-pair { grid-template-columns: 1fr; }
+  .tp-stat .tp-big { font-size: 23px; }
+}
+
+/* ------------------------------------------------------------ pdf pages */
+
+/* Pages as pages. The tile keeps a portrait shape until its picture arrives,
+   so the grid does not jump about while a long document renders. */
+.tp-grid {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 14px;
+}
+.tp-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  border-radius: 10px;
+  transition: transform 0.15s var(--ios-ease), opacity 0.15s;
+}
+.tp-grid-item.is-dropped { opacity: 0.35; }
+.tp-grid-item.is-over { transform: translateX(6px); }
+.tp-grid-item.is-over .tp-grid-sheet { border-color: var(--ios-blue); }
+
+.tp-grid-sheet {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1 / 1.414;
+  padding: 0;
+  border: 1px solid var(--ios-separator);
+  border-radius: 8px;
+  background: var(--ios-card);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.2s var(--ios-ease);
+}
+.tp-grid-sheet:disabled { cursor: default; }
+.tp-grid-sheet img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform: rotate(var(--turn, 0deg));
+  transition: transform 0.25s var(--ios-ease);
+}
+.tp-grid-blank { font-size: 15px; font-weight: 600; color: var(--ios-label-2); }
+.tp-grid-item.is-dropped .tp-grid-sheet { border-style: dashed; }
+.tp-grid-item.is-selected .tp-grid-sheet {
+  border-color: var(--ios-blue);
+  box-shadow: 0 0 0 2px var(--ios-blue);
+}
+
+.tp-grid-tick {
+  position: absolute;
+  top: 5px; inset-inline-end: 5px;
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--ios-fill);
+  color: transparent;
+}
+.tp-grid-item.is-selected .tp-grid-tick { background: var(--ios-blue-fill); color: #fff; }
+
+.tp-grid-no { font-size: 12px; color: var(--ios-label-2); font-variant-numeric: tabular-nums; }
+.tp-grid-tools { display: flex; flex-wrap: wrap; gap: 2px; }
+.tp-grid-tools button {
+  width: 26px; height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ios-fill);
+  color: var(--ios-label-2);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tp-grid-tools button:hover:not(:disabled) { color: var(--ios-label); }
+.tp-grid-tools button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* Throwing a page away is the one thing here that cannot be undone by pressing
+   the same button again, and it used to sit flush against rotate-right at the
+   same size in the same grey — five identical icons in a row, with the
+   destructive one at the end. Pushed away from the cluster and tinted red, so
+   it reads as a different kind of thing before it is pressed rather than
+   after. `title` is no help on a phone: there is no hover. */
+.tp-grid-tools button[data-danger] {
+  margin-inline-start: auto;
+  background: color-mix(in srgb, var(--ios-red) 12%, transparent);
+  color: var(--ios-red);
+}
+.tp-grid-tools button[data-danger]:hover { background: color-mix(in srgb, var(--ios-red) 22%, transparent); }
+
+.tp-cover {
+  width: 34px;
+  height: 46px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid var(--ios-separator);
+  object-fit: cover;
+  background: #fff;
+}
+
+.tp-shots {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 14px;
+}
+.tp-shots li { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.tp-shots img {
+  width: 100%;
+  border: 1px solid var(--ios-separator);
+  border-radius: 8px;
+  background: #fff;
+}
+.tp-shots span { font-size: 12px; color: var(--ios-label-2); font-variant-numeric: tabular-nums; }
+
+.tp-clip-tall { max-height: 460px; overflow: auto; }
+.tp-stat .tp-plain { font-size: 15px; font-weight: 400; }
+
+/* ------------------------------------------------------------- signing */
+
+.tp-pad {
+  display: block;
+  width: 100%;
+  aspect-ratio: 19 / 6;
+  border: 1.5px dashed var(--ios-separator);
+  border-radius: var(--ios-radius);
+  background: var(--ios-card);
+  touch-action: none;
+  cursor: crosshair;
+}
+.tp-sign-preview {
+  display: block;
+  max-width: 320px;
+  max-height: 130px;
+  margin: 12px auto 0;
+  border-radius: 8px;
+  background: var(--ios-fill-2);
+}
+
+.tp-sheet {
+  position: relative;
+  margin: 0 auto;
+  max-width: 100%;
+  width: fit-content;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 10px rgb(0 0 0 / 0.14);
+  cursor: crosshair;
+}
+.tp-sheet > img { display: block; max-width: 100%; height: auto; }
+.tp-sheet-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.15));
+}
+
+/* A preview that is produced by the engine, so it waits rather than lies. */
+.tp-sheet-still {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  margin: 8px auto 4px;
+  background: var(--ios-fill-2);
+  cursor: default;
+  transition: opacity 0.2s;
+}
+.tp-sheet-still.is-busy { opacity: 0.5; }
+.tp-sheet-waiting { padding: 60px 20px; font-size: 14px; color: var(--ios-label-2); }
+
+/* A finger is not a mouse pointer. Where a control is deliberately light on a
+   desktop — the back link, the language switch — it still has to be a target
+   somebody can hit while holding a phone one-handed. */
+@media (pointer: coarse) {
+  .tp-back { min-height: 44px; padding-top: 11px; padding-bottom: 11px; }
+  .tp-langs a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; }
+  .tp-langs { padding: 2px; }
+  /* 44px is Apple's minimum for a finger, and these are the smallest controls
+     in the market: five of them under a thumbnail, one of which deletes a
+     page. At 34px they cleared the old 32px check while still being the
+     easiest thing here to hit by mistake. Five at 44px will not fit across a
+     phone column, which is what the wrap on .tp-grid-tools is for — two rows
+     of comfortable targets beat one row of cramped ones. */
+  .tp-grid-tools button { width: 44px; height: 44px; font-size: 16px; }
+  .tp-page-tools button { width: 44px; height: 44px; }
+  /* Five choices do not fit across a phone. Let the control scroll rather
+     than let it push the whole page sideways. */
+  .tp-seg {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tp-seg::-webkit-scrollbar { display: none; }
+  .tp-seg button { min-height: 40px; padding-inline: 18px; flex: none; }
+  .tp .btn-sm { min-height: 40px; padding: 10px 15px; }
+}
+
+/* ---------------------------------------------------------- advertising */
+
+/* The space is reserved before anything arrives. An advert that pushes the
+   page down as it loads moves the button somebody was about to press. */
+.ad-slot {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 26px 0 6px;
+  padding-top: 16px;
+  border-top: 0.5px solid var(--ios-separator);
+  overflow: hidden;
+}
+.ad-slot .adsbygoogle { width: 100%; }
+/* Labelled, always. A reader is entitled to know which part of the page is
+   the site talking and which part is somebody paying to talk. */
+.ad-mark {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ios-label-2);
+  opacity: 0.65;
+}
+
+.ad-ask {
+  position: fixed;
+  inset-inline: 0; bottom: 0;
+  z-index: 60;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  animation: ad-ask-in 0.32s var(--ios-ease);
+}
+@keyframes ad-ask-in {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.ad-ask-inner {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 18px 20px 16px;
+  border-radius: 18px;
+  background: var(--ios-card);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.22), 0 0 0 0.5px var(--ios-separator);
+}
+.ad-ask h2 { margin: 0 0 8px; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.ad-ask p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; color: var(--ios-label-2); }
+
+.ad-ask-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  margin-bottom: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ios-blue);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.ad-ask-more .icon { transition: transform 0.2s var(--ios-ease); }
+@media (pointer: coarse) {
+  .ad-ask-more { min-height: 44px; }
+}
+.ad-ask-open { transform: rotate(90deg); }
+.ad-ask-detail { font-size: 13px; }
+
+/* Refusing looks exactly like agreeing. That is the point. */
+.ad-ask-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.ad-ask-buttons .btn { flex: 1; min-width: 132px; font-size: 15px; }
+
+.ad-switch { margin: 10px 0 0; text-align: center; font-size: 13px; }
+.ad-switch > button {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: var(--ios-label-2);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ad-switch-options { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-inline-start: 6px; }
+.ad-switch-options button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--ios-fill);
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ad-switch-options button[aria-pressed="true"] { background: var(--ios-blue-fill); color: #fff; }
+
+.tp-prose { margin: 0 0 12px; font-size: 15px; line-height: 1.6; color: var(--ios-label); }
+.tp-prose:last-child { margin-bottom: 0; }
+.tp-foot a + a { margin-inline-start: 4px; }
+
+@media (max-width: 600px) {
+  .ad-ask-buttons .btn { flex: 1 1 100%; }
+}
+
+
+/* ------------------------------------------------------------ right to left
+
+   Arabic runs the other way, and almost all of that is handled by the logical
+   properties above — the page mirrors because it was written in terms of
+   start and end rather than left and right.
+
+   What is left here is the handful of things that must *not* mirror. A number
+   is read left to right in every script: ١٢ is twelve, and a byte count, a
+   pixel size or a checksum reversed is simply wrong. So anything numeric is
+   isolated back to its own direction rather than allowed to flow with the
+   paragraph. */
+
+[dir="rtl"] .tp {
+  /* The system stack alone gives cramped Naskh with badly placed harakat. */
+  font-family: "SF Arabic", "Geeza Pro", "Noto Naskh Arabic", "Segoe UI", Tahoma, system-ui, sans-serif;
+  line-height: 1.65;
+}
+[dir="rtl"] .tp-title,
+[dir="rtl"] .tp-card-name strong { letter-spacing: 0; }
+
+[dir="rtl"] .tp-stat dd,
+[dir="rtl"] .tp-slider output,
+[dir="rtl"] .tp-grid-no,
+[dir="rtl"] .tp-shots span,
+[dir="rtl"] .tp-diff-no,
+[dir="rtl"] .tp-chip,
+[dir="rtl"] .tp-out,
+[dir="rtl"] .tp-passwords code,
+[dir="rtl"] .tp-mono {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+/* A page preview is a picture of a page, not a paragraph — it keeps its own
+   order however the text around it runs. */
+[dir="rtl"] .tp-grid,
+[dir="rtl"] .tp-shots,
+[dir="rtl"] .tp-sheet,
+[dir="rtl"] .tp-pages { direction: ltr; }
+[dir="rtl"] .tp-grid-no,
+[dir="rtl"] .tp-shots span { direction: ltr; }
+
+/* ------------------------------------------------------- a tool's own prose */
+
+.tp-notes { margin-top: 28px; max-width: 64ch; }
+.tp-notes > div + div { margin-top: 20px; }
+.tp-notes h2 { margin: 0 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.tp-notes p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ios-label-2); }
+
+/* The Arabic shaper's two boxes have one job: show what an editor with no
+   Arabic support draws. So the browser's own joining and reordering are
+   switched off — otherwise the "broken" box would quietly render correctly
+   and the comparison would be a lie. */
+.ar-demo {
+  margin-top: 8px;
+  padding: 15px;
+  min-height: 86px;
+  border-radius: var(--ios-radius);
+  background: var(--ios-fill-2);
+  font-size: 18px;
+  line-height: 1.95;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-feature-settings: "liga" 0, "calt" 0, "init" 0, "medi" 0, "fina" 0, "isol" 0;
+  direction: ltr;
+  unicode-bidi: bidi-override;
+}
+
+/* Same reason: presentation forms still carry an Arabic bidi class, so a
+   plain dir="ltr" box would let the browser re-reverse them and show
+   something the editor never receives — making the label above it a lie. */
+.ar-out { direction: ltr; unicode-bidi: bidi-override; }
+
+.ar-apps { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 4px; }
+.ar-app {
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ios-fill);
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.15s var(--ios-ease);
+}
+.ar-app:active { transform: scale(0.96); }
+.ar-app[aria-pressed="true"] { background: var(--ios-blue-fill); color: #fff; }
+
+@media (pointer: coarse) {
+  .ar-app { min-height: 40px; }
+}
+
+/* A row that carries a second line of controls under its own summary. */
+.tp-rows li.tp-row-tall { flex-direction: column; align-items: stretch; gap: 10px; padding: 13px 14px; }
+.tp-row-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+.tp-row-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tp-row-pages label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp-row-pages-label { font-size: 13px; color: var(--ios-label-2); white-space: nowrap; }
+.tp-row-pages input[type="text"] {
+  width: 150px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--ios-fill);
+  color: var(--ios-label);
+  font: inherit;
+  font-size: 15px;
+}
+.tp-row-pages input[type="text"]:focus { outline: 2px solid var(--ios-blue); outline-offset: -2px; }
+.tp-rows li.tp-row-tall .tp-grid { margin-top: 2px; }
+
+@media (pointer: coarse) {
+  .tp-row-pages input[type="text"] { min-height: 44px; }
+}
+
+/* ---------------------------------------------------- boekbrug page shell */
+/* [PDF-TOOLS] The furniture around the tool, matching the calculators: the
+   promise line, the FAQ a crawler reads, and the account close. */
+
+.tp-foot-note {
+  display: flex;
+  gap: 9px;
+  margin: 28px 0 0;
+  padding-top: 20px;
+  border-top: 0.5px solid var(--ios-separator);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ios-label-2);
+}
+
+.tp-faq { margin-top: 40px; }
+.tp-faq h2 { margin: 0 0 16px; font-size: 21px; font-weight: 650; letter-spacing: -0.02em; }
+.tp-faq h3 { margin: 0 0 5px; font-size: 16px; font-weight: 600; }
+.tp-faq > div + div { margin-top: 18px; }
+.tp-faq p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ios-label-2); }
+
+.tp-close {
+  margin-top: 40px;
+  padding: 28px;
+  border-radius: var(--ios-radius);
+  background: var(--ios-card);
+  box-shadow: var(--ios-lift);
+  text-align: center;
+}
+.tp-close strong { display: block; margin-bottom: 8px; font-size: 20px; letter-spacing: -0.02em; }
+.tp-close p { margin: 0 auto 18px; max-width: 46ch; font-size: 15px; line-height: 1.55; color: var(--ios-label-2); }
+.tp-close-cta {
+  display: inline-block;
+  padding: 13px 26px;
+  border-radius: 9999px;
+  background: var(--ios-blue-fill);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}

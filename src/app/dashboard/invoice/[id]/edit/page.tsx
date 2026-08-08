@@ -6,6 +6,8 @@
 
 import { useState, useEffect } from 'react'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
+import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS } from '@/lib/payment-term'
+import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -15,12 +17,11 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 import type { ProfileRow } from '@/types/rows'
 import { COLUMN } from '@/lib/design/tokens';
+import { formatDateNL } from '@/lib/format-nl'
 // [PRIJS-MODUS] Dezelfde omrekening als het aanmaakscherm — één definitie, twee schermen.
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
-// [BTW-ROUND] De wettelijke totalen, dezelfde functie als de PUT van dit scherm.
-import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 
@@ -57,6 +58,11 @@ export default function InvoiceEditPage() {
   // (Art. 35), en het woord offerte kwam nergens voor.
   const [invoiceType, setInvoiceType] = useState<string>('factuur')
   const quote = isQuote(invoiceType)
+  // [KORTING] Ook hier te wijzigen, niet alleen bij het aanmaken. Een korting die je alleen kunt
+  // instellen door de factuur opnieuw te maken, is een korting die je bij de eerste onderhandeling
+  // met de klant kwijt bent.
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>('percent')
+  const [discountValue, setDiscountValue] = useState('')
   const [showSendModal, setShowSendModal] = useState(false)
   useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
@@ -120,6 +126,13 @@ export default function InvoiceEditPage() {
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
       setInvoiceType(invoice.invoice_type || 'factuur')
+      // [KORTING] Wat er staat, zoals het is opgeslagen. Zonder deze twee regels opende het scherm
+      // met een leeg kortingsveld boven een verlaagd totaal, en de eerste "Wijzigingen opslaan"
+      // haalde de korting er stilletjes af.
+      const dt = (invoice as { discount_type?: string | null }).discount_type
+      const dv = (invoice as { discount_value?: number | null }).discount_value
+      if (dt === 'percent' || dt === 'amount') setDiscountType(dt)
+      setDiscountValue(dv == null ? '' : String(dv))
       setClientName(invoice.client_name || '')
       setClientEmail(invoice.client_email || '')
       setClientAddress(invoice.client_address || '')
@@ -184,15 +197,17 @@ export default function InvoiceEditPage() {
   }
 
   // ── Totalen — realtime ────────────────────────────────────────────────────
-  // [BTW-ROUND] Via computeInvoiceTotals, dezelfde functie die de PUT van deze pagina en
-  // /api/invoice/send gebruiken. Hier stond de BTW per regel opgeteld en ongerond; dat wijkt op
-  // een factuur met gemengde tarieven een cent af van wat er wordt opgeslagen en verstuurd, en dan
-  // toont dit scherm een ander bedrag dan de PDF die eruit komt.
-  const { total_ex_btw: totalEx, btw_amount: btwAmount, total_inc_btw: totalInc } =
-    computeInvoiceTotals(lines.map((l) => ({
-      line_total: round2(l.quantity * l.unit_price),
-      btw_rate: l.btw_rate,
-    })))
+  // [KORTING] Dezelfde module als de server, de PDF en de UBL-export. Zonder korting geeft
+  // applyDiscount exact dezelfde drie getallen als de handmatige sommen die hier stonden.
+  const korting = parseDiscount(discountType, discountValue)
+  const kortingTotalen = applyDiscount(
+    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    korting,
+  )
+  const subtotalEx = kortingTotalen.subtotal_ex_btw
+  const totalEx = kortingTotalen.total_ex_btw
+  const btwAmount = kortingTotalen.btw_amount
+  const totalInc = kortingTotalen.total_inc_btw
 
   // ── Opslaan — PUT ─────────────────────────────────────────────────────────
   async function handleSave() {
@@ -220,6 +235,10 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [KORTING] Altijd meesturen, ook leeg: dat is hoe de route "korting eraf halen"
+        // onderscheidt van "een oudere pagina die het veld niet kent".
+        discount_type: invoiceType === 'creditnota' ? null : discountType,
+        discount_value: invoiceType === 'creditnota' ? null : discountValue,
         lines
       })
     })
@@ -263,6 +282,11 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [KORTING] Ook op de opslaan-en-versturen weg. Dit is de gevaarlijkste van de twee: hier
+        // wordt het document een genummerde factuur, en een korting die op dit pad wegvalt gaat
+        // onherroepelijk mee de deur uit tegen de volle prijs.
+        discount_type: invoiceType === 'creditnota' ? null : discountType,
+        discount_value: invoiceType === 'creditnota' ? null : discountValue,
         lines,
       }),
     })
@@ -414,11 +438,54 @@ export default function InvoiceEditPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
-                Vervaldatum <span className="text-red-400">*</span>
+                {quote ? 'Geldig tot' : 'Vervaldatum'} <span className="text-red-400">*</span>
               </label>
-              <DateFieldNL value={dueDate} onChange={setDueDate} aria-label="Vervaldatum" />
+              <DateFieldNL value={dueDate} onChange={setDueDate} aria-label={quote ? 'Geldig tot' : 'Vervaldatum'} />
             </div>
           </div>
+
+          {/* [BETAALTERMIJN] De termijn zelf, vrij in te vullen.
+              Op het nieuwe-factuurscherm stonden drie chips: 14, 30 en 60. Een termijn is iets wat
+              je per klant afspreekt ("jij krijgt 45 dagen"), dus elk heel getal mag — de grens in
+              payment-term.ts is een tikfoutgrens, geen beleid.
+              Dit blok bestaat niet op een offerte: haar datum betekent "Geldig tot", niet een
+              betaaltermijn, en één veld twee dingen laten betekenen is hoe een document iets anders
+              gaat zeggen dan het scherm. */}
+          {!quote && (
+            <div className="flex items-center gap-2 flex-wrap mt-3">
+              <span className="text-xs text-gray-500">Betalingstermijn:</span>
+              {COMMON_PAYMENT_TERMS.map(days => {
+                const active = invoiceDate !== '' && termFromDates(invoiceDate, dueDate) === days
+                return (
+                  <button
+                    key={days}
+                    type="button"
+                    onClick={() => { if (invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, days)) }}
+                    className={`text-sm px-3.5 py-1.5 rounded-full border ${active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600'}`}
+                  >
+                    {days} dagen
+                  </button>
+                )
+              })}
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <span className="text-xs text-gray-500">of</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_PAYMENT_TERM_DAYS}
+                  inputMode="numeric"
+                  placeholder="dagen"
+                  value={invoiceDate ? (termFromDates(invoiceDate, dueDate) ?? '') : ''}
+                  onChange={e => {
+                    const days = parsePaymentTerm(e.target.value)
+                    if (days != null && invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, days))
+                  }}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                  aria-label="Betalingstermijn in dagen"
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Factuurregels */}
@@ -515,13 +582,61 @@ export default function InvoiceEditPage() {
           </button>
         </div>
 
+        {/* [KORTING] Op de factuur én de offerte, niet op een creditnota — dat document is al een
+            correctie. Zelfde regels als het aanmaakscherm; de server valideert opnieuw. */}
+        {invoiceType !== 'creditnota' && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium text-gray-900">Korting</span>
+            <div className="inline-flex rounded-full border border-gray-200 overflow-hidden">
+              {(['percent', 'amount'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setDiscountType(t)}
+                  className={`text-sm px-3.5 py-1.5 ${discountType === t ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-600'}`}
+                >
+                  {t === 'percent' ? '%' : '€'}
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              inputMode="decimal"
+              placeholder={discountType === 'percent' ? 'bijv. 10' : 'bijv. 50,00'}
+              value={discountValue}
+              onChange={e => setDiscountValue(e.target.value)}
+              aria-label={discountType === 'percent' ? 'Kortingspercentage' : 'Kortingsbedrag'}
+              className="w-28 border border-gray-200 rounded-lg px-2.5 py-2 text-sm"
+            />
+            {discountValue.trim() !== '' && !korting && (
+              <span className="text-xs text-red-600">
+                {discountType === 'percent' ? 'Vul een percentage tussen 0 en 100 in.' : 'Vul een bedrag boven 0 in.'}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Totalen */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
           <div className="space-y-2 text-sm max-w-xs ml-auto">
             <div className="flex justify-between text-gray-500">
               <span>Subtotaal excl. BTW</span>
-              <span>€{totalEx.toFixed(2)}</span>
+              <span>€{subtotalEx.toFixed(2)}</span>
             </div>
+            {kortingTotalen.discount_ex_btw > 0 && (
+              <>
+                <div className="flex justify-between text-green-700">
+                  <span>{discountLabel(korting)}</span>
+                  <span>−€{kortingTotalen.discount_ex_btw.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>Na korting excl. BTW</span>
+                  <span>€{totalEx.toFixed(2)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between text-gray-500">
               <span>BTW</span>
               <span>€{btwAmount.toFixed(2)}</span>
@@ -539,12 +654,30 @@ export default function InvoiceEditPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               Betalingsinformatie
             </p>
-            <p className="text-sm text-gray-600">
-              Gelieve te betalen binnen 30 dagen op{' '}
-              <span className="font-medium text-gray-900">{profile.iban}</span>{' '}
-              o.v.v.{' '}
-              <span className="font-medium text-gray-900">{invoiceNumber}</span>
-            </p>
+            {/* [BETAALTERMIJN] De zin komt uit de DATA, niet uit een literal. Hier stond
+                "binnen 30 dagen" als vaste tekst: wie een vervaldatum van veertien dagen had
+                ingevuld, kreeg op het scherm waar hij zijn factuur nakijkt de belofte van dertig
+                te zien. Het getal sloeg nergens op — en het stond op een document over geld.
+
+                Is er niets eerlijks te zeggen (geen vervaldatum, of een datum vóór de
+                factuurdatum), dan staat er niets. Zwijgen is beter dan een getal verzinnen. */}
+            {quote ? (
+              // Een offerte KENT geen betaaltermijn: haar due_date is "Geldig tot" — dat is wat de
+              // PDF ervan drukt. Hier een betaalzin tonen zou het document tegenspreken.
+              <p className="text-sm text-gray-600">
+                {dueDate ? <>Deze offerte is geldig tot <span className="font-medium text-gray-900">{formatDateNL(dueDate)}</span>. </> : null}
+                Bij akkoord betaal je op{' '}
+                <span className="font-medium text-gray-900">{profile.iban}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-gray-600">
+                {paymentTermText({ invoiceDateIso: invoiceDate, dueDateIso: dueDate, iban: profile.iban })
+                  ?? 'Betalen op'}{' '}
+                <span className="font-medium text-gray-900">{profile.iban}</span>{' '}
+                o.v.v.{' '}
+                <span className="font-medium text-gray-900">{invoiceNumber}</span>
+              </p>
+            )}
           </div>
         )}
 

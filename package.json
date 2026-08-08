@@ -11,7 +11,9 @@
     "test:render": "node --experimental-test-module-mocks --import tsx --test tests/render/*.test.tsx",
     "test:e2e": "playwright test tests/public-surface.spec.ts",
     "gates": "tsc --noEmit && npm run test:unit && npm run test:render && eslint src/ && rm -rf .next && next build && npm run test:e2e",
-    "test:sql": "bash scripts/sql-seam-test.sh"
+    "test:sql": "bash scripts/sql-seam-test.sh",
+    "prebuild": "node scripts/copy-pdfjs.mjs",
+    "predev": "node scripts/copy-pdfjs.mjs"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
@@ -23,6 +25,7 @@
     "jszip": "^3.10.1",
     "next": "~16.2.12",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.1.200",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -48,7 +51,6 @@
     "@types/web-push": "^3.6.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
-    "pdfjs-dist": "^6.1.200",
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
     "typescript": "^5"

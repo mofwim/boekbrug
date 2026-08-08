@@ -24,6 +24,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
 import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
+import { parseDiscount } from '@/lib/invoice-discount'
 // [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
 // gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
 import { isKnownUnit } from '@/lib/units'
@@ -103,7 +104,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'De regels kloppen niet', fouten: gecontroleerd.errors }, { status: 400 })
     }
     const sign = soort === 'creditnota' ? -1 : 1
-    const totalen = computeDraftTotals(gecontroleerd.lines, sign)
+    // [KORTING] De korting komt uit het verzoek en wordt hier GEVALIDEERD, niet vertrouwd. Een
+    // browser die "150%" of een negatief bedrag stuurt, hoort geen factuur op te leveren waarvan
+    // het totaal nergens op slaat — parseDiscount geeft dan null en de factuur is er gewoon zonder.
+    const korting = parseDiscount(body.discount_type, body.discount_value)
+    const totalen = computeDraftTotals(gecontroleerd.lines, sign, korting)
 
     const klantNaam = typeof body.client_name === 'string' ? body.client_name.trim() : ''
     if (!klantNaam) {
@@ -155,7 +160,17 @@ export async function POST(request: NextRequest) {
     }
 
     // ── De factuur ───────────────────────────────────────────────────────────
-    const { data: factuur, error: insertErr } = await writeWithTrail<{ id: string }>(
+    // [KORTING] De kortingskolommen bestaan pas ná invoice_discount.sql. Meesturen op een database
+    // zonder die kolommen laat de HELE insert falen (PGRST204) — en dat is het aanmaken van elke
+    // factuur, voor iedereen, precies de ramp die created-by.ts in zijn kop beschrijft.
+    //
+    // Dus: mét korting proberen, en zonder als de kolommen er niet zijn. Maar dan MOETEN de totalen
+    // mee terug. Een factuur met verlaagde bedragen en geen opgeslagen korting is een document dat
+    // niet optelt tegen zijn eigen regels — erger dan geen korting. In de terugval staat de factuur
+    // er dus voor de VOLLE prijs, en het antwoord zegt dat, zodat de ondernemer het weet in plaats
+    // van het te ontdekken op de PDF die zijn klant al heeft.
+    const zonderKorting = computeDraftTotals(gecontroleerd.lines, sign, null)
+    const { data: factuur, error: insertErr, trailWritten } = await writeWithTrail<{ id: string }>(
       (spoor) => pipeline
       .from('invoices')
       .insert({
@@ -170,8 +185,16 @@ export async function POST(request: NextRequest) {
         status: 'draft',
         invoice_type: DB_TYPE[soort],
         direction: 'outgoing',
-        ...totalen,
+        // [KORTING] De totalen en de korting reizen SAMEN. `spoor` is leeg zodra de terugval van
+        // writeWithTrail heeft toegeslagen, en dan hoort ook de verlaging van tafel.
+        ...(korting && Object.keys(spoor).length ? totalen : zonderKorting),
         source: 'created',
+        // Wat de ondernemer AFSPRAK, niet wat het toevallig opleverde. "10%" en "€ 200" zijn op
+        // deze factuur hetzelfde bedrag en op de volgende niet; alleen het bedrag bewaren maakt
+        // het document onreproduceerbaar zodra er een regel bij komt.
+        ...(korting && Object.keys(spoor).length
+          ? { discount_type: korting.type, discount_value: korting.value }
+          : {}),
         client_name: klantNaam,
         client_id: clientId,
         client_email: body.client_email || null,
@@ -181,9 +204,18 @@ export async function POST(request: NextRequest) {
         client_btw_number: body.client_btw_number || null,
         original_invoice_id: soort === 'creditnota' ? null : (body.replaces_id || null),
         ...spoor,
-      })
+        // [KORTING] De cast zit op de RIJ, niet op een veld: discount_type/discount_value staan pas
+        // in de gegenereerde types nadat invoice_discount.sql is gedraaid en de types opnieuw zijn
+        // gegenereerd. Dezelfde situatie als created_by had — en met dezelfde vangnet eromheen, dus
+        // een database zonder de kolommen faalt niet maar valt terug (zie hierboven).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any)
       .select('id')
       .single(),
+      // [KORTING] De kortingskolommen reizen mee in dezelfde terugval als created_by: mist één
+      // van de drie, dan wordt de rij zonder alle drie geschreven. Grover dan nodig, en met opzet —
+      // één terugval die je kunt navertellen is veiliger dan drie die elkaar kruisen. `trailWritten`
+      // is precies het signaal: false betekent dat de tweede poging is gebruikt.
       { created_by: createdBy },
     )
 
@@ -266,7 +298,11 @@ export async function POST(request: NextRequest) {
       })),
     })
 
-    return NextResponse.json({ ok: true, invoiceId: factuur.id, clientId })
+    return NextResponse.json({
+      ok: true, invoiceId: factuur.id, clientId,
+      // [KORTING] Gezegd, niet verzwegen. De factuur staat er dan voor de volle prijs.
+      ...(korting && !trailWritten ? { warning: 'discount_not_stored' } : {}),
+    })
   } catch (e) {
     console.error('[ACTING-FOR] /api/invoice/draft', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })

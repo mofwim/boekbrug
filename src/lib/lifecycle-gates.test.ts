@@ -2456,11 +2456,15 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
   ];
   for (const file of owners) {
     const src = code(file);
+    // Either shared summation is fine — computeInvoiceTotals, or applyDiscount, which groups per
+    // rate and rounds each rate's BTW the same way and additionally carries the korting. What is
+    // NOT fine is a third one written inline, which is the whole point.
     assert.match(
       src,
-      /computeInvoiceTotals/,
-      `${file} states an invoice's totals and must take them from invoice-totals.ts — that file ` +
-        "exists precisely because two summations of the same legal amount disagreed",
+      /computeInvoiceTotals|applyDiscount/,
+      `${file} states an invoice's totals and must take them from invoice-totals.ts or ` +
+        "invoice-discount.ts — those exist precisely because summations of the same legal amount " +
+        "disagreed once already",
     );
     // The per-line BTW multiplication, in the shape all three copies used. The per-RATE version
     // inside computeInvoiceTotals looks different (it multiplies a grouped ex-amount), so this
@@ -3449,5 +3453,310 @@ test("[OFFERTE-EEN-KNOP] the offerte screen offers one save, because there is on
   assert.match(
     page, /\{invoiceType !== 'offerte' && \(\s*<button onClick=\{\(\) => handleSubmit\('draft'\)\}/,
     "the secondary save is hidden for an offerte, where it did the same as the primary one",
+  );
+});
+
+// ── [BETAALTERMIJN] The payment sentence states the term, instead of asserting one ──
+//
+// The edit screen printed "Gelieve te betalen binnen 30 dagen op <IBAN>". The 30 was a LITERAL:
+// not derived from anything, not editable, and not necessarily true. An owner who had set a due
+// date fourteen days out was shown a promise of thirty — on the screen where they check the
+// invoice before sending it, about money, on a document their customer will read.
+//
+// And the term itself was three chips (14 / 30 / 60) on one screen and absent on the other. A term
+// is something an owner agrees per customer; "jij krijgt 45 dagen" was not expressible without
+// working out the date by hand.
+test("[BETAALTERMIJN] the term is derived from the dates, and any term can be typed", () => {
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  const create = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // No literal. The sentence comes from the data or does not appear.
+  assert.doesNotMatch(
+    edit, /Gelieve te betalen binnen 30 dagen/,
+    "the hardcoded term may not come back — it was a number with nothing behind it",
+  );
+  assert.match(
+    edit, /paymentTermText\(\{ invoiceDateIso: invoiceDate, dueDateIso: dueDate, iban: profile\.iban \}\)/,
+    "the sentence must be built from the invoice's own dates",
+  );
+
+  // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
+  // prints. Showing a payment sentence there makes the screen contradict the document.
+  assert.match(
+    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    "a quote states its validity, not a payment term",
+  );
+  assert.match(
+    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    "…and the term control is hidden there, so one field never means two things",
+  );
+
+  // Any whole number, on BOTH screens, through the one parser.
+  for (const [name, src] of [["edit", edit], ["create", create]] as const) {
+    assert.match(
+      src, /parsePaymentTerm\(e\.target\.value\)/,
+      `${name}: a freely typed term must go through the shared parser`,
+    );
+    assert.match(
+      src, /dueDateFromTerm\(invoiceDate, days\)/,
+      `${name}: and set the due date through the shared arithmetic`,
+    );
+    assert.match(src, /max=\{MAX_PAYMENT_TERM_DAYS\}/, `${name}: bounded by the shared typo guard`);
+  }
+
+  // One definition of the common terms and the default, not one per screen.
+  assert.match(
+    create, /const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS/,
+    "the chip list comes from payment-term.ts",
+  );
+  assert.match(
+    create, /const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM/,
+    "…and so does the default a new invoice starts at",
+  );
+});
+
+// ── [ARTIKEL-CODE] You could search the catalog by code, and never give one ──
+//
+// The catalog has always had codes. matchArticles ranks an exact code match first ("22" → that
+// article, ahead of every description match), and the line's own placeholder invites it:
+// "Omschrijving of code (bijv. 22)". But the only way to put a line INTO the catalog from the
+// invoice screen posted `code: ''`, so every article created that way had no code — and the
+// article-learner cannot invent one either, because a code is a decision a person makes.
+//
+// So an owner typed "22", found nothing, and concluded the feature did not exist. It did; there
+// was simply no door to it outside /dashboard/artikelen.
+test("[ARTIKEL-CODE] a line can be saved to the catalog WITH a code, and a clash is spoken", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  assert.doesNotMatch(
+    page, /btw_rate: line\.btw_rate, code: '',/,
+    "the empty-code literal may not come back — it is what made the code feature unreachable",
+  );
+  assert.match(
+    page, /async function saveLineToCatalog\(i: number, line: InvoiceLine, code: string\)/,
+    "saving a line to the catalog must be able to carry a code",
+  );
+  assert.match(
+    page, /body: JSON\.stringify\(\{ description: line\.description[^}]*code, unit: line\.unit/,
+    "…and send it",
+  );
+  // The field itself, and the fact that it is optional: an owner who wants no code must still be
+  // able to save, exactly as before.
+  assert.match(page, /aria-label="Artikelcode"/, "there must be a field to type it in");
+  assert.match(
+    page, /placeholder="code \(bijv\. 22\)"/,
+    "…labelled with the same example the description field already uses",
+  );
+
+  // A REFUSAL MUST BE HEARD. articles carries UNIQUE(user_id, code) and the route answers 409
+  // with which code is taken. Swallowing that leaves the owner believing "22" now points at this
+  // line while it points at another — and they will pull up the wrong line later.
+  assert.match(
+    page, /setCodeError\(typeof j\?\.error === 'string'/,
+    "a rejected code must be shown, not swallowed",
+  );
+  assert.match(page, /\{codeError && </, "…on screen, beside the field it belongs to");
+  assert.doesNotMatch(
+    page, /\} catch \{ \/\* silent \*\/ \}/,
+    "and the silent catch around this save is gone",
+  );
+});
+
+// ── [KORTING] A discount is not a subtraction ──
+//
+// "Trek er 10% af" reads like one line of arithmetic and is not, because BTW is owed PER TARIEF.
+// An invoice of EUR 1.000 at 21% and EUR 1.000 at 9% with EUR 200 off does not owe some blended
+// rate over 1.800 — it owes 21% over its reduced 21%-part and 9% over its reduced 9%-part.
+// Subtract the discount from the total and BOTH aangifte boxes are wrong, in opposite directions,
+// on every mixed-rate invoice.
+//
+// And it appears in five places that must agree to the cent: the screen, the draft route, the send
+// route, the PDF and the UBL. Peppol BIS 3.0 makes that non-negotiable — a file whose
+// LineExtensionAmount minus AllowanceTotalAmount does not equal TaxExclusiveAmount is REFUSED at
+// the receiving access point (BR-CO-10), so the invoice simply never arrives.
+test("[KORTING] every surface computes the discount with the same module", () => {
+  const store = code("src/lib/invoice-discount.ts");
+
+  // Nobody rolls their own. Five call sites, one module.
+  for (const file of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/api/invoice/draft/route.ts",
+    "src/app/api/invoice/send/route.ts",
+    "src/app/api/invoice/[id]/route.ts",
+    "src/lib/invoice-pdf.tsx",
+    "src/lib/ubl-export.ts",
+  ]) {
+    assert.match(
+      code(file), /from ['"](@\/lib\/invoice-discount|\.\/invoice-discount)['"]/,
+      `${file} must take the discount arithmetic from the one module — a second copy of the ` +
+        "apportioning is a second answer, and these all describe the same invoice",
+    );
+  }
+
+  // The two places that would silently DROP a stored discount by recomputing from the lines.
+  assert.match(
+    code("src/app/api/invoice/send/route.ts"),
+    /if \(kortingHier\) \{[\s\S]{0,300}?applyDiscount\(/,
+    "issuance must keep the discount: recomputing from the lines would send the customer a " +
+      "numbered, irreversible invoice at the FULL price the owner had just discounted",
+  );
+  // Retargeted: this matched `const kortingHier = parseDiscount(` literally, and broke the moment
+  // the edit route learned to take a CHANGED discount from the body — while the property it
+  // guards held more strongly than before. The rule is that the edit route's totals carry the
+  // discount, not the spelling of the line that fetches it.
+  assert.match(
+    code("src/app/api/invoice/[id]/route.ts"),
+    /const \{ total_ex_btw, btw_amount, total_inc_btw \} = kortingHier[\s\S]{0,200}?applyDiscount\(lines, kortingHier\)/,
+    "editing must keep it too, or the row says there is a discount while charging the full amount",
+  );
+
+  // The UBL shape. Wrong here is not cosmetic — the file is refused and nothing arrives.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /ChargeIndicator"\)\.txt\("false"\)/, "a discount is an allowance, not a charge");
+  assert.match(
+    ubl, /for \(const a of kortingUitkomst\.allowances\)/,
+    "one AllowanceCharge per rate — each carries exactly one TaxCategory",
+  );
+  assert.match(
+    ubl, /TaxExclusiveAmount", \{ currencyID: EUR \}\)\.txt\(money\(taxExclusive\)\)/,
+    "TaxExclusiveAmount is lines MINUS allowances (BR-CO-10)",
+  );
+  assert.match(ubl, /AllowanceTotalAmount/, "…and the allowance total is stated");
+  assert.ok(
+    ubl.indexOf("cac, \"AllowanceCharge\"") < ubl.indexOf("cac, \"TaxTotal\""),
+    "AllowanceCharge is emitted before TaxTotal — the UBL sequence is not free",
+  );
+
+  // The PDF prints what it charges. A reduced total with no line explaining it is an invoice the
+  // customer cannot check.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /discountLabel\(korting\)/, "the PDF names the discount");
+  assert.match(pdf, /netRateLines\.map/, "…and its BTW rows are the REDUCED ones");
+
+  // Shipping before the migration may not break invoicing. The columns arrive with
+  // invoice_discount.sql, and until then the row is written without them — WITH the undiscounted
+  // totals, because a reduced total plus no stored discount is a document that does not add up.
+  const draft = code("src/app/api/invoice/draft/route.ts");
+  assert.match(
+    draft, /\.\.\.\(korting && Object\.keys\(spoor\)\.length \? totalen : zonderKorting\)/,
+    "the totals and the discount fall back TOGETHER",
+  );
+  assert.match(
+    draft, /korting && !trailWritten \? \{ warning: 'discount_not_stored' \}/,
+    "…and the owner is told, rather than finding out from the PDF their customer already has",
+  );
+
+  // Empty is not zero — the same trap as the payment term, and here it would print
+  // "Korting: € 0,00" on a customer's invoice.
+  assert.match(
+    store, /if \(typeof raw === "string" && raw\.length === 0\) return null/,
+    "an untouched field is not a discount of zero",
+  );
+});
+
+// ── [KORTING-BEWERKEN] The discount is changeable, and the CAS agrees with the gate ──
+//
+// Two things, and the second is a defect the FIRST offerte commit shipped.
+//
+// 1. A discount you can only set by re-creating the invoice is a discount you lose at the first
+//    negotiation with the customer. The edit screen now loads it, shows it, and sends it on BOTH
+//    of its save paths — including save-and-send, the dangerous one: that path turns the document
+//    into a numbered factuur, so a discount dropped there goes out irreversibly at full price.
+//
+// 2. [OFFERTE-BEWERKBAAR] made a sent quote editable at the GATE, and the compare-and-swap under
+//    it still demanded `status = 'draft'`. The quote passed the gate, matched zero rows, and got
+//    "Deze factuur is inmiddels verzonden" — the feature was built and did not work, with a
+//    message that sends the owner looking in the wrong place. A guard and its CAS asking different
+//    questions is the same defect class as a button that appears where the door refuses.
+test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matches its own gate", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+
+  assert.doesNotMatch(
+    route, /\.update\(patch as never\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
+    "the compare-and-swap may not demand 'draft' — that refuses every editable sent quote",
+  );
+  assert.match(
+    route, /\.eq\('status', existing\.status \?\? 'draft'\)/,
+    "…it guards on the status that was READ, which is what protects against a change in between",
+  );
+  assert.match(
+    route, /if \(existing\.status !== 'draft'\) cas = cas\.is\('invoice_number', null\)/,
+    "…and a non-draft may only be written while it still carries no number",
+  );
+  assert.match(
+    route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
+    "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
+  );
+
+  // Present vs absent, not truthy vs falsy: removing a discount is as valid an edit as setting one.
+  assert.match(
+    route, /const kortingMeegestuurd = 'discount_type' in body \|\| 'discount_value' in body/,
+    "the route must distinguish 'cleared' from 'not sent by an older page'",
+  );
+  assert.match(
+    route, /patch\.discount_type = kortingHier \? kortingHier\.type : null/,
+    "…and write the change, or the PDF shows a discount the totals no longer carry",
+  );
+
+  assert.match(edit, /setDiscountValue\(dv == null \? '' : String\(dv\)\)/, "the stored discount is loaded");
+  assert.match(
+    edit, /const kortingTotalen = applyDiscount\(/,
+    "the screen's totals come from the same module as the server's",
+  );
+  assert.equal(
+    [...edit.matchAll(/discount_type: invoiceType === 'creditnota' \? null : discountType/g)].length, 2,
+    "BOTH save paths send it — plain save AND save-and-send, where losing it is irreversible",
+  );
+});
+
+// ── [OFFERTE-KNOP-EERLIJK] The button on a quote says what it does ──
+//
+// On /dashboard/facturen a pro_forma row carried a button labelled "Versturen". It reads as "send
+// the quote to the customer". It does not do that: it converts the quote into an OFFICIAL FACTUUR
+// with a number from the owner's gapless series and mails that (send route, isConversion). One
+// tap, and Art. 35 knows no way back — only a creditnota.
+//
+// The confirmation already said so honestly. The button did not, and the button is the thing you
+// press. "Offerte versturen" would be worse than either: it would promise to send a quote while an
+// invoice goes out. Mailing an offerte AS an offerte is something this app cannot do at all —
+// every path through /api/invoice/send converts, converts-only, or re-delivers a numbered invoice.
+test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion it performs", () => {
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const send = code("src/app/api/invoice/send/route.ts");
+
+  // The premise. If sending a quote ever stops converting it, this label is the thing to revisit —
+  // so the gate holds the reason, not just the word.
+  assert.match(
+    send,
+    /const isConversion = !resend &&[\s\S]{0,160}?invoice_type === ['"]pro_forma['"]/,
+    "sending a quote still turns it into a factuur — that is why the button may not say 'Versturen'",
+  );
+
+  // Both ends on CODE. The end anchor was "[BOEK-RESEND]" — a COMMENT, which code() strips, so
+  // indexOf returned -1, slice(start, -1) ran to the end of the file, and the block picked up the
+  // RESEND button's own "Versturen". The length bound is what said so instead of passing.
+  // The BRACE matters: "!isCredit && !isOfferte && inv.status === 'draft'" is the FACTUUR button
+  // one block up, and it CONTAINS "isOfferte && inv.status === 'draft'" as a substring. Without the
+  // brace the slice started on that button — which correctly says "Versturen" — and the gate
+  // reported a failure about the wrong element entirely.
+  const qStart = list.indexOf("{isOfferte && inv.status === 'draft'");
+  const qEnd = list.indexOf("!isCredit && !isOfferte && (inv.status === 'sent'", qStart);
+  assert.ok(qStart > 0 && qEnd > qStart, "the quote button block sits before the resend button");
+  const quoteButton = list.slice(qStart, qEnd);
+  assert.ok(
+    quoteButton.length > 100 && quoteButton.length < 2400,
+    `the slice must be that ONE button — it is ${quoteButton.length} chars`,
+  );
+  assert.match(quoteButton, /Omzetten naar factuur/, "the label states the act");
+  assert.doesNotMatch(
+    quoteButton, /> Versturen</,
+    "…and not the expectation. A bare 'Versturen' on a quote promises to send a quote and issues " +
+      "a numbered invoice instead",
+  );
+
+  assert.match(
+    list, /wordt omgezet naar een officiële factuur met een nieuw factuurnummer/,
+    "the confirm must still say what happens, in full",
   );
 });
