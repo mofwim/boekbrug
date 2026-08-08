@@ -3778,3 +3778,50 @@ test("[LOGO-INITIALEN] the monogram has one definition, and both surfaces use it
     "the avatar is deriving its own initials again",
   );
 });
+
+// ─── [OFFERTE-IS-GEEN-PROFORMA] The two things the rendered document cannot show ───────────────
+//
+// invoice-pdf-document.test.ts renders the real PDF and reads its text back, which covers the
+// heading, the validity date, the acceptance route and the number label. Two properties survive
+// that test no matter what, because neither is text: the COLOUR of the footer, and WHICH helper
+// decides that a document is a quote. Both are held here.
+test("[OFFERTE-IS-GEEN-PROFORMA] the PDF shares one definition of 'this is a quote'", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+
+  assert.match(
+    pdf,
+    /import \{ isQuote \} from '\.\/invoice-editable'/,
+    "the PDF must use the same isQuote() as the edit screen and the send routes",
+  );
+  assert.match(
+    pdf,
+    /const isOfferte = isQuote\(type\)/,
+    "…and decide with it",
+  );
+  // The exact expression that made every offerte branch dead code: each quote is STORED as
+  // 'pro_forma', so a check against 'offerte' alone never matched a real document.
+  assert.doesNotMatch(
+    pdf,
+    /const isOfferte = type === 'offerte'/,
+    "a quote is stored as pro_forma — checking only for 'offerte' turns the whole offerte layout " +
+      "into code that never runs, which is exactly how it shipped",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /Dit is een pro-formafactuur/,
+    "the pro-forma disclaimer belongs to a prepayment invoice and was printing on every quote",
+  );
+});
+
+test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
+  // Not visible to the render test: pdfjs returns the text either way. It read #dadce0 at 8pt —
+  // the same light grey this stylesheet uses for HAIRLINES — which on white is about 1,3:1 and
+  // effectively invisible in print. The owner reported it as missing, not as faint.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  const start = pdf.indexOf("footer: {");
+  assert.ok(start > 0, "the footer style block was found");
+  const block = pdf.slice(start, pdf.indexOf("}", start));
+  assert.ok(block.length < 400, `the slice must be the footer block alone — it is ${block.length} chars`);
+  assert.doesNotMatch(block, /#dadce0/, "the footer is back to the hairline grey nobody can read");
+  assert.match(block, /color: '#5f6368'/, "…it must carry a colour with real contrast on white");
+});

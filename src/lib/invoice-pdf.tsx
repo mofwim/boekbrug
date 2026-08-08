@@ -36,6 +36,9 @@ import { applyDiscount, parseDiscount, discountLabel } from './invoice-discount'
 // [LOGO-INITIALEN] Het monogram woont in een eigen bestand, samen met de avatar in de
 // dashboardkop — die twee gaven een ander antwoord over hetzelfde bedrijf.
 import { deriveInitials } from './logo-initials'
+// [OFFERTE-IS-GEEN-PROFORMA] Eén definitie van "dit is een offerte", gedeeld met het
+// bewerkscherm en de verstuurroute. Dit bestand had zijn eigen, en die kende 'pro_forma' niet.
+import { isQuote } from './invoice-editable'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -139,16 +142,29 @@ const styles = StyleSheet.create({
     left: 44,
     right: 44,
     textAlign: 'center',
-    fontSize: 8,
-    color: '#dadce0',
+    // [VOETTEKST-LEESBAAR] Stond op 8pt in #dadce0 — dezelfde lichtgrijze tint als de scheidslijnen
+    // in deze stylesheet. Op wit is dat ongeveer 1,3:1 contrast: op papier vrijwel onzichtbaar, en
+    // een regel die niemand kan lezen kan net zo goed weg zijn. #5f6368 haalt ruim 7:1.
+    fontSize: 9,
+    color: '#5f6368',
   },
 })
 
 // ─── Document title per invoice_type (title-case, matches the reference) ─────
+// [OFFERTE-IS-GEEN-PROFORMA] `pro_forma` is what an offerte is STORED as — the create route maps
+// offerte → pro_forma and nothing else in the product ever writes that value. So the word the
+// customer reads is Offerte. The database value stays as it is; renaming it is a migration, and
+// what a customer reads is not a database value (AGENTS.md).
+//
+// Until now this map printed "Pro forma" on it, and a pro-formafactuur is a DIFFERENT document: a
+// preliminary invoice, used for a prepayment or for customs, that says "this is what you will be
+// billed". An offerte asks a question and waits for a yes. The customer received a mail titled
+// "Offerte" asking them to agree, opened the attachment, and read a heading that reads as a
+// request for money — with an IBAN in the corner. A purchasing department pays that.
 const DOC_TITLES: Record<string, string> = {
   factuur: 'Factuur',
   creditnota: 'Creditnota',
-  pro_forma: 'Pro forma',
+  pro_forma: 'Offerte',
   offerte: 'Offerte',
 }
 
@@ -222,8 +238,14 @@ export function InvoicePDF({
   const type = (invoice.invoice_type as string) || 'factuur'
   const docTitle = DOC_TITLES[type] ?? 'Factuur'
   const isCreditnota = type === 'creditnota'
-  const isOfferte = type === 'offerte'
-  const isProForma = type === 'pro_forma'
+  // [OFFERTE-IS-GEEN-PROFORMA] Both spellings, via the helper the rest of the app already uses.
+  //
+  // This was `type === 'offerte'`, and EVERY quote this product creates is stored as 'pro_forma'
+  // (draft route, DB_TYPE). So not one of the offerte branches below has ever run on a real
+  // document: no "Geldig tot" row, no "vrijblijvend" sentence, and the number line called itself
+  // "Factuurnummer:" above an empty value. The quote's due_date was in the row the whole time —
+  // the screen showed it — and the PDF simply had no branch that printed it.
+  const isOfferte = isQuote(type)
   // Only a factuur (or a creditnota, which reverses one) is a legal payment
   // document. Offerte/pro forma must NOT demand payment or call their number a
   // "factuurnummer".
@@ -344,15 +366,27 @@ export function InvoicePDF({
             <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text>
             <Text style={styles.partyText}>KvK nr.: {profile.kvk_number || '—'}</Text>
             <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
+            {/* [OFFERTE-ANTWOORD] Een offerte is een document dat om een antwoord vraagt, en op
+                papier stond nergens waar dat antwoord heen moest: adres, KvK, BTW en IBAN, geen
+                mail en geen telefoon. De mail heeft sinds kort een reply-to, maar de PDF wordt
+                afgedrukt, doorgestuurd en los bewaard. Alleen tonen wat is ingevuld — een lege
+                regel "E-mail: —" helpt niemand. */}
+            {profile.email ? <Text style={styles.partyText}>E-mail: {profile.email}</Text> : null}
+            {profile.phone ? <Text style={styles.partyText}>Tel.: {profile.phone}</Text> : null}
           </View>
         </View>
 
         {/* Heading + meta */}
         <Text style={styles.heading}>{docTitle}</Text>
-        <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>{numberLabel}</Text>
-          <Text style={styles.metaValue}>{invoice.invoice_number}</Text>
-        </View>
+        {/* [OFFERTE-IS-GEEN-PROFORMA] Alleen als er een nummer IS. Een offerte krijgt er met opzet
+            geen (Art. 35 kent één doorlopende reeks, en die is voor facturen), dus dit drukte een
+            label af met niets erachter — op precies het document dat geen nummer hoort te hebben. */}
+        {invoice.invoice_number ? (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>{numberLabel}</Text>
+            <Text style={styles.metaValue}>{invoice.invoice_number}</Text>
+          </View>
+        ) : null}
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>{dateLabel}</Text>
           <Text style={styles.metaValue}>{formatDateNL(invoice.invoice_date)}</Text>
@@ -462,15 +496,23 @@ export function InvoicePDF({
             Deze creditnota crediteert het bovenstaande bedrag. Er is geen betaling vereist.
           </Text>
         )}
+        {/* [OFFERTE-IS-GEEN-PROFORMA] Eén afsluiting voor allebei de spellingen. De pro-forma-tekst
+            die hier stond ("geen geldige btw-factuur, er kunnen geen rechten aan worden ontleend")
+            hoort bij een vooruitfactuur, niet bij een aanbod — en stond dus op elke offerte.
+
+            De geldigheid wordt ALTIJD genoemd. Stond er geen datum, dan verdween de zin stilzwijgend
+            en ging er een aanbod de deur uit dat nooit verloopt: de klant kan er een jaar later mee
+            terugkomen en de ondernemer staat tussen weigeren en werken voor een oude prijs. */}
         {isOfferte && (
           <Text style={styles.payment}>
-            Deze offerte is vrijblijvend{invoice.due_date ? ` en geldig tot ${formatDateNL(invoice.due_date)}` : ''}.
-          </Text>
-        )}
-        {isProForma && (
-          <Text style={styles.payment}>
-            Dit is een pro-formafactuur en geen geldige btw-factuur; er kunnen geen rechten aan
-            worden ontleend.
+            {invoice.due_date
+              ? `Deze offerte is vrijblijvend en geldig tot ${formatDateNL(invoice.due_date)}.`
+              : 'Deze offerte is vrijblijvend. Er is geen einddatum afgesproken — vraag ons gerust of dit aanbod nog geldt.'}
+            {'\n'}
+            {/* Wat de klant moet DOEN. "Vrijblijvend" zegt wat niet hoeft; hier staat wat wel kan. */}
+            {profile.email
+              ? `Ga je akkoord? Laat het weten via ${profile.email}${profile.phone ? ` of ${profile.phone}` : ''} — daarna maken wij er een factuur van.`
+              : 'Ga je akkoord? Laat het ons weten — daarna maken wij er een factuur van.'}
           </Text>
         )}
 

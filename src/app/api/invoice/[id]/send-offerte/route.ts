@@ -98,7 +98,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     
     // [OFFERTE-ANTWOORD] `email` erbij: dat is het adres waar het akkoord naartoe moet. Zonder
     // deze kolom gaat de mail uit vanaf noreply@ met een reply-to die nergens heen wijst.
-    .select('company_name, full_name, email, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity')
+    // [OFFERTE-ANTWOORD] `phone` erbij: de PDF drukt hem in het afzenderblok af, naast het
+    // mailadres. Deze route is de enige die zijn kolommen opsomt — de andere PDF-routes lezen
+    // select('*') — dus een veld dat hier ontbreekt, bestaat voor de offerte-PDF niet, ook als het
+    // profiel het gewoon heeft.
+    .select('company_name, full_name, email, phone, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity')
     .eq('id', ownerId)
     .maybeSingle()
   const senderName = profile?.company_name?.trim() || profile?.full_name?.trim() || 'BoekBrug'

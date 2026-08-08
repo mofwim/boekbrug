@@ -1,0 +1,199 @@
+// [OFFERTE-IS-GEEN-PROFORMA] Behavioural test — run: npx tsx --test src/lib/invoice-pdf-document.test.ts
+//
+// WHY THIS RENDERS A REAL PDF INSTEAD OF READING THE SOURCE
+//
+// The defect this file exists for was invisible to every other kind of check. invoice-pdf.tsx had
+// a complete, correct offerte: a "Geldig tot" row, a "Deze offerte is vrijblijvend" sentence, an
+// "Offertenummer" label. All of it sat behind `const isOfferte = type === 'offerte'`, and EVERY
+// quote this product creates is stored as 'pro_forma' (draft route, DB_TYPE). So not one of those
+// branches had ever run on a real document.
+//
+// tsc type-checks it. eslint reads it. next build compiles it. A source-level gate asserting "the
+// file contains a Geldig tot row" passes — the row is right there. The only thing that says the
+// document is wrong is the document, so this test makes the document and reads it.
+//
+// It renders through the same server entry point the send routes use, and pulls the text back out
+// with pdfjs-dist, which is already a direct dependency. Roughly two seconds for the whole file.
+//
+// NOTE ON LANGUAGE: identifiers, comments and test names are English (AGENTS.md). The strings
+// being asserted are Dutch because they are what a customer reads.
+
+import { test, before } from "node:test";
+import assert from "node:assert/strict";
+
+import { renderInvoicePdf } from "./invoice-pdf-server";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let getDocument: any;
+before(async () => {
+  // The legacy build is the one that runs outside a browser. Imported lazily so the cost lands on
+  // this file rather than on every test run that does not touch a PDF.
+  ({ getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs"));
+});
+
+/**
+ * The text of a rendered PDF, in reading order.
+ *
+ * A home-made extractor was tried first and returned "not found" for EVERY string, including ones
+ * that were certainly on the page — a broken instrument that reports absence is exactly the silent
+ * failure this codebase keeps finding, so the assertions below would all have passed vacuously
+ * had they been written as doesNotMatch. Hence a real parser, and hence the control test below it.
+ */
+async function pdfText(buf: Buffer): Promise<string> {
+  const doc = await getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise;
+  let out = "";
+  for (let i = 1; i <= doc.numPages; i++) {
+    const content = await (await doc.getPage(i)).getTextContent();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    out += content.items.map((it: any) => it.str + (it.hasEOL ? "\n" : "")).join("") + "\n";
+  }
+  return out;
+}
+
+const PROFILE = {
+  company_name: "Kiwi Food Market",
+  address: "Verdiplein 13-14",
+  postal_code: "5049NM",
+  city: "Tilburg",
+  kvk_number: "94386676",
+  btw_number: "NL005079680B23",
+  iban: "NL73INGB0107197480",
+  email: "info@kiwifoodmarket.nl",
+  phone: "013-1234567",
+};
+
+// The lines from the quote that prompted all of this: prices typed inclusive of 9% btw, so every
+// stored ex-price is a long fraction and every line_total is the rounded one.
+const LINES = [
+  { description: "Worstjes", quantity: 150, unit_price: 0.9 / 1.09, btw_rate: 9, line_total: 123.85 },
+  { description: "Kip spies", quantity: 100, unit_price: 1.9 / 1.09, btw_rate: 9, line_total: 174.31 },
+  { description: "Broodjes", quantity: 38, unit_price: 1.75 / 1.09, btw_rate: 9, line_total: 61.01 },
+  { description: "Sauzen", quantity: 2, unit_price: 1.75 / 1.09, btw_rate: 9, line_total: 3.21 },
+];
+
+const QUOTE = {
+  invoice_type: "pro_forma",
+  invoice_number: null,
+  invoice_date: "2026-08-08",
+  due_date: "2026-09-07",
+  client_name: "Stichting Contour de Twern",
+  client_address: "Spoorlaan 444",
+  client_postal_code: "5038CH",
+  client_city: "Tilburg",
+  client_email: "romeline@r-newt.nl",
+  total_ex_btw: 362.38,
+  btw_amount: 32.61,
+  total_inc_btw: 394.99,
+};
+
+test("the extractor finds text that IS on the page — control for every assertion below", async () => {
+  // Without this, a parser that silently returns "" turns every assert.ok(!text.includes(...))
+  // below into a test that can never fail.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.length > 200, `the extractor returned ${text.length} characters — it is broken`);
+  assert.ok(text.includes("Kiwi Food Market"), "the sender name must come back out of the PDF");
+  assert.ok(text.includes("Worstjes"), "and the line descriptions");
+});
+
+test("a quote calls itself an Offerte, not a Pro forma", async () => {
+  // A pro-formafactuur is a different document: a preliminary invoice for a prepayment or for
+  // customs, which says "this is what you will be billed". The customer got a mail titled Offerte
+  // asking them to agree, and an attachment headed Pro forma with an IBAN in the corner.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("Offerte"), "the heading must be the word the rest of the product uses");
+  assert.ok(!text.includes("Pro forma"), "the heading must not say Pro forma");
+  assert.ok(
+    !text.includes("pro-formafactuur"),
+    "the pro-forma disclaimer belongs to a prepayment invoice, not to an offer",
+  );
+});
+
+test("a quote prints its validity date — the row that never once rendered", async () => {
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("Geldig tot"), "the quote must state until when it holds");
+  assert.ok(text.includes("07-09-2026"), "…with the date that was in the row all along");
+  assert.ok(
+    text.includes("Deze offerte is vrijblijvend en geldig tot 07-09-2026."),
+    "…and say so in words as well, where the customer reads it",
+  );
+  assert.ok(!text.includes("Vervaldatum"), "a quote has nothing due — that word belongs on an invoice");
+});
+
+test("a quote with no validity date SAYS so instead of going quiet", async () => {
+  // The sentence used to drop its clause and leave "Deze offerte is vrijblijvend." — an offer that
+  // never expires, which the customer can accept a year later at last year's price.
+  const text = await pdfText(await renderInvoicePdf({ ...QUOTE, due_date: null }, LINES, PROFILE));
+  assert.ok(
+    text.includes("Er is geen einddatum afgesproken"),
+    "a missing expiry must be stated, not omitted",
+  );
+});
+
+test("a quote tells the customer how to say yes", async () => {
+  // "Vrijblijvend" says what is not required. Nothing said what to do.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("Ga je akkoord?"), "the quote must name the next step");
+  assert.ok(
+    text.includes("Laat het weten via info@kiwifoodmarket.nl of 013-1234567"),
+    "…and name the route back inside that sentence, not merely somewhere on the page",
+  );
+});
+
+test("the sender block itself carries a way to reply", async () => {
+  // Separate from the sentence above, and the negative control is why. Asserting only that the
+  // address appears SOMEWHERE stayed green with both sender lines deleted — the acceptance
+  // sentence names the same address, so the page still contained the string. The labels are what
+  // distinguishes the two, so the labels are what this asserts.
+  //
+  // It matters because the PDF outlives the mail: it gets printed, forwarded and filed on its own,
+  // and the block that held an address, a KvK number, a BTW number and an IBAN had no e-mail and
+  // no phone on the one document whose whole purpose is to be answered.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("E-mail: info@kiwifoodmarket.nl"), "the sender block must list the e-mail");
+  assert.ok(text.includes("Tel.: 013-1234567"), "…and the phone number when the profile has one");
+});
+
+test("a sender without a phone number gets no empty label", async () => {
+  // Only what is filled in. "Tel.: —" on a customer's document reads as a broken template.
+  const noPhone = { ...PROFILE, phone: null };
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, noPhone));
+  assert.ok(text.includes("E-mail: info@kiwifoodmarket.nl"), "the e-mail is still there");
+  assert.ok(!text.includes("Tel.:"), "…and no dangling phone label");
+  assert.ok(
+    text.includes("Laat het weten via info@kiwifoodmarket.nl —"),
+    "and the acceptance sentence drops the phone clause cleanly rather than trailing an 'of'",
+  );
+});
+
+test("a quote carries no invoice number, and no empty label pretending it might", async () => {
+  // A quote is deliberately never numbered — Art. 35 has one unbroken series and it is for
+  // invoices. The label was printed anyway, above nothing.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(!text.includes("Factuurnummer"), "a quote must not print an invoice-number label");
+  assert.ok(!text.includes("Offertenummer"), "…nor a quote-number label above an empty value");
+});
+
+test("the printed column adds up to the printed total", async () => {
+  // [REGEL-AFRONDING] 123,85 + 174,31 + 61,01 + 3,21 = 362,38. The document used to state 362,39
+  // under it, and a btw of 32,61 that is 9% of neither.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("362,38"), "the subtotal must be the sum of the lines above it");
+  assert.ok(!text.includes("362,39"), "…and not a second opinion about the same number");
+  assert.ok(text.includes("9,00% BTW over € 362,38"), "the btw must be stated over that same base");
+  assert.ok(text.includes("32,61"), "…and 9% of 362,38 is 32,61");
+  assert.ok(text.includes("394,99"), "so the total is 394,99 — the amount issuance produces");
+});
+
+test("a real factuur is untouched by all of this", async () => {
+  // Everything above is scoped to quotes. An invoice is a legal document and none of it may leak
+  // in — no validity date, no "vrijblijvend", and its own payment demand still present.
+  const invoice = { ...QUOTE, invoice_type: "factuur", invoice_number: "2026-001" };
+  const text = await pdfText(await renderInvoicePdf(invoice, LINES, PROFILE));
+  assert.ok(text.includes("Factuurnummer"), "an invoice states its number");
+  assert.ok(text.includes("2026-001"), "…the real one");
+  assert.ok(text.includes("Vervaldatum"), "…and when it is due");
+  assert.ok(text.includes("Wij verzoeken u vriendelijk"), "…and asks to be paid");
+  assert.ok(!text.includes("Geldig tot"), "an invoice does not expire");
+  assert.ok(!text.includes("vrijblijvend"), "an invoice is not an offer");
+  assert.ok(!text.includes("Ga je akkoord?"), "an invoice does not ask for agreement");
+});
