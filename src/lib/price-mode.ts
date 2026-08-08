@@ -18,13 +18,25 @@
 // laten veranderen. Dit is dus een INVOERSTAND, geen opslagformaat.
 //
 // DE AFRONDING, EXPLICIET. Bij het intypen van een inclusief bedrag is de ex-prijs zelden rond:
-// € 10,00 incl. bij 21% is € 8,264462809917355… ex. Die waarde wordt NIET afgerond opgeslagen,
-// want dan betaalt de klant € 9,99 terwijl de ondernemer € 10,00 heeft ingetypt — een cent die
-// niemand kan verklaren en die je pas ziet als de factuur al verstuurd is. Het bedrag dat je
-// intypt, is het bedrag dat je klant betaalt; het scherm toont de ex-prijs afgerond op centen
-// (want dat is wat een prijs is), de berekening houdt de exacte breuk vast. Dat is dezelfde keuze
-// die dit scherm al maakte: ook zonder deze modus worden de koptotalen onafgerond weggeschreven
-// (3 × € 33,33 → btw € 20,9979).
+// € 10,00 incl. bij 21% is € 8,264462809917355… ex. Die breuk wordt NIET afgerond opgeslagen in
+// unit_price — afronden op de PRIJS zou € 8,26 × aantal opleveren en dat is een heel andere
+// factuur dan wat de ondernemer beloofde.
+//
+// Het REGELTOTAAL wordt wél afgerond, en het koptotaal is de som van die afgeronde regels. Zie de
+// kop van draft-totals.ts voor de meting; kort gezegd moet het bedrag onder de kolom optelbaar
+// zijn uit de kolom zelf, anders klopt de factuur niet tegen zichzelf en weigert een Peppol access
+// point het bestand (BR-CO-10).
+//
+// DAT KOST SOMS EEN CENT, EN DIE CENT IS ECHT. "€ 0,90 all-in" × 150 stuks bij 9% kan geen
+// document opleveren dat én optelt én precies op € 395,00 uitkomt: er bestaat geen ex-bedrag met
+// twee decimalen waarvoor X + round2(0,09X) = 395,00 (362,38 geeft 394,99 en 362,39 geeft 395,01).
+// Dat is rekenkunde, geen fout, en het is niet op te lossen — alleen te tonen. Daarom rekent het
+// scherm sinds [REGEL-AFRONDING] met dezelfde afgeronde regels als de server: je ziet die € 394,99
+// terwijl je typt, in plaats van hem te ontdekken op de factuur die je klant al heeft.
+//
+// Wie exact € 395,00 wil factureren, past één regelprijs een cent aan en ziet het totaal meteen
+// meebewegen. Dat is een keuze van de ondernemer over zijn eigen prijs, en die hoort bij hem —
+// niet bij een afrondingsregel die het verschil wegmoffelt.
 
 export type PriceMode = "excl" | "incl";
 

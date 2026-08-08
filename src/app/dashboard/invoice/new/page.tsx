@@ -26,6 +26,7 @@ import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+import { round2 } from '@/lib/invoice-totals'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -867,8 +868,11 @@ function NewInvoicePageContent() {
   // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
   // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
   const korting = parseDiscount(discountType, discountValue)
+  // [REGEL-AFRONDING] Afgerond per regel, want dát is wat er in invoice_lines.line_total komt te
+  // staan en wat de klant straks in de kolom optelt. Ongerond optellen liet dit scherm EUR 395,00
+  // tonen terwijl er EUR 394,99 werd verstuurd — zie de kop van draft-totals.ts.
   const kortingTotalen = applyDiscount(
-    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    lines.map(l => ({ line_total: round2(l.quantity * l.unit_price), btw_rate: l.btw_rate })),
     sign === 1 ? korting : null,
   )
   const subtotalEx = kortingTotalen.subtotal_ex_btw
@@ -886,10 +890,14 @@ function NewInvoicePageContent() {
   // je op het scherm ziet terwijl je typt, en raken de database niet.
 
   // BTW breakdown per rate
+  // [REGEL-AFRONDING] Óók over de afgeronde regeltotalen. Dit vakje staat naast het totaal dat
+  // hierboven uit dezelfde regels komt; rekende het over de ruwe producten, dan kon het op een
+  // gemengde factuur een cent afwijken van het bedrag eronder — twee getallen op één scherm die
+  // elkaar tegenspreken, over dezelfde factuur.
   const btwByRate: Record<number, number> = {}
   lines.forEach(l => {
     const rate = l.btw_rate
-    btwByRate[rate] = (btwByRate[rate] ?? 0) + l.quantity * l.unit_price * (rate / 100)
+    btwByRate[rate] = (btwByRate[rate] ?? 0) + round2(l.quantity * l.unit_price) * (rate / 100)
   })
 
   // [COHERENCE-CREDITNOTA] The standalone credit-submit flow that lived here was

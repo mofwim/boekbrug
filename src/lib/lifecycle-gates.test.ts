@@ -3663,3 +3663,118 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   );
   assert.match(page, /setDiscountType\(offHead\.discount_type\)/, "…and pre-fill the invoice with it");
 });
+
+// ─── [REGEL-AFRONDING-KOP] The header may never be summed differently from its own lines ───────
+//
+// invoice_lines.line_total is written round2(quantity × unit_price) — the create route argues that
+// at length in its own comment, because an unrounded column prints two lines of EUR 50,00 under a
+// subtotal of EUR 99,99 and because Peppol BIS 3.0 BR-CO-10 refuses the file when the two disagree.
+//
+// The HEADER was not rounded the same way. draft-totals.ts summed the raw products, and its own
+// header comment promised it always would ("including NOT rounding"). So the same invoice had two
+// subtotals, and which one you got depended on which button you pressed.
+//
+// Measured on a real quote — four lines at 9%, prices typed inclusive of btw:
+//   printed column 362,38 · stored header 362,39 · stated btw 32,61 while 9% of 362,39 is 32,62 ·
+//   concept total EUR 395,00 · the same invoice issued, or merely re-saved from the edit screen,
+//   EUR 394,99.
+//
+// The gate is on the SHAPE that caused it: every place that turns a line into money for a total
+// must round it first, exactly as the insert does. A raw `quantity * unit_price` reaching a total
+// is the defect, whichever file it reappears in.
+test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STORED, never raw", () => {
+  const totals = code("src/lib/draft-totals.ts");
+
+  assert.match(
+    totals,
+    /line_total: round2\(sign \* l\.quantity \* l\.unit_price\),/,
+    "computeDraftTotals must build its lines with the SAME expression the create route inserts — " +
+      "round2(sign * quantity * unit_price). Anything else is a second opinion about one number",
+  );
+  // The two raw reducers that used to be the whole function. Paired with the match above, so a
+  // file that somehow read empty cannot make this pass vacuously.
+  assert.doesNotMatch(
+    totals,
+    /reduce\(\(s, l\) => s \+ l\.quantity \* l\.unit_price/,
+    "the header is back to summing raw products — that is the 362,38-vs-362,39 defect returning",
+  );
+  assert.match(
+    totals,
+    /return computeInvoiceTotals\(stored\);/,
+    "and the per-rate split must be the one function issuance and the PDF already use, not a " +
+      "second implementation that can drift from it",
+  );
+
+  // Both editors. What you watch while typing has to be what gets written, or the cent surfaces
+  // after the customer has the document.
+  for (const path of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ]) {
+    const page = code(path);
+    assert.match(
+      page,
+      /line_total: round2\(l\.quantity \* l\.unit_price\), btw_rate: l\.btw_rate/,
+      `${path} must total the rounded line amounts — unrounded, this screen showed EUR 395,00 ` +
+        "while EUR 394,99 was stored",
+    );
+    assert.doesNotMatch(
+      page,
+      /line_total: l\.quantity \* l\.unit_price,/,
+      `${path} is summing raw products again`,
+    );
+  }
+
+  // The per-rate box on the create screen sits directly beside that total and is derived from the
+  // same lines, so it rounds the same way. Two numbers on one screen contradicting each other
+  // about one invoice is the same failure at a smaller scale.
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(
+    nieuw,
+    /btwByRate\[rate\] = \(btwByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\) \* \(rate \/ 100\)/,
+    "the on-screen BTW-per-rate breakdown must use the rounded line amounts too",
+  );
+});
+
+// ─── [LOGO-INITIALEN] One company, one monogram ────────────────────────────────────────────────
+//
+// There were two derivations. The invoice PDF took the first and the LAST word, so "Kiwi Food
+// Market" went out on every document as KM. The dashboard avatar took every word and then cut to
+// two, so the same owner saw KF above it. Neither is what a person writes, which is KFM — and the
+// two disagreeing with each other is its own bug: the logo on your invoice was not the logo in
+// your app.
+test("[LOGO-INITIALEN] the monogram has one definition, and both surfaces use it", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(
+    pdf,
+    /import \{ deriveInitials \} from '\.\/logo-initials'/,
+    "the invoice PDF must take the monogram from the shared module",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /function deriveInitials/,
+    "a local copy in the PDF is how the two definitions drifted apart in the first place",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /words\[words\.length - 1\]\[0\]/,
+    "first-word-plus-last-word is the rule that printed KM for Kiwi Food Market",
+  );
+
+  const shell = code("src/app/dashboard/_shared/index.tsx");
+  assert.match(
+    shell,
+    /import \{ deriveInitials \} from '@\/lib\/logo-initials'/,
+    "the dashboard avatar must use the same function as the invoice",
+  );
+  assert.match(
+    shell,
+    /const initials = deriveInitials\(/,
+    "…and actually call it, rather than import it beside a hand-rolled copy",
+  );
+  assert.doesNotMatch(
+    shell,
+    /\.split\(' '\)\.map\(\(w: string\) => w\[0\]\)/,
+    "the avatar is deriving its own initials again",
+  );
+});

@@ -33,6 +33,9 @@ import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
 import { unitLabel } from './units'
 import { applyDiscount, parseDiscount, discountLabel } from './invoice-discount'
+// [LOGO-INITIALEN] Het monogram woont in een eigen bestand, samen met de avatar in de
+// dashboardkop — die twee gaven een ander antwoord over hetzelfde bedrijf.
+import { deriveInitials } from './logo-initials'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -161,24 +164,6 @@ function formatQtyNL(q: number | null | undefined): string {
   const v = Number(q)
   if (!isFinite(v)) return String(q ?? '')
   return (Number.isInteger(v) ? String(v) : String(v)).replace('.', ',')
-}
-
-// ─── Auto logo: initials from the company (or personal) name ─────────────────
-// Fills the "Jouw eigen logo" slot without an upload — up to two initials.
-// Helvetica has no non-Latin/emoji glyphs, so we keep only A–Z/0–9 and fall
-// back to a dot rather than render a blank or a lone surrogate.
-function deriveInitials(name: string | null | undefined): string {
-  const words = String(name ?? '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-  const raw =
-    words.length === 0
-      ? ''
-      : words.length === 1
-        ? words[0].slice(0, 2)
-        : words[0][0] + words[words.length - 1][0]
-  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '') || '•'
 }
 
 // ─── BTW breakdown per rate, derived from lines ──────────────────────────────

@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+import { round2 } from '@/lib/invoice-totals'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -200,8 +201,11 @@ export default function InvoiceEditPage() {
   // [KORTING] Dezelfde module als de server, de PDF en de UBL-export. Zonder korting geeft
   // applyDiscount exact dezelfde drie getallen als de handmatige sommen die hier stonden.
   const korting = parseDiscount(discountType, discountValue)
+  // [REGEL-AFRONDING] Afgerond per regel — dezelfde waarde die de PUT-route opslaat (line_total:
+  // round2(quantity * unit_price)). Zonder dit toont dit scherm een ander totaal dan het bedrag
+  // dat je met Opslaan wegschrijft.
   const kortingTotalen = applyDiscount(
-    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    lines.map(l => ({ line_total: round2(l.quantity * l.unit_price), btw_rate: l.btw_rate })),
     korting,
   )
   const subtotalEx = kortingTotalen.subtotal_ex_btw
