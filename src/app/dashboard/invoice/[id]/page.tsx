@@ -39,6 +39,10 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }
 }
 
 // [DS] NL formatting — fixed, never changes
+// [PRIJS-KOLOM] De prijskolom draait via unit-price-display.ts, zodat dit scherm en de PDF
+// dezelfde prijs tonen — en een prijs die vermenigvuldigd het regeltotaal oplevert.
+import { formatUnitPriceNL } from '@/lib/unit-price-display'
+
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 // [TZ] timeZone PINNED. This formats invoice_date / due_date / payment_date — all DATE-ONLY
 // columns, so `new Date(...)` is midnight UTC and an unpinned format renders a day early west of
@@ -714,7 +718,7 @@ export default function InvoiceDetailPage() {
               <div key={index} style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
                 <p style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.quantity}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price ?? 0)}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{formatUnitPriceNL(line.unit_price, line.quantity, line.line_total)}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.btw_rate}%</p>
                 <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total ?? 0)}</p>
               </div>

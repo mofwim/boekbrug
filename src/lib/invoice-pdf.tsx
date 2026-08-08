@@ -39,6 +39,8 @@ import { deriveInitials } from './logo-initials'
 // [OFFERTE-IS-GEEN-PROFORMA] Eén definitie van "dit is een offerte", gedeeld met het
 // bewerkscherm en de verstuurroute. Dit bestand had zijn eigen, en die kende 'pro_forma' niet.
 import { isQuote } from './invoice-editable'
+// [PRIJS-KOLOM] De prijskolom moet vermenigvuldigd het regeltotaal opleveren.
+import { formatUnitPriceNL } from './unit-price-display'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -433,7 +435,10 @@ export function InvoicePDF({
                   {line.unit ? ` ${unitLabel(line.unit, Number(line.quantity ?? 1))}` : ''}
                 </Text>
                 <Text style={styles.colOmschrijving}>{line.description}</Text>
-                <Text style={styles.colPrijs}>{formatEuroNL(line.unit_price)}</Text>
+                {/* [PRIJS-KOLOM] Met zoveel decimalen als de regel nodig heeft. Op twee stond hier
+                    "150 x EUR 0,83" naast een regeltotaal van EUR 123,85 — 65 cent verschil, op het
+                    papier dat de klant bewaart en zelf natelt. Zie unit-price-display.ts. */}
+                <Text style={styles.colPrijs}>{formatUnitPriceNL(line.unit_price, line.quantity, lineTotal)}</Text>
                 <Text style={styles.colTotaal}>{formatEuroNL(lineTotal)}</Text>
               </View>
             )

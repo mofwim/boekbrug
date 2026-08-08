@@ -3993,3 +3993,51 @@ test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", 
   // Paired with a positive match, so a file that somehow read empty cannot pass this vacuously.
   assert.match(mail, /color: #5f6368/, "…and the replacement colour is actually in use");
 });
+
+// ─── [PRIJS-KOLOM] The price column must multiply out to the total beside it ────────────────────
+//
+// invoice_lines.unit_price holds the EXACT price on purpose: someone selling at "EUR 0,90 all-in"
+// stores 0,825688… so the customer pays what was promised (price-mode.ts). Both surfaces printed
+// that at two decimals next to a line total computed from the exact value, so the reported quote
+// read 150 x EUR 0,83 against EUR 123,85 — 65 cents on one row, EUR 1,14 across four.
+//
+// The behaviour is held by invoice-pdf-document.test.ts, which renders the PDF and multiplies each
+// row out. What is held HERE is that both surfaces go through the one function, because the screen
+// and the document showing different prices for the same line is its own bug.
+test("[PRIJS-KOLOM] the PDF and the screen format a unit price the same way", () => {
+  for (const [path, importLine] of [
+    ["src/lib/invoice-pdf.tsx", /import \{ formatUnitPriceNL \} from '\.\/unit-price-display'/],
+    ["src/app/dashboard/invoice/[id]/page.tsx", /import \{ formatUnitPriceNL \} from '@\/lib\/unit-price-display'/],
+  ] as const) {
+    const src = code(path);
+    assert.match(src, importLine, `${path} must take the price column from the shared module`);
+    assert.match(
+      src,
+      /formatUnitPriceNL\(line\.unit_price, line\.quantity, line(Total|\.line_total)\)/,
+      `${path} must pass the quantity AND the line total — the needed precision depends on both, ` +
+        "so a formatter given only the price cannot know how many decimals make the row true",
+    );
+  }
+
+  // The rounded-to-cents formatters must be gone from that one cell, in both files.
+  assert.doesNotMatch(
+    code("src/lib/invoice-pdf.tsx"), /formatEuroNL\(line\.unit_price\)/,
+    "the PDF is back to two decimals on the unit price — the column stops adding up",
+  );
+  assert.doesNotMatch(
+    code("src/app/dashboard/invoice/[id]/page.tsx"), /NL_NUMBER\.format\(line\.unit_price/,
+    "the screen is back to two decimals on the unit price",
+  );
+
+  // And the rule that makes it work: fewest decimals that reconcile, never a fixed number. A
+  // constant would be wrong in both directions — noisy on two units, still false on a hundred.
+  const mod = code("src/lib/unit-price-display.ts");
+  assert.match(
+    mod, /for \(let d = MIN_DECIMALS; d <= MAX_DECIMALS; d\+\+\)/,
+    "the precision must be searched per line, not fixed",
+  );
+  assert.match(
+    mod, /if \(round2\(q \* roundTo\(p, d\)\) === target\) return d;/,
+    "…and the test for 'enough decimals' is that the row reconciles",
+  );
+});

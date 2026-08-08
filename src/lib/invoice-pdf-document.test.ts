@@ -197,3 +197,41 @@ test("a real factuur is untouched by all of this", async () => {
   assert.ok(!text.includes("vrijblijvend"), "an invoice is not an offer");
   assert.ok(!text.includes("Ga je akkoord?"), "an invoice does not ask for agreement");
 });
+
+test("[PRIJS-KOLOM] every price on the page multiplies out to the total beside it", async () => {
+  // The reported document showed "150 x € 0,83" against a line total of € 123,85 — 65 cents on one
+  // row, and € 1,14 across the four. unit_price stores the exact fraction on purpose (price-mode.ts);
+  // printing it at two decimals is what made the column lie.
+  const lines = [
+    ...LINES,
+    // An ordinary line, to prove nothing moved for the invoices that were always right.
+    { description: "Uren", quantity: 2, unit_price: 75, btw_rate: 21, line_total: 150 },
+  ];
+  const text = await pdfText(await renderInvoicePdf(QUOTE, lines, PROFILE));
+
+  // Parse the table back out of the page and do the multiplication a customer would do.
+  //
+  // SCOPED to the table. An unbounded match ran straight on into the totals and read
+  // "21,00% BTW over € 362,38 … € 31,50" as a line of 362,38 units — the same mistake that made
+  // the first UBL reader in this repo report a failure that was not there. Read the region you
+  // mean, not the page.
+  const euro = (s: string) => Number(s.replace(/\./g, "").replace(",", "."));
+  const from = text.indexOf("Aantal Omschrijving Prijs Totaal");
+  const to = text.indexOf("Subtotaal", from);
+  assert.ok(from > 0 && to > from, "the line table must be locatable on the page");
+  const table = text.slice(from, to);
+  const rows = [...table.matchAll(/(\d+(?:,\d+)?) (\S[^€]*?) € ([\d.,]+) € ([\d.,]+)/g)];
+  assert.ok(rows.length >= 5, `the five line rows must be readable from the page — found ${rows.length}`);
+  for (const [, qty, name, price, total] of rows) {
+    const product = Math.round(euro(qty) * euro(price) * 100 + 1e-9) / 100;
+    assert.ok(
+      Math.abs(product - euro(total)) < 0.005,
+      `${name.trim()}: ${qty} x € ${price} = ${product.toFixed(2)}, but the row says € ${total}`,
+    );
+  }
+
+  // The precise shapes, so a future "let's just use two decimals everywhere" is caught by name.
+  assert.ok(text.includes("€ 0,82569"), "the fractional price is printed with the precision it needs");
+  assert.ok(!text.includes("€ 0,83"), "…and not as the rounded price that does not multiply out");
+  assert.ok(text.includes("€ 75,00"), "a round price keeps exactly two decimals");
+});
