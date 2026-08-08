@@ -162,5 +162,14 @@ export const config = {
   // [PWA] sw.js must be reachable at the origin root (its scope) and offline.html
   // is the fallback the worker serves with no session — both must skip the auth
   // guard, or SW registration / the offline page break.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|icons/|\\.well-known/|sw.js|offline.html|opengraph-image|twitter-image).*)"],
+  // [PDF-TOOLS] /pdfjs/ is pdf.js's runtime: the worker, the character maps and
+  // the standard fonts (scripts/copy-pdfjs.mjs). They are fetched by the WORKER
+  // rather than by the page, so the guard redirected them to /login and the
+  // browser refused what came back — "Expected a JavaScript-or-Wasm module
+  // script but the server responded with a MIME type of text/html". Every PDF
+  // then failed as unreadable, on a page that is public, with nothing in the
+  // server log to say why. They are static files like the icons above, so they
+  // belong here rather than in PUBLIC_PATHS — a middleware invocation per cmap
+  // is also a bill nobody wants.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|icons/|pdfjs/|\\.well-known/|sw.js|offline.html|opengraph-image|twitter-image).*)"],
 };
