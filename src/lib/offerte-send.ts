@@ -113,3 +113,79 @@ export function offerteFileName(clientName: string | null | undefined, dateIso: 
   const date = (dateIso ?? "").trim().slice(0, 10);
   return ["offerte", safe || null, date || null].filter(Boolean).join("-") + ".pdf";
 }
+
+// ─── [OFFERTE-MAILTEKST] The body of the quote e-mail, as a pure function ──────────────────────
+//
+// It was built inline inside sendOfferteToClient, which does I/O, so the only way to see what a
+// customer would read was to intercept the network. Three defects reached a customer that way:
+// the mail asked for a yes and carried no reply-to; the heading printed "Offerte van" with nothing
+// after it; and the validity line vanished silently when no date was set.
+//
+// The subject and the file name already live here. This is the third thing the customer reads, so
+// it belongs beside them — and now every one of them can be asserted without sending anything.
+
+import { escapeHtml } from "./escape-html";
+import { formatDateNL } from "./format-nl";
+
+export interface OfferteEmailFields {
+  clientName: string;
+  senderName: string;
+  /** Where the yes should go. Empty when the owner has no address on file at all. */
+  senderEmail?: string | null;
+  totalInc: number;
+  /** ISO date. A quote need not carry one — but the mail must then SAY it does not. */
+  validUntil?: string | null;
+  offerteDate?: string | null;
+}
+
+/**
+ * The HTML the customer opens.
+ *
+ * Every field degrades to a sentence that is still true rather than to a blank: no amount means no
+ * amount row (never "€ 0,00" beside a thousand-euro quote), no reply address means "laat het ons
+ * dan weten" instead of a dangling mailto, and no company name falls back through offerteSubject.
+ */
+export function offerteEmailHtml(f: OfferteEmailFields): string {
+  // Geen bedrag is beter dan een verkeerd bedrag: is het totaal onbekend, dan zwijgt deze regel en
+  // staat het echte bedrag nog steeds in de PDF.
+  const heeftBedrag = Number.isFinite(f.totalInc) && f.totalInc !== 0;
+  const bedrag = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(f.totalInc);
+  const antwoordAdres = (f.senderEmail ?? "").trim();
+
+  // [OFFERTE-KOP] Letterlijk het onderwerp, zodat kop en onderwerp niet uit elkaar kunnen lopen.
+  // Er stond `Offerte van ${senderName}` zonder wacht: bij een leeg bedrijfsnaamveld las de klant
+  // "Offerte van" met niets erachter, terwijl het onderwerp keurig terugviel op "Offerte".
+  const kopregel = offerteSubject(f.senderName);
+
+  const datumRegel = f.offerteDate
+    ? `<p style="margin:4px 0; color:#202124;"><strong>Datum:</strong> ${formatDateNL(f.offerteDate)}</p>`
+    : "";
+
+  // [OFFERTE-GELDIGHEID] Deze regel staat er ALTIJD. Hij verdween stilzwijgend als er geen datum
+  // was, en dan las de klant een aanbod zonder einde — daar kan hij een jaar later mee terugkomen,
+  // en dan staat de ondernemer tussen weigeren en werken voor een oude prijs. De PDF zegt sinds
+  // [OFFERTE-IS-GEEN-PROFORMA] wat er aan de hand is; de mail is wat de klant als eerste opent.
+  const geldigRegel = `<p style="margin:4px 0; color:#202124;"><strong>Geldig tot:</strong> ${
+    f.validUntil ? formatDateNL(f.validUntil) : "niet afgesproken"
+  }</p>`;
+
+  return `
+      <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">${escapeHtml(kopregel)}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(f.clientName)},</p>
+        <p style="color: #555;">Hierbij onze offerte. Je vindt hem als PDF in de bijlage.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
+          ${datumRegel}
+          ${geldigRegel}
+          ${heeftBedrag ? `<p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>` : ""}
+        </div>
+        <p style="color: #555;">
+          Deze offerte is <strong>vrijblijvend</strong>: er hoeft nog niets betaald te worden en er
+          is nog geen factuur. Ga je akkoord, ${antwoordAdres
+            ? `antwoord dan op deze mail of stuur een bericht naar <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>`
+            : "laat het ons dan weten"} — dan sturen we de factuur.
+        </p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `;
+}

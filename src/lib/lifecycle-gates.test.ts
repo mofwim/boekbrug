@@ -3514,10 +3514,36 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
   assert.match(route, /pdf render failed[\s\S]{0,300}?status: 502/, "no quote mail without the quote");
 
   // The mail is quote-shaped, not an invoice mail with different words.
+  //
+  // [OFFERTE-MAILTEKST] The BODY moved to offerte-send.ts, beside the subject and the file name —
+  // the other two strings this same mail puts in front of a customer — so that it could become a
+  // pure function with tests. This gate was pinned to the file the text used to sit in and went
+  // red on the move, which is the defect class this whole file is about: it was checking WHERE the
+  // sentence lived, not THAT the mail says it. So: the envelope is asserted on email.ts, the words
+  // on whichever module owns them.
   const mail = code("src/lib/email.ts");
+  const body = code("src/lib/offerte-send.ts");
   assert.match(mail, /export async function sendOfferteToClient/, "a quote has its own mail");
-  assert.match(mail, /vrijblijvend/, "…which says the one thing that separates a proposal from a bill");
-  assert.match(mail, /Geldig tot/, "…and a validity date, never a due date");
+  assert.match(
+    mail, /html: offerteEmailHtml\(\{/,
+    "…and takes its text from the pure builder, rather than growing a second copy inline where " +
+      "nothing can assert on it",
+  );
+  assert.match(body, /vrijblijvend/, "…which says the one thing that separates a proposal from a bill");
+  assert.match(body, /Geldig tot/, "…and a validity date, never a due date");
+  // [OFFERTE-GELDIGHEID] Unconditionally. The row used to disappear when no date was set, and an
+  // offer with no stated end is one the customer can accept a year later at last year's price.
+  assert.match(
+    body, /niet afgesproken/,
+    "a quote with no end date must SAY it has none, not drop the line",
+  );
+  // [OFFERTE-KOP] The heading is the subject. It used to interpolate the name unguarded, so an
+  // empty company field printed "Offerte van" with nothing after it — while offerteSubject(), two
+  // functions away, handled exactly that case.
+  assert.match(
+    body, /const kopregel = offerteSubject\(f\.senderName\)/,
+    "the heading and the subject must come from one function, or they drift",
+  );
 
   // [OFFERTE-ANTWOORD] THE YES HAS TO LAND SOMEWHERE. This mail exists to ask for an agreement and
   // went out from noreply@boekbrug.nl with no reply-to, so pressing Reply — the customer's first
@@ -3530,13 +3556,13 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
     "replying to a quote must reach the owner, not noreply@",
   );
   assert.match(
-    mail, /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
+    body, /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
     "…and the address is named in the body too, for a customer who forwards it or answers from " +
       "another account",
   );
   // A wrong amount is worse than none: "€ 0,00" beside a thousand-euro quote is the kind of
   // contradiction a customer rightly phones about, and the real figure is in the PDF regardless.
-  assert.match(mail, /const heeftBedrag = Number\.isFinite\(totalInc\) && totalInc !== 0/, "no invented total");
+  assert.match(body, /const heeftBedrag = Number\.isFinite\(f\.totalInc\) && f\.totalInc !== 0/, "no invented total");
 
   assert.match(
     route, /senderEmail: profile\?\.email\?\.trim\(\) \|\| user\.email \|\| null/,

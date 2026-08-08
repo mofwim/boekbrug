@@ -5,7 +5,10 @@ import { Resend } from 'resend'
 import * as Sentry from '@sentry/nextjs'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
-import { offerteSubject } from './offerte-send'
+import { offerteSubject, offerteEmailHtml } from './offerte-send'
+// [M2] De escaper woont in een eigen bestand sinds de offertetekst puur moest worden — zie de kop
+// van escape-html.ts. Zelfde functie, zelfde gedrag, alleen niet meer hier gedeclareerd.
+import { escapeHtml } from './escape-html'
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -52,19 +55,6 @@ async function deliverEmail(
   return false
 }
 
-// [M2] Escape any user-controlled string interpolated into an HTML email body. Client
-// names, invoice numbers, message text and accountant names all reach third parties
-// (customers, accountants), so a name like <b>… or an injected link must render as
-// literal text, never as markup. Scripts are already stripped by mail clients (no XSS),
-// but this closes phishing/spoofing/hidden-text injection. Subjects are plain-text
-// headers and are deliberately NOT passed through this.
-function escapeHtml(s: string): string {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
@@ -872,15 +862,10 @@ export async function sendOfferteToClient({
   // Geen bedrag is beter dan een verkeerd bedrag: is het totaal onbekend, dan zwijgt deze regel en
   // staat het echte bedrag nog steeds in de PDF. "€ 0,00" naast een offerte van duizend euro is de
   // soort tegenspraak waar een klant terecht over belt.
-  const heeftBedrag = Number.isFinite(totalInc) && totalInc !== 0
-  const bedrag = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(totalInc)
+  // [OFFERTE-MAILTEKST] De tekst zelf is puur en woont bij het onderwerp en de bestandsnaam, in
+  // offerte-send.ts. Wat hier overblijft is de envelop: van wie, naar wie, waar het antwoord heen
+  // gaat en wat eraan hangt.
   const antwoordAdres = (senderEmail ?? '').trim()
-  const datumRegel = offerteDate
-    ? `<p style="margin:4px 0; color:#202124;"><strong>Datum:</strong> ${formatDateNL(offerteDate)}</p>`
-    : ''
-  const geldigRegel = validUntil
-    ? `<p style="margin:4px 0; color:#202124;"><strong>Geldig tot:</strong> ${formatDateNL(validUntil)}</p>`
-    : ''
 
   const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
@@ -888,25 +873,7 @@ export async function sendOfferteToClient({
     // [OFFERTE-ANTWOORD] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
     ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject: offerteSubject(senderName),
-    html: `
-      <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #202124;">Offerte van ${escapeHtml(senderName)}</h2>
-        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
-        <p style="color: #555;">Hierbij onze offerte. Je vindt hem als PDF in de bijlage.</p>
-        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
-          ${datumRegel}
-          ${geldigRegel}
-          ${heeftBedrag ? `<p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>` : ''}
-        </div>
-        <p style="color: #555;">
-          Deze offerte is <strong>vrijblijvend</strong>: er hoeft nog niets betaald te worden en er
-          is nog geen factuur. Ga je akkoord, ${antwoordAdres
-            ? `antwoord dan op deze mail of stuur een bericht naar <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>`
-            : 'laat het ons dan weten'} — dan sturen we de factuur.
-        </p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
-      </div>
-    `,
+    html: offerteEmailHtml({ clientName, senderName, senderEmail, totalInc, validUntil, offerteDate }),
     ...(pdfBuffer
       ? { attachments: [{ filename: fileName || 'offerte.pdf', content: pdfBuffer }] }
       : {}),
