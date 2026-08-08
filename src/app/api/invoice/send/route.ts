@@ -288,10 +288,7 @@ export async function POST(request: NextRequest) {
       // zijn klant krijgt draagt de volle prijs met een genummerd, onherroepelijk document
       // eromheen. De kolommen bestaan pas na invoice_discount.sql; parseDiscount geeft dan null en
       // dit is letterlijk de oude regel.
-      const kortingHier = parseDiscount(
-        (invoice as { discount_type?: unknown }).discount_type,
-        (invoice as { discount_value?: unknown }).discount_value,
-      )
+      const kortingHier = parseDiscount(invoice.discount_type, invoice.discount_value)
       if (kortingHier) {
         const d = applyDiscount(lines as { line_total?: number | null; btw_rate?: number | null }[], kortingHier)
         computedTotals = { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw }
@@ -625,6 +622,10 @@ export async function POST(request: NextRequest) {
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
         isCreditnota: finalType === 'creditnota',
+        // [ANTWOORD-ADRES] Het adres waarmee de ondernemer zich heeft aangemeld (profiles.email
+        // wordt bij registratie uit auth.users gevuld). Zonder dit komt een antwoord van de klant
+        // bij noreply@ terecht.
+        senderEmail: profile?.email ?? null,
       })
     } catch (emailErr) {
       emailFailed = true

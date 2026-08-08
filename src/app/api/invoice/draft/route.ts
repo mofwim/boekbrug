@@ -204,12 +204,14 @@ export async function POST(request: NextRequest) {
         client_btw_number: body.client_btw_number || null,
         original_invoice_id: soort === 'creditnota' ? null : (body.replaces_id || null),
         ...spoor,
-        // [KORTING] De cast zit op de RIJ, niet op een veld: discount_type/discount_value staan pas
-        // in de gegenereerde types nadat invoice_discount.sql is gedraaid en de types opnieuw zijn
-        // gegenereerd. Dezelfde situatie als created_by had — en met dezelfde vangnet eromheen, dus
-        // een database zonder de kolommen faalt niet maar valt terug (zie hierboven).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any)
+        // [KORTING] De rij-brede `as any` die hier stond is weg: invoice_discount.sql is gedraaid en
+        // discount_type/discount_value staan in de types. Die cast dekte de HELE rij, niet alleen
+        // de twee nieuwe kolommen — op een insert waar bedragen, eigenaar en factuursoort in staan.
+        // Zolang een kolom nog niet bestond was dat de prijs; nu niet meer, dus hij gaat eraf.
+        //
+        // De terugval eromheen blijft wél staan: hij is gedeeld met created_by en beschermt elke
+        // installatie waar een migratie nog open staat.
+      })
       .select('id')
       .single(),
       // [KORTING] De kortingskolommen reizen mee in dezelfde terugval als created_by: mist één

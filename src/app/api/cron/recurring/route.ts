@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
 
       const { data: src, error: srcErr } = await pipeline
         .from("invoices")
-        .select("id, sender_id, client_id, client_name, client_email, client_address, client_postal_code, client_city, client_btw_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw")
+        .select("id, sender_id, client_id, client_name, client_email, client_address, client_postal_code, client_city, client_btw_number, invoice_date, due_date, discount_type, discount_value, total_ex_btw, btw_amount, total_inc_btw")
         .eq("id", s.source_invoice_id)
         .maybeSingle();
       if (srcErr || !src) { failed += 1; continue; }
@@ -165,6 +165,13 @@ export async function GET(req: NextRequest) {
           total_ex_btw: src.total_ex_btw,
           btw_amount: src.btw_amount,
           total_inc_btw: src.total_inc_btw,
+          // [KORTING-KOPIE] De korting reist mee met de bedragen. Deze route kopieert de TOTALEN van
+          // het origineel maar bouwt de REGELS opnieuw op — en zonder de korting spraken die twee
+          // elkaar tegen: de kop droeg het verlaagde bedrag, de regels het volle. Elke afgeleide
+          // (de PDF en de UBL-export rekenen uit de regels) drukte dan een ander bedrag dan er in de
+          // boeken staat. Gemeten op een factuur van EUR 1.000 met 10%: EUR 121 verschil.
+          discount_type: src.discount_type ?? null,
+          discount_value: src.discount_value ?? null,
         })
         .select("id")
         .single();

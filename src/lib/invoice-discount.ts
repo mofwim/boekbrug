@@ -96,8 +96,19 @@ export function parseDiscount(type: unknown, value: unknown): Discount | null {
  * would invent a credit note out of a typo. The applied figure is returned, so a screen can show
  * what really came off.
  *
- * Credit notes (negative lines) are left alone: a discount on a correction is not a thing anyone
- * asks for, and halving a negative is the kind of arithmetic nobody can check by eye.
+ * SIGN-SYMMETRIC, and that is not a nicety. A creditnota copies its lines from the invoice it
+ * reverses and negates them; if the discount did not come along, a EUR 1.000 invoice discounted to
+ * EUR 900 produced a credit note whose stored header said −900 while its LINES said −1.000. Every
+ * surface that derives from lines — the PDF, the UBL export — then printed a refund of EUR 121 more
+ * than was ever charged, on a legal document. Measured before this was fixed.
+ *
+ * So a negative document gets the mirror of the discount: the same percentage or amount, applied to
+ * the magnitude, with the sign carried through. A credit note reversing a discounted invoice then
+ * reproduces that invoice exactly, line for line and allowance for allowance, which is the form an
+ * accountant can check against the original.
+ *
+ * Nothing lets an owner TYPE a discount onto a credit note — the screens exclude it, because a
+ * discount on a correction is not something anyone asks for. The only source is a copy.
  */
 export function applyDiscount(lines: DiscountLine[], discount: Discount | null): DiscountedTotals {
   const exByRate = new Map<number, number>();
@@ -107,31 +118,38 @@ export function applyDiscount(lines: DiscountLine[], discount: Discount | null):
   }
   const subtotal = round2([...exByRate.values()].reduce((s, e) => s + e, 0));
 
-  const positive = subtotal > 0;
-  const wanted = !discount || !positive
+  // The document's own direction. A creditnota is negative throughout — lines, totals, allowances —
+  // so the discount is mirrored rather than skipped. Everything below works on the MAGNITUDE and
+  // multiplies the sign back in, which keeps the cap meaningful in both directions: Math.min against
+  // a negative subtotal was how an earlier version turned a discount into a surcharge.
+  const sign = subtotal < 0 ? -1 : 1;
+  const magnitude = Math.abs(subtotal);
+  const wanted = !discount || magnitude === 0
     ? 0
     : discount.type === "percent"
-      ? round2((subtotal * discount.value) / 100)
+      ? round2((magnitude * discount.value) / 100)
       : round2(discount.value);
-  // The cap only means anything on a POSITIVE invoice. Math.min(0, −1000) is −1000, so on a credit
-  // note this returned a negative "discount" — a surcharge, from an owner who typed a discount.
-  // The test found it; `positive` was already computed two lines up and simply was not used here.
-  const applied = positive ? Math.min(wanted, subtotal) : 0;
+  const appliedMagnitude = Math.min(wanted, magnitude);
+  const applied = round2(sign * appliedMagnitude);
 
   const allowances: RateAllowance[] = [];
-  if (applied > 0) {
-    // Only groups with a positive share can carry part of a discount. A negative group on an
-    // otherwise positive invoice would otherwise receive a negative allowance, which reads as a
-    // surcharge in UBL and is not what anyone typed.
-    const groups = [...exByRate.entries()].filter(([, e]) => e > 0).sort((a, b) => b[1] - a[1]);
-    const base = groups.reduce((s, [, e]) => s + e, 0);
+  if (appliedMagnitude > 0) {
+    // Only groups pointing the SAME WAY as the document carry part of the discount. A negative
+    // group on an otherwise positive invoice would otherwise receive a negative allowance, which
+    // reads as a surcharge in UBL — the opposite of what was meant.
+    const groups = [...exByRate.entries()]
+      .filter(([, e]) => sign * e > 0)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    const base = groups.reduce((s, [, e]) => s + Math.abs(e), 0);
     let assigned = 0;
     for (let i = 0; i < groups.length; i++) {
       const [rate, ex] = groups[i];
       // The LAST group takes the remainder, so the parts always sum to `applied` to the cent. The
       // groups are sorted largest-first, so the remainder lands on the smallest share, where a
-      // cent distorts least — and never outside the discount the owner typed.
-      const part = i === groups.length - 1 ? round2(applied - assigned) : round2((applied * ex) / base);
+      // cent distorts least — and never outside the discount the owner agreed.
+      const part = i === groups.length - 1
+        ? round2(applied - assigned)
+        : round2(sign * ((appliedMagnitude * Math.abs(ex)) / base));
       assigned = round2(assigned + part);
       if (part !== 0) allowances.push({ rate, amount: part });
     }

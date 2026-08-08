@@ -8,7 +8,10 @@ import { computeInvoiceTotals, round2 } from "./invoice-totals";
 const r = (quantity: number, unit_price: number, btw_rate: number, description = "werk") =>
   ({ quantity, unit_price, btw_rate, description });
 
-test("the arithmetic is the one every other route uses — computeInvoiceTotals", () => {
+test("the arithmetic is the same as the one in the browser on amounts that land on a cent", () => {
+  // The assignment of this file was to move the computation to the server without changing a cent
+  // for an existing owner. On amounts that already sit on whole cents — which is nearly every
+  // invoice — that still holds exactly.
   const lines = [r(2, 100, 21), r(1, 50, 9)];
   assert.deepEqual(computeDraftTotals(lines), {
     total_ex_btw: 250,
@@ -26,29 +29,59 @@ test("the arithmetic is the one every other route uses — computeInvoiceTotals"
   );
 });
 
-test("a draft is stored in CENTS, not in whatever the multiplication produced", () => {
-  // 3 × 33,33 at 21%. This file used to leave that alone on purpose — "rounding here would
-  // silently change the bookkeeping" — and the result was total_inc_btw = 120,9879 written into a
-  // money column, four decimals, on a row an accountant reads. It was never the issued number
-  // either: /api/invoice/send recomputes at issue, so the only effect was that the editor showed
-  // an amount the PDF would not.
-  const t = computeDraftTotals([r(3, 33.33, 21)]);
-  assert.equal(t.total_ex_btw, 99.99);
-  assert.equal(t.btw_amount, 21, "20,9979 is not an amount of money");
-  assert.equal(t.total_inc_btw, 120.99);
-  for (const v of [t.total_ex_btw, t.btw_amount, t.total_inc_btw]) {
-    assert.equal(v, Number(v.toFixed(2)), "every stored total lands on a cent");
-  }
+// ── [REGEL-AFRONDING] the header may never disagree with its own lines ────────────────────────
+
+test("the header equals the sum of the line amounts as they are STORED", () => {
+  // This replaces a test that asserted the opposite ("there is NO rounding"), and that test was
+  // wrong in the way that matters: it locked in a header computed from raw products while
+  // invoice_lines.line_total was written round2(quantity × unit_price). The two then differed by a
+  // cent on any invoice with sub-cent line residue.
+  //
+  // 1,5 uur × € 33,33 = 49,995 → the column prints 50,00 twice. A customer adding up the column
+  // gets 100,00, and the invoice used to answer 99,99.
+  const t = computeDraftTotals([r(1.5, 33.33, 21), r(1.5, 33.33, 21)]);
+  assert.equal(t.total_ex_btw, 100, "the two printed 50,00 lines must total 100,00");
+  assert.equal(t.btw_amount, 21);
+  assert.equal(t.total_inc_btw, 121);
 });
 
-test("the stored header equals the sum of the stored lines", () => {
-  // /api/invoice/draft writes line_total = round2(quantity × price) per line. The header used to
-  // be computed from the UNROUNDED products, so the invoice disagreed with its own lines — the
-  // one inconsistency nothing downstream can explain, because both numbers came from us.
-  const lines = [r(3, 33.335, 21), r(7, 1.115, 9)];
-  const t = computeDraftTotals(lines);
-  const storedLineSum = lines.reduce((s, l) => s + round2(l.quantity * l.unit_price), 0);
-  assert.equal(t.total_ex_btw, round2(storedLineSum));
+test("the concept shows the amount that is actually issued — Kiwi Food Market", () => {
+  // The measured case, from a real quote: four lines at 9%, prices typed INCLUSIVE of btw
+  // (€ 0,90 / € 1,90 / € 1,75 / € 1,75 all-in), so every stored ex-price is a long fraction.
+  //
+  // Before: the concept said € 395,00 and the printed column said 362,38 against a stated
+  // subtotal of 362,39 — and issuing the very same invoice produced € 394,99, because the send
+  // route recomputes from the stored, rounded lines. The owner promised a number the document
+  // could not produce.
+  const ex = (incl: number) => incl / 1.09;
+  const t = computeDraftTotals([
+    r(150, ex(0.9), 9),
+    r(100, ex(1.9), 9),
+    r(38, ex(1.75), 9),
+    r(2, ex(1.75), 9),
+  ]);
+  assert.equal(t.total_ex_btw, 362.38, "the sum of 123,85 + 174,31 + 61,01 + 3,21");
+  assert.equal(t.btw_amount, 32.61, "9% over the base the document itself states");
+  assert.equal(t.total_inc_btw, 394.99, "what issuance produces — so the concept must say it too");
+});
+
+test("the stated btw is derivable from the stated base, which is what an accountant recomputes", () => {
+  // BR-S-09 / BR-CO-17: the tax amount of a category is its taxable amount × the rate. A header
+  // built from unrounded lines failed this — it stated 362,39 and 32,61, and 9% of 362,39 is
+  // 32,62. Whoever checks the invoice arrives at a different number than the invoice.
+  const t = computeDraftTotals([r(150, 0.9 / 1.09, 9), r(100, 1.9 / 1.09, 9)]);
+  const recomputed = Math.round(t.total_ex_btw * 9) / 100;
+  assert.equal(t.btw_amount, recomputed, "btw must be the rate applied to the base on the page");
+});
+
+test("a creditnota rounds the same way, mirrored", () => {
+  // The credit note copies the invoice it reverses. Rounding one direction differently from the
+  // other is how a refund ends up a cent away from the charge — measured before, at € 121.
+  const plus = computeDraftTotals([r(1.5, 33.33, 21), r(1.5, 33.33, 21)], 1);
+  const minus = computeDraftTotals([r(1.5, 33.33, 21), r(1.5, 33.33, 21)], -1);
+  assert.equal(minus.total_ex_btw, -plus.total_ex_btw);
+  assert.equal(minus.btw_amount, -plus.btw_amount);
+  assert.equal(minus.total_inc_btw, -plus.total_inc_btw);
 });
 
 test("a credit note sits negative in the books, and the sign is set in one place", () => {

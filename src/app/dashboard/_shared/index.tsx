@@ -17,6 +17,9 @@ import { SearchBar } from '@/components/search/SearchBar'
 import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
+// [LOGO-INITIALEN] Dezelfde functie als de factuur-PDF. Stond hier als een eigen regel die
+// "Kiwi Food Market" tot KF maakte terwijl de PDF er KM van maakte — één bedrijf, twee monogrammen.
+import { deriveInitials } from '@/lib/logo-initials'
 
 // De header toont alleen naam, bedrijf, e-mail en rol. Door dát te vragen in plaats van een
 // volledige ProfileRow mogen aanroepers een gerichte select doen zonder te liegen over wat
@@ -242,8 +245,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  const initials = (profile.full_name || profile.company_name || 'U')
-    .split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+  const initials = deriveInitials(profile.full_name || profile.company_name || 'U')
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>

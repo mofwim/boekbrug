@@ -72,6 +72,13 @@ export async function POST(
         total_ex_btw: original.total_ex_btw,
         btw_amount: original.btw_amount,
         total_inc_btw: original.total_inc_btw,
+        // [KORTING-KOPIE] De korting reist mee met de bedragen. Deze route kopieert de TOTALEN van
+        // het origineel maar bouwt de REGELS opnieuw op — en zonder de korting spraken die twee
+        // elkaar tegen: de kop droeg het verlaagde bedrag, de regels het volle. Elke afgeleide
+        // (de PDF en de UBL-export rekenen uit de regels) drukte dan een ander bedrag dan er in de
+        // boeken staat. Gemeten op een factuur van EUR 1.000 met 10%: EUR 121 verschil.
+        discount_type: original.discount_type ?? null,
+        discount_value: original.discount_value ?? null,
         // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         client_name: original.client_name,
         client_email: original.client_email,

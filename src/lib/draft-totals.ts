@@ -9,31 +9,49 @@
 // the books under their employer's VAT number, and then the server should do the arithmetic, not
 // the page.
 //
-// WHY THE ARITHMETIC MOVED AGAIN
-// This file used to hold its own summation, with a note explaining that it was "LITERALLY THE SAME
-// AS THE ONE IN THE PAGE, including NOT rounding" so that no existing owner would see a cent
-// change. That was written before invoice-totals.ts, which exists to be the ONE place these three
-// legal amounts are computed — and which had already made, and won, exactly the opposite argument:
-// group the ex-amount PER RATE, round each rate's BTW, sum those. That is the method the
-// Belastingdienst and Peppol prescribe, and the one the PDF's btwBreakdown and the UBL export
-// already use.
+// [REGEL-AFRONDING] WHY THIS ROUNDS PER LINE, AND WHY IT USED NOT TO
 //
-// So there were three algorithms for one number, and this one was the odd one out in two ways.
+// This header used to say the opposite: "the arithmetic is LITERALLY the same as the one in the
+// page, including NOT rounding — this must not make a cent of difference for an existing owner."
+// The promise was about the MOVE from browser to server, and for that move it was right. What it
+// preserved, though, was a divergence that was already there, and the promise is what kept it
+// alive: the header summed the raw products while invoice_lines.line_total was written
+// round2(quantity x unit_price) three hundred lines away in the same route.
 //
-//   · It did not round AT ALL. Three lines of 3 × 33,33 at 21% were stored as
-//     total_inc_btw = 120,9879 — four decimals, in a money column, on a row an accountant reads.
-//   · The same route rounds each LINE to cents (line_total = round2(quantity × price)), so the
-//     stored header did not even equal the sum of the stored lines it was computed from.
+// Measured, on a real quote (Kiwi Food Market, four lines at 9%, prices typed INCLUSIVE of btw):
 //
-// And it was never the number that got issued: /api/invoice/send recomputes at issue via
-// computeInvoiceTotals. The only thing the third algorithm achieved was that the amount in the
-// editor was not the amount on the PDF — measured at a cent on a mixed-rate invoice, and at a
-// tenth of a cent of nonsense on a plain one.
+//     printed line column   123,85 + 174,31 + 61,01 + 3,21  =  362,38
+//     stored header                                            362,39
+//     stated btw            32,61, while 9% of 362,39 is       32,62
+//     concept said                                             395,00
+//     the same invoice re-saved via the edit screen, or issued: 394,99
+//
+// Three separate contradictions out of one cause. The customer adds up the column and gets a
+// different number than the total; an accountant recomputing the btw from the stated base gets a
+// different number again; and the amount the owner sees in the concept is not the amount that
+// goes out — the precise failure the header of invoice-totals.ts says it fixed, still open on the
+// other axis. In the UBL export it is fatal rather than confusing: Peppol BIS 3.0 BR-CO-10
+// requires LegalMonetaryTotal/LineExtensionAmount to equal the sum of the line amounts, so the
+// file is refused at the receiving access point and the invoice never arrives.
+//
+// It is not an inclusive-price problem. 1,5 uur x EUR 33,33 = 49,995 rounds to 50,00 in the
+// column; two such lines print 100,00 and used to total 99,99.
+//
+// So the rounding moves here, ONE step earlier than it was, onto exactly the number that lands in
+// invoice_lines.line_total. The header is then the sum of its own lines by construction, and the
+// create route, the edit route, issuance, the PDF and the UBL export cannot drift apart again —
+// they all read the same rounded amounts.
+//
+// The cent this costs is real and belongs to whoever types prices INCLUSIVE of btw: "EUR 0,90
+// all-in" x 150 at 9% cannot produce a document that both adds up and totals exactly EUR 395,00,
+// because no two-decimal ex-amount X satisfies X + round2(0,09X) = 395,00 (362,38 gives 394,99,
+// 362,39 gives 395,01). That cent is arithmetic, not a defect. What WAS the defect is that it
+// stayed hidden until issuance; now the concept shows the same 394,99 the customer will get.
 //
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
-import { round2 } from "./invoice-totals";
+import { computeInvoiceTotals, round2 } from "./invoice-totals";
 import { applyDiscount, type Discount } from "./invoice-discount";
 
 export interface DraftLine {
@@ -68,30 +86,26 @@ export function computeDraftTotals(
   // korting precies dezelfde bedragen uit als voorheen, tot op de cent.
   discount: Discount | null = null,
 ): DraftTotals {
-  // [BTW-ROUND] ÉÉN pad, ook zonder korting. Hier stond een tweede som — btw per REGEL opgeteld en
-  // helemaal niet afgerond — die alleen liep als er geen korting was. Dat is precies de kant die
-  // misgaat: een concept van 3 × 33,33 tegen 21% werd opgeslagen als total_inc_btw = 120,9879, vier
-  // decimalen in een geldkolom op een regel die een boekhouder leest, en op een factuur met
-  // gemengde tarieven week hij een cent af van wat /api/invoice/send bij uitgifte opnieuw uitrekent.
-  //
-  // applyDiscount groepeert per tarief, rondt de btw van elk tarief af en telt die op — dezelfde
-  // methode als computeInvoiceTotals, en met discount = null is het diezelfde som zonder aftrek. Zo
-  // kan het bedrag in de editor niet verschillen van het bedrag op de PDF, en kan het conceptpad
-  // niet verschillen van het uitgiftepad.
-  //
-  // Het teken is wél van deze route: het wordt per REGEL toegepast, zodat het groeperen en afronden
-  // gebeurt op de getallen die ook echt worden opgeslagen. round2 is symmetrisch, dus een
-  // creditnota rondt identiek aan de factuur die hij crediteert.
-  const d = applyDiscount(
-    lines.map((l) => ({
-      line_total: round2(sign * (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)),
-      btw_rate: l.btw_rate,
-    })),
-    // Een korting op een creditnota is een toeslag op een teruggave — applyDiscount weigert hem
-    // ook zelf (`positive`), en hier al niet meegeven zegt hetzelfde op de plek waar het besluit valt.
-    sign === 1 ? discount : null,
-  );
-  return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw };
+  // [REGEL-AFRONDING] The line amounts as they will be STORED — the same expression as the insert
+  // in /api/invoice/draft, sign and all. Everything below sums these and nothing else, so the
+  // header can never claim a different subtotal than the column the customer reads. See the block
+  // at the top of this file for what the raw-product version produced.
+  const stored = lines.map((l) => ({
+    line_total: round2(sign * l.quantity * l.unit_price),
+    btw_rate: l.btw_rate,
+  }));
+
+  if (discount && sign === 1) {
+    // De verdeling over de tarieven staat in invoice-discount.ts, samen met de UBL-kant ervan.
+    // Hier een eigen aftrekking doen zou betekenen dat de conceptroute en de uitgifteroute op een
+    // gemengde factuur een andere btw uitrekenen — en dan hangt het bedrag af van welke knop de
+    // ondernemer indrukte.
+    const d = applyDiscount(stored, discount);
+    return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw };
+  }
+  // Per tarief, precies zoals de uitgifteroute en de PDF het doen — één functie, geen tweede
+  // methode die op een gemengde factuur een cent afwijkt.
+  return computeInvoiceTotals(stored);
 }
 
 /** The BTW rate must be a rate that exists in the Netherlands — not a number someone typed. */

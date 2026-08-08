@@ -3760,3 +3760,528 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
     "the confirm must still say what happens, in full",
   );
 });
+
+// ── [OFFERTE-VERSTUREN] A quote can be sent as a quote, through a door that cannot mint ──
+//
+// The app could not send a quote at all. Every path through /api/invoice/send either CONVERTS it
+// into an official factuur (isConversion → a number from the gapless series), converts it without
+// sending, or re-delivers an invoice that already has a number. So the only way to put a quote in
+// front of a customer was to turn it into an invoice first — the opposite of what a quote is for,
+// and irreversible under Art. 35.
+//
+// The guarantee that matters is negative: this route must not be ABLE to mint a number. A flag on
+// the send route would have put "never mint" one wrong branch away from "mint", on the single
+// action in this app that cannot be undone. A separate door is checkable, and this is the check.
+test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if the mail fails", () => {
+  const route = code("src/app/api/invoice/[id]/send-offerte/route.ts");
+
+  // THE LOAD-BEARING ONE. Not "does not" — CANNOT: the allocator is not reachable from here.
+  // WRITES, not reads. The route must READ the number — that is what refuses a quote the send
+  // route already converted (checkOfferteSendable → already_invoice). Banning the read outright
+  // was my first attempt and it forbade the very guard that makes this door safe.
+  assert.doesNotMatch(
+    route, /invoice_number:\s/,
+    "this route may never write a number — it is the door that cannot mint one",
+  );
+  assert.match(
+    route, /invoiceNumber: invoice\.invoice_number/,
+    "…but it MUST read it, or an already-converted quote could be mailed as 'vrijblijvend' for " +
+      "work the books already hold as an issued, numbered invoice",
+  );
+  assert.doesNotMatch(route, /invoice_type:/, "…nor change the document's type");
+  assert.doesNotMatch(
+    route, /next_invoice_seq|convertOnly|isConversion|from\(['"]invoice_number/,
+    "…nor reach the numbering machinery in any form",
+  );
+  // And it does not call the converting route either, which would be the same thing at one remove.
+  assert.doesNotMatch(route, /api\/invoice\/send/, "it must not delegate to the route that converts");
+
+  // What it DOES write: status and pdf_url. Nothing else.
+  assert.match(route, /status: 'sent',/, "a sent quote is marked sent");
+  assert.match(route, /pdf_url: pdfPath/, "…and keeps the document it sent");
+
+  // The refusals come from the tested module, each with its own sentence.
+  assert.match(route, /checkOfferteSendable\(\{/, "the four refusals are decided in offerte-send.ts");
+  assert.match(route, /error: check\.error, code: check\.code/, "…and the reason reaches the screen");
+
+  // ORDER: mail first, status second. Marking a quote 'sent' before the mail leaves an owner
+  // waiting on a customer who never received anything.
+  const mailAt = route.indexOf("await sendOfferteToClient(");
+  const statusAt = route.indexOf("status: 'sent',");
+  assert.ok(mailAt > 0 && statusAt > mailAt, "nothing is marked sent until the mail is away");
+  assert.match(
+    route, /if \(!delivered\) \{[\s\S]{0,400}?status: 502/,
+    "an undelivered quote is reported as undelivered — this is a proposal with a deadline on it",
+  );
+
+  // A PDF failure refuses. An e-mail naming an amount with nothing attached is not the thing the
+  // owner asked to send, and a customer cannot agree to a number in a sentence.
+  assert.match(route, /pdf render failed[\s\S]{0,300}?status: 502/, "no quote mail without the quote");
+
+  // The mail is quote-shaped, not an invoice mail with different words.
+  //
+  // [OFFERTE-MAILTEKST] The BODY moved to offerte-send.ts, beside the subject and the file name —
+  // the other two strings this same mail puts in front of a customer — so that it could become a
+  // pure function with tests. This gate was pinned to the file the text used to sit in and went
+  // red on the move, which is the defect class this whole file is about: it was checking WHERE the
+  // sentence lived, not THAT the mail says it. So: the envelope is asserted on email.ts, the words
+  // on whichever module owns them.
+  const mail = code("src/lib/email.ts");
+  const body = code("src/lib/offerte-send.ts");
+  assert.match(mail, /export async function sendOfferteToClient/, "a quote has its own mail");
+  assert.match(
+    mail, /html: offerteEmailHtml\(\{/,
+    "…and takes its text from the pure builder, rather than growing a second copy inline where " +
+      "nothing can assert on it",
+  );
+  assert.match(body, /vrijblijvend/, "…which says the one thing that separates a proposal from a bill");
+  assert.match(body, /Geldig tot/, "…and a validity date, never a due date");
+  // [OFFERTE-GELDIGHEID] Unconditionally. The row used to disappear when no date was set, and an
+  // offer with no stated end is one the customer can accept a year later at last year's price.
+  assert.match(
+    body, /niet afgesproken/,
+    "a quote with no end date must SAY it has none, not drop the line",
+  );
+  // [OFFERTE-KOP] The heading is the subject. It used to interpolate the name unguarded, so an
+  // empty company field printed "Offerte van" with nothing after it — while offerteSubject(), two
+  // functions away, handled exactly that case.
+  assert.match(
+    body, /const kopregel = offerteSubject\(f\.senderName\)/,
+    "the heading and the subject must come from one function, or they drift",
+  );
+
+  // [OFFERTE-ANTWOORD] THE YES HAS TO LAND SOMEWHERE. This mail exists to ask for an agreement and
+  // went out from noreply@boekbrug.nl with no reply-to, so pressing Reply — the customer's first
+  // move — sent the answer nowhere. The PDF underneath does not help: its sender block carries
+  // name, address, KvK, BTW number and IBAN, and no e-mail or phone at all. A customer who wanted
+  // to say yes had literally no address to say it to, on the one feature whose entire purpose is
+  // getting that yes.
+  assert.match(
+    mail, /\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/,
+    "replying to a quote must reach the owner, not noreply@",
+  );
+  assert.match(
+    body, /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
+    "…and the address is named in the body too, for a customer who forwards it or answers from " +
+      "another account",
+  );
+  // A wrong amount is worse than none: "€ 0,00" beside a thousand-euro quote is the kind of
+  // contradiction a customer rightly phones about, and the real figure is in the PDF regardless.
+  assert.match(body, /const heeftBedrag = Number\.isFinite\(f\.totalInc\) && f\.totalInc !== 0/, "no invented total");
+
+  // [ACTING-FOR] The fallback used to be a bare `|| user.email`, which is the OWNER's address only
+  // when the owner is the one pressing the button. The precise form is asserted in
+  // [ANTWOORD-ADRES]; here it is enough that the route supplies an address at all.
+  assert.match(
+    route, /senderEmail: profile\?\.email\?\.trim\(\)/,
+    "the route must supply that address — the profile field, which registration fills from the " +
+      "account the owner signed up with",
+  );
+  assert.match(
+    route, /\.select\('company_name, full_name, email,/,
+    "…and it must READ it: a column not selected is a reply-to that points nowhere",
+  );
+
+  // The screen offers it, and on an already-sent quote too — re-sending after an edit is the
+  // normal negotiation, not an error.
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.match(
+    list, /isOfferte && !inv\.invoice_number && \(inv\.status === 'draft' \|\| inv\.status === 'sent'\)/,
+    "the button appears on an unconverted quote, draft or already sent",
+  );
+  assert.match(list, /send-offerte/, "…and calls the quote door, not the send route");
+  assert.match(
+    list, /Offerte versturen/,
+    "…labelled as what it is — which only became an honest label once the button existed",
+  );
+});
+
+// ── [KORTING-KOPIE] Every route that COPIES an invoice carries its discount ──
+//
+// Three routes build a new document from an existing one: the creditnota, the duplicate, and the
+// recurring cron. All three copy the header TOTALS from the source and rebuild the LINES — and the
+// discount lives on the header. So each of them produced a document whose stored total said one
+// thing and whose lines said another, by exactly the discount.
+//
+// That is not a display bug. The PDF and the UBL export both derive their figures from the LINES
+// (btwBreakdown / groupByRate), so what the customer received and what the access point validated
+// were the undiscounted amounts, while the books held the discounted ones. Measured on a EUR 1.000
+// invoice at 21% with 10% off: the credit note's header said −1.089 and the document it printed
+// said −1.210. EUR 121 of refund that was never charged, on a legal document.
+//
+// This is the same shape as [VRIJGESTELD-KOPIE] one screen over: a field that lives on the header
+// and is silently dropped by everything that copies the row.
+test("[KORTING-KOPIE] the creditnota, the duplicate and the recurring cron all carry the discount", () => {
+  for (const [file, indent] of [
+    ["src/app/api/invoice/creditnota/route.ts", "original"],
+    ["src/app/api/invoice/[id]/duplicate/route.ts", "original"],
+    ["src/app/api/cron/recurring/route.ts", "src"],
+  ] as const) {
+    const src = code(file);
+    assert.match(
+      src, new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`),
+      `${file} copies the header totals, so it must copy the discount that produced them — ` +
+        "otherwise its lines contradict its own stored amounts",
+    );
+    assert.match(src, new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`), `${file}: and its value`);
+  }
+
+  // The recurring cron reads its source explicitly — a column it does not SELECT is a column it
+  // cannot copy, and the copy above would silently write null.
+  assert.match(
+    code("src/app/api/cron/recurring/route.ts"),
+    /\.select\("[^"]*discount_type, discount_value[^"]*"\)/,
+    "the recurring source read must include the discount columns",
+  );
+
+  // And the arithmetic mirrors on a negative document, which is what makes the creditnota copy
+  // correct rather than merely present. Without this the copied discount would compute to zero on
+  // a credit note and the contradiction would survive the fix.
+  const store = code("src/lib/invoice-discount.ts");
+  assert.match(
+    store, /const sign = subtotal < 0 \? -1 : 1;/,
+    "a creditnota is negative throughout; the discount is mirrored, not skipped",
+  );
+  assert.match(
+    store, /\.filter\(\(\[, e\]\) => sign \* e > 0\)/,
+    "…and only groups pointing the same way as the document carry part of it — a group pointing " +
+      "the other way would get an allowance that reads as a surcharge in UBL",
+  );
+});
+
+// ── [OFFERTE-OMZETTEN-VOLLEDIG] The accepted quote and the invoice for it are the same document ──
+//
+// The from_offerte flow loads the quote's lines and pre-fills the new invoice. It read FOUR columns
+// where the line carries six, and never read the header at all. So the customer accepted one
+// document and was billed a different one, in three ways at once:
+//
+//   · unit          — "2 uur" became "2" (C62 = stuk) in the e-invoice. The [UNIT] comments in
+//                     pickArticle and in the catalog button describe this same loss, each fixed on
+//                     its own path; this was a third path nobody had walked.
+//   · vat_treatment — the exemption flag. Without it revenue moves out of the exempt pot into the
+//                     0%/verlegd box of the aangifte (schoonRegel spells out that consequence), so
+//                     an accepted exempt quote produced an invoice filed in the wrong box.
+//   · the discount  — it lives on the HEADER, so a line-only read could never see it. The customer
+//                     agreed to EUR 900 and was invoiced EUR 1.000.
+test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quote said", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // Every column the line actually holds — a SELECT is the whole boundary here.
+  assert.match(
+    page,
+    /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment'\)/,
+    "the quote's lines must be read in full: a column not selected is a column silently dropped " +
+      "between what the customer accepted and what they are billed",
+  );
+  // Scoped to the conversion block. `unit: l.unit ?? null` appears three times in this file — the
+  // two submit-path mappings are the others — so an unscoped assertion stayed green with the
+  // conversion's own mapping deleted. The negative control is what said so.
+  const convStart = page.indexOf("if (offerteParam) {");
+  const convEnd = page.indexOf("setLinesLoading(false)", convStart);
+  assert.ok(convStart > 0 && convEnd > convStart, "the from_offerte load block was found");
+  const conv = page.slice(convStart, convEnd);
+  assert.ok(conv.length < 1800, `the slice must be that block alone — it is ${conv.length} chars`);
+  assert.match(conv, /unit:\s+l\.unit \?\? null,/, "…and the unit must reach the new line");
+  assert.match(
+    conv, /vat_treatment: l\.vat_treatment === 'exempt' \? 'exempt' : null,/,
+    "…and the exemption flag, hardened the same way every other writer hardens it: only the " +
+      "literal 'exempt' counts, so no stray value can create an exemption",
+  );
+
+  // The discount is on the header, so it needs its own read. A line-only load cannot see it.
+  assert.match(
+    page,
+    /\.select\('discount_type, discount_value'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
+    "the quote's discount must be read from the header — that is the amount the customer said " +
+      "yes to",
+  );
+  assert.match(page, /setDiscountType\(offHead\.discount_type\)/, "…and pre-fill the invoice with it");
+});
+
+// ─── [REGEL-AFRONDING-KOP] The header may never be summed differently from its own lines ───────
+//
+// invoice_lines.line_total is written round2(quantity × unit_price) — the create route argues that
+// at length in its own comment, because an unrounded column prints two lines of EUR 50,00 under a
+// subtotal of EUR 99,99 and because Peppol BIS 3.0 BR-CO-10 refuses the file when the two disagree.
+//
+// The HEADER was not rounded the same way. draft-totals.ts summed the raw products, and its own
+// header comment promised it always would ("including NOT rounding"). So the same invoice had two
+// subtotals, and which one you got depended on which button you pressed.
+//
+// Measured on a real quote — four lines at 9%, prices typed inclusive of btw:
+//   printed column 362,38 · stored header 362,39 · stated btw 32,61 while 9% of 362,39 is 32,62 ·
+//   concept total EUR 395,00 · the same invoice issued, or merely re-saved from the edit screen,
+//   EUR 394,99.
+//
+// The gate is on the SHAPE that caused it: every place that turns a line into money for a total
+// must round it first, exactly as the insert does. A raw `quantity * unit_price` reaching a total
+// is the defect, whichever file it reappears in.
+test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STORED, never raw", () => {
+  const totals = code("src/lib/draft-totals.ts");
+
+  assert.match(
+    totals,
+    /line_total: round2\(sign \* l\.quantity \* l\.unit_price\),/,
+    "computeDraftTotals must build its lines with the SAME expression the create route inserts — " +
+      "round2(sign * quantity * unit_price). Anything else is a second opinion about one number",
+  );
+  // The two raw reducers that used to be the whole function. Paired with the match above, so a
+  // file that somehow read empty cannot make this pass vacuously.
+  assert.doesNotMatch(
+    totals,
+    /reduce\(\(s, l\) => s \+ l\.quantity \* l\.unit_price/,
+    "the header is back to summing raw products — that is the 362,38-vs-362,39 defect returning",
+  );
+  assert.match(
+    totals,
+    /return computeInvoiceTotals\(stored\);/,
+    "and the per-rate split must be the one function issuance and the PDF already use, not a " +
+      "second implementation that can drift from it",
+  );
+
+  // Both editors. What you watch while typing has to be what gets written, or the cent surfaces
+  // after the customer has the document.
+  for (const path of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ]) {
+    const page = code(path);
+    assert.match(
+      page,
+      /line_total: round2\(l\.quantity \* l\.unit_price\), btw_rate: l\.btw_rate/,
+      `${path} must total the rounded line amounts — unrounded, this screen showed EUR 395,00 ` +
+        "while EUR 394,99 was stored",
+    );
+    assert.doesNotMatch(
+      page,
+      /line_total: l\.quantity \* l\.unit_price,/,
+      `${path} is summing raw products again`,
+    );
+  }
+
+  // The per-rate box on the create screen sits directly beside that total and is derived from the
+  // same lines, so it rounds the same way. Two numbers on one screen contradicting each other
+  // about one invoice is the same failure at a smaller scale.
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(
+    nieuw,
+    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\)/,
+    "the on-screen BTW-per-rate breakdown must use the rounded line amounts too",
+  );
+  // [KORTING] And it must subtract the korting that applyDiscount assigned to each rate. This
+  // assertion used to pin a one-liner that summed `round2(line) * rate/100` straight into
+  // btwByRate — right about the rounding, and blind to the discount: with one set, the box showed
+  // the BTW over a base the customer does not pay, printed directly above a total that had already
+  // deducted it. Same failure as the cent, one line further down the same card.
+  //
+  // Deriving it from `allowances` rather than re-splitting the discount here is the point: the
+  // rows and the total are then the same sum by construction, not two sums that happen to agree.
+  assert.match(
+    nieuw,
+    /for \(const a of kortingTotalen\.allowances\)/,
+    "the per-rate box must take the discount from applyDiscount's own per-rate allowances",
+  );
+  assert.match(
+    nieuw,
+    /btwByRate\[r\] = round2\(\(\(ex - \(aftrekPerTarief\[r\] \?\? 0\)\) \* r\) \/ 100\)/,
+    "…and show the BTW over what is left after it, rounded per rate like every other total here",
+  );
+});
+
+// ─── [LOGO-INITIALEN] One company, one monogram ────────────────────────────────────────────────
+//
+// There were two derivations. The invoice PDF took the first and the LAST word, so "Kiwi Food
+// Market" went out on every document as KM. The dashboard avatar took every word and then cut to
+// two, so the same owner saw KF above it. Neither is what a person writes, which is KFM — and the
+// two disagreeing with each other is its own bug: the logo on your invoice was not the logo in
+// your app.
+test("[LOGO-INITIALEN] the monogram has one definition, and both surfaces use it", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(
+    pdf,
+    /import \{ deriveInitials \} from '\.\/logo-initials'/,
+    "the invoice PDF must take the monogram from the shared module",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /function deriveInitials/,
+    "a local copy in the PDF is how the two definitions drifted apart in the first place",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /words\[words\.length - 1\]\[0\]/,
+    "first-word-plus-last-word is the rule that printed KM for Kiwi Food Market",
+  );
+
+  const shell = code("src/app/dashboard/_shared/index.tsx");
+  assert.match(
+    shell,
+    /import \{ deriveInitials \} from '@\/lib\/logo-initials'/,
+    "the dashboard avatar must use the same function as the invoice",
+  );
+  assert.match(
+    shell,
+    /const initials = deriveInitials\(/,
+    "…and actually call it, rather than import it beside a hand-rolled copy",
+  );
+  assert.doesNotMatch(
+    shell,
+    /\.split\(' '\)\.map\(\(w: string\) => w\[0\]\)/,
+    "the avatar is deriving its own initials again",
+  );
+});
+
+// ─── [OFFERTE-IS-GEEN-PROFORMA] The two things the rendered document cannot show ───────────────
+//
+// invoice-pdf-document.test.ts renders the real PDF and reads its text back, which covers the
+// heading, the validity date, the acceptance route and the number label. Two properties survive
+// that test no matter what, because neither is text: the COLOUR of the footer, and WHICH helper
+// decides that a document is a quote. Both are held here.
+test("[OFFERTE-IS-GEEN-PROFORMA] the PDF shares one definition of 'this is a quote'", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+
+  assert.match(
+    pdf,
+    /import \{ isQuote \} from '\.\/invoice-editable'/,
+    "the PDF must use the same isQuote() as the edit screen and the send routes",
+  );
+  assert.match(
+    pdf,
+    /const isOfferte = isQuote\(type\)/,
+    "…and decide with it",
+  );
+  // The exact expression that made every offerte branch dead code: each quote is STORED as
+  // 'pro_forma', so a check against 'offerte' alone never matched a real document.
+  assert.doesNotMatch(
+    pdf,
+    /const isOfferte = type === 'offerte'/,
+    "a quote is stored as pro_forma — checking only for 'offerte' turns the whole offerte layout " +
+      "into code that never runs, which is exactly how it shipped",
+  );
+  assert.doesNotMatch(
+    pdf,
+    /Dit is een pro-formafactuur/,
+    "the pro-forma disclaimer belongs to a prepayment invoice and was printing on every quote",
+  );
+});
+
+test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
+  // Not visible to the render test: pdfjs returns the text either way. It read #dadce0 at 8pt —
+  // the same light grey this stylesheet uses for HAIRLINES — which on white is about 1,3:1 and
+  // effectively invisible in print. The owner reported it as missing, not as faint.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  const start = pdf.indexOf("footer: {");
+  assert.ok(start > 0, "the footer style block was found");
+  const block = pdf.slice(start, pdf.indexOf("}", start));
+  assert.ok(block.length < 400, `the slice must be the footer block alone — it is ${block.length} chars`);
+  assert.doesNotMatch(block, /#dadce0/, "the footer is back to the hairline grey nobody can read");
+  assert.match(block, /color: '#5f6368'/, "…it must carry a colour with real contrast on white");
+});
+
+// ─── [AFZENDERNAAM] Mail to the owner's customer carries the owner's name and address ──────────
+//
+// All fifteen senders read `BoekBrug <noreply@boekbrug.nl>`, including the three that write to a
+// THIRD PARTY on the owner's behalf. A customer of Kiwi Food Market therefore got an inbox row
+// saying BoekBrug about an amount they were being asked to pay — a name they have no relationship
+// with, which is what spam looks like.
+//
+// And only the quote had a Reply-To. Pressing Reply on an invoice or a payment reminder — "ik heb
+// al betaald", "kan het gespreid?" — sent the answer to noreply@. On a reminder that is worse than
+// clumsy: someone who WANTS to pay writes to a dead letterbox, and the next reminder goes out
+// anyway.
+//
+// The address itself cannot change and that is not a defect: mail is authenticated per DOMAIN, so
+// only boekbrug.nl can be the envelope sender. The display name and Reply-To are the parts that
+// can carry the owner, and they now do.
+test("[AFZENDERNAAM] the three customer-facing mails carry the business, the other twelve do not", () => {
+  const mail = code("src/lib/email.ts");
+
+  // Exactly three senders write to someone who is not a BoekBrug user.
+  const viaOwner = [...mail.matchAll(/from: customerMailFrom\(/g)].length;
+  assert.equal(viaOwner, 3, `factuur, herinnering en offerte — gevonden: ${viaOwner}`);
+  // …and every one of them offers a way back. Counted, so adding a fourth customer mail without a
+  // reply-to shows up here rather than in a customer's dead reply.
+  const replies = [...mail.matchAll(/\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/g)].length;
+  assert.equal(replies, 3, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
+
+  // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
+  // business name would be wrong.
+  const plain = [...mail.matchAll(/from: 'BoekBrug <noreply@boekbrug\.nl>'/g)].length;
+  assert.equal(plain, 12, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
+
+  // The name is never interpolated raw. It is typed by a user and lands in a header that reaches
+  // strangers: a newline is header injection, and an @ or a bracket lets a display name pose as
+  // the sending address.
+  assert.doesNotMatch(
+    mail, /from: `[^`]*\$\{/,
+    "a From header must not be built by interpolation — it goes through customerMailFrom()",
+  );
+
+  const from = code("src/lib/mail-from.ts");
+  assert.match(from, /replace\(\/\[\\u0000-\\u001f\\u007f\]\/g/, "control characters are stripped");
+  assert.match(from, /replace\(\/\[<>@"\\\\\]\/g/, "…and the address-shaped characters with them");
+  assert.match(from, /return `"\$\{label\}" <\$\{MAIL_FROM_ADDRESS\}>`/,
+    "the display name is quoted — an ordinary Dutch trade name with a comma would otherwise " +
+      "parse as two senders and break the header");
+  assert.match(from, /via \$\{MAIL_FROM_FALLBACK\}/,
+    "'via BoekBrug' is what keeps a display name from being a free claim about who sent the mail");
+});
+
+test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it comes from", () => {
+  // A reply-to the sender never fills is dead code, and a column that is not SELECTed is a
+  // reply-to that points nowhere — the failure this app has hit twice.
+  for (const [path, needle] of [
+    ["src/app/api/invoice/send/route.ts", /senderEmail: profile\?\.email \?\? null/],
+    ["src/app/api/invoice/creditnota/route.ts", /senderEmail: profile\?\.email \?\? null/],
+    ["src/app/api/invoice/[id]/reminder/route.ts", /senderEmail: eigenaarProfiel\?\.email \?\? null/],
+    ["src/app/api/cron/reminders/route.ts", /senderEmail: owner\.email \?\? null/],
+  ] as const) {
+    assert.match(code(path), needle, `${path} must pass the owner's address to the mailer`);
+  }
+  assert.match(
+    code("src/app/api/invoice/[id]/reminder/route.ts"),
+    /\.select\('company_name, full_name, email'\)/,
+    "the reminder route must READ the address it passes",
+  );
+  assert.match(
+    code("src/app/api/cron/reminders/route.ts"),
+    /\.select\("id, reminder_offsets, company_name, full_name, email"\)/,
+    "…and so must the cron that sends most of them",
+  );
+
+  // [ACTING-FOR] The fallback to the logged-in account is only the owner's address when the logged-
+  // in person IS the owner. A verkoopmedewerker sending a quote would otherwise route the
+  // customer's "akkoord" to an employee, on a document that binds the employer.
+  assert.match(
+    code("src/app/api/invoice/[id]/send-offerte/route.ts"),
+    /senderEmail: profile\?\.email\?\.trim\(\) \|\| \(acting\.actorId === ownerId \? user\.email : null\) \|\| null/,
+    "the account fallback must be owner-only",
+  );
+});
+
+// ─── [LEESBARE-MAIL] No sentence in an e-mail is set in a colour nobody can read ────────────────
+//
+// The owner reported the PDF footer as MISSING, not as faint. It was #dadce0 at 8pt — about 1,3:1
+// on white. The mail bodies had the same habit: thirteen lines in #aaa (≈2,3:1) and two in #999.
+//
+// Most of those carry only the BoekBrug strapline, and a faint strapline is a design choice. Three
+// of them do not:
+//   · "Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet" — the warning
+//     that tells someone an invitation-shaped mail might not be genuine.
+//   · "Je krijgt deze mail omdat je BoekBrug-account is beëindigd…" — the retention notice that
+//     exists to satisfy article 5.7.5 of our own terms.
+//   · "Heb je deze factuur al betaald? Dan kun je deze herinnering als niet verzonden beschouwen."
+//     — on a payment reminder, addressed to the one customer who has already paid.
+//
+// A notice printed below the threshold of legibility has been sent, not given.
+test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", () => {
+  const mail = code("src/lib/email.ts");
+  for (const grey of ["#aaa", "#999", "#bbb", "#ccc", "#dadce0"]) {
+    assert.doesNotMatch(
+      mail, new RegExp(`color: ${grey}\\b`),
+      `${grey} on white is not readable — a sentence set in it has been sent, not given`,
+    );
+  }
+  // Paired with a positive match, so a file that somehow read empty cannot pass this vacuously.
+  assert.match(mail, /color: #5f6368/, "…and the replacement colour is actually in use");
+});

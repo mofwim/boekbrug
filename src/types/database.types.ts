@@ -1465,6 +1465,8 @@ export type Database = {
           client_postal_code: string | null
           created_at: string | null
           delivery_date: string | null
+          discount_type: string | null
+          discount_value: number | null
           direction: string | null
           document_id: string | null
           due_date: string | null
@@ -1518,6 +1520,8 @@ export type Database = {
           client_postal_code?: string | null
           created_at?: string | null
           delivery_date?: string | null
+          discount_type?: string | null
+          discount_value?: number | null
           direction?: string | null
           document_id?: string | null
           due_date?: string | null
@@ -1570,6 +1574,8 @@ export type Database = {
           client_postal_code?: string | null
           created_at?: string | null
           delivery_date?: string | null
+          discount_type?: string | null
+          discount_value?: number | null
           direction?: string | null
           document_id?: string | null
           due_date?: string | null

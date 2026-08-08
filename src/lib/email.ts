@@ -5,6 +5,14 @@ import { Resend } from 'resend'
 import * as Sentry from '@sentry/nextjs'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
+import { offerteSubject, offerteEmailHtml } from './offerte-send'
+// [M2] De escaper woont in een eigen bestand sinds de offertetekst puur moest worden — zie de kop
+// van escape-html.ts. Zelfde functie, zelfde gedrag, alleen niet meer hier gedeclareerd.
+import { escapeHtml } from './escape-html'
+// [AFZENDERNAAM] Mail naar de KLANT VAN DE ONDERNEMER draagt zijn bedrijfsnaam, niet die van ons.
+// Alleen deze drie (factuur, herinnering, offerte) gaan naar een derde; de overige twaalf schrijven
+// aan de ondernemer zelf, zijn boekhouder of een genodigde, en daar is BoekBrug de juiste afzender.
+import { customerMailFrom } from './mail-from'
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -51,19 +59,6 @@ async function deliverEmail(
   return false
 }
 
-// [M2] Escape any user-controlled string interpolated into an HTML email body. Client
-// names, invoice numbers, message text and accountant names all reach third parties
-// (customers, accountants), so a name like <b>… or an injected link must render as
-// literal text, never as markup. Scripts are already stripped by mail clients (no XSS),
-// but this closes phishing/spoofing/hidden-text injection. Subjects are plain-text
-// headers and are deliberately NOT passed through this.
-function escapeHtml(s: string): string {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
@@ -88,7 +83,7 @@ export async function sendAccountantInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -123,7 +118,7 @@ export async function sendClientInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -164,7 +159,7 @@ export async function sendMemberInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Toegang accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet, en laat het ${escapeHtml(companyName)} weten.</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet, en laat het ${escapeHtml(companyName)} weten.</p>
       </div>
     `
   })
@@ -190,7 +185,8 @@ export async function sendInvoiceToClient({
   dueDate,
   invoiceDate,
   pdfBuffer,
-  isCreditnota = false
+  isCreditnota = false,
+  senderEmail,
 }: {
   toEmail: string
   clientName: string
@@ -204,6 +200,21 @@ export async function sendInvoiceToClient({
   pdfBuffer?: Buffer
   /** Creditnota wording (subject + heading) */
   isCreditnota?: boolean
+  /**
+   * [ANTWOORD-ADRES] Het e-mailadres van de ondernemer, uit zijn profiel — dat is het adres waarmee
+   * hij zich bij BoekBrug heeft aangemeld.
+   *
+   * Deze mail ging uit vanaf noreply@boekbrug.nl zonder reply-to, net als de offerte tot voor kort.
+   * Op "Beantwoorden" drukken is het eerste wat een klant doet die iets wil zeggen over een
+   * factuur — "ik heb al betaald", "kan het gespreid?", "de tenaamstelling klopt niet" — en dat
+   * antwoord kwam nergens aan. Bij een herinnering is dat erger dan onhandig: dan schrijft iemand
+   * die WIL betalen naar een brievenbus die niet bestaat, en de volgende herinnering gaat gewoon
+   * uit.
+   *
+   * Optioneel, zodat elke bestaande aanroep blijft werken: zonder adres geen reply-to, precies
+   * zoals het was.
+   */
+  senderEmail?: string | null
 }) {
   const docLabel = isCreditnota ? 'Creditnota' : 'Factuur'
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
@@ -224,9 +235,12 @@ export async function sendInvoiceToClient({
   // validation). Ignoring the return let a rejected send look delivered, so the
   // invoice showed "verstuurd" while the customer received nothing. Capture the
   // result and THROW on error so the caller's catch marks it email_failed.
+  const antwoordAdres = (senderEmail ?? '').trim()
   const { error: sendError } = await getResend().emails.send({
-    from: 'BoekBrug <noreply@boekbrug.nl>',
+    from: customerMailFrom(zzperName),
     to: toEmail,
+    // [ANTWOORD-ADRES] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -240,7 +254,7 @@ export async function sendInvoiceToClient({
           ${dueDateRow}
         </div>
         ${attachmentLine}
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
     // [FACTUUR-A] Attach the legal PDF — only when rendering succeeded.
@@ -292,7 +306,7 @@ export async function sendMessageNotification({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
           Bericht bekijken
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -318,7 +332,7 @@ export async function sendAccountantUnlinkedNotification({
         <p style="color: #555;">Beste ${escapeHtml(accountantName)},</p>
         <p style="color: #555;"><strong>${escapeHtml(clientName)}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je hebt geen toegang meer tot nieuwe facturen of documenten van deze klant. Historische gegevens waar je eerder aan hebt gewerkt, blijven beschikbaar voor je administratie.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -345,7 +359,7 @@ export async function sendClientUnlinkedNotification({
         <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
         <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je facturen en documenten blijven volledig van jou en blijven beschikbaar in je account. Je kunt op elk moment een nieuwe boekhouder uitnodigen via je instellingen.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -388,7 +402,7 @@ export async function sendDraftQueueEmail({
         <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; color:#202124; line-height:1.5;">
           ${safeBody}
         </div>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">
           ${escapeHtml(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
         </p>
       </div>
@@ -442,7 +456,7 @@ export async function sendAccountExportSummary({
         </div>
         ${skippedLine}
         <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -478,6 +492,7 @@ export async function sendInvoiceReminder({
   firm = false,
   wik,
   pdfBuffer,
+  senderEmail,
 }: {
   toEmail: string
   clientName: string
@@ -498,6 +513,12 @@ export async function sendInvoiceReminder({
   wik?: { sentence: string; deadline: string; costs: number } | null
   /** Re-attach the invoice PDF when available. */
   pdfBuffer?: Buffer
+  /**
+   * [ANTWOORD-ADRES] Zie sendInvoiceToClient. Bij een herinnering weegt dit het zwaarst: hier
+   * schrijft iemand die WIL betalen — "ik heb vorige week overgemaakt", "kan het gespreid?" — en
+   * dat antwoord kwam bij noreply@ terecht terwijl de volgende herinnering gewoon uitging.
+   */
+  senderEmail?: string | null
 }) {
   const heading = wik ? 'Laatste aanmaning' : firm ? 'Betalingsherinnering' : 'Herinnering'
   const subject = wik
@@ -524,9 +545,12 @@ export async function sendInvoiceReminder({
     ? `<p style="color: #555;">De factuur is nogmaals bijgevoegd als PDF.</p>`
     : ''
 
+  const antwoordAdres = (senderEmail ?? '').trim()
   const __sendResult = await getResend().emails.send({
-    from: 'BoekBrug <noreply@boekbrug.nl>',
+    from: customerMailFrom(zzperName),
     to: toEmail,
+    // [ANTWOORD-ADRES] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -540,8 +564,8 @@ export async function sendInvoiceReminder({
         </div>
         ${wikBlock}
         ${attachmentLine}
-        <p style="color: #999; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
     ...(pdfBuffer
@@ -610,10 +634,10 @@ export async function sendPaymentFailedEmail({
            style="display:inline-block; margin:20px 0; padding:12px 24px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">
           Betaalgegevens bijwerken
         </a>
-        <p style="color: #999; font-size: 13px;">
+        <p style="color: #5f6368; font-size: 13px;">
           Heb je je gegevens net al aangepast? Dan kun je deze mail negeren.
         </p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
   })
@@ -771,8 +795,8 @@ export async function sendRetentionWarning({
         <p style="color: #555;">Tot die tijd kun je alles nog kosteloos exporteren — je facturen, je bonnen en je documenten, in één bestand. Daarna is het weg, en dat kunnen wij niet ongedaan maken.</p>
         ${knop}
         <p style="color: #555; font-size: 13px;">Wil je je administratie langer bewaren? Dat kan met de Bewaarkluis. Log in en kies zelf tot welk jaar.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Je krijgt deze mail omdat je BoekBrug-account is beëindigd en wij je administratie sindsdien hebben bewaard. Dit is de aankondiging uit artikel 5.7.5 van onze voorwaarden.</p>
-        <p style="color: #aaa; font-size: 12px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">Je krijgt deze mail omdat je BoekBrug-account is beëindigd en wij je administratie sindsdien hebben bewaard. Dit is de aankondiging uit artikel 5.7.5 van onze voorwaarden.</p>
+        <p style="color: #5f6368; font-size: 12px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
   })
@@ -822,4 +846,70 @@ export async function sendFeedbackNotification({
     `
   })
   return deliverEmail(__sendResult, { label: 'feedback-notification', critical: false })
+}
+
+/**
+ * [OFFERTE-VERSTUREN] Mail a QUOTE to the customer — as a quote.
+ *
+ * Not sendInvoiceToClient with different words. That function is invoice-shaped all the way
+ * through: "Factuur", "Factuurnummer", "Vervaldatum", a payment request, and an attachment named
+ * after an invoice. A quote has none of those. It has no number (it is in no series), its date is
+ * a VALIDITY date and not a due date, and the one thing it must say — that it is vrijblijvend, non
+ * binding — is the whole difference between a proposal and a bill. Reusing the invoice mail would
+ * have put a customer under the impression they owed money for work they had not agreed to.
+ *
+ * Returns whether it was delivered. The caller reports that: an owner who thinks their quote is
+ * with the customer, and waits, is worse off than one who knows it bounced.
+ */
+export async function sendOfferteToClient({
+  toEmail,
+  clientName,
+  senderName,
+  senderEmail,
+  totalInc,
+  validUntil,
+  offerteDate,
+  pdfBuffer,
+  fileName,
+}: {
+  toEmail: string
+  clientName: string
+  senderName: string
+  /**
+   * [OFFERTE-ANTWOORD] Waar het "ja" naartoe moet.
+   *
+   * Deze mail vraagt om een akkoord — dat is de hele reden dat hij bestaat — en ging uit vanaf
+   * noreply@boekbrug.nl zonder reply-to. Op "Beantwoorden" drukken, wat de klant als eerste doet,
+   * stuurde het antwoord dus nergens heen. En de PDF eronder helpt niet: het afzenderblok draagt
+   * naam, adres, KvK, btw-nummer en IBAN — geen e-mailadres en geen telefoonnummer. Een klant die
+   * ja wilde zeggen had letterlijk geen adres om het naartoe te sturen.
+   */
+  senderEmail?: string | null
+  totalInc: number
+  /** ISO date — "Geldig tot", the quote's own deadline. Optional: a quote need not expire. */
+  validUntil?: string | null
+  offerteDate?: string | null
+  pdfBuffer?: Buffer
+  fileName?: string
+}): Promise<boolean> {
+  // Geen bedrag is beter dan een verkeerd bedrag: is het totaal onbekend, dan zwijgt deze regel en
+  // staat het echte bedrag nog steeds in de PDF. "€ 0,00" naast een offerte van duizend euro is de
+  // soort tegenspraak waar een klant terecht over belt.
+  // [OFFERTE-MAILTEKST] De tekst zelf is puur en woont bij het onderwerp en de bestandsnaam, in
+  // offerte-send.ts. Wat hier overblijft is de envelop: van wie, naar wie, waar het antwoord heen
+  // gaat en wat eraan hangt.
+  const antwoordAdres = (senderEmail ?? '').trim()
+
+  const __sendResult = await getResend().emails.send({
+    from: customerMailFrom(senderName),
+    to: toEmail,
+    // [OFFERTE-ANTWOORD] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
+    subject: offerteSubject(senderName),
+    html: offerteEmailHtml({ clientName, senderName, senderEmail, totalInc, validUntil, offerteDate }),
+    ...(pdfBuffer
+      ? { attachments: [{ filename: fileName || 'offerte.pdf', content: pdfBuffer }] }
+      : {}),
+  })
+  return deliverEmail(__sendResult, { label: 'offerte-to-client', critical: false })
 }

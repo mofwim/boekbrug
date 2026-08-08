@@ -195,6 +195,16 @@ export async function POST(request: NextRequest) {
         total_ex_btw: -(original.total_ex_btw || 0),
         btw_amount: -(original.btw_amount || 0),
         total_inc_btw: -(original.total_inc_btw || 0),
+        // [KORTING-KOPIE] De korting reist mee met de bedragen. Deze route kopieert de TOTALEN van
+        // het origineel maar bouwt de REGELS opnieuw op — en zonder de korting spraken die twee
+        // elkaar tegen: de kop droeg het verlaagde bedrag, de regels het volle. Elke afgeleide
+        // (de PDF en de UBL-export rekenen uit de regels) drukte dan een ander bedrag dan er in de
+        // boeken staat. Gemeten op een factuur van EUR 1.000 met 10%: EUR 121 verschil.
+        // Op een creditnota spiegelt applyDiscount de korting mee (negatief document, negatieve
+        // toeslag), dus de regels reproduceren de kop precies — regel voor regel te vergelijken
+        // met de factuur die hij terugdraait, wat de vorm is die een boekhouder kan controleren.
+        discount_type: original.discount_type ?? null,
+        discount_value: original.discount_value ?? null,
         // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         source: 'created',
         client_name: original.client_name,
@@ -379,6 +389,8 @@ export async function POST(request: NextRequest) {
             toEmail: original.client_email,
             clientName: original.client_name ?? '',
             zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
+            // [ANTWOORD-ADRES] Een creditnota roept vaker een vraag op dan een factuur.
+            senderEmail: profile?.email ?? null,
             // [FACTUUR-A] use the locally generated number (guaranteed non-null —
             // we returned 500 above if generation failed). creditnota.invoice_number
             // is typed string|null by the DB schema, which the e-mail signature rejects.

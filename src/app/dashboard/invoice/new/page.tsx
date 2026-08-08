@@ -26,7 +26,8 @@ import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
-// [BTW-ROUND] Alleen round2: de totalen komen uit applyDiscount, deze uitsplitsing rondt mee.
+// [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
+// regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
@@ -570,6 +571,17 @@ function NewInvoicePageContent() {
     [invoiceType, offerteId]
   )
 
+  // [KORTING] Percentage of bedrag, op de hele factuur — en op een offerte net zo goed: daar is
+  // korting juist het gesprek. De verdeling over de btw-tarieven staat in invoice-discount.ts; hier
+  // wordt alleen ingevuld en getoond.
+  //
+  // [OFFERTE-OMZETTEN-VOLLEDIG] Staat hier, BOVEN de load-effect die hem vult. Hij stond honderd
+  // regels lager, en dan leest de effect-callback een const boven zijn eigen declaratie — precies
+  // de vorm waarvan AGENTS.md een incident beschrijft: tsc modelleert niet WANNEER een closure
+  // draait, dus dit type-checkte, bouwde en kwam alleen als eslint-fout boven water.
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>('percent')
+  const [discountValue, setDiscountValue] = useState('')
+
   // ─── Load ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -597,10 +609,25 @@ function NewInvoicePageContent() {
       if (cl) setClients(cl)
 
       // [BOEK-029] from_offerte: load original invoice_lines for accurate amounts
+      //
+      // [OFFERTE-OMZETTEN-VOLLEDIG] Deze SELECT las VIER kolommen, en de regel draagt er zes. De
+      // klant heeft de offerte geaccepteerd; wat hij daarna gefactureerd krijgt, hoort hetzelfde
+      // document te zijn. Wat er stilletjes afviel:
+      //
+      //   · unit          — "2 uur" werd "2" (C62 = stuk) in de e-factuur. Precies de fout die de
+      //                     [UNIT]-regels in pickArticle en in de catalogusknop al twee keer
+      //                     hebben opgelost, hier voor de derde keer langs een andere weg.
+      //   · vat_treatment — de vrijstellingsvlag. Zonder haar verhuist de omzet uit de vrijgestelde
+      //                     pot naar de 0%/verlegd-rubriek van de aangifte (zie schoonRegel in
+      //                     /api/invoice/[id]): een geaccepteerde vrijgestelde offerte werd een
+      //                     factuur die in de verkeerde rubriek belandt.
+      //   · de korting    — die staat op de KOP, niet op de regels, en werd dus helemaal niet
+      //                     gelezen. De klant ging akkoord met EUR 900 en kreeg EUR 1.000
+      //                     gefactureerd.
       if (offerteParam) {
         const { data: offLines } = await supabase
           .from('invoice_lines')
-          .select('description, quantity, unit_price, btw_rate')
+          .select('description, quantity, unit_price, btw_rate, unit, vat_treatment')
           .eq('invoice_id', offerteParam)
         if (offLines && offLines.length > 0) {
           setLines(offLines.map(l => ({
@@ -608,7 +635,20 @@ function NewInvoicePageContent() {
             quantity:    l.quantity    ?? 1,
             unit_price:  l.unit_price  ?? 0,
             btw_rate:    l.btw_rate    ?? 21,
+            unit:        l.unit ?? null,
+            vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null,
           })))
+        }
+        // De korting van de offerte, van de KOP. Zonder deze read gaat precies het bedrag verloren
+        // waarover de klant "ja" heeft gezegd.
+        const { data: offHead } = await supabase
+          .from('invoices')
+          .select('discount_type, discount_value')
+          .eq('id', offerteParam)
+          .maybeSingle()
+        if (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount') {
+          setDiscountType(offHead.discount_type)
+          setDiscountValue(offHead.discount_value == null ? '' : String(offHead.discount_value))
         }
         // [BOEK-031] lines loaded from DB — allow submit — May 2026
         setLinesLoading(false)
@@ -755,11 +795,6 @@ function NewInvoicePageContent() {
   // knop hieronder stuurde altijd `code: ''`. Je kon dus wel op code ZOEKEN en nooit een code
   // TOEKENNEN — behalve door naar /dashboard/artikelen te lopen en het artikel daar te openen.
   // Voor een ondernemer die "22" intikt en niets vindt, is de functie er simpelweg niet.
-  // [KORTING] Percentage of bedrag, op de hele factuur — en op een offerte net zo goed: daar is
-  // korting juist het gesprek. De verdeling over de btw-tarieven staat in invoice-discount.ts; hier
-  // wordt alleen ingevuld en getoond.
-  const [discountType, setDiscountType] = useState<'percent' | 'amount'>('percent')
-  const [discountValue, setDiscountValue] = useState('')
   const [codeForLine, setCodeForLine] = useState<number | null>(null)
   const [codeDraft, setCodeDraft] = useState('')
   const [codeError, setCodeError] = useState('')
@@ -835,8 +870,11 @@ function NewInvoicePageContent() {
   // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
   // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
   const korting = parseDiscount(discountType, discountValue)
+  // [REGEL-AFRONDING] Afgerond per regel, want dát is wat er in invoice_lines.line_total komt te
+  // staan en wat de klant straks in de kolom optelt. Ongerond optellen liet dit scherm EUR 395,00
+  // tonen terwijl er EUR 394,99 werd verstuurd — zie de kop van draft-totals.ts.
   const kortingTotalen = applyDiscount(
-    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    lines.map(l => ({ line_total: round2(l.quantity * l.unit_price), btw_rate: l.btw_rate })),
     sign === 1 ? korting : null,
   )
   const subtotalEx = kortingTotalen.subtotal_ex_btw
@@ -861,6 +899,9 @@ function NewInvoicePageContent() {
   //
   // applyDiscount deelt de korting al per tarief uit (allowances) — diezelfde verdeling gebruiken
   // betekent dat dit blokje en het totaal per definitie dezelfde som zijn.
+  //
+  // [REGEL-AFRONDING] En over de AFGERONDE regelbedragen, dezelfde die in invoice_lines.line_total
+  // belanden — zie het blok bovenaan draft-totals.ts voor wat de ruwe producten opleverden.
   const btwByRate: Record<number, number> = {}
   {
     const exByRate: Record<number, number> = {}
