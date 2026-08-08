@@ -5,6 +5,7 @@
 // نفس شكل ومنطق new/page.tsx — لكن يحمّل البيانات الموجودة ويرسل PUT
 
 import { useState, useEffect } from 'react'
+import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -48,6 +49,12 @@ export default function InvoiceEditPage() {
 
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
+  // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
+  // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
+  // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
+  // (Art. 35), en het woord offerte kwam nergens voor.
+  const [invoiceType, setInvoiceType] = useState<string>('factuur')
+  const quote = isQuote(invoiceType)
   const [showSendModal, setShowSendModal] = useState(false)
   useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
@@ -110,6 +117,7 @@ export default function InvoiceEditPage() {
       setInvoiceNumber(invoice.invoice_number)
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
+      setInvoiceType(invoice.invoice_type || 'factuur')
       setClientName(invoice.client_name || '')
       setClientEmail(invoice.client_email || '')
       setClientAddress(invoice.client_address || '')
@@ -280,8 +288,8 @@ export default function InvoiceEditPage() {
   // [SUBNAV] Title (+ invoice number) in the shared header; called before the
   // loading return so hook order stays stable.
   useSubPageHeader(
-    { title: invoiceNumber ? `Factuur bewerken · ${invoiceNumber}` : 'Factuur bewerken' },
-    [invoiceNumber]
+    { title: quote ? 'Offerte bewerken' : invoiceNumber ? `Factuur bewerken · ${invoiceNumber}` : 'Factuur bewerken' },
+    [invoiceNumber, quote]
   )
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -538,7 +546,7 @@ export default function InvoiceEditPage() {
 
         {/* Acties */}
         <div className="flex gap-3 pb-8 flex-wrap">
-          {invoiceStatus === 'draft' ? (
+          {isInvoiceEditable({ status: invoiceStatus, invoiceType, invoiceNumber }) ? (
             <>
               {/* [BOEK-031] Draft: 2 buttons — Save (keeps draft) + Send (triggers full flow) — May 2026 */}
               <button
@@ -553,7 +561,7 @@ export default function InvoiceEditPage() {
                 disabled={saving || sending}
                 className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
               >
-                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+                {sending ? 'Verzenden...' : quote ? '✉ Omzetten naar factuur en versturen' : '✉ Verstuur factuur'}
               </button>
             </>
           ) : (
@@ -587,7 +595,9 @@ export default function InvoiceEditPage() {
               Versturen naar {clientName}?
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
-              Bevestig de gegevens voordat je de factuur verstuurt.
+              {quote
+                ? 'Let op: hiermee wordt deze offerte een OFFICIËLE FACTUUR. Hij krijgt een factuurnummer uit je reeks, en dat is niet terug te draaien — een factuur corrigeer je met een creditnota. Wil je alleen de offerte bijwerken, gebruik dan "Wijzigingen opslaan".'
+                : 'Bevestig de gegevens voordat je de factuur verstuurt.'}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
               <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>

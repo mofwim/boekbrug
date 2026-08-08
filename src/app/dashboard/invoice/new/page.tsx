@@ -1617,12 +1617,22 @@ function NewInvoicePageContent() {
                     handleSubmit('sent')
                   }
                 }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' : '↩ Versturen'}
+                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' /* saves only — never /api/invoice/send, see handleSubmit */ : '↩ Versturen'}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
+                  {/* [OFFERTE-EEN-KNOP] Voor een OFFERTE deed deze knop letterlijk hetzelfde als de
+                      grote knop erboven. `mode` wordt in handleSubmit precies één keer gelezen —
+                      `if (mode === 'sent' && invoiceType !== 'offerte')` — en die voorwaarde sluit
+                      de offerte uit, dus beide paden schreven hetzelfde concept weg en navigeerden
+                      naar dezelfde pagina. Twee knoppen, waarvan één als hoofdactie opgemaakt, met
+                      geen enkel verschil: de ondernemer kan alleen maar denken dat hij iets mist.
+                      Een factuur en een creditnota houden hem — daar is het verschil echt
+                      (versturen versus als concept bewaren). */}
+                  {invoiceType !== 'offerte' && (
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
                     {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
                   </button>
+                  )}
                   {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
                   <Link href={parentHref}
                     style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
