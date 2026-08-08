@@ -167,6 +167,19 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
 
+  // [BETAALDATUM] A paid invoice says WHEN. The card carried "Betaald" plus the invoice date and
+  // the vervaldatum — two dates that are not about the payment — while the one that is decided
+  // which BTW quarter the cost falls in under the kasstelsel, and was nowhere on the screen.
+  // Row 'paid' settled on 2026-03-20 and row 'bon' on 2026-03-18, both with a payment_date.
+  assert.match(html, /betaald 20 mrt/, "a paid invoice shows the date it was paid");
+  assert.match(html, /betaald 18 mrt/, "…including one the app booked from a kassabon");
+  // And an UNPAID row must not claim one. There are several in this list; none has a payment_date,
+  // so exactly two of these labels may exist.
+  assert.equal(
+    (html.match(/· betaald \d/g) ?? []).length, 2,
+    "only the two rows that carry a payment_date say when they were paid",
+  );
+
   // [CREDIT-NOT-PAYABLE] The row 'cn' is a correctly booked credit note (all three amounts
   // negative). It wore "Te betalen", a vervaldatum, "Heb je betaald?" and a QR Betalen button —
   // four claims about direction, all pointing the wrong way, and the last one prepares a real

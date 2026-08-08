@@ -2605,6 +2605,29 @@ export default function IncomingManageClient({
                         ) : (
                           <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
                         )}
+                        {/* [BETAALDATUM] WANNEER hij betaald is. De kaart zei "Betaald" en noemde
+                            alleen de factuurdatum en de vervaldatum — twee datums die er allebei
+                            NIET over gaan, met de datum die er wél toe doet nergens op het scherm.
+                            Om hem te vinden moest je de factuur openen.
+                            Dat is niet alleen ongemak. Onder het KASSTELSEL bepaalt de betaaldatum
+                            in WELK kwartaal de btw valt, en de "Betaald in Q3 2026"-chip verderop
+                            op deze regel bestaat precies daarom. Die chip noemt het kwartaal en
+                            verzwijgt de dag: wie wil controleren of hij in het goede tijdvak staat,
+                            kan dat op dit scherm niet.
+                            payment_date is bovendien niet zomaar een opgeslagen veld — het is de
+                            datum van de VROEGSTE koppeling die de factuur nog heeft
+                            (recompute_invoice_amount_paid), dus hij blijft kloppen nadat een
+                            termijn is teruggedraaid. Dat is precies het getal dat het waard is om
+                            te tonen. Ontbreekt hij (een oude rij, of handmatig op betaald gezet
+                            zonder datum), dan zeggen we niets in plaats van een datum te verzinnen. */}
+                        {isPaid && inv.payment_date && (
+                          <span
+                            title={`Betaald op ${fmtDateSmart(inv.payment_date, thisYear)}${inv.payment_method === 'kas' ? ' — contant' : inv.payment_method === 'bank' ? ' — via de bank' : ''}`}
+                            style={{ whiteSpace: 'nowrap', color: '#0B8043' }}
+                          >
+                            · betaald {fmtDateSmart(inv.payment_date, thisYear)}
+                          </span>
+                        )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
                             the only difference from an invoice is a minus sign in the amount, and
                             that is too little for a document that works the other way. */}
