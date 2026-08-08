@@ -95,7 +95,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('company_name, full_name, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity')
+    
+    // [OFFERTE-ANTWOORD] `email` erbij: dat is het adres waar het akkoord naartoe moet. Zonder
+    // deze kolom gaat de mail uit vanaf noreply@ met een reply-to die nergens heen wijst.
+    .select('company_name, full_name, email, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity')
     .eq('id', ownerId)
     .maybeSingle()
   const senderName = profile?.company_name?.trim() || profile?.full_name?.trim() || 'BoekBrug'
@@ -118,6 +121,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     toEmail: String(invoice.client_email),
     clientName: invoice.client_name?.trim() || 'klant',
     senderName,
+    // Het antwoordadres van de ondernemer. Valt terug op het ingelogde account: dat is hoe hij
+    // bereikbaar is, ook als het profielveld nooit is ingevuld.
+    senderEmail: profile?.email?.trim() || user.email || null,
     totalInc: Number(invoice.total_inc_btw ?? 0),
     validUntil: invoice.due_date,
     offerteDate: invoice.invoice_date,

@@ -842,6 +842,7 @@ export async function sendOfferteToClient({
   toEmail,
   clientName,
   senderName,
+  senderEmail,
   totalInc,
   validUntil,
   offerteDate,
@@ -851,6 +852,16 @@ export async function sendOfferteToClient({
   toEmail: string
   clientName: string
   senderName: string
+  /**
+   * [OFFERTE-ANTWOORD] Waar het "ja" naartoe moet.
+   *
+   * Deze mail vraagt om een akkoord — dat is de hele reden dat hij bestaat — en ging uit vanaf
+   * noreply@boekbrug.nl zonder reply-to. Op "Beantwoorden" drukken, wat de klant als eerste doet,
+   * stuurde het antwoord dus nergens heen. En de PDF eronder helpt niet: het afzenderblok draagt
+   * naam, adres, KvK, btw-nummer en IBAN — geen e-mailadres en geen telefoonnummer. Een klant die
+   * ja wilde zeggen had letterlijk geen adres om het naartoe te sturen.
+   */
+  senderEmail?: string | null
   totalInc: number
   /** ISO date — "Geldig tot", the quote's own deadline. Optional: a quote need not expire. */
   validUntil?: string | null
@@ -858,7 +869,12 @@ export async function sendOfferteToClient({
   pdfBuffer?: Buffer
   fileName?: string
 }): Promise<boolean> {
+  // Geen bedrag is beter dan een verkeerd bedrag: is het totaal onbekend, dan zwijgt deze regel en
+  // staat het echte bedrag nog steeds in de PDF. "€ 0,00" naast een offerte van duizend euro is de
+  // soort tegenspraak waar een klant terecht over belt.
+  const heeftBedrag = Number.isFinite(totalInc) && totalInc !== 0
   const bedrag = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(totalInc)
+  const antwoordAdres = (senderEmail ?? '').trim()
   const datumRegel = offerteDate
     ? `<p style="margin:4px 0; color:#202124;"><strong>Datum:</strong> ${formatDateNL(offerteDate)}</p>`
     : ''
@@ -869,6 +885,8 @@ export async function sendOfferteToClient({
   const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
+    // [OFFERTE-ANTWOORD] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject: offerteSubject(senderName),
     html: `
       <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
@@ -878,11 +896,13 @@ export async function sendOfferteToClient({
         <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
           ${datumRegel}
           ${geldigRegel}
-          <p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>
+          ${heeftBedrag ? `<p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>` : ''}
         </div>
         <p style="color: #555;">
           Deze offerte is <strong>vrijblijvend</strong>: er hoeft nog niets betaald te worden en er
-          is nog geen factuur. Ga je akkoord, laat het ons weten — dan sturen we de factuur.
+          is nog geen factuur. Ga je akkoord, ${antwoordAdres
+            ? `antwoord dan op deze mail of stuur een bericht naar <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>`
+            : 'laat het ons dan weten'} — dan sturen we de factuur.
         </p>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>

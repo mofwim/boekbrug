@@ -3519,6 +3519,35 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
   assert.match(mail, /vrijblijvend/, "…which says the one thing that separates a proposal from a bill");
   assert.match(mail, /Geldig tot/, "…and a validity date, never a due date");
 
+  // [OFFERTE-ANTWOORD] THE YES HAS TO LAND SOMEWHERE. This mail exists to ask for an agreement and
+  // went out from noreply@boekbrug.nl with no reply-to, so pressing Reply — the customer's first
+  // move — sent the answer nowhere. The PDF underneath does not help: its sender block carries
+  // name, address, KvK, BTW number and IBAN, and no e-mail or phone at all. A customer who wanted
+  // to say yes had literally no address to say it to, on the one feature whose entire purpose is
+  // getting that yes.
+  assert.match(
+    mail, /\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/,
+    "replying to a quote must reach the owner, not noreply@",
+  );
+  assert.match(
+    mail, /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
+    "…and the address is named in the body too, for a customer who forwards it or answers from " +
+      "another account",
+  );
+  // A wrong amount is worse than none: "€ 0,00" beside a thousand-euro quote is the kind of
+  // contradiction a customer rightly phones about, and the real figure is in the PDF regardless.
+  assert.match(mail, /const heeftBedrag = Number\.isFinite\(totalInc\) && totalInc !== 0/, "no invented total");
+
+  assert.match(
+    route, /senderEmail: profile\?\.email\?\.trim\(\) \|\| user\.email \|\| null/,
+    "the route must supply that address, falling back to the logged-in account — that is how the " +
+      "owner is reachable even with an empty profile field",
+  );
+  assert.match(
+    route, /\.select\('company_name, full_name, email,/,
+    "…and it must READ it: a column not selected is a reply-to that points nowhere",
+  );
+
   // The screen offers it, and on an already-sent quote too — re-sending after an edit is the
   // normal negotiation, not an error.
   const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
