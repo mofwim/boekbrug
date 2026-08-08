@@ -34,6 +34,24 @@ export const PUBLIC_PATHS = [
   "/netto-inkomen-zzp",
   "/factuur-scannen",
   "/tools",
+  // [PDF-TOOLS] The file tools. Same reasoning as the calculators above: public
+  // pages whose whole job is to be found and used without an account.
+  "/pdf-verkleinen",
+  "/pdf-naar-afbeelding",
+  "/afbeeldingen-naar-pdf",
+  "/afbeelding-verkleinen",
+  "/pdf-naar-tekst",
+  "/afbeeldingen-uit-pdf",
+  "/pdf-eigenschappen",
+  "/pdf-watermerk",
+  "/afbeelding-formaat",
+  "/afbeelding-omzetten",
+  "/watermerk-op-foto",
+  "/favicon-maken",
+  "/pdf-samenvoegen",
+  "/pdf-splitsen",
+  "/pdf-paginas-ordenen",
+  "/pdf-ondertekenen",
   // [EN-TOOLS] English versions of the public calculators, targeting expat /
   // English search demand ("Dutch VAT calculator", etc). Same tool engines,
   // English UI — must be reachable without a session, like their NL originals.
