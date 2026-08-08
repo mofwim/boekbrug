@@ -2552,6 +2552,50 @@ test("[PARTIAL-PAY] the /vandaag confirm panel states the amount it will actuall
   );
 });
 
+// ── [BANK-BATCH-AMBIGU] A function may not name an output after a column it writes ──
+//
+// book_bank_batch raised on EVERY call, on the simplest possible input:
+//
+//     column reference "invoice_id" is ambiguous
+//
+// RETURNS TABLE(invoice_id uuid) declares a plpgsql variable of that name, and the function then
+// writes ON CONFLICT (transaction_id, invoice_id). plpgsql will not guess which is meant.
+//
+// What made it survive is the shape worth remembering. The caller answers a raise with
+// `if (batchErr) continue`, under a comment reading "error ⇒ not payable / migration not applied
+// ⇒ the batch stays for the human". So the failure was indistinguishable from a normal outcome,
+// on every run, and multi-invoice auto-confirmation had simply never booked anything.
+//
+// A source sweep cannot type-check plpgsql — tests/sql/ is what proves these functions run. What
+// this gate does is cheaper and complementary: any function that declares an output column sharing
+// a name with a table column must say which one it means.
+test("[BANK-BATCH-AMBIGU] a plpgsql output named after a column declares its resolution", () => {
+  const dir = "supabase/migrations";
+  const offenders: string[] = [];
+  // The column names that appear both as OUT parameters and in a conflict target / DML in this
+  // schema. Adding to this list is cheap; the failure it prevents is a function that never runs.
+  const RISKY = ["invoice_id", "transaction_id", "user_id", "amount_applied"];
+
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".sql")) continue;
+    const sql = readFileSync(`${dir}/${name}`, "utf8");
+    // Only plpgsql functions that RETURN a table whose columns could collide.
+    const returnsRisky = new RegExp(`RETURNS TABLE\\s*\\(\\s*(?:[^)]*\\b)?(${RISKY.join("|")})\\b`, "i").test(sql);
+    if (!returnsRisky) continue;
+    // …and that actually write to a table (a pure reader cannot hit the ambiguity).
+    if (!/\b(INSERT INTO|UPDATE)\s+public\./i.test(sql)) continue;
+    if (!/#variable_conflict/.test(sql)) offenders.push(name);
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these functions RETURN a column name they also write, without a #variable_conflict directive: ` +
+      `${offenders.join(", ")}. plpgsql refuses the ambiguity at RUNTIME, so the function raises on ` +
+      `every call — and a caller that treats a raise as "not applicable" never notices.`,
+  );
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:
