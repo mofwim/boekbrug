@@ -7,9 +7,12 @@
 // /api/invoice/[id] and got 405/410 → editing and deleting were fully broken.
 // Restored here with the real handlers.
 //
-// Legal guard (Art. 35 Wet OB 1968): only a DRAFT can be edited or deleted — a
-// sent invoice has a committed legal number and is immutable. All access is via
-// the session client and scoped by sender_id, so RLS is enforced.
+// Legal guard (Art. 35 Wet OB 1968): a document that carries a NUMBER is immutable — it sits in
+// a gapless, forward-only series and is corrected with a creditnota, never rewritten. DELETE stays
+// draft-only. EDIT follows isInvoiceEditable (src/lib/invoice-editable.ts): a draft, or a quote
+// that has not become an invoice yet. An offerte has no number and is not a legal invoice, so it
+// was inheriting a restriction nobody had chosen for it. All access is via the session client and
+// scoped by sender_id, so RLS is enforced.
 // =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -31,6 +34,8 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // tekst — ook de regels die op dit scherm zijn toegevoegd. Eén module, gedeeld met /api/invoice/draft.
 import { learnFromLines } from '@/lib/article-learning-store'
 import { readWithTrail } from '@/lib/created-by'
+// [OFFERTE-BEWERKBAAR] Eén regel, gedeeld met de schermen — zie invoice-editable.ts.
+import { isInvoiceEditable, editRefusalText } from '@/lib/invoice-editable'
 // [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
 import { isKnownUnit } from '@/lib/units'
 
@@ -108,6 +113,9 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
      *  dus de terugval mag hem niet kwijtraken — dan leerde een installatie zonder created_by
      *  stilletjes niets. */
     invoice_type?: string | null
+    /** [OFFERTE-BEWERKBAAR] The thing that makes a document legally issued. The edit guard below
+     *  needs it, and it may not be lost by the fallback: it belongs to the base schema. */
+    invoice_number?: string | null
   }>(
 
     (kolommen: string) => supabase
@@ -116,8 +124,8 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
       .eq('id', id)
       .eq('sender_id', userId)
       .single(),
-    'id, status, sender_id, created_by, invoice_type, total_ex_btw, btw_amount, total_inc_btw',
-    'id, status, sender_id, invoice_type, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, created_by, invoice_type, invoice_number, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, invoice_type, invoice_number, total_ex_btw, btw_amount, total_inc_btw',
   )
 }
 
@@ -180,9 +188,27 @@ export async function PUT(
   if (!canAccessInvoice(acting, existing)) {
     return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
   }
-  if (existing.status !== 'draft') {
+  // [OFFERTE-BEWERKBAAR] `status !== 'draft'` was the right rule for a FACTUUR and the wrong one
+  // for an OFFERTE. A sent factuur carries a legal number from a gapless series (Art. 35 Wet OB,
+  // forward-only) and may never be rewritten — that is what a creditnota is for. A quote carries
+  // no number, sits in no series and is not a legal invoice; a customer asking "kan het goedkoper?"
+  // is ordinary business, and the owner's only route was a second offerte and the hope that the
+  // customer looked at the right one.
+  //
+  // The rule lives in invoice-editable.ts, shared with the screens, so the button and the door can
+  // never disagree about what may be opened. It refuses ANY numbered document, whatever its type
+  // column says — two conditions, so no single wrong field unlocks one.
+  if (!isInvoiceEditable({
+    status: existing.status,
+    invoiceType: existing.invoice_type,
+    invoiceNumber: existing.invoice_number,
+  })) {
     return NextResponse.json(
-      { error: 'Een verzonden factuur kan niet meer worden gewijzigd.' },
+      { error: editRefusalText({
+          status: existing.status,
+          invoiceType: existing.invoice_type,
+          invoiceNumber: existing.invoice_number,
+        }) },
       { status: 409 }
     )
   }

@@ -3301,3 +3301,109 @@ test("[FEEDBACK] the report is on every page, and a failed one is never thanked 
     "an upload failure keeps the report and is reported, rather than failing the whole thing",
   );
 });
+
+// ── [OFFERTE-BEWERKBAAR] A quote may be changed until it becomes an invoice ──
+//
+// `status === 'draft'` was answering two different questions with one flag, and it was the wrong
+// answer to one of them:
+//
+//   · A sent FACTUUR carries a legal number from a gapless, forward-only series (Art. 35 Wet OB).
+//     Editing it is not a correction, it is rewriting a document the customer already holds — that
+//     is what a creditnota is for. This must stay impossible.
+//   · An OFFERTE is a price quote: no number, no series, not a legal invoice, not counted by the
+//     Belastingdienst. A customer asking "kan het goedkoper?" is ordinary business — and a sent
+//     offerte could not be touched. The owner's only route was a second offerte and the hope that
+//     the customer looked at the right one.
+//
+// Two screens and one route each carried their own copy of the flag, so the rule now lives in
+// invoice-editable.ts and all three read it. A button that appears where the door refuses is the
+// other half of the same defect.
+test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered document", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  const actions = code("src/components/invoice/InvoiceActions.tsx");
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+
+  // The door. Not a status literal — the shared rule, with all three fields it needs.
+  assert.match(
+    route,
+    /if \(!isInvoiceEditable\(\{[\s\S]{0,200}?invoiceNumber: existing\.invoice_number,/,
+    "the PUT guard must use the shared rule and pass the NUMBER — the field that decides whether a " +
+      "document is legally issued",
+  );
+  assert.doesNotMatch(
+    route, /if \(existing\.status !== 'draft'\) \{[\s\S]{0,120}?kan niet meer worden gewijzigd/,
+    "…and the old status-only edit guard may not come back",
+  );
+  // DELETE stays draft-only on purpose: a sent offerte has been at the customer, and making it
+  // vanish is a different act from adjusting it.
+  assert.match(
+    route, /Alleen een concept kan verwijderd worden/,
+    "deleting stays draft-only — that is a different question from editing",
+  );
+  // invoice_number must survive the readWithTrail fallback, or the guard reads undefined on an
+  // installation without created_by and every quote silently looks unnumbered.
+  // Anchored on CODE at both ends. The first version ended the slice on a comment — which code()
+  // strips, so indexOf returned -1, slice(start, -1) ran to the end of the file, and the count was
+  // of the whole route instead of the fallback. An end anchor that does not exist is not an end.
+  const trailStart = route.indexOf("return readWithTrail<");
+  const trailEnd = route.indexOf("export async function GET(", trailStart);
+  assert.ok(trailStart > 0 && trailEnd > trailStart, "the readWithTrail block is still there, ahead of GET");
+  const withTrail = route.slice(trailStart, trailEnd);
+  assert.equal(
+    [...withTrail.matchAll(/invoice_number/g)].length, 3,
+    "invoice_number belongs in the type AND in both column lists of the fallback — otherwise the " +
+      "guard reads undefined on an installation without created_by and every quote looks unnumbered",
+  );
+
+  // The button follows the same rule, so it can neither appear where the door refuses nor hide
+  // where editing is allowed — which is what it was doing for every sent offerte.
+  assert.match(
+    actions, /const canEdit = isInvoiceEditable\(\{ status, invoiceType, invoiceNumber \}\)/,
+    "the Bewerken button must ask the same question the route answers",
+  );
+
+  // The edit screen has to know WHAT it is editing. It called everything "Factuur bewerken" and
+  // its confirm promised to send "de factuur" — while sending a quote CONVERTS it into a numbered
+  // invoice (send route, isConversion). One tap, irreversible, and the word offerte never appeared.
+  assert.match(edit, /setInvoiceType\(invoice\.invoice_type/, "the screen must load the type");
+  assert.match(edit, /quote \? 'Offerte bewerken'/, "…and title itself honestly");
+  assert.match(
+    edit, /hiermee wordt deze offerte een OFFICIËLE FACTUUR/,
+    "…and the confirm must say that sending a quote issues an invoice number, before it happens",
+  );
+  assert.match(
+    edit, /quote \? '✉ Omzetten naar factuur en versturen'/,
+    "…and the button must be labelled with what it does",
+  );
+});
+
+// ── [OFFERTE-EEN-KNOP] Two buttons that did exactly the same thing ──
+//
+// The new-invoice screen showed "📋 Offerte opslaan" as the primary action and "Opslaan" beneath
+// it. For an offerte they were identical: `mode` is read exactly ONCE in handleSubmit, in
+// `if (mode === 'sent' && invoiceType !== 'offerte')`, and that condition excludes the offerte —
+// so both paths wrote the same draft and navigated to the same page. An owner facing two buttons
+// with no difference can only assume they are missing something.
+test("[OFFERTE-EEN-KNOP] the offerte screen offers one save, because there is only one action", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // The premise: `mode` still branches only there. If a second use appears, the two buttons may
+  // differ again and this test should be reconsidered rather than silently kept.
+  const body = page.slice(page.indexOf("async function handleSubmit(mode:"), page.indexOf("// ─── Derived ───"));
+  assert.ok(body.length > 500, "the handleSubmit slice is real");
+  assert.equal(
+    [...body.matchAll(/\bmode\b/g)].length, 2,
+    "`mode` appears once in the signature and once in the send condition. A third use means the " +
+      "two buttons can differ again — check whether the offerte still has only one action",
+  );
+  assert.match(
+    body, /if \(mode === 'sent' && invoiceType !== 'offerte'\)/,
+    "an offerte still never goes through the send route — that route mints a factuur number",
+  );
+
+  // So: no second button for an offerte.
+  assert.match(
+    page, /\{invoiceType !== 'offerte' && \(\s*<button onClick=\{\(\) => handleSubmit\('draft'\)\}/,
+    "the secondary save is hidden for an offerte, where it did the same as the primary one",
+  );
+});
