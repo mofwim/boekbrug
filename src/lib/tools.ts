@@ -39,7 +39,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-verkleinen',
-    emoji: '\U0001F4C9',
+    emoji: '📉',
     title: 'PDF verkleinen',
     tagline: 'Te groot voor de upload? Alleen de afbeeldingen gaan omlaag — je tekst blijft tekst.',
     keywords: ['pdf verkleinen', 'pdf comprimeren', 'pdf kleiner maken', 'pdf te groot'],
@@ -47,7 +47,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/afbeeldingen-naar-pdf',
-    emoji: '\U0001F5BC\uFE0F',
+    emoji: '🖼️',
     title: "Foto's naar PDF",
     tagline: 'Bonnetjes van je telefoon als \u00e9\u00e9n net document, in de volgorde die jij bepaalt.',
     keywords: ['afbeeldingen naar pdf', 'jpg naar pdf', 'bonnetjes naar pdf', 'foto naar pdf'],
@@ -55,7 +55,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/afbeelding-verkleinen',
-    emoji: '\U0001F4F7',
+    emoji: '📷',
     title: 'Afbeelding verkleinen',
     tagline: 'Een telefoonfoto van 4 MB tot onder de grens die het portaal accepteert.',
     keywords: ['afbeelding verkleinen', 'foto verkleinen', 'jpg verkleinen', 'foto kleiner maken'],
@@ -63,7 +63,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-naar-afbeelding',
-    emoji: '\U0001F5A8\uFE0F',
+    emoji: '🖨️',
     title: 'PDF naar JPG',
     tagline: 'Elke pagina als afbeelding, in de resolutie die je nodig hebt.',
     keywords: ['pdf naar jpg', 'pdf naar png', 'pdf naar afbeelding'],
@@ -71,7 +71,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-watermerk',
-    emoji: '\U0001F4A7',
+    emoji: '💧',
     title: 'Watermerk op een PDF',
     tagline: 'KOPIE of CONCEPT over elke pagina, met paginanummers. Je ziet meteen hoe het wordt.',
     keywords: ['watermerk pdf', 'kopie stempel pdf', 'paginanummers pdf'],
@@ -79,7 +79,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-eigenschappen',
-    emoji: '\U0001F3F7\uFE0F',
+    emoji: '🏷️',
     title: 'PDF-eigenschappen',
     tagline: 'Zie welke naam en software er in je document staan \u2014 en haal ze eruit.',
     keywords: ['pdf eigenschappen', 'pdf metadata verwijderen', 'naam uit pdf halen'],
@@ -87,7 +87,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-naar-tekst',
-    emoji: '\U0001F4DD',
+    emoji: '📝',
     title: 'PDF naar tekst',
     tagline: 'De tekst uit een PDF, om te kopi\u00ebren of te bewaren.',
     keywords: ['pdf naar tekst', 'tekst uit pdf halen', 'pdf naar txt'],
@@ -95,7 +95,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/afbeeldingen-uit-pdf',
-    emoji: '\U0001F5BC\uFE0F',
+    emoji: '📤',
     title: 'Afbeeldingen uit een PDF',
     tagline: "De foto's en logo's die erin zitten, op hun eigen resolutie.",
     keywords: ['afbeeldingen uit pdf', 'foto uit pdf halen', 'logo uit pdf'],
@@ -103,7 +103,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/afbeelding-omzetten',
-    emoji: '\U0001F504',
+    emoji: '🔄',
     title: 'Afbeelding omzetten',
     tagline: 'Naar WebP, JPG of PNG \u2014 meerdere tegelijk, en je mag van gedachten veranderen.',
     keywords: ['afbeelding omzetten', 'png naar jpg', 'jpg naar webp', 'webp maken'],
@@ -111,7 +111,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/afbeelding-formaat',
-    emoji: '\U0001F4D0',
+    emoji: '📐',
     title: 'Afbeelding op maat',
     tagline: 'De juiste maat voor LinkedIn, Instagram of een link die je deelt.',
     keywords: ['afbeelding formaat', 'foto bijsnijden', 'linkedin formaat', 'open graph afbeelding'],
@@ -135,7 +135,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-samenvoegen',
-    emoji: '\U0001F517',
+    emoji: '🔗',
     title: 'PDF samenvoegen',
     tagline: "Meerdere PDF's tot \u00e9\u00e9n document \u2014 en je kiest per bestand welke pagina's meegaan.",
     keywords: ['pdf samenvoegen', "pdf's combineren", 'bonnetjes samenvoegen'],
@@ -151,7 +151,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-ondertekenen',
-    emoji: '\U0001F58A\uFE0F',
+    emoji: '🖊️',
     title: 'PDF ondertekenen',
     tagline: 'Teken met je vinger en wijs aan waar hij komt \u2014 zonder printen en scannen.',
     keywords: ['pdf ondertekenen', 'handtekening pdf', 'offerte ondertekenen'],
@@ -159,7 +159,7 @@ export const TOOLS: PublicTool[] = [
   },
   {
     slug: '/pdf-paginas-ordenen',
-    emoji: '\U0001F503',
+    emoji: '🔃',
     title: "PDF-pagina's ordenen",
     tagline: 'Scheve scans rechtzetten, verplaatsen en weggooien \u2014 alles in \u00e9\u00e9n overzicht.',
     keywords: ['pdf pagina draaien', 'pdf pagina verwijderen', 'pdf roteren'],
