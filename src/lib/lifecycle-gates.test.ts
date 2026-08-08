@@ -3532,3 +3532,56 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
     "…labelled as what it is — which only became an honest label once the button existed",
   );
 });
+
+// ── [KORTING-KOPIE] Every route that COPIES an invoice carries its discount ──
+//
+// Three routes build a new document from an existing one: the creditnota, the duplicate, and the
+// recurring cron. All three copy the header TOTALS from the source and rebuild the LINES — and the
+// discount lives on the header. So each of them produced a document whose stored total said one
+// thing and whose lines said another, by exactly the discount.
+//
+// That is not a display bug. The PDF and the UBL export both derive their figures from the LINES
+// (btwBreakdown / groupByRate), so what the customer received and what the access point validated
+// were the undiscounted amounts, while the books held the discounted ones. Measured on a EUR 1.000
+// invoice at 21% with 10% off: the credit note's header said −1.089 and the document it printed
+// said −1.210. EUR 121 of refund that was never charged, on a legal document.
+//
+// This is the same shape as [VRIJGESTELD-KOPIE] one screen over: a field that lives on the header
+// and is silently dropped by everything that copies the row.
+test("[KORTING-KOPIE] the creditnota, the duplicate and the recurring cron all carry the discount", () => {
+  for (const [file, indent] of [
+    ["src/app/api/invoice/creditnota/route.ts", "original"],
+    ["src/app/api/invoice/[id]/duplicate/route.ts", "original"],
+    ["src/app/api/cron/recurring/route.ts", "src"],
+  ] as const) {
+    const src = code(file);
+    assert.match(
+      src, new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`),
+      `${file} copies the header totals, so it must copy the discount that produced them — ` +
+        "otherwise its lines contradict its own stored amounts",
+    );
+    assert.match(src, new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`), `${file}: and its value`);
+  }
+
+  // The recurring cron reads its source explicitly — a column it does not SELECT is a column it
+  // cannot copy, and the copy above would silently write null.
+  assert.match(
+    code("src/app/api/cron/recurring/route.ts"),
+    /\.select\("[^"]*discount_type, discount_value[^"]*"\)/,
+    "the recurring source read must include the discount columns",
+  );
+
+  // And the arithmetic mirrors on a negative document, which is what makes the creditnota copy
+  // correct rather than merely present. Without this the copied discount would compute to zero on
+  // a credit note and the contradiction would survive the fix.
+  const store = code("src/lib/invoice-discount.ts");
+  assert.match(
+    store, /const sign = subtotal < 0 \? -1 : 1;/,
+    "a creditnota is negative throughout; the discount is mirrored, not skipped",
+  );
+  assert.match(
+    store, /\.filter\(\(\[, e\]\) => sign \* e > 0\)/,
+    "…and only groups pointing the same way as the document carry part of it — a group pointing " +
+      "the other way would get an allowance that reads as a surcharge in UBL",
+  );
+});

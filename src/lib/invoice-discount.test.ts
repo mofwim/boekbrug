@@ -109,14 +109,38 @@ test("100% is allowed and empties the invoice; more than 100% is not a percentag
   assert.equal(parseDiscount("percent", 101), null);
 });
 
-test("a creditnota keeps its own arithmetic — a discount does not touch negative lines", () => {
-  // Halving a negative is arithmetic nobody can check by eye, and a discount on a correction is
-  // not something anyone asks for.
+test("a CREDITNOTA mirrors the discount of the invoice it reverses", () => {
+  // This test used to assert the opposite — that a discount never touches negative lines — and
+  // that was the bug. A creditnota copies its lines from the original and negates them. Without
+  // the discount coming along, a EUR 1.000 invoice discounted to EUR 900 produced a credit note
+  // whose stored header said −1.089 while its LINES said −1.210: every surface that derives from
+  // lines (the PDF, the UBL) then printed a refund EUR 121 larger than was ever charged, on a
+  // legal document. Measured, at exactly those figures.
   const d = applyDiscount([line(-1000, 21)], { type: "percent", value: 10 });
-  assert.equal(d.discount_ex_btw, 0);
-  assert.deepEqual(d.allowances, []);
-  assert.equal(d.total_ex_btw, -1000);
-  assert.equal(d.btw_amount, -210);
+  assert.equal(d.discount_ex_btw, -100, "the mirror of the discount, not zero and not a surcharge");
+  assert.deepEqual(d.allowances, [{ rate: 21, amount: -100 }]);
+  assert.equal(d.total_ex_btw, -900, "reverses exactly what was charged");
+  assert.equal(d.btw_amount, -189);
+  assert.equal(d.total_inc_btw, -1089);
+});
+
+test("a credit note reverses a discounted invoice to the cent, mixed rates and all", () => {
+  // The property that matters end to end: negate the invoice's lines, keep its discount, and the
+  // credit note's totals are the exact negation of the invoice's.
+  const invoiceLines = [line(1500, 21), line(500, 9)];
+  const discount = { type: "percent" as const, value: 10 };
+  const inv = applyDiscount(invoiceLines, discount);
+  const cn = applyDiscount(invoiceLines.map((l) => ({ ...l, line_total: -l.line_total })), discount);
+  assert.equal(cn.total_ex_btw, -inv.total_ex_btw);
+  assert.equal(cn.btw_amount, -inv.btw_amount);
+  assert.equal(cn.total_inc_btw, -inv.total_inc_btw);
+  assert.equal(cn.allowances.length, inv.allowances.length, "allowance for allowance");
+});
+
+test("an AMOUNT discount mirrors too, and is still capped by the document", () => {
+  const d = applyDiscount([line(-400, 21)], { type: "amount", value: 500 });
+  assert.equal(d.discount_ex_btw, -400, "capped at the document, not at 500");
+  assert.equal(d.total_inc_btw, 0);
 });
 
 test("a group with a negative share carries no part of the discount", () => {
