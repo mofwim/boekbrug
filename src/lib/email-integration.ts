@@ -58,6 +58,8 @@ import { planForUser } from '@/lib/fair-use-gate'
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
 import { paymentSuggestion } from '@/lib/intake-router'
+// [EIGEN-FACTUUR] Is dit stuk van de eigenaar zelf? — zie own-document.ts.
+import { looksLikeOwnDocument, ownDocumentNotice } from '@/lib/own-document'
 // [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
 import { planReceiptSettlement } from '@/lib/receipt-auto-settle'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
@@ -1884,6 +1886,51 @@ export async function classifyAttachment(
     receiverIban: opts?.receiverIban,
     readingHint: opts?.readingHint,
   })
+
+  // ── [EIGEN-FACTUUR] Is this the owner's OWN invoice, mailed back to them? ──
+  //
+  // Measured: Kiwi Food Market invoices a customer for €394,99, the copy lands in the mailbox this
+  // sync reads, and it was booked as a purchase. Wrong twice, in opposite directions — the €362,38
+  // is turnover now also standing as a cost, and the €32,61 is BTW OWED, now claimed as
+  // voorbelasting. A €65 swing on one document, on the aangifte, with nothing contradicting itself
+  // anywhere: every number is real and every total adds up.
+  //
+  // The [OWN-SENT] envelope guard above cannot catch it. It skips a message the owner sent UNLESS
+  // the owner is also a recipient — because that is a supplier invoice forwarded to oneself, which
+  // must be kept. A self-copied outgoing invoice is that case exactly; from the headers the two
+  // are indistinguishable.
+  //
+  // The DOCUMENT distinguishes them. A purchase invoice whose supplier is you cannot exist, and
+  // the owner's KVK / BTW / IBAN are already in hand — they are passed INTO the reader above so
+  // the model does not mistake them for the vendor's. Now they are also used to answer the
+  // question. Only a registration number or the payee account is treated as proof; a name match
+  // alone asks rather than decides (own-document.ts explains why).
+  //
+  // Answered as "not an invoice" WITH a reason, deliberately: that is the path the skip registry
+  // already surfaces, so the file is kept and named on the owner's screen instead of vanishing.
+  // Nothing is booked, and nothing is lost.
+  const ownDoc = looksLikeOwnDocument(
+    {
+      vendorName: result.vendor ?? null,
+      kvkNumber: result.vendor_kvk ?? null,
+      btwNumber: result.vendor_btw ?? null,
+      vendorIban: result.vendor_iban ?? null,
+    },
+    {
+      companyName: receiverName ?? null,
+      kvkNumber: opts?.receiverKvk ?? null,
+      btwNumber: opts?.receiverBtw ?? null,
+      iban: opts?.receiverIban ?? null,
+    },
+  );
+  if (ownDoc.isOwn) {
+    return {
+      isInvoice: false,
+      confidence: 0,
+      uncertain: false,
+      reason: ownDocumentNotice(ownDoc) ?? 'Dit lijkt je eigen verkoopfactuur.',
+    };
+  }
 
   return {
     isInvoice: result.is_invoice,

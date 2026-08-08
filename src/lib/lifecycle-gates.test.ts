@@ -4285,3 +4285,49 @@ test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", 
   // Paired with a positive match, so a file that somehow read empty cannot pass this vacuously.
   assert.match(mail, /color: #5f6368/, "…and the replacement colour is actually in use");
 });
+
+// ── [EIGEN-FACTUUR] Your own sales invoice is not a cost ──────────────────────
+//
+// Kiwi Food Market invoiced a customer €394,99, the copy landed in the mailbox the sync reads, and
+// it was booked as a purchase invoice. Wrong twice, in opposite directions: the €362,38 is
+// turnover now also standing as a cost, and the €32,61 is BTW OWED, now claimed as voorbelasting.
+// A €65 swing on one document, on the aangifte, and nothing anywhere contradicts itself — every
+// number is real and every total adds up.
+//
+// The envelope cannot answer it. [OWN-SENT] skips a message the owner sent UNLESS the owner is
+// also a recipient, because that is a supplier invoice forwarded to oneself. A self-copied
+// outgoing invoice is that case exactly.
+//
+// The document answers it: a purchase invoice whose supplier is you cannot exist.
+test("[EIGEN-FACTUUR] the e-mail reader checks whether the document is the owner's own", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  assert.match(
+    src,
+    /looksLikeOwnDocument\(/,
+    "the e-mail path must ask whether what it just read is the owner's OWN invoice — the envelope " +
+      "guard cannot tell a self-copied sales invoice from a forwarded supplier invoice",
+  );
+  // It has to be given the identity to compare against. Called with nothing, the check is a no-op
+  // that reads as protection — the worst of both.
+  for (const field of ["kvkNumber:", "btwNumber:", "vendorIban:"]) {
+    assert.ok(
+      new RegExp(`looksLikeOwnDocument\\(([\\s\\S]{0,600}?)${field}`).test(src),
+      `the check must be handed the document's ${field} — an empty comparison never matches`,
+    );
+  }
+  // And the verdict must actually stop the booking. Computing it and carrying on is the shape a
+  // refactor leaves behind.
+  assert.match(
+    src,
+    /if \(ownDoc\.isOwn\) \{[\s\S]{0,300}?isInvoice: false/,
+    "a document recognised as the owner's own must not be booked as an incoming invoice",
+  );
+  // Kept and named, not dropped. The skip registry is the surface that already does that, which is
+  // why the refusal carries a reason rather than a bare false.
+  assert.match(
+    src,
+    /reason: ownDocumentNotice\(ownDoc\)/,
+    "…and the owner must be told why, or a document they can see in their mailbox simply vanishes",
+  );
+});
