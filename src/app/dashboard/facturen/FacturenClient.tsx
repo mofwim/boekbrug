@@ -767,6 +767,31 @@ export default function FacturenClient({
 
   // [BOEK-029] Versturen flow — open modal with client details
   // [BOEK-RESEND] isResend=true when re-sending an already-sent invoice.
+  // [OFFERTE-VERSTUREN] De offerte ALS offerte naar de klant. Een eigen route die geen nummer kan
+  // slaan — zie de kop van /api/invoice/[id]/send-offerte. Geen bevestigingsdialoog: er valt niets
+  // onomkeerbaars te bevestigen. Dat is precies het verschil met de knop ernaast.
+  async function handleSendOfferte(invoiceId: string) {
+    if (processingId) return
+    setProcessingId(invoiceId)
+    try {
+      const res = await fetch(`/api/invoice/${invoiceId}/send-offerte`, { method: 'POST' })
+      const json = await res.json().catch(() => null)
+      if (res.ok) {
+        showToast(typeof json?.message === 'string' ? json.message : 'De offerte is verstuurd.')
+        await refresh()
+      } else {
+        // De route weigert met een eigen zin per reden (geen e-mailadres, geen regels, al omgezet).
+        // Die tonen, niet vervangen door "mislukt": vier redenen vragen vier verschillende dingen
+        // van de ondernemer.
+        showToast(typeof json?.error === 'string' && json.error ? json.error : 'Versturen lukte niet.')
+      }
+    } catch {
+      showToast('Versturen lukte niet. Probeer het zo meteen opnieuw.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
   async function handleSendRequest(invoiceId: string, isResend = false) {
     // Fetch full data to verify required fields before showing modal
     const { data: inv } = await supabase
@@ -1224,6 +1249,25 @@ export default function FacturenClient({
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Versturen</>}
+                        </button>
+                      )}
+
+                      {/* [OFFERTE-VERSTUREN] pro_forma → de offerte NAAR DE KLANT sturen, als
+                          offerte. Dit is wat "Versturen" leek te doen en niet deed. Staat vóór de
+                          omzetknop omdat dit de gewone volgorde is: eerst aanbieden, dan pas — als
+                          de klant ja zegt — een factuur maken. Ook op een al verstuurde offerte,
+                          want opnieuw sturen na een aanpassing is de normale onderhandeling. */}
+                      {isOfferte && !inv.invoice_number && (inv.status === 'draft' || inv.status === 'sent') && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (processingId === inv.id) return
+                            handleSendOfferte(inv.id)
+                          }}
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primary, color: '#fff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {processingId === inv.id
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {inv.status === 'sent' ? 'Opnieuw sturen' : 'Offerte versturen'}</>}
                         </button>
                       )}
 

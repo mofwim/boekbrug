@@ -3455,3 +3455,80 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
     "the confirm must still say what happens, in full",
   );
 });
+
+// ── [OFFERTE-VERSTUREN] A quote can be sent as a quote, through a door that cannot mint ──
+//
+// The app could not send a quote at all. Every path through /api/invoice/send either CONVERTS it
+// into an official factuur (isConversion → a number from the gapless series), converts it without
+// sending, or re-delivers an invoice that already has a number. So the only way to put a quote in
+// front of a customer was to turn it into an invoice first — the opposite of what a quote is for,
+// and irreversible under Art. 35.
+//
+// The guarantee that matters is negative: this route must not be ABLE to mint a number. A flag on
+// the send route would have put "never mint" one wrong branch away from "mint", on the single
+// action in this app that cannot be undone. A separate door is checkable, and this is the check.
+test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if the mail fails", () => {
+  const route = code("src/app/api/invoice/[id]/send-offerte/route.ts");
+
+  // THE LOAD-BEARING ONE. Not "does not" — CANNOT: the allocator is not reachable from here.
+  // WRITES, not reads. The route must READ the number — that is what refuses a quote the send
+  // route already converted (checkOfferteSendable → already_invoice). Banning the read outright
+  // was my first attempt and it forbade the very guard that makes this door safe.
+  assert.doesNotMatch(
+    route, /invoice_number:\s/,
+    "this route may never write a number — it is the door that cannot mint one",
+  );
+  assert.match(
+    route, /invoiceNumber: invoice\.invoice_number/,
+    "…but it MUST read it, or an already-converted quote could be mailed as 'vrijblijvend' for " +
+      "work the books already hold as an issued, numbered invoice",
+  );
+  assert.doesNotMatch(route, /invoice_type:/, "…nor change the document's type");
+  assert.doesNotMatch(
+    route, /next_invoice_seq|convertOnly|isConversion|from\(['"]invoice_number/,
+    "…nor reach the numbering machinery in any form",
+  );
+  // And it does not call the converting route either, which would be the same thing at one remove.
+  assert.doesNotMatch(route, /api\/invoice\/send/, "it must not delegate to the route that converts");
+
+  // What it DOES write: status and pdf_url. Nothing else.
+  assert.match(route, /status: 'sent',/, "a sent quote is marked sent");
+  assert.match(route, /pdf_url: pdfPath/, "…and keeps the document it sent");
+
+  // The refusals come from the tested module, each with its own sentence.
+  assert.match(route, /checkOfferteSendable\(\{/, "the four refusals are decided in offerte-send.ts");
+  assert.match(route, /error: check\.error, code: check\.code/, "…and the reason reaches the screen");
+
+  // ORDER: mail first, status second. Marking a quote 'sent' before the mail leaves an owner
+  // waiting on a customer who never received anything.
+  const mailAt = route.indexOf("await sendOfferteToClient(");
+  const statusAt = route.indexOf("status: 'sent',");
+  assert.ok(mailAt > 0 && statusAt > mailAt, "nothing is marked sent until the mail is away");
+  assert.match(
+    route, /if \(!delivered\) \{[\s\S]{0,400}?status: 502/,
+    "an undelivered quote is reported as undelivered — this is a proposal with a deadline on it",
+  );
+
+  // A PDF failure refuses. An e-mail naming an amount with nothing attached is not the thing the
+  // owner asked to send, and a customer cannot agree to a number in a sentence.
+  assert.match(route, /pdf render failed[\s\S]{0,300}?status: 502/, "no quote mail without the quote");
+
+  // The mail is quote-shaped, not an invoice mail with different words.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /export async function sendOfferteToClient/, "a quote has its own mail");
+  assert.match(mail, /vrijblijvend/, "…which says the one thing that separates a proposal from a bill");
+  assert.match(mail, /Geldig tot/, "…and a validity date, never a due date");
+
+  // The screen offers it, and on an already-sent quote too — re-sending after an edit is the
+  // normal negotiation, not an error.
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.match(
+    list, /isOfferte && !inv\.invoice_number && \(inv\.status === 'draft' \|\| inv\.status === 'sent'\)/,
+    "the button appears on an unconverted quote, draft or already sent",
+  );
+  assert.match(list, /send-offerte/, "…and calls the quote door, not the send route");
+  assert.match(
+    list, /Offerte versturen/,
+    "…labelled as what it is — which only became an honest label once the button existed",
+  );
+});

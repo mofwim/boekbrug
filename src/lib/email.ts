@@ -5,6 +5,7 @@ import { Resend } from 'resend'
 import * as Sentry from '@sentry/nextjs'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
+import { offerteSubject } from './offerte-send'
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -822,4 +823,73 @@ export async function sendFeedbackNotification({
     `
   })
   return deliverEmail(__sendResult, { label: 'feedback-notification', critical: false })
+}
+
+/**
+ * [OFFERTE-VERSTUREN] Mail a QUOTE to the customer — as a quote.
+ *
+ * Not sendInvoiceToClient with different words. That function is invoice-shaped all the way
+ * through: "Factuur", "Factuurnummer", "Vervaldatum", a payment request, and an attachment named
+ * after an invoice. A quote has none of those. It has no number (it is in no series), its date is
+ * a VALIDITY date and not a due date, and the one thing it must say — that it is vrijblijvend, non
+ * binding — is the whole difference between a proposal and a bill. Reusing the invoice mail would
+ * have put a customer under the impression they owed money for work they had not agreed to.
+ *
+ * Returns whether it was delivered. The caller reports that: an owner who thinks their quote is
+ * with the customer, and waits, is worse off than one who knows it bounced.
+ */
+export async function sendOfferteToClient({
+  toEmail,
+  clientName,
+  senderName,
+  totalInc,
+  validUntil,
+  offerteDate,
+  pdfBuffer,
+  fileName,
+}: {
+  toEmail: string
+  clientName: string
+  senderName: string
+  totalInc: number
+  /** ISO date — "Geldig tot", the quote's own deadline. Optional: a quote need not expire. */
+  validUntil?: string | null
+  offerteDate?: string | null
+  pdfBuffer?: Buffer
+  fileName?: string
+}): Promise<boolean> {
+  const bedrag = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(totalInc)
+  const datumRegel = offerteDate
+    ? `<p style="margin:4px 0; color:#202124;"><strong>Datum:</strong> ${formatDateNL(offerteDate)}</p>`
+    : ''
+  const geldigRegel = validUntil
+    ? `<p style="margin:4px 0; color:#202124;"><strong>Geldig tot:</strong> ${formatDateNL(validUntil)}</p>`
+    : ''
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: offerteSubject(senderName),
+    html: `
+      <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">Offerte van ${escapeHtml(senderName)}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">Hierbij onze offerte. Je vindt hem als PDF in de bijlage.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
+          ${datumRegel}
+          ${geldigRegel}
+          <p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>
+        </div>
+        <p style="color: #555;">
+          Deze offerte is <strong>vrijblijvend</strong>: er hoeft nog niets betaald te worden en er
+          is nog geen factuur. Ga je akkoord, laat het ons weten — dan sturen we de factuur.
+        </p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+    ...(pdfBuffer
+      ? { attachments: [{ filename: fileName || 'offerte.pdf', content: pdfBuffer }] }
+      : {}),
+  })
+  return deliverEmail(__sendResult, { label: 'offerte-to-client', critical: false })
 }

@@ -39,6 +39,11 @@ export type AuditAction =
   | 'invoice.duplicated'              // ← v2: matches historical data
   | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
+  // [OFFERTE-VERSTUREN] De offerte is als OFFERTE naar de klant gemaild — geen nummer, geen
+  // conversie. Eigen actie en niet 'invoice.status_changed', omdat dit de enige regel is waaruit
+  // later blijkt dát er een voorstel de deur uit is gegaan en wanneer: de offerte zelf draagt geen
+  // nummer en geen verzendspoor, en bij een geschil over "wat is er aangeboden" is dit het bewijs.
+  | 'offerte.sent'
   | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
   | 'invoice.auto_paid'               // ← [BON-AUTO] app settled a kassabon whose PAPER printed the tender line ("Kontant"/"Bankpas")
   // [TWEEDE-KANS] The owner asked the app to read a stored file again — one it had kept because it
