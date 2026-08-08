@@ -3585,3 +3585,52 @@ test("[KORTING-KOPIE] the creditnota, the duplicate and the recurring cron all c
       "the other way would get an allowance that reads as a surcharge in UBL",
   );
 });
+
+// ── [OFFERTE-OMZETTEN-VOLLEDIG] The accepted quote and the invoice for it are the same document ──
+//
+// The from_offerte flow loads the quote's lines and pre-fills the new invoice. It read FOUR columns
+// where the line carries six, and never read the header at all. So the customer accepted one
+// document and was billed a different one, in three ways at once:
+//
+//   · unit          — "2 uur" became "2" (C62 = stuk) in the e-invoice. The [UNIT] comments in
+//                     pickArticle and in the catalog button describe this same loss, each fixed on
+//                     its own path; this was a third path nobody had walked.
+//   · vat_treatment — the exemption flag. Without it revenue moves out of the exempt pot into the
+//                     0%/verlegd box of the aangifte (schoonRegel spells out that consequence), so
+//                     an accepted exempt quote produced an invoice filed in the wrong box.
+//   · the discount  — it lives on the HEADER, so a line-only read could never see it. The customer
+//                     agreed to EUR 900 and was invoiced EUR 1.000.
+test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quote said", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // Every column the line actually holds — a SELECT is the whole boundary here.
+  assert.match(
+    page,
+    /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment'\)/,
+    "the quote's lines must be read in full: a column not selected is a column silently dropped " +
+      "between what the customer accepted and what they are billed",
+  );
+  // Scoped to the conversion block. `unit: l.unit ?? null` appears three times in this file — the
+  // two submit-path mappings are the others — so an unscoped assertion stayed green with the
+  // conversion's own mapping deleted. The negative control is what said so.
+  const convStart = page.indexOf("if (offerteParam) {");
+  const convEnd = page.indexOf("setLinesLoading(false)", convStart);
+  assert.ok(convStart > 0 && convEnd > convStart, "the from_offerte load block was found");
+  const conv = page.slice(convStart, convEnd);
+  assert.ok(conv.length < 1800, `the slice must be that block alone — it is ${conv.length} chars`);
+  assert.match(conv, /unit:\s+l\.unit \?\? null,/, "…and the unit must reach the new line");
+  assert.match(
+    conv, /vat_treatment: l\.vat_treatment === 'exempt' \? 'exempt' : null,/,
+    "…and the exemption flag, hardened the same way every other writer hardens it: only the " +
+      "literal 'exempt' counts, so no stray value can create an exemption",
+  );
+
+  // The discount is on the header, so it needs its own read. A line-only load cannot see it.
+  assert.match(
+    page,
+    /\.select\('discount_type, discount_value'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
+    "the quote's discount must be read from the header — that is the amount the customer said " +
+      "yes to",
+  );
+  assert.match(page, /setDiscountType\(offHead\.discount_type\)/, "…and pre-fill the invoice with it");
+});
