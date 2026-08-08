@@ -44,6 +44,7 @@ import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-num
 // [BTW-ROUND] Per-tarief afronding — nu uit de gedeelde module, zodat het opslaan van een concept
 // (/api/invoice/[id] PUT) en het uitgeven hier per definitie hetzelfde bedrag opleveren.
 import { computeInvoiceTotals } from '@/lib/invoice-totals'
+import { applyDiscount, parseDiscount } from '@/lib/invoice-discount'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
@@ -281,7 +282,22 @@ export async function POST(request: NextRequest) {
       // PDF (btwBreakdown → round2 per rate) AND the UBL export use. The logic now lives in
       // lib/invoice-totals.ts, shared with the edit route, so the concept the owner saved and the
       // invoice we issue can never differ by the cent they used to differ by.
-      computedTotals = computeInvoiceTotals(lines)
+      // [KORTING] Met de korting van de factuurrij erbij. Zonder dit rekent de uitgifte de
+      // totalen opnieuw uit de REGELS en schrijft ze over de verlaagde bedragen heen: de
+      // ondernemer geeft 10% korting, het concept toont het verlaagde bedrag, en de factuur die
+      // zijn klant krijgt draagt de volle prijs met een genummerd, onherroepelijk document
+      // eromheen. De kolommen bestaan pas na invoice_discount.sql; parseDiscount geeft dan null en
+      // dit is letterlijk de oude regel.
+      const kortingHier = parseDiscount(
+        (invoice as { discount_type?: unknown }).discount_type,
+        (invoice as { discount_value?: unknown }).discount_value,
+      )
+      if (kortingHier) {
+        const d = applyDiscount(lines as { line_total?: number | null; btw_rate?: number | null }[], kortingHier)
+        computedTotals = { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw }
+      } else {
+        computedTotals = computeInvoiceTotals(lines)
+      }
     }
     // The authoritative total for the e-mail + accountant notification below.
     const finalTotalInc = computedTotals?.total_inc_btw ?? invoice.total_inc_btw

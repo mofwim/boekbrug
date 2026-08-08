@@ -3209,3 +3209,138 @@ test("[BETAALTERMIJN] the term is derived from the dates, and any term can be ty
     "…and so does the default a new invoice starts at",
   );
 });
+
+// ── [ARTIKEL-CODE] You could search the catalog by code, and never give one ──
+//
+// The catalog has always had codes. matchArticles ranks an exact code match first ("22" → that
+// article, ahead of every description match), and the line's own placeholder invites it:
+// "Omschrijving of code (bijv. 22)". But the only way to put a line INTO the catalog from the
+// invoice screen posted `code: ''`, so every article created that way had no code — and the
+// article-learner cannot invent one either, because a code is a decision a person makes.
+//
+// So an owner typed "22", found nothing, and concluded the feature did not exist. It did; there
+// was simply no door to it outside /dashboard/artikelen.
+test("[ARTIKEL-CODE] a line can be saved to the catalog WITH a code, and a clash is spoken", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  assert.doesNotMatch(
+    page, /btw_rate: line\.btw_rate, code: '',/,
+    "the empty-code literal may not come back — it is what made the code feature unreachable",
+  );
+  assert.match(
+    page, /async function saveLineToCatalog\(i: number, line: InvoiceLine, code: string\)/,
+    "saving a line to the catalog must be able to carry a code",
+  );
+  assert.match(
+    page, /body: JSON\.stringify\(\{ description: line\.description[^}]*code, unit: line\.unit/,
+    "…and send it",
+  );
+  // The field itself, and the fact that it is optional: an owner who wants no code must still be
+  // able to save, exactly as before.
+  assert.match(page, /aria-label="Artikelcode"/, "there must be a field to type it in");
+  assert.match(
+    page, /placeholder="code \(bijv\. 22\)"/,
+    "…labelled with the same example the description field already uses",
+  );
+
+  // A REFUSAL MUST BE HEARD. articles carries UNIQUE(user_id, code) and the route answers 409
+  // with which code is taken. Swallowing that leaves the owner believing "22" now points at this
+  // line while it points at another — and they will pull up the wrong line later.
+  assert.match(
+    page, /setCodeError\(typeof j\?\.error === 'string'/,
+    "a rejected code must be shown, not swallowed",
+  );
+  assert.match(page, /\{codeError && </, "…on screen, beside the field it belongs to");
+  assert.doesNotMatch(
+    page, /\} catch \{ \/\* silent \*\/ \}/,
+    "and the silent catch around this save is gone",
+  );
+});
+
+// ── [KORTING] A discount is not a subtraction ──
+//
+// "Trek er 10% af" reads like one line of arithmetic and is not, because BTW is owed PER TARIEF.
+// An invoice of EUR 1.000 at 21% and EUR 1.000 at 9% with EUR 200 off does not owe some blended
+// rate over 1.800 — it owes 21% over its reduced 21%-part and 9% over its reduced 9%-part.
+// Subtract the discount from the total and BOTH aangifte boxes are wrong, in opposite directions,
+// on every mixed-rate invoice.
+//
+// And it appears in five places that must agree to the cent: the screen, the draft route, the send
+// route, the PDF and the UBL. Peppol BIS 3.0 makes that non-negotiable — a file whose
+// LineExtensionAmount minus AllowanceTotalAmount does not equal TaxExclusiveAmount is REFUSED at
+// the receiving access point (BR-CO-10), so the invoice simply never arrives.
+test("[KORTING] every surface computes the discount with the same module", () => {
+  const store = code("src/lib/invoice-discount.ts");
+
+  // Nobody rolls their own. Five call sites, one module.
+  for (const file of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/api/invoice/draft/route.ts",
+    "src/app/api/invoice/send/route.ts",
+    "src/app/api/invoice/[id]/route.ts",
+    "src/lib/invoice-pdf.tsx",
+    "src/lib/ubl-export.ts",
+  ]) {
+    assert.match(
+      code(file), /from ['"](@\/lib\/invoice-discount|\.\/invoice-discount)['"]/,
+      `${file} must take the discount arithmetic from the one module — a second copy of the ` +
+        "apportioning is a second answer, and these all describe the same invoice",
+    );
+  }
+
+  // The two places that would silently DROP a stored discount by recomputing from the lines.
+  assert.match(
+    code("src/app/api/invoice/send/route.ts"),
+    /if \(kortingHier\) \{[\s\S]{0,300}?applyDiscount\(/,
+    "issuance must keep the discount: recomputing from the lines would send the customer a " +
+      "numbered, irreversible invoice at the FULL price the owner had just discounted",
+  );
+  assert.match(
+    code("src/app/api/invoice/[id]/route.ts"),
+    /const kortingHier = parseDiscount\(/,
+    "editing must keep it too, or the row says there is a discount while charging the full amount",
+  );
+
+  // The UBL shape. Wrong here is not cosmetic — the file is refused and nothing arrives.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /ChargeIndicator"\)\.txt\("false"\)/, "a discount is an allowance, not a charge");
+  assert.match(
+    ubl, /for \(const a of kortingUitkomst\.allowances\)/,
+    "one AllowanceCharge per rate — each carries exactly one TaxCategory",
+  );
+  assert.match(
+    ubl, /TaxExclusiveAmount", \{ currencyID: EUR \}\)\.txt\(money\(taxExclusive\)\)/,
+    "TaxExclusiveAmount is lines MINUS allowances (BR-CO-10)",
+  );
+  assert.match(ubl, /AllowanceTotalAmount/, "…and the allowance total is stated");
+  assert.ok(
+    ubl.indexOf("cac, \"AllowanceCharge\"") < ubl.indexOf("cac, \"TaxTotal\""),
+    "AllowanceCharge is emitted before TaxTotal — the UBL sequence is not free",
+  );
+
+  // The PDF prints what it charges. A reduced total with no line explaining it is an invoice the
+  // customer cannot check.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /discountLabel\(korting\)/, "the PDF names the discount");
+  assert.match(pdf, /netRateLines\.map/, "…and its BTW rows are the REDUCED ones");
+
+  // Shipping before the migration may not break invoicing. The columns arrive with
+  // invoice_discount.sql, and until then the row is written without them — WITH the undiscounted
+  // totals, because a reduced total plus no stored discount is a document that does not add up.
+  const draft = code("src/app/api/invoice/draft/route.ts");
+  assert.match(
+    draft, /\.\.\.\(korting && Object\.keys\(spoor\)\.length \? totalen : zonderKorting\)/,
+    "the totals and the discount fall back TOGETHER",
+  );
+  assert.match(
+    draft, /korting && !trailWritten \? \{ warning: 'discount_not_stored' \}/,
+    "…and the owner is told, rather than finding out from the PDF their customer already has",
+  );
+
+  // Empty is not zero — the same trap as the payment term, and here it would print
+  // "Korting: € 0,00" on a customer's invoice.
+  assert.match(
+    store, /if \(typeof raw === "string" && raw\.length === 0\) return null/,
+    "an untouched field is not a discount of zero",
+  );
+});

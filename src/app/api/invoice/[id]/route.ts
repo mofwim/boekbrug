@@ -23,6 +23,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
 import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-totals'
+import { applyDiscount, parseDiscount } from '@/lib/invoice-discount'
 // [ACTING-FOR] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
 // blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
@@ -116,6 +117,11 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
     /** [OFFERTE-BEWERKBAAR] The thing that makes a document legally issued. The edit guard below
      *  needs it, and it may not be lost by the fallback: it belongs to the base schema. */
     invoice_number?: string | null
+    /** [KORTING] Bestaan pas ná invoice_discount.sql — daarom NIET in de eerste kolomlijst
+     *  verplicht: readWithTrail valt terug op de tweede zodra een kolom ontbreekt, en dan rekent
+     *  deze route gewoon zonder korting, precies zoals vóór de feature. */
+    discount_type?: string | null
+    discount_value?: number | null
   }>(
 
     (kolommen: string) => supabase
@@ -124,7 +130,7 @@ async function ownedInvoice(supabase: any, id: string, userId: string) {
       .eq('id', id)
       .eq('sender_id', userId)
       .single(),
-    'id, status, sender_id, created_by, invoice_type, invoice_number, total_ex_btw, btw_amount, total_inc_btw',
+    'id, status, sender_id, created_by, invoice_type, invoice_number, discount_type, discount_value, total_ex_btw, btw_amount, total_inc_btw',
     'id, status, sender_id, invoice_type, invoice_number, total_ex_btw, btw_amount, total_inc_btw',
   )
 }
@@ -249,7 +255,17 @@ export async function PUT(
       unit: typeof l.unit === 'string' && isKnownUnit(l.unit) ? l.unit.trim() : null,
     }
   })
-  const { total_ex_btw, btw_amount, total_inc_btw } = computeInvoiceTotals(lines)
+  // [KORTING] De korting van deze factuur telt mee. Zonder dit wist elke bewerking hem: het
+  // scherm stuurt de regels terug, de route rekent de totalen opnieuw uit ALLEEN die regels, en de
+  // verlaging verdwijnt terwijl discount_type/discount_value in de rij blijven staan — een factuur
+  // die zegt dat er korting op zit en het volle bedrag rekent.
+  const kortingHier = parseDiscount(
+    (existing as { discount_type?: unknown }).discount_type,
+    (existing as { discount_value?: unknown }).discount_value,
+  )
+  const { total_ex_btw, btw_amount, total_inc_btw } = kortingHier
+    ? (() => { const d = applyDiscount(lines, kortingHier); return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw } })()
+    : computeInvoiceTotals(lines)
 
   // Header patch — only the client/date fields the edit form sends, plus totals.
   const patch: Record<string, unknown> = {

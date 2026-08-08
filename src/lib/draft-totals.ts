@@ -17,6 +17,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
+import { applyDiscount, type Discount } from "./invoice-discount";
+
 export interface DraftLine {
   quantity: number;
   unit_price: number;
@@ -33,7 +35,24 @@ export interface DraftTotals {
  * Summing. `sign` is -1 for a credit note: that sits negative in the books, and that sign should
  * be set in one place rather than by every caller again.
  */
-export function computeDraftTotals(lines: readonly DraftLine[], sign: 1 | -1 = 1): DraftTotals {
+export function computeDraftTotals(
+  lines: readonly DraftLine[],
+  sign: 1 | -1 = 1,
+  // [KORTING] Optioneel, en met opzet als LAATSTE argument: elke bestaande aanroep rekent zonder
+  // korting precies dezelfde bedragen uit als voorheen, tot op de cent.
+  discount: Discount | null = null,
+): DraftTotals {
+  if (discount && sign === 1) {
+    // De verdeling over de tarieven staat in invoice-discount.ts, samen met de UBL-kant ervan.
+    // Hier een eigen aftrekking doen zou betekenen dat de conceptroute en de uitgifteroute op een
+    // gemengde factuur een andere btw uitrekenen — en dan hangt het bedrag af van welke knop de
+    // ondernemer indrukte.
+    const d = applyDiscount(
+      lines.map((l) => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+      discount,
+    );
+    return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw };
+  }
   const ex = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0);
   const btw = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0);
   return {
