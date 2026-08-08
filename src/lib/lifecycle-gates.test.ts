@@ -3935,3 +3935,30 @@ test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it
     "the account fallback must be owner-only",
   );
 });
+
+// ─── [LEESBARE-MAIL] No sentence in an e-mail is set in a colour nobody can read ────────────────
+//
+// The owner reported the PDF footer as MISSING, not as faint. It was #dadce0 at 8pt — about 1,3:1
+// on white. The mail bodies had the same habit: thirteen lines in #aaa (≈2,3:1) and two in #999.
+//
+// Most of those carry only the BoekBrug strapline, and a faint strapline is a design choice. Three
+// of them do not:
+//   · "Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet" — the warning
+//     that tells someone an invitation-shaped mail might not be genuine.
+//   · "Je krijgt deze mail omdat je BoekBrug-account is beëindigd…" — the retention notice that
+//     exists to satisfy article 5.7.5 of our own terms.
+//   · "Heb je deze factuur al betaald? Dan kun je deze herinnering als niet verzonden beschouwen."
+//     — on a payment reminder, addressed to the one customer who has already paid.
+//
+// A notice printed below the threshold of legibility has been sent, not given.
+test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", () => {
+  const mail = code("src/lib/email.ts");
+  for (const grey of ["#aaa", "#999", "#bbb", "#ccc", "#dadce0"]) {
+    assert.doesNotMatch(
+      mail, new RegExp(`color: ${grey}\\b`),
+      `${grey} on white is not readable — a sentence set in it has been sent, not given`,
+    );
+  }
+  // Paired with a positive match, so a file that somehow read empty cannot pass this vacuously.
+  assert.match(mail, /color: #5f6368/, "…and the replacement colour is actually in use");
+});

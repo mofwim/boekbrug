@@ -83,7 +83,7 @@ export async function sendAccountantInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -118,7 +118,7 @@ export async function sendClientInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -159,7 +159,7 @@ export async function sendMemberInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Toegang accepteren
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet, en laat het ${escapeHtml(companyName)} weten.</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">Deze uitnodiging verloopt na 14 dagen. Verwacht je hem niet? Klik dan niet, en laat het ${escapeHtml(companyName)} weten.</p>
       </div>
     `
   })
@@ -254,7 +254,7 @@ export async function sendInvoiceToClient({
           ${dueDateRow}
         </div>
         ${attachmentLine}
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
     // [FACTUUR-A] Attach the legal PDF — only when rendering succeeded.
@@ -306,7 +306,7 @@ export async function sendMessageNotification({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
           Bericht bekijken
         </a>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -332,7 +332,7 @@ export async function sendAccountantUnlinkedNotification({
         <p style="color: #555;">Beste ${escapeHtml(accountantName)},</p>
         <p style="color: #555;"><strong>${escapeHtml(clientName)}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je hebt geen toegang meer tot nieuwe facturen of documenten van deze klant. Historische gegevens waar je eerder aan hebt gewerkt, blijven beschikbaar voor je administratie.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -359,7 +359,7 @@ export async function sendClientUnlinkedNotification({
         <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
         <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je facturen en documenten blijven volledig van jou en blijven beschikbaar in je account. Je kunt op elk moment een nieuwe boekhouder uitnodigen via je instellingen.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -402,7 +402,7 @@ export async function sendDraftQueueEmail({
         <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; color:#202124; line-height:1.5;">
           ${safeBody}
         </div>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">
           ${escapeHtml(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
         </p>
       </div>
@@ -456,7 +456,7 @@ export async function sendAccountExportSummary({
         </div>
         ${skippedLine}
         <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
@@ -564,8 +564,8 @@ export async function sendInvoiceReminder({
         </div>
         ${wikBlock}
         ${attachmentLine}
-        <p style="color: #999; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
     ...(pdfBuffer
@@ -634,10 +634,10 @@ export async function sendPaymentFailedEmail({
            style="display:inline-block; margin:20px 0; padding:12px 24px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">
           Betaalgegevens bijwerken
         </a>
-        <p style="color: #999; font-size: 13px;">
+        <p style="color: #5f6368; font-size: 13px;">
           Heb je je gegevens net al aangepast? Dan kun je deze mail negeren.
         </p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
   })
@@ -795,8 +795,8 @@ export async function sendRetentionWarning({
         <p style="color: #555;">Tot die tijd kun je alles nog kosteloos exporteren — je facturen, je bonnen en je documenten, in één bestand. Daarna is het weg, en dat kunnen wij niet ongedaan maken.</p>
         ${knop}
         <p style="color: #555; font-size: 13px;">Wil je je administratie langer bewaren? Dat kan met de Bewaarkluis. Log in en kies zelf tot welk jaar.</p>
-        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">Je krijgt deze mail omdat je BoekBrug-account is beëindigd en wij je administratie sindsdien hebben bewaard. Dit is de aankondiging uit artikel 5.7.5 van onze voorwaarden.</p>
-        <p style="color: #aaa; font-size: 12px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+        <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">Je krijgt deze mail omdat je BoekBrug-account is beëindigd en wij je administratie sindsdien hebben bewaard. Dit is de aankondiging uit artikel 5.7.5 van onze voorwaarden.</p>
+        <p style="color: #5f6368; font-size: 12px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
   })
