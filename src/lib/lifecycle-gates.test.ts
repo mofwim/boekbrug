@@ -3295,9 +3295,13 @@ test("[KORTING] every surface computes the discount with the same module", () =>
     "issuance must keep the discount: recomputing from the lines would send the customer a " +
       "numbered, irreversible invoice at the FULL price the owner had just discounted",
   );
+  // Retargeted: this matched `const kortingHier = parseDiscount(` literally, and broke the moment
+  // the edit route learned to take a CHANGED discount from the body — while the property it
+  // guards held more strongly than before. The rule is that the edit route's totals carry the
+  // discount, not the spelling of the line that fetches it.
   assert.match(
     code("src/app/api/invoice/[id]/route.ts"),
-    /const kortingHier = parseDiscount\(/,
+    /const \{ total_ex_btw, btw_amount, total_inc_btw \} = kortingHier[\s\S]{0,200}?applyDiscount\(lines, kortingHier\)/,
     "editing must keep it too, or the row says there is a discount while charging the full amount",
   );
 
@@ -3342,5 +3346,112 @@ test("[KORTING] every surface computes the discount with the same module", () =>
   assert.match(
     store, /if \(typeof raw === "string" && raw\.length === 0\) return null/,
     "an untouched field is not a discount of zero",
+  );
+});
+
+// ── [KORTING-BEWERKEN] The discount is changeable, and the CAS agrees with the gate ──
+//
+// Two things, and the second is a defect the FIRST offerte commit shipped.
+//
+// 1. A discount you can only set by re-creating the invoice is a discount you lose at the first
+//    negotiation with the customer. The edit screen now loads it, shows it, and sends it on BOTH
+//    of its save paths — including save-and-send, the dangerous one: that path turns the document
+//    into a numbered factuur, so a discount dropped there goes out irreversibly at full price.
+//
+// 2. [OFFERTE-BEWERKBAAR] made a sent quote editable at the GATE, and the compare-and-swap under
+//    it still demanded `status = 'draft'`. The quote passed the gate, matched zero rows, and got
+//    "Deze factuur is inmiddels verzonden" — the feature was built and did not work, with a
+//    message that sends the owner looking in the wrong place. A guard and its CAS asking different
+//    questions is the same defect class as a button that appears where the door refuses.
+test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matches its own gate", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+
+  assert.doesNotMatch(
+    route, /\.update\(patch as never\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
+    "the compare-and-swap may not demand 'draft' — that refuses every editable sent quote",
+  );
+  assert.match(
+    route, /\.eq\('status', existing\.status \?\? 'draft'\)/,
+    "…it guards on the status that was READ, which is what protects against a change in between",
+  );
+  assert.match(
+    route, /if \(existing\.status !== 'draft'\) cas = cas\.is\('invoice_number', null\)/,
+    "…and a non-draft may only be written while it still carries no number",
+  );
+  assert.match(
+    route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
+    "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
+  );
+
+  // Present vs absent, not truthy vs falsy: removing a discount is as valid an edit as setting one.
+  assert.match(
+    route, /const kortingMeegestuurd = 'discount_type' in body \|\| 'discount_value' in body/,
+    "the route must distinguish 'cleared' from 'not sent by an older page'",
+  );
+  assert.match(
+    route, /patch\.discount_type = kortingHier \? kortingHier\.type : null/,
+    "…and write the change, or the PDF shows a discount the totals no longer carry",
+  );
+
+  assert.match(edit, /setDiscountValue\(dv == null \? '' : String\(dv\)\)/, "the stored discount is loaded");
+  assert.match(
+    edit, /const kortingTotalen = applyDiscount\(/,
+    "the screen's totals come from the same module as the server's",
+  );
+  assert.equal(
+    [...edit.matchAll(/discount_type: invoiceType === 'creditnota' \? null : discountType/g)].length, 2,
+    "BOTH save paths send it — plain save AND save-and-send, where losing it is irreversible",
+  );
+});
+
+// ── [OFFERTE-KNOP-EERLIJK] The button on a quote says what it does ──
+//
+// On /dashboard/facturen a pro_forma row carried a button labelled "Versturen". It reads as "send
+// the quote to the customer". It does not do that: it converts the quote into an OFFICIAL FACTUUR
+// with a number from the owner's gapless series and mails that (send route, isConversion). One
+// tap, and Art. 35 knows no way back — only a creditnota.
+//
+// The confirmation already said so honestly. The button did not, and the button is the thing you
+// press. "Offerte versturen" would be worse than either: it would promise to send a quote while an
+// invoice goes out. Mailing an offerte AS an offerte is something this app cannot do at all —
+// every path through /api/invoice/send converts, converts-only, or re-delivers a numbered invoice.
+test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion it performs", () => {
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const send = code("src/app/api/invoice/send/route.ts");
+
+  // The premise. If sending a quote ever stops converting it, this label is the thing to revisit —
+  // so the gate holds the reason, not just the word.
+  assert.match(
+    send,
+    /const isConversion = !resend &&[\s\S]{0,160}?invoice_type === ['"]pro_forma['"]/,
+    "sending a quote still turns it into a factuur — that is why the button may not say 'Versturen'",
+  );
+
+  // Both ends on CODE. The end anchor was "[BOEK-RESEND]" — a COMMENT, which code() strips, so
+  // indexOf returned -1, slice(start, -1) ran to the end of the file, and the block picked up the
+  // RESEND button's own "Versturen". The length bound is what said so instead of passing.
+  // The BRACE matters: "!isCredit && !isOfferte && inv.status === 'draft'" is the FACTUUR button
+  // one block up, and it CONTAINS "isOfferte && inv.status === 'draft'" as a substring. Without the
+  // brace the slice started on that button — which correctly says "Versturen" — and the gate
+  // reported a failure about the wrong element entirely.
+  const qStart = list.indexOf("{isOfferte && inv.status === 'draft'");
+  const qEnd = list.indexOf("!isCredit && !isOfferte && (inv.status === 'sent'", qStart);
+  assert.ok(qStart > 0 && qEnd > qStart, "the quote button block sits before the resend button");
+  const quoteButton = list.slice(qStart, qEnd);
+  assert.ok(
+    quoteButton.length > 100 && quoteButton.length < 2400,
+    `the slice must be that ONE button — it is ${quoteButton.length} chars`,
+  );
+  assert.match(quoteButton, /Omzetten naar factuur/, "the label states the act");
+  assert.doesNotMatch(
+    quoteButton, /> Versturen</,
+    "…and not the expectation. A bare 'Versturen' on a quote promises to send a quote and issues " +
+      "a numbered invoice instead",
+  );
+
+  assert.match(
+    list, /wordt omgezet naar een officiële factuur met een nieuw factuurnummer/,
+    "the confirm must still say what happens, in full",
   );
 });

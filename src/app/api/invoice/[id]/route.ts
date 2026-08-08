@@ -36,7 +36,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { learnFromLines } from '@/lib/article-learning-store'
 import { readWithTrail } from '@/lib/created-by'
 // [OFFERTE-BEWERKBAAR] Eén regel, gedeeld met de schermen — zie invoice-editable.ts.
-import { isInvoiceEditable, editRefusalText } from '@/lib/invoice-editable'
+import { isInvoiceEditable, editRefusalText, isQuote } from '@/lib/invoice-editable'
 // [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
 import { isKnownUnit } from '@/lib/units'
 
@@ -259,10 +259,18 @@ export async function PUT(
   // scherm stuurt de regels terug, de route rekent de totalen opnieuw uit ALLEEN die regels, en de
   // verlaging verdwijnt terwijl discount_type/discount_value in de rij blijven staan — een factuur
   // die zegt dat er korting op zit en het volle bedrag rekent.
-  const kortingHier = parseDiscount(
-    (existing as { discount_type?: unknown }).discount_type,
-    (existing as { discount_value?: unknown }).discount_value,
-  )
+  //
+  // Het bewerkscherm mag hem WIJZIGEN. Stuurt het de velden mee, dan telt wat er staat — ook als
+  // dat leeg is, want "korting eraf halen" is een even geldige bewerking als hem instellen. Stuurt
+  // een oudere (gecachete) pagina ze niet mee, dan blijft de korting van de rij staan; die twee
+  // gevallen uit elkaar houden is precies waarom `in body` wordt getest en niet de waarde zelf.
+  const kortingMeegestuurd = 'discount_type' in body || 'discount_value' in body
+  const kortingHier = kortingMeegestuurd
+    ? parseDiscount(body.discount_type, body.discount_value)
+    : parseDiscount(
+        (existing as { discount_type?: unknown }).discount_type,
+        (existing as { discount_value?: unknown }).discount_value,
+      )
   const { total_ex_btw, btw_amount, total_inc_btw } = kortingHier
     ? (() => { const d = applyDiscount(lines, kortingHier); return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw } })()
     : computeInvoiceTotals(lines)
@@ -273,6 +281,12 @@ export async function PUT(
     btw_amount,
     total_inc_btw,
     updated_at: new Date().toISOString(),
+  }
+  // [KORTING] Meeschrijven zodra het scherm hem stuurt — anders zou de PDF straks een korting
+  // tonen die de totalen niet meer dragen (of andersom).
+  if (kortingMeegestuurd) {
+    patch.discount_type = kortingHier ? kortingHier.type : null
+    patch.discount_value = kortingHier ? kortingHier.value : null
   }
   for (const k of [
     'client_name',
@@ -293,20 +307,35 @@ export async function PUT(
   // become legally issued, and the lines below would then be swapped under a committed number.
   // /api/invoice/send guards its own commit exactly this way and explains why; the edit path
   // mutates the same legal record and needs the same guard.
-  const { data: patched, error: upErr } = await supabase
+  //
+  // [OFFERTE-BEWERKBAAR] De CAS stond op de LETTERLIJKE waarde 'draft', en dat sprak de poort
+  // hierboven tegen zodra een verstuurde offerte bewerkbaar werd: die kwam door isInvoiceEditable
+  // heen, raakte hier nul rijen en kreeg "Deze factuur is inmiddels verzonden" — de functie was
+  // dus wel gebouwd en werkte niet, met een melding die de ondernemer op het verkeerde been zet.
+  //
+  // De grendel moet dezelfde vraag stellen als de poort, niet een strengere. Wat hij beschermt is
+  // dat de rij tussen lezen en schrijven niet van staat is veranderd, dus: de status die we ZAGEN,
+  // plus — voor een offerte — dat er nog steeds geen nummer op staat. Wordt de offerte in dat
+  // venster omgezet naar een factuur, dan krijgt hij een nummer en raakt deze UPDATE niets.
+  let cas = supabase
     .from('invoices')
     // patch has a dynamic key set (only the fields the form sent) → cast past
     // the generated row type.
     .update(patch as never)
     .eq('id', id)
     .eq('sender_id', ownerId)
-    .eq('status', 'draft')
-    .select('id')
+    .eq('status', existing.status ?? 'draft')
+  if (existing.status !== 'draft') cas = cas.is('invoice_number', null)
+  const { data: patched, error: upErr } = await cas.select('id')
   if (upErr) return NextResponse.json({ error: 'Opslaan mislukt' }, { status: 500 })
   if (!patched || patched.length === 0) {
     // Lost the race: it is no longer a draft. Nothing was written, and the lines are untouched.
     return NextResponse.json(
-      { error: 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.' },
+      {
+        error: isQuote(existing.invoice_type)
+          ? 'Deze offerte is inmiddels omgezet naar een factuur en kan niet meer worden gewijzigd.'
+          : 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.',
+      },
       { status: 409 }
     )
   }

@@ -1227,7 +1227,18 @@ export default function FacturenClient({
                         </button>
                       )}
 
-                      {/* pro_forma + draft → Versturen (converts to official factuur on send) */}
+                      {/* [OFFERTE-KNOP-EERLIJK] pro_forma + draft. Deze knop heette "Versturen", en
+                          dat leest als "stuur de offerte naar de klant". Dat doet hij NIET: hij zet
+                          de offerte om in een OFFICIËLE FACTUUR met een nummer uit de reeks en
+                          mailt die (send-route, isConversion). Eén tik, en onomkeerbaar — Art. 35
+                          kent geen weg terug, alleen een creditnota.
+
+                          De bevestiging zei het al eerlijk; de knop niet, en de knop is wat je
+                          indrukt. Het label zegt nu de handeling, niet de verwachting.
+
+                          NB: "Offerte versturen" zou het erger maken, niet beter — dan belooft de
+                          knop een offerte te sturen terwijl er een factuur uitgaat. Een offerte
+                          ALS offerte mailen kan de app (nog) helemaal niet. */}
                       {isOfferte && inv.status === 'draft' && (
                         <button
                           onClick={e => {
@@ -1238,7 +1249,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Versturen</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Omzetten naar factuur</>}
                         </button>
                       )}
 

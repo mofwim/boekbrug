@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS } from '@/lib/payment-term'
+import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -57,6 +58,11 @@ export default function InvoiceEditPage() {
   // (Art. 35), en het woord offerte kwam nergens voor.
   const [invoiceType, setInvoiceType] = useState<string>('factuur')
   const quote = isQuote(invoiceType)
+  // [KORTING] Ook hier te wijzigen, niet alleen bij het aanmaken. Een korting die je alleen kunt
+  // instellen door de factuur opnieuw te maken, is een korting die je bij de eerste onderhandeling
+  // met de klant kwijt bent.
+  const [discountType, setDiscountType] = useState<'percent' | 'amount'>('percent')
+  const [discountValue, setDiscountValue] = useState('')
   const [showSendModal, setShowSendModal] = useState(false)
   useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
@@ -120,6 +126,13 @@ export default function InvoiceEditPage() {
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
       setInvoiceType(invoice.invoice_type || 'factuur')
+      // [KORTING] Wat er staat, zoals het is opgeslagen. Zonder deze twee regels opende het scherm
+      // met een leeg kortingsveld boven een verlaagd totaal, en de eerste "Wijzigingen opslaan"
+      // haalde de korting er stilletjes af.
+      const dt = (invoice as { discount_type?: string | null }).discount_type
+      const dv = (invoice as { discount_value?: number | null }).discount_value
+      if (dt === 'percent' || dt === 'amount') setDiscountType(dt)
+      setDiscountValue(dv == null ? '' : String(dv))
       setClientName(invoice.client_name || '')
       setClientEmail(invoice.client_email || '')
       setClientAddress(invoice.client_address || '')
@@ -184,9 +197,17 @@ export default function InvoiceEditPage() {
   }
 
   // ── Totalen — realtime ────────────────────────────────────────────────────
-  const totalEx = lines.reduce((sum, l) => sum + l.quantity * l.unit_price, 0)
-  const btwAmount = lines.reduce((sum, l) => sum + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
-  const totalInc = totalEx + btwAmount
+  // [KORTING] Dezelfde module als de server, de PDF en de UBL-export. Zonder korting geeft
+  // applyDiscount exact dezelfde drie getallen als de handmatige sommen die hier stonden.
+  const korting = parseDiscount(discountType, discountValue)
+  const kortingTotalen = applyDiscount(
+    lines.map(l => ({ line_total: l.quantity * l.unit_price, btw_rate: l.btw_rate })),
+    korting,
+  )
+  const subtotalEx = kortingTotalen.subtotal_ex_btw
+  const totalEx = kortingTotalen.total_ex_btw
+  const btwAmount = kortingTotalen.btw_amount
+  const totalInc = kortingTotalen.total_inc_btw
 
   // ── Opslaan — PUT ─────────────────────────────────────────────────────────
   async function handleSave() {
@@ -214,6 +235,10 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [KORTING] Altijd meesturen, ook leeg: dat is hoe de route "korting eraf halen"
+        // onderscheidt van "een oudere pagina die het veld niet kent".
+        discount_type: invoiceType === 'creditnota' ? null : discountType,
+        discount_value: invoiceType === 'creditnota' ? null : discountValue,
         lines
       })
     })
@@ -257,6 +282,11 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [KORTING] Ook op de opslaan-en-versturen weg. Dit is de gevaarlijkste van de twee: hier
+        // wordt het document een genummerde factuur, en een korting die op dit pad wegvalt gaat
+        // onherroepelijk mee de deur uit tegen de volle prijs.
+        discount_type: invoiceType === 'creditnota' ? null : discountType,
+        discount_value: invoiceType === 'creditnota' ? null : discountValue,
         lines,
       }),
     })
@@ -552,13 +582,61 @@ export default function InvoiceEditPage() {
           </button>
         </div>
 
+        {/* [KORTING] Op de factuur én de offerte, niet op een creditnota — dat document is al een
+            correctie. Zelfde regels als het aanmaakscherm; de server valideert opnieuw. */}
+        {invoiceType !== 'creditnota' && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium text-gray-900">Korting</span>
+            <div className="inline-flex rounded-full border border-gray-200 overflow-hidden">
+              {(['percent', 'amount'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setDiscountType(t)}
+                  className={`text-sm px-3.5 py-1.5 ${discountType === t ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-600'}`}
+                >
+                  {t === 'percent' ? '%' : '€'}
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              inputMode="decimal"
+              placeholder={discountType === 'percent' ? 'bijv. 10' : 'bijv. 50,00'}
+              value={discountValue}
+              onChange={e => setDiscountValue(e.target.value)}
+              aria-label={discountType === 'percent' ? 'Kortingspercentage' : 'Kortingsbedrag'}
+              className="w-28 border border-gray-200 rounded-lg px-2.5 py-2 text-sm"
+            />
+            {discountValue.trim() !== '' && !korting && (
+              <span className="text-xs text-red-600">
+                {discountType === 'percent' ? 'Vul een percentage tussen 0 en 100 in.' : 'Vul een bedrag boven 0 in.'}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Totalen */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
           <div className="space-y-2 text-sm max-w-xs ml-auto">
             <div className="flex justify-between text-gray-500">
               <span>Subtotaal excl. BTW</span>
-              <span>€{totalEx.toFixed(2)}</span>
+              <span>€{subtotalEx.toFixed(2)}</span>
             </div>
+            {kortingTotalen.discount_ex_btw > 0 && (
+              <>
+                <div className="flex justify-between text-green-700">
+                  <span>{discountLabel(korting)}</span>
+                  <span>−€{kortingTotalen.discount_ex_btw.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>Na korting excl. BTW</span>
+                  <span>€{totalEx.toFixed(2)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between text-gray-500">
               <span>BTW</span>
               <span>€{btwAmount.toFixed(2)}</span>
