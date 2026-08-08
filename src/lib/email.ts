@@ -236,6 +236,14 @@ export async function sendInvoiceToClient({
   // invoice showed "verstuurd" while the customer received nothing. Capture the
   // result and THROW on error so the caller's catch marks it email_failed.
   const antwoordAdres = (senderEmail ?? '').trim()
+  // [ANTWOORD-ADRES-ZICHTBAAR] Het adres staat ook IN de mail, niet alleen in de Reply-To-header.
+  // Die header doet zijn werk pas als de klant op "Beantwoorden" drukt; wie de mail doorstuurt naar
+  // zijn boekhouder, hem afdrukt, of vanaf een ander account wil reageren, ziet hem nooit. Op de
+  // offerte stond het adres al in de tekst — op de factuur en de herinnering, de twee stukken waar
+  // een klant juist iets over te melden heeft, nergens.
+  const contactRegel = antwoordAdres
+    ? `<p style="color: #555;">Vragen over deze ${docLabel.toLowerCase()}? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
+    : ''
   const { error: sendError } = await getResend().emails.send({
     from: customerMailFrom(zzperName),
     to: toEmail,
@@ -254,6 +262,7 @@ export async function sendInvoiceToClient({
           ${dueDateRow}
         </div>
         ${attachmentLine}
+        ${contactRegel}
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
@@ -546,6 +555,14 @@ export async function sendInvoiceReminder({
     : ''
 
   const antwoordAdres = (senderEmail ?? '').trim()
+  // [ANTWOORD-ADRES-ZICHTBAAR] Het adres staat ook IN de mail, niet alleen in de Reply-To-header.
+  // Die header doet zijn werk pas als de klant op "Beantwoorden" drukt; wie de mail doorstuurt naar
+  // zijn boekhouder, hem afdrukt, of vanaf een ander account wil reageren, ziet hem nooit. Op de
+  // offerte stond het adres al in de tekst — op de factuur en de herinnering, de twee stukken waar
+  // een klant juist iets over te melden heeft, nergens.
+  const contactRegel = antwoordAdres
+    ? `<p style="color: #555;">Vragen over deze factuur? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
+    : ''
   const __sendResult = await getResend().emails.send({
     from: customerMailFrom(zzperName),
     to: toEmail,
@@ -565,6 +582,7 @@ export async function sendInvoiceReminder({
         ${wikBlock}
         ${attachmentLine}
         <p style="color: #5f6368; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
+        ${contactRegel}
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `,
