@@ -267,10 +267,7 @@ export async function PUT(
   const kortingMeegestuurd = 'discount_type' in body || 'discount_value' in body
   const kortingHier = kortingMeegestuurd
     ? parseDiscount(body.discount_type, body.discount_value)
-    : parseDiscount(
-        (existing as { discount_type?: unknown }).discount_type,
-        (existing as { discount_value?: unknown }).discount_value,
-      )
+    : parseDiscount(existing.discount_type, existing.discount_value)
   const { total_ex_btw, btw_amount, total_inc_btw } = kortingHier
     ? (() => { const d = applyDiscount(lines, kortingHier); return { total_ex_btw: d.total_ex_btw, btw_amount: d.btw_amount, total_inc_btw: d.total_inc_btw } })()
     : computeInvoiceTotals(lines)

@@ -165,8 +165,7 @@ test("[KORTING] the UBL carries one AllowanceCharge per rate, and its totals bal
       client_postal_code: "1000 AA", client_btw_number: null, invoice_type: "factuur",
       total_ex_btw: 1800, btw_amount: 270, total_inc_btw: 2070,
       discount_type: "amount", discount_value: 200,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any,
+    },
     [
       { description: "Werk 21", quantity: 1, unit_price: 1000, btw_rate: 21, line_total: 1000 },
       { description: "Werk 9", quantity: 1, unit_price: 1000, btw_rate: 9, line_total: 1000 },

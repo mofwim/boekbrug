@@ -54,6 +54,13 @@ export interface UblInvoiceHeader {
   client_postal_code: string | null;
   client_city: string | null;
   client_btw_number: string | null;
+  /**
+   * [KORTING] Een korting op de hele factuur. Hoort in het CONTRACT van deze export, niet in een
+   * cast bij het gebruik: dit bestand gaat naar een access point dat het weigert als de bedragen
+   * niet met elkaar kloppen (BR-CO-10), dus wat erin mag is precies wat hier staat.
+   */
+  discount_type?: string | null;
+  discount_value?: number | null;
 }
 
 /** Invoice line, from `invoice_lines`. `line_total` is treated as EX BTW. */
@@ -289,10 +296,7 @@ export function buildInvoiceUbl(
   // gebruiken. Drie plekken die hetzelfde uitrekenen moeten hetzelfde antwoord geven — en hier is
   // dat geen nettigheid: wijkt LegalMonetaryTotal een cent af van de som van de regels en de
   // toeslagen, dan weigert het ontvangende access point het bestand (BR-CO-10).
-  const korting = parseDiscount(
-    (header as { discount_type?: unknown }).discount_type,
-    (header as { discount_value?: unknown }).discount_value,
-  );
+  const korting = parseDiscount(header.discount_type, header.discount_value);
   const kortingUitkomst = applyDiscount(
     rawGroups.map((g) => ({ line_total: g.taxable, btw_rate: g.rate })),
     korting,
