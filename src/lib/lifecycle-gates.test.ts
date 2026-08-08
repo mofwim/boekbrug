@@ -3926,6 +3926,37 @@ test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it
     "…and so must the cron that sends most of them",
   );
 
+  // [ANTWOORD-ADRES-ZICHTBAAR] The address is IN the mail, not only in the Reply-To header.
+  //
+  // That header only works when the customer presses Reply. Someone who forwards the invoice to
+  // their own bookkeeper, prints it, or answers from another account never sees it — and those are
+  // ordinary things to do with an invoice. The quote already named the address in its text; the
+  // invoice and the reminder, the two documents a customer actually has something to say about,
+  // named it nowhere.
+  //
+  // Counted at three, so a fourth customer-facing mail cannot quietly ship without one.
+  //
+  // The first version of this counted the `mailto:` string, which lives in the DEFINITION of the
+  // line. Deleting the interpolation from the body left the definition — and its mailto — sitting
+  // there unused, so the gate stayed green over a mail that no longer showed the address. Its own
+  // negative control is what said so. What has to be counted is the line being PLACED.
+  const mailBody = code("src/lib/email.ts");
+  const geplaatst = mailBody.split("${contactRegel}").length - 1;
+  assert.equal(geplaatst, 2, `factuur en herinnering plaatsen de regel — gevonden: ${geplaatst}`);
+  assert.match(
+    mailBody, /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
+    "…and that line is what carries the address",
+  );
+  assert.match(
+    code("src/lib/offerte-send.ts"), /mailto:\$\{escapeHtml\(antwoordAdres\)\}/,
+    "the quote names it in its own closing sentence",
+  );
+  // And only when there IS one: a contact sentence trailing into nothing is worse than none.
+  assert.match(
+    mailBody, /const contactRegel = antwoordAdres\n?\s*\?/,
+    "the contact line must be conditional on an address actually being known",
+  );
+
   // [ACTING-FOR] The fallback to the logged-in account is only the owner's address when the logged-
   // in person IS the owner. A verkoopmedewerker sending a quote would otherwise route the
   // customer's "akkoord" to an employee, on a document that binds the employer.
