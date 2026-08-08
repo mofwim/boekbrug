@@ -24,6 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
+import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -384,8 +385,11 @@ function DateField({
 // ─── [FACTUUR-A] Payment-term presets — June 2026 ────────────────────────────
 // Quick chips that compute Vervaldatum = Factuurdatum + N days. Manual editing
 // stays fully available via the DateField. 30 days is the Dutch default.
-const BETALINGSTERMIJNEN = [14, 30, 60] as const
-const DEFAULT_TERMIJN = 30
+// [BETAALTERMIJN] De lijst en de standaard staan nu in payment-term.ts, samen met de rekenregels
+// en de zin die het bewerkscherm eruit opbouwt. Twee schermen met elk hun eigen kopie van "wat is
+// een termijn" is precies hoe die twee uit elkaar gaan lopen.
+const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS
+const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM
 function addDaysISO(iso: string, days: number): string {
   // String-based to stay timezone-proof on date-only values.
   const [y, m, d] = iso.split('-').map(Number)
@@ -1415,6 +1419,31 @@ function NewInvoicePageContent() {
                       </button>
                     )
                   })}
+                  {/* [BETAALTERMIJN] Elk heel getal, niet alleen 14/30/60. Een termijn spreek je
+                      per klant af — "jij krijgt 45 dagen" — en drie vaste chips maakten dat
+                      onmogelijk zonder de vervaldatum uit te rekenen en met de hand in te tikken.
+                      De bovengrens in payment-term.ts is een tikfoutgrens (300 in plaats van 30 zet
+                      de vervaldatum bijna een jaar vooruit en laat elke herinnering net zo lang
+                      wachten), geen uitspraak over wat een ondernemer mag afspreken. */}
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: '#70757a' }}>of</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={MAX_PAYMENT_TERM_DAYS}
+                      inputMode="numeric"
+                      placeholder="dagen"
+                      value={betalingstermijn ?? ''}
+                      onChange={e => {
+                        const days = parsePaymentTerm(e.target.value)
+                        if (days == null) { setBetalingstermijn(null); return }
+                        setBetalingstermijn(days)
+                        if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
+                      }}
+                      style={{ width: 78, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 14, outline: 'none' }}
+                      aria-label="Betalingstermijn in dagen"
+                    />
+                  </label>
                   {betalingstermijn === null && (
                     <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
                   )}
@@ -1617,12 +1646,22 @@ function NewInvoicePageContent() {
                     handleSubmit('sent')
                   }
                 }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' : '↩ Versturen'}
+                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' /* saves only — never /api/invoice/send, see handleSubmit */ : '↩ Versturen'}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
+                  {/* [OFFERTE-EEN-KNOP] Voor een OFFERTE deed deze knop letterlijk hetzelfde als de
+                      grote knop erboven. `mode` wordt in handleSubmit precies één keer gelezen —
+                      `if (mode === 'sent' && invoiceType !== 'offerte')` — en die voorwaarde sluit
+                      de offerte uit, dus beide paden schreven hetzelfde concept weg en navigeerden
+                      naar dezelfde pagina. Twee knoppen, waarvan één als hoofdactie opgemaakt, met
+                      geen enkel verschil: de ondernemer kan alleen maar denken dat hij iets mist.
+                      Een factuur en een creditnota houden hem — daar is het verschil echt
+                      (versturen versus als concept bewaren). */}
+                  {invoiceType !== 'offerte' && (
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
                     {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
                   </button>
+                  )}
                   {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
                   <Link href={parentHref}
                     style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>

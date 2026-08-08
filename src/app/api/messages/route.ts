@@ -4,10 +4,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendMessageNotification } from '@/lib/email'
 import { appUrl } from "@/lib/app-origin"
 
-// ── GET: جلب رسائل المحادثة ───────────────────────────────────────────────────
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// ── GET: fetch one conversation ───────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest) {
 
     // [SEC-MESSAGE] otherId is interpolated into the PostgREST .or() filter below. Constrain it to a
     // UUID so a crafted value can't inject extra filter syntax and widen the match beyond this pair.
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(otherId)) {
+    if (!UUID.test(otherId)) {
       return NextResponse.json({ error: 'Ongeldige gesprekspartner' }, { status: 400 })
     }
 
@@ -33,23 +36,81 @@ export async function GET(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: 'Ophalen mislukt' }, { status: 500 })
 
-    // تحديد الرسائل المستلمة كمقروءة
+    // Mark the received messages as read
     const unreadIds = messages
       ?.filter(m => m.receiver_id === user.id && !m.read)
       .map(m => m.id) || []
 
     if (unreadIds.length > 0) {
-      await supabase.from('messages').update({ read: true }).in('id', unreadIds)
+      const { error: readErr } = await supabase.from('messages').update({ read: true }).in('id', unreadIds)
+      // [NO-SILENT-EMPTY] Not fatal — the conversation is on screen either way — but a failure here
+      // means the badge on the home keeps counting messages the owner has visibly read, and nothing
+      // would ever say why.
+      if (readErr) console.error('[BERICHTEN] als gelezen markeren mislukt', { userId: user.id, error: readErr.message })
     }
 
-    return NextResponse.json({ messages: messages || [] })
+    const partnerName = await resolvePartnerName(supabase, user.id, otherId, (messages ?? []).length > 0)
+
+    return NextResponse.json({
+      messages: messages || [],
+      // [NAAM-TEGENPARTIJ] Resolved server-side on purpose — see resolvePartnerName.
+      partner: { id: otherId, name: partnerName },
+    })
 
   } catch {
     return NextResponse.json({ error: 'Onbekende fout' }, { status: 500 })
   }
 }
 
-// ── POST: إرسال رسالة ─────────────────────────────────────────────────────────
+/**
+ * [NAAM-TEGENPARTIJ] Who the owner is talking to, by name.
+ *
+ * The screens used to read this straight from `profiles` in the browser, and for a zzp'er that
+ * returns NOTHING: RLS on profiles is `id = auth.uid()` plus one policy that lets an ACCOUNTANT
+ * read a linked client — there is no policy the other way round. So the accountant saw his client's
+ * name and the client saw "Onbekend", on the one screen whose entire purpose is that these two
+ * people talk to each other. The rest of the app already knew this (see the header of
+ * /api/settings/accountant, "bypasses RLS on profiles"); the message screens were the exception.
+ *
+ * Reading a name for an arbitrary id would be a leak, so it is gated on a relationship the CALLER
+ * can already prove: an accountant↔client link, or an existing message between the two (which RLS
+ * itself just returned to them).
+ */
+async function resolvePartnerName(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  otherId: string,
+  hasConversation: boolean,
+): Promise<string | null> {
+  try {
+    if (!hasConversation) {
+      const { data: myLinks } = await supabase
+        .from('accountant_clients')
+        .select('accountant_id, zzper_id')
+        .or(`accountant_id.eq.${userId},zzper_id.eq.${userId}`)
+      const linked = (myLinks ?? []).some(
+        (l) =>
+          (l.accountant_id === userId && l.zzper_id === otherId) ||
+          (l.zzper_id === userId && l.accountant_id === otherId),
+      )
+      if (!linked) return null
+    }
+
+    const pipeline = createPipelineClient()
+    const { data: profile } = await pipeline
+      .from('profiles')
+      .select('full_name, company_name')
+      .eq('id', otherId)
+      .maybeSingle()
+    return profile?.company_name || profile?.full_name || null
+  } catch (err) {
+    // A missing name is a cosmetic loss; it may never cost the owner the conversation itself.
+    console.error('[BERICHTEN] naam van gesprekspartner ophalen mislukt', { otherId, error: String(err) })
+    return null
+  }
+}
+
+// ── POST: send a message ──────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
@@ -69,10 +130,19 @@ export async function POST(request: NextRequest) {
     // in-app notification + e-mail (via service_role) to ANY user — a spam/abuse vector.
     // Fetch this user's own links (bounded) and check the pair IN CODE (receiver_id is never
     // interpolated into a SQL filter → no PostgREST filter injection).
-    const { data: myLinks } = await supabase
+    const { data: myLinks, error: linkErr } = await supabase
       .from('accountant_clients')
       .select('accountant_id, zzper_id')
       .or(`accountant_id.eq.${user.id},zzper_id.eq.${user.id}`)
+    if (linkErr) {
+      // [NO-SILENT-EMPTY] A failed read is not "not linked". Answering 403 here tells the owner
+      // their accountant is gone, which is a different — and false — piece of news.
+      console.error('[BERICHTEN] koppelingslezing mislukt', { userId: user.id, error: linkErr.message })
+      return NextResponse.json(
+        { error: 'De koppeling kon niet worden gecontroleerd — probeer het zo opnieuw.' },
+        { status: 503 },
+      )
+    }
     const linked = (myLinks ?? []).some(
       (l) =>
         (l.accountant_id === user.id && l.zzper_id === receiver_id) ||
@@ -100,41 +170,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Verzenden mislukt' }, { status: 500 })
     }
 
-    // إشعار في قاعدة البيانات
+    // In-app notification + push, through the one writer.
     // [CONTROL] notifications has NO authenticated INSERT policy (verified via
     // live pg_policies) → an anon insert 42501s silently and the recipient never
-    // gets the in-app notification. Write it via service_role.
-    const pipeline = createPipelineClient()
-    await pipeline.from('notifications').insert({
-      user_id: receiver_id,
+    // gets the in-app notification. createNotification writes it via service_role —
+    // and, since it is the writer that also fans out to the recipient's devices,
+    // this is what finally makes a new message ring a phone. The direct insert that
+    // stood here wrote the row and stopped there: push was built, documented and
+    // wired to exactly the events a message is not.
+    const melding = await createNotification({
+      userId: receiver_id,
       title: 'Nieuw bericht',
       body: content.trim().slice(0, 80),
       type: 'message',
-      read: false,
-      link: `/dashboard/messages/${user.id}`
+      link: `/dashboard/messages/${user.id}`,
     })
+    if (!melding.ok) {
+      console.error('[BERICHTEN] melding aan de ontvanger mislukt', { receiver_id, error: melding.error })
+    }
 
-    // إيميل إشعار — لا يوقف العملية عند الفشل
+    // E-mail notification — never blocks the send.
+    //
+    // [NAAM-TEGENPARTIJ] Both profiles come from the PIPELINE client. The receiver used to be read
+    // with the session client, and RLS on profiles only lets an accountant read his client — never
+    // the reverse. So `receiverProfile` was null for every message a client sent to his accountant,
+    // the `if` below fell through, and the mail was silently not sent. One direction of the bridge
+    // mailed and the other did not; nothing on either screen said so. The sibling route
+    // /api/accountant/vraag-stukken already read both sides through the pipeline.
+    const pipeline = createPipelineClient()
     const [{ data: senderProfile }, { data: receiverProfile }] = await Promise.all([
-      supabase.from('profiles').select('full_name, company_name, email').eq('id', user.id).single(),
-      supabase.from('profiles').select('email, full_name').eq('id', receiver_id).single()
+      pipeline.from('profiles').select('full_name, company_name, email').eq('id', user.id).maybeSingle(),
+      pipeline.from('profiles').select('email, full_name').eq('id', receiver_id).maybeSingle()
     ])
 
 // [BOEK-FOUNDATION-TYPES] Only send notification if recipient has email
     if (senderProfile && receiverProfile?.email) {
       const senderName = senderProfile.company_name || senderProfile.full_name || 'BoekBrug gebruiker'
-      sendMessageNotification({
-        toEmail: receiverProfile.email,
-        receiverName: receiverProfile.full_name || 'Gebruiker',
-        senderName,
-        messagePreview: content.trim().slice(0, 120),
-        // [ORIGIN] Was `${process.env.NEXT_PUBLIC_APP_URL}/...` zonder vangnet: ontbrak de
-        // variabele, dan vertrok deze mail met de link "undefined/dashboard/messages/...".
-        // appUrl geeft null als er geen origin is; de mail gaat dan zonder link i.p.v. met een
-        // kapotte — sendMessageNotification valt terug op de tekst zelf.
-        conversationUrl:
-          appUrl(process.env, `/dashboard/messages/${user.id}`, new URL(request.url).origin) ?? ''
-      }).catch(() => null)
+      // Awaited: this route runs in a serverless function that may be frozen the moment it
+      // responds, so a floating promise is a mail that leaves only if the platform feels like it.
+      // The failure path stays best-effort — the message itself is already stored.
+      try {
+        await sendMessageNotification({
+          toEmail: receiverProfile.email,
+          receiverName: receiverProfile.full_name || 'Gebruiker',
+          senderName,
+          messagePreview: content.trim().slice(0, 120),
+          // [ORIGIN] Was `${process.env.NEXT_PUBLIC_APP_URL}/...` zonder vangnet: ontbrak de
+          // variabele, dan vertrok deze mail met de link "undefined/dashboard/messages/...".
+          // appUrl geeft null als er geen origin is; de mail gaat dan zonder link i.p.v. met een
+          // kapotte — sendMessageNotification valt terug op de tekst zelf.
+          conversationUrl:
+            appUrl(process.env, `/dashboard/messages/${user.id}`, new URL(request.url).origin) ?? ''
+        })
+      } catch (e) {
+        console.error('[BERICHTEN] e-mail aan de ontvanger mislukt', { receiver_id, error: String(e) })
+      }
     }
     return NextResponse.json({ success: true, message })
 

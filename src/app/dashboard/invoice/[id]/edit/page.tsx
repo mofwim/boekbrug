@@ -5,6 +5,8 @@
 // نفس شكل ومنطق new/page.tsx — لكن يحمّل البيانات الموجودة ويرسل PUT
 
 import { useState, useEffect } from 'react'
+import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
+import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS } from '@/lib/payment-term'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -14,6 +16,7 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 import type { ProfileRow } from '@/types/rows'
 import { COLUMN } from '@/lib/design/tokens';
+import { formatDateNL } from '@/lib/format-nl'
 // [PRIJS-MODUS] Dezelfde omrekening als het aanmaakscherm — één definitie, twee schermen.
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
@@ -48,6 +51,12 @@ export default function InvoiceEditPage() {
 
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
+  // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
+  // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
+  // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
+  // (Art. 35), en het woord offerte kwam nergens voor.
+  const [invoiceType, setInvoiceType] = useState<string>('factuur')
+  const quote = isQuote(invoiceType)
   const [showSendModal, setShowSendModal] = useState(false)
   useCloseOnBack(!!showSendModal, () => setShowSendModal(false))
   const [sending, setSending] = useState(false)
@@ -110,6 +119,7 @@ export default function InvoiceEditPage() {
       setInvoiceNumber(invoice.invoice_number)
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
+      setInvoiceType(invoice.invoice_type || 'factuur')
       setClientName(invoice.client_name || '')
       setClientEmail(invoice.client_email || '')
       setClientAddress(invoice.client_address || '')
@@ -280,8 +290,8 @@ export default function InvoiceEditPage() {
   // [SUBNAV] Title (+ invoice number) in the shared header; called before the
   // loading return so hook order stays stable.
   useSubPageHeader(
-    { title: invoiceNumber ? `Factuur bewerken · ${invoiceNumber}` : 'Factuur bewerken' },
-    [invoiceNumber]
+    { title: quote ? 'Offerte bewerken' : invoiceNumber ? `Factuur bewerken · ${invoiceNumber}` : 'Factuur bewerken' },
+    [invoiceNumber, quote]
   )
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -398,11 +408,54 @@ export default function InvoiceEditPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
-                Vervaldatum <span className="text-red-400">*</span>
+                {quote ? 'Geldig tot' : 'Vervaldatum'} <span className="text-red-400">*</span>
               </label>
-              <DateFieldNL value={dueDate} onChange={setDueDate} aria-label="Vervaldatum" />
+              <DateFieldNL value={dueDate} onChange={setDueDate} aria-label={quote ? 'Geldig tot' : 'Vervaldatum'} />
             </div>
           </div>
+
+          {/* [BETAALTERMIJN] De termijn zelf, vrij in te vullen.
+              Op het nieuwe-factuurscherm stonden drie chips: 14, 30 en 60. Een termijn is iets wat
+              je per klant afspreekt ("jij krijgt 45 dagen"), dus elk heel getal mag — de grens in
+              payment-term.ts is een tikfoutgrens, geen beleid.
+              Dit blok bestaat niet op een offerte: haar datum betekent "Geldig tot", niet een
+              betaaltermijn, en één veld twee dingen laten betekenen is hoe een document iets anders
+              gaat zeggen dan het scherm. */}
+          {!quote && (
+            <div className="flex items-center gap-2 flex-wrap mt-3">
+              <span className="text-xs text-gray-500">Betalingstermijn:</span>
+              {COMMON_PAYMENT_TERMS.map(days => {
+                const active = invoiceDate !== '' && termFromDates(invoiceDate, dueDate) === days
+                return (
+                  <button
+                    key={days}
+                    type="button"
+                    onClick={() => { if (invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, days)) }}
+                    className={`text-sm px-3.5 py-1.5 rounded-full border ${active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600'}`}
+                  >
+                    {days} dagen
+                  </button>
+                )
+              })}
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <span className="text-xs text-gray-500">of</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_PAYMENT_TERM_DAYS}
+                  inputMode="numeric"
+                  placeholder="dagen"
+                  value={invoiceDate ? (termFromDates(invoiceDate, dueDate) ?? '') : ''}
+                  onChange={e => {
+                    const days = parsePaymentTerm(e.target.value)
+                    if (days != null && invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, days))
+                  }}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                  aria-label="Betalingstermijn in dagen"
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Factuurregels */}
@@ -523,12 +576,30 @@ export default function InvoiceEditPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               Betalingsinformatie
             </p>
-            <p className="text-sm text-gray-600">
-              Gelieve te betalen binnen 30 dagen op{' '}
-              <span className="font-medium text-gray-900">{profile.iban}</span>{' '}
-              o.v.v.{' '}
-              <span className="font-medium text-gray-900">{invoiceNumber}</span>
-            </p>
+            {/* [BETAALTERMIJN] De zin komt uit de DATA, niet uit een literal. Hier stond
+                "binnen 30 dagen" als vaste tekst: wie een vervaldatum van veertien dagen had
+                ingevuld, kreeg op het scherm waar hij zijn factuur nakijkt de belofte van dertig
+                te zien. Het getal sloeg nergens op — en het stond op een document over geld.
+
+                Is er niets eerlijks te zeggen (geen vervaldatum, of een datum vóór de
+                factuurdatum), dan staat er niets. Zwijgen is beter dan een getal verzinnen. */}
+            {quote ? (
+              // Een offerte KENT geen betaaltermijn: haar due_date is "Geldig tot" — dat is wat de
+              // PDF ervan drukt. Hier een betaalzin tonen zou het document tegenspreken.
+              <p className="text-sm text-gray-600">
+                {dueDate ? <>Deze offerte is geldig tot <span className="font-medium text-gray-900">{formatDateNL(dueDate)}</span>. </> : null}
+                Bij akkoord betaal je op{' '}
+                <span className="font-medium text-gray-900">{profile.iban}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-gray-600">
+                {paymentTermText({ invoiceDateIso: invoiceDate, dueDateIso: dueDate, iban: profile.iban })
+                  ?? 'Betalen op'}{' '}
+                <span className="font-medium text-gray-900">{profile.iban}</span>{' '}
+                o.v.v.{' '}
+                <span className="font-medium text-gray-900">{invoiceNumber}</span>
+              </p>
+            )}
           </div>
         )}
 
@@ -538,7 +609,7 @@ export default function InvoiceEditPage() {
 
         {/* Acties */}
         <div className="flex gap-3 pb-8 flex-wrap">
-          {invoiceStatus === 'draft' ? (
+          {isInvoiceEditable({ status: invoiceStatus, invoiceType, invoiceNumber }) ? (
             <>
               {/* [BOEK-031] Draft: 2 buttons — Save (keeps draft) + Send (triggers full flow) — May 2026 */}
               <button
@@ -553,7 +624,7 @@ export default function InvoiceEditPage() {
                 disabled={saving || sending}
                 className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
               >
-                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+                {sending ? 'Verzenden...' : quote ? '✉ Omzetten naar factuur en versturen' : '✉ Verstuur factuur'}
               </button>
             </>
           ) : (
@@ -587,7 +658,9 @@ export default function InvoiceEditPage() {
               Versturen naar {clientName}?
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
-              Bevestig de gegevens voordat je de factuur verstuurt.
+              {quote
+                ? 'Let op: hiermee wordt deze offerte een OFFICIËLE FACTUUR. Hij krijgt een factuurnummer uit je reeks, en dat is niet terug te draaien — een factuur corrigeer je met een creditnota. Wil je alleen de offerte bijwerken, gebruik dan "Wijzigingen opslaan".'
+                : 'Bevestig de gegevens voordat je de factuur verstuurt.'}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
               <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>

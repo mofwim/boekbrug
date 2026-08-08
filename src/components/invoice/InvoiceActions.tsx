@@ -5,6 +5,7 @@
 // مكون مشترك — يُستخدم في صفحة تفاصيل الفاتورة
 
 import { useState } from 'react'
+import { isInvoiceEditable } from '@/lib/invoice-editable'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 // [BOEK-020] UBL export button
@@ -48,7 +49,12 @@ export function InvoiceActions({ invoiceId, invoiceNumber, status, direction, in
   const [bvCopied, setBvCopied] = useState('')
 
   //const canDelete = DELETABLE_STATUSES.includes(status)
-const canEdit = status === 'draft'
+// [OFFERTE-BEWERKBAAR] Dezelfde regel als de PUT-route, uit één module — anders kan de knop
+// verschijnen waar de deur weigert (of andersom: verborgen blijven terwijl bewerken gewoon mag,
+// wat hier het geval was voor elke verstuurde offerte).
+const canEdit = isInvoiceEditable({ status, invoiceType, invoiceNumber })
+// Verwijderen blijft concept-only: een verstuurde offerte is bij de klant geweest, en hem laten
+// verdwijnen is iets anders dan hem aanpassen.
 const canDelete = status === 'draft'
 // A betaalverzoek is for an issued, unpaid, OUTGOING factuur.
 const canRequestPayment =

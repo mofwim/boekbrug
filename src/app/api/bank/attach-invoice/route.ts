@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
@@ -631,22 +632,18 @@ export async function POST(req: NextRequest) {
   });
 
   // 11. Notification (non-blocking) — service_role by rule.
-  try {
-    await pipeline.from("notifications").insert({
-      user_id: user.id,
-      title: "Factuur gekoppeld",
-      body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
-      type: "payment",
-      // [NOTIF-DEADEND] This route CREATES a paid invoice out of a bank line — the one
-      // row the owner is most likely to want to check — and the bell announcing it had
-      // no link. Point at the new invoice, by direction.
-      link: isOutgoing
-        ? `/dashboard/invoice/${invoice.id}`
-        : `/dashboard/incoming/manage?focus=${invoice.id}`,
-    });
-  } catch {
-    /* non-blocking */
-  }
+  await createNotification({
+    userId: user.id,
+    title: "Factuur gekoppeld",
+    body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
+    type: "payment",
+    // [NOTIF-DEADEND] This route CREATES a paid invoice out of a bank line — the one
+    // row the owner is most likely to want to check — and the bell announcing it had
+    // no link. Point at the new invoice, by direction.
+    link: isOutgoing
+      ? `/dashboard/invoice/${invoice.id}`
+      : `/dashboard/incoming/manage?focus=${invoice.id}`,
+  });
 
   return NextResponse.json({
     ok: true,

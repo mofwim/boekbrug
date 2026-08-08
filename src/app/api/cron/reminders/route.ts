@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { createNotification } from "@/lib/notifications";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import {
@@ -375,11 +376,21 @@ export async function GET(req: NextRequest) {
         // Releasing the claim lets tomorrow's run try the same tier again.
         if (!delivery.delivered) {
           failed += 1;
-          try {
-            await pipeline.from("invoice_reminders").delete().eq("id", claimId);
-          } catch {
-            // Could not release it — then it stays claimed, which is the old behaviour. Say so.
-            console.error("[CRON-REMINDERS] could not release a rejected claim", { invoiceId: inv.id, tier });
+          // [LINKS-WRITE-HONEST] The error is READ. This block already meant to say something when
+          // the release failed — and could not: supabase-js reports a query error in the RESULT, it
+          // does not throw, so that catch never fired and the delete's error was discarded. The
+          // release silently not happening puts this invoice back in exactly the state the comment
+          // above describes as the bug being fixed: the claim stays, the pre-read counts every
+          // invoice_reminders row whatever its status, and the tier can NEVER be tried again. On
+          // the last tier that is the statutory WIK aanmaning never reaching the customer while the
+          // owner believes it went out — and with it the basis for charging incassokosten.
+          const { error: releaseErr } = await pipeline
+            .from("invoice_reminders").delete().eq("id", claimId);
+          if (releaseErr) {
+            console.error(
+              "[CRON-REMINDERS] could NOT release a rejected claim — this tier can never be retried",
+              { invoiceId: inv.id, tier, finalTier, error: releaseErr.message },
+            );
           }
           console.error("[CRON-REMINDERS] reminder rejected by the mail provider — tier released for retry", {
             invoiceId: inv.id, tier, wik: !!wik,
@@ -394,24 +405,19 @@ export async function GET(req: NextRequest) {
         sentByInvoice.set(inv.id, arr);
 
         // Notify the owner (best-effort) — visible proof the app acted for them.
-        try {
-          // [WIK] After the statutory letter the owner has something they did not have before:
-          // the RIGHT to charge collection costs once the term passes. That right is invisible
-          // unless it is said — and unsaid, the letter's whole purpose is lost on them.
-          await pipeline.from("notifications").insert({
-            user_id: ownerId,
-            title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
-            body: wik
-              ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
-                `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
-              : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
-            type: "invoice",
-            read: false,
-            link: `/dashboard/invoice/${inv.id}`,
-          });
-        } catch {
-          /* low severity — the reminder itself already succeeded */
-        }
+        // [WIK] After the statutory letter the owner has something they did not have before:
+        // the RIGHT to charge collection costs once the term passes. That right is invisible
+        // unless it is said — and unsaid, the letter's whole purpose is lost on them.
+        await createNotification({
+          userId: ownerId,
+          title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
+          body: wik
+            ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
+              `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
+            : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
+          type: "invoice",
+          link: `/dashboard/invoice/${inv.id}`,
+        });
       } catch (sendErr) {
         // A THROW is the ambiguous case: the request may have reached the provider before the
         // connection died, so we cannot know whether the customer got a demand. The claim STAYS
@@ -423,29 +429,34 @@ export async function GET(req: NextRequest) {
         // matters most on the final tier, where the letter is what makes incassokosten claimable.
         failed += 1;
         console.error("[CRON-REMINDERS] reminder send threw (non-fatal)", { invoiceId: inv.id, tier, error: sendErr instanceof Error ? sendErr.message : String(sendErr) });
-        try {
-          await pipeline.from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
-        } catch {
-          /* best-effort */
+        // [LINKS-WRITE-HONEST] The error is READ, same reason. invoice_reminders IS the send log:
+        // a claim left on 'sent' after a send that may never have happened records a dunning letter
+        // that was not demonstrably sent — and on the final tier that log is the basis on which
+        // incassokosten are claimed. The tier stays unretryable either way (that is deliberate
+        // after a throw: a second letter to someone who already got one is the worse harm), so
+        // this failure costs the RECORD rather than the send, which is exactly why it may not
+        // disappear.
+        const { error: markErr } = await pipeline
+          .from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
+        if (markErr) {
+          console.error(
+            "[CRON-REMINDERS] could NOT mark a claim failed — the send log still reads 'sent'",
+            { invoiceId: inv.id, tier, finalTier, error: markErr.message },
+          );
         }
-        try {
-          await pipeline.from("notifications").insert({
-            user_id: ownerId,
-            title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
-            body:
-              `Het versturen van ${finalTier ? "de laatste aanmaning" : "een herinnering"} voor factuur ${inv.invoice_number ?? ""} ` +
-              `aan ${inv.client_name ?? "je klant"} is misgegaan. We proberen het niet automatisch opnieuw — een dubbele ` +
-              `aanmaning naar iemand die er al een kreeg is erger. ` +
-              (finalTier
-                ? "Let op: zonder deze aanmaning mag je (nog) geen incassokosten in rekening brengen. Stuur hem zelf, of neem contact op."
-                : "Stuur hem zelf als je dat wilt."),
-            type: "invoice",
-            read: false,
-            link: `/dashboard/invoice/${inv.id}`,
-          });
-        } catch {
-          /* best-effort */
-        }
+        await createNotification({
+          userId: ownerId,
+          title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
+          body:
+            `Het versturen van ${finalTier ? "de laatste aanmaning" : "een herinnering"} voor factuur ${inv.invoice_number ?? ""} ` +
+            `aan ${inv.client_name ?? "je klant"} is misgegaan. We proberen het niet automatisch opnieuw — een dubbele ` +
+            `aanmaning naar iemand die er al een kreeg is erger. ` +
+            (finalTier
+              ? "Let op: zonder deze aanmaning mag je (nog) geen incassokosten in rekening brengen. Stuur hem zelf, of neem contact op."
+              : "Stuur hem zelf als je dat wilt."),
+          type: "invoice",
+          link: `/dashboard/invoice/${inv.id}`,
+        });
       }
     }
   }

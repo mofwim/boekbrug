@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { createNotification } from '@/lib/notifications'
 import { sendInvoiceReminder } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
@@ -220,17 +221,15 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     // bij het volgende telefoontje te horen dat er is aangedrongen — dan is het zijn probleem
     // geworden zonder dat hij erbij was. Best-effort: de mail is al weg.
     if (acting.role === 'boekhouder') {
-      try {
-        await pipeline.from('notifications').insert({
-          user_id: ownerId,
-          title: 'Je boekhouder heeft een herinnering gestuurd',
-          body: `${inv.client_name?.trim() || 'Je klant'} is herinnerd aan factuur ${inv.invoice_number?.trim() || '—'}. Dit was herinnering ${geslaagd.length + 1}.`,
-          type: 'invoice',
-          read: false,
-          link: '/dashboard/facturen',
-        })
-      } catch (e) {
-        console.error('[DEBITEUREN] melding aan de ondernemer mislukt', { id, error: String(e) })
+      const melding = await createNotification({
+        userId: ownerId,
+        title: 'Je boekhouder heeft een herinnering gestuurd',
+        body: `${inv.client_name?.trim() || 'Je klant'} is herinnerd aan factuur ${inv.invoice_number?.trim() || '—'}. Dit was herinnering ${geslaagd.length + 1}.`,
+        type: 'invoice',
+        link: '/dashboard/facturen',
+      })
+      if (!melding.ok) {
+        console.error('[DEBITEUREN] melding aan de ondernemer mislukt', { id, error: melding.error })
       }
     }
 

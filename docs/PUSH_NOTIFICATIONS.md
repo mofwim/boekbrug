@@ -8,12 +8,29 @@ notification is written exactly as before.
 ## How it fits together
 
 ```
-event (invoice paid, bon in mailbox, aangifte klaar, …)
-  → createNotification()            src/lib/notifications.ts   (unchanged source of truth: inserts the row)
+event (invoice paid, bon in mailbox, aangifte klaar, nieuw bericht, …)
+  → createNotification()            src/lib/notifications.ts   (source of truth: inserts the row)
       → sendPushToUser()            src/lib/push.ts            (best-effort, never throws)
           → web-push → each device  → public/sw.js 'push'      (renders the system notification)
                                      → 'notificationclick'      (focuses the app on the row's link)
 ```
+
+**That arrow is the whole feature, so nothing may write a notification beside it.** For a while this
+diagram described an intention rather than the code: four files called `createNotification` and
+twenty inserted into `notifications` themselves, which does everything except the second half of the
+arrow. Push was configured, opt-in-able and tested, and rang for almost nothing — including a new
+message from your accountant. `[NOTIFY-EEN-DEUR]` in `src/lib/notification-gates.test.ts` now fails
+the build on any direct insert outside the writer.
+
+Two rules the writer holds, and callers may rely on:
+
+- **It never throws.** It returns `{ ok, error }`. A notification is the last step of a route that
+  has already booked something; it reports, it does not decide.
+- **No push without the row.** A refused insert returns before `sendPushToUser`. A phone
+  notification whose in-app row does not exist sends the owner to a bell with nothing in it.
+
+The device tag is `type:link`, not `type` — two conversations, or two payments about different
+screens, must not overwrite each other on the lock screen (see `src/lib/push-payload.ts`).
 
 - **Subscription store:** `push_subscriptions` (migration
   `supabase/migrations/push_subscriptions.sql`) — one row per device, natural key

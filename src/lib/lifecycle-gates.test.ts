@@ -2885,3 +2885,327 @@ test("[ARTIKEL-LEREN] every door a human types lines through teaches the catalog
     "the invoice line and the catalog entry must read the description the same way",
   );
 });
+
+// ── [LINKS-WRITE-HONEST] The write that decides whether a bank line is finished may not be silent ──
+//
+// An owner reported confirming the same bank transaction over and over: it kept coming back to
+// "Te bevestigen". bank-matching.ts already names that loop — "confirming it again can only return
+// 409, the client treats that as done and re-fetches, and the card comes straight back — an
+// unbreakable loop" — and [BANK-COVERAGE-BY-MONEY] closed it by measuring the line's applied total
+// from bank_tx_invoices instead of counting invoice numbers in the bank reference.
+//
+// The measurement's precondition was written by a function that could not report failure:
+//
+//     try { await client.from("bank_tx_invoices").upsert(rows, …) } catch { /* non-fatal */ }
+//
+// supabase-js does NOT throw on a query error — it returns `{ error }` — so that catch never fired
+// and the error object was dropped. The read half of the same file was fixed for exactly this
+// reason, with the reasoning written out above it. The write half was not.
+//
+// What a lost row costs, both of which the file's own comments establish elsewhere:
+//   · recompute_invoice_amount_paid re-derives invoices.amount_paid as SUM(amount_applied) over
+//     the surviving links, on every unlink and undo. A link never written counts as ZERO, so an
+//     invoice this payment really settled re-opens at its full total.
+//   · /api/bank/match cannot measure the line, falls back to the reference-token rule, and any
+//     token that is not a paid invoice number (a customer number, an order number, a POS batch
+//     counter) keeps the line in "Te bevestigen" forever. The loop, restarted — in total silence.
+test("[LINKS-WRITE-HONEST] a lost payment link is logged, returned, and said out loud", () => {
+  const links = code("src/lib/bank-tx-links.ts");
+
+  // Both writers read the error. supabase-js reports it in the RESULT, so a try/catch alone is
+  // not error handling here — it is the appearance of it.
+  // Bounded by the NEXT declaration, never by a character count. A fixed 1400-char window ran past
+  // recordPaymentLinks into clearPaymentLinks, whose correct code then satisfied every assertion
+  // while the function under test was reverted to the bare swallow — both negative controls passed
+  // green. A window that can reach its neighbour is not a window.
+  for (const fn of ["recordPaymentLinks", "clearPaymentLinks"]) {
+    const start = links.indexOf(`export async function ${fn}(`);
+    assert.ok(start > 0, `${fn} is still here`);
+    const nextDecl = links.indexOf("\nexport ", start + 1);
+    const body = links.slice(start, nextDecl > start ? nextDecl : undefined);
+    assert.ok(
+      body.includes("bank_tx_invoices") && body.length < 1400,
+      `the ${fn} slice must be that function alone — it is ${body.length} chars`,
+    );
+    assert.match(
+      body, /const \{ error \} = await client/,
+      `${fn} must read the query error — supabase-js returns it, it does not throw it`,
+    );
+    assert.match(
+      // The log must be the FIRST statement in the guard, not merely somewhere after it: a
+      // permissive window matched the catch clause BELOW and passed while the guard logged nothing.
+      body, /if \(error\) \{\s*console\.error\(/,
+      `${fn} must log the query failure inside the guard that detects it`,
+    );
+    assert.match(body, /Promise<boolean>/, `${fn} must report whether the write landed`);
+  }
+  assert.doesNotMatch(
+    links, /\} catch \{\s*\/\* non-fatal[^\n]*\n\s*\}/,
+    "the bare swallow may not come back — it is what made the loop start in silence",
+  );
+
+  // The confirm route is where an owner is standing and waiting, so it is where the failure has to
+  // surface. Not as an error — the money IS booked — but not as a bare tick either.
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+  assert.match(
+    confirm, /const linkRecorded = await recordPaymentLinks\(/,
+    "the confirm route must keep the answer rather than discarding it",
+  );
+  assert.match(
+    confirm, /linkRecorded \? \{\} : \{ warning: "payment_link_not_recorded" \}/,
+    "…and pass it to the screen, so a booking that may keep coming back is not reported as done",
+  );
+
+  // And the screen says it in words. A warning nobody renders is the same silence one layer up.
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(
+    ui, /json\?\.warning === 'payment_link_not_recorded'/,
+    "the bank screen must handle the warning",
+  );
+  assert.match(
+    ui, /niet volledig vastgelegd/,
+    "…and tell the owner in Dutch, with something to do about it — telling them 'Bevestigd ✓' and " +
+      "letting them walk into the loop is the worse of the two failures",
+  );
+});
+
+// ── [FEEDBACK] The channel out, and the one thing it may never do ──
+//
+// Everything in this app is built so nothing fails silently: the skipped panel admits what it could
+// not read, the bank screen says when a line may keep coming back, a failed lookup refuses instead
+// of answering "niets". All of that honesty stopped at the screen. The owner was told something
+// went wrong and there was no way for that to reach anyone who could fix it — so from the outside,
+// the app's own alarms were indistinguishable from silence.
+//
+// This adds the way out. Which makes ONE failure worse than having no button at all: thanking
+// someone for a report that was never stored. They stop worrying about a problem nobody will see.
+test("[FEEDBACK] the report is on every page, and a failed one is never thanked for", () => {
+  const lib = code("src/lib/feedback.ts");
+  const route = code("src/app/api/feedback/route.ts");
+  const ui = code("src/components/feedback/FeedbackButton.tsx");
+  const layout = code("src/app/dashboard/layout.tsx");
+
+  // ONE mount point. A button added per page is on half the pages within a year — and not on the
+  // screen where something broke, because that is usually the least visited one.
+  assert.match(layout, /<FeedbackButton \/>/, "the button is mounted in the dashboard layout");
+  assert.doesNotMatch(
+    layout, /!isMedewerker && <FeedbackButton/,
+    "a verkoopmedewerker keeps it. The navigation is hidden from them because its links throw them " +
+      "back; this is the opposite — they hit the same problems and their route back to the owner " +
+      "is the longest",
+  );
+
+  // The order of writes IS the design: row first, notification second. A report that existed only
+  // as an e-mail is lost the moment Resend rejects it — the exact silence this feature ends.
+  const insertAt = route.indexOf('.from("feedback").insert(');
+  const notifyAt = route.indexOf("sendFeedbackNotification(");
+  assert.ok(insertAt > 0 && notifyAt > insertAt, "the row is stored BEFORE any mail is attempted");
+
+  // [NO-SILENT-EMPTY] supabase-js does not throw, so an unchecked insert lets this route answer
+  // "bedankt" over a row that was never written. THE defect for this feature.
+  assert.match(route, /const \{ error: insErr \} = await/, "the insert error is read");
+  assert.match(
+    route, /if \(insErr\) \{[\s\S]{0,600}?status: 503/,
+    "…and a failed store REFUSES, in words",
+  );
+  assert.doesNotMatch(
+    route, /if \(insErr\)[\s\S]{0,300}?ok: true/,
+    "a failed store may never answer ok",
+  );
+  // The mail may fail freely — it is a notification about a row that already exists.
+  assert.match(
+    route, /catch \(e\) \{[\s\S]{0,160}?the report IS stored/,
+    "a notification failure may not undo a stored report",
+  );
+
+  // The screen keeps the words when sending failed. Clearing the box on failure loses the report a
+  // second time, and this time the owner watched it happen.
+  const okBranch = ui.indexOf("if (res.ok) {");
+  const clearAt = ui.indexOf("setMessage('')", okBranch);
+  const elseAt = ui.indexOf("} else {", okBranch);
+  assert.ok(okBranch > 0 && clearAt > okBranch && clearAt < elseAt,
+    "the message is cleared only inside the success branch");
+
+  // The image type is decided by the BYTES. This file lands in the bucket the owner's own documents
+  // live in, so trusting a declared type is how a non-image gets stored there under a good name.
+  assert.match(lib, /sniffReadableMime\(bytes\)/, "the image type comes from its content");
+  assert.match(
+    lib, /bytes\.length > FEEDBACK_MAX_IMAGE_BYTES/,
+    "…and the size cap is on the DECODED bytes — base64 is ~33% larger, so a cap on the string " +
+      "would be a different and wrong number",
+  );
+  assert.match(
+    route, /\$\{user\.id\}\/feedback\//,
+    "the screenshot goes under the owner's own folder, which the bucket policy already scopes on",
+  );
+  // A failed upload must not cost the words.
+  assert.match(
+    route, /imageFailed = true/,
+    "an upload failure keeps the report and is reported, rather than failing the whole thing",
+  );
+});
+
+// ── [OFFERTE-BEWERKBAAR] A quote may be changed until it becomes an invoice ──
+//
+// `status === 'draft'` was answering two different questions with one flag, and it was the wrong
+// answer to one of them:
+//
+//   · A sent FACTUUR carries a legal number from a gapless, forward-only series (Art. 35 Wet OB).
+//     Editing it is not a correction, it is rewriting a document the customer already holds — that
+//     is what a creditnota is for. This must stay impossible.
+//   · An OFFERTE is a price quote: no number, no series, not a legal invoice, not counted by the
+//     Belastingdienst. A customer asking "kan het goedkoper?" is ordinary business — and a sent
+//     offerte could not be touched. The owner's only route was a second offerte and the hope that
+//     the customer looked at the right one.
+//
+// Two screens and one route each carried their own copy of the flag, so the rule now lives in
+// invoice-editable.ts and all three read it. A button that appears where the door refuses is the
+// other half of the same defect.
+test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered document", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  const actions = code("src/components/invoice/InvoiceActions.tsx");
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+
+  // The door. Not a status literal — the shared rule, with all three fields it needs.
+  assert.match(
+    route,
+    /if \(!isInvoiceEditable\(\{[\s\S]{0,200}?invoiceNumber: existing\.invoice_number,/,
+    "the PUT guard must use the shared rule and pass the NUMBER — the field that decides whether a " +
+      "document is legally issued",
+  );
+  assert.doesNotMatch(
+    route, /if \(existing\.status !== 'draft'\) \{[\s\S]{0,120}?kan niet meer worden gewijzigd/,
+    "…and the old status-only edit guard may not come back",
+  );
+  // DELETE stays draft-only on purpose: a sent offerte has been at the customer, and making it
+  // vanish is a different act from adjusting it.
+  assert.match(
+    route, /Alleen een concept kan verwijderd worden/,
+    "deleting stays draft-only — that is a different question from editing",
+  );
+  // invoice_number must survive the readWithTrail fallback, or the guard reads undefined on an
+  // installation without created_by and every quote silently looks unnumbered.
+  // Anchored on CODE at both ends. The first version ended the slice on a comment — which code()
+  // strips, so indexOf returned -1, slice(start, -1) ran to the end of the file, and the count was
+  // of the whole route instead of the fallback. An end anchor that does not exist is not an end.
+  const trailStart = route.indexOf("return readWithTrail<");
+  const trailEnd = route.indexOf("export async function GET(", trailStart);
+  assert.ok(trailStart > 0 && trailEnd > trailStart, "the readWithTrail block is still there, ahead of GET");
+  const withTrail = route.slice(trailStart, trailEnd);
+  assert.equal(
+    [...withTrail.matchAll(/invoice_number/g)].length, 3,
+    "invoice_number belongs in the type AND in both column lists of the fallback — otherwise the " +
+      "guard reads undefined on an installation without created_by and every quote looks unnumbered",
+  );
+
+  // The button follows the same rule, so it can neither appear where the door refuses nor hide
+  // where editing is allowed — which is what it was doing for every sent offerte.
+  assert.match(
+    actions, /const canEdit = isInvoiceEditable\(\{ status, invoiceType, invoiceNumber \}\)/,
+    "the Bewerken button must ask the same question the route answers",
+  );
+
+  // The edit screen has to know WHAT it is editing. It called everything "Factuur bewerken" and
+  // its confirm promised to send "de factuur" — while sending a quote CONVERTS it into a numbered
+  // invoice (send route, isConversion). One tap, irreversible, and the word offerte never appeared.
+  assert.match(edit, /setInvoiceType\(invoice\.invoice_type/, "the screen must load the type");
+  assert.match(edit, /quote \? 'Offerte bewerken'/, "…and title itself honestly");
+  assert.match(
+    edit, /hiermee wordt deze offerte een OFFICIËLE FACTUUR/,
+    "…and the confirm must say that sending a quote issues an invoice number, before it happens",
+  );
+  assert.match(
+    edit, /quote \? '✉ Omzetten naar factuur en versturen'/,
+    "…and the button must be labelled with what it does",
+  );
+});
+
+// ── [OFFERTE-EEN-KNOP] Two buttons that did exactly the same thing ──
+//
+// The new-invoice screen showed "📋 Offerte opslaan" as the primary action and "Opslaan" beneath
+// it. For an offerte they were identical: `mode` is read exactly ONCE in handleSubmit, in
+// `if (mode === 'sent' && invoiceType !== 'offerte')`, and that condition excludes the offerte —
+// so both paths wrote the same draft and navigated to the same page. An owner facing two buttons
+// with no difference can only assume they are missing something.
+test("[OFFERTE-EEN-KNOP] the offerte screen offers one save, because there is only one action", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // The premise: `mode` still branches only there. If a second use appears, the two buttons may
+  // differ again and this test should be reconsidered rather than silently kept.
+  const body = page.slice(page.indexOf("async function handleSubmit(mode:"), page.indexOf("// ─── Derived ───"));
+  assert.ok(body.length > 500, "the handleSubmit slice is real");
+  assert.equal(
+    [...body.matchAll(/\bmode\b/g)].length, 2,
+    "`mode` appears once in the signature and once in the send condition. A third use means the " +
+      "two buttons can differ again — check whether the offerte still has only one action",
+  );
+  assert.match(
+    body, /if \(mode === 'sent' && invoiceType !== 'offerte'\)/,
+    "an offerte still never goes through the send route — that route mints a factuur number",
+  );
+
+  // So: no second button for an offerte.
+  assert.match(
+    page, /\{invoiceType !== 'offerte' && \(\s*<button onClick=\{\(\) => handleSubmit\('draft'\)\}/,
+    "the secondary save is hidden for an offerte, where it did the same as the primary one",
+  );
+});
+
+// ── [BETAALTERMIJN] The payment sentence states the term, instead of asserting one ──
+//
+// The edit screen printed "Gelieve te betalen binnen 30 dagen op <IBAN>". The 30 was a LITERAL:
+// not derived from anything, not editable, and not necessarily true. An owner who had set a due
+// date fourteen days out was shown a promise of thirty — on the screen where they check the
+// invoice before sending it, about money, on a document their customer will read.
+//
+// And the term itself was three chips (14 / 30 / 60) on one screen and absent on the other. A term
+// is something an owner agrees per customer; "jij krijgt 45 dagen" was not expressible without
+// working out the date by hand.
+test("[BETAALTERMIJN] the term is derived from the dates, and any term can be typed", () => {
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  const create = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // No literal. The sentence comes from the data or does not appear.
+  assert.doesNotMatch(
+    edit, /Gelieve te betalen binnen 30 dagen/,
+    "the hardcoded term may not come back — it was a number with nothing behind it",
+  );
+  assert.match(
+    edit, /paymentTermText\(\{ invoiceDateIso: invoiceDate, dueDateIso: dueDate, iban: profile\.iban \}\)/,
+    "the sentence must be built from the invoice's own dates",
+  );
+
+  // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
+  // prints. Showing a payment sentence there makes the screen contradict the document.
+  assert.match(
+    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    "a quote states its validity, not a payment term",
+  );
+  assert.match(
+    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    "…and the term control is hidden there, so one field never means two things",
+  );
+
+  // Any whole number, on BOTH screens, through the one parser.
+  for (const [name, src] of [["edit", edit], ["create", create]] as const) {
+    assert.match(
+      src, /parsePaymentTerm\(e\.target\.value\)/,
+      `${name}: a freely typed term must go through the shared parser`,
+    );
+    assert.match(
+      src, /dueDateFromTerm\(invoiceDate, days\)/,
+      `${name}: and set the due date through the shared arithmetic`,
+    );
+    assert.match(src, /max=\{MAX_PAYMENT_TERM_DAYS\}/, `${name}: bounded by the shared typo guard`);
+  }
+
+  // One definition of the common terms and the default, not one per screen.
+  assert.match(
+    create, /const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS/,
+    "the chip list comes from payment-term.ts",
+  );
+  assert.match(
+    create, /const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM/,
+    "…and so does the default a new invoice starts at",
+  );
+});

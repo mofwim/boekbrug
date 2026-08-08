@@ -3,8 +3,35 @@
 // EVERY booking path records the exact invoices a transaction paid here; EVERY reversal path reads
 // them back and reverses by invoice_id — never by invoice number — so a reversal can only ever
 // touch the invoices this payment actually paid (invoice numbers are not unique across suppliers /
-// directions). Best-effort by design: the join row is the reversal index, not a money figure, so a
-// write failure never blocks a booking (the tx.invoice_id + status remain the money-truth).
+// directions).
+//
+// [LINKS-WRITE-HONEST] THIS FILE USED TO SAY the join row is "the reversal index, not a money
+// figure", and that a write failure is harmless because tx.invoice_id + status stay the
+// money-truth. Both halves stopped being true, and the sentence is what justified swallowing the
+// error:
+//
+//   · [PARTIAL-PAY] (see recordPaymentLinks below) recompute_invoice_amount_paid re-derives
+//     invoices.amount_paid as SUM(coalesce(amount_applied,0)) over an invoice's surviving links,
+//     on every unlink and every undo. A link that was never written counts as ZERO — so an
+//     invoice really settled by this payment silently re-opens at its full total.
+//   · [BANK-COVERAGE-BY-MONEY] /api/bank/match decides whether a bank line is FINISHED from these
+//     rows. Without them the line is not measurable, the route falls back to counting invoice
+//     numbers in the bank reference, and a line carrying any token that is not a paid invoice
+//     number (a customer number, an order number, a POS batch counter) never leaves "Te
+//     bevestigen". Confirming it again returns 409, the client reads that as done and re-fetches,
+//     and the card comes straight back — the unbreakable loop bank-matching.ts describes.
+//
+// And the swallow could not have worked even when the claim was true: supabase-js does NOT throw
+// on a query error — it returns `{ error }` — so `try { await … } catch {}` caught nothing and
+// discarded the error object. A failed write left no log, no trace, and no symptom until the
+// owner met a card they could not clear. The read half of this file was fixed for exactly this
+// reason (see invoiceIdsForTransactions below); the write half was not.
+//
+// Still non-blocking: a booking is legally complete without the index row, and failing the request
+// would leave the owner worse off. Non-blocking is not the same as unspoken — both writes now log
+// the failure with the ids, and both return whether the row landed, so /api/bank/confirm (the one
+// place an owner is standing and waiting) can say the booking is not fully recorded instead of
+// answering "Bevestigd ✓" over a card that is about to come straight back.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRowsForIds } from "./supabase-paginate";
@@ -47,7 +74,7 @@ export async function recordPaymentLinks(
   transactionId: string,
   invoiceIds: string[],
   amountApplied?: Record<string, number | null | undefined>,
-): Promise<void> {
+): Promise<boolean> {
   const rows = [...new Set(invoiceIds.filter(Boolean))].map((invoice_id) => {
     const applied = amountApplied?.[invoice_id];
     return {
@@ -60,21 +87,49 @@ export async function recordPaymentLinks(
           : null,
     };
   });
-  if (rows.length === 0) return;
+  if (rows.length === 0) return true;
+  // [LINKS-WRITE-HONEST] The error is READ. supabase-js does not throw, so the try/catch this
+  // replaced could never fire — it only kept the surrounding await from rejecting on a network
+  // fault, and dropped the query error on the floor. See the header for what that costs.
   try {
-    await client.from("bank_tx_invoices").upsert(rows, { onConflict: "transaction_id,invoice_id" });
-  } catch {
-    /* non-fatal — reversal index only */
+    const { error } = await client
+      .from("bank_tx_invoices")
+      .upsert(rows, { onConflict: "transaction_id,invoice_id" });
+    if (error) {
+      console.error("[BANK-TX-INVOICES] payment link NOT recorded", {
+        transactionId, invoiceIds: rows.map((r) => r.invoice_id), message: error.message,
+      });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    // A genuine throw (network, aborted fetch). Same answer, same visibility.
+    console.error("[BANK-TX-INVOICES] payment link write threw", { transactionId, error: e });
+    return false;
   }
 }
 
-/** Remove the links for one transaction (e.g. when it is unlinked). Best-effort; the FK also
- *  cascades on a hard tx delete, so this is for the unlink-but-keep-the-row case. */
-export async function clearPaymentLinks(client: Client, userId: string, transactionId: string): Promise<void> {
+/**
+ * Remove the links for one transaction (e.g. when it is unlinked). The FK also cascades on a hard
+ * tx delete, so this is for the unlink-but-keep-the-row case.
+ *
+ * [LINKS-WRITE-HONEST] Its failure is the mirror of the one above and just as quiet: the links
+ * SURVIVE a reversal, so recompute_invoice_amount_paid keeps counting amount_applied for money
+ * that was given back, and the invoice stays "paid" for an amount no longer on any bank line.
+ * Reported for the same reason, and returned so a caller can say what really happened.
+ */
+export async function clearPaymentLinks(client: Client, userId: string, transactionId: string): Promise<boolean> {
   try {
-    await client.from("bank_tx_invoices").delete().eq("user_id", userId).eq("transaction_id", transactionId);
-  } catch {
-    /* non-fatal */
+    const { error } = await client
+      .from("bank_tx_invoices").delete().eq("user_id", userId).eq("transaction_id", transactionId);
+    if (error) {
+      console.error("[BANK-TX-INVOICES] payment links NOT cleared", { transactionId, message: error.message });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("[BANK-TX-INVOICES] payment link clear threw", { transactionId, error: e });
+    return false;
   }
 }
 

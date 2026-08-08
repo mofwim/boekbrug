@@ -77,6 +77,11 @@ export const RATE_LIMITS = {
   // per rekening, zie SYNC_MIN_INTERVAL_HOURS); dit hek voorkomt alleen dat iemand die limiet er
   // in één minuut doorheen jaagt en zijn eigen feed voor de rest van de dag stilzet.
   BANK_SYNC:           { maxRequests: 12, windowMinutes: 60 },    // 12 verversingen / uur
+  // [FEEDBACK] De "er ging iets mis"-knop. Ruim, en met opzet: dit is het enige kanaal waarlangs
+  // een ondernemer een probleem kwijt kan, en iemand die vastloopt schrijft soms drie keer achter
+  // elkaar omdat hij eerst iets vergeten is. Een hek dat dán dichtklapt, maakt van een klacht over
+  // de app een tweede klacht over de app. 20 per uur remt alleen een script.
+  FEEDBACK_SEND:       { maxRequests: 20, windowMinutes: 60 },    // 20 meldingen / uur
 } as const
 
 // ── Main function ─────────────────────────────────────

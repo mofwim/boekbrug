@@ -324,13 +324,15 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
 // [BOEK-028] Bell with outside click + markAsRead — May 2026
 
 function NotificationsBell({
-  notifications, unreadCount, showNotifications, onToggle, onMarkAllRead,
+  notifications, showNotifications, onToggle, onMarkAllRead, loadError,
 }: {
   notifications: NotificationRow[]
-  unreadCount: number
   showNotifications: boolean
   onToggle: () => void
   onMarkAllRead?: () => void
+  // [NO-SILENT-EMPTY] De meldingen konden niet worden gelezen. Zonder deze stand toont de bel
+  // "Geen meldingen" — de enige zin die dit paneel nooit mag zeggen als het het niet weet.
+  loadError?: string | null
 }) {
   const router = useRouter()
   const bellRef = useRef<HTMLDivElement>(null)
@@ -428,7 +430,11 @@ function NotificationsBell({
               </button>
             )}
           </div>
-          {notifications.length === 0 ? (
+          {loadError ? (
+            <p style={{ fontSize: 13, color: '#B3261E', textAlign: 'center', padding: '24px 16px', margin: 0, lineHeight: 1.5 }}>
+              {loadError}
+            </p>
+          ) : notifications.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '32px 16px', margin: 0 }}>
               Geen meldingen
             </p>
@@ -573,25 +579,26 @@ interface DashboardHeaderProps {
   profile: HeaderProfile
   notifications: NotificationRow[]
   showNotifications: boolean
-  unreadNotifCount: number
   unreadMessages: number
   onToggleNotifications: () => void
   onMessagesClick: () => void
   onLogout: () => void
   // [BRIDGE-NOTIF] explicit "mark all read" — replaces the old auto-clear on open
   onMarkAllRead?: () => void
+  // [NO-SILENT-EMPTY] Doorgegeven aan de bel: melden dat de meldingen niet gelezen konden worden.
+  notificationsError?: string | null
 }
 
 export function DashboardHeader({
   profile,
   notifications,
   showNotifications,
-  unreadNotifCount,
   unreadMessages,
   onToggleNotifications,
   onMessagesClick,
   onLogout,
   onMarkAllRead,
+  notificationsError,
 }: DashboardHeaderProps) {
   // [INTEGRATION] Logo Universal — role-aware href — May 2026
   const isAccountant = profile?.role === 'accountant'
@@ -709,10 +716,10 @@ export function DashboardHeader({
         {/* Notifications bell */}
         <NotificationsBell
           notifications={notifications}
-          unreadCount={unreadNotifCount}
           showNotifications={showNotifications}
           onToggle={onToggleNotifications}
           onMarkAllRead={onMarkAllRead}
+          loadError={notificationsError}
         />
 
         {/* Avatar + profile dropdown */}

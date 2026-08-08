@@ -8,11 +8,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { PAGE_HEADER_HEIGHT, COLUMN } from '@/lib/design/tokens'
-import type { ProfileRow, MessageRow } from '@/types/rows'
-
-// Alleen de kolommen die deze pagina ophaalt — een volledige ProfileRow beloven terwijl er
-// vier velden geselecteerd zijn, is een leugen die pas bij gebruik stukgaat.
-type ChatProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email'>
+import type { MessageRow } from '@/types/rows'
 
 // Skeleton للرسائل أثناء التحميل
 function MessageSkeleton({ isMe }: { isMe: boolean }) {
@@ -31,17 +27,33 @@ export default function ConversationPage() {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const [currentUserId, setCurrentUserId] = useState<string>('')
-  const [otherProfile, setOtherProfile] = useState<ChatProfile | null>(null)
+  // [NAAM-TEGENPARTIJ] De naam komt van de server, samen met de berichten. Hij werd hier uit
+  // `profiles` gelezen met de browserclient, en dat levert een zzp'er niets: RLS op profiles kent
+  // alleen "je eigen rij" en "een boekhouder mag zijn gekoppelde klant zien" — niet andersom. De
+  // ondernemer keek dus naar een gesprek met "..." in de titel en "Bericht aan ..." in het invoerveld.
+  const [partnerName, setPartnerName] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  // [NO-SILENT-EMPTY] Een mislukte lezing mag niet als "nog geen berichten" op het scherm komen.
+  const [loadError, setLoadError] = useState('')
 
   async function fetchMessages() {
-    const res = await fetch(`/api/messages?with=${otherId}`)
-    const data = await res.json()
-    if (data.messages) setMessages(data.messages)
+    try {
+      const res = await fetch(`/api/messages?with=${otherId}`)
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        setLoadError(data?.error || 'We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.')
+        return
+      }
+      setLoadError('')
+      if (data?.messages) setMessages(data.messages)
+      if (data?.partner) setPartnerName(data.partner.name ?? null)
+    } catch {
+      setLoadError('We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.')
+    }
   }
 
   useEffect(() => {
@@ -49,14 +61,6 @@ export default function ConversationPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
       setCurrentUserId(user.id)
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, full_name, company_name, email')
-        .eq('id', otherId)
-        .single()
-
-      if (profile) setOtherProfile(profile)
 
       await fetchMessages()
       setLoading(false)
@@ -117,10 +121,16 @@ export default function ConversationPage() {
     })
 
     if (!res.ok) {
-      // إلغاء الـ optimistic عند الفشل
+      // Roll the optimistic message back
       setMessages(prev => prev.filter(m => m.id !== optimistic.id))
       setInput(content)
-      setError('Verzenden mislukt — probeer opnieuw')
+      // [SERVER-ZEGT-WAAROM] De route weigert met een reden — "je kunt alleen berichten sturen naar
+      // een gekoppelde klant of boekhouder" (403), of "de koppeling kon niet worden gecontroleerd"
+      // (503). Hier stond onvoorwaardelijk "probeer opnieuw", wat bij een 403 een instructie is om
+      // eeuwig iets te herhalen dat nooit kan lukken: een scherm dat de weigering van de server
+      // overschrijft met een raadgeving die hij niet gaf.
+      const data = await res.json().catch(() => null)
+      setError(data?.error || 'Verzenden mislukt — probeer opnieuw')
     } else {
       await fetchMessages()
     }
@@ -135,7 +145,7 @@ export default function ConversationPage() {
     }
   }
 
-  const otherName = otherProfile?.company_name || otherProfile?.full_name || '...'
+  const otherName = partnerName || '...'
 
   // [SUBNAV] Conversation partner's name as the shared sub-page header title
   // (back is provided there too). The chat fills exactly the space below the
@@ -160,6 +170,18 @@ export default function ConversationPage() {
             <MessageSkeleton isMe={false} />
             <MessageSkeleton isMe={true} />
           </>
+        ) : loadError ? (
+          /* De fout IN PLAATS VAN het gesprek: een leeg gesprek beweert dat er niets gezegd is. */
+          <div className="text-center py-16">
+            <p className="text-2xl mb-2">⚠️</p>
+            <p className="text-gray-700 text-sm font-medium px-6">{loadError}</p>
+            <button
+              onClick={() => { setLoading(true); fetchMessages().finally(() => setLoading(false)) }}
+              className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+            >
+              Opnieuw proberen
+            </button>
+          </div>
         ) : messages.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-2xl mb-2">👋</p>

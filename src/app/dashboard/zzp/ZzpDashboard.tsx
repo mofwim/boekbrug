@@ -70,6 +70,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
   const supabase = createClient()
 
   const [notifications, setNotifications]         = useState<NotificationRow[]>([])
+  const [notifError, setNotifError]               = useState<string | null>(null)
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages]       = useState(0)
   const [accountantId, setAccountantId]           = useState<string | null>(null)
@@ -79,7 +80,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
   const [vragenCount, setVragenCount]             = useState<number>(0)
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }, { count: vragen }] = await Promise.all([
+    const [{ data: link }, { data: notifData, error: notifErr }, { count }, { count: vragen }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
@@ -89,7 +90,17 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
         .eq('subject_type', 'document').eq('status', VRAAG_STATUS),
     ])
     if (link?.accountant_id) setAccountantId(link.accountant_id)
-    if (notifData) setNotifications(notifData)
+    // [NO-SILENT-EMPTY] `if (notifData)` alleen liet een mislukte lezing als "Geen meldingen" op
+    // het scherm komen: supabase-js gooit niet, dus een RLS-weigering of een haperende verbinding
+    // kwam hier binnen als data === null. De bel is de plek waar een vraag van de boekhouder
+    // aankomt; "er is niets" is daar de duurste zin die hij kan tonen als hij het niet weet.
+    if (notifErr) {
+      console.error('[HOME] meldingen ophalen mislukt:', notifErr.message)
+      setNotifError('We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.')
+    } else {
+      setNotifError(null)
+      setNotifications(notifData ?? [])
+    }
     setUnreadMessages(count || 0)
     setVragenCount(vragen || 0)
 
@@ -127,14 +138,14 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
   }
 
-  const unreadNotifCount = notifications.filter(n => !n.read).length
   const firstName = profile.full_name?.split(' ')[0] ?? 'daar'
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
       <DashboardHeader
         profile={profile} notifications={notifications}
-        showNotifications={showNotifications} unreadNotifCount={unreadNotifCount}
+        showNotifications={showNotifications}
+        notificationsError={notifError}
         unreadMessages={unreadMessages}
         onToggleNotifications={() => { setShowNotifications(p => !p) }}
         onMarkAllRead={markAllRead}
