@@ -69,6 +69,7 @@ type OwnerProfile = {
   id: string;
   reminder_offsets: number[] | null;
   company_name: string | null;
+  email: string | null;
   full_name: string | null;
 };
 
@@ -125,7 +126,9 @@ export async function GET(req: NextRequest) {
     owners = await fetchAllRows<OwnerProfile>((from, to) =>
       pipeline
         .from("profiles")
-        .select("id, reminder_offsets, company_name, full_name")
+        // [ANTWOORD-ADRES] `email` erbij — zie de herinneringsroute. Deze cron stuurt de meeste
+        // herinneringen van het hele product; een antwoord daarop hoort bij de ondernemer.
+        .select("id, reminder_offsets, company_name, full_name, email")
         .eq("reminders_enabled", true)
         .order("id", { ascending: true })
         .range(from, to),
@@ -357,6 +360,7 @@ export async function GET(req: NextRequest) {
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",
           zzperName,
+          senderEmail: owner.email ?? null,
           invoiceNumber: inv.invoice_number?.trim() || "—",
           openstaand,
           dueDate: inv.due_date as string,

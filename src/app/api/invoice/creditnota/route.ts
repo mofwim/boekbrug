@@ -389,6 +389,8 @@ export async function POST(request: NextRequest) {
             toEmail: original.client_email,
             clientName: original.client_name ?? '',
             zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
+            // [ANTWOORD-ADRES] Een creditnota roept vaker een vraag op dan een factuur.
+            senderEmail: profile?.email ?? null,
             // [FACTUUR-A] use the locally generated number (guaranteed non-null —
             // we returned 500 above if generation failed). creditnota.invoice_number
             // is typed string|null by the DB schema, which the e-mail signature rejects.

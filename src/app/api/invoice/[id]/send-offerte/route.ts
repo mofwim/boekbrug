@@ -125,9 +125,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     toEmail: String(invoice.client_email),
     clientName: invoice.client_name?.trim() || 'klant',
     senderName,
-    // Het antwoordadres van de ondernemer. Valt terug op het ingelogde account: dat is hoe hij
-    // bereikbaar is, ook als het profielveld nooit is ingevuld.
-    senderEmail: profile?.email?.trim() || user.email || null,
+    // Het antwoordadres van de ONDERNEMER — profiles.email, dat bij registratie uit auth.users
+    // wordt gevuld.
+    //
+    // [ACTING-FOR] De terugval op het ingelogde account geldt alleen als de ingelogde persoon de
+    // eigenaar zelf IS. Stuurt een verkoopmedewerker de offerte, dan is `user.email` zíjn adres en
+    // niet dat van zijn werkgever: het akkoord van de klant zou dan bij een medewerker landen in
+    // plaats van bij het bedrijf, op een document dat de werkgever bindt. Liever geen reply-to dan
+    // de verkeerde — de mail zegt dan "laat het ons weten" en de PDF draagt de bedrijfsgegevens.
+    senderEmail: profile?.email?.trim() || (acting.actorId === ownerId ? user.email : null) || null,
     totalInc: Number(invoice.total_inc_btw ?? 0),
     validUntil: invoice.due_date,
     offerteDate: invoice.invoice_date,

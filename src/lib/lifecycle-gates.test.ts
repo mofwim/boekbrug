@@ -3564,10 +3564,13 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
   // contradiction a customer rightly phones about, and the real figure is in the PDF regardless.
   assert.match(body, /const heeftBedrag = Number\.isFinite\(f\.totalInc\) && f\.totalInc !== 0/, "no invented total");
 
+  // [ACTING-FOR] The fallback used to be a bare `|| user.email`, which is the OWNER's address only
+  // when the owner is the one pressing the button. The precise form is asserted in
+  // [ANTWOORD-ADRES]; here it is enough that the route supplies an address at all.
   assert.match(
-    route, /senderEmail: profile\?\.email\?\.trim\(\) \|\| user\.email \|\| null/,
-    "the route must supply that address, falling back to the logged-in account — that is how the " +
-      "owner is reachable even with an empty profile field",
+    route, /senderEmail: profile\?\.email\?\.trim\(\)/,
+    "the route must supply that address — the profile field, which registration fills from the " +
+      "account the owner signed up with",
   );
   assert.match(
     route, /\.select\('company_name, full_name, email,/,
@@ -3850,4 +3853,85 @@ test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
   assert.ok(block.length < 400, `the slice must be the footer block alone — it is ${block.length} chars`);
   assert.doesNotMatch(block, /#dadce0/, "the footer is back to the hairline grey nobody can read");
   assert.match(block, /color: '#5f6368'/, "…it must carry a colour with real contrast on white");
+});
+
+// ─── [AFZENDERNAAM] Mail to the owner's customer carries the owner's name and address ──────────
+//
+// All fifteen senders read `BoekBrug <noreply@boekbrug.nl>`, including the three that write to a
+// THIRD PARTY on the owner's behalf. A customer of Kiwi Food Market therefore got an inbox row
+// saying BoekBrug about an amount they were being asked to pay — a name they have no relationship
+// with, which is what spam looks like.
+//
+// And only the quote had a Reply-To. Pressing Reply on an invoice or a payment reminder — "ik heb
+// al betaald", "kan het gespreid?" — sent the answer to noreply@. On a reminder that is worse than
+// clumsy: someone who WANTS to pay writes to a dead letterbox, and the next reminder goes out
+// anyway.
+//
+// The address itself cannot change and that is not a defect: mail is authenticated per DOMAIN, so
+// only boekbrug.nl can be the envelope sender. The display name and Reply-To are the parts that
+// can carry the owner, and they now do.
+test("[AFZENDERNAAM] the three customer-facing mails carry the business, the other twelve do not", () => {
+  const mail = code("src/lib/email.ts");
+
+  // Exactly three senders write to someone who is not a BoekBrug user.
+  const viaOwner = [...mail.matchAll(/from: customerMailFrom\(/g)].length;
+  assert.equal(viaOwner, 3, `factuur, herinnering en offerte — gevonden: ${viaOwner}`);
+  // …and every one of them offers a way back. Counted, so adding a fourth customer mail without a
+  // reply-to shows up here rather than in a customer's dead reply.
+  const replies = [...mail.matchAll(/\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/g)].length;
+  assert.equal(replies, 3, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
+
+  // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
+  // business name would be wrong.
+  const plain = [...mail.matchAll(/from: 'BoekBrug <noreply@boekbrug\.nl>'/g)].length;
+  assert.equal(plain, 12, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
+
+  // The name is never interpolated raw. It is typed by a user and lands in a header that reaches
+  // strangers: a newline is header injection, and an @ or a bracket lets a display name pose as
+  // the sending address.
+  assert.doesNotMatch(
+    mail, /from: `[^`]*\$\{/,
+    "a From header must not be built by interpolation — it goes through customerMailFrom()",
+  );
+
+  const from = code("src/lib/mail-from.ts");
+  assert.match(from, /replace\(\/\[\\u0000-\\u001f\\u007f\]\/g/, "control characters are stripped");
+  assert.match(from, /replace\(\/\[<>@"\\\\\]\/g/, "…and the address-shaped characters with them");
+  assert.match(from, /return `"\$\{label\}" <\$\{MAIL_FROM_ADDRESS\}>`/,
+    "the display name is quoted — an ordinary Dutch trade name with a comma would otherwise " +
+      "parse as two senders and break the header");
+  assert.match(from, /via \$\{MAIL_FROM_FALLBACK\}/,
+    "'via BoekBrug' is what keeps a display name from being a free claim about who sent the mail");
+});
+
+test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it comes from", () => {
+  // A reply-to the sender never fills is dead code, and a column that is not SELECTed is a
+  // reply-to that points nowhere — the failure this app has hit twice.
+  for (const [path, needle] of [
+    ["src/app/api/invoice/send/route.ts", /senderEmail: profile\?\.email \?\? null/],
+    ["src/app/api/invoice/creditnota/route.ts", /senderEmail: profile\?\.email \?\? null/],
+    ["src/app/api/invoice/[id]/reminder/route.ts", /senderEmail: eigenaarProfiel\?\.email \?\? null/],
+    ["src/app/api/cron/reminders/route.ts", /senderEmail: owner\.email \?\? null/],
+  ] as const) {
+    assert.match(code(path), needle, `${path} must pass the owner's address to the mailer`);
+  }
+  assert.match(
+    code("src/app/api/invoice/[id]/reminder/route.ts"),
+    /\.select\('company_name, full_name, email'\)/,
+    "the reminder route must READ the address it passes",
+  );
+  assert.match(
+    code("src/app/api/cron/reminders/route.ts"),
+    /\.select\("id, reminder_offsets, company_name, full_name, email"\)/,
+    "…and so must the cron that sends most of them",
+  );
+
+  // [ACTING-FOR] The fallback to the logged-in account is only the owner's address when the logged-
+  // in person IS the owner. A verkoopmedewerker sending a quote would otherwise route the
+  // customer's "akkoord" to an employee, on a document that binds the employer.
+  assert.match(
+    code("src/app/api/invoice/[id]/send-offerte/route.ts"),
+    /senderEmail: profile\?\.email\?\.trim\(\) \|\| \(acting\.actorId === ownerId \? user\.email : null\) \|\| null/,
+    "the account fallback must be owner-only",
+  );
 });

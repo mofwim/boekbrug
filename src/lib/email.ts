@@ -9,6 +9,10 @@ import { offerteSubject, offerteEmailHtml } from './offerte-send'
 // [M2] De escaper woont in een eigen bestand sinds de offertetekst puur moest worden — zie de kop
 // van escape-html.ts. Zelfde functie, zelfde gedrag, alleen niet meer hier gedeclareerd.
 import { escapeHtml } from './escape-html'
+// [AFZENDERNAAM] Mail naar de KLANT VAN DE ONDERNEMER draagt zijn bedrijfsnaam, niet die van ons.
+// Alleen deze drie (factuur, herinnering, offerte) gaan naar een derde; de overige twaalf schrijven
+// aan de ondernemer zelf, zijn boekhouder of een genodigde, en daar is BoekBrug de juiste afzender.
+import { customerMailFrom } from './mail-from'
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -181,7 +185,8 @@ export async function sendInvoiceToClient({
   dueDate,
   invoiceDate,
   pdfBuffer,
-  isCreditnota = false
+  isCreditnota = false,
+  senderEmail,
 }: {
   toEmail: string
   clientName: string
@@ -195,6 +200,21 @@ export async function sendInvoiceToClient({
   pdfBuffer?: Buffer
   /** Creditnota wording (subject + heading) */
   isCreditnota?: boolean
+  /**
+   * [ANTWOORD-ADRES] Het e-mailadres van de ondernemer, uit zijn profiel — dat is het adres waarmee
+   * hij zich bij BoekBrug heeft aangemeld.
+   *
+   * Deze mail ging uit vanaf noreply@boekbrug.nl zonder reply-to, net als de offerte tot voor kort.
+   * Op "Beantwoorden" drukken is het eerste wat een klant doet die iets wil zeggen over een
+   * factuur — "ik heb al betaald", "kan het gespreid?", "de tenaamstelling klopt niet" — en dat
+   * antwoord kwam nergens aan. Bij een herinnering is dat erger dan onhandig: dan schrijft iemand
+   * die WIL betalen naar een brievenbus die niet bestaat, en de volgende herinnering gaat gewoon
+   * uit.
+   *
+   * Optioneel, zodat elke bestaande aanroep blijft werken: zonder adres geen reply-to, precies
+   * zoals het was.
+   */
+  senderEmail?: string | null
 }) {
   const docLabel = isCreditnota ? 'Creditnota' : 'Factuur'
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
@@ -215,9 +235,12 @@ export async function sendInvoiceToClient({
   // validation). Ignoring the return let a rejected send look delivered, so the
   // invoice showed "verstuurd" while the customer received nothing. Capture the
   // result and THROW on error so the caller's catch marks it email_failed.
+  const antwoordAdres = (senderEmail ?? '').trim()
   const { error: sendError } = await getResend().emails.send({
-    from: 'BoekBrug <noreply@boekbrug.nl>',
+    from: customerMailFrom(zzperName),
     to: toEmail,
+    // [ANTWOORD-ADRES] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -469,6 +492,7 @@ export async function sendInvoiceReminder({
   firm = false,
   wik,
   pdfBuffer,
+  senderEmail,
 }: {
   toEmail: string
   clientName: string
@@ -489,6 +513,12 @@ export async function sendInvoiceReminder({
   wik?: { sentence: string; deadline: string; costs: number } | null
   /** Re-attach the invoice PDF when available. */
   pdfBuffer?: Buffer
+  /**
+   * [ANTWOORD-ADRES] Zie sendInvoiceToClient. Bij een herinnering weegt dit het zwaarst: hier
+   * schrijft iemand die WIL betalen — "ik heb vorige week overgemaakt", "kan het gespreid?" — en
+   * dat antwoord kwam bij noreply@ terecht terwijl de volgende herinnering gewoon uitging.
+   */
+  senderEmail?: string | null
 }) {
   const heading = wik ? 'Laatste aanmaning' : firm ? 'Betalingsherinnering' : 'Herinnering'
   const subject = wik
@@ -515,9 +545,12 @@ export async function sendInvoiceReminder({
     ? `<p style="color: #555;">De factuur is nogmaals bijgevoegd als PDF.</p>`
     : ''
 
+  const antwoordAdres = (senderEmail ?? '').trim()
   const __sendResult = await getResend().emails.send({
-    from: 'BoekBrug <noreply@boekbrug.nl>',
+    from: customerMailFrom(zzperName),
     to: toEmail,
+    // [ANTWOORD-ADRES] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -868,7 +901,7 @@ export async function sendOfferteToClient({
   const antwoordAdres = (senderEmail ?? '').trim()
 
   const __sendResult = await getResend().emails.send({
-    from: 'BoekBrug <noreply@boekbrug.nl>',
+    from: customerMailFrom(senderName),
     to: toEmail,
     // [OFFERTE-ANTWOORD] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
     ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),

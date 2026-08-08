@@ -622,6 +622,10 @@ export async function POST(request: NextRequest) {
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
         isCreditnota: finalType === 'creditnota',
+        // [ANTWOORD-ADRES] Het adres waarmee de ondernemer zich heeft aangemeld (profiles.email
+        // wordt bij registratie uit auth.users gevuld). Zonder dit komt een antwoord van de klant
+        // bij noreply@ terecht.
+        senderEmail: profile?.email ?? null,
       })
     } catch (emailErr) {
       emailFailed = true

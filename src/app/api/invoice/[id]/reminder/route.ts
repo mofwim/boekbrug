@@ -189,7 +189,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     // De naam die op de mail komt is die van de EIGENAAR — het is zijn factuur.
     const { data: eigenaarProfiel } = await pipeline
       .from('profiles')
-      .select('company_name, full_name')
+      // [ANTWOORD-ADRES] `email` erbij: een kolom die niet wordt gelezen is een reply-to die nergens
+      // heen wijst — en juist op een herinnering schrijft de klant terug.
+      .select('company_name, full_name, email')
       .eq('id', ownerId)
       .single()
 
@@ -198,6 +200,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         toEmail: inv.client_email as string,
         clientName: inv.client_name?.trim() || 'klant',
         zzperName: eigenaarProfiel?.company_name || eigenaarProfiel?.full_name || 'BoekBrug',
+        senderEmail: eigenaarProfiel?.email ?? null,
         invoiceNumber: inv.invoice_number?.trim() || '—',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         openstaand: outstandingAmount(inv as any),
