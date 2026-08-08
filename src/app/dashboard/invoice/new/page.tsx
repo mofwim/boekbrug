@@ -24,6 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
+import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -384,8 +385,11 @@ function DateField({
 // ─── [FACTUUR-A] Payment-term presets — June 2026 ────────────────────────────
 // Quick chips that compute Vervaldatum = Factuurdatum + N days. Manual editing
 // stays fully available via the DateField. 30 days is the Dutch default.
-const BETALINGSTERMIJNEN = [14, 30, 60] as const
-const DEFAULT_TERMIJN = 30
+// [BETAALTERMIJN] De lijst en de standaard staan nu in payment-term.ts, samen met de rekenregels
+// en de zin die het bewerkscherm eruit opbouwt. Twee schermen met elk hun eigen kopie van "wat is
+// een termijn" is precies hoe die twee uit elkaar gaan lopen.
+const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS
+const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM
 function addDaysISO(iso: string, days: number): string {
   // String-based to stay timezone-proof on date-only values.
   const [y, m, d] = iso.split('-').map(Number)
@@ -1415,6 +1419,31 @@ function NewInvoicePageContent() {
                       </button>
                     )
                   })}
+                  {/* [BETAALTERMIJN] Elk heel getal, niet alleen 14/30/60. Een termijn spreek je
+                      per klant af — "jij krijgt 45 dagen" — en drie vaste chips maakten dat
+                      onmogelijk zonder de vervaldatum uit te rekenen en met de hand in te tikken.
+                      De bovengrens in payment-term.ts is een tikfoutgrens (300 in plaats van 30 zet
+                      de vervaldatum bijna een jaar vooruit en laat elke herinnering net zo lang
+                      wachten), geen uitspraak over wat een ondernemer mag afspreken. */}
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: '#70757a' }}>of</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={MAX_PAYMENT_TERM_DAYS}
+                      inputMode="numeric"
+                      placeholder="dagen"
+                      value={betalingstermijn ?? ''}
+                      onChange={e => {
+                        const days = parsePaymentTerm(e.target.value)
+                        if (days == null) { setBetalingstermijn(null); return }
+                        setBetalingstermijn(days)
+                        if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
+                      }}
+                      style={{ width: 78, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 14, outline: 'none' }}
+                      aria-label="Betalingstermijn in dagen"
+                    />
+                  </label>
                   {betalingstermijn === null && (
                     <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
                   )}

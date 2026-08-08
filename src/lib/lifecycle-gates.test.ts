@@ -3150,3 +3150,62 @@ test("[OFFERTE-EEN-KNOP] the offerte screen offers one save, because there is on
     "the secondary save is hidden for an offerte, where it did the same as the primary one",
   );
 });
+
+// ── [BETAALTERMIJN] The payment sentence states the term, instead of asserting one ──
+//
+// The edit screen printed "Gelieve te betalen binnen 30 dagen op <IBAN>". The 30 was a LITERAL:
+// not derived from anything, not editable, and not necessarily true. An owner who had set a due
+// date fourteen days out was shown a promise of thirty — on the screen where they check the
+// invoice before sending it, about money, on a document their customer will read.
+//
+// And the term itself was three chips (14 / 30 / 60) on one screen and absent on the other. A term
+// is something an owner agrees per customer; "jij krijgt 45 dagen" was not expressible without
+// working out the date by hand.
+test("[BETAALTERMIJN] the term is derived from the dates, and any term can be typed", () => {
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  const create = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // No literal. The sentence comes from the data or does not appear.
+  assert.doesNotMatch(
+    edit, /Gelieve te betalen binnen 30 dagen/,
+    "the hardcoded term may not come back — it was a number with nothing behind it",
+  );
+  assert.match(
+    edit, /paymentTermText\(\{ invoiceDateIso: invoiceDate, dueDateIso: dueDate, iban: profile\.iban \}\)/,
+    "the sentence must be built from the invoice's own dates",
+  );
+
+  // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
+  // prints. Showing a payment sentence there makes the screen contradict the document.
+  assert.match(
+    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    "a quote states its validity, not a payment term",
+  );
+  assert.match(
+    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    "…and the term control is hidden there, so one field never means two things",
+  );
+
+  // Any whole number, on BOTH screens, through the one parser.
+  for (const [name, src] of [["edit", edit], ["create", create]] as const) {
+    assert.match(
+      src, /parsePaymentTerm\(e\.target\.value\)/,
+      `${name}: a freely typed term must go through the shared parser`,
+    );
+    assert.match(
+      src, /dueDateFromTerm\(invoiceDate, days\)/,
+      `${name}: and set the due date through the shared arithmetic`,
+    );
+    assert.match(src, /max=\{MAX_PAYMENT_TERM_DAYS\}/, `${name}: bounded by the shared typo guard`);
+  }
+
+  // One definition of the common terms and the default, not one per screen.
+  assert.match(
+    create, /const BETALINGSTERMIJNEN = COMMON_PAYMENT_TERMS/,
+    "the chip list comes from payment-term.ts",
+  );
+  assert.match(
+    create, /const DEFAULT_TERMIJN = DEFAULT_PAYMENT_TERM/,
+    "…and so does the default a new invoice starts at",
+  );
+});
