@@ -48,6 +48,38 @@
 
 BEGIN;
 
+-- ── Drop first, and drop EVERY overload ───────────────────────────────────────────────────────
+--
+-- CREATE OR REPLACE cannot change a function's return type or the NAMES of its parameters. Where
+-- some earlier version of this function already exists under a different shape, the statement
+-- below fails with
+--
+--     ERROR:  cannot change name of input parameter "uid"
+--     HINT:   Use DROP FUNCTION seed_invoice_counter(uuid,integer,text,integer) first.
+--
+-- and because this file is one transaction, the whole thing rolls back. The old function stays,
+-- nothing says so afterwards, and a schema check keeps reporting the migration as not applied
+-- while the owner is certain they ran it. That is exactly how this was found.
+--
+-- Every overload BY NAME, not one signature: a DROP that names the arguments only matches the
+-- shape it names, and the shape blocking the replace is by definition a different one. This
+-- function is app-owned, called from one route through PostgREST, and referenced by no view,
+-- default or constraint, so there is nothing for a drop to break.
+--
+-- Idempotent: on a database that has never seen it, the loop simply finds nothing.
+DO $drop$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT p.oid::regprocedure AS sig
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'seed_invoice_counter'
+  LOOP
+    EXECUTE format('DROP FUNCTION %s', r.sig);
+  END LOOP;
+END
+$drop$;
+
 CREATE OR REPLACE FUNCTION public.seed_invoice_counter(
   p_user_id  uuid,
   p_year     int,
