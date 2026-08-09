@@ -4500,6 +4500,42 @@ test("[LEVERDATUM] the edit path can read, show and write the delivery date", ()
   assert.equal(sends.length, 2, "both 'Opslaan' and 'Opslaan en versturen' must carry it");
 });
 
+// ─── [LEVERDATUM] Converting an offerte creates a factuur that needs one ────────────────────────
+//
+// An offerte is stored with delivery_date NULL — correct, an offer delivers nothing. Pressing
+// "Versturen" on it does not send the offer: it CONVERTS it into a numbered factuur. That factuur
+// went out with no leverdatum at all, and the PDF simply omitted the row, because showLeverdatum
+// needs a value to print. Past the number commit the document is immutable (Art. 35), so the only
+// remedy was a creditnota.
+//
+// Two readers, one answer: the UPDATE writes the row, and the PDF is rendered from the row as it
+// was READ. Fixing only the database would leave the document in the customer's mailbox wrong.
+test("[LEVERDATUM] an offerte converted on send gets one, in the row AND on the PDF", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+
+  assert.match(
+    send, /const leverdatumBijConversie: string \| null =/,
+    "resolved once — two call sites reading two expressions is how they drift",
+  );
+  // Only when the column is really there. This UPDATE is the point of no return: on a deployment
+  // where the FACTUUR-A migration is still open, an unknown column fails the WHOLE statement and
+  // the invoice is numbered nowhere and sent nowhere.
+  assert.match(
+    send, /'delivery_date' in invoice &&/,
+    "the row itself must answer whether the column exists, before it is written",
+  );
+  assert.match(
+    send, /!invoice\.delivery_date &&/,
+    "never overwrite a leverdatum the owner already chose",
+  );
+
+  const uses = send.match(/leverdatumBijConversie \? \{ delivery_date: leverdatumBijConversie \} : \{\}/g) ?? [];
+  assert.equal(
+    uses.length, 2,
+    "both the committing UPDATE and the rendered PDF must carry it — one of the two is not a fix",
+  );
+});
+
 // ─── [REGEL-PARITEIT] Two writers on invoice_lines, one definition of a valid line ──────────────
 //
 // /api/invoice/draft refuses a line with no description (Art. 35a: the nature of the supply belongs

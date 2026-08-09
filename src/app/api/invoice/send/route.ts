@@ -307,6 +307,20 @@ export async function POST(request: NextRequest) {
       ? (invoice.invoice_type ?? 'factuur')
       : isConversion ? 'factuur' : (invoice.invoice_type ?? 'factuur')
 
+    // [LEVERDATUM] Resolved ONCE, here, because two things downstream need the same answer: the
+    // UPDATE that commits the number, and the PDF that is rendered from the PRE-update row. Fixing
+    // only the database would have left the document that actually reaches the customer without
+    // the leverdatum — the row would be right and the invoice still wrong. Null when there is
+    // nothing to do, which is every ordinary send. See the UPDATE below for the full argument.
+    const leverdatumBijConversie: string | null =
+      !resend &&
+      'delivery_date' in invoice &&
+      !invoice.delivery_date &&
+      (finalType === 'factuur' || finalType === 'creditnota') &&
+      typeof invoice.invoice_date === 'string'
+        ? invoice.invoice_date
+        : null
+
     // [FACTUUR-A] Art. 35a sub c — customer ADDRESS is a mandatory invoice
     // element. Enforced server-side (defense in depth; the UI enforces it
     // too). Applies on first issuance of a factuur/creditnota — resend of an
@@ -425,6 +439,26 @@ export async function POST(request: NextRequest) {
           ...(convertOnly ? {} : { status: 'sent' as const }),
           invoice_number: finalNumber,
           invoice_type: finalType as 'factuur' | 'creditnota' | 'pro_forma' | 'offerte',
+          // [LEVERDATUM] Art. 35a lid 1 sub f — the date of supply, on the ONE line where a
+          // document that had none becomes a document that needs one.
+          //
+          // An offerte is stored with delivery_date NULL, and rightly so: an offer delivers
+          // nothing. Pressing "Versturen" on it does not send the offer — it CONVERTS it into a
+          // numbered factuur (isConversion above). That factuur went out without a leverdatum, and
+          // the PDF simply omitted the row, because showLeverdatum needs a value to print. A
+          // mandatory element missing from a legal invoice, invisibly — and past this line the
+          // number is committed, so it can never be edited, only credited (Art. 35).
+          //
+          // FILLED, not refused. The invoice date is what /api/invoice/draft already uses when the
+          // owner names no separate leverdatum, so this is the same default applied one step later,
+          // not a new claim about when the work was done. Refusing here would break conversion for
+          // every existing offerte, and the check would have to sit before the number is minted.
+          //
+          // The key only travels when the column is really there. This UPDATE is the point of no
+          // return; on a deployment where the FACTUUR-A migration is still open, an unknown column
+          // fails the WHOLE statement — the invoice would be numbered nowhere and sent nowhere.
+          // `select('*')` above returns the key iff the column exists, so the row itself answers.
+          ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
           ...(computedTotals ?? {}),
           updated_at: new Date().toISOString(),
         })
@@ -514,6 +548,10 @@ export async function POST(request: NextRequest) {
             ...(computedTotals ?? {}),
             invoice_number: finalNumber,
             invoice_type: finalType,
+            // [LEVERDATUM] The same value the UPDATE just committed. `invoice` is the row as it
+            // was read, so without this line the stored invoice would carry a leverdatum and the
+            // PDF in the customer's mailbox would not.
+            ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
             status: resend || convertOnly ? invoice.status : 'sent',
           },
           lines ?? [],
