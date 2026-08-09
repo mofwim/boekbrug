@@ -4891,3 +4891,55 @@ test("[BETAALTERMIJN-LANG] both screens warn above sixty days and neither blocks
     assert.match(src, /\{langeTermijn && \(/, `${path} must render it`);
   }
 });
+
+// ─── [KAS-STIL] A drawer that goes out of step must say so ──────────────────────────────────────
+//
+// cash-settle.ts keeps the kasboek in step with the invoices paid in cash. It creates entries, it
+// heals them, and it DELETES them — and every one of those failures ended at console.error, with
+// the word "non-fatal" beside it. The module runs from the hourly cron, where console output
+// reaches nobody.
+//
+// Non-fatal to the REQUEST, which is right: paying an invoice must not fail because a reconcile
+// did. Never non-fatal to the BOOKS, and each direction is its own wrong number:
+//
+//   insert failed   the cash payment has no drawer movement → the balance is too HIGH
+//   update failed   the invoice's amount or date moved and the entry did not → stale
+//   delete failed   the invoice is no longer cash-paid and the entry stayed → too LOW
+//   read bailed     the whole pass did not run, and every caller ignores its ok:false
+//
+// Its own sibling in the same hourly reconcile — incasso-settle.ts — already imports the reporter
+// for exactly this class. This file was the one that did not.
+test("[KAS-STIL] every cash-drawer failure reaches the reporter, not just the console", () => {
+  const src = code("src/lib/cash-settle.ts");
+
+  assert.match(
+    src, /import \{ reportHandledFailure \} from "@\/lib\/report-handled"/,
+    "the same reporter its neighbour in the hourly reconcile already uses",
+  );
+  // Four write/read failure sites, four reports. A count, because the failure mode here is one
+  // branch quietly keeping its console.error while the others were converted.
+  const reports = src.match(/reportHandledFailure\(\{/g) ?? [];
+  assert.ok(
+    reports.length >= 5,
+    `insert, update, delete, the outer throw and the read bail must each report — found ${reports.length}`,
+  );
+  // And nothing may fall back to the console, which is what "non-fatal" meant here.
+  assert.doesNotMatch(
+    src, /console\.error/,
+    "a cron writing to stdout is the same as a cron writing nothing",
+  );
+
+  // The three that leave a WRONG BALANCE are data-integrity; a bail leaves the books untouched
+  // and is a gate-unavailable. Getting that backwards makes the severe ones easy to skim past.
+  assert.match(src, /message: "cash settlement entry not created[^"]*"/);
+  assert.match(src, /message: "orphaned cash settlements not removed[^"]*"/);
+  assert.match(src, /severity: "gate-unavailable"/, "the read bail is not a corrupted drawer");
+
+  // No customer amounts in a report — report-handled.ts asks for ids and counts, never bedragen.
+  for (const c of src.match(/context: \{[^}]*\}/g) ?? []) {
+    assert.doesNotMatch(
+      c, /\bamount\b|total_inc_btw|bedrag/,
+      `a failure report must not carry an amount — ${c.slice(0, 70)}…`,
+    );
+  }
+});
