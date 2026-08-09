@@ -40,6 +40,8 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { createNotification } from '@/lib/notifications'
 import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
+// [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
+import { checkKorInvoice } from '@/lib/kor-invoice'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 // [BTW-ROUND] Per-tarief afronding — nu uit de gedeelde module, zodat het opslaan van een concept
 // (/api/invoice/[id] PUT) en het uitgeven hier per definitie hetzelfde bedrag opleveren.
@@ -344,7 +346,9 @@ export async function POST(request: NextRequest) {
       // een melding over ontbrekende bedrijfsgegevens die wél gewoon ingevuld zijn.
       const { data: sellerProfile } = await (isActingForOther(acting) ? createPipelineClient() : supabase)
         .from('profiles')
-        .select('btw_number, kvk_number, address, company_name, full_name')
+        // [KOR-FACTUUR] `kor_active` erbij: zonder die kolom kan deze route niet zien dat de
+        // eigenaar geen btw mag rekenen, en dat is precies de controle hieronder.
+        .select('btw_number, kvk_number, address, company_name, full_name, kor_active')
         .eq('id', ownerId)
         .single()
       const missingSeller: string[] = []
@@ -360,6 +364,29 @@ export async function POST(request: NextRequest) {
           },
           { status: 400 }
         )
+      }
+
+      // [KOR-FACTUUR] Geen btw onder de kleineondernemersregeling — en dit is het laatste moment
+      // waarop dat nog gratis te herstellen is.
+      //
+      // Hierna wordt een nummer uitgegeven en gaat het document de deur uit. Staat er dan btw op,
+      // dan is die verschuldigd op grond van art. 37 Wet OB (wie btw op een factuur vermeldt, is
+      // hem verschuldigd), terwijl de KOR juist elk recht op aftrek wegneemt — dus er staat niets
+      // tegenover. Terugdraaien kan alleen nog met een creditnota naar een klant die niets fout
+      // deed.
+      //
+      // Het aanmaakscherm biedt onder de KOR alleen 0% aan, dus normaal komt hier nooit iets langs.
+      // Deze controle vangt wat het scherm niet kan: een concept dat is opgesteld VÓÓRDAT de KOR
+      // werd aangezet, en elk verzoek dat niet uit dat scherm komt.
+      //
+      // Weigeren, niet stilzwijgend corrigeren: de bedragen aanpassen van een document dat de
+      // ondernemer net heeft nagekeken, op de enige onomkeerbare knop in de app, is geen oplossing.
+      const korCheck = checkKorInvoice({
+        korActive: (sellerProfile as { kor_active?: boolean | null } | null)?.kor_active,
+        lines: (lines ?? []) as { btw_rate?: number | null }[],
+      })
+      if (!korCheck.ok) {
+        return NextResponse.json({ error: korCheck.error, code: korCheck.code, lines: korCheck.lines }, { status: 400 })
       }
     }
 
