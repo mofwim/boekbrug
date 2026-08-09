@@ -254,7 +254,40 @@ export async function runBankAutoConfirm(args: {
       p_invoice_ids: plan.invoiceIds,
       p_pay_date: tx.date || null,
     });
-    if (batchErr) continue;
+    if (batchErr) {
+      // [BATCH-STIL] This `continue` used to be the whole handler, and it is the reason a real
+      // defect lived here unseen: book_bank_batch raised on EVERY call — a plpgsql "column
+      // reference invoice_id is ambiguous" — so multi-invoice auto-confirmation had never booked
+      // anything, for anyone. Nothing logged it, nothing counted it, and the comment above says
+      // "the batch stays for the human", which is precisely what a working skip looks like. The
+      // one place in this file that could hide a bug was the one place that reported nothing,
+      // while the pay-rollback forty lines down already knew to wake someone.
+      //
+      // The outcomes are NOT alike, so they are no longer treated alike:
+      //
+      //   55000  the RPC's own refusal — an invoice stopped being payable, or the tie stopped
+      //          being exact, between the plan and the lock. A race with a human, expected on a
+      //          busy account, and genuinely nothing to report. Still silent.
+      //   42883 / PGRST202  the function is not there. The migration was never applied and this
+      //          entire tier books nothing — invisible from the outside, because "no batches were
+      //          booked" reads exactly like "there were no batches".
+      //   anything else  the database refused something the plan said was safe. Money did not
+      //          move where the app had decided it should, which is not a skip.
+      const code = String((batchErr as { code?: string }).code ?? "");
+      if (code !== "55000") {
+        reportHandledFailure({
+          tag: "BANK-BATCH-ATOMIC",
+          message:
+            code === "42883" || code === "PGRST202"
+              ? "book_bank_batch is missing — every multi-invoice batch is silently skipped"
+              : "book_bank_batch refused a planned batch for an unexpected reason",
+          severity: code === "42883" || code === "PGRST202" ? "feature-off" : "data-integrity",
+          // Ids and codes only. Never the amounts — see report-handled.ts.
+          context: { userId, txId, invoiceCount: plan.invoiceIds.length, code, error: batchErr.message },
+        });
+      }
+      continue;
+    }
     if (!bookedRows || (bookedRows as unknown[]).length === 0) continue;
 
     for (const inv of planInvs) {
@@ -403,7 +436,20 @@ export async function runBankAutoConfirm(args: {
       .neq("status", "paid")
       .or("accountant_status.is.null,accountant_status.neq.verwerkt")
       .select("id");
-    if (payErr) continue; // verwerkt/RLS/other — leave for the human, don't fail the batch
+    if (payErr) {
+      // [BATCH-STIL] Same shape as the batch swallow above, same reasoning. The two EXPECTED
+      // outcomes of this write do not arrive as an error at all: an invoice the accountant locked,
+      // or one someone else just paid, comes back as zero rows on the next line. So `payErr` is
+      // never the ordinary case — it is the database refusing the write, and the invoice stays
+      // open while the bank line stays unmatched with nobody told which one.
+      reportHandledFailure({
+        tag: "BANK-AUTO-CONFIRM",
+        message: "marking an invoice paid failed — the bank line stays unmatched",
+        severity: "data-integrity",
+        context: { userId, invoiceId, txId, code: (payErr as { code?: string }).code ?? null, error: payErr.message },
+      });
+      continue;
+    }
     if (!payData || payData.length === 0) continue; // concurrently paid — not ours to link
 
     // (b) link the bank line → matched (single invoice ⇒ fully covered). 0 rows ⇒ roll back.

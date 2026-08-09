@@ -4701,3 +4701,64 @@ test("[KOR-FACTUUR] the screen offers no rate that would be refused, and the doo
   assert.match(mod, /if \(!args\.korActive\) return \{ ok: true \}/,
     "an owner outside the scheme must be untouched by every line of it");
 });
+
+// ─── [BATCH-STIL] The one place a bug could hide was the one place that said nothing ────────────
+//
+// bank-auto-confirm.ts is 530 lines that move money automatically after every invoice send, and it
+// had no unit test at all. What it did have was two bare swallows:
+//
+//     if (batchErr) continue;   // "not payable / migration not applied — stays for the human"
+//     if (payErr) continue;     // "verwerkt/RLS/other — leave for the human"
+//
+// The first is where a real defect lived unseen: book_bank_batch raised on EVERY call (a plpgsql
+// "column reference invoice_id is ambiguous"), so multi-invoice auto-confirmation had never booked
+// anything, for anyone. Nothing logged it and nothing counted it, and "no batches were booked"
+// reads exactly like "there were no batches". Forty lines further down the same file already knew
+// better: [ROLLBACK-LOUD] wakes someone, because "a promise nobody is told has been broken is not
+// a promise".
+//
+// The expected outcomes must STAY silent, or the alarm becomes noise nobody reads: the RPC's own
+// 55000 refusal is a race with a human and happens on any busy account, and for the single-invoice
+// write the two ordinary cases arrive as zero rows, not as an error.
+test("[BATCH-STIL] a bank booking that fails for an unexpected reason reaches someone", () => {
+  const src = code("src/lib/bank-auto-confirm.ts");
+
+  // Neither swallow may go back to being a bare continue.
+  assert.doesNotMatch(
+    src, /if \(batchErr\) continue;/,
+    "an RPC that refuses a planned batch must not vanish — that is how it hid for months",
+  );
+  assert.doesNotMatch(src, /if \(payErr\) continue;/, "…and neither must a failed pay write");
+
+  // The RPC's own business refusal stays quiet. Reporting a race on every busy account would bury
+  // the signal this gate exists to protect.
+  assert.match(
+    src, /if \(code !== "55000"\)/,
+    "55000 is the RPC saying the tie stopped being exact — expected, and not an alarm",
+  );
+
+  // A missing function is its own outcome: the whole tier books nothing, invisibly.
+  assert.match(
+    src, /code === "42883" \|\| code === "PGRST202"/,
+    "the not-applied-migration case must be told apart from a genuine refusal",
+  );
+  assert.match(
+    src, /severity: code === "42883" \|\| code === "PGRST202" \? "feature-off" : "data-integrity"/,
+    "…and carry a severity that says which of the two it is",
+  );
+
+  // Both sites must actually call the reporter, not merely console.log.
+  const calls = src.match(/reportHandledFailure\(\{/g) ?? [];
+  assert.ok(
+    calls.length >= 3,
+    `the batch swallow, the pay swallow and the rollback must all report — found ${calls.length}`,
+  );
+  // And no customer amounts in the context: report-handled.ts says ids and values, never bedragen.
+  const contexts = src.match(/context: \{[^}]*\}/g) ?? [];
+  for (const c of contexts) {
+    assert.doesNotMatch(
+      c, /total_inc_btw|amount:|bedrag/,
+      `a failure report must not carry a customer's amount — ${c.slice(0, 60)}…`,
+    );
+  }
+});

@@ -49,6 +49,9 @@ export const EXEMPT_REASON_NL = "Vrijgesteld van btw op grond van artikel 11 Wet
 
 /** A line, as little of it as this question needs. */
 export interface ExemptLineLike {
+  /** Carried so a caller can hand over its own line objects unchanged; not read here — an exempt
+   *  supply is identified by the flag, never by a rate that happens to be 0. */
+  btw_rate?: number | string | null;
   line_total?: number | null;
   quantity?: number | string | null;
   unit_price?: number | string | null;
