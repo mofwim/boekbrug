@@ -548,10 +548,39 @@ export function buildInvoiceUbl(
     cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate, lineVatKind(l)));
     cat.ele(NS.cbc, "Percent").txt(String(rate));
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
-    line
-      .ele(NS.cac, "Price")
-      .ele(NS.cbc, "PriceAmount", { currencyID: EUR })
-      .txt(money(Number(l.unit_price ?? 0)));
+    // [PRIJS-RECONSTRUEERBAAR] De prijs moet het regelbedrag OPLEVEREN.
+    //
+    // Hier stond alleen `PriceAmount = money(unit_price)`, en money() rondt af op centen. Bij een
+    // prijs die geen rond bedrag is — en dat is elke regel van iemand die zijn prijzen INCLUSIEF
+    // btw intypt — zei het bestand dus:
+    //
+    //     InvoicedQuantity     150
+    //     PriceAmount          0.83        150 x 0,83 = 124,50
+    //     LineExtensionAmount  123.85      maar de regel zegt 123,85
+    //
+    // Dat is 65 cent verschil op één regel, in het document dat naar het access point gaat. Peppol
+    // BIS 3.0 rekent die vermenigvuldiging na (PEPPOL-EN16931-R120: regelbedrag = aantal x prijs
+    // gedeeld door het basisaantal) en weigert het bestand. En los van elke regel: een mens die de
+    // factuur naleest komt op een ander getal uit dan de factuur.
+    //
+    // UBL heeft hier `cbc:BaseQuantity` voor — het aantal eenheden waarvoor de prijs geldt. Zodra
+    // de afgeronde stuksprijs het regelbedrag niet reproduceert, wordt de prijs uitgedrukt PER
+    // REGEL: "EUR 123,85 per 150 stuks". Dat is exact per constructie, voor elk aantal en elke
+    // breuk, want het is dezelfde deling in beide richtingen.
+    //
+    // De gewone factuur verandert niet. Is de stuksprijs al een rond bedrag — verreweg de meeste
+    // regels — dan klopt de vermenigvuldiging en blijft er precies staan wat er stond, zonder
+    // BaseQuantity. Alleen de regel die anders zou liegen, krijgt de andere vorm.
+    const aantal = Number(l.quantity ?? 1);
+    const stuksprijs = round2(Number(l.unit_price ?? 0));
+    const price = line.ele(NS.cac, "Price");
+    if (round2(aantal * stuksprijs) === ex) {
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
+    } else {
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(ex));
+      // Zelfde eenheidscode als InvoicedQuantity — anders vergelijkt de validator appels met peren.
+      price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
+    }
   });
 
   const xml = root.end({ prettyPrint: true });

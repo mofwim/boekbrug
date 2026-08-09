@@ -48,6 +48,8 @@ import {
   type LinkRow,
   type TransactionRow,
 } from '@/lib/money-invariants'
+// [EIGEN-FACTUUR] Dezelfde beslissing als de e-mailpoort — zie own-document.ts.
+import { looksLikeOwnDocument } from '@/lib/own-document'
 
 /** Plain-language heading per violation kind, so the output reads without the source open. */
 const HEADINGS: Record<string, string> = {
@@ -60,6 +62,10 @@ const HEADINGS: Record<string, string> = {
   btw_arithmetic: 'ex + btw is niet inc — dit getal staat in de aangifte',
   creditnota_sign: 'Creditnota met een positief bedrag — telt op waar hij eraf hoort',
   negative_paid: 'Negatief betaald bedrag',
+  // [EIGEN-FACTUUR] Twee kwaden tegelijk: de omzet telt ook als kosten, en de BTW die je moet
+  // AFDRAGEN staat als voorbelasting terug te vragen. De rij spreekt zichzelf nergens tegen.
+  own_invoice_booked: 'Je EIGEN verkoopfactuur staat als inkoop geboekt',
+  own_invoice_suspected: 'Lijkt je eigen verkoopfactuur, als inkoop geboekt — naam komt overeen',
 }
 
 function argValue(name: string): string | null {
@@ -88,10 +94,12 @@ async function main() {
     id: string; invoice_number: string | null; direction: string | null; status: string | null
     invoice_type: string | null; total_ex_btw: number | null; btw_amount: number | null
     total_inc_btw: number | null; amount_paid: number | null
+    // [EIGEN-FACTUUR] Who the supplier is said to be, and where its money was to go.
+    client_name: string | null; vendor_iban: string | null; receiver_id: string | null
   }>((from, to) =>
     scope(pipeline
       .from('invoices')
-      .select('id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid'))
+      .select('id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, client_name, vendor_iban, receiver_id'))
       .order('id', { ascending: true })
       .range(from, to),
   )
@@ -147,6 +155,69 @@ async function main() {
 
   // Grouped by kind, biggest euros first inside each group — the order you would work in.
   const byKind = new Map<string, typeof violations>()
+  // ── [EIGEN-FACTUUR] Invoices already booked as a cost that are the owner's OWN ──────────────
+  //
+  // The guard in email-integration.ts stops NEW ones. It cannot undo what is already in the books,
+  // and this is the shape that leaves no trace of itself: the owner's own sales invoice, mailed
+  // back and read as a purchase. Measured once at EUR 394,99 — turnover standing a second time as
+  // a cost, and EUR 32,61 of BTW OWED also claimed as voorbelasting.
+  //
+  // What an existing ROW can be checked against is narrower than what the reader saw: the vendor's
+  // KVK and BTW number are not columns on invoices. Two signals survive on the row itself, and
+  // they are treated as differently as they deserve — the IBAN is proof, the name is a question.
+  const profiles = await fetchAllRows<{
+    id: string; company_name: string | null; full_name: string | null; iban: string | null
+  }>((from, to) => {
+    const q = pipeline.from('profiles').select('id, company_name, full_name, iban')
+    return (onlyUser ? q.eq('id', onlyUser) : q).order('id', { ascending: true }).range(from, to)
+  }).catch(() => [] as { id: string; company_name: string | null; full_name: string | null; iban: string | null }[])
+
+  const meById = new Map(profiles.map((p) => [p.id, p]))
+  const ownFindings: Array<{ certain: boolean; entityId: string; euros: number; message: string }> = []
+  let ownCertain = 0
+  let ownLikely = 0
+  for (const inv of invoices) {
+    if (inv.direction !== 'incoming') continue
+    const me = inv.receiver_id ? meById.get(inv.receiver_id) : undefined
+    if (!me) continue
+    const v = looksLikeOwnDocument(
+      { vendorName: inv.client_name, vendorIban: inv.vendor_iban },
+      { companyName: me.company_name, fullName: me.full_name, iban: me.iban },
+    )
+    if (!v.isOwn) continue
+    const euros = Math.abs(Number(inv.total_inc_btw) || 0)
+    // Kept in its OWN list rather than pushed into `violations`. ViolationKind is a closed union in
+    // money-invariants.ts, and widening a shared money type for a finding only this script makes
+    // would be the tail wagging the dog — the invariants module is about arithmetic that must hold,
+    // this is about a document that should never have been read as a cost. Same report shape below.
+    ownFindings.push({
+      certain: v.certainty === 'certain',
+      entityId: inv.id,
+      euros,
+      message: `${inv.invoice_number ?? '(geen nummer)'} — ${v.reasons.join(' · ')}`,
+    })
+    if (v.certainty === 'certain') ownCertain++
+    else ownLikely++
+  }
+  if (ownFindings.length > 0) {
+    for (const certain of [true, false]) {
+      const list = ownFindings.filter((f) => f.certain === certain)
+      if (list.length === 0) continue
+      const sum = Math.round(list.reduce((s, f) => s + f.euros, 0) * 100) / 100
+      console.log(`── ${HEADINGS[certain ? 'own_invoice_booked' : 'own_invoice_suspected']} — ${list.length}×, samen € ${sum.toFixed(2)}`)
+      for (const f of list.slice(0, 15)) console.log(`     ${f.entityId}  ${f.message}`)
+      if (list.length > 15) console.log(`     … en nog ${list.length - 15}. Niet afgekapt in het totaal hierboven.`)
+      console.log()
+    }
+    console.log(
+      `  ${ownCertain} zeker + ${ownLikely} mogelijk. Elk daarvan telt je omzet ook als KOSTEN én\n` +
+      '  vraagt de BTW terug die je juist moet AFDRAGEN — twee fouten in tegengestelde richting,\n' +
+      '  op één stuk. Op de rij zelf staan alleen de naam en het IBAN; het KVK- en BTW-nummer van\n' +
+      '  de leverancier zijn geen kolommen op invoices, dus dit is een ONDERGRENS.\n',
+    )
+    process.exitCode = 1
+  }
+
   for (const v of violations) {
     const list = byKind.get(v.kind) ?? []
     list.push(v)
