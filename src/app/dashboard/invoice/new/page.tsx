@@ -29,6 +29,7 @@ import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-disco
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
+import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -86,6 +87,10 @@ type Profile = {
   // read with select('*') and this column does not exist until vat_exemption.sql is applied —
   // absent then, which correctly hides the "Vrijgesteld" option instead of breaking the form.
   vat_exempt_activity?: boolean | null
+  // [KOR-FACTUUR] Zit deze ondernemer in de kleineondernemersregeling? Dan brengt hij GEEN btw in
+  // rekening, en dit scherm was de enige plek in de app die dat niet wist. Optioneel om dezelfde
+  // reden als hierboven: het profiel wordt met select('*') gelezen.
+  kor_active?: boolean | null
 }
 
 type Client = {
@@ -866,6 +871,10 @@ function NewInvoicePageContent() {
   // ─── Totals ────────────────────────────────────────────────────────────────
 
   // [BOEK-031] Credit: user enters positive — system saves negative
+  // [KOR-FACTUUR] Eén afgeleide waarde, zodat het tariefmenu en de uitleg niet uit elkaar kunnen
+  // lopen. Ontbreekt de kolom (profiel gelezen met select('*') vóór de migratie), dan is dit false
+  // en gedraagt het scherm zich precies zoals voorheen.
+  const korActief = !!profile?.kor_active
   const sign      = invoiceType === 'creditnota' ? -1 : 1
   // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
   // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
@@ -1647,8 +1656,12 @@ function NewInvoicePageContent() {
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
                       <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
-                        <option value={21}>21%</option>
-                        <option value={9}>9%</option>
+                        {/* [KOR-FACTUUR] Onder de KOR bestaan 21% en 9% niet als keuze. Weglaten is
+                            hier beter dan achteraf afkeuren: een tarief dat je kunt kiezen en dat
+                            daarna wordt geweigerd, is een val. Zie kor-invoice.ts voor wat het
+                            kost als er tóch btw op komt (art. 37 Wet OB). */}
+                        {!korActief && <option value={21}>21%</option>}
+                        {!korActief && <option value={9}>9%</option>}
                         <option value={0}>0%</option>
                         {/* [VRIJGESTELD] Alleen zichtbaar als de ondernemer vrijgestelde omzet
                             heeft verklaard (Instellingen). Voor iedereen anders is deze keuze
@@ -1657,6 +1670,13 @@ function NewInvoicePageContent() {
                             aangifte én kost de aftrek op de bijbehorende kosten. */}
                         {profile?.vat_exempt_activity && <option value={EXEMPT_OPTION}>Vrijgesteld</option>}
                       </select>
+                      {/* De reden staat ernaast, niet in een melding achteraf. Zonder deze zin is
+                          een menu met één keuze gewoon een kapot menu. */}
+                      {korActief && (
+                        <p style={{ fontSize: 11, color: '#5F6368', margin: '6px 0 0', lineHeight: 1.45 }}>
+                          {KOR_RATE_HINT}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#70757a' }}>

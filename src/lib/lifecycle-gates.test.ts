@@ -4644,3 +4644,60 @@ test("[EIGEN-FACTUUR] the own-invoice verdict precedes the identity scrub, in th
     "the caller-side copy is what read the cleared fields — it must not come back",
   );
 });
+
+// ─── [KOR-FACTUUR] No btw under the KOR, checked where it can still be undone ───────────────────
+//
+// This app knew about the KOR everywhere downstream — regime-flags.ts writes a careful paragraph
+// about it, readiness knows, the closing package knows. The invoice screen did not: `kor_active`
+// appeared nowhere in it, so an owner in the scheme could pick 21%, send, and hear about it at the
+// aangifte up to three months later.
+//
+// By then it is money. Art. 37 Wet OB makes btw owed BECAUSE it is stated on the invoice; the KOR
+// removes the right to deduct, so nothing offsets it; and a numbered invoice is corrected with a
+// creditnota, not withdrawn. The only free moment is the one before it is sent.
+test("[KOR-FACTUUR] the screen offers no rate that would be refused, and the door refuses anyway", () => {
+  const screen = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // Prevention: 21 and 9 are not selectable under the KOR. Offering a choice and then rejecting it
+  // is a trap, not a guard.
+  assert.match(
+    screen, /\{!korActief && <option value=\{21\}>21%<\/option>\}/,
+    "21% must be hidden under the KOR",
+  );
+  assert.match(screen, /\{!korActief && <option value=\{9\}>9%<\/option>\}/, "…and 9%");
+  assert.match(
+    screen, /<option value=\{0\}>0%<\/option>/,
+    "…while 0% stays, unconditionally — it is the only rate a KOR invoice may carry",
+  );
+  assert.match(
+    screen, /const korActief = !!profile\?\.kor_active/,
+    "the flag comes from the profile the screen already loads",
+  );
+  // A menu with one option and no explanation is a broken menu.
+  assert.match(screen, /\{KOR_RATE_HINT\}/, "the reason must stand beside the field");
+
+  // Refusal, at the point of no return. The screen cannot catch a draft written BEFORE the KOR was
+  // switched on, nor anything that does not come from the screen.
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /const korCheck = checkKorInvoice\(\{/, "the send route must run the check");
+  assert.match(
+    send, /\.select\('btw_number, kvk_number, address, company_name, full_name, kor_active'\)/,
+    "…and READ the column it checks — an unselected field is a guard that never fires",
+  );
+  assert.match(
+    send, /if \(!korCheck\.ok\) \{[\s\S]{0,200}?status: 400/,
+    "…and refuse, rather than log and carry on",
+  );
+
+  // ORDER is the whole point: the refusal must come BEFORE the number is minted, or the check
+  // burns a sequence number it cannot give back (Art. 35 — the series has no holes).
+  const checkAt = send.indexOf("const korCheck = checkKorInvoice({");
+  const numberAt = send.indexOf("if (!resend && (isConversion || !finalNumber))");
+  assert.ok(checkAt > 0 && numberAt > checkAt, "the KOR check must run before a number is issued");
+
+  // And it refuses rather than silently adjusting the amounts of a reviewed document.
+  const mod = code("src/lib/kor-invoice.ts");
+  assert.doesNotMatch(mod, /btw_rate:\s*0|\.map\(/, "this module corrects nothing — it only reports");
+  assert.match(mod, /if \(!args\.korActive\) return \{ ok: true \}/,
+    "an owner outside the scheme must be untouched by every line of it");
+});

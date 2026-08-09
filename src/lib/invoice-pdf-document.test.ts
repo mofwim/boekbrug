@@ -235,3 +235,83 @@ test("[PRIJS-KOLOM] every price on the page multiplies out to the total beside i
   assert.ok(!text.includes("€ 0,83"), "…and not as the rounded price that does not multiply out");
   assert.ok(text.includes("€ 75,00"), "a round price keeps exactly two decimals");
 });
+
+// ─── [VRIJSTELLING-OP-PAPIER] An exempt supply must say on what ground it is exempt ─────────────
+//
+// Art. 226 punt 11 of directive 2006/112/EG (art. 35a lid 1 sub k Wet OB). The UBL for this same
+// invoice already carried it — BR-E-10 of Peppol BIS 3.0 refuses the file without a
+// TaxExemptionReason — so the e-invoice was compliant and the paper one was not.
+//
+// This renders the document rather than reading the source, for the reason at the top of this
+// file: the summary row is BUILT from btwBreakdown(), which groups by rate alone and therefore
+// prints one "0,00% BTW" line over a genuine 0% export and an exempt course together. Nothing at
+// the source level looks wrong; only the page shows what the customer is told.
+
+const EXEMPT_MIX = [
+  // A genuine zero-rated supply — taxed, at 0%. Deduction right intact, category Z in the XML.
+  { description: "Export handelsgoederen", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: null },
+  // And an exempt one — art. 11, no BTW and no deduction right. Category E in the XML.
+  { description: "Cursus voedselveiligheid", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: "exempt" },
+];
+
+const EXEMPT_INVOICE = {
+  invoice_type: "factuur",
+  invoice_number: "2026-0011",
+  invoice_date: "2026-08-08",
+  due_date: "2026-09-07",
+  client_name: "Stichting Contour de Twern",
+  client_address: "Spoorlaan 444",
+  client_postal_code: "5038CH",
+  client_city: "Tilburg",
+  total_ex_btw: 1000,
+  btw_amount: 0,
+  total_inc_btw: 1000,
+};
+
+test("an exempt line puts the exemption reference on the page", async () => {
+  const text = await pdfText(await renderInvoicePdf(EXEMPT_INVOICE, EXEMPT_MIX, PROFILE));
+  // Control first — an extractor returning "" would make every assertion here vacuous.
+  assert.ok(text.includes("Cursus voedselveiligheid"), "the extractor must find the exempt line");
+
+  assert.ok(
+    text.includes("Vrijgesteld van btw op grond van artikel 11 Wet OB 1968"),
+    "the ground for the exemption is a mandatory element, not a courtesy",
+  );
+  // And WHICH part of the total it covers. On a mixed invoice the reference without an amount
+  // leaves the reader unable to tell the exempt half from the zero-rated one.
+  assert.ok(
+    text.includes("€ 500,00"),
+    "the sentence must name the exempt amount — the other € 500 is taxed, at 0%",
+  );
+});
+
+test("an invoice with nothing exempt says nothing about exemption", async () => {
+  // The direction this may never err in: a plain 21% invoice claiming an exemption would be a
+  // false statement about the tax, on the document the customer files.
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(!/vrijgesteld/i.test(text), "no exempt line, no exemption sentence");
+  assert.ok(!/artikel 11/i.test(text), "…and no article reference either");
+});
+
+test("the sentence on the page is the same string the e-invoice sends", async () => {
+  // The point of the shared constant. Two documents describing one sale must not describe it
+  // differently — this repository has met that defect three times in one audit.
+  const { taxExemptionReason } = await import("./ubl-export");
+  const fromXml = taxExemptionReason("E");
+  assert.ok(fromXml, "the UBL must still carry a reason for category E — BR-E-10");
+  const text = await pdfText(await renderInvoicePdf(EXEMPT_INVOICE, EXEMPT_MIX, PROFILE));
+  assert.ok(
+    text.includes(fromXml!),
+    `the PDF must print the XML's own reason text verbatim — XML says "${fromXml}"`,
+  );
+});
+
+test("an offerte carries no exemption statement, exempt lines or not", async () => {
+  // Same rule the reverse-charge sentence follows: an offer is not a legal invoice and may not
+  // make a BTW statement at all.
+  const text = await pdfText(
+    await renderInvoicePdf({ ...EXEMPT_INVOICE, invoice_type: "pro_forma", invoice_number: null }, EXEMPT_MIX, PROFILE),
+  );
+  assert.ok(text.includes("Offerte"), "control — this really is the quote document");
+  assert.ok(!/vrijgesteld/i.test(text), "a quote states no BTW ground");
+});

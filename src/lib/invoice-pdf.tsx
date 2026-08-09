@@ -28,6 +28,9 @@ import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 // [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
 // the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
 import { reverseChargeNotice } from './icp'
+// [VRIJSTELLING-OP-PAPIER] De verplichte vermelding bij een vrijgestelde prestatie, uit dezelfde
+// module waar de UBL-export zijn TaxExemptionReason vandaan haalt — één zin, twee documenten.
+import { exemptionNotice, type ExemptLineLike } from './exemption-notice'
 // [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
 import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
@@ -332,6 +335,17 @@ export function InvoicePDF({
     lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
   })
 
+  // [VRIJSTELLING-OP-PAPIER] The exemption reference, from the module the UBL takes its reason
+  // text from — so the sentence on the page and the string in the XML are the same string.
+  // Derived from the LINES, never typed: vat_treatment='exempt' is the flag the aangifte already
+  // reads to keep that turnover out of every rubriek, and it is what makes this claim true.
+  const exemption = exemptionNotice({
+    lines: (lines ?? []) as ExemptLineLike[],
+    invoiceType: type,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
+  })
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -483,6 +497,15 @@ export function InvoicePDF({
             art. 226 punt 11a requires the words "Btw verlegd" on a document whose BTW was
             shifted to the customer. */}
         {reverseCharge && <Text style={styles.payment}>{reverseCharge}</Text>}
+
+        {/* [VRIJSTELLING-OP-PAPIER] The other mandatory BTW reference, and it was missing entirely.
+            Art. 226 punt 11 (art. 35a lid 1 sub k Wet OB): an exempt supply must SAY on what
+            ground it is exempt. Rendered and read back with pdfjs, a €500 export plus a €500
+            exempt course produced one row — "0,00% BTW over € 1.000,00" — and neither the word
+            "vrijgesteld" nor "artikel 11" appeared anywhere on the page. The UBL for that same
+            invoice splits the two and carries the reason, because BR-E-10 refuses the file
+            otherwise. The XML was compliant and the paper was not. */}
+        {exemption && <Text style={styles.payment}>{exemption}</Text>}
 
         {/* Closing note — depends on the document type. A quote / pro forma
             must NOT demand payment or reference a "factuurnummer". */}

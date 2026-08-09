@@ -27,6 +27,7 @@ import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
 import { isReverseChargedInvoice } from "./icp";
+import { EXEMPT_REASON_NL } from "./exemption-notice";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
@@ -190,7 +191,9 @@ export type VatKind = "taxed" | "exempt" | "reverse_charge";
  * the claim checkable.
  */
 export function taxExemptionReason(category: UblTaxCategory): string | null {
-  if (category === "E") return "Vrijgesteld van btw op grond van artikel 11 Wet OB 1968";
+  // [VRIJSTELLING-OP-PAPIER] One string, imported — the PDF prints this exact sentence. Two
+  // copies of a legal claim is how the paper document and the XML start disagreeing.
+  if (category === "E") return EXEMPT_REASON_NL;
   if (category === "AE") return "Btw verlegd — artikel 12 lid 5 Wet OB 1968";
   return null;
 }
