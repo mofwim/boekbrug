@@ -19,6 +19,8 @@ import type { ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
 import { COLUMN } from '@/lib/design/tokens';
+// [BTW-VERKLARING] Zelfde normalisatie en zelfde maximum als de PDF gebruikt.
+import { cleanVatNote, MAX_NOTE_LENGTH } from '@/lib/vat-statement'
 
 export default function SettingsPage() {
   const dialog = useDialog()
@@ -59,6 +61,8 @@ export default function SettingsPage() {
   // carries an effective date, and for the same reason: without it, turning this on today would
   // re-apportion the deduction of a quarter that has already been filed.
   const [vatExemptActivity, setVatExemptActivity] = useState(false)
+  // [BTW-VERKLARING] De eigen zin die op de factuur komt als er geen btw wordt berekend.
+  const [vatStatementNote, setVatStatementNote] = useState('')
   const [vatExemptSince, setVatExemptSince] = useState<string | null>(null)
   // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
   // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
@@ -137,6 +141,7 @@ export default function SettingsPage() {
         setVatScheme(data.vat_scheme === 'kas' ? 'kas' : 'factuur')
         setVatSchemeSince(data.vat_scheme_since ?? null)
         setVatExemptActivity(!!data.vat_exempt_activity)
+        setVatStatementNote((data as { vat_statement_note?: string | null }).vat_statement_note ?? '')
         setVatExemptSince(data.vat_exempt_since ?? null)
         setRemindersEnabled(!!data.reminders_enabled)
         setReminderOffsetsText(
@@ -270,6 +275,17 @@ export default function SettingsPage() {
         .eq('id', user.id)
       if (exemptErr) {
         console.warn('[VRIJGESTELD] exemption declaration save skipped (migration applied?)', exemptErr.message)
+      }
+
+      // [BTW-VERKLARING] Apart en best-effort, om precies dezelfde reden als hierboven: vóór
+      // vat_statement_note.sql bestaat deze kolom niet, en meeschrijven in de kernopslag zou het
+      // HELE profiel laten falen voor iedereen — ook voor wie deze zin nooit invult.
+      const { error: noteErr } = await supabase
+        .from('profiles')
+        .update({ vat_statement_note: cleanVatNote(vatStatementNote) || null })
+        .eq('id', user.id)
+      if (noteErr) {
+        console.warn('[BTW-VERKLARING] btw-toelichting save skipped (migration applied?)', noteErr.message)
       }
 
       // Reflect the normalized values back into the form fields
@@ -634,6 +650,34 @@ export default function SettingsPage() {
                 )}
               </span>
             </label>
+          </div>
+
+          {/* [BTW-VERKLARING] De zin die op de factuur komt als er geen btw op zit.
+              Waarom de ondernemer hem zelf schrijft: de app weet DAT een regel vrijgesteld is,
+              nooit WELKE vrijstelling — die staan in art. 11 Wet OB en de juiste hangt af van het
+              vak. Er een verzinnen zou een onjuiste juridische grond op de factuur van een klant
+              zetten, en dat is erger dan de stilte die het vervangt. */}
+          <div className="border-t border-gray-100 pt-4 space-y-2">
+            <label htmlFor="vat-note" className="block text-sm font-medium text-gray-800">
+              Toelichting op je factuur bij 0% of vrijgesteld
+            </label>
+            <p className="text-xs text-gray-500">
+              Deze zin komt onder het totaal te staan op elke factuur waar geen BTW op zit. Zonder
+              toelichting ziet je klant een factuur zonder BTW en niets dat uitlegt waarom — zijn
+              boekhouder kan hem dan niet plaatsen. Vul de grond in die voor jouw werk geldt,
+              bijvoorbeeld: <em>Vrijgesteld van btw op grond van artikel 11-1-g Wet OB (zorg).</em>
+              {' '}Voor de KOR en voor btw verlegd hoef je niets in te vullen — die zet de app er
+              zelf op.
+            </p>
+            <input
+              id="vat-note"
+              type="text"
+              value={vatStatementNote}
+              onChange={e => setVatStatementNote(e.target.value.slice(0, MAX_NOTE_LENGTH))}
+              maxLength={MAX_NOTE_LENGTH}
+              placeholder="Bijv. Vrijgesteld van btw op grond van artikel 11-1-o Wet OB (onderwijs)."
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
           </div>
 
           {/* [KASSTELSEL] BTW-methode: factuurstelsel (accrual) vs kasstelsel (cash basis). */}

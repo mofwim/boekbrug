@@ -235,3 +235,106 @@ test("[PRIJS-KOLOM] every price on the page multiplies out to the total beside i
   assert.ok(!text.includes("€ 0,83"), "…and not as the rounded price that does not multiply out");
   assert.ok(text.includes("€ 75,00"), "a round price keeps exactly two decimals");
 });
+
+// ─── [BTW-VERKLARING] Why there is no btw ───────────────────────────────────────────────────────
+//
+// Four invoices were rendered, all with EUR 0,00 btw, and three printed text that was
+// character-for-character identical: nothing. Only the EU reverse-charge case said anything. So a
+// KOR invoice, an exempt supply and a plain 0% invoice were one document, and a customer's
+// bookkeeper had no way to tell them apart.
+
+const INVOICE = {
+  invoice_type: "factuur",
+  invoice_number: "2026-001",
+  invoice_date: "2026-08-08",
+  due_date: "2026-09-07",
+  client_name: "Stichting Contour de Twern",
+  client_address: "Spoorlaan 444",
+  client_postal_code: "5038CH",
+  client_city: "Tilburg",
+  total_ex_btw: 1000,
+  btw_amount: 0,
+  total_inc_btw: 1000,
+};
+const ZERO_LINE = [{ description: "Advies", quantity: 1, unit_price: 1000, btw_rate: 0, line_total: 1000 }];
+const NOTE = "Vrijgesteld van btw op grond van artikel 11-1-o Wet OB (onderwijs).";
+
+test("[BTW-VERKLARING] a KOR invoice says why it charges nothing", async () => {
+  const text = await pdfText(
+    await renderInvoicePdf(INVOICE, ZERO_LINE, { ...PROFILE, kor_active: true }),
+  );
+  assert.ok(text.includes("kleineondernemersregeling (KOR)"), "the scheme must be named");
+});
+
+test("[BTW-VERKLARING] an exempt supply carries the owner's own legal ground", async () => {
+  // The app knows THAT it is exempt, never WHICH exemption — art. 11 has a provision per trade.
+  const text = await pdfText(
+    await renderInvoicePdf(
+      INVOICE,
+      [{ ...ZERO_LINE[0], vat_treatment: "exempt" }],
+      { ...PROFILE, vat_exempt_activity: true, vat_statement_note: NOTE },
+    ),
+  );
+  assert.ok(text.includes(NOTE), "the sentence the owner wrote must be on the document");
+});
+
+test("[BTW-VERKLARING] an exempt supply without a note still says the true part", async () => {
+  const text = await pdfText(
+    await renderInvoicePdf(INVOICE, [{ ...ZERO_LINE[0], vat_treatment: "exempt" }], PROFILE),
+  );
+  assert.ok(text.includes("Vrijgesteld van btw."), "incomplete beats absent, and it is not false");
+});
+
+test("[BTW-VERKLARING] plain 0% with nothing to go on stays silent", async () => {
+  // Export, intra-EU goods and several services are all 0%. Printing a guessed ground on a
+  // customer's invoice is the one outcome worse than saying nothing.
+  const text = await pdfText(await renderInvoicePdf(INVOICE, ZERO_LINE, PROFILE));
+  assert.ok(!text.includes("Vrijgesteld"), "no exemption is claimed");
+  assert.ok(!text.includes("kleineondernemersregeling"), "…nor a scheme the owner is not in");
+});
+
+test("[BTW-VERKLARING] the reverse-charge sentence is never spoken over", async () => {
+  // icp.ts derives that from the customer's EU VAT number — the one zero the app can PROVE. Two
+  // sentences giving different reasons for one zero is worse than either alone.
+  const text = await pdfText(
+    await renderInvoicePdf(
+      { ...INVOICE, client_btw_number: "DE123456789" },
+      ZERO_LINE,
+      { ...PROFILE, vat_statement_note: NOTE },
+    ),
+  );
+  assert.ok(text.includes("Btw verlegd"), "the provable reason wins");
+  assert.ok(!text.includes(NOTE), "…and the owner's note does not appear beside it");
+});
+
+test("[BTW-VERKLARING] KOR and an EU customer give the KOR sentence, not verlegging", async () => {
+  // Written after the previous test failed on a premise I had not checked: the two cannot both
+  // apply. icp.ts refuses to claim verlegging for an owner in the KOR — "a statement about a
+  // regime the owner is not in" — so the reverse-charge line is absent and this one must fill the
+  // gap rather than leave the customer with a bare zero.
+  const text = await pdfText(
+    await renderInvoicePdf(
+      { ...INVOICE, client_btw_number: "DE123456789" },
+      ZERO_LINE,
+      { ...PROFILE, kor_active: true, vat_statement_note: NOTE },
+    ),
+  );
+  assert.ok(!text.includes("Btw verlegd"), "no verlegging is claimed under the KOR");
+  assert.ok(text.includes("kleineondernemersregeling (KOR)"), "the real reason is stated");
+  assert.ok(!text.includes(NOTE), "…and the scheme is a complete explanation on its own");
+});
+
+test("[BTW-VERKLARING] an invoice that DOES charge btw explains nothing", async () => {
+  // The per-rate rows already say what was charged. "Geen btw" beside EUR 210,00 of btw is a
+  // contradiction the customer would rightly phone about.
+  const text = await pdfText(
+    await renderInvoicePdf(
+      { ...INVOICE, btw_amount: 210, total_inc_btw: 1210 },
+      [{ ...ZERO_LINE[0], btw_rate: 21 }],
+      { ...PROFILE, vat_statement_note: NOTE, kor_active: true },
+    ),
+  );
+  assert.ok(text.includes("21,00% BTW"), "the rate row is there");
+  assert.ok(!text.includes(NOTE), "and no explanation of an absence that is not happening");
+  assert.ok(!text.includes("kleineondernemersregeling"));
+});

@@ -4098,3 +4098,62 @@ test("[KOR-FACTUUR] the screen offers no rate that would be refused, and the doo
   assert.match(mod, /if \(!args\.korActive\) return \{ ok: true \}/,
     "an owner outside the scheme must be untouched by every line of it");
 });
+
+// ─── [BTW-VERKLARING] A zero on an invoice must say what kind of zero it is ─────────────────────
+//
+// Measured on four rendered invoices, all with EUR 0,00 btw: a KOR invoice, an exempt supply and a
+// plain 0% invoice printed text that was character-for-character identical — nothing. Only the EU
+// reverse-charge case said anything. Three legal situations, one document.
+//
+// The exempt case is the sharpest, because this product OFFERS the choice: the create screen has a
+// "Vrijgesteld" option gated on the owner's own declaration, and the word then appeared zero times
+// in invoice-pdf.tsx.
+//
+// The behaviour is held by invoice-pdf-document.test.ts, which renders the documents. Held HERE is
+// the shape of the decision: that the app derives what it can PROVE, asks the owner for what it
+// cannot, and invents nothing.
+test("[BTW-VERKLARING] the invoice explains the zeroes it can and invents none", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /import \{ vatStatement \} from '\.\/vat-statement'/, "the PDF must carry the sentence");
+  assert.match(pdf, /const btwUitleg = vatStatement\(\{/, "…and compute it");
+  assert.match(pdf, /\{btwUitleg && <Text style=\{styles\.payment\}>\{btwUitleg\}<\/Text>\}/,
+    "…and actually render it — a computed string that is never placed is the defect this file is about");
+  assert.match(
+    pdf, /reverseChargeStated: !!reverseCharge/,
+    "it must be told whether icp.ts already spoke. Two sentences giving different reasons for one " +
+      "zero is worse than either alone",
+  );
+
+  const mod = code("src/lib/vat-statement.ts");
+  // The KOR is a fact the app holds, so it is derived and never typed.
+  assert.match(mod, /if \(args\.korActive\) \{[\s\S]{0,120}?kleineondernemersregeling \(KOR\)/,
+    "the KOR sentence is automatic — profiles.kor_active already says it");
+  // The exemption is a fact the app does NOT hold. Art. 11 has a provision per trade; deriving one
+  // would print a false legal ground on a customer's invoice.
+  assert.match(mod, /return note \|\| "Vrijgesteld van btw\.";/,
+    "an exempt line takes the owner's own ground, or the true part of it — never a guessed article");
+  // Plain 0% is the case the app cannot reason about at all.
+  assert.match(mod, /return note \|\| null;/, "a bare 0% stays silent unless the owner supplied a reason");
+  // Scoped to the STRINGS the module can put on a document, not the file: `export function` made
+  // the first version of this fail on the word "export", which is a JS keyword and not a VAT
+  // ground. Read what can be printed, not what happens to be written nearby.
+  const printable = [...mod.matchAll(/"([^"]{4,})"/g)].map((m) => m[1]).join(" | ");
+  assert.doesNotMatch(
+    printable, /artikel|art\. 11|uitvoer|onderwijs|zorg|verzekering/i,
+    "no provision or ground may be hard-coded in a printable string — a guessed article on a " +
+      `customer's invoice is worse than silence. Found in: ${printable}`,
+  );
+
+  // The note is free text on its way to a stranger's document: bounded and single-line, and the
+  // settings field must use the SAME normalisation, or what is stored differs from what is shown.
+  const settings = code("src/app/dashboard/settings/page.tsx");
+  assert.match(settings, /import \{ cleanVatNote, MAX_NOTE_LENGTH \} from '@\/lib\/vat-statement'/);
+  assert.match(settings, /vat_statement_note: cleanVatNote\(vatStatementNote\) \|\| null/,
+    "the field is normalised on save with the same function the PDF trusts");
+  // Its own best-effort update, like the two beside it: before the migration this column does not
+  // exist, and bundling it into the core save would brick Instellingen for every user.
+  assert.match(
+    settings, /const \{ error: noteErr \} = await supabase[\s\S]{0,200}?\.update\(\{ vat_statement_note/,
+    "the note must save in its OWN update, never folded into the core profile write",
+  );
+});

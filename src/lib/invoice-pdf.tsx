@@ -41,6 +41,9 @@ import { deriveInitials } from './logo-initials'
 import { isQuote } from './invoice-editable'
 // [PRIJS-KOLOM] De prijskolom moet vermenigvuldigd het regeltotaal opleveren.
 import { formatUnitPriceNL } from './unit-price-display'
+// [BTW-VERKLARING] Waarom er geen btw op deze factuur staat — KOR, vrijstelling of de eigen zin
+// van de ondernemer. Spreekt nooit over de verleggingsregel heen; zie de kop van vat-statement.ts.
+import { vatStatement } from './vat-statement'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -332,6 +335,23 @@ export function InvoicePDF({
     lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
   })
 
+  // [BTW-VERKLARING] Drie verschillende redenen voor EUR 0,00 btw drukten hetzelfde af: niets.
+  // Gemeten op vier facturen — KOR, vrijgestelde prestatie en kaal 0% waren letterlijk niet van
+  // elkaar te onderscheiden, en alleen de verlegde EU-factuur zei iets. Een klant las een bedrag
+  // zonder btw en niets dat het uitlegde; zijn boekhouder kan dat niet plaatsen en gokt dan.
+  //
+  // `reverseChargeStated` is de belangrijkste parameter: staat die zin er al, dan zwijgt deze.
+  // Twee zinnen die een andere reden geven voor één nul is erger dan allebei geen.
+  const btwUitleg = vatStatement({
+    invoiceType: type,
+    btwAmount: displayBtwTotal,
+    korActive: !!profile.kor_active,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lines: (lines ?? []) as any[],
+    note: profile.vat_statement_note,
+    reverseChargeStated: !!reverseCharge,
+  })
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -483,6 +503,7 @@ export function InvoicePDF({
             art. 226 punt 11a requires the words "Btw verlegd" on a document whose BTW was
             shifted to the customer. */}
         {reverseCharge && <Text style={styles.payment}>{reverseCharge}</Text>}
+        {btwUitleg && <Text style={styles.payment}>{btwUitleg}</Text>}
 
         {/* Closing note — depends on the document type. A quote / pro forma
             must NOT demand payment or reference a "factuurnummer". */}

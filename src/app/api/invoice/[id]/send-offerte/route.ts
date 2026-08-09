@@ -102,7 +102,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // mailadres. Deze route is de enige die zijn kolommen opsomt — de andere PDF-routes lezen
     // select('*') — dus een veld dat hier ontbreekt, bestaat voor de offerte-PDF niet, ook als het
     // profiel het gewoon heeft.
-    .select('company_name, full_name, email, phone, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity')
+    .select('company_name, full_name, email, phone, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity, vat_statement_note')
     .eq('id', ownerId)
     .maybeSingle()
   const senderName = profile?.company_name?.trim() || profile?.full_name?.trim() || 'BoekBrug'

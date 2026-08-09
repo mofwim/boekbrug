@@ -15,6 +15,7 @@
 //   · bank_transactions.source        — supabase/migrations/bank_tx_source_identity.sql (text, nullable)
 //   · bank_transactions.external_id   — same migration (text, nullable)
 //   · profiles.vat_exempt_activity / .vat_exempt_since,
+//   · profiles.vat_statement_note (vat_statement_note.sql — [BTW-VERKLARING]),
 //     invoice_lines.vat_treatment, invoices.vat_deduction
 //                                 — supabase/migrations/vat_exemption.sql
 //
@@ -1874,6 +1875,7 @@ export type Database = {
           kas_opening_balance: number
           kor_active: boolean
           vat_exempt_activity: boolean
+          vat_statement_note: string | null
           vat_exempt_since: string | null
           vat_scheme: string
           vat_scheme_since: string | null
@@ -1906,6 +1908,7 @@ export type Database = {
           kas_opening_balance?: number
           kor_active?: boolean
           vat_exempt_activity?: boolean
+          vat_statement_note?: string | null
           vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
@@ -1938,6 +1941,7 @@ export type Database = {
           kas_opening_balance?: number
           kor_active?: boolean
           vat_exempt_activity?: boolean
+          vat_statement_note?: string | null
           vat_exempt_since?: string | null
           vat_scheme?: string
           vat_scheme_since?: string | null
