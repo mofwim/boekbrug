@@ -22,7 +22,10 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // send groepeert per TARIEF en rondt per tarief af (de methode van de PDF en de UBL-export).
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
-import { computeInvoiceTotals, isValidBtwRate, round2 } from '@/lib/invoice-totals'
+import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
+// [REGEL-PARITEIT] Dezelfde regelkeuring als /api/invoice/draft — één definitie van wat een
+// factuurregel mag zijn, voor allebei de schrijvers op invoice_lines.
+import { validateDraftLines } from '@/lib/draft-totals'
 import { applyDiscount, parseDiscount } from '@/lib/invoice-discount'
 // [ACTING-FOR] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
@@ -227,15 +230,31 @@ export async function PUT(
 
   // Normalize lines and recompute totals (line sign is preserved, so a
   // creditnota draft keeps its negative amounts).
-  // [BTW-TARIEF] Only a rate a Dutch invoice may actually carry. `Number(l.btw_rate) || 0`
-  // silently turned anything unparseable — and a MISSING rate — into 0%, which is a real tariff
-  // with a real meaning (vrijgesteld/verlegd). A draft saved that way looks perfect and books
-  // zero BTW. Both editors offer exactly 21/9/0, so this can only reject a hand-made request.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const badRate = rawLines.findIndex((l: any) => !isValidBtwRate(l?.btw_rate))
-  if (badRate !== -1) {
+  //
+  // [REGEL-PARITEIT] Dezelfde controle als /api/invoice/draft, uit dezelfde functie.
+  //
+  // Er staan TWEE schrijvers op invoice_lines, en ze keurden verschillend. De aanmaakroute
+  // weigert een regel zonder omschrijving (Art. 35a Wet OB: de aard van de prestatie hoort op de
+  // factuur), weigert een hoeveelheid of prijs die geen getal is, en weigert meer regels dan een
+  // factuur kan dragen. Deze route keek alleen naar het BTW-tarief en maakte van de rest stil een
+  // 0: `Number(l.quantity) || 0` verandert "twee" in nul, en een lege omschrijving ging er zo
+  // doorheen. Een factuur die niet aangemaakt MAG worden, kon dus wel bewerkt worden tot precies
+  // die vorm — en daarna verstuurd, want versturen slaat eerst op via deze route.
+  //
+  // Het scherm controleert het ook, maar het scherm is niet de grendel: deze route is de deur.
+  //
+  // De sign blijft van deze route: een creditnota houdt haar negatieve regels, en validateDraftLines
+  // heeft daar geen mening over — zij keurt alleen of het getallen zijn die op een factuur kunnen.
+  const keuring = validateDraftLines(rawLines)
+  if (!keuring.ok) {
+    const eerste = keuring.errors[0]
+    const waar = eerste.index >= 0 ? `Regel ${eerste.index + 1}: ` : ''
+    const uitleg =
+      eerste.field === 'btw_rate'
+        ? 'ongeldig BTW-tarief — kies 21%, 9% of 0%.'
+        : `${eerste.reason}.`
     return NextResponse.json(
-      { error: `Regel ${badRate + 1} heeft een ongeldig BTW-tarief — kies 21%, 9% of 0%.` },
+      { error: `${waar}${uitleg}`, fouten: keuring.errors },
       { status: 400 }
     )
   }
@@ -294,6 +313,13 @@ export async function PUT(
     'client_btw_number',
     'invoice_date',
     'due_date',
+    // [LEVERDATUM] De leverdatum hoort erbij. Art. 35a lid 1 sub f Wet OB eist hem op elke factuur,
+    // het aanmaakscherm vraagt hem, de PDF drukt hem af — en dit was de enige weg terug naar dat
+    // veld. Stond hij niet in deze lijst, dan gold: eenmaal verkeerd ingevuld, nooit meer te
+    // corrigeren. Wie de datum aanpaste zag het scherm meebewegen, sloeg op, en kreeg een PDF met
+    // de oude leverdatum erop — een wettelijk verplicht gegeven dat iets anders zegt dan de
+    // ondernemer bedoelde, op een document dat de deur uitgaat.
+    'delivery_date',
   ]) {
     if (k in body) patch[k] = body[k]
   }

@@ -26,6 +26,7 @@ import { create } from "xmlbuilder2";
 import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
+import { isReverseChargedInvoice } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
@@ -211,11 +212,21 @@ export function taxExemptionReason(category: UblTaxCategory): string | null {
  * Requires zero BTW on the line as well: a line that charged BTW cannot also have reverse-charged
  * it, whatever the description says.
  */
-export function lineVatKind(line: UblInvoiceLine): VatKind {
+export function lineVatKind(line: UblInvoiceLine, documentIsReverseCharged = false): VatKind {
   const rate = Number(line.btw_rate ?? 0);
   if (rate > 0) return "taxed";
   if (line.vat_treatment === "exempt") return "exempt";
   if (RE_REVERSE_CHARGE.test(line.description ?? "")) return "reverse_charge";
+  // [E-FACTUUR-VERLEGD] The document-level fact, from the same predicate the PDF prints its
+  // "Btw verlegd" sentence from (isReverseChargedInvoice in icp.ts): an EU customer with a VAT
+  // number, zero BTW on the invoice, not KOR. Reading the line text alone left this case as Z —
+  // so the paper document and the e-invoice for ONE sale told two different tax stories, and the
+  // receiving system booked no reverse charge at all.
+  //
+  // Last of the four, deliberately. An exempt line stays E: art. 11 is a different fact and does
+  // not become verlegging because the customer happens to sit in Germany. A taxed line is
+  // unreachable here anyway, because a document carrying BTW is never reverse-charged.
+  if (documentIsReverseCharged) return "reverse_charge";
   return "taxed"; // a genuine 0% supply — Z
 }
 
@@ -301,11 +312,11 @@ interface TaxGroup {
  * equal the sum of the lines carrying it, so the merged version is not only wrong in meaning, it
  * fails validation as soon as both appear on one invoice.
  */
-function groupByRate(lines: UblInvoiceLine[]): TaxGroup[] {
+function groupByRate(lines: UblInvoiceLine[], documentIsReverseCharged = false): TaxGroup[] {
   const map = new Map<string, { rate: number; category: UblTaxCategory; taxable: number }>();
   for (const l of lines) {
     const rate = Number(l.btw_rate ?? 0);
-    const category = taxCategoryId(rate, lineVatKind(l));
+    const category = taxCategoryId(rate, lineVatKind(l, documentIsReverseCharged));
     const key = `${rate}|${category}`;
     const ex = Number(l.line_total ?? 0);
     const cur = map.get(key);
@@ -325,6 +336,17 @@ function groupByRate(lines: UblInvoiceLine[]): TaxGroup[] {
 
 // ─── Generator ────────────────────────────────────────────────────────────────────
 
+/** What the generator cannot read off the invoice row itself. */
+export interface UblBuildOptions {
+  /**
+   * [E-FACTUUR-VERLEGD] The owner's KOR status, from their profile. Under KOR no BTW is charged
+   * for a reason that has nothing to do with verlegging, so a zero-BTW invoice to an EU customer
+   * is NOT reverse-charged — same rule the PDF applies. Absent ⇒ not KOR, which is the majority
+   * case and the behaviour of every caller before this option existed.
+   */
+  korActive?: boolean;
+}
+
 export interface UblBuildResult {
   xml: string;
   /** Non-fatal cross-check notes (e.g. derived totals differ from stored header). */
@@ -338,12 +360,23 @@ export interface UblBuildResult {
 export function buildInvoiceUbl(
   header: UblInvoiceHeader,
   lines: UblInvoiceLine[],
-  supplier: UblSupplier
+  supplier: UblSupplier,
+  opts?: UblBuildOptions
 ): UblBuildResult {
   const check = validateUblInputs(header, lines, supplier);
   if (!check.ok) {
     throw new UblValidationError(check.code, `UBL export blocked: ${check.code}`);
   }
+
+  // [E-FACTUUR-VERLEGD] One question, asked once, for the whole document — and asked of the same
+  // function the PDF asks. Every category below (line, subtotal, allowance) reads this variable,
+  // so the three places in the XML cannot disagree with each other or with the paper invoice.
+  const docReverseCharged = isReverseChargedInvoice({
+    clientVatNumber: header.client_btw_number,
+    btwAmount: header.btw_amount,
+    invoiceType: header.invoice_type,
+    korActive: opts?.korActive,
+  });
 
   const warnings: string[] = [];
   const issueDate = toUblDate(header.invoice_date)!; // validated
@@ -369,7 +402,7 @@ export function buildInvoiceUbl(
     : effLinesRaw;
 
   // Derive totals from lines (internal consistency over stored header).
-  const rawGroups = groupByRate(effLines);
+  const rawGroups = groupByRate(effLines, docReverseCharged);
   const lineExtensionTotal = round2(rawGroups.reduce((s, g) => s + g.taxable, 0));
 
   // [KORTING] Een korting op de hele factuur is in Peppol BIS 3.0 GEEN aftrek van het totaal maar
@@ -485,7 +518,11 @@ export function buildInvoiceUbl(
     ac.ele(NS.cbc, "AllowanceChargeReason").txt("Korting");
     ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(a.amount));
     const acCat = ac.ele(NS.cac, "TaxCategory");
-    acCat.ele(NS.cbc, "ID").txt(taxCategoryId(a.rate));
+    // [E-FACTUUR-VERLEGD] The allowance carries the category of the supply it reduces. On a
+    // reverse-charged invoice every line is AE, so an allowance left at Z would be the only Z on
+    // the document — and BR-Z-08 then demands a Z subtotal whose taxable amount equals it, which
+    // does not exist. The file would be refused at the access point over a discount line.
+    acCat.ele(NS.cbc, "ID").txt(taxCategoryId(a.rate, docReverseCharged ? "reverse_charge" : undefined));
     acCat.ele(NS.cbc, "Percent").txt(String(a.rate));
     acCat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
   }
@@ -545,7 +582,7 @@ export function buildInvoiceUbl(
     const cat = item.ele(NS.cac, "ClassifiedTaxCategory");
     // [E-FACTUUR] The LINE's own category, so it matches the subtotal its amount was counted into.
     // ClassifiedTaxCategory carries no exemption reason — that lives on the TaxSubtotal above.
-    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate, lineVatKind(l)));
+    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate, lineVatKind(l, docReverseCharged)));
     cat.ele(NS.cbc, "Percent").txt(String(rate));
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
     // [PRIJS-RECONSTRUEERBAAR] De prijs moet het regelbedrag OPLEVEREN.

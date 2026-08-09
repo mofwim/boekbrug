@@ -48,8 +48,11 @@ const LINES_SELECT =
 const LINES_SELECT_ZONDER_EENHEID =
   "description, quantity, unit_price, btw_rate, line_total" as const;
 
+// [E-FACTUUR-VERLEGD] kor_active hoort erbij: onder de KOR wordt er geen btw berekend om een
+// reden die niets met verleggen te maken heeft, dus een 0%-factuur aan een EU-klant is dan GEEN
+// verlegde prestatie. Precies de vraag die de PDF ook aan dit veld stelt.
 const PROFILE_SELECT =
-  "company_name, full_name, kvk_number, btw_number, iban, address, postal_code, city" as const;
+  "company_name, full_name, kvk_number, btw_number, iban, address, postal_code, city, kor_active" as const;
 
 // [BOEK-020] Map generator error codes → Dutch user messages (UI text in Dutch).
 // Context-aware: when an accountant exports a client's invoice, missing seller
@@ -239,7 +242,9 @@ export async function GET(req: NextRequest) {
   let xml: string;
   let warnings: string[];
   try {
-    const result = buildInvoiceUbl(header, lines, supplier);
+    const result = buildInvoiceUbl(header, lines, supplier, {
+      korActive: !!(profileRow as { kor_active?: boolean | null }).kor_active,
+    });
     xml = result.xml;
     warnings = result.warnings;
   } catch (err) {

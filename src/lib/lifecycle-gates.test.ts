@@ -4410,3 +4410,124 @@ test("[PRIJS-KOLOM] the PDF and the screen format a unit price the same way", ()
     "…and the test for 'enough decimals' is that the row reconciles",
   );
 });
+
+// ─── [E-FACTUUR-VERLEGD] The PDF and the XML may not tell two tax stories ───────────────────────
+//
+// One sale to a German customer produced two documents. The PDF printed "Btw verlegd" because
+// reverseChargeNotice() derived it from the DOCUMENT (EU VAT number, zero BTW, not KOR); the UBL
+// put the same supply in category Z, because lineVatKind() looked only at the LINE DESCRIPTION.
+// Z says the seller taxed it at 0%, AE says the buyer owes the tax — the receiving system books
+// them differently, so the customer's ERP raised no liability at all.
+//
+// What is held here is the WIRING, not the arithmetic — ubl-reverse-charge.test.ts checks the XML
+// that comes out. The defect was never a wrong formula; it was two modules answering one legal
+// question separately. So: one predicate, and every reader must go to it.
+test("[E-FACTUUR-VERLEGD] one predicate answers 'is this verlegd', for both documents", () => {
+  const icp = code("src/lib/icp.ts");
+  assert.match(
+    icp, /export function isReverseChargedInvoice\(/,
+    "the legal predicate must be a named export, not inlined in the sentence builder",
+  );
+  // The sentence must be BUILT ON the predicate, so the two can never drift apart.
+  assert.match(
+    icp, /if \(!isReverseChargedInvoice\(args\)\) return null;/,
+    "reverseChargeNotice must ask the same question, not re-implement it",
+  );
+  // And the line-text check must stay OUT of the predicate: "the owner already wrote it" is a
+  // reason not to print the sentence twice, never a reason to export the supply as Z.
+  const predicate = icp.slice(
+    icp.indexOf("export function isReverseChargedInvoice("),
+    icp.indexOf("export function reverseChargeNotice("),
+  );
+  assert.ok(predicate.length > 0, "the predicate must sit before the sentence builder");
+  assert.doesNotMatch(
+    predicate, /lineTexts/,
+    "an invoice whose own line says 'btw verlegd' is the MOST certainly verlegd one — " +
+      "folding the de-duplication into the predicate would export exactly that case as Z",
+  );
+
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(
+    ubl, /import \{ isReverseChargedInvoice \} from "\.\/icp"/,
+    "the UBL export must read the document-level fact from the same module the PDF reads",
+  );
+  assert.match(
+    ubl, /const docReverseCharged = isReverseChargedInvoice\(\{/,
+    "asked ONCE for the whole document, so line, subtotal and allowance cannot disagree",
+  );
+  // All three places that emit a category must carry it. An AllowanceCharge left at Z would be the
+  // only Z on an AE document, and BR-Z-08 then demands a Z subtotal that does not exist — the
+  // access point refuses the whole invoice over a discount line.
+  for (const site of [
+    /groupByRate\(effLines, docReverseCharged\)/,
+    /taxCategoryId\(rate, lineVatKind\(l, docReverseCharged\)\)/,
+    /taxCategoryId\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
+  ]) {
+    assert.match(ubl, site, `every category in the XML must read docReverseCharged: ${site}`);
+  }
+  // The owner's KOR status has to reach the generator, or a KOR invoice to an EU customer would be
+  // exported as verlegd — a claim about a regime the owner is not in.
+  assert.match(
+    code("src/app/api/export/ubl/route.ts"), /kor_active/,
+    "the export route must read kor_active and pass it to the builder",
+  );
+});
+
+// ─── [LEVERDATUM] A legally required field must be reachable after it is first written ──────────
+//
+// Art. 35a lid 1 sub f Wet OB puts the date of supply on every invoice, distinct from the invoice
+// date. The create screen asked for it, /api/invoice/draft stored it and the PDF printed it — and
+// then nothing could touch it again. The edit screen had no field, and the PUT's header allowlist
+// did not name the column, so the owner could change the invoice date, watch the screen follow,
+// save, and get a PDF carrying the OLD leverdatum. A mandatory legal statement, wrong on a
+// document going out the door, with the only remedy being to throw the draft away.
+test("[LEVERDATUM] the edit path can read, show and write the delivery date", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(
+    route, /'delivery_date',/,
+    "the PUT header allowlist must name delivery_date — a key it does not list is silently dropped",
+  );
+
+  const screen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(screen, /setDeliveryDate\(/, "the screen must load the stored value");
+  assert.match(
+    screen, /aria-label="Leverdatum"/,
+    "…and offer a field to correct it, or the allowlist entry has no way to be used",
+  );
+  // Sent on BOTH save paths. The second one is the dangerous one: it saves and then issues a
+  // numbered invoice, so a leverdatum lost there goes out irreversibly (Art. 35).
+  const sends = screen.match(/delivery_date: deliveryDate \|\| invoiceDate/g) ?? [];
+  assert.equal(sends.length, 2, "both 'Opslaan' and 'Opslaan en versturen' must carry it");
+});
+
+// ─── [REGEL-PARITEIT] Two writers on invoice_lines, one definition of a valid line ──────────────
+//
+// /api/invoice/draft refuses a line with no description (Art. 35a: the nature of the supply belongs
+// on the invoice), refuses a quantity or price that is not a number, and caps the line count. The
+// PUT checked only the BTW rate and quietly turned the rest into zero — `Number(l.quantity) || 0`
+// makes "twee" a nought. So an invoice that could not be CREATED in that shape could be EDITED into
+// it, and then sent, because sending saves through this same route first.
+test("[REGEL-PARITEIT] the edit route keeps lines to the same standard as the create route", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(
+    route, /import \{ validateDraftLines \} from '@\/lib\/draft-totals'/,
+    "the PUT must use the create route's validator, not a second opinion",
+  );
+  assert.match(route, /const keuring = validateDraftLines\(rawLines\)/);
+  assert.match(
+    route, /if \(!keuring\.ok\) \{/,
+    "…and refuse on its verdict, before anything is written",
+  );
+  // The old single-question check must be gone, or a rejected line could still slip past on the
+  // other three grounds.
+  assert.doesNotMatch(
+    route, /rawLines\.findIndex\(\(l: any\) => !isValidBtwRate/,
+    "the rate-only check is superseded — leaving it would suggest the others are optional",
+  );
+  // And the validator must still be the one that demands a description; that is the Art. 35a part.
+  assert.match(
+    code("src/lib/draft-totals.ts"),
+    /een regel zonder omschrijving mag niet op een factuur/,
+    "the shared validator is where 'the nature of the supply' is required",
+  );
+});
