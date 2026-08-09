@@ -59,7 +59,6 @@ import { planForUser } from '@/lib/fair-use-gate'
 // how they drifted apart the first time.
 import { paymentSuggestion } from '@/lib/intake-router'
 // [EIGEN-FACTUUR] Is dit stuk van de eigenaar zelf? — zie own-document.ts.
-import { looksLikeOwnDocument, ownDocumentNotice } from '@/lib/own-document'
 // [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
 import { planReceiptSettlement } from '@/lib/receipt-auto-settle'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
@@ -1900,37 +1899,19 @@ export async function classifyAttachment(
   // must be kept. A self-copied outgoing invoice is that case exactly; from the headers the two
   // are indistinguishable.
   //
-  // The DOCUMENT distinguishes them. A purchase invoice whose supplier is you cannot exist, and
-  // the owner's KVK / BTW / IBAN are already in hand — they are passed INTO the reader above so
-  // the model does not mistake them for the vendor's. Now they are also used to answer the
-  // question. Only a registration number or the payee account is treated as proof; a name match
-  // alone asks rather than decides (own-document.ts explains why).
+  // THE CHECK IS NOT HERE ANY MORE, and that is the fix rather than a move. It stood right at this
+  // spot and read `result.vendor_kvk / vendor_btw / vendor_iban` — the three fields the reader
+  // NULLS one line earlier, because our own identity may never be recorded as a supplier
+  // ([RECEIVER-IDENTITY] in ai.ts). So it was asking about evidence that had just been destroyed:
+  // with the numbers gone only the NAME could match, and when the model also obeyed its prompt
+  // rule "never name the receiver as the vendor" nothing matched at all and the invoice was
+  // booked. It failed precisely when the reader worked best.
   //
-  // Answered as "not an invoice" WITH a reason, deliberately: that is the path the skip registry
-  // already surfaces, so the file is kept and named on the owner's screen instead of vanishing.
-  // Nothing is booked, and nothing is lost.
-  const ownDoc = looksLikeOwnDocument(
-    {
-      vendorName: result.vendor ?? null,
-      kvkNumber: result.vendor_kvk ?? null,
-      btwNumber: result.vendor_btw ?? null,
-      vendorIban: result.vendor_iban ?? null,
-    },
-    {
-      companyName: receiverName ?? null,
-      kvkNumber: opts?.receiverKvk ?? null,
-      btwNumber: opts?.receiverBtw ?? null,
-      iban: opts?.receiverIban ?? null,
-    },
-  );
-  if (ownDoc.isOwn) {
-    return {
-      isInvoice: false,
-      confidence: 0,
-      uncertain: false,
-      reason: ownDocumentNotice(ownDoc) ?? 'Dit lijkt je eigen verkoopfactuur.',
-    };
-  }
+  // It now sits INSIDE verifyInvoiceFromPdf, one line before those three drops, where the document
+  // still says what it says — and therefore also covers the four other doors that call the reader
+  // and never had it: the manual upload, /api/intake, attaching a file to a bank line, and
+  // "opnieuw inlezen". A refusal comes back as is_invoice=false with a Dutch reason, which the
+  // mapping below already carries to the skip registry, so the file is kept and named.
 
   return {
     isInvoice: result.is_invoice,

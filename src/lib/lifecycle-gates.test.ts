@@ -4330,37 +4330,29 @@ test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", 
 // outgoing invoice is that case exactly.
 //
 // The document answers it: a purchase invoice whose supplier is you cannot exist.
-test("[EIGEN-FACTUUR] the e-mail reader checks whether the document is the owner's own", () => {
-  const src = code("src/lib/email-integration.ts");
-
+test("[EIGEN-FACTUUR] every door that reads a document asks it", () => {
+  // Superseded in place. This gate used to require the check in email-integration.ts, which is
+  // where it was first written and where it did NOT work — it read the vendor identity one line
+  // after the reader had cleared it, and it covered one of five doors. The behaviour it was
+  // protecting is now held by the ordering gate at the end of this file; what stays here is the
+  // reach: the reader is the single place, so no door can be added without it.
+  const ai = code("src/lib/ai.ts");
   assert.match(
-    src,
-    /looksLikeOwnDocument\(/,
-    "the e-mail path must ask whether what it just read is the owner's OWN invoice — the envelope " +
-      "guard cannot tell a self-copied sales invoice from a forwarded supplier invoice",
+    ai, /looksLikeOwnDocument\(/,
+    "verifyInvoiceFromPdf is the one function every intake door goes through",
   );
-  // It has to be given the identity to compare against. Called with nothing, the check is a no-op
-  // that reads as protection — the worst of both.
-  for (const field of ["kvkNumber:", "btwNumber:", "vendorIban:"]) {
-    assert.ok(
-      new RegExp(`looksLikeOwnDocument\\(([\\s\\S]{0,600}?)${field}`).test(src),
-      `the check must be handed the document's ${field} — an empty comparison never matches`,
+  for (const door of [
+    "src/lib/email-integration.ts",
+    "src/app/api/email/upload/route.ts",
+    "src/app/api/intake/route.ts",
+    "src/app/api/bank/attach-invoice/route.ts",
+    "src/app/api/documents/[id]/read-as-invoice/route.ts",
+  ]) {
+    assert.match(
+      code(door), /verifyInvoiceFromPdf/,
+      `${door} must read documents through the guarded reader, not around it`,
     );
   }
-  // And the verdict must actually stop the booking. Computing it and carrying on is the shape a
-  // refactor leaves behind.
-  assert.match(
-    src,
-    /if \(ownDoc\.isOwn\) \{[\s\S]{0,300}?isInvoice: false/,
-    "a document recognised as the owner's own must not be booked as an incoming invoice",
-  );
-  // Kept and named, not dropped. The skip registry is the surface that already does that, which is
-  // why the refusal carries a reason rather than a bare false.
-  assert.match(
-    src,
-    /reason: ownDocumentNotice\(ownDoc\)/,
-    "…and the owner must be told why, or a document they can see in their mailbox simply vanishes",
-  );
 });
 
 // ─── [PRIJS-KOLOM] The price column must multiply out to the total beside it ────────────────────
@@ -4594,5 +4586,61 @@ test("[REGEL-PARITEIT] the edit route keeps lines to the same standard as the cr
     code("src/lib/draft-totals.ts"),
     /een regel zonder omschrijving mag niet op een factuur/,
     "the shared validator is where 'the nature of the supply' is required",
+  );
+});
+
+// ─── [EIGEN-FACTUUR] The guard must be asked BEFORE the evidence is destroyed ───────────────────
+//
+// This file's own defect class, and it caught me writing it.
+//
+// verifyInvoiceFromPdf ends with a [RECEIVER-IDENTITY] backstop that nulls vendor_kvk, vendor_btw
+// and vendor_iban whenever they equal the owner's own — correct, our identity may never be
+// recorded as a supplier. The own-invoice guard was placed in the CALLER, so it read those three
+// fields one line AFTER they were cleared. Measured on the reported case:
+//
+//   as the document reads   → certain, 4 identifiers → blocked
+//   after the three drops   → likely, name only      → blocked, softer wording
+//   …and the model also obeyed "never name the receiver as the vendor"
+//                           → nothing matched        → BOOKED AS A COST
+//
+// So it failed exactly when the reader worked best, and nothing anywhere turned red. Moving it one
+// line earlier restores 'certain' AND covers the four other doors that call the reader and never
+// had the check: the manual upload, /api/intake, bank attach, and "opnieuw inlezen".
+//
+// What is held here is the ORDER. A future tidy-up that moves the guard below the drops, or
+// re-adds a copy in a caller, puts the money back where it was.
+test("[EIGEN-FACTUUR] the own-invoice verdict precedes the identity scrub, in the reader", () => {
+  const ai = code("src/lib/ai.ts");
+
+  const verdict = ai.indexOf("const eigenStuk = looksLikeOwnDocument(");
+  // Anchored on the BACKSTOP's own line, not on any `parsed.vendor_kvk = undefined` — the
+  // canonicalization block a few lines above writes that same assignment for a malformed number,
+  // and indexOf would find it first and compare against the wrong position.
+  const firstDrop = ai.indexOf("if (myKvk && parsed.vendor_kvk === myKvk)");
+  assert.ok(verdict !== -1, "the verdict must be taken inside verifyInvoiceFromPdf");
+  assert.ok(firstDrop !== -1, "the receiver-identity backstop must still be there — it is correct");
+  assert.ok(
+    verdict < firstDrop,
+    "the guard reads vendor_kvk/btw/iban; below the drops those are null and it decides on nothing",
+  );
+
+  // It must read the PARSED fields, not something already laundered.
+  const block = ai.slice(verdict, firstDrop);
+  for (const field of ["parsed.vendor", "parsed.vendor_kvk", "parsed.vendor_btw", "parsed.vendor_iban"]) {
+    assert.ok(block.includes(field), `the verdict must be taken on ${field}, as the document read it`);
+  }
+  // …against the owner's identity, which the caller already hands in for the prompt.
+  for (const field of ["receiverName", "opts?.receiverKvk", "opts?.receiverBtw", "opts?.receiverIban"]) {
+    assert.ok(block.includes(field), `the owner side must come from ${field}`);
+  }
+  // Refused as "not an invoice" WITH a reason — that is the path the skip registry surfaces, so
+  // the file is kept and named instead of vanishing.
+  assert.match(block, /is_invoice: false/, "a refusal, not a throw and not a silent drop");
+  assert.match(block, /ownDocumentNotice\(eigenStuk\)/, "…and the owner is told why, in Dutch");
+
+  // And no second copy in a caller: one legal question, one place that answers it.
+  assert.doesNotMatch(
+    code("src/lib/email-integration.ts"), /looksLikeOwnDocument\(/,
+    "the caller-side copy is what read the cleared fields — it must not come back",
   );
 });

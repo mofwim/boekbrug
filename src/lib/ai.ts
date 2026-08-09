@@ -87,6 +87,9 @@ import { groundMoneyFields } from './amount-grounding';
 import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
 // [DOCCHECK] The sharper check on the same text — see document-verify.ts.
 import { verifyDocument } from './document-verify';
+// [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
+// reader, one line before the receiver-identity backstop erases the evidence — see there.
+import { looksLikeOwnDocument, ownDocumentNotice } from './own-document';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
@@ -2055,6 +2058,52 @@ Return JSON only.`;
     // match. This is the code-level guarantee behind the prompt rules, and it also fixes the case
     // where the vendor NAME was suppressed but its identity numbers survived (self-supplier
     // pollution: a supplier row keyed on our own company).
+    // ── [EIGEN-FACTUUR] Decided HERE, one line BEFORE the evidence is destroyed ──
+    //
+    // The three drops below are correct on their own terms — our identity must never be recorded
+    // as a supplier. But they also erase the only proof that this document is our OWN sales
+    // invoice, and the guard that asks that question used to sit in the CALLER, after this
+    // function returned. Measured on the reported case (Kiwi Food Market, €394,99):
+    //
+    //   as the document reads              → certain, 4 matching identifiers → blocked
+    //   after these three lines            → likely, name only               → blocked, softer
+    //   …and the model also obeyed the prompt rule "never name the receiver as the vendor"
+    //                                      → nothing matched                 → BOOKED AS A COST
+    //
+    // So the guard failed exactly when the reader worked best, and the failure was invisible: the
+    // €362,38 of turnover stands again as a cost and the €32,61 of BTW OWED is claimed back as
+    // voorbelasting — a €65 swing on one document, in the direction the Belastingdienst charges
+    // interest on, with every number real and every total adding up.
+    //
+    // Placing it inside the reader fixes a second thing at the same time. FIVE doors call this
+    // function — the mail sync, the manual upload, /api/intake, attaching a file to a bank line,
+    // and "opnieuw inlezen" on a stored document — and only the mail sync carried the guard. A
+    // check that lives at one door is a check the other four do not have.
+    const eigenStuk = looksLikeOwnDocument(
+      {
+        vendorName: parsed.vendor ?? null,
+        kvkNumber: parsed.vendor_kvk ?? null,
+        btwNumber: parsed.vendor_btw ?? null,
+        vendorIban: parsed.vendor_iban ?? null,
+      },
+      {
+        companyName: receiverName ?? null,
+        kvkNumber: opts?.receiverKvk ?? null,
+        btwNumber: opts?.receiverBtw ?? null,
+        iban: opts?.receiverIban ?? null,
+      },
+    );
+    if (eigenStuk.isOwn) {
+      // Answered as "not an invoice" WITH a reason, deliberately: that is the path the skip
+      // registry already surfaces, so the file is kept and NAMED on the owner's screen instead of
+      // vanishing. Nothing is booked, and nothing is lost.
+      return {
+        is_invoice: false,
+        confidence: 0,
+        reason: ownDocumentNotice(eigenStuk) ?? 'Dit lijkt je eigen verkoopfactuur.',
+      };
+    }
+
     if (myKvk && parsed.vendor_kvk === myKvk) parsed.vendor_kvk = undefined;
     if (myBtw && parsed.vendor_btw === myBtw) parsed.vendor_btw = undefined;
     if (myIban && parsed.vendor_iban === myIban) parsed.vendor_iban = undefined;
