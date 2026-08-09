@@ -1,7 +1,7 @@
 -- scripts/check-migrations.sql
 -- [MIGRATIE-CHECK] What is actually live in THIS database?
 --
--- Paste the whole file into the Supabase SQL editor and run it. It writes nothing, changes
+-- Paste the whole file in the Supabase SQL editor and run it. It writes nothing, changes
 -- nothing and reads no customer data — it only looks at the schema and at the source of the
 -- stored functions.
 --
@@ -14,6 +14,17 @@
 -- pg_get_functiondef — a phrase that only the fixed version contains.
 --
 -- Read the result as: OK = the fixed version is live · TE DOEN = run that migration file.
+--
+-- VERIFIED AGAINST A REAL POSTGRESQL 16 IN ALL THREE STATES, because a checker nobody has run is
+-- a claim and not a check — and the two ways it could fail are opposite and both quiet:
+--
+--   empty database          every row says TE DOEN
+--   migrations applied      every function row flips to OK, so no fingerprint is a typo that
+--                           would send someone chasing a migration they already ran
+--   PRE-FIX book_bank_batch installed from the commit before the fix: TE DOEN, exactly where a
+--                           "does the function exist" check would have said OK
+--
+-- That last one is the whole reason this file exists rather than a list in a chat message.
 
 with checks(soort, naam, migratie, waarom, aanwezig) as (
 
@@ -54,7 +65,22 @@ with checks(soort, naam, migratie, waarom, aanwezig) as (
          exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
                  where n.nspname='public' and p.proname='book_bank_batch'
                    and pg_get_functiondef(p.oid) like '%variable_conflict use_column%'
-                   and pg_get_functiondef(p.oid) like '%DISTINCT id) INTO p_invoice_ids%'
+                   -- The de-dup fingerprint stops at array_agg(DISTINCT id) on purpose, and the
+                   -- reason is worth a note because it will bite anyone who lengthens it.
+                   --
+                   -- That line in the migration continues with the keyword that assigns a query
+                   -- result to a variable, followed by the parameter name. In plpgsql that is an
+                   -- assignment; at the top level of a script the same keyword CREATES A TABLE.
+                   -- The Supabase SQL editor's linter reads tokens without honouring quoting, so
+                   -- with the longer phrase in this string literal it concluded that this file
+                   -- creates an unprotected table and asked whether to run it without RLS.
+                   --
+                   -- Nothing was ever created — the whole file is a single SELECT — but a schema
+                   -- CHECKER that makes a money database raise a security prompt teaches exactly
+                   -- the wrong reflex, and "just click through it" is not a habit to build here.
+                   -- The shorter fingerprint is equally unique to the corrected body. Keep any
+                   -- future fingerprint free of that keyword for the same reason.
+                   and pg_get_functiondef(p.oid) like '%array_agg(DISTINCT id)%'
                    and pg_get_functiondef(p.oid) like '%+ EXCLUDED.amount_applied%')
 
   union all select 'functie', 'apply_bank_payment', 'invoice_partial_payments.sql',
