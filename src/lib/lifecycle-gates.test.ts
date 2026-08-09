@@ -4227,3 +4227,73 @@ test("[BETAALTERMIJN-LANG] both screens warn above sixty days and neither blocks
     assert.match(src, /\{langeTermijn && \(/, `${path} must render it`);
   }
 });
+
+// ─── [TYPES] Schema that exists must be typed, so the compiler checks the column names ─────────
+//
+// Six migrations were applied on 9 August. Until then seven schema objects were absent from the
+// generated types, and the code reached them through `as any` — which means a mistyped column name
+// compiled cleanly and failed at runtime, on paths that in some cases had NEVER run.
+//
+// Adding them by hand turned that into a compile-time check, and doing so immediately caught one
+// error: I had put auto_incasso and incasso_suggested_at on `profiles` and `bank_transactions`,
+// because the first pass read the ADD COLUMN lines without reading which ALTER TABLE they were
+// under. All three are on SUPPLIERS. The code was right; my reading of the migration was not.
+//
+// This gate holds the arrangement, not the reading: the objects are declared, and the escapes that
+// made them unnecessary are gone.
+test("[TYPES] the newly applied schema is declared, and reached without `as any`", () => {
+  const types = code("src/types/database.types.ts");
+
+  // The two whole tables.
+  assert.match(types, /^ {6}feedback: \{$/m, "the feedback table must be in the schema types");
+  assert.match(types, /^ {6}supplier_aliases: \{$/m, "…and supplier_aliases");
+
+  // The columns, each under the table the migration actually alters. Scoped, because asserting
+  // "the file contains auto_incasso" is exactly the mistake this gate was written after.
+  const table = (name: string) => {
+    const start = types.indexOf(`      ${name}: {`);
+    assert.ok(start > 0, `${name} not found in the types`);
+    const rest = types.slice(start + 20);
+    const next = rest.search(/\n {6}[a-z_]+: \{\n/);
+    return rest.slice(0, next > 0 ? next : rest.length);
+  };
+  const suppliers = table("suppliers");
+  for (const col of ["auto_incasso", "auto_incasso_since", "incasso_suggested_at"]) {
+    assert.match(suppliers, new RegExp(`\\n {10}${col}\\??: `), `suppliers.${col} — auto_incasso.sql and bank_tx_direct_debit.sql both ALTER suppliers, not profiles`);
+  }
+  const bankTx = table("bank_transactions");
+  for (const col of ["type_code", "mandate_id", "creditor_id"]) {
+    assert.match(bankTx, new RegExp(`\\n {10}${col}\\??: `), `bank_transactions.${col}`);
+  }
+  // …and NOT where they do not belong. A column declared on the wrong table type-checks fine and
+  // is a lie the compiler will then help enforce.
+  assert.doesNotMatch(table("profiles"), /\n {10}auto_incasso/, "auto_incasso is not on profiles");
+  assert.doesNotMatch(bankTx, /\n {10}incasso_suggested_at/, "incasso_suggested_at is not on bank_transactions");
+
+  // The escapes are gone, so a typo in any of these statements is now a build failure.
+  assert.doesNotMatch(
+    code("src/app/api/feedback/route.ts"), /\(supabase as any\)/,
+    "the feedback insert must be type-checked — it had never run against a real table",
+  );
+  // For incasso-settle the cast was not the thing that mattered, and its own negative control is
+  // what said so: `type Client = SupabaseClient<any>` meant the statement was untyped either way,
+  // so removing the cast changed nothing and a misspelled column still reached the database.
+  // Asserting the absence of the cast would have been this file's own recurring defect — checking a
+  // MENTION instead of the WIRING. What makes the check real is the client type.
+  assert.match(
+    code("src/lib/incasso-settle.ts"), /type Client = SupabaseClient<Database>/,
+    "the suppliers writes are only checked if the client carries the schema",
+  );
+  assert.doesNotMatch(
+    code("src/lib/incasso-settle.ts"), /incasso_suggested_at: at \} as any/,
+    "…and the cast is gone too",
+  );
+  assert.doesNotMatch(
+    code("src/app/api/cron/reconcile/route.ts"), /select\("user_id"\) as any/,
+    "…and the auto_incasso filter",
+  );
+  assert.match(
+    code("src/lib/supplier-alias-write.ts"), /type Client = SupabaseClient<Database>/,
+    "supplier-alias-write took SupabaseClient<any> because the table was not in the schema; it is now",
+  );
+});

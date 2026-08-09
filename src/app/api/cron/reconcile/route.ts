@@ -105,8 +105,8 @@ export async function GET(req: NextRequest) {
       const rows = await fetchAllRows<{ user_id: string | null }>((from, to) =>
         // auto_incasso is added by auto_incasso.sql and not yet in the generated types;
         // incassoSupported() above is what makes the read safe.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (pipeline.from("suppliers").select("user_id") as any).eq("auto_incasso", true)
+         
+        pipeline.from("suppliers").select("user_id").eq("auto_incasso", true)
           .order("id", { ascending: true }).range(from, to));
       for (const r of rows) if (r.user_id) { userIds.add(r.user_id); incassoUsers += 1; }
     }
