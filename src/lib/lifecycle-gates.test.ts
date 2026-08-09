@@ -4536,6 +4536,35 @@ test("[LEVERDATUM] an offerte converted on send gets one, in the row AND on the 
   );
 });
 
+// ─── [LEVERDATUM] Writing the column is not the same as naming the key ──────────────────────────
+//
+// Caught reviewing the duplicate route's own fix. `delivery_date: original.delivery_date` was safe
+// on a database without that column for a reason nobody chose: the value was `undefined`, and JSON
+// drops undefined, so the key never reached PostgREST. Rewriting it as
+// `original.delivery_date ? today : null` kept the same intent and put the KEY in the request —
+// which on an un-migrated deployment fails the whole INSERT (42703). Duplicating any invoice would
+// have stopped working, and the fix for a false date would have been worse than the date.
+//
+// Both routes that write this column conditionally must probe the ROW, not the value.
+test("[LEVERDATUM] a conditional write probes for the column, never just its value", () => {
+  for (const [path, subject] of [
+    ["src/app/api/invoice/[id]/duplicate/route.ts", "original"],
+    ["src/app/api/invoice/send/route.ts", "invoice"],
+  ] as const) {
+    const src = code(path);
+    assert.match(
+      src, new RegExp(`'delivery_date' in ${subject}`),
+      `${path}: select('*') returns the key iff the column exists — that is the only honest probe`,
+    );
+    // A bare `delivery_date: <expr>` at the top level of an insert/update object is the shape that
+    // sends the key unconditionally. It must be inside a spread instead.
+    assert.doesNotMatch(
+      src, /^\s{8}delivery_date: /m,
+      `${path}: the key must be spread in, so it is absent rather than null when the column is`,
+    );
+  }
+});
+
 // ─── [REGEL-PARITEIT] Two writers on invoice_lines, one definition of a valid line ──────────────
 //
 // /api/invoice/draft refuses a line with no description (Art. 35a: the nature of the supply belongs

@@ -75,7 +75,16 @@ export async function POST(
         // but a false one; and until now it could not even be corrected afterwards.
         //
         // Only when there was one at all: an offerte has none and must not acquire one here.
-        delivery_date: original.delivery_date ? today : null,
+        //
+        // And spread rather than assigned, which is not tidiness. `delivery_date: null` puts the
+        // KEY in the JSON that goes to PostgREST; on a deployment where the FACTUUR-A migration is
+        // still open that column does not exist and the whole INSERT fails (42703) — duplicating
+        // any invoice would stop working. The previous line got away with `original.delivery_date`
+        // precisely because it was `undefined` there, and JSON drops undefined. `select('*')` above
+        // returns the key iff the column exists, so the row itself answers whether to write it.
+        ...('delivery_date' in original
+          ? { delivery_date: original.delivery_date ? today : null }
+          : {}),
         status: 'draft',
         direction: original.direction,
         total_ex_btw: original.total_ex_btw,
