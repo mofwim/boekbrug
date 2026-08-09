@@ -28,9 +28,6 @@ import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 // [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
 // the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
 import { reverseChargeNotice } from './icp'
-// [VRIJSTELLING-OP-PAPIER] De verplichte vermelding bij een vrijgestelde prestatie, uit dezelfde
-// module waar de UBL-export zijn TaxExemptionReason vandaan haalt — één zin, twee documenten.
-import { exemptionNotice, type ExemptLineLike } from './exemption-notice'
 // [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
 import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
@@ -44,6 +41,9 @@ import { deriveInitials } from './logo-initials'
 import { isQuote } from './invoice-editable'
 // [PRIJS-KOLOM] De prijskolom moet vermenigvuldigd het regeltotaal opleveren.
 import { formatUnitPriceNL } from './unit-price-display'
+// [BTW-VERKLARING] Waarom er geen btw op deze factuur staat — KOR, vrijstelling of de eigen zin
+// van de ondernemer. Spreekt nooit over de verleggingsregel heen; zie de kop van vat-statement.ts.
+import { vatStatement } from './vat-statement'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -335,15 +335,21 @@ export function InvoicePDF({
     lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
   })
 
-  // [VRIJSTELLING-OP-PAPIER] The exemption reference, from the module the UBL takes its reason
-  // text from — so the sentence on the page and the string in the XML are the same string.
-  // Derived from the LINES, never typed: vat_treatment='exempt' is the flag the aangifte already
-  // reads to keep that turnover out of every rubriek, and it is what makes this claim true.
-  const exemption = exemptionNotice({
-    lines: (lines ?? []) as ExemptLineLike[],
+  // [BTW-VERKLARING] Drie verschillende redenen voor EUR 0,00 btw drukten hetzelfde af: niets.
+  // Gemeten op vier facturen — KOR, vrijgestelde prestatie en kaal 0% waren letterlijk niet van
+  // elkaar te onderscheiden, en alleen de verlegde EU-factuur zei iets. Een klant las een bedrag
+  // zonder btw en niets dat het uitlegde; zijn boekhouder kan dat niet plaatsen en gokt dan.
+  //
+  // `reverseChargeStated` is de belangrijkste parameter: staat die zin er al, dan zwijgt deze.
+  // Twee zinnen die een andere reden geven voor één nul is erger dan allebei geen.
+  const btwUitleg = vatStatement({
     invoiceType: type,
+    btwAmount: displayBtwTotal,
+    korActive: !!profile.kor_active,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
+    lines: (lines ?? []) as any[],
+    note: profile.vat_statement_note,
+    reverseChargeStated: !!reverseCharge,
   })
 
   return (
@@ -497,15 +503,7 @@ export function InvoicePDF({
             art. 226 punt 11a requires the words "Btw verlegd" on a document whose BTW was
             shifted to the customer. */}
         {reverseCharge && <Text style={styles.payment}>{reverseCharge}</Text>}
-
-        {/* [VRIJSTELLING-OP-PAPIER] The other mandatory BTW reference, and it was missing entirely.
-            Art. 226 punt 11 (art. 35a lid 1 sub k Wet OB): an exempt supply must SAY on what
-            ground it is exempt. Rendered and read back with pdfjs, a €500 export plus a €500
-            exempt course produced one row — "0,00% BTW over € 1.000,00" — and neither the word
-            "vrijgesteld" nor "artikel 11" appeared anywhere on the page. The UBL for that same
-            invoice splits the two and carries the reason, because BR-E-10 refuses the file
-            otherwise. The XML was compliant and the paper was not. */}
-        {exemption && <Text style={styles.payment}>{exemption}</Text>}
+        {btwUitleg && <Text style={styles.payment}>{btwUitleg}</Text>}
 
         {/* Closing note — depends on the document type. A quote / pro forma
             must NOT demand payment or reference a "factuurnummer". */}

@@ -13,8 +13,7 @@ import {
   termFromDates,
   paymentTermText,
   MAX_PAYMENT_TERM_DAYS,
-  DEFAULT_PAYMENT_TERM,
-} from "./payment-term";
+  DEFAULT_PAYMENT_TERM, longPaymentTermNotice, LONG_PAYMENT_TERM_DAYS } from "./payment-term";
 
 test("a term the owner typed becomes a whole number of days", () => {
   assert.equal(parsePaymentTerm("45"), 45);
@@ -103,4 +102,34 @@ test("with nothing honest to say, it says nothing", () => {
 
 test("the default is still thirty — this file did not change what a new invoice starts at", () => {
   assert.equal(DEFAULT_PAYMENT_TERM, 30);
+});
+
+// ─── [BETAALTERMIJN-LANG] ──────────────────────────────────────────────────────────────────────
+
+test("[BETAALTERMIJN-LANG] an ordinary term says nothing at all", () => {
+  // Nearly every invoice. A notice that appears on 30 days is a notice nobody reads by 90.
+  for (const d of [0, 7, 14, 21, 30, 45, 60]) {
+    assert.equal(longPaymentTermNotice(d), null, `${d} days must be silent`);
+  }
+});
+
+test("[BETAALTERMIJN-LANG] past sixty days it says why, and does not block", () => {
+  const s = longPaymentTermNotice(90);
+  assert.ok(s, "ninety days deserves a word");
+  assert.match(s!, /90 dagen/, "the actual number, not a generic warning");
+  assert.match(s!, /art\. 6:119a BW/, "the ground");
+  assert.match(s!, /grote onderneming/, "…including the case where the agreement does not hold");
+  assert.match(s!, /kun je gewoon doorgaan/, "it is a word, not a refusal");
+});
+
+test("[BETAALTERMIJN-LANG] sixty-one is over the line, sixty is not", () => {
+  assert.equal(longPaymentTermNotice(LONG_PAYMENT_TERM_DAYS), null);
+  assert.ok(longPaymentTermNotice(LONG_PAYMENT_TERM_DAYS + 1));
+});
+
+test("[BETAALTERMIJN-LANG] rubbish in produces no notice", () => {
+  // An unset field must not shout at an owner who has not typed anything yet.
+  for (const v of [null, undefined, NaN, -5]) {
+    assert.equal(longPaymentTermNotice(v as number), null, String(v));
+  }
 });

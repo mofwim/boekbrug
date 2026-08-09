@@ -105,3 +105,39 @@ export function paymentTermText(args: {
   if (days === 1) return "Gelieve te betalen binnen 1 dag op";
   return `Gelieve te betalen binnen ${days} dagen op`;
 }
+
+// ─── [BETAALTERMIJN-LANG] A term long enough to be worth a word ────────────────────────────────
+//
+// MAX_PAYMENT_TERM_DAYS is 365 and nothing said anything at 180. That ceiling is right — the app
+// must not decide what an owner may agree with their customer — but silence at six months is not
+// neutral either.
+//
+// Dutch law puts a soft edge at thirty days and a hard one at sixty (art. 6:119a BW, from the EU
+// late-payment directive). Between businesses a term over sixty days holds only if it was
+// expressly agreed and is not grossly unfair to the creditor; agreed against a LARGE company it
+// does not hold at all. Toward a consumer thirty days is the norm.
+//
+// So this warns and never blocks. Which of those cases an owner is in depends on the contract and
+// on who the customer is — neither of which this app knows — and an owner who has genuinely agreed
+// a ninety-day term with a client should not have to fight their own invoicing tool.
+
+/** Above this a B2B term needs an explicit agreement to hold. */
+export const LONG_PAYMENT_TERM_DAYS = 60;
+
+/**
+ * A sentence for a term worth a second look, or null for an ordinary one.
+ *
+ * Null for everything up to and including sixty days, which is nearly every invoice — so nothing
+ * appears where nothing needs to.
+ */
+export function longPaymentTermNotice(days: number | null | undefined): string | null {
+  const d = Number(days);
+  if (!Number.isFinite(d) || d <= LONG_PAYMENT_TERM_DAYS) return null;
+  return (
+    `${d} dagen is een lange betaaltermijn. Tussen bedrijven geldt een termijn boven de ` +
+    `${LONG_PAYMENT_TERM_DAYS} dagen alleen als je die uitdrukkelijk hebt afgesproken en hij niet ` +
+    "onredelijk is voor jou als schuldeiser; tegenover een grote onderneming houdt zo'n afspraak " +
+    "helemaal geen stand (art. 6:119a BW). Naar een particulier is 30 dagen gebruikelijk. " +
+    "Klopt de afspraak? Dan kun je gewoon doorgaan."
+  );
+}

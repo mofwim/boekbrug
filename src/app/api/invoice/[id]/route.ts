@@ -27,6 +27,7 @@ import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
 // factuurregel mag zijn, voor allebei de schrijvers op invoice_lines.
 import { validateDraftLines } from '@/lib/draft-totals'
 import { applyDiscount, parseDiscount } from '@/lib/invoice-discount'
+import { checkInvoiceDates } from '@/lib/invoice-dates'
 // [ACTING-FOR] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
 // blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
@@ -283,6 +284,17 @@ export async function PUT(
   // dat leeg is, want "korting eraf halen" is een even geldige bewerking als hem instellen. Stuurt
   // een oudere (gecachete) pagina ze niet mee, dan blijft de korting van de rij staan; die twee
   // gevallen uit elkaar houden is precies waarom `in body` wordt getest en niet de waarde zelf.
+  // [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum maakt een factuur die al verlopen is op
+  // het moment dat hij wordt verstuurd — de herinneringscron leidt zijn trap af van due_date, dus
+  // de klant krijgt de factuur en de aanmaning zo ongeveer tegelijk.
+  const datums = checkInvoiceDates({
+    invoiceDate: typeof body.invoice_date === 'string' ? body.invoice_date : null,
+    dueDate: typeof body.due_date === 'string' ? body.due_date : null,
+  })
+  if (!datums.ok) {
+    return NextResponse.json({ error: datums.error, code: datums.code }, { status: 400 })
+  }
+
   const kortingMeegestuurd = 'discount_type' in body || 'discount_value' in body
   const kortingHier = kortingMeegestuurd
     ? parseDiscount(body.discount_type, body.discount_value)

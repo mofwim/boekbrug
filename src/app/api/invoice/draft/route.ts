@@ -24,6 +24,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
 import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
+import { checkInvoiceDates } from '@/lib/invoice-dates'
 import { parseDiscount } from '@/lib/invoice-discount'
 // [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
 // gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
@@ -109,6 +110,17 @@ export async function POST(request: NextRequest) {
     // het totaal nergens op slaat — parseDiscount geeft dan null en de factuur is er gewoon zonder.
     const korting = parseDiscount(body.discount_type, body.discount_value)
     const totalen = computeDraftTotals(gecontroleerd.lines, sign, korting)
+
+    // [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum maakt een factuur die al verlopen is op
+    // het moment dat hij wordt verstuurd — de herinneringscron leidt zijn trap af van due_date, dus
+    // de klant krijgt de factuur en de aanmaning zo ongeveer tegelijk.
+    const datums = checkInvoiceDates({
+      invoiceDate: typeof body.invoice_date === 'string' ? body.invoice_date : null,
+      dueDate: typeof body.due_date === 'string' ? body.due_date : null,
+    })
+    if (!datums.ok) {
+      return NextResponse.json({ error: datums.error, code: datums.code }, { status: 400 })
+    }
 
     const klantNaam = typeof body.client_name === 'string' ? body.client_name.trim() : ''
     if (!klantNaam) {

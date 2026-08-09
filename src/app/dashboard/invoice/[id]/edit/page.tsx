@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
-import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS } from '@/lib/payment-term'
+import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
 import { round2 } from '@/lib/invoice-totals'
 import { createClient } from '@/lib/supabase'
@@ -210,6 +210,9 @@ export default function InvoiceEditPage() {
   // ── Totalen — realtime ────────────────────────────────────────────────────
   // [KORTING] Dezelfde module als de server, de PDF en de UBL-export. Zonder korting geeft
   // applyDiscount exact dezelfde drie getallen als de handmatige sommen die hier stonden.
+  // [BETAALTERMIJN-LANG] Uit de twee datums, want op dit scherm is de vervaldatum het veld dat
+  // wordt getypt en de termijn de afgeleide.
+  const langeTermijn = longPaymentTermNotice(invoiceDate ? termFromDates(invoiceDate, dueDate) : null)
   const korting = parseDiscount(discountType, discountValue)
   // [REGEL-AFRONDING] Afgerond per regel — dezelfde waarde die de PUT-route opslaat (line_total:
   // round2(quantity * unit_price)). Zonder dit toont dit scherm een ander totaal dan het bedrag
@@ -521,6 +524,14 @@ export default function InvoiceEditPage() {
                   aria-label="Betalingstermijn in dagen"
                 />
               </label>
+              {/* [BETAALTERMIJN-LANG] Zelfde woord als op het aanmaakscherm, en op dit scherm des
+                  te nodiger: hier wordt de vervaldatum met de hand getypt, dus hier ontstaat een
+                  termijn van een half jaar zonder dat iemand een knop met "180 dagen" aanklikte. */}
+              {langeTermijn && (
+                <p className="w-full text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-relaxed">
+                  {langeTermijn}
+                </p>
+              )}
             </div>
           )}
         </div>

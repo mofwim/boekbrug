@@ -4762,3 +4762,132 @@ test("[BATCH-STIL] a bank booking that fails for an unexpected reason reaches so
     );
   }
 });
+
+// ─── [BTW-VERKLARING] A zero on an invoice must say what kind of zero it is ─────────────────────
+//
+// Measured on four rendered invoices, all with EUR 0,00 btw: a KOR invoice, an exempt supply and a
+// plain 0% invoice printed text that was character-for-character identical — nothing. Only the EU
+// reverse-charge case said anything. Three legal situations, one document.
+//
+// The exempt case is the sharpest, because this product OFFERS the choice: the create screen has a
+// "Vrijgesteld" option gated on the owner's own declaration, and the word then appeared zero times
+// in invoice-pdf.tsx.
+//
+// The behaviour is held by invoice-pdf-document.test.ts, which renders the documents. Held HERE is
+// the shape of the decision: that the app derives what it can PROVE, asks the owner for what it
+// cannot, and invents nothing.
+test("[BTW-VERKLARING] the invoice explains the zeroes it can and invents none", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /import \{ vatStatement \} from '\.\/vat-statement'/, "the PDF must carry the sentence");
+  assert.match(pdf, /const btwUitleg = vatStatement\(\{/, "…and compute it");
+  assert.match(pdf, /\{btwUitleg && <Text style=\{styles\.payment\}>\{btwUitleg\}<\/Text>\}/,
+    "…and actually render it — a computed string that is never placed is the defect this file is about");
+  assert.match(
+    pdf, /reverseChargeStated: !!reverseCharge/,
+    "it must be told whether icp.ts already spoke. Two sentences giving different reasons for one " +
+      "zero is worse than either alone",
+  );
+
+  const mod = code("src/lib/vat-statement.ts");
+  // The KOR is a fact the app holds, so it is derived and never typed.
+  assert.match(mod, /if \(args\.korActive\) \{[\s\S]{0,120}?kleineondernemersregeling \(KOR\)/,
+    "the KOR sentence is automatic — profiles.kor_active already says it");
+  // The exemption is a fact the app does NOT hold. Art. 11 has a provision per trade; deriving one
+  // would print a false legal ground on a customer's invoice.
+  assert.match(mod, /return note \|\| "Vrijgesteld van btw\.";/,
+    "an exempt line takes the owner's own ground, or the true part of it — never a guessed article");
+  // Plain 0% is the case the app cannot reason about at all.
+  assert.match(mod, /return note \|\| null;/, "a bare 0% stays silent unless the owner supplied a reason");
+  // Scoped to the STRINGS the module can put on a document, not the file: `export function` made
+  // the first version of this fail on the word "export", which is a JS keyword and not a VAT
+  // ground. Read what can be printed, not what happens to be written nearby.
+  const printable = [...mod.matchAll(/"([^"]{4,})"/g)].map((m) => m[1]).join(" | ");
+  assert.doesNotMatch(
+    printable, /artikel|art\. 11|uitvoer|onderwijs|zorg|verzekering/i,
+    "no provision or ground may be hard-coded in a printable string — a guessed article on a " +
+      `customer's invoice is worse than silence. Found in: ${printable}`,
+  );
+
+  // The note is free text on its way to a stranger's document: bounded and single-line, and the
+  // settings field must use the SAME normalisation, or what is stored differs from what is shown.
+  const settings = code("src/app/dashboard/settings/page.tsx");
+  assert.match(settings, /import \{ cleanVatNote, MAX_NOTE_LENGTH \} from '@\/lib\/vat-statement'/);
+  assert.match(settings, /vat_statement_note: cleanVatNote\(vatStatementNote\) \|\| null/,
+    "the field is normalised on save with the same function the PDF trusts");
+  // Its own best-effort update, like the two beside it: before the migration this column does not
+  // exist, and bundling it into the core save would brick Instellingen for every user.
+  assert.match(
+    settings, /const \{ error: noteErr \} = await supabase[\s\S]{0,200}?\.update\(\{ vat_statement_note/,
+    "the note must save in its OWN update, never folded into the core profile write",
+  );
+});
+
+// ─── [FACTUUR-DATUMS] A due date cannot precede the invoice it belongs to ───────────────────────
+//
+// Nothing checked it. An invoice dated 08-08 with a due date of 01-08 was perfectly acceptable —
+// and cron/reminders derives the reminder tier from due_date, so that invoice is PAST DUE the
+// moment it is issued. The customer gets the bill and a payment reminder for it on the same day;
+// on the final tier that reminder carries the statutory aanmaning and names collection costs.
+//
+// On the server, because the create screen computes the due date from the term and cannot produce
+// it — while the EDIT screen takes a typed date, and nothing outside the screens is bound by
+// either.
+test("[FACTUUR-DATUMS] all three write paths refuse it, and the last one before the number", () => {
+  for (const path of [
+    "src/app/api/invoice/draft/route.ts",
+    "src/app/api/invoice/[id]/route.ts",
+    "src/app/api/invoice/send/route.ts",
+  ]) {
+    const src = code(path);
+    assert.match(src, /checkInvoiceDates\(\{/, `${path} must run the check`);
+    assert.match(
+      src, /if \(!datums\.ok\) \{[\s\S]{0,200}?status: 400/,
+      `${path} must refuse on it, not log and continue`,
+    );
+  }
+
+  // Same ordering rule as the KOR check: a refusal after the number is minted burns a sequence
+  // number that cannot be given back, and Art. 35 wants a series without holes.
+  const send = code("src/app/api/invoice/send/route.ts");
+  const checkAt = send.indexOf("const datums = checkInvoiceDates({");
+  const numberAt = send.indexOf("if (!resend && (isConversion || !finalNumber))");
+  assert.ok(checkAt > 0 && numberAt > checkAt, "the date check must run before a number is issued");
+
+  // Dates are compared as strings on purpose. These columns are DATE with no zone, and this repo
+  // already has a [TZ] scar from parsing one into a Date and rendering a day early west of UTC.
+  const mod = code("src/lib/invoice-dates.ts");
+  assert.match(mod, /if \(due >= inv\) return \{ ok: true \}/, "a lexical ISO comparison, not a Date");
+  assert.match(
+    mod, /dt\.getUTCFullYear\(\) === y/,
+    "…and a day that does not exist must not round-trip: 2026-02-30 becomes 2 March and would " +
+      "then compare as LATER than an invoice dated 1 March, so the refusal would silently not fire",
+  );
+});
+
+// ─── [BETAALTERMIJN-LANG] Six months deserves a word, not a block ───────────────────────────────
+//
+// MAX_PAYMENT_TERM_DAYS is 365 and nothing said anything at 180. The ceiling is right — the app
+// must not decide what an owner may agree with a customer — but silence at six months is not
+// neutral either. Art. 6:119a BW: over sixty days a B2B term holds only if expressly agreed and
+// not grossly unfair, and against a large company not at all.
+test("[BETAALTERMIJN-LANG] both screens warn above sixty days and neither blocks", () => {
+  const mod = code("src/lib/payment-term.ts");
+  assert.match(mod, /export const LONG_PAYMENT_TERM_DAYS = 60/);
+  assert.match(
+    mod, /if \(!Number\.isFinite\(d\) \|\| d <= LONG_PAYMENT_TERM_DAYS\) return null/,
+    "an ordinary term must produce nothing — a notice that shows at 30 days is unread by 90",
+  );
+  assert.match(mod, /kun je gewoon doorgaan/, "it is advice, and says so");
+  // The ceiling stays where it was. Turning the warning into a limit would be the app deciding a
+  // commercial term on the owner's behalf.
+  assert.match(mod, /export const MAX_PAYMENT_TERM_DAYS = 365/, "the hard maximum is unchanged");
+
+  for (const path of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ]) {
+    const src = code(path);
+    assert.match(src, /longPaymentTermNotice\(/, `${path} must compute the notice`);
+    assert.match(src, /\{langeTermijn && \(/, `${path} must render it`);
+  }
+});
