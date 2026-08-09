@@ -42,6 +42,8 @@ import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
+// [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum — laatste kans vóór het nummer.
+import { checkInvoiceDates } from '@/lib/invoice-dates'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 // [BTW-ROUND] Per-tarief afronding — nu uit de gedeelde module, zodat het opslaan van een concept
 // (/api/invoice/[id] PUT) en het uitgeven hier per definitie hetzelfde bedrag opleveren.
@@ -381,6 +383,13 @@ export async function POST(request: NextRequest) {
       //
       // Weigeren, niet stilzwijgend corrigeren: de bedragen aanpassen van een document dat de
       // ondernemer net heeft nagekeken, op de enige onomkeerbare knop in de app, is geen oplossing.
+      // [FACTUUR-DATUMS] Ook hier, en vóór het nummer: een concept kan zijn gemaakt toen deze
+      // controle er nog niet was, en niet elk verzoek komt van het scherm.
+      const datums = checkInvoiceDates({ invoiceDate: invoice.invoice_date, dueDate: invoice.due_date })
+      if (!datums.ok) {
+        return NextResponse.json({ error: datums.error, code: datums.code }, { status: 400 })
+      }
+
       const korCheck = checkKorInvoice({
         korActive: (sellerProfile as { kor_active?: boolean | null } | null)?.kor_active,
         lines: (lines ?? []) as { btw_rate?: number | null }[],

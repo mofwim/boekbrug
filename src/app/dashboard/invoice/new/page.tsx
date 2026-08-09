@@ -24,7 +24,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
-import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm } from '@/lib/payment-term'
+import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
 import { round2 } from '@/lib/invoice-totals'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
@@ -873,6 +873,8 @@ function NewInvoicePageContent() {
   // lopen. Ontbreekt de kolom (profiel gelezen met select('*') vóór de migratie), dan is dit false
   // en gedraagt het scherm zich precies zoals voorheen.
   const korActief = !!profile?.kor_active
+  // [BETAALTERMIJN-LANG] Null bij elke gewone termijn, dus er verschijnt niets waar niets hoeft.
+  const langeTermijn = longPaymentTermNotice(betalingstermijn)
   const sign      = invoiceType === 'creditnota' ? -1 : 1
   // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
   // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
@@ -1537,6 +1539,19 @@ function NewInvoicePageContent() {
                     <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
                   )}
                 </div>
+              )}
+
+              {/* [BETAALTERMIJN-LANG] Een woord, geen blokkade. Boven de 60 dagen houdt een
+                  B2B-termijn alleen stand als hij uitdrukkelijk is afgesproken (art. 6:119a BW), en
+                  tegenover een grote onderneming helemaal niet — maar welke situatie het is, hangt
+                  af van het contract en van wie de klant is, en dat weet deze app geen van beide. */}
+              {langeTermijn && (
+                <p style={{
+                  fontSize: 12, color: '#8a5a00', background: '#FFF8E1', border: '1px solid #FFE082',
+                  borderRadius: 8, padding: '8px 10px', margin: '8px 0 0', lineHeight: 1.5,
+                }}>
+                  {langeTermijn}
+                </p>
               )}
 
               {/* [FACTUUR-A] Leverdatum — Art. 35a sub f. Factuur only;
