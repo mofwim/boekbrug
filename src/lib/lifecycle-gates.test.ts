@@ -5282,3 +5282,79 @@ test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules wi
       "the toolbar shortcut is only safe because the bottom nav carries the same destination",
   );
 });
+
+// ─── [FOCUS-KOP] A deep link must land on the invoice, not in the middle of it ──────────────────
+//
+// Reported: tapping an invoice under "DIT HEEFT JE AANDACHT NODIG" on the dashboard opens the
+// inkoopfacturen list far below the invoice. Everything about the deep link worked — the row was
+// found, expanded and highlighted — and the owner still arrived nowhere near it.
+//
+// The cause is the ORDER of two correct-looking lines. The effect expands the focused row, then
+// calls scrollIntoView({ block: 'center' }). Measured in Chromium against the real stylesheet, an
+// expanded incoming card is 705px tall against 586px of usable viewport at 390x844, and centring
+// something taller than the viewport puts its TOP off the top of the screen:
+//
+//     width   chrome   card    invoice name lands at
+//      320    302px    727px   y= 58   behind the bar
+//      390    258px    705px   y= 70   behind the bar
+//      900    246px    705px   y= 70   behind the bar
+//
+// So the owner landed inside the detail body, past the supplier name, past the amount and past
+// the highlight ring drawn for them — the next name on screen being the FOLLOWING invoice, which
+// is why it read as "sent to the wrong place".
+//
+// block:'start' alone is not the fix: it measures y=0, still behind two stacked sticky bars that
+// scrollIntoView knows nothing about. With a margin derived from the bar's LIVE height the name
+// lands at y=254..310 at every width — the chrome varies by 56px across the range, so a constant
+// would have been wrong at four of the six widths measured.
+
+test("[FOCUS-KOP] neither invoice list centres a row it has just expanded", () => {
+  for (const f of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+  ]) {
+    const screen = code(f);
+    // The row that gets expanded must not then be centred. Centring is fine for a short row and
+    // ruinous for a tall one, and these two always expand first.
+    assert.doesNotMatch(
+      screen, /rowRefs\.current\[[^\]]+\][^\n]*scrollIntoView\([^)]*block: 'center'/,
+      `${f}: a focused row is expanded and then centred — its header ends up above the viewport`,
+    );
+    assert.match(
+      screen, /scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\)/,
+      `${f}: the focused row must be scrolled to its START, so the invoice name reads first`,
+    );
+  }
+});
+
+test("[FOCUS-KOP] the margin comes from the bar's measured height, not a constant", () => {
+  for (const f of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+  ]) {
+    const screen = code(f);
+    // Measured, because the toolbar WRAPS: 246px above the breakpoint and 302px at 320px wide.
+    assert.match(
+      screen, /scrollMarginTop = `\$\{focusScrollMarginTop\(\s*\n?\s*toolbarRef\.current\?\.getBoundingClientRect\(\)\.bottom,/,
+      `${f}: the scroll margin must be derived from the toolbar's live rect`,
+    );
+    // …and the ref has to be ON the sticky bar, or the measurement is of nothing. Checking the
+    // attribute alone would pass with the ref sitting on any div in the file.
+    const at = screen.indexOf("<div ref={toolbarRef}");
+    assert.ok(at > 0, `${f}: toolbarRef is not attached to any element`);
+    const tag = screen.slice(at, screen.indexOf(">", at));
+    assert.match(tag, /position: 'sticky'/, `${f}: toolbarRef must sit on the STICKY bar`);
+    assert.match(tag, /top: STICKY_BELOW_HEADER/, `${f}: …the one stacked under the page header`);
+  }
+});
+
+test("[FOCUS-KOP] a deep link that cannot land says so instead of returning silently", () => {
+  // The server unshifts the focused row when the fetch window missed it ([INBOX-CROWD-OUT]), so
+  // absence means that lookup failed. Returning quietly leaves the owner on an unchanged list of
+  // 88 invoices, believing their tap landed. They are entitled to know it did not.
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const guard = screen.indexOf("if (!invoices.some(i => i.id === focusId))");
+  assert.ok(guard > 0, "the not-in-list guard is gone");
+  const branch = screen.slice(guard, guard + 400);
+  assert.match(branch, /showToast\(/, "a focus that cannot land must be reported, never swallowed");
+});

@@ -28,7 +28,7 @@ import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
 import { eInvoiceOf } from '@/lib/e-invoice'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
-import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
@@ -43,7 +43,9 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+// [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
+import { focusScrollMarginTop } from '@/lib/focus-scroll'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
@@ -779,21 +781,55 @@ export default function IncomingManageClient({
   const actionParam = searchParams.get('action')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // [FOCUS-KOP] The sticky toolbar, so its live height can be measured — it WRAPS, so it is
+  // 246px at 320px wide and 190px above the breakpoint. A constant would be wrong somewhere.
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+
+  // ── [FOCUS-KOP] Bring a row to rest under the chrome, on its HEADER ────────────────────────
+  //
+  // Reported: tapping an invoice under "DIT HEEFT JE AANDACHT NODIG" lands you far below it.
+  // The deep link was fine; the landing was not. This effect EXPANDS the row first, and an
+  // expanded card measures 695px at 390x844 — taller than the viewport. `block: 'center'` then
+  // centres the card's middle, which puts its top off the top of the screen: measured in
+  // Chromium, the supplier name came to rest at y=74, behind 258px of sticky chrome. So the
+  // owner arrived in the middle of the detail body, past the name and past the highlight ring
+  // drawn for them, and the whole feature read as broken.
+  //
+  // `block: 'start'` alone measures y=0 — still behind the chrome, because scrollIntoView knows
+  // nothing about two stacked sticky bars. With the margin it measures y=266: just under the
+  // toolbar, name first. The arithmetic and its failure modes live in lib/focus-scroll.ts.
+  const scrollRowIntoView = useCallback((id: string) => {
+    const row = rowRefs.current[id]
+    if (!row) return false
+    row.style.scrollMarginTop = `${focusScrollMarginTop(
+      toolbarRef.current?.getBoundingClientRect().bottom,
+      PAGE_HEADER_HEIGHT,
+      typeof window === 'undefined' ? 0 : window.innerHeight,
+    )}px`
+    row.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return true
+  }, [])
 
   useEffect(() => {
     if (!focusId) return
-    // Only act if the focused row actually exists in this list.
-    if (!invoices.some(i => i.id === focusId)) return
+    // Only act if the focused row actually exists in this list. The server unshifts it when the
+    // fetch window missed it ([INBOX-CROWD-OUT]), so absence here means that lookup failed —
+    // and then the owner tapped an invoice and got an unchanged list. Saying so is the whole
+    // point: they are entitled to know their tap did not land, rather than assume it did.
+    if (!invoices.some(i => i.id === focusId)) {
+      showToast('Deze factuur konden we hier niet openen — zoek hem op in de lijst')
+      return
+    }
     // Expand + highlight on the next tick (never synchronously in the effect
     // body — avoids a cascading re-render during the effects pass).
     const applyTimer = setTimeout(() => {
       setExpandedId(focusId)
       setHighlightId(focusId)
     }, 0)
-    // Wait a tick for the row to render, then scroll to it.
-    const scrollTimer = setTimeout(() => {
-      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, 100)
+    // Wait a tick for the row to render, then scroll to it. 100ms is enough because the expanded
+    // panel holds no image and fetches nothing — its height is final as soon as it renders, so
+    // the smooth scroll cannot be aimed at a position that then moves.
+    const scrollTimer = setTimeout(() => { scrollRowIntoView(focusId) }, 100)
     // Fade the highlight after a few seconds — a cue, not a permanent state.
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
     return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
@@ -1331,9 +1367,9 @@ export default function IncomingManageClient({
     if (invoices.some(i => i.id === originalId)) {
       setExpandedId(originalId)
       setHighlightId(originalId)
-      setTimeout(() => {
-        rowRefs.current[originalId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }, 60)
+      // [FOCUS-KOP] Same landing as the deep link, through the same helper — this call had the
+      // identical `block: 'center'` defect, and an expanded card is just as tall here.
+      setTimeout(() => { scrollRowIntoView(originalId) }, 60)
       setTimeout(() => setHighlightId(null), 3200)
     } else {
       router.push(`/dashboard/incoming/manage?focus=${originalId}`)
@@ -1781,7 +1817,7 @@ export default function IncomingManageClient({
       {/* ── Controls toolbar ── [SUBNAV] back + "Inkoopfacturen" title come from the
           shared sub-page header; this block keeps the Verificatie link + filter/sort,
           sticking directly below the shared bar. */}
-      <div style={{
+      <div ref={toolbarRef} style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '10px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
