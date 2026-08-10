@@ -5172,3 +5172,113 @@ test("[DOC-VERSE-LINK] the open button carries no signature, and a failed tab ge
     "every error must go through fileError, which answers a tab in words and a fetch in JSON",
   );
 });
+
+// ─── [KOP-KLEINER] The Inkoopfacturen toolbar, and the flex rule that has to be a wrapper ──────
+//
+// Reported from a phone: the header of /dashboard/incoming/manage is far too big, and the button
+// that jumps to /dashboard/incoming is redundant. Both were true, and both were measured in
+// Chromium against the real globals.css before anything was changed.
+//
+//   390px, before   282px of sticky toolbar — a third of the viewport, above the list, always
+//                   four button rows: [bulk pair] [Verificatie ALONE] [Matchen] [Reken na]
+//   390px, after    202px, two button rows: [bulk pair] [Matchen | Reken na]
+//
+// The Verificatie shortcut cost a whole 42px row to itself, because `margin-left: auto` pushed it
+// past the two bulk pills onto the next line. It pointed at /dashboard/incoming with the `inbox`
+// icon — the same destination and the same icon as a BottomNav tab that never leaves the screen.
+//
+// WHY THIS GATE EXISTS AT ALL, given that no gate in this repo can run a layout
+// The first version of the fix put `flex: 1 1 0; min-width: 0` on the two buttons directly, with
+// no wrapper. It is the obvious way to write it and it is wrong: flex line-breaking uses an item's
+// HYPOTHETICAL MAIN SIZE, which a zero basis makes zero, so the buttons no longer start their own
+// row — they join whatever line still has a few pixels free and are handed the remainder. Measured
+// across 320-1024px it survived at exactly two widths and collapsed at the rest: "Matchen met bank
+// & kas" came out 44px wide and 76px tall at 375px, and 36px wide at 430px.
+//
+// So the property that must not regress is not "the buttons have a flex rule" — it is that the
+// pair sits in a container whose basis is 100%, which cannot share a line with anything. That is
+// structural, and structure is the one thing a static gate CAN check.
+
+test("[KOP-KLEINER] the two toolbar actions live inside the .inko-run wrapper, not loose in the row", () => {
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // The wrapper must exist...
+  const openAt = screen.indexOf('<div className="inko-run">');
+  assert.ok(openAt > 0, ".inko-run wrapper is gone — the pair would rejoin the bulk row");
+
+  // ...and BOTH buttons must actually be inside it. This is the whole claim: a gate that merely
+  // found the three class names somewhere in the file would pass just as happily with the wrapper
+  // sitting empty two hundred lines away.
+  let depth = 0;
+  let closeAt = -1;
+  const tag = /<div\b|<\/div>/g;
+  tag.lastIndex = openAt;
+  for (let m = tag.exec(screen); m; m = tag.exec(screen)) {
+    depth += m[0] === "</div>" ? -1 : 1;
+    if (depth === 0) { closeAt = m.index; break }
+  }
+  assert.ok(closeAt > openAt, "the .inko-run wrapper is never closed");
+
+  const inside = screen.slice(openAt, closeAt);
+  assert.match(inside, /className="inko-match"/, "Matchen met bank & kas must be inside the wrapper");
+  assert.match(inside, /className="inko-audit"/, "Reken mijn boeken na must be inside the wrapper");
+
+  // And the wrapper must close before .inko-actions does, or it is not a row within that row.
+  const actionsAt = screen.indexOf('<div className="inko-actions">');
+  assert.ok(actionsAt > 0 && actionsAt < openAt, ".inko-run must sit inside .inko-actions");
+});
+
+test("[KOP-KLEINER] .inko-run claims a whole line — a zero basis is the measured bug", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+
+  const run = css.slice(css.indexOf(".inko-run {"), css.indexOf("@media (min-width: 641px)", css.indexOf(".inko-run {")));
+  assert.ok(run.length > 0, ".inko-run rule is gone");
+  assert.match(run, /flex:\s*1\s+1\s+100%/, "the wrapper must have a 100% basis, so it cannot share a line");
+
+  // The exact regression: a zero basis on the wrapper puts it back beside the bulk buttons.
+  const wrapperDecl = run.slice(0, run.indexOf("}"));
+  assert.doesNotMatch(
+    wrapperDecl, /flex:\s*1\s+1\s+0/,
+    "a zero basis makes the wrapper's hypothetical main size 0, so it joins the bulk row instead " +
+      "of starting its own — measured at 44x76px for 'Matchen met bank & kas' at 375px",
+  );
+
+  // The button rules must be scoped to the wrapper. Scoped to .inko-actions they would apply to
+  // loose children again, which is the layout that was measured broken.
+  assert.match(css, /\.inko-run > \.inko-match,\s*\n\s*\.inko-run > \.inko-audit \{/);
+  assert.doesNotMatch(css, /\.inko-actions > \.inko-(match|audit)/, "the old loose-child rules must be gone");
+});
+
+test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules with it", () => {
+  // It duplicated a BottomNav tab exactly — same href, same icon — and cost a full row.
+  assert.equal(
+    readFileSync("src/app/globals.css", "utf8").includes("inko-inbox"), false,
+    "the .inko-inbox rules outlived the element they styled",
+  );
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(screen, /inko-inbox/, "the Verificatie shortcut is back in the toolbar");
+
+  // The destination it duplicated must still be reachable, or removing the shortcut would have
+  // taken the only permanent route to the verification queue with it.
+  //
+  // Found by CONTENT, not by path. The first draft of this gate read "src/components/BottomNav.tsx"
+  // — a path that does not exist (it is components/nav/BottomNav.tsx), and a gate pinned to a
+  // guessed path is the recurring defect in this file: it either throws, or worse, quietly matches
+  // nothing and passes forever.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+  const navEntry = /\{ href: '\/dashboard\/incoming', label: '[^']+', icon: 'inbox'/;
+  const carriers = walk("src/components").filter((f) => navEntry.test(readFileSync(f, "utf8")));
+  assert.ok(
+    carriers.length > 0,
+    "no navigation component still routes to /dashboard/incoming with the inbox icon — removing " +
+      "the toolbar shortcut is only safe because the bottom nav carries the same destination",
+  );
+});

@@ -21,7 +21,6 @@
 // → B.4 receiver-exclusion fires → write passes). NEVER service_role here.
 // Defense in depth: the update touches ONLY payment fields — never amounts.
 
-import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
 // [E-FACTUUR-ZICHTBAAR] De cijfers die de leverancier zelf meestuurde — het sterkste bewijs dat
@@ -1785,7 +1784,7 @@ export default function IncomingManageClient({
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
+        padding: '10px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
         {/* [BAR-ALIGN] The shell spans the viewport — the blur and the hairline
             should — but its CONTENT lines up with the list underneath. Without
@@ -1836,10 +1835,17 @@ export default function IncomingManageClient({
                 Meerdere annuleren
               </button>
             )}
-            <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
-            </Link>
+            {/* [KOP-KLEINER] De Verificatie-snelkoppeling stond hier: een rond inbox-icoontje naar
+                /dashboard/incoming. De onderbalk heeft datzelfde doel al staan, met hetzelfde icoon
+                en dezelfde bestemming, en die balk verlaat het scherm nooit. Twee knoppen naar één
+                plek, waarvan er één permanent zichtbaar is — dan is de andere ruimte die van de
+                lijst was. Gemeten kostte hij een hele regel: `margin-left: auto` duwde hem voorbij
+                de twee bulkknoppen, dus stond hij in zijn eentje op een regel van 42px. */}
 
+          {/* [KOP-KLEINER] The two actions share one row, and this wrapper is what guarantees it —
+              see the block above .inko-run in globals.css for the measurement that rules out doing
+              it with a rule on the buttons themselves. */}
+          <div className="inko-run">
           {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
               The one tap that turns the whole matching circle now instead of waiting
               for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
@@ -1891,6 +1897,7 @@ export default function IncomingManageClient({
           <button
             onClick={() => void runBooksAudit()}
             disabled={auditBusy}
+            className="inko-audit"
             title="Leest je facturen terug uit de documenten zelf en zegt of de bedragen er zo op staan. Verandert niets."
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
@@ -1910,6 +1917,7 @@ export default function IncomingManageClient({
             </span>
             {auditBusy ? 'Bezig met narekenen…' : 'Reken mijn boeken na'}
           </button>
+          </div>
         </div>
 
           {/* [PERIODE] De periodekiezer staat BOVEN filter en sorteren, op zijn eigen regel: hij
