@@ -39,7 +39,14 @@ export default function GlobalSearchLauncher() {
   // Bottom-LEFT: the primary page FABs ("+ Nieuwe factuur/klant", etc.) live
   // bottom-right on facturen/klanten/werkplek — a bottom-right search FAB overlapped them.
   return (
-    <div style={{ position: "fixed", left: 20, bottom: 20, zIndex: 150 }}>
+    <div style={{
+      position: "fixed", left: 20, zIndex: 150,
+      // [MOBILE-FAB] Boven de BottomNav via de gedeelde --bottom-nav-h (0px op
+      // desktop, 64px op mobiel). Op de vaste `bottom: 20` stond deze knop op een
+      // telefoon ACHTER die balk — alleen een streepje blauw stak uit de linkerrand,
+      // en zoeken was daar dus onbereikbaar.
+      bottom: "calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px))",
+    }}>
       <SearchBar variant="launcher" />
     </div>
   );
