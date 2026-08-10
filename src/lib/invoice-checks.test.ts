@@ -207,3 +207,48 @@ test('[CHECKLIST] the kind of document is stated, not only warned about', () => 
   const conflict = invoiceChecks(clean({ invoice_type: 'creditnota', total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121 }))
   assert.equal(conflict.find((c) => c.id === 'kind')?.outcome, 'flagged')
 })
+
+test('[CHECKLIST-BEIDE] a flagged invoice still reports the checks that could not run', () => {
+  // Measured on a real invoice: one red point (the supplier's bank account had changed) under the
+  // heading "Eén ding om even naar te kijken" — while the btw amount had not been verified at all,
+  // because the invoice mixes rates. The owner reads "one thing", deals with that one thing, and
+  // never learns the btw went unchecked. Two open points become one, in their disfavour.
+  //
+  // This is the same overstatement the test above this one guards, in the branch it does not
+  // reach: that one covers "alles gecontroleerd" when nothing is flagged.
+  const both = invoiceChecks(clean({
+    total_ex_btw: 100, btw_amount: 21, total_inc_btw: 130,
+    field_confidence: { _safecore: { iban_check_unavailable: true } },
+  }))
+  assert.ok(both.some((c) => c.outcome === 'flagged'), 'the fixture must flag something')
+  assert.ok(both.some((c) => c.outcome === 'not-checked'), '…and leave something unchecked')
+
+  const summary = checksSummary(both)
+  assert.match(summary, /om even naar te kijken/, 'the flagged count still leads')
+  assert.match(summary, /konden we niet nagaan/, '…and the unknown is not swallowed by it')
+})
+
+test('[CHECKLIST-BEIDE] nothing is added when every check actually ran', () => {
+  // The ordinary flagged invoice must not grow a clause about zero unknowns.
+  const only = invoiceChecks(clean({ total_ex_btw: 100, btw_amount: 21, total_inc_btw: 130 }))
+  assert.equal(only.filter((c) => c.outcome === 'not-checked').length, 0)
+  assert.equal(checksSummary(only), 'Eén ding om even naar te kijken')
+})
+
+test('[CHECKLIST-BEIDE] one unknown reads as one, several read as several', () => {
+  // Dutch: "1 controle" against "3 controles". A count sentence that does not agree with itself
+  // reads as a template nobody finished.
+  const one = checksSummary([
+    { id: 'a', label: 'a', outcome: 'flagged' },
+    { id: 'b', label: 'b', outcome: 'not-checked' },
+  ] as never)
+  assert.match(one, /1 controle konden we niet nagaan/)
+  assert.doesNotMatch(one, /1 controles/)
+
+  const many = checksSummary([
+    { id: 'a', label: 'a', outcome: 'flagged' },
+    { id: 'b', label: 'b', outcome: 'not-checked' },
+    { id: 'c', label: 'c', outcome: 'not-checked' },
+  ] as never)
+  assert.match(many, /2 controles konden we niet nagaan/)
+})

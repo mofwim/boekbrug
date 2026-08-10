@@ -82,7 +82,9 @@ interface ImportHealth {
 import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
-import { M3, COLUMN } from '@/lib/design/tokens'
+import { M3, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
+// [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
 import { reconcileBtw } from '@/lib/btw-reconcile'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
@@ -3242,10 +3244,16 @@ export default function IncomingInvoicesClient({
   useEffect(() => {
     if (!focusId) return;
     // rAF: let the (possibly expanded) card lay out before we scroll to it.
+    // [FOCUS-KOP] On the card's HEAD, not its middle. The effect above expands it
+    // (setExpandedId(id)), and this screen's detail panel is the largest of the four — centring a
+    // card taller than the viewport puts its top, its supplier and its amount off the top of the
+    // screen. No toolbar of its own here, so the shared sub-page header is the whole chrome.
     requestAnimationFrame(() => {
-      document
-        .getElementById(`incoming-card-${focusId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      landRowUnderChrome(
+        document.getElementById(`incoming-card-${focusId}`),
+        null,
+        PAGE_HEADER_HEIGHT,
+      );
     });
   }, [focusId, pending]);
 

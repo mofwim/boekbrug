@@ -5,7 +5,9 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
+// [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -318,6 +320,9 @@ export default function FacturenClient({
   const [searchResults, setSearchResults] = useState<InvoiceRow[] | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // [FOCUS-KOP] The sticky controls bar, measured live: a deep-linked row has to come to
+  // rest under it, and its height is not a constant — it wraps on a narrow screen.
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<ArchivedRow[]>([])
@@ -442,6 +447,13 @@ export default function FacturenClient({
   } = useInfiniteInvoices({ userId: profile.id, status: statusMap[filter] })
 
   // [BRIDGE-NOTIF] Reveal a ?focus= row once it's present in the loaded list.
+  //
+  // [FOCUS-KOP] The landing is the same one the inkoopfacturen screen had wrong, in the same
+  // words: this effect EXPANDS the row and then centres it, and a card taller than the viewport
+  // cannot be centred without putting its top off the top of the screen. Measured on the
+  // inkoop side at 390x844 the expanded card is 705px against 586px of usable height, and the
+  // invoice name came to rest at y=70 — behind 258px of stacked sticky chrome. Nothing about
+  // that arithmetic is specific to inkoop, so this screen lands on its row's header too.
   useEffect(() => {
     if (!focusId || loading) return
     if (!invoices.some(i => i.id === focusId)) return
@@ -450,7 +462,7 @@ export default function FacturenClient({
       setHighlightId(focusId)
     }, 0)
     const scrollTimer = setTimeout(() => {
-      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      landRowUnderChrome(rowRefs.current[focusId], toolbarRef.current, PAGE_HEADER_HEIGHT)
     }, 100)
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
     return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
@@ -900,7 +912,7 @@ export default function FacturenClient({
           the shared sub-page header (see DashboardChrome); this block keeps the
           page's own controls (sort/refresh/search/filter) and sticks directly
           BELOW the shared bar via top: calc(56px + safe-area). */}
-      <div style={{
+      <div ref={toolbarRef} style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,

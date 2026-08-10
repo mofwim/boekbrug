@@ -5,7 +5,9 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { M3, R, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
+// [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
@@ -44,6 +46,8 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // [FOCUS-KOP] The sticky controls bar, measured live rather than assumed.
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
 
   const dialog = useDialog()
   // [MOTION] The app-wide snackbar. Bound to the name the call sites already
@@ -96,8 +100,10 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
       setExpandedId(focusId)
       setHighlightId(focusId)
     })()
+    // [FOCUS-KOP] Op de kop van de rij, niet op het midden ervan. Zie lib/focus-scroll.ts:
+    // een uitgeklapte kaart centreren zet zijn bovenkant boven de rand van het scherm.
     const scrollTimer = setTimeout(() => {
-      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      landRowUnderChrome(rowRefs.current[focusId], toolbarRef.current, PAGE_HEADER_HEIGHT)
     }, 100)
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
     return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
@@ -191,7 +197,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
       {/* ── Controls toolbar ── [SUBNAV] back + "Mijn klanten" title come from the
           shared sub-page header; this block keeps the "Nieuw" + search controls,
           sticking directly below the shared bar. */}
-      <div style={{
+      <div ref={toolbarRef} style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px 10px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,

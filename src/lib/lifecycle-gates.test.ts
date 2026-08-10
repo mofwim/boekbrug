@@ -5014,6 +5014,63 @@ test("[TYPES] the newly applied schema is declared, and reached without `as any`
   );
 });
 
+// ─── [DOC-GEEN-BLADZIJDE] A file with no page must not be framed ────────────────────────────────
+//
+// The document sheet renders an <img> for a photo and puts everything ELSE in an <iframe>. For a
+// pdf that is right. For a UBL e-invoice the browser renders the SOURCE, so an owner opening an
+// incoming invoice on their phone read:
+//
+//     <?xml version="1.0" encoding="UTF-8"?>
+//     <Invoice xmlns:qdt="urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2" …
+//
+// — namespace declarations in a dark frame, under a panel of tidy amounts. And unnecessary: this
+// app READS these files (ubl-invoice.ts), and the sheet shows what it read directly above.
+//
+// WHY THIS IS HELD HERE AND NOT IN tests/render/. The branch is chosen from a fetch inside a
+// useEffect, and effects never run under renderToStaticMarkup — the sheet stays in its 'loading'
+// phase there, so the render gate cannot reach it. The decision itself is pure and tested in
+// document-preview.test.ts; what is left for this file is the wiring.
+test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of framing it", () => {
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  // Asserted on the MODULE and the USE, not on the exact spelling of the import list — pinning it
+  // to that list broke the moment fileOpenHref was added beside these two, which is a gate
+  // reporting an edit rather than a defect. Same trap this file keeps finding elsewhere.
+  assert.match(
+    sheet, /from '@\/lib\/document-preview'/,
+    "the sheet must take the rule from the shared module",
+  );
+  assert.match(sheet, /\bnoPageNotice\b/, "…and use it");
+  assert.match(
+    sheet, /\{doc\.phase === 'ready' && doc\.kind === 'structured' && \(/,
+    "…and have a branch for a file with no page",
+  );
+  assert.match(sheet, /\{noPageNotice\(doc\.name\)\}/, "…which says why there is nothing to show");
+  // The frame must now EXCLUDE it. Without this the new branch would render the sentence AND the
+  // iframe under it, which is worse than either alone.
+  assert.match(
+    sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \(\n\s*<iframe/,
+    "the iframe branch must exclude structured files, not merely be preceded by one",
+  );
+  // The source is not hidden — it stops being the default view.
+  assert.match(sheet, /Openen in nieuw tabblad/, "the escape hatch stays");
+
+  // The route sends the kind, from the same function, so the two cannot disagree about a format.
+  const route = code("src/app/api/email/file/[id]/route.ts");
+  assert.match(route, /import \{ previewKind \} from "@\/lib\/document-preview"/);
+  assert.match(route, /const kind = previewKind\(name\)/, "the route must derive it from the shared rule");
+  assert.doesNotMatch(
+    route, /\.pdf\$\/\.test\(lower\) \? "pdf"/,
+    "the route's own copy of the rule must be gone — two definitions drift",
+  );
+
+  // A bank statement is also an .xml file, so the specific formats have to be tested first.
+  const mod = code("src/lib/document-preview.ts");
+  const camtAt = mod.indexOf("camt|053");
+  const xmlAt = mod.indexOf("\\.xml$");
+  assert.ok(camtAt > 0 && xmlAt > camtAt, "CAMT must be matched before the bare .xml rule");
+});
+
 // ─── [SENTRY-EEN-CONFIG] One browser Sentry config, and it is the one that runs ─────────────────
 //
 // There were two client Sentry.init calls: src/instrumentation-client.ts, scaffolded by the Sentry
@@ -5100,4 +5157,283 @@ test("[DUBBEL-ZICHTBAAR] every duplicate branch registers a skip, not only an au
 
   // It must not be able to break the sync it reports on.
   assert.match(src.slice(idx - 600, idx + 1800), /\} catch \{/, "registering a skip is best-effort");
+});
+
+// ─── [DOC-VERSE-LINK] The escape hatch signs at the tap, not five minutes earlier ──────────────
+//
+// The sheet fetches a signed url once, on open, and the "Openen in nieuw tabblad" button carried
+// that same url. The signature lives 300 seconds. So a tap five minutes later put this in a new
+// tab, in place of the document:
+//
+//     {"statusCode":"400","error":"InvalidJWT","message":"\"exp\" claim timestamp check failed"}
+//
+// Reported from a phone and easy to blame on the phone. It is a stopwatch, and it runs everywhere.
+//
+// It matters more than a stale link normally would, because that button is the ESCAPE HATCH. Edge
+// on Android answers an inline pdf with "PDF reader has been disabled"; Safari has shipped versions
+// that render only the first page. When the frame will not work, the button is the only way to the
+// document — and it was the one route with a fuse on it.
+test("[DOC-VERSE-LINK] the open button carries no signature, and a failed tab gets a sentence", () => {
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(
+    sheet, /href=\{fileOpenHref\(invoice\.id\)\}/,
+    "the button must point at our own route — a url captured at open time has a 300-second fuse",
+  );
+  assert.doesNotMatch(
+    sheet, /href=\{doc\.url\}/,
+    "…and never at the pre-signed url the sheet fetched",
+  );
+
+  const route = code("src/app/api/email/file/[id]/route.ts");
+  assert.match(
+    route, /if \(req\.nextUrl\.searchParams\.get\("open"\) === "1"\) \{/,
+    "the route must have the redirect branch",
+  );
+  assert.match(route, /NextResponse\.redirect\(signed\.signedUrl/, "…which signs and sends");
+  // A cached 302 would point a later tap at a url that has already died — exactly the failure this
+  // branch removes.
+  assert.match(
+    route, /"Cache-Control": "no-store, max-age=0"/,
+    "the redirect must not be cached: the target expires and the cache would outlive it",
+  );
+
+  // ORDER: the signature has to be minted in this request, not read from anywhere earlier.
+  const signAt = route.indexOf("createSignedUrl(storagePath");
+  const redirectAt = route.indexOf('searchParams.get("open") === "1"');
+  assert.ok(signAt > 0 && redirectAt > signAt, "the redirect must follow a fresh createSignedUrl");
+
+  // And no failure path may answer a browser tab with a JSON object — that is what the owner was
+  // shown once already.
+  assert.match(route, /function fileError\(req: NextRequest, message: string, status: number\)/);
+  assert.doesNotMatch(
+    route, /return NextResponse\.json\(\{ error: "/,
+    "every error must go through fileError, which answers a tab in words and a fetch in JSON",
+  );
+});
+
+// ─── [KOP-KLEINER] The Inkoopfacturen toolbar, and the flex rule that has to be a wrapper ──────
+//
+// Reported from a phone: the header of /dashboard/incoming/manage is far too big, and the button
+// that jumps to /dashboard/incoming is redundant. Both were true, and both were measured in
+// Chromium against the real globals.css before anything was changed.
+//
+//   390px, before   282px of sticky toolbar — a third of the viewport, above the list, always
+//                   four button rows: [bulk pair] [Verificatie ALONE] [Matchen] [Reken na]
+//   390px, after    202px, two button rows: [bulk pair] [Matchen | Reken na]
+//
+// The Verificatie shortcut cost a whole 42px row to itself, because `margin-left: auto` pushed it
+// past the two bulk pills onto the next line. It pointed at /dashboard/incoming with the `inbox`
+// icon — the same destination and the same icon as a BottomNav tab that never leaves the screen.
+//
+// WHY THIS GATE EXISTS AT ALL, given that no gate in this repo can run a layout
+// The first version of the fix put `flex: 1 1 0; min-width: 0` on the two buttons directly, with
+// no wrapper. It is the obvious way to write it and it is wrong: flex line-breaking uses an item's
+// HYPOTHETICAL MAIN SIZE, which a zero basis makes zero, so the buttons no longer start their own
+// row — they join whatever line still has a few pixels free and are handed the remainder. Measured
+// across 320-1024px it survived at exactly two widths and collapsed at the rest: "Matchen met bank
+// & kas" came out 44px wide and 76px tall at 375px, and 36px wide at 430px.
+//
+// So the property that must not regress is not "the buttons have a flex rule" — it is that the
+// pair sits in a container whose basis is 100%, which cannot share a line with anything. That is
+// structural, and structure is the one thing a static gate CAN check.
+
+test("[KOP-KLEINER] the two toolbar actions live inside the .inko-run wrapper, not loose in the row", () => {
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // The wrapper must exist...
+  const openAt = screen.indexOf('<div className="inko-run">');
+  assert.ok(openAt > 0, ".inko-run wrapper is gone — the pair would rejoin the bulk row");
+
+  // ...and BOTH buttons must actually be inside it. This is the whole claim: a gate that merely
+  // found the three class names somewhere in the file would pass just as happily with the wrapper
+  // sitting empty two hundred lines away.
+  let depth = 0;
+  let closeAt = -1;
+  const tag = /<div\b|<\/div>/g;
+  tag.lastIndex = openAt;
+  for (let m = tag.exec(screen); m; m = tag.exec(screen)) {
+    depth += m[0] === "</div>" ? -1 : 1;
+    if (depth === 0) { closeAt = m.index; break }
+  }
+  assert.ok(closeAt > openAt, "the .inko-run wrapper is never closed");
+
+  const inside = screen.slice(openAt, closeAt);
+  assert.match(inside, /className="inko-match"/, "Matchen met bank & kas must be inside the wrapper");
+  assert.match(inside, /className="inko-audit"/, "Reken mijn boeken na must be inside the wrapper");
+
+  // And the wrapper must close before .inko-actions does, or it is not a row within that row.
+  const actionsAt = screen.indexOf('<div className="inko-actions">');
+  assert.ok(actionsAt > 0 && actionsAt < openAt, ".inko-run must sit inside .inko-actions");
+});
+
+test("[KOP-KLEINER] .inko-run claims a whole line — a zero basis is the measured bug", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+
+  const run = css.slice(css.indexOf(".inko-run {"), css.indexOf("@media (min-width: 641px)", css.indexOf(".inko-run {")));
+  assert.ok(run.length > 0, ".inko-run rule is gone");
+  assert.match(run, /flex:\s*1\s+1\s+100%/, "the wrapper must have a 100% basis, so it cannot share a line");
+
+  // The exact regression: a zero basis on the wrapper puts it back beside the bulk buttons.
+  const wrapperDecl = run.slice(0, run.indexOf("}"));
+  assert.doesNotMatch(
+    wrapperDecl, /flex:\s*1\s+1\s+0/,
+    "a zero basis makes the wrapper's hypothetical main size 0, so it joins the bulk row instead " +
+      "of starting its own — measured at 44x76px for 'Matchen met bank & kas' at 375px",
+  );
+
+  // The button rules must be scoped to the wrapper. Scoped to .inko-actions they would apply to
+  // loose children again, which is the layout that was measured broken.
+  assert.match(css, /\.inko-run > \.inko-match,\s*\n\s*\.inko-run > \.inko-audit \{/);
+  assert.doesNotMatch(css, /\.inko-actions > \.inko-(match|audit)/, "the old loose-child rules must be gone");
+});
+
+test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules with it", () => {
+  // It duplicated a BottomNav tab exactly — same href, same icon — and cost a full row.
+  assert.equal(
+    readFileSync("src/app/globals.css", "utf8").includes("inko-inbox"), false,
+    "the .inko-inbox rules outlived the element they styled",
+  );
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(screen, /inko-inbox/, "the Verificatie shortcut is back in the toolbar");
+
+  // The destination it duplicated must still be reachable, or removing the shortcut would have
+  // taken the only permanent route to the verification queue with it.
+  //
+  // Found by CONTENT, not by path. The first draft of this gate read "src/components/BottomNav.tsx"
+  // — a path that does not exist (it is components/nav/BottomNav.tsx), and a gate pinned to a
+  // guessed path is the recurring defect in this file: it either throws, or worse, quietly matches
+  // nothing and passes forever.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+  const navEntry = /\{ href: '\/dashboard\/incoming', label: '[^']+', icon: 'inbox'/;
+  const carriers = walk("src/components").filter((f) => navEntry.test(readFileSync(f, "utf8")));
+  assert.ok(
+    carriers.length > 0,
+    "no navigation component still routes to /dashboard/incoming with the inbox icon — removing " +
+      "the toolbar shortcut is only safe because the bottom nav carries the same destination",
+  );
+});
+
+// ─── [FOCUS-KOP] A deep link must land on the invoice, not in the middle of it ──────────────────
+//
+// Reported: tapping an invoice under "DIT HEEFT JE AANDACHT NODIG" on the dashboard opens the
+// inkoopfacturen list far below the invoice. Everything about the deep link worked — the row was
+// found, expanded and highlighted — and the owner still arrived nowhere near it.
+//
+// The cause is the ORDER of two correct-looking lines. The effect expands the focused row, then
+// calls scrollIntoView({ block: 'center' }). Measured in Chromium against the real stylesheet, an
+// expanded incoming card is 705px tall against 586px of usable viewport at 390x844, and centring
+// something taller than the viewport puts its TOP off the top of the screen:
+//
+//     width   chrome   card    invoice name lands at
+//      320    302px    727px   y= 58   behind the bar
+//      390    258px    705px   y= 70   behind the bar
+//      900    246px    705px   y= 70   behind the bar
+//
+// So the owner landed inside the detail body, past the supplier name, past the amount and past
+// the highlight ring drawn for them — the next name on screen being the FOLLOWING invoice, which
+// is why it read as "sent to the wrong place".
+//
+// block:'start' alone is not the fix: it measures y=0, still behind two stacked sticky bars that
+// scrollIntoView knows nothing about. With a margin derived from the bar's LIVE height the name
+// lands at y=254..310 at every width — the chrome varies by 56px across the range, so a constant
+// would have been wrong at four of the six widths measured.
+
+const FOCUS_SCREENS = [
+  // path, and whether the screen has a sticky toolbar of its own to measure
+  ["src/app/dashboard/incoming/manage/IncomingManageClient.tsx", true],
+  ["src/app/dashboard/facturen/FacturenClient.tsx", true],
+  ["src/app/dashboard/klanten/KlantenClient.tsx", true],
+  ["src/app/dashboard/clients/[id]/kwartaal/page.tsx", false],
+  ["src/app/dashboard/incoming/IncomingInvoicesClient.tsx", false],
+] as const;
+
+test("[FOCUS-KOP] no screen centres a row it has just expanded", () => {
+  // Five screens had written this landing out separately, and all five had it the same way wrong.
+  // That is the argument for one function: the next screen to grow a deep link inherits the fix
+  // instead of re-deriving the bug.
+  for (const [f] of FOCUS_SCREENS) {
+    const screen = code(f);
+    assert.match(screen, /landRowUnderChrome\(/, `${f}: the focused row must land through the helper`);
+    // The defect itself: centring something that was just expanded.
+    assert.doesNotMatch(
+      screen, /(rowRefs\.current\[[^\]]+\]|getElementById\(`incoming-card-[^`]+`\))[^\n]*\n?[^\n]*scrollIntoView\([^)]*block: ?["']center/,
+      `${f}: a focused row is expanded and then centred — its header ends up above the viewport`,
+    );
+  }
+});
+
+test("[FOCUS-KOP] a screen with its own toolbar measures it; one without passes null on purpose", () => {
+  for (const [f, hasBar] of FOCUS_SCREENS) {
+    const screen = code(f);
+    // Every call site, and its arguments read by MATCHING PARENS rather than by regex. Two earlier
+    // drafts of this gate failed on their own instrument: one indexed past the only call there was,
+    // and one used a non-greedy /\)/ that stopped inside `getElementById(...)` — so the argument it
+    // checked was half an argument. A call's arguments are a balanced span; nothing less reads them.
+    const calls: string[] = [];
+    for (let i = screen.indexOf("landRowUnderChrome("); i >= 0; i = screen.indexOf("landRowUnderChrome(", i + 1)) {
+      let depth = 0;
+      const from = screen.indexOf("(", i);
+      for (let j = from; j < screen.length; j++) {
+        if (screen[j] === "(") depth++;
+        else if (screen[j] === ")" && --depth === 0) { calls.push(screen.slice(from + 1, j)); break }
+      }
+    }
+    assert.ok(calls.length > 0, `${f}: no landRowUnderChrome call found`);
+    if (hasBar) {
+      assert.ok(
+        calls.every(c => /toolbarRef\.current/.test(c)),
+        `${f}: has a sticky toolbar, so the row must land below THAT, not below the header alone`,
+      );
+      // …and the ref has to be ON the sticky bar. Checking the attribute alone would pass with the
+      // ref parked on any div in the file.
+      const at = screen.indexOf("<div ref={toolbarRef}");
+      assert.ok(at > 0, `${f}: toolbarRef is not attached to any element`);
+      const tag = screen.slice(at, screen.indexOf(">", at));
+      assert.match(tag, /position: 'sticky'/, `${f}: toolbarRef must sit on the STICKY bar`);
+      assert.match(tag, /top: STICKY_BELOW_HEADER/, `${f}: …the one stacked under the page header`);
+    } else {
+      assert.ok(
+        calls.every(c => /,\s*null,/.test(c)),
+        `${f}: has no toolbar of its own — null says so, and the shared header is measured instead`,
+      );
+      assert.doesNotMatch(screen, /toolbarRef/, `${f}: a ref to a bar this screen does not have`);
+    }
+  }
+});
+
+test("[FOCUS-KOP] the chrome is measured, never assumed from a constant", () => {
+  const lib = code("src/lib/focus-scroll.ts");
+  // The shared header carries env(safe-area-inset-top) on a notched phone in PWA mode, so its
+  // height is NOT PAGE_HEADER_HEIGHT. Deriving it from the constant lands the row behind the bar
+  // by exactly the height of the notch.
+  assert.match(lib, /document\.querySelector\(SUBPAGE_HEADER_SELECTOR\)/, "the shared header must be measured");
+  assert.match(lib, /block: "start"/, "and the row scrolled to its start");
+  assert.doesNotMatch(lib, /block: "center"/, "never centred");
+
+  // …and the handle it measures has to exist on the real bar.
+  const header = code("src/components/nav/SubPageHeader.tsx");
+  const at = header.indexOf("data-subpage-header");
+  assert.ok(at > 0, "the shared header lost the attribute the helper finds it by");
+  const tag = header.slice(header.lastIndexOf("<", at), header.indexOf(">", at));
+  assert.match(tag, /^<header/, "the attribute must be on the header element itself");
+  assert.match(header.slice(at, at + 400), /position: "sticky"/, "…which must still be sticky");
+});
+
+test("[FOCUS-KOP] a deep link that cannot land says so instead of returning silently", () => {
+  // The server unshifts the focused row when the fetch window missed it ([INBOX-CROWD-OUT]), so
+  // absence means that lookup failed. Returning quietly leaves the owner on an unchanged list of
+  // 88 invoices, believing their tap landed. They are entitled to know it did not.
+  const screen = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const guard = screen.indexOf("if (!invoices.some(i => i.id === focusId))");
+  assert.ok(guard > 0, "the not-in-list guard is gone");
+  const branch = screen.slice(guard, guard + 400);
+  assert.match(branch, /showToast\(/, "a focus that cannot land must be reported, never swallowed");
 });

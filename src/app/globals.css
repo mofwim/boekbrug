@@ -632,41 +632,64 @@ input::placeholder, textarea::placeholder {
    of a STICKY toolbar, and that toolbar sits above the list, so the wasted line
    pushed every invoice further down exactly on the screens with room to spare.
    One wrapping row serves both now: side by side above the breakpoint, stacked
-   below it exactly as before.
-
-   DOM order is [Meerdere] [Verificatie] [Matchen] — chosen so the PHONE layout
-   needs no rules at all and stays what it was. The desktop reordering is done
-   with `order`, which is what flexbox is for. */
+   below it exactly as before. */
 .inko-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
 }
 
-/* Phone: the Verificatie shortcut sits at the far right of the first line, and
-   the match button takes a line of its own. */
-.inko-actions > .inko-inbox {
-  margin-left: auto;
+/* [KOP-KLEINER] The two ACTIONS share ONE row instead of taking one each.
+   Measured in Chromium at 390px, the toolbar this replaces was 282px tall — a third
+   of a phone screen, permanently, above the list it is meant to help you read. It ran
+   four rows of buttons before the period picker and the filters: the bulk pair, the
+   Verificatie shortcut ALONE on its own row (`margin-left: auto` pushed it past the
+   two bulk pills), "Matchen met bank & kas" full width, and "Reken mijn boeken na".
+
+   WHY THE WRAPPER, AND NOT A RULE ON THE TWO BUTTONS
+   The obvious version — `flex: 1 1 0; min-width: 0` on both buttons, no extra element —
+   was measured and is WRONG. Flex line-breaking uses an item's hypothetical main size,
+   and `flex-basis: 0` with `min-width: 0` makes that ZERO: the buttons then fit beside
+   ANY line that has a few pixels left, so instead of starting their own row they join
+   the bulk row and are handed whatever is left over. Measured across 320-1024px it held
+   at exactly two widths (390 and 414) and collapsed everywhere else — "Matchen met bank
+   & kas" rendered 44px wide and 76px tall at 375px, and 36px wide at 430px. A vertical
+   sliver, on the one control here that moves the books forward.
+
+   A wrapper with `flex: 1 1 100%` cannot do that: a basis of 100% never fits beside
+   anything, so the pair always starts a fresh line and always has that line to itself.
+   Inside it `flex: 1 1 0` is safe, because there is nothing else on the line to lose
+   space to — the two split the width evenly and stay equal height. Verified at 320,
+   360, 375, 390, 414, 430, 480, 540, 600, 640, 641, 768 and 1024px. */
+.inko-run {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 
-.inko-actions > .inko-match {
-  flex: 1 1 100%;
+.inko-run > .inko-match,
+.inko-run > .inko-audit {
+  flex: 1 1 0;
+  min-width: 0;
   justify-content: center;
+  text-align: center;
 }
 
 @media (min-width: 641px) {
-  /* Side by side, Verificatie pushed to the far right. 641px, so this flips at
-     the same width as every other layout switch in the app. */
-  .inko-actions > .inko-match {
+  /* Above the breakpoint there is room for all four pills, so the pair stops claiming
+     a whole line and sits at its natural width. 641px, so this flips where every other
+     layout switch in the app flips. */
+  .inko-run {
     flex: 0 0 auto;
-    order: 2;
-    justify-content: flex-start;
   }
 
-  .inko-actions > .inko-inbox {
-    order: 3;
+  .inko-run > .inko-match,
+  .inko-run > .inko-audit {
+    flex: 0 0 auto;
+    justify-content: flex-start;
   }
 }
 

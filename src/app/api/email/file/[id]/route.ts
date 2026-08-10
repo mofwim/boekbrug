@@ -10,9 +10,37 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // question, so they live in one tested place — see the header of storage-path.ts for the hole
 // this closes.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
+// [DOC-GEEN-BLADZIJDE] Één regel voor "kan dit als bladzijde getoond worden", gedeeld met het
+// scherm dat het antwoord gebruikt.
+import { previewKind } from "@/lib/document-preview";
+
+/**
+ * [DOC-VERSE-LINK] An answer the CALLER can read.
+ *
+ * This route serves two kinds of caller. The sheet fetches it and reads JSON. With ?open=1 the
+ * browser is navigating to it directly, and a JSON object in a tab is what the owner was already
+ * shown once — `{"statusCode":"400","error":"InvalidJWT"…}` — which tells them nothing and looks
+ * like the app broke. Same failure, two audiences, so: a sentence for the tab, JSON for the fetch.
+ *
+ * Deliberately plain: no styling, no link back. This is the last thing standing when the file
+ * cannot be reached, and every dependency it takes on is another way for it to fail too.
+ */
+function fileError(req: NextRequest, message: string, status: number) {
+  if (req.nextUrl.searchParams.get("open") !== "1") {
+    return NextResponse.json({ error: message }, { status });
+  }
+  const escaped = message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return new NextResponse(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `<title>Bestand openen</title>` +
+      `<body style="font-family:system-ui,sans-serif;padding:32px;line-height:1.6;color:#202124">` +
+      `<p>${escaped}</p></body>`,
+    { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
+  );
+}
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -23,7 +51,7 @@ export async function GET(
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+    return fileError(req, "Je bent niet ingelogd. Log in en probeer het opnieuw.", 401);
   }
 
   // Verify access and get the storage path.
@@ -39,7 +67,7 @@ export async function GET(
     .single();
 
   if (!invoice) {
-    return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+    return fileError(req, "Deze factuur konden we niet vinden.", 404);
   }
 
   let authorized = invoice.receiver_id === user.id;
@@ -55,7 +83,7 @@ export async function GET(
   }
 
   if (!authorized) {
-    return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+    return fileError(req, "Deze factuur konden we niet vinden.", 404);
   }
 
   if (!invoice.pdf_url) {
@@ -79,7 +107,7 @@ export async function GET(
     console.error("[SEC-STORAGE-PATH] refused to sign a path outside the authorized owner", {
       invoiceId: id, receiverId: invoice.receiver_id, storagePath, callerId: user.id,
     });
-    return NextResponse.json({ error: "Kon bestand niet openen" }, { status: 403 });
+    return fileError(req, "Je hebt geen toegang tot dit bestand.", 403);
   }
 
   // [BOEK-011 + ACC-INVOICE-VIEW] Sign with service_role — same reasoning as
@@ -108,21 +136,36 @@ export async function GET(
       storagePath,
       error,
     });
-    return NextResponse.json(
-      { error: "Kon bestand niet openen" },
-      { status: 500 }
-    );
+    // [DOC-VERSE-LINK] A tab that the owner is looking at gets a sentence, not a JSON object.
+    return fileError(req, "We konden dit bestand nu niet openen. Probeer het zo meteen opnieuw.", 500);
   }
 
   // [DOC-INLINE] The KIND, so the viewer can render it instead of handing it to the operating
   // system. A camera intake is a JPEG and belongs in an <img>; a pdf goes in a frame. Derived from
   // the stored path, which is the only thing we have — the bucket does not carry a content type we
   // can trust here, and guessing wrong costs a blank frame, never a wrong file.
-  const lower = storagePath.toLowerCase();
-  const kind = /\.(jpe?g|png|webp|heic|gif)$/.test(lower) ? "image"
-    : /\.pdf$/.test(lower) ? "pdf"
-    : "other";
+  //
+  // [DOC-GEEN-BLADZIJDE] The rule moved to document-preview.ts, and grew a third answer. "other"
+  // meant "put it in a frame", and for a UBL e-invoice that renders the raw XML source at the
+  // owner — namespace declarations and all. A file that has no page now says so.
   const name = storagePath.split("/").pop() ?? "factuur";
+  const kind = previewKind(name);
+
+  // [DOC-VERSE-LINK] ?open=1 — the browser is going STRAIGHT to the file, so send it there.
+  //
+  // The alternative, which is what this route used to support alone, is to hand a signed url to the
+  // screen and let a button carry it. That url lives 300 seconds, so a tap five minutes later put
+  // Supabase's raw {"error":"InvalidJWT"} in a new tab instead of the document — on the one control
+  // that exists precisely for when the inline frame does not work. Signing here removes the window
+  // rather than widening it.
+  if (req.nextUrl.searchParams.get("open") === "1") {
+    return NextResponse.redirect(signed.signedUrl, {
+      status: 302,
+      // Never cached: the target carries a signature that expires, and a cached 302 would send a
+      // later tap to a url that has already died — the very thing this branch exists to prevent.
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
+  }
 
   return NextResponse.json({ url: signed.signedUrl, kind, name });
 }
