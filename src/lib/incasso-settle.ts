@@ -27,6 +27,10 @@
 
 import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+// [TYPES] Strak sinds auto_incasso.sql en bank_tx_direct_debit.sql zijn toegepast. Zonder dit
+// was het weghalen van de `as any` hierboven kosmetisch: de client zelf was al ongetypeerd, dus
+// een verkeerd gespelde kolomnaam kwam nog steeds pas bij de database aan het licht.
+import type { Database, Json } from '@/types/database.types'
 
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import { supplierNameKey } from '@/lib/supplier-registry'
@@ -40,8 +44,8 @@ import {
   type IncassoHold,
 } from '@/lib/auto-incasso'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Client = SupabaseClient<any>
+ 
+type Client = SupabaseClient<Database>
 
 /** The columns the decision needs, plus what the marker write and the summary need. */
 const INCASSO_COLS = 'id, invoice_number, client_name, status, direction, accountant_status, invoice_type, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, field_confidence, supplier_id' as const
@@ -242,9 +246,13 @@ export async function settleIncassoForUser(
       // indistinguishable from an observed one, which is the whole reason the marker exists.
       const { error: markErr } = await payClient
         .from('invoices')
+        // `as Json` volgt de bestaande schrijfwijze voor deze kolom (supersede- en
+        // multi-invoice-route doen hetzelfde). withIncassoMark geeft Record<string, unknown> terug
+        // en de kolom is jsonb: de waarde IS serialiseerbaar — hij komt uit dezelfde kolom plus
+        // drie strings — maar `unknown` kan dat niet zeggen.
         .update({ field_confidence: withIncassoMark(inv.field_confidence, {
           at: new Date().toISOString(), paid_on: decision.paymentDate, supplier: supplier.name,
-        }) })
+        }) as Json })
         .eq('id', inv.id)
       if (markErr) {
         reportHandledFailure({
@@ -388,15 +396,15 @@ export async function markIncassoSuggested(
   for (const p of proposals) {
     try {
       if (p.supplierId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('suppliers').update({ incasso_suggested_at: at } as any)
+         
+        await supabase.from('suppliers').update({ incasso_suggested_at: at })
           .eq('id', p.supplierId).eq('user_id', userId)
         continue
       }
       const key = supplierNameKey(p.name)
       if (!key) continue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await supabase.from('suppliers').insert({ user_id: userId, name: p.name, name_key: key, incasso_suggested_at: at } as any)
+       
+      await supabase.from('suppliers').insert({ user_id: userId, name: p.name, name_key: key, incasso_suggested_at: at })
     } catch (e) {
       console.error('[DD-SIGNAL] could not record that the incasso question was asked', {
         userId, supplier: p.name, error: e instanceof Error ? e.message : String(e),

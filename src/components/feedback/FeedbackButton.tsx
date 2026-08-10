@@ -109,9 +109,12 @@ export default function FeedbackButton() {
         aria-label="Er ging iets mis — stuur ons een bericht"
         style={{
           position: 'fixed', right: 16,
-          // [FEEDBACK] Boven de BottomNav, niet erachter. Op mobiel staat die balk onderaan vast;
-          // 88px + de veilige zone houdt de knop bereikbaar zonder iets af te dekken.
-          bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))',
+          // [FEEDBACK] Boven de BottomNav én boven de paginaknop. De vaste 88px botste
+          // op mobiel exact met de upload-/plus-FAB: die staat op
+          // 24px + var(--bottom-nav-h) = 24 + 64 = 88px, ook rechts — twee knoppen op
+          // dezelfde plek (zichtbaar als een blauwe cirkel half achter deze witte).
+          // 24px onderrand + 56px FAB + 12px lucht = 92px boven de balk.
+          bottom: 'calc(92px + var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px))',
           zIndex: 40, width: 44, height: 44, borderRadius: 9999,
           border: '1px solid #dadce0', background: '#fff', color: '#5f6368',
           boxShadow: '0 2px 10px rgba(0,0,0,0.12)', cursor: 'pointer',

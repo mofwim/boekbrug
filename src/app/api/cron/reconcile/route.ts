@@ -105,8 +105,8 @@ export async function GET(req: NextRequest) {
       const rows = await fetchAllRows<{ user_id: string | null }>((from, to) =>
         // auto_incasso is added by auto_incasso.sql and not yet in the generated types;
         // incassoSupported() above is what makes the read safe.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (pipeline.from("suppliers").select("user_id") as any).eq("auto_incasso", true)
+         
+        pipeline.from("suppliers").select("user_id").eq("auto_incasso", true)
           .order("id", { ascending: true }).range(from, to));
       for (const r of rows) if (r.user_id) { userIds.add(r.user_id); incassoUsers += 1; }
     }
@@ -134,8 +134,12 @@ export async function GET(req: NextRequest) {
   let ddUsers = 0;
   try {
     const rows = await fetchAllRows<{ user_id: string | null }>((from, to) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (pipeline.from("bank_transactions").select("user_id") as any)
+      // [TYPES] The cast that stood here is gone. mandate_id, creditor_id and type_code were not
+      // in the generated schema when this block was written, so the query had to be widened to
+      // `any` to name them — and a widened query stops checking every OTHER column name in it.
+      // The six migrations of 9 August put those three in the types, so the filter is now checked
+      // by the compiler like any other.
+      pipeline.from("bank_transactions").select("user_id")
         .or("mandate_id.not.is.null,creditor_id.not.is.null,type_code.not.is.null")
         .order("id", { ascending: true }).range(from, to));
     for (const r of rows) if (r.user_id && !userIds.has(r.user_id)) { userIds.add(r.user_id); ddUsers += 1; }

@@ -13,12 +13,16 @@
 // remembered" must not be said when nothing was written.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+// [TYPES] Sinds supplier_aliases.sql is toegepast staat de tabel in de gegenereerde types, dus
+// mag deze client strak: de compiler kijkt nu elke kolomnaam hier na in plaats van de database bij
+// de eerste echte schrijfactie.
+import type { Database } from '@/types/database.types'
 
 import { supplierNameKey, isReliableSupplierName, normalizeIban, normalizeKvk } from '@/lib/supplier-registry'
 import { planSupplierAlias, aliasWouldHijack, aliasLearnedText } from '@/lib/supplier-alias'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Client = SupabaseClient<any>
+ 
+type Client = SupabaseClient<Database>
 
 export interface AliasLearnResult {
   /** True when a spelling→supplier link was stored. */

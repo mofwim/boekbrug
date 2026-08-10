@@ -67,13 +67,16 @@ export async function POST(req: NextRequest) {
   // [NO-SILENT-EMPTY] The error is read. supabase-js does not throw, so an unchecked insert would
   // let this route answer "bedankt" over a row that was never written.
   //
-  // [DEPLOY-SAFE] `feedback` is not in the generated types until feedback.sql has run, which is why
-  // the client is loosened for this one statement. Note what does NOT happen here: elsewhere a
+  // The refusal below still assumes the table might be missing, and stays: a deploy can reach an
+  // installation where feedback.sql has not run. Note what does NOT happen there — elsewhere a
   // missing table degrades quietly (supplier-alias learns nothing and moves on), and that is right
-  // there. Here it would be the whole defect — a report that vanishes while the owner is thanked
+  // there. Here it would be the whole defect: a report that vanishes while the owner is thanked
   // for it. So a missing table is treated as any other failure: a refusal, in words.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: insErr } = await (supabase as any).from("feedback").insert({
+  //
+  // What is gone is the `as any` on the client. The table is in the generated types now, so the
+  // COMPILER checks these five column names — which is the only check that was ever going to catch
+  // a typo here, since this statement had never run against a real table until today.
+  const { error: insErr } = await supabase.from("feedback").insert({
     user_id: user.id,
     message,
     page_path: path,

@@ -117,8 +117,8 @@ export async function POST(req: NextRequest) {
     // auto_incasso is added by auto_incasso.sql and not yet in the generated types — same cast the
     // bank auto-matcher uses for its own post-migration column. incassoSupported() above is what
     // makes the write safe; this only silences the stale type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .update((on ? { auto_incasso: true, auto_incasso_since: today } : { auto_incasso: false }) as any)
+     
+    .update(on ? { auto_incasso: true, auto_incasso_since: today } : { auto_incasso: false })
     .eq("id", row.id)
     .eq("user_id", user.id);
   if (updErr) {

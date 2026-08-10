@@ -16,6 +16,12 @@
 //   · bank_transactions.external_id   — same migration (text, nullable)
 //   · profiles.vat_exempt_activity / .vat_exempt_since,
 //   · profiles.vat_statement_note (vat_statement_note.sql — [BTW-VERKLARING]),
+//   · feedback + supplier_aliases (whole tables),
+//     suppliers.auto_incasso / .auto_incasso_since / .incasso_suggested_at,
+//     bank_transactions.type_code / .mandate_id / .creditor_id — all added by hand once their
+//     migrations were applied, so the COMPILER checks those column names instead of `as any`
+//     letting a typo through to runtime. Note which table each one is on: auto_incasso and
+//     incasso_suggested_at are on SUPPLIERS, not on profiles or bank_transactions.
 //     invoice_lines.vat_treatment, invoices.vat_deduction
 //                                 — supabase/migrations/vat_exemption.sql
 //
@@ -359,6 +365,9 @@ export type Database = {
           status: string | null
           statement_document_id: string | null
           user_id: string | null
+          type_code: string | null
+          mandate_id: string | null
+          creditor_id: string | null
         }
         Insert: {
           amount?: number | null
@@ -378,6 +387,9 @@ export type Database = {
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null
+          type_code?: string | null
+          mandate_id?: string | null
+          creditor_id?: string | null
         }
         Update: {
           amount?: number | null
@@ -397,6 +409,9 @@ export type Database = {
           status?: string | null
           statement_document_id?: string | null
           user_id?: string | null
+          type_code?: string | null
+          mandate_id?: string | null
+          creditor_id?: string | null
         }
         Relationships: [
           {
@@ -1285,6 +1300,47 @@ export type Database = {
         }
         Relationships: []
       }
+      feedback: {
+        Row: {
+          created_at: string
+          id: string
+          image_path: string | null
+          message: string
+          page_path: string | null
+          status: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_path?: string | null
+          message: string
+          page_path?: string | null
+          status?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_path?: string | null
+          message?: string
+          page_path?: string | null
+          status?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       folders: {
         Row: {
           color: string | null
@@ -2153,6 +2209,48 @@ export type Database = {
           },
         ]
       }
+      supplier_aliases: {
+        Row: {
+          alias_key: string
+          created_at: string
+          id: string
+          printed_name: string | null
+          supplier_id: string
+          user_id: string
+        }
+        Insert: {
+          alias_key: string
+          created_at?: string
+          id?: string
+          printed_name?: string | null
+          supplier_id: string
+          user_id: string
+        }
+        Update: {
+          alias_key?: string
+          created_at?: string
+          id?: string
+          printed_name?: string | null
+          supplier_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_aliases_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_aliases_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       suppliers: {
         Row: {
           btw_number: string | null
@@ -2164,6 +2262,9 @@ export type Database = {
           name_key: string | null
           updated_at: string
           user_id: string
+          auto_incasso: boolean
+          auto_incasso_since: string | null
+          incasso_suggested_at: string | null
         }
         Insert: {
           btw_number?: string | null
@@ -2175,6 +2276,9 @@ export type Database = {
           name_key?: string | null
           updated_at?: string
           user_id: string
+          auto_incasso?: boolean
+          auto_incasso_since?: string | null
+          incasso_suggested_at?: string | null
         }
         Update: {
           btw_number?: string | null
@@ -2186,6 +2290,9 @@ export type Database = {
           name_key?: string | null
           updated_at?: string
           user_id?: string
+          auto_incasso?: boolean
+          auto_incasso_since?: string | null
+          incasso_suggested_at?: string | null
         }
         Relationships: [
           {
