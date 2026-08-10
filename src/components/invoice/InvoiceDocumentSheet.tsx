@@ -36,6 +36,8 @@ import { formatEuroNL } from '@/lib/format-nl'
 import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from '@/lib/invoice-checks'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DOC-GEEN-BLADZIJDE] Welke bestanden een bladzijde hébben, en wat je zegt over de rest.
+import { previewKind, noPageNotice, type PreviewKind } from '@/lib/document-preview'
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
 export interface DocumentSheetInvoice extends CheckInput {
@@ -45,7 +47,7 @@ export interface DocumentSheetInvoice extends CheckInput {
 
 type DocState =
   | { phase: 'loading' }
-  | { phase: 'ready'; url: string; kind: 'image' | 'pdf' | 'other'; name: string }
+  | { phase: 'ready'; url: string; kind: PreviewKind; name: string }
   | { phase: 'failed'; message: string }
 
 const TICK: Record<InvoiceCheck['outcome'], { icon: string; color: string }> = {
@@ -77,7 +79,12 @@ export default function InvoiceDocumentSheet({
       .then((d: { url?: string; kind?: string; name?: string; error?: string }) => {
         if (cancelled) return
         if (!d.url) { setDoc({ phase: 'failed', message: d.error || 'Kon het bestand niet openen' }); return }
-        const kind = d.kind === 'image' || d.kind === 'pdf' ? d.kind : 'other'
+        // The route sends the kind; previewKind() re-derives it from the name as a fallback, so a
+        // still-deployed older route (which only knew image/pdf/other) also gets the new answer.
+        const sent = d.kind
+        const kind: PreviewKind = sent === 'image' || sent === 'pdf' || sent === 'structured'
+          ? sent
+          : previewKind(d.name)
         setDoc({ phase: 'ready', url: d.url, kind, name: d.name ?? 'factuur' })
       })
       .catch(() => { if (!cancelled) setDoc({ phase: 'failed', message: 'Kon het bestand niet openen — controleer je verbinding' }) })
@@ -194,7 +201,18 @@ export default function InvoiceDocumentSheet({
               // A photographed bon. Always renders, everywhere — no frame needed.
               <img src={doc.url} alt={`Factuur ${invoice.invoice_number ?? ''}`} style={{ width: '100%', height: 'auto', display: 'block' }} />
             )}
-            {doc.phase === 'ready' && doc.kind !== 'image' && (
+            {doc.phase === 'ready' && doc.kind === 'structured' && (
+              // [DOC-GEEN-BLADZIJDE] No frame. A machine-readable file has no page, and framing one
+              // shows the owner raw XML under a panel of tidy amounts — see document-preview.ts.
+              // The reading of it is directly above this block, and the source is one tap below.
+              <p style={{
+                fontSize: 13, color: M3.onSurfaceVariant, lineHeight: 1.6, padding: '28px 20px',
+                textAlign: 'center', margin: 0, fontFamily: FONT,
+              }}>
+                {noPageNotice(doc.name)}
+              </p>
+            )}
+            {doc.phase === 'ready' && doc.kind !== 'image' && doc.kind !== 'structured' && (
               <iframe
                 src={doc.url}
                 title={`Factuur ${invoice.invoice_number ?? ''}`}

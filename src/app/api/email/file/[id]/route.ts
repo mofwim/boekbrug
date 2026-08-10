@@ -10,6 +10,9 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // question, so they live in one tested place — see the header of storage-path.ts for the hole
 // this closes.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
+// [DOC-GEEN-BLADZIJDE] Één regel voor "kan dit als bladzijde getoond worden", gedeeld met het
+// scherm dat het antwoord gebruikt.
+import { previewKind } from "@/lib/document-preview";
 
 export async function GET(
   _req: NextRequest,
@@ -118,11 +121,12 @@ export async function GET(
   // system. A camera intake is a JPEG and belongs in an <img>; a pdf goes in a frame. Derived from
   // the stored path, which is the only thing we have — the bucket does not carry a content type we
   // can trust here, and guessing wrong costs a blank frame, never a wrong file.
-  const lower = storagePath.toLowerCase();
-  const kind = /\.(jpe?g|png|webp|heic|gif)$/.test(lower) ? "image"
-    : /\.pdf$/.test(lower) ? "pdf"
-    : "other";
+  //
+  // [DOC-GEEN-BLADZIJDE] The rule moved to document-preview.ts, and grew a third answer. "other"
+  // meant "put it in a frame", and for a UBL e-invoice that renders the raw XML source at the
+  // owner — namespace declarations and all. A file that has no page now says so.
   const name = storagePath.split("/").pop() ?? "factuur";
+  const kind = previewKind(name);
 
   return NextResponse.json({ url: signed.signedUrl, kind, name });
 }

@@ -257,7 +257,17 @@ export function checksSummary(checks: readonly InvoiceCheck[]): string {
   const passed = checksPassed(checks)
 
   if (flagged > 0) {
-    return flagged === 1 ? 'Eén ding om even naar te kijken' : `${flagged} dingen om even naar te kijken`
+    const kop = flagged === 1 ? 'Eén ding om even naar te kijken' : `${flagged} dingen om even naar te kijken`
+    // [CHECKLIST-BEIDE] En de controles die NIET konden draaien, ook als er al iets is opgevallen.
+    //
+    // Deze tak zweeg daarover, en dat is precies de overdrijving waar de rest van deze functie
+    // tegen is gebouwd — één regel hoger staat waarom. Gemeten op een echte factuur: één rood punt
+    // (het rekeningnummer van de leverancier was veranderd) en daarboven "Eén ding om even naar te
+    // kijken", terwijl het btw-bedrag helemaal niet was nagerekend omdat de factuur tarieven mengt.
+    // De ondernemer leest "één ding", regelt dat ding, en hoort nooit dat de btw ongecontroleerd
+    // bleef. Twee open punten worden er dan één, in zijn nadeel.
+    if (unknown === 0) return kop
+    return `${kop} — en ${unknown === 1 ? '1 controle konden we' : `${unknown} controles konden we`} niet nagaan`
   }
   if (unknown > 0) {
     return `${passed} van de ${checks.length} controles gedaan — ${unknown} konden we niet nagaan`

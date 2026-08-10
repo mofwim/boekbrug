@@ -4297,3 +4297,56 @@ test("[TYPES] the newly applied schema is declared, and reached without `as any`
     "supplier-alias-write took SupabaseClient<any> because the table was not in the schema; it is now",
   );
 });
+
+// ─── [DOC-GEEN-BLADZIJDE] A file with no page must not be framed ────────────────────────────────
+//
+// The document sheet renders an <img> for a photo and puts everything ELSE in an <iframe>. For a
+// pdf that is right. For a UBL e-invoice the browser renders the SOURCE, so an owner opening an
+// incoming invoice on their phone read:
+//
+//     <?xml version="1.0" encoding="UTF-8"?>
+//     <Invoice xmlns:qdt="urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2" …
+//
+// — namespace declarations in a dark frame, under a panel of tidy amounts. And unnecessary: this
+// app READS these files (ubl-invoice.ts), and the sheet shows what it read directly above.
+//
+// WHY THIS IS HELD HERE AND NOT IN tests/render/. The branch is chosen from a fetch inside a
+// useEffect, and effects never run under renderToStaticMarkup — the sheet stays in its 'loading'
+// phase there, so the render gate cannot reach it. The decision itself is pure and tested in
+// document-preview.test.ts; what is left for this file is the wiring.
+test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of framing it", () => {
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  assert.match(
+    sheet, /import \{ previewKind, noPageNotice, type PreviewKind \} from '@\/lib\/document-preview'/,
+    "the sheet must take the rule from the shared module",
+  );
+  assert.match(
+    sheet, /\{doc\.phase === 'ready' && doc\.kind === 'structured' && \(/,
+    "…and have a branch for a file with no page",
+  );
+  assert.match(sheet, /\{noPageNotice\(doc\.name\)\}/, "…which says why there is nothing to show");
+  // The frame must now EXCLUDE it. Without this the new branch would render the sentence AND the
+  // iframe under it, which is worse than either alone.
+  assert.match(
+    sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \(\n\s*<iframe/,
+    "the iframe branch must exclude structured files, not merely be preceded by one",
+  );
+  // The source is not hidden — it stops being the default view.
+  assert.match(sheet, /Openen in nieuw tabblad/, "the escape hatch stays");
+
+  // The route sends the kind, from the same function, so the two cannot disagree about a format.
+  const route = code("src/app/api/email/file/[id]/route.ts");
+  assert.match(route, /import \{ previewKind \} from "@\/lib\/document-preview"/);
+  assert.match(route, /const kind = previewKind\(name\)/, "the route must derive it from the shared rule");
+  assert.doesNotMatch(
+    route, /\.pdf\$\/\.test\(lower\) \? "pdf"/,
+    "the route's own copy of the rule must be gone — two definitions drift",
+  );
+
+  // A bank statement is also an .xml file, so the specific formats have to be tested first.
+  const mod = code("src/lib/document-preview.ts");
+  const camtAt = mod.indexOf("camt|053");
+  const xmlAt = mod.indexOf("\\.xml$");
+  assert.ok(camtAt > 0 && xmlAt > camtAt, "CAMT must be matched before the bare .xml rule");
+});
