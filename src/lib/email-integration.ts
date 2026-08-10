@@ -3678,6 +3678,50 @@ export async function syncUserEmails(
               },
             })
 
+            // [DUBBEL-ZICHTBAAR] A dropped duplicate must leave a trace the OWNER can see.
+            //
+            // This is the same lesson the same-filename branch above already learned, in its own
+            // words: "The old code counted it as a duplicate and dropped it with no trace: no skip
+            // row, no audit, invisible to the owner." That branch was fixed. This one — the branch
+            // that drops on invoice NUMBER or on vendor+total, which is the one that fires in
+            // practice — was not.
+            //
+            // Why an audit row was never enough: the audit log is a forensic record, not a screen
+            // the owner opens. From their side an invoice simply never arrived, and there is no
+            // difference between "we decided this was a duplicate" and "the e-mail never came".
+            //
+            // And the decision can be WRONG. A supplier who invoices the wrong amount, corrects it
+            // and re-sends under the SAME NUMBER is ordinary — the hard key requires the same total
+            // so a corrected amount does not match here, but the vendor tier keys on vendor+total
+            // +date, and a correction that changes only a line description or a date, or one whose
+            // amount the reader misread, lands right on it. Then the WRONG invoice stays in the
+            // books and the right one is gone, which is the worst of the three possible outcomes.
+            //
+            // So: name the original, say what matched, and tell them what to do about it. Nothing
+            // is imported (the block itself is correct in the common case) and nothing is hidden.
+            try {
+              const skipPipeline = createPipelineClient()
+              await skipPipeline
+                .from('email_skipped_attachments')
+                .upsert(
+                  {
+                    user_id: userId,
+                    // Its own key shape, so this row cannot collide with a not-an-invoice skip of
+                    // the same attachment.
+                    source_message_id: `${dedupKey}:dubbel`,
+                    filename: attachment.filename,
+                    reason:
+                      tier.kind === 'number'
+                        ? `zelfde factuurnummer${classification.invoiceNumber ? ` (${classification.invoiceNumber})` : ''} en zelfde bedrag als een factuur die je al hebt — niet nog een keer geïmporteerd. Stuurde je leverancier een GECORRIGEERDE versie? Open de e-mail en voeg hem handmatig toe; daarna kun je de oude vervangen.`
+                        : `zelfde leverancier, bedrag en datum als een factuur die je al hebt — niet nog een keer geïmporteerd. Klopt dat niet? Open de e-mail en voeg hem handmatig toe.`,
+                  },
+                  { onConflict: 'user_id,source_message_id', ignoreDuplicates: true },
+                )
+            } catch {
+              // Never let the bookkeeping of a skip break the sync — the audit row above is
+              // already written, and the next sync re-registers this one.
+            }
+
             console.log('[BOEK-SAFECORE] Skipping semantic duplicate', {
               matchedOn: tier.kind,
               totalIncBtw: classification.totalIncBtw,
