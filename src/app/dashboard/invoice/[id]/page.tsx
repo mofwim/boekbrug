@@ -431,8 +431,11 @@ export default function InvoiceDetailPage() {
             The factuurnummer therefore started one gutter left of the card under
             it and the PDF button ended one gutter right of it. columnInner is the
             width the reader actually sees. */}
-        <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* [DETAIL-BAR] Layout staat in globals.css (.inv-detail-bar*), niet inline —
+            anders wint de inline style van de wrap-regel onder 520px en scrolt de
+            hele pagina weer zijwaarts. */}
+        <div className="inv-detail-bar" style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
+          <div className="inv-detail-bar-left">
             {loading ? (
               <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
@@ -461,7 +464,7 @@ export default function InvoiceDetailPage() {
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="inv-detail-bar-right">
             {!loading && statusCfg && (
               <>
                 {/* [DS] Status chip — Material You pill */}
@@ -708,19 +711,21 @@ export default function InvoiceDetailPage() {
             <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F3F4' }}>
               <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Factuurregels</h2>
             </div>
-            {/* Header row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
+            {/* Header row — [LINES-LAYOUT] raster + uitlijning staan in globals.css
+                (.inv-lines-*), niet inline: anders wint de inline style van de
+                media query en houdt de telefoon het brede raster. */}
+            <div className="inv-lines-head" style={{ padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
               {['Omschrijving','Aantal','Prijs','BTW','Totaal'].map((h, i) => (
-                <p key={h} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, textAlign: i > 0 ? 'right' : 'left' }}>{h}</p>
+                <p key={h} className={i === 0 ? 'inv-lines-desc' : 'inv-lines-total'} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>{h}</p>
               ))}
             </div>
             {lines.map((line, index) => (
-              <div key={index} style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
-                <p style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.quantity}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{formatUnitPriceNL(line.unit_price, line.quantity, line.line_total)}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.btw_rate}%</p>
-                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total ?? 0)}</p>
+              <div key={index} className="inv-lines-row" style={{ padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
+                <p className="inv-lines-desc" style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
+                <p className="inv-lines-qty" style={{ fontSize: 14, color: '#5F6368', margin: 0 }}>{line.quantity}</p>
+                <p className="inv-lines-price" style={{ fontSize: 14, color: '#5F6368', margin: 0, fontFamily: 'Roboto Mono, monospace' }}>{formatUnitPriceNL(line.unit_price, line.quantity, line.line_total)}</p>
+                <p className="inv-lines-btw" style={{ fontSize: 14, color: '#5F6368', margin: 0 }}>{line.btw_rate}%</p>
+                <p className="inv-lines-total" style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total ?? 0)}</p>
               </div>
             ))}
           </div>
