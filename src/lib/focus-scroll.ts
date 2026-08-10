@@ -82,3 +82,71 @@ export function focusScrollMarginTop(
 function safe(n: number | null | undefined, fallback: number): number {
   return typeof n === "number" && Number.isFinite(n) ? n : fallback;
 }
+
+/** Anything with a measurable box. Duck-typed so this stays testable without a DOM. */
+export interface Measurable {
+  getBoundingClientRect(): { bottom: number };
+}
+
+/** The attribute that marks the shared sub-page header, so any screen can measure the chrome. */
+export const SUBPAGE_HEADER_SELECTOR = "[data-subpage-header]";
+
+/**
+ * Bring a deep-linked row to rest just under the sticky chrome, on its own header.
+ *
+ * One function rather than the same six lines on five screens: this landing was wrong in five
+ * places at once precisely because each screen had written it out again. Returns false when the
+ * row is not in the DOM, so a caller can tell the difference between "scrolled" and "nothing to
+ * scroll to" instead of assuming the first.
+ *
+ * `localBar` is the screen's own sticky toolbar when it has one, and null when it does not — the
+ * shared header is found here, so no screen has to know about it.
+ */
+export function landRowUnderChrome(
+  row: HTMLElement | null | undefined,
+  localBar: Measurable | null | undefined,
+  fallbackChrome: number,
+): boolean {
+  if (!row) return false;
+  const shared =
+    typeof document === "undefined" ? null : document.querySelector(SUBPAGE_HEADER_SELECTOR);
+  row.style.scrollMarginTop = `${focusScrollMarginTop(
+    stickyChromeBottom(localBar, shared),
+    fallbackChrome,
+    typeof window === "undefined" ? 0 : window.innerHeight,
+  )}px`;
+  // block: 'start' — NEVER 'center'. See the header: an expanded card is routinely taller than
+  // the viewport, and centring one puts its top, its name and its amount off the top of the screen.
+  row.scrollIntoView({ behavior: "smooth", block: "start" });
+  return true;
+}
+
+/**
+ * The lower edge of everything sticky above the list, or null when nothing can be measured.
+ *
+ * Two bars can be stacked above a list and a screen may have either, both, or neither:
+ *
+ *   · the shared sub-page header — on every /dashboard sub-page, `position: sticky; top: 0`;
+ *   · the page's own toolbar — search, filters, actions — offset below it.
+ *
+ * The LOWER of the two edges is the one that matters, so this takes the maximum rather than
+ * assuming an order. Screens without their own toolbar (the verification queue, the accountant's
+ * quarter view) then still land correctly, and screens with one are unaffected because their
+ * toolbar is by construction the lower bar.
+ *
+ * Measured rather than derived from PAGE_HEADER_HEIGHT, because the shared header also carries
+ * `env(safe-area-inset-top)` in standalone PWA mode. A constant is right only on a device with no
+ * notch, and wrong by the height of the notch on every other one — which puts the invoice name
+ * back under the bar, which is the entire defect this module exists to remove.
+ */
+export function stickyChromeBottom(
+  ...bars: (Measurable | null | undefined)[]
+): number | null {
+  let lowest: number | null = null;
+  for (const bar of bars) {
+    const bottom = bar?.getBoundingClientRect?.().bottom;
+    if (typeof bottom !== "number" || !Number.isFinite(bottom)) continue;
+    if (lowest === null || bottom > lowest) lowest = bottom;
+  }
+  return lowest;
+}

@@ -5308,44 +5308,85 @@ test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules wi
 // lands at y=254..310 at every width — the chrome varies by 56px across the range, so a constant
 // would have been wrong at four of the six widths measured.
 
-test("[FOCUS-KOP] neither invoice list centres a row it has just expanded", () => {
-  for (const f of [
-    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
-    "src/app/dashboard/facturen/FacturenClient.tsx",
-  ]) {
+const FOCUS_SCREENS = [
+  // path, and whether the screen has a sticky toolbar of its own to measure
+  ["src/app/dashboard/incoming/manage/IncomingManageClient.tsx", true],
+  ["src/app/dashboard/facturen/FacturenClient.tsx", true],
+  ["src/app/dashboard/klanten/KlantenClient.tsx", true],
+  ["src/app/dashboard/clients/[id]/kwartaal/page.tsx", false],
+  ["src/app/dashboard/incoming/IncomingInvoicesClient.tsx", false],
+] as const;
+
+test("[FOCUS-KOP] no screen centres a row it has just expanded", () => {
+  // Five screens had written this landing out separately, and all five had it the same way wrong.
+  // That is the argument for one function: the next screen to grow a deep link inherits the fix
+  // instead of re-deriving the bug.
+  for (const [f] of FOCUS_SCREENS) {
     const screen = code(f);
-    // The row that gets expanded must not then be centred. Centring is fine for a short row and
-    // ruinous for a tall one, and these two always expand first.
+    assert.match(screen, /landRowUnderChrome\(/, `${f}: the focused row must land through the helper`);
+    // The defect itself: centring something that was just expanded.
     assert.doesNotMatch(
-      screen, /rowRefs\.current\[[^\]]+\][^\n]*scrollIntoView\([^)]*block: 'center'/,
+      screen, /(rowRefs\.current\[[^\]]+\]|getElementById\(`incoming-card-[^`]+`\))[^\n]*\n?[^\n]*scrollIntoView\([^)]*block: ?["']center/,
       `${f}: a focused row is expanded and then centred — its header ends up above the viewport`,
-    );
-    assert.match(
-      screen, /scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\)/,
-      `${f}: the focused row must be scrolled to its START, so the invoice name reads first`,
     );
   }
 });
 
-test("[FOCUS-KOP] the margin comes from the bar's measured height, not a constant", () => {
-  for (const f of [
-    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
-    "src/app/dashboard/facturen/FacturenClient.tsx",
-  ]) {
+test("[FOCUS-KOP] a screen with its own toolbar measures it; one without passes null on purpose", () => {
+  for (const [f, hasBar] of FOCUS_SCREENS) {
     const screen = code(f);
-    // Measured, because the toolbar WRAPS: 246px above the breakpoint and 302px at 320px wide.
-    assert.match(
-      screen, /scrollMarginTop = `\$\{focusScrollMarginTop\(\s*\n?\s*toolbarRef\.current\?\.getBoundingClientRect\(\)\.bottom,/,
-      `${f}: the scroll margin must be derived from the toolbar's live rect`,
-    );
-    // …and the ref has to be ON the sticky bar, or the measurement is of nothing. Checking the
-    // attribute alone would pass with the ref sitting on any div in the file.
-    const at = screen.indexOf("<div ref={toolbarRef}");
-    assert.ok(at > 0, `${f}: toolbarRef is not attached to any element`);
-    const tag = screen.slice(at, screen.indexOf(">", at));
-    assert.match(tag, /position: 'sticky'/, `${f}: toolbarRef must sit on the STICKY bar`);
-    assert.match(tag, /top: STICKY_BELOW_HEADER/, `${f}: …the one stacked under the page header`);
+    // Every call site, and its arguments read by MATCHING PARENS rather than by regex. Two earlier
+    // drafts of this gate failed on their own instrument: one indexed past the only call there was,
+    // and one used a non-greedy /\)/ that stopped inside `getElementById(...)` — so the argument it
+    // checked was half an argument. A call's arguments are a balanced span; nothing less reads them.
+    const calls: string[] = [];
+    for (let i = screen.indexOf("landRowUnderChrome("); i >= 0; i = screen.indexOf("landRowUnderChrome(", i + 1)) {
+      let depth = 0;
+      const from = screen.indexOf("(", i);
+      for (let j = from; j < screen.length; j++) {
+        if (screen[j] === "(") depth++;
+        else if (screen[j] === ")" && --depth === 0) { calls.push(screen.slice(from + 1, j)); break }
+      }
+    }
+    assert.ok(calls.length > 0, `${f}: no landRowUnderChrome call found`);
+    if (hasBar) {
+      assert.ok(
+        calls.every(c => /toolbarRef\.current/.test(c)),
+        `${f}: has a sticky toolbar, so the row must land below THAT, not below the header alone`,
+      );
+      // …and the ref has to be ON the sticky bar. Checking the attribute alone would pass with the
+      // ref parked on any div in the file.
+      const at = screen.indexOf("<div ref={toolbarRef}");
+      assert.ok(at > 0, `${f}: toolbarRef is not attached to any element`);
+      const tag = screen.slice(at, screen.indexOf(">", at));
+      assert.match(tag, /position: 'sticky'/, `${f}: toolbarRef must sit on the STICKY bar`);
+      assert.match(tag, /top: STICKY_BELOW_HEADER/, `${f}: …the one stacked under the page header`);
+    } else {
+      assert.ok(
+        calls.every(c => /,\s*null,/.test(c)),
+        `${f}: has no toolbar of its own — null says so, and the shared header is measured instead`,
+      );
+      assert.doesNotMatch(screen, /toolbarRef/, `${f}: a ref to a bar this screen does not have`);
+    }
   }
+});
+
+test("[FOCUS-KOP] the chrome is measured, never assumed from a constant", () => {
+  const lib = code("src/lib/focus-scroll.ts");
+  // The shared header carries env(safe-area-inset-top) on a notched phone in PWA mode, so its
+  // height is NOT PAGE_HEADER_HEIGHT. Deriving it from the constant lands the row behind the bar
+  // by exactly the height of the notch.
+  assert.match(lib, /document\.querySelector\(SUBPAGE_HEADER_SELECTOR\)/, "the shared header must be measured");
+  assert.match(lib, /block: "start"/, "and the row scrolled to its start");
+  assert.doesNotMatch(lib, /block: "center"/, "never centred");
+
+  // …and the handle it measures has to exist on the real bar.
+  const header = code("src/components/nav/SubPageHeader.tsx");
+  const at = header.indexOf("data-subpage-header");
+  assert.ok(at > 0, "the shared header lost the attribute the helper finds it by");
+  const tag = header.slice(header.lastIndexOf("<", at), header.indexOf(">", at));
+  assert.match(tag, /^<header/, "the attribute must be on the header element itself");
+  assert.match(header.slice(at, at + 400), /position: "sticky"/, "…which must still be sticky");
 });
 
 test("[FOCUS-KOP] a deep link that cannot land says so instead of returning silently", () => {

@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { focusScrollMarginTop, FOCUS_GAP, MAX_CHROME_FRACTION } from "./focus-scroll";
+import { focusScrollMarginTop, stickyChromeBottom, FOCUS_GAP, MAX_CHROME_FRACTION } from "./focus-scroll";
 
 const HEADER = 56;      // PAGE_HEADER_HEIGHT — the chrome that is always there
 const VIEWPORT = 844;
@@ -57,4 +57,37 @@ test("[FOCUS-KOP] a broken fallback still yields a usable number", () => {
   const m = focusScrollMarginTop(null, NaN as number, VIEWPORT);
   assert.ok(Number.isFinite(m), "a NaN margin is ignored by the browser — back to the original bug");
   assert.equal(m, FOCUS_GAP);
+});
+
+// ── stickyChromeBottom: which bar is actually in the way ──────────────────────────────────────
+
+const bar = (bottom: number) => ({ getBoundingClientRect: () => ({ bottom }) });
+
+test("[FOCUS-KOP] the LOWER of the stacked bars decides, whatever order they come in", () => {
+  // A page toolbar sits below the shared header, so it is normally the lower edge — but the
+  // argument order must not be what decides that.
+  assert.equal(stickyChromeBottom(bar(258), bar(56)), 258);
+  assert.equal(stickyChromeBottom(bar(56), bar(258)), 258);
+});
+
+test("[FOCUS-KOP] a screen with no toolbar of its own still measures the shared header", () => {
+  // The verification queue and the accountant's quarter view have no toolbar. Before this they
+  // would have fallen back to a constant, which is wrong by the height of a notch on any device
+  // that has one — the header carries env(safe-area-inset-top).
+  assert.equal(stickyChromeBottom(null, bar(56)), 56);
+  assert.equal(stickyChromeBottom(undefined, bar(103)), 103, "56 + a 47px notch");
+});
+
+test("[FOCUS-KOP] nothing measurable is null, so the caller can fall back deliberately", () => {
+  // Null, not 0. Zero would read as "no chrome" and land the row at the very top of the page —
+  // behind whatever is actually there.
+  assert.equal(stickyChromeBottom(null, undefined), null);
+  assert.equal(stickyChromeBottom(), null);
+  assert.equal(stickyChromeBottom({} as never), null, "an element without the method");
+  assert.equal(stickyChromeBottom(bar(NaN)), null, "an unlaid-out element measures NaN");
+});
+
+test("[FOCUS-KOP] a null chrome flows into the documented fallback", () => {
+  // The two functions have to compose: nothing measurable must still produce a usable margin.
+  assert.equal(focusScrollMarginTop(stickyChromeBottom(null, null), HEADER, VIEWPORT), HEADER + FOCUS_GAP);
 });

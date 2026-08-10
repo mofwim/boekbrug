@@ -45,7 +45,7 @@ import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
-import { focusScrollMarginTop } from '@/lib/focus-scroll'
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
@@ -798,17 +798,10 @@ export default function IncomingManageClient({
   // `block: 'start'` alone measures y=0 — still behind the chrome, because scrollIntoView knows
   // nothing about two stacked sticky bars. With the margin it measures y=266: just under the
   // toolbar, name first. The arithmetic and its failure modes live in lib/focus-scroll.ts.
-  const scrollRowIntoView = useCallback((id: string) => {
-    const row = rowRefs.current[id]
-    if (!row) return false
-    row.style.scrollMarginTop = `${focusScrollMarginTop(
-      toolbarRef.current?.getBoundingClientRect().bottom,
-      PAGE_HEADER_HEIGHT,
-      typeof window === 'undefined' ? 0 : window.innerHeight,
-    )}px`
-    row.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    return true
-  }, [])
+  const scrollRowIntoView = useCallback(
+    (id: string) => landRowUnderChrome(rowRefs.current[id], toolbarRef.current, PAGE_HEADER_HEIGHT),
+    [],
+  )
 
   useEffect(() => {
     if (!focusId) return

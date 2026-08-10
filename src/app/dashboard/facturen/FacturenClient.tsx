@@ -7,7 +7,7 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
-import { focusScrollMarginTop } from '@/lib/focus-scroll'
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -462,14 +462,7 @@ export default function FacturenClient({
       setHighlightId(focusId)
     }, 0)
     const scrollTimer = setTimeout(() => {
-      const row = rowRefs.current[focusId]
-      if (!row) return
-      row.style.scrollMarginTop = `${focusScrollMarginTop(
-        toolbarRef.current?.getBoundingClientRect().bottom,
-        PAGE_HEADER_HEIGHT,
-        typeof window === 'undefined' ? 0 : window.innerHeight,
-      )}px`
-      row.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      landRowUnderChrome(rowRefs.current[focusId], toolbarRef.current, PAGE_HEADER_HEIGHT)
     }, 100)
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
     return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }

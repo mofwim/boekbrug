@@ -16,7 +16,9 @@ import { rowMatchesQuery } from '@/lib/search'
 import type { InvoiceRow, ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
-import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
+import { EL1, M3, R, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
+// [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
+import { landRowUnderChrome } from '@/lib/focus-scroll'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -251,8 +253,11 @@ export default function KwartaalPage() {
       setExpandedId(focusId)
       setHighlightId(focusId)
     })()
+    // [FOCUS-KOP] Op de kop van de rij. Dit scherm heeft geen eigen balk, dus de gedeelde
+    // subpagina-koptekst is de hele chrome — en die wordt gemeten, want in PWA-modus draagt hij
+    // ook env(safe-area-inset-top), wat geen constante kan weten.
     const scrollTimer = setTimeout(() => {
-      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      landRowUnderChrome(rowRefs.current[focusId], null, PAGE_HEADER_HEIGHT)
     }, 100)
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
     return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }

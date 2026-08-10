@@ -43,6 +43,11 @@ export default function SubPageHeader({
 
   return (
     <header
+      // [FOCUS-KOP] A stable handle on the chrome. A deep-linked row has to come to rest BELOW
+      // everything sticky, and on the screens without their own toolbar this bar is all of it.
+      // Its height is not PAGE_HEADER_HEIGHT: in standalone PWA mode it also carries
+      // env(safe-area-inset-top), which a constant cannot know — so it is measured, not assumed.
+      data-subpage-header=""
       style={{
         position: "sticky",
         top: 0,
