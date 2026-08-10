@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { previewKind, structuredFormatLabel, noPageNotice } from "./document-preview";
+import { previewKind, structuredFormatLabel, noPageNotice, fileOpenHref } from "./document-preview";
 
 test("[DOC-GEEN-BLADZIJDE] the two things that DO have a page keep it", () => {
   // Nothing about the ordinary case may move: a photographed receipt and a pdf are what almost
@@ -59,4 +59,21 @@ test("[DOC-GEEN-BLADZIJDE] an unnamed file still produces a sentence, never 'nul
   const s = noPageNotice(null);
   assert.doesNotMatch(s, /null|undefined/);
   assert.match(s, /geen bladzijde/);
+});
+
+// ─── [DOC-VERSE-LINK] The escape hatch must not carry a stopwatch ──────────────────────────────
+
+test("[DOC-VERSE-LINK] the open link points at our own route, not at a pre-signed url", () => {
+  // The whole point: nothing is signed until the tap. A url captured when the sheet opened has a
+  // 300-second fuse, and the owner met the end of it — Supabase's raw InvalidJWT JSON in a new tab,
+  // on the one control that exists for when the inline frame does not work.
+  const href = fileOpenHref("inv-1");
+  assert.equal(href, "/api/email/file/inv-1?open=1");
+  assert.doesNotMatch(href, /supabase|token=|https?:/, "no signature may be baked into it");
+});
+
+test("[DOC-VERSE-LINK] an id with awkward characters cannot break out of the path", () => {
+  assert.equal(fileOpenHref("a/b"), "/api/email/file/a%2Fb?open=1");
+  assert.equal(fileOpenHref("a?b=1"), "/api/email/file/a%3Fb%3D1?open=1");
+  assert.doesNotMatch(fileOpenHref("x#y"), /#/, "a fragment would silently truncate the query");
 });

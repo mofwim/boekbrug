@@ -5033,10 +5033,14 @@ test("[TYPES] the newly applied schema is declared, and reached without `as any`
 test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of framing it", () => {
   const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
 
+  // Asserted on the MODULE and the USE, not on the exact spelling of the import list — pinning it
+  // to that list broke the moment fileOpenHref was added beside these two, which is a gate
+  // reporting an edit rather than a defect. Same trap this file keeps finding elsewhere.
   assert.match(
-    sheet, /import \{ previewKind, noPageNotice, type PreviewKind \} from '@\/lib\/document-preview'/,
+    sheet, /from '@\/lib\/document-preview'/,
     "the sheet must take the rule from the shared module",
   );
+  assert.match(sheet, /\bnoPageNotice\b/, "…and use it");
   assert.match(
     sheet, /\{doc\.phase === 'ready' && doc\.kind === 'structured' && \(/,
     "…and have a branch for a file with no page",
@@ -5115,4 +5119,56 @@ test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the priv
   // And the sampling the project chose, not the scaffold's 100%.
   assert.match(src, /tracesSampleRate: isProduction \? 0\.1 : 1\.0/);
   assert.match(src, /replaysSessionSampleRate: 0\.05/);
+});
+
+// ─── [DOC-VERSE-LINK] The escape hatch signs at the tap, not five minutes earlier ──────────────
+//
+// The sheet fetches a signed url once, on open, and the "Openen in nieuw tabblad" button carried
+// that same url. The signature lives 300 seconds. So a tap five minutes later put this in a new
+// tab, in place of the document:
+//
+//     {"statusCode":"400","error":"InvalidJWT","message":"\"exp\" claim timestamp check failed"}
+//
+// Reported from a phone and easy to blame on the phone. It is a stopwatch, and it runs everywhere.
+//
+// It matters more than a stale link normally would, because that button is the ESCAPE HATCH. Edge
+// on Android answers an inline pdf with "PDF reader has been disabled"; Safari has shipped versions
+// that render only the first page. When the frame will not work, the button is the only way to the
+// document — and it was the one route with a fuse on it.
+test("[DOC-VERSE-LINK] the open button carries no signature, and a failed tab gets a sentence", () => {
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(
+    sheet, /href=\{fileOpenHref\(invoice\.id\)\}/,
+    "the button must point at our own route — a url captured at open time has a 300-second fuse",
+  );
+  assert.doesNotMatch(
+    sheet, /href=\{doc\.url\}/,
+    "…and never at the pre-signed url the sheet fetched",
+  );
+
+  const route = code("src/app/api/email/file/[id]/route.ts");
+  assert.match(
+    route, /if \(req\.nextUrl\.searchParams\.get\("open"\) === "1"\) \{/,
+    "the route must have the redirect branch",
+  );
+  assert.match(route, /NextResponse\.redirect\(signed\.signedUrl/, "…which signs and sends");
+  // A cached 302 would point a later tap at a url that has already died — exactly the failure this
+  // branch removes.
+  assert.match(
+    route, /"Cache-Control": "no-store, max-age=0"/,
+    "the redirect must not be cached: the target expires and the cache would outlive it",
+  );
+
+  // ORDER: the signature has to be minted in this request, not read from anywhere earlier.
+  const signAt = route.indexOf("createSignedUrl(storagePath");
+  const redirectAt = route.indexOf('searchParams.get("open") === "1"');
+  assert.ok(signAt > 0 && redirectAt > signAt, "the redirect must follow a fresh createSignedUrl");
+
+  // And no failure path may answer a browser tab with a JSON object — that is what the owner was
+  // shown once already.
+  assert.match(route, /function fileError\(req: NextRequest, message: string, status: number\)/);
+  assert.doesNotMatch(
+    route, /return NextResponse\.json\(\{ error: "/,
+    "every error must go through fileError, which answers a tab in words and a fetch in JSON",
+  );
 });

@@ -89,3 +89,30 @@ export function noPageNotice(fileName: string | null | undefined): string {
     "bestand dan in een nieuw tabblad."
   );
 }
+
+// ─── [DOC-VERSE-LINK] Opening the file, without a stopwatch on it ──────────────────────────────
+//
+// WHAT WAS MEASURED
+// The sheet fetches a signed url once, when it opens, and the "Openen in nieuw tabblad" button
+// carried that same url. The signature lives 300 seconds. So: open an invoice, read it, tap the
+// button five minutes later, and the browser lands on
+//
+//     {"statusCode":"400","error":"InvalidJWT","message":"\"exp\" claim timestamp check failed"}
+//
+// — Supabase's raw JSON, in a new tab, in place of the document. Reported from a phone, and easy to
+// blame on the phone; it is a stopwatch, and it runs on every device.
+//
+// It matters more than a stale link usually would, because that button is the ESCAPE HATCH. When a
+// browser refuses to render a pdf inline — Edge on Android shows "PDF reader has been disabled",
+// Safari has shipped versions that render only the first page — it is the only way left to see the
+// document at all. So the one route to the file that has to keep working was the one with a
+// five-minute fuse.
+//
+// THE FIX IS TO CARRY NO URL. The button points at our own route with ?open=1, which signs at the
+// moment of the tap and redirects. There is no window in which it can go stale, because nothing is
+// signed until it is needed — a guarantee the length of the fuse cannot give, at any length.
+
+/** Where the "open in a new tab" button points. Signed at click time, never before. */
+export function fileOpenHref(invoiceId: string): string {
+  return `/api/email/file/${encodeURIComponent(invoiceId)}?open=1`;
+}

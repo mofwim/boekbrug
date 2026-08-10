@@ -37,7 +37,7 @@ import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DOC-GEEN-BLADZIJDE] Welke bestanden een bladzijde hébben, en wat je zegt over de rest.
-import { previewKind, noPageNotice, type PreviewKind } from '@/lib/document-preview'
+import { previewKind, noPageNotice, fileOpenHref, type PreviewKind } from '@/lib/document-preview'
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
 export interface DocumentSheetInvoice extends CheckInput {
@@ -236,7 +236,7 @@ export default function InvoiceDocumentSheet({
               // that render only the first page of a pdf in a frame, so there has to be a way to
               // hand it to the operating system — one tap away, and never the only route.
               <a
-                href={doc.url} target="_blank" rel="noopener noreferrer"
+                href={fileOpenHref(invoice.id)} target="_blank" rel="noopener noreferrer"
                 style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 13.5, fontWeight: 600, textAlign: 'center', textDecoration: 'none', fontFamily: FONT }}
               >
                 Openen in nieuw tabblad
