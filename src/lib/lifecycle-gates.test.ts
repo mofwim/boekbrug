@@ -13,7 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -5012,4 +5012,54 @@ test("[TYPES] the newly applied schema is declared, and reached without `as any`
     code("src/lib/supplier-alias-write.ts"), /type Client = SupabaseClient<Database>/,
     "supplier-alias-write took SupabaseClient<any> because the table was not in the schema; it is now",
   );
+});
+
+// ─── [SENTRY-EEN-CONFIG] One browser Sentry config, and it is the one that runs ─────────────────
+//
+// There were two client Sentry.init calls: src/instrumentation-client.ts, scaffolded by the Sentry
+// wizard, and sentry.client.config.ts, which somebody had thought about carefully — a 5% replay
+// rate, 10% tracing in production, and a beforeSend deleting password, access_token,
+// refresh_token, kvk_number, btw_number and iban before anything left the browser.
+//
+// @sentry/nextjs 10 loads instrumentation-client.ts and ignores sentry.client.config.ts. Confirmed
+// against the BUILT BUNDLE, not the docs: the scaffold's replaysSessionSampleRate 0.1 shipped, the
+// considered 0.05 did not, and neither did its vercel.live frame filter. Every privacy decision in
+// this app was written down and never executed.
+//
+// The direction of the mistake is worth keeping in the record. An external review read the dead
+// file and reported "Session Replay records unmasked text (maskAllText: false)" — reasonable from
+// the source and wrong about production: that line never reached a bundle, and replayIntegration()
+// masks text by default. The real exposure was sendDefaultPii: true with no beforeSend at all.
+//
+// What is held: one config, no resurrection of the second, and the three settings that decide what
+// leaves a bookkeeper's browser.
+test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the privacy rules", () => {
+  // The dead file must stay dead. A wizard re-run recreates it, and it would silently take back
+  // over as the file people read while the other one runs.
+  assert.equal(
+    existsSync("sentry.client.config.ts"), false,
+    "a second client config that looks authoritative and executes nowhere is how this happened",
+  );
+
+  const src = code("src/instrumentation-client.ts");
+
+  // The line that mattered most. The scaffold turns it ON, which attaches IP addresses and user
+  // identifiers to every event and replay — on screens showing turnover, customers and balances.
+  assert.match(src, /sendDefaultPii: false/, "no PII by default, on a bookkeeping app");
+
+  // Stated, never inherited: these are today's library defaults, and a default is a decision
+  // someone else can change in a minor release.
+  for (const opt of ["maskAllText: true", "maskAllInputs: true", "blockAllMedia: true"]) {
+    assert.ok(src.includes(opt), `replay masking must be explicit: ${opt}`);
+  }
+
+  // The work that was written in the dead file has to actually be here.
+  assert.match(src, /beforeSend\(event\)/, "the PII stripper must run, not merely exist");
+  for (const field of ["password", "access_token", "refresh_token", "kvk_number", "btw_number", "iban"]) {
+    assert.ok(src.includes(`delete data.${field}`), `beforeSend must still strip ${field}`);
+  }
+
+  // And the sampling the project chose, not the scaffold's 100%.
+  assert.match(src, /tracesSampleRate: isProduction \? 0\.1 : 1\.0/);
+  assert.match(src, /replaysSessionSampleRate: 0\.05/);
 });
