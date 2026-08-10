@@ -5133,6 +5133,44 @@ test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the priv
   assert.match(src, /replaysSessionSampleRate: 0\.05/);
 });
 
+// ─── [DUBBEL-ZICHTBAAR] A dropped duplicate must leave a trace the owner can see ────────────────
+//
+// Reported: a supplier invoiced the wrong amount, corrected it, and re-sent under the same number.
+// The first import landed; the second never appeared. From the owner's side there is no difference
+// between "we decided this was a duplicate" and "the e-mail never came" — and the WRONG invoice
+// stays in the books while the right one is gone.
+//
+// email-integration.ts had already learned this once. Its same-filename branch says so in its own
+// words: "The old code counted it as a duplicate and dropped it with no trace: no skip row, no
+// audit, invisible to the owner." That branch registers a skip. The SEMANTIC branch — the one that
+// drops on invoice number or on vendor+total+date, the one that actually fires — did not.
+//
+// An audit row is not enough and never was: it is a forensic record, not a screen anyone opens.
+test("[DUBBEL-ZICHTBAAR] every duplicate branch registers a skip, not only an audit row", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // Both duplicate drops must reach the registry the owner's screen reads.
+  const skips = src.match(/from\('email_skipped_attachments'\)\s*\.upsert\(/g) ?? [];
+  assert.ok(
+    skips.length >= 2,
+    `the same-filename branch and the semantic branch must both register — found ${skips.length}`,
+  );
+  assert.match(
+    src, /source_message_id: `\$\{dedupKey\}:dubbel`/,
+    "the semantic duplicate needs its own key, or it collides with a not-an-invoice skip",
+  );
+
+  // The reason has to be ACTIONABLE. "Duplicate" alone tells the owner nothing they can act on;
+  // the corrected-resend case is the one that costs money, so it is named.
+  const idx = src.indexOf("source_message_id: `${dedupKey}:dubbel`");
+  const block = src.slice(idx, idx + 1400);
+  assert.match(block, /GECORRIGEERDE/, "the corrected-resend case must be offered as the explanation");
+  assert.match(block, /handmatig toe/, "…and the way out must be in the sentence");
+
+  // It must not be able to break the sync it reports on.
+  assert.match(src.slice(idx - 600, idx + 1800), /\} catch \{/, "registering a skip is best-effort");
+});
+
 // ─── [DOC-VERSE-LINK] The escape hatch signs at the tap, not five minutes earlier ──────────────
 //
 // The sheet fetches a signed url once, on open, and the "Openen in nieuw tabblad" button carried
