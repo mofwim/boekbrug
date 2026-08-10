@@ -66,7 +66,25 @@ export async function POST(
         due_date: dueDate.toISOString().split('T')[0],
         // [DUP-TYPE] Carry Leverdatum (Art. 35a sub f) so a duplicated factuur
         // doesn't ship without a delivery date.
-        delivery_date: original.delivery_date,
+        //
+        // [LEVERDATUM] …but not the ORIGINAL's date. Every other date on this row is refreshed —
+        // invoice_date is today, due_date is today + 30 — because duplicating means "the same work,
+        // again, now". The leverdatum was the one that stayed behind, so a March invoice duplicated
+        // in August produced an August invoice stating the goods were delivered in March. It is
+        // printed on the PDF and it is a legally required statement, so it was not a stale field
+        // but a false one; and until now it could not even be corrected afterwards.
+        //
+        // Only when there was one at all: an offerte has none and must not acquire one here.
+        //
+        // And spread rather than assigned, which is not tidiness. `delivery_date: null` puts the
+        // KEY in the JSON that goes to PostgREST; on a deployment where the FACTUUR-A migration is
+        // still open that column does not exist and the whole INSERT fails (42703) — duplicating
+        // any invoice would stop working. The previous line got away with `original.delivery_date`
+        // precisely because it was `undefined` there, and JSON drops undefined. `select('*')` above
+        // returns the key iff the column exists, so the row itself answers whether to write it.
+        ...('delivery_date' in original
+          ? { delivery_date: original.delivery_date ? today : null }
+          : {}),
         status: 'draft',
         direction: original.direction,
         total_ex_btw: original.total_ex_btw,

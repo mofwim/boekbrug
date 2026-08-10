@@ -26,6 +26,8 @@ import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+// [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
+// regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
@@ -892,24 +894,41 @@ function NewInvoicePageContent() {
   const totalInc  = kortingTotalen.total_inc_btw
 
   // [ACTING-FOR] computeTotals() stond hier en berekende de bedragen die met de INSERT meegingen.
-  // Die som woont nu op de server, in src/lib/draft-totals.ts — letterlijk dezelfde formule,
-  // inclusief het niet afronden, zodat er voor een bestaande eigenaar geen cent verandert. De
-  // reden voor de verhuizing is niet netheid: zodra een tweede mens facturen mag maken onder
-  // hetzelfde BTW-nummer, hoort de server te bepalen wat er in de boeken komt, niet de pagina.
-  //
-  // De drie getallen hierboven (totalEx/btwAmount/totalInc) blijven — die zijn alleen voor wat
-  // je op het scherm ziet terwijl je typt, en raken de database niet.
+  // Die som woont nu op de server, in src/lib/draft-totals.ts — die op zijn beurt computeInvoiceTotals
+  // aanroept, precies zoals de twee regels hierboven. De reden voor de verhuizing is niet netheid:
+  // zodra een tweede mens facturen mag maken onder hetzelfde BTW-nummer, hoort de server te bepalen
+  // wat er in de boeken komt, niet de pagina. De getallen hierboven zijn alleen voor wat je op het
+  // scherm ziet terwijl je typt — maar ze moeten wél dezelfde getallen zijn.
 
-  // BTW breakdown per rate
-  // [REGEL-AFRONDING] Óók over de afgeronde regeltotalen. Dit vakje staat naast het totaal dat
-  // hierboven uit dezelfde regels komt; rekende het over de ruwe producten, dan kon het op een
-  // gemengde factuur een cent afwijken van het bedrag eronder — twee getallen op één scherm die
-  // elkaar tegenspreken, over dezelfde factuur.
+  // BTW-uitsplitsing per tarief — de regels die op het scherm onder het subtotaal staan.
+  //
+  // [BTW-ROUND] Per tarief afgerond, en NA aftrek van de korting die aan dat tarief is toegewezen.
+  // Twee dingen gingen hier mis en het is dezelfde fout: deze regels moeten OPTELLEN tot het totaal
+  // eronder. Ongerond per regel opgeteld toonde dit blokje "BTW 21% € 20,9979" boven een totaal van
+  // € 120,99; en zonder de korting eraf toont het de btw over een bedrag dat de klant niet betaalt.
+  // Twee getallen die elkaar tegenspreken op hetzelfde kaartje, over dezelfde factuur.
+  //
+  // applyDiscount deelt de korting al per tarief uit (allowances) — diezelfde verdeling gebruiken
+  // betekent dat dit blokje en het totaal per definitie dezelfde som zijn.
+  //
+  // [REGEL-AFRONDING] En over de AFGERONDE regelbedragen, dezelfde die in invoice_lines.line_total
+  // belanden — zie het blok bovenaan draft-totals.ts voor wat de ruwe producten opleverden.
   const btwByRate: Record<number, number> = {}
-  lines.forEach(l => {
-    const rate = l.btw_rate
-    btwByRate[rate] = (btwByRate[rate] ?? 0) + round2(l.quantity * l.unit_price) * (rate / 100)
-  })
+  {
+    const exByRate: Record<number, number> = {}
+    lines.forEach(l => {
+      const rate = l.btw_rate
+      exByRate[rate] = (exByRate[rate] ?? 0) + round2(l.quantity * l.unit_price)
+    })
+    const aftrekPerTarief: Record<number, number> = {}
+    for (const a of kortingTotalen.allowances) {
+      aftrekPerTarief[a.rate] = (aftrekPerTarief[a.rate] ?? 0) + a.amount
+    }
+    for (const [rate, ex] of Object.entries(exByRate)) {
+      const r = Number(rate)
+      btwByRate[r] = round2(((ex - (aftrekPerTarief[r] ?? 0)) * r) / 100)
+    }
+  }
 
   // [COHERENCE-CREDITNOTA] The standalone credit-submit flow that lived here was
   // removed: a creditnota is now created only from its original invoice via the detail

@@ -428,7 +428,20 @@ export function computeResult(
         // the omzet in the same rubriek. The pieces re-sum to this slice exactly.
         const mix = splitSliceByShares(opts.rateSharesByInvoice?.get(s.invoiceId), taxedEx, s.btw);
         if (mix) for (const part of mix) addSale(part.rate, part.ex, part.btw);
-        else if (taxedEx !== 0 || s.btw !== 0) addSale(s.rate, taxedEx, s.btw);
+        // [VRIJGESTELD] s.rate is derived from the FULL header (kas-payment-events.ts:252), which
+        // is right for an ordinary invoice and wrong the moment part of it is exempt: all of the
+        // BTW belongs to the taxed half, so btw ÷ header-ex divides real BTW by turnover it was
+        // never charged on. €100 exempt care + €100 whitening @21% reads 21/200 = 10,5%, snaps to
+        // 9%, and books a 21% supply in rubriek 1b — the accrual branch below fixed exactly this
+        // and the cash branch was left on the header. Re-derive from the taxed remainder so both
+        // schemes name the same rubriek; with nothing exempt taxedEx IS s.ex and this returns
+        // s.rate unchanged.
+        else if (taxedEx !== 0 || s.btw !== 0) {
+          const rate = exemptEx !== 0
+            ? (taxedEx !== 0 ? nearestLegalRate(Math.round((s.btw / taxedEx) * 100)) : 0)
+            : s.rate;
+          addSale(rate, taxedEx, s.btw);
+        }
       } else {
         kosten += s.ex;
         bookVoorbelasting(s.btw, opts.deductionByInvoice?.get(s.invoiceId));

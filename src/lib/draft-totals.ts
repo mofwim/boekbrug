@@ -51,8 +51,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
-import { applyDiscount, type Discount } from "./invoice-discount";
 import { computeInvoiceTotals, round2 } from "./invoice-totals";
+import { applyDiscount, type Discount } from "./invoice-discount";
 
 export interface DraftLine {
   quantity: number;
@@ -69,6 +69,15 @@ export interface DraftTotals {
 /**
  * Summing. `sign` is -1 for a credit note: that sits negative in the books, and that sign should
  * be set in one place rather than by every caller again.
+ *
+ * The arithmetic itself is computeInvoiceTotals — the same function /api/invoice/[id] PUT and
+ * /api/invoice/send call, so a draft's stored amounts are the amounts it will be issued with.
+ * What stays here is the SIGN, which is this route's own concern and not the summation's.
+ *
+ * The sign is applied to each LINE rather than to the three results, so the per-rate grouping and
+ * rounding inside computeInvoiceTotals happen on the numbers that will actually be stored. Rounding
+ * is symmetric (round2), so this is the same magnitude either way — but doing it on the way in
+ * keeps one rule instead of two, and a creditnota then rounds identically to the invoice it credits.
  */
 export function computeDraftTotals(
   lines: readonly DraftLine[],

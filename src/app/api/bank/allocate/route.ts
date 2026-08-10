@@ -38,7 +38,9 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { requireOwner } from "@/lib/owner-only";
-import { resolvePaymentPlan, type PlanInvoice, type PlanLine } from "@/lib/payment-plan";
+import { resolvePaymentPlan, remainderNote, type PlanInvoice, type PlanLine } from "@/lib/payment-plan";
+import { round2 } from "@/lib/invoice-totals";
+import { allocatedOnLine } from "@/lib/bank-line-budget";
 
 export const dynamic = "force-dynamic";
 // A ten-invoice batch is ten RPC calls, each locking and recomputing. Well above the real work.
@@ -104,6 +106,11 @@ export async function POST(req: NextRequest) {
   // NULL means a link from before that column existed, which by construction settled its invoice
   // in full — so the invoice's total is what it took. Reading NULL as 0 would let the same euros
   // be spent twice.
+  // [CREDITNOTA] SIGNED, exactly as allocate_bank_payment computes the same sum under the lock.
+  // A credit already linked to this line did not TAKE €150 from it, it GAVE €150 to it — summing
+  // magnitudes reads that as −€300 of budget and refuses plans that fit perfectly well. The
+  // pre-flight check and the database have to agree about what a line has left, or the screen
+  // refuses what the database would accept (or, worse, the other way round).
   let alreadyAllocated = 0;
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,15 +120,25 @@ export async function POST(req: NextRequest) {
       .eq("transaction_id", transactionId)
       .eq("user_id", user.id);
     const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>;
-    const unpriced = rows.filter((r) => r.amount_applied == null).map((r) => r.invoice_id);
-    for (const r of rows) if (r.amount_applied != null) alreadyAllocated += Math.abs(Number(r.amount_applied) || 0);
-    if (unpriced.length > 0) {
-      const { data: olds } = await pipeline
+    if (rows.length > 0) {
+      const { data: linked } = await pipeline
         .from("invoices")
-        .select("id, total_inc_btw")
-        .in("id", unpriced)
+        .select("id, direction, invoice_type, total_inc_btw")
+        .in("id", rows.map((r) => r.invoice_id))
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-      for (const o of olds ?? []) alreadyAllocated += Math.abs(Number(o.total_inc_btw) || 0);
+      const sum = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0);
+      // A link whose invoice this user cannot read means the read is incomplete, not that the link
+      // gave nothing. Counting it as zero makes the budget too large, which is the one direction
+      // this sum may never err in — so the route refuses instead of booking against a number it
+      // knows is wrong. allocate_bank_payment reads the same links under its lock and would refuse
+      // too; saying so here means the owner learns it before half a batch is booked.
+      if (sum.unknownInvoiceIds.length > 0) {
+        return NextResponse.json(
+          { error: "Deze betaling is gekoppeld aan een factuur die niet gelezen kan worden. Ververs de pagina." },
+          { status: 409 },
+        );
+      }
+      alreadyAllocated = sum.allocated;
     }
   }
 
@@ -164,8 +181,21 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Apply, line by line, stopping honestly ────────────────────────────────
+  //
+  // [CREDITNOTA-VOLGORDE] Credit lines FIRST, and this is not a preference — the batch is wrong
+  // without it. A credit does not spend the bank line, it raises what the line has to give: on a
+  // €850 debit made of a €1.000 invoice and a €150 credit, the line is worth €850 until the credit
+  // is booked and €1.000 after. Apply the invoice first and allocate_bank_payment caps it at the
+  // €850 it can see — booking a €1.000 invoice as €850 paid, spending the line to the cent so it
+  // flips to 'matched', and leaving the credit to return empty against a line that is no longer
+  // pending. One ordinary supplier payment, wrong in three places.
+  //
+  // Sorting by the SIGNED amount puts every negative line in front. The database is sign-aware too
+  // (allocate_bank_payment reads each linked invoice's own type), so this ordering makes the batch
+  // possible rather than making it correct — correctness is the function's, as it has to be.
+  const ordered = [...plan.lines].sort((a, b) => a.amount - b.amount);
   const applied: Array<{ invoiceId: string; amount: number; fullyPaid: boolean }> = [];
-  for (const line of plan.lines) {
+  for (const line of ordered) {
     // [BETAALPLAN] allocate_bank_payment, NOT apply_bank_payment.
     //
     // apply_bank_payment ends by setting the transaction to 'matched' unconditionally — its own
@@ -205,14 +235,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // [BETAALPLAN] Report what the DATABASE booked, not what we asked it to book.
+    //
+    // The two can differ by up to two cents: allocate_bank_payment absorbs that much rounding
+    // drift rather than blowing up a valid batch (beyond it, it refuses and we never get here).
+    // Echoing line.amount back meant the screen and the audit trail both stated a number that is
+    // not in the invoice — small, and precisely the kind of small that is impossible to find later
+    // because nothing anywhere records that it was changed.
+    //
+    // The sign is ours to re-apply: the RPC deals in magnitudes per invoice, the plan in signed
+    // amounts, and the caller reads this list as a plan.
     const row = rows[0] as { applied: number; amount_paid: number; total: number; is_paid: boolean };
-    applied.push({ invoiceId: line.invoiceId, amount: line.amount, fullyPaid: row.is_paid === true });
+    const booked = Number(row.applied);
+    const bookedSigned = Number.isFinite(booked)
+      ? Math.sign(line.amount) * Math.abs(booked)
+      : line.amount;
+    applied.push({ invoiceId: line.invoiceId, amount: bookedSigned, fullyPaid: row.is_paid === true });
 
     // [BETAALPLAN] Nothing is written to the link here, on purpose. allocate_bank_payment already
     // records amount_applied itself and accumulates it on conflict, which is also what the unlink
     // reversal reads. Writing a second column beside it was this route's first version and it was
     // dead on arrival — bank_tx_invoices_amount.sql now removes it and says why.
   }
+
+  // [BETAALPLAN] The totals are re-derived from what LANDED, not from the plan. plan.allocated is
+  // what the owner asked for and the two can differ by the cents the database absorbed — and the
+  // remainder is the one number on this screen the owner is invited to go and explain. Reporting a
+  // planned remainder next to a booked allocation sends them looking for a bank charge that is
+  // really our own rounding.
+  const booked = round2(applied.reduce((s, a) => s + a.amount, 0));
+  const remainder = round2(plan.allocated + plan.remainder - booked);
 
   await logAuditAction({
     userId: user.id,
@@ -221,8 +273,11 @@ export async function POST(req: NextRequest) {
     entityId: transactionId,
     newValue: {
       lines: applied.length,
-      allocated: plan.allocated,
-      remainder: plan.remainder,
+      allocated: booked,
+      remainder,
+      // Kept only when it differs, so the trail says "this was not what was asked for" and stays
+      // silent the other 99% of the time.
+      ...(Math.abs(booked - plan.allocated) > 0.004 ? { requested: plan.allocated } : {}),
       invoiceIds: applied.map((a) => a.invoiceId),
     },
     ipAddress: getClientIP(req),
@@ -231,8 +286,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     applied,
-    allocated: plan.allocated,
-    remainder: plan.remainder,
-    remainderNote: plan.remainderNote,
+    allocated: booked,
+    remainder,
+    remainderNote: remainderNote(remainder),
   });
 }

@@ -2336,6 +2336,26 @@ export type Database = {
           line_remaining: number
         }[]
       }
+      /**
+       * [FACTUUR-B] Seed invoice_counters.last_seq forward-only — seed_invoice_counter.sql.
+       *
+       * GREATEST is evaluated inside the ON CONFLICT, against the row as it is at write time. The
+       * route used to read last_seq, take Math.max in TypeScript and write the result with an
+       * unconditional upsert, so a next_invoice_seq allocation inside that window made the counter
+       * go BACKWARDS and the next invoice reused a sequence (Art. 35 Wet OB 1968).
+       *
+       * Returns the value that actually LANDED, which is what the owner is shown as their first
+       * number — not the one they asked for.
+       */
+      seed_invoice_counter: {
+        Args: {
+          p_user_id: string
+          p_year: number
+          p_type: string
+          p_last_seq: number
+        }
+        Returns: number
+      }
       apply_bank_payment: {
         Args: {
           p_user_id: string

@@ -25,6 +25,16 @@ import type { Cell } from "./turnover-import";
 // Do that as soon as an environment with access to cdn.sheetjs.com can run it,
 // then re-run `npm audit`. See docs/BoekBrug_Security_Hunt_Report.md → C1.
 //
+// TRIED, 7 August 2026: cdn.sheetjs.com is refused by the agent proxy's network
+// policy (403 on CONNECT). Not a transient failure and not something to work
+// around — it needs an environment whose policy allows that host, or the tarball
+// carried in by hand. Written down so the next reader spends a minute on it
+// rather than an hour: the command above is right, the network is the blocker.
+//
+// Everything else in this repo's audit is now clean (15 findings → 1, and this
+// is the 1). That makes this the only known-vulnerable dependency we ship, which
+// is worth knowing when weighing the guards below against the upgrade.
+//
 // UNTIL THEN — and as defence in depth AFTERWARDS — every untrusted parse goes
 // through the guards below. This module is the ONE place that imports SheetJS,
 // and all six server routes that parse uploads (turnover import, ledger import,

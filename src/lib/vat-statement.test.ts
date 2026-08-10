@@ -112,3 +112,79 @@ test("[BTW-VERKLARING] a whitespace-only note is no note", () => {
   assert.equal(vatStatement({ ...base, lines: [{ vat_treatment: "exempt" }], note: "   " }), "Vrijgesteld van btw.");
   assert.equal(vatStatement({ ...base, note: "  \n " }), null);
 });
+
+// ── [BTW-VERKLARING-GEMENGD] An invoice can charge btw AND carry an exempt line ────────────────
+//
+// The zero-btw short-circuit stood above everything, and for the two questions below it that is
+// right: "why is there no btw at all" only has an answer when there is no btw at all. It is the
+// wrong question for an exempt LINE, which is a fact about that line and not about the total.
+//
+// Measured on a rendered PDF: a caterer's invoice with EUR 500 of food at 9% plus a EUR 500
+// food-safety course exempt under art. 11 carried EUR 45 of btw, so the guard returned null and
+// the page said nothing about the exempt half — while the all-exempt invoice beside it was
+// correct. Art. 35a lid 1 sub k asks for the reference on the invoice that carries the exempt
+// supply, not only on invoices that carry nothing else.
+
+const CATERER = [{ vat_treatment: null }, { vat_treatment: "exempt" }];
+
+test("[BTW-VERKLARING] an invoice that charges btw AND has an exempt line still names it", () => {
+  const s = vatStatement({ invoiceType: "factuur", btwAmount: 45, lines: CATERER });
+  assert.ok(s, "the exempt half must be referenced even though the other half is taxed");
+  assert.match(s!, /vrijgesteld van btw/i);
+});
+
+test("[BTW-VERKLARING] …and says it is about PART of the amount, not all of it", () => {
+  // A bare "Vrijgesteld van btw." above a total containing EUR 45 of btw reads as a claim about
+  // the whole document, and a bookkeeper would be right to disbelieve one of the two.
+  const s = vatStatement({ invoiceType: "factuur", btwAmount: 45, lines: CATERER })!;
+  assert.equal(s, "Een deel van dit bedrag is vrijgesteld van btw.");
+  // …and with no note it is ONE sentence. Gluing the fallback onto the scope clause produced
+  // "…is vrijgesteld van btw: vrijgesteld van btw.", which is how a template reads unrendered.
+  assert.doesNotMatch(s, /vrijgesteld van btw.*vrijgesteld van btw/i);
+
+  // The owner's own ground is carried into the longer sentence rather than replaced by it.
+  const met = vatStatement({
+    invoiceType: "factuur", btwAmount: 45, lines: CATERER,
+    note: "Vrijgesteld op grond van artikel 11 lid 1 sub o Wet OB (onderwijs).",
+  })!;
+  assert.match(met, /^Een deel van dit bedrag is vrijgesteld van btw: /);
+  assert.match(met, /artikel 11 lid 1 sub o/, "the owner's wording survives, it is the true part");
+});
+
+test("[BTW-VERKLARING] a wholly exempt invoice keeps the short sentence", () => {
+  // The regression risk of the change: the ordinary all-exempt case must not acquire the longer
+  // wording, because there no part of it is taxed.
+  assert.equal(
+    vatStatement({ invoiceType: "factuur", btwAmount: 0, lines: [{ vat_treatment: "exempt" }] }),
+    "Vrijgesteld van btw.",
+  );
+});
+
+test("[BTW-VERKLARING] charging btw with NO exempt line still explains nothing", () => {
+  // The branch that was there before must keep its meaning: the per-rate rows say what was
+  // charged, and there is nothing to add.
+  assert.equal(vatStatement({ invoiceType: "factuur", btwAmount: 210, lines: [{ vat_treatment: null }] }), null);
+  assert.equal(
+    vatStatement({ invoiceType: "factuur", btwAmount: 210, lines: [{ vat_treatment: null }], note: "Iets" }),
+    null,
+    "a note explains why there is no btw — it may not appear on an invoice that charges it",
+  );
+});
+
+test("[BTW-VERKLARING] KOR still outranks an exempt line, in both directions", () => {
+  // KOR is the regime of the whole business. Under it nothing is charged for a different reason
+  // entirely, and two grounds for one zero is what this module exists to prevent.
+  assert.match(
+    vatStatement({ invoiceType: "factuur", btwAmount: 0, korActive: true, lines: CATERER })!,
+    /kleineondernemersregeling/,
+  );
+  // A KOR invoice cannot carry btw (checkKorInvoice refuses it before a number is minted), so this
+  // combination is a contradiction — and it must not produce a sentence claiming both.
+  const s = vatStatement({ invoiceType: "factuur", btwAmount: 45, korActive: true, lines: CATERER });
+  assert.equal(s, null, "a contradiction is answered with silence, never with two claims");
+});
+
+test("[BTW-VERKLARING] a quote with a mixed line set still states nothing", () => {
+  assert.equal(vatStatement({ invoiceType: "offerte", btwAmount: 45, lines: CATERER }), null);
+  assert.equal(vatStatement({ invoiceType: "pro_forma", btwAmount: 45, lines: CATERER }), null);
+});

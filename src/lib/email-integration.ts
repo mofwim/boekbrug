@@ -58,6 +58,7 @@ import { planForUser } from '@/lib/fair-use-gate'
 // one must never disagree about whether a bon was paid — a second copy of that reasoning here is
 // how they drifted apart the first time.
 import { paymentSuggestion } from '@/lib/intake-router'
+// [EIGEN-FACTUUR] Is dit stuk van de eigenaar zelf? — zie own-document.ts.
 // [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
 import { planReceiptSettlement } from '@/lib/receipt-auto-settle'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
@@ -1884,6 +1885,33 @@ export async function classifyAttachment(
     receiverIban: opts?.receiverIban,
     readingHint: opts?.readingHint,
   })
+
+  // ── [EIGEN-FACTUUR] Is this the owner's OWN invoice, mailed back to them? ──
+  //
+  // Measured: Kiwi Food Market invoices a customer for €394,99, the copy lands in the mailbox this
+  // sync reads, and it was booked as a purchase. Wrong twice, in opposite directions — the €362,38
+  // is turnover now also standing as a cost, and the €32,61 is BTW OWED, now claimed as
+  // voorbelasting. A €65 swing on one document, on the aangifte, with nothing contradicting itself
+  // anywhere: every number is real and every total adds up.
+  //
+  // The [OWN-SENT] envelope guard above cannot catch it. It skips a message the owner sent UNLESS
+  // the owner is also a recipient — because that is a supplier invoice forwarded to oneself, which
+  // must be kept. A self-copied outgoing invoice is that case exactly; from the headers the two
+  // are indistinguishable.
+  //
+  // THE CHECK IS NOT HERE ANY MORE, and that is the fix rather than a move. It stood right at this
+  // spot and read `result.vendor_kvk / vendor_btw / vendor_iban` — the three fields the reader
+  // NULLS one line earlier, because our own identity may never be recorded as a supplier
+  // ([RECEIVER-IDENTITY] in ai.ts). So it was asking about evidence that had just been destroyed:
+  // with the numbers gone only the NAME could match, and when the model also obeyed its prompt
+  // rule "never name the receiver as the vendor" nothing matched at all and the invoice was
+  // booked. It failed precisely when the reader worked best.
+  //
+  // It now sits INSIDE verifyInvoiceFromPdf, one line before those three drops, where the document
+  // still says what it says — and therefore also covers the four other doors that call the reader
+  // and never had it: the manual upload, /api/intake, attaching a file to a bank line, and
+  // "opnieuw inlezen". A refusal comes back as is_invoice=false with a Dutch reason, which the
+  // mapping below already carries to the skip registry, so the file is kept and named.
 
   return {
     isInvoice: result.is_invoice,

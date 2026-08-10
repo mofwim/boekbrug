@@ -83,6 +83,10 @@ export default function InvoiceEditPage() {
   // التواريخ
   const [invoiceDate, setInvoiceDate] = useState('')
   const [dueDate, setDueDate] = useState('')
+  // [LEVERDATUM] Art. 35a lid 1 sub f Wet OB — de datum waarop de prestatie is verricht, en een
+  // ander gegeven dan de factuurdatum. Het aanmaakscherm vroeg hem al; dit scherm niet, dus een
+  // verkeerd ingevulde leverdatum was onherstelbaar behalve door het concept weg te gooien.
+  const [deliveryDate, setDeliveryDate] = useState('')
 
   // البنود
   const [lines, setLines] = useState<InvoiceLine[]>([
@@ -142,6 +146,12 @@ export default function InvoiceEditPage() {
       setClientBtw(invoice.client_btw_number || '')
       setInvoiceDate(invoice.invoice_date || '')
       setDueDate(invoice.due_date || '')
+      // [LEVERDATUM] Terugvallen op de factuurdatum, precies zoals /api/invoice/draft hem zet.
+      // Een oude factuur zonder leverdatum opent dan met een ingevuld veld in plaats van een leeg
+      // veld dat bij het opslaan een verplicht gegeven zou wissen.
+      setDeliveryDate(
+        (invoice as { delivery_date?: string | null }).delivery_date || invoice.invoice_date || ''
+      )
 
       if (linesData && linesData.length > 0) setLines(linesData)
 
@@ -242,6 +252,10 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
+        // leverdatum van de factuur die zij corrigeert — die sleutel weglaten laat de opgeslagen
+        // waarde staan, want de route patcht alleen wat het scherm meestuurt.
+        ...(invoiceType === 'factuur' ? { delivery_date: deliveryDate || invoiceDate } : {}),
         // [KORTING] Altijd meesturen, ook leeg: dat is hoe de route "korting eraf halen"
         // onderscheidt van "een oudere pagina die het veld niet kent".
         discount_type: invoiceType === 'creditnota' ? null : discountType,
@@ -289,6 +303,10 @@ export default function InvoiceEditPage() {
         client_btw_number: clientBtw,
         invoice_date: invoiceDate,
         due_date: dueDate,
+        // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
+        // leverdatum van de factuur die zij corrigeert — die sleutel weglaten laat de opgeslagen
+        // waarde staan, want de route patcht alleen wat het scherm meestuurt.
+        ...(invoiceType === 'factuur' ? { delivery_date: deliveryDate || invoiceDate } : {}),
         // [KORTING] Ook op de opslaan-en-versturen weg. Dit is de gevaarlijkste van de twee: hier
         // wordt het document een genummerde factuur, en een korting die op dit pad wegvalt gaat
         // onherroepelijk mee de deur uit tegen de volle prijs.
@@ -450,6 +468,21 @@ export default function InvoiceEditPage() {
               <DateFieldNL value={dueDate} onChange={setDueDate} aria-label={quote ? 'Geldig tot' : 'Vervaldatum'} />
             </div>
           </div>
+
+          {/* [LEVERDATUM] Art. 35a lid 1 sub f Wet OB. Alleen op een factuur: een offerte levert
+              niets, en een creditnota houdt de leverdatum van de factuur die zij corrigeert.
+              Het aanmaakscherm vroeg hem al en de PDF drukt hem af — dit veld ontbrak, dus was
+              een verkeerde leverdatum alleen te herstellen door het concept weg te gooien. */}
+          {invoiceType === 'factuur' && (
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Leverdatum</label>
+              <DateFieldNL value={deliveryDate} onChange={setDeliveryDate} aria-label="Leverdatum" />
+              <p className="text-[11px] text-gray-500 mt-1">
+                De datum waarop de levering of dienst is verricht. Vaak dezelfde als de factuurdatum,
+                maar niet altijd — en hij is wettelijk verplicht op de factuur.
+              </p>
+            </div>
+          )}
 
           {/* [BETAALTERMIJN] De termijn zelf, vrij in te vullen.
               Op het nieuwe-factuurscherm stonden drie chips: 14, 30 en 60. Een termijn is iets wat

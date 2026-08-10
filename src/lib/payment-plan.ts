@@ -66,7 +66,15 @@ export interface PlanLine {
 export interface PlanInput {
   /** The bank line, signed: negative is money out. */
   txAmount: number;
-  /** What this line already gave to links made earlier. Magnitude. */
+  /**
+   * What this line already gave to links made earlier. SIGNED, the same way `lines` are: an
+   * already-linked creditnota is negative because it GAVE money to the line rather than taking it.
+   *
+   * This used to be documented as a magnitude and read through Math.abs, which is right for every
+   * ordinary link and backwards for a credit — a €150 credit already on the line reduced the
+   * budget by €150 instead of raising it, a €300 swing, and the screen then refused plans the
+   * database would happily have booked.
+   */
   alreadyAllocated?: number;
   lines: PlanLine[];
   invoices: readonly PlanInvoice[];
@@ -145,9 +153,10 @@ export function resolvePaymentPlan(input: PlanInput): PlanVerdict {
   const byId = new Map(input.invoices.map((i) => [i.id, i]));
   const wanted = settleableDirection(input.txAmount);
 
-  // What this line still has to give: its face amount minus what earlier links already took.
+  // What this line still has to give: its face amount minus what earlier links already took, where
+  // "took" is signed — a credit among them gave money back and raises this figure.
   const payAvailable = toCents(
-    Math.max(0, Math.abs(Number(input.txAmount) || 0) - Math.abs(Number(input.alreadyAllocated) || 0)),
+    Math.max(0, Math.abs(Number(input.txAmount) || 0) - (Number(input.alreadyAllocated) || 0)),
   );
 
   const seen = new Set<string>();

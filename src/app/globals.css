@@ -510,8 +510,74 @@ input::placeholder, textarea::placeholder {
   /* links, het bedrag helemaal rechts — waar het bedrag ook op een breed scherm       */
   /* staat, zodat het oog dezelfde plek houdt bij het draaien van het toestel. Op een  */
   /* breed scherm blijft de kolom rechts uitgelijnd; daar staan ze onder elkaar.       */
+  /* flex-wrap: een offerte-rij draagt TWEE knoppen ("Omzetten naar factuur" +
+     "Offerte versturen") naast het bedrag. Zonder wrap werd die strook op een
+     telefoon samengeperst: beide knoppen braken over meerdere regels en het
+     bedrag werd tegen de rand geduwd. Past het niet, dan zakt wat overblijft
+     naar een eigen regel in plaats van te knijpen. */
   .inv-row-side { flex: 1 1 auto; flex-direction: row-reverse; align-items: center;
-                  justify-content: space-between; }
+                  justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
+}
+
+/* [DETAIL-BAR] De sticky balk op het factuurdetail: links nummer + type-badge,
+   rechts statuschip, de actieknoppen (Bewerken / Verwijderen / Betaalverzoek /
+   UBL exporteren) en de PDF-knop — alles op één regel zonder flex-wrap.
+
+   In Chromium op 360px gemeten: die rij werd 561px, dus 201px te breed. Een
+   sticky element kan niet onder zijn min-content krimpen, dus de HELE pagina
+   kreeg horizontale scroll. Daardoor stond alles verschoven: "Concept" werd
+   "ncept", de kolomkop "OMSCHRIJVING" werd "CHRIJVING" en de PDF-knop viel
+   rechts buiten beeld.
+
+   Zoals bij .inv-row moet dit hier staan en niet inline: een inline
+   `display: flex` op hetzelfde element overruled deze media query, en die zou
+   dan stil niets doen. */
+.inv-detail-bar { display: flex; align-items: center; justify-content: space-between; }
+.inv-detail-bar-left { display: flex; align-items: center; gap: 12px; }
+.inv-detail-bar-right { display: flex; align-items: center; gap: 8px; }
+
+@media (max-width: 520px) {
+  .inv-detail-bar { flex-wrap: wrap; row-gap: 10px; }
+  .inv-detail-bar-left { flex: 1 1 100%; }
+  .inv-detail-bar-right { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
+}
+
+/* [LINES-LAYOUT] Factuurregels op het factuurdetail. De kolommen stonden op
+   `5fr 1fr 1fr 1fr 1fr`: op een telefoon is 1fr ≈ 32px terwijl "€ 0,82569" er
+   76px nodig heeft. Het bedrag brak dan middenin af — het euroteken op de ene
+   regel, de cijfers op de volgende.
+
+   Nu: geldkolommen met een VASTE breedte die de langste bedragen aankan en de
+   omschrijving als rest; bedragen op nowrap zodat een getal nooit in tweeën
+   breekt. Onder 520px vervalt het tabelraster naar een gestapelde regel. */
+.inv-lines-head,
+.inv-lines-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 96px 56px 104px;
+  gap: 8px;
+}
+.inv-lines-desc { text-align: left; }
+.inv-lines-qty,
+.inv-lines-btw { text-align: right; }
+.inv-lines-price,
+.inv-lines-total { text-align: right; white-space: nowrap; }
+
+@media (max-width: 520px) {
+  /* Kolomkoppen zeggen niets meer zodra er geen kolommen zijn. */
+  .inv-lines-head { display: none; }
+  .inv-lines-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+  }
+  .inv-lines-row .inv-lines-desc { flex: 1 1 100%; }
+  .inv-lines-row .inv-lines-qty,
+  .inv-lines-row .inv-lines-price,
+  .inv-lines-row .inv-lines-btw { flex: 0 0 auto; text-align: left; }
+  /* "150 × € 0,82569  9%" leest als een zin zodra de kop weg is. */
+  .inv-lines-row .inv-lines-qty::after { content: ' ×'; }
+  .inv-lines-row .inv-lines-total { flex: 1 1 auto; text-align: right; }
 }
 
 /* ── Dashboard header — mobile declutter ─────────────────────────────────────── */

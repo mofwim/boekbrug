@@ -115,6 +115,27 @@ hier staat is wat er misgaat als je iets vergeet, want dát bepaalt de volgorde.
 > gewoon `NEXT_PUBLIC_APP_URL` en klaar. De oude naam blijft werken voor een omgeving die hem al
 > heeft.
 
+### Waar je een geheim MAAKT, bepaalt of het nog een geheim is
+
+Deze lijst zegt wat er zonder een variabele misgaat en niet waar de waarde vandaan komt, en dat
+gat heeft zich één keer gewroken: `CRON_SECRET` werd tijdens het bouwen gegenereerd met
+
+    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+in een terminal waarvan de uitvoer werd meegeschreven. De waarde is cryptografisch prima en op het
+moment van afdrukken al verbrand — niet omdat hij zwak is, maar omdat hij ergens staat.
+
+Dus: **maak een geheim op een plek die niets bewaart.** De knop "Generate" van je hostingpartij is
+de beste, want de waarde komt dan nergens langs. Anders je eigen terminal, en dan geplakt in de
+omgevingsvariabelen zonder tussenstop. Nooit in een gedeelde sessie, een CI-log, een chat, een
+issue of een screenshot.
+
+En het gevolg als het tóch gebeurt is niet "opletten volgende keer" maar één handeling:
+**vervangen.** Een geheim dat ergens is afgedrukt, is geen geheim meer, hoe kort ook — dat geldt
+net zo goed voor `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY` en `STRIPE_WEBHOOK_SECRET`.
+Roteren van `CRON_SECRET` is bovendien goedkoop: zet de nieuwe waarde, deploy, klaar. De zes crons
+lezen hem per aanroep en er is geen enkele staat die meeverhuist.
+
 ### Bewust leeg laten
 
 | variabele | waarom |

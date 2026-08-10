@@ -79,30 +79,65 @@ export function vatStatement(args: VatStatementArgs): string | null {
   const type = args.invoiceType ?? "factuur";
   if (type !== "factuur" && type !== "creditnota") return null;
 
-  // Btw on the document means there is nothing to explain: the per-rate rows already say what was
-  // charged and at which rate.
-  if (Math.abs(Number(args.btwAmount) || 0) >= 0.005) return null;
-
   // Never speak over icp.ts. Two sentences claiming different reasons for one zero is worse than
   // either of them alone.
   if (args.reverseChargeStated) return null;
 
   const note = cleanVatNote(args.note);
+  const btwCharged = Math.abs(Number(args.btwAmount) || 0) >= 0.005;
 
-  // KOR first: it is the regime of the whole business, so it outranks anything on a single line.
-  // The owner's note is not appended — the scheme is its own complete explanation, and a second
+  // ── [BTW-VERKLARING-GEMENGD] The exempt branch is asked BEFORE "was any btw charged" ──
+  //
+  // The zero-btw short-circuit used to stand above everything, and it is right for the two
+  // questions below it: "why is there no btw at all" only has an answer when there is no btw at
+  // all. It is the wrong question for an EXEMPT LINE, which is a fact about that line and not
+  // about the document's total.
+  //
+  // Rendered and read back with pdfjs, a caterer's invoice — EUR 500 of food at 9% plus a EUR 500
+  // food-safety course exempt under art. 11 — carried EUR 45 of btw, so the guard returned null
+  // and the page said nothing at all about the exempt half. The all-exempt invoice beside it was
+  // correct. It is not a rare shape: a physiotherapist selling taxed products beside exempt
+  // treatment, a school with taxed catering, any trade that does both.
+  //
+  // Art. 35a lid 1 sub k asks for the reference on the invoice that carries the exempt supply,
+  // not only on invoices that carry nothing else.
+  if (hasExemptLine(args.lines)) {
+    // KOR outranks it — see below — so that case is left to the branch that owns it.
+    if (!args.korActive) {
+      // The owner's own wording when they have written one; otherwise the true part of it. "This
+      // is exempt" without the provision is incomplete, but it is not false, and it is a great
+      // deal more than a customer could previously read.
+      //
+      // When the invoice ALSO charges btw, the sentence has to say that it is about part of it.
+      // A bare "Vrijgesteld van btw." above a total with EUR 45 of btw in it reads as a claim
+      // about the whole document, and a bookkeeper would be right to disbelieve one of the two.
+      //
+      // Without a note the scope sentence IS the whole statement — gluing the fallback onto it
+      // produced "Een deel van dit bedrag is vrijgesteld van btw: vrijgesteld van btw.", which is
+      // how a template reads when nobody rendered it.
+      if (!btwCharged) return note || "Vrijgesteld van btw.";
+      return note
+        ? `Een deel van dit bedrag is vrijgesteld van btw: ${lowerFirst(note)}`
+        : "Een deel van dit bedrag is vrijgesteld van btw.";
+    }
+  }
+
+  // Btw on the document means there is nothing further to explain: the per-rate rows already say
+  // what was charged and at which rate.
+  if (btwCharged) return null;
+
+  // KOR: it is the regime of the whole business, so it outranks anything on a single line. The
+  // owner's note is not appended — the scheme is its own complete explanation, and a second
   // sentence about an exemption would contradict it.
   if (args.korActive) {
     return "Geen btw in rekening gebracht: kleineondernemersregeling (KOR).";
   }
 
-  if (hasExemptLine(args.lines)) {
-    // The owner's own wording when they have written one; otherwise the true part of it. "This is
-    // exempt" without the provision is incomplete, but it is not false, and it is a great deal
-    // more than a customer could previously read.
-    return note || "Vrijgesteld van btw.";
-  }
-
   // Plain 0%. The app has no basis for a reason, so it says only what the owner has told it to.
   return note || null;
+}
+
+/** "Vrijgesteld van btw." → "vrijgesteld van btw." — it becomes the tail of a longer sentence. */
+function lowerFirst(s: string): string {
+  return s.length > 0 ? s[0].toLowerCase() + s.slice(1) : s;
 }

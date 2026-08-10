@@ -88,6 +88,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_tx_status   text;
+  v_tx_amount   numeric;
   v_inv_status  text;
   v_acc_status  text;
   v_total       numeric;
@@ -114,12 +115,29 @@ BEGIN
 
   -- MUTEX on the bank line — a concurrent booker for the same tx blocks here and,
   -- after we commit, sees status <> 'pending' → returns empty (caller skips).
-  SELECT status INTO v_tx_status
+  SELECT status, abs(coalesce(amount, 0)) INTO v_tx_status, v_tx_amount
   FROM public.bank_transactions
   WHERE id = p_tx_id AND user_id = p_user_id
   FOR UPDATE;
   IF NOT FOUND OR v_tx_status IS DISTINCT FROM 'pending' THEN
     RETURN;   -- already claimed / not ours → empty result
+  END IF;
+
+  -- [PARTIAL-PAY-HEEL] This function CONSUMES the line: it ends by setting the transaction to
+  -- 'matched' unconditionally, because its semantics are one tx → one invoice. That is only honest
+  -- while the amount it is given IS the line. Called with less, it books the smaller number and
+  -- retires the line anyway, and the difference stops existing — no link row, no pending line, no
+  -- warning. A EUR 300 split of a EUR 1.000 debit loses EUR 700 that the owner will never be
+  -- asked about again.
+  --
+  -- Unreachable from /api/bank/confirm today: a stated amount routes to allocate_bank_payment,
+  -- which exists exactly to spend part of a line. But this is the LEGACY fallback that runs when
+  -- that function is not installed, and it is SECURITY DEFINER + GRANTed to authenticated, so
+  -- PostgREST will call it with whatever it is handed. Two cents of rounding drift are absorbed;
+  -- a real shortfall is refused, and the caller is told which function it wanted.
+  IF v_tx_amount > 0 AND p_amount < v_tx_amount - 0.02 THEN
+    RAISE EXCEPTION '[PARTIAL-PAY] this function consumes the whole line (% of %) — use allocate_bank_payment to spend part of it',
+      p_amount, v_tx_amount USING ERRCODE = '55000';
   END IF;
 
   -- Lock + read the invoice under the lock (its amount_paid/status can't change

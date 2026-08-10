@@ -596,6 +596,21 @@ function InvoiceCard({
   // betaald?" — only "Bekijken". (This is the same rule the home snapshot uses.)
   const isCredit = isIncoming && (invoice.total_inc_btw ?? 0) < 0;
 
+  // [PARTIAL-PAY] Wat er van deze factuur nog openstaat — ÉÉN keer gerekend, voor het bedrag
+  // bovenaan de kaart én voor de bevestigingsknoppen eronder. Die stonden apart, en dat was
+  // precies waar het misging: de kaart toonde het restant en het paneel eronder zei "het hele
+  // bedrag". Zie de opmerking bij dat paneel.
+  const totalIncBtw = typeof invoice.total_inc_btw === "number" ? invoice.total_inc_btw : null;
+  const paidSoFar = Math.max(0, invoice.amount_paid ?? 0);
+  const isPartial =
+    totalIncBtw !== null && paidSoFar > 0.005 && paidSoFar < Math.abs(totalIncBtw) - 0.005;
+  const openstaand =
+    totalIncBtw === null
+      ? null
+      : isPartial
+        ? (totalIncBtw < 0 ? -1 : 1) * (Math.abs(totalIncBtw) - paidSoFar)
+        : totalIncBtw;
+
   // One clear verb per direction (clarity #3). Outgoing says "Bekijken" — the
   // button routes to the invoice page. Automatic payment reminders now run on
   // their own (opt-in in Instellingen → the /api/cron/reminders schedule); this
@@ -674,24 +689,18 @@ function InvoiceCard({
               [PARTIAL-PAY] When a deelbetaling already settled part of it, show the REMAINING
               openstaand (the reconciled truth the bank matcher booked), with the full total as a
               sub-note — never the full total as "te betalen" when only part is left. */}
-          {typeof invoice.total_inc_btw === "number" && (() => {
-            const total = invoice.total_inc_btw;
-            const paid = Math.max(0, invoice.amount_paid ?? 0);
-            const isPartial = paid > 0.005 && paid < Math.abs(total) - 0.005;
-            const openstaand = isPartial ? (total < 0 ? -1 : 1) * (Math.abs(total) - paid) : total;
-            return (
-              <div style={{ marginTop: 6 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface }}>
-                  {formatEuroNL(openstaand)}
-                </div>
-                {isPartial && (
-                  <div style={{ fontSize: 12, color: "#b06000", marginTop: 2 }}>
-                    deels betaald · van {formatEuroNL(total)}
-                  </div>
-                )}
+          {openstaand !== null && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface }}>
+                {formatEuroNL(openstaand)}
               </div>
-            );
-          })()}
+              {isPartial && totalIncBtw !== null && (
+                <div style={{ fontSize: 12, color: "#b06000", marginTop: 2 }}>
+                  deels betaald · van {formatEuroNL(totalIncBtw)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* "Negeren" — session-only visual hide. No DB, no status change. */}
@@ -773,8 +782,35 @@ function InvoiceCard({
           doen bewust alleen het geval dat tientallen keren per kwartaal voorkomt. */}
       {payOpen && !justPaid && (
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #E8EAED" }}>
+          {/* [PARTIAL-PAY] Deze zin zei "vandaag, het hele bedrag", zonder bedrag.
+              Op een factuur waarop al een deelbetaling stond was dat gewoon niet waar: de kaart
+              erboven toonde € 4.662,80 open van € 6.662,80, en het paneel eronder bood aan "het
+              hele bedrag" af te boeken. De boeking zelf klopte wél — apply_manual_payment leest een
+              leeg bedrag als "de rest" — maar de eigenaar werd verteld dat hij € 6.662,80 afboekte
+              terwijl er € 4.662,80 werd geboekt. Hij aarzelt bij een handeling die goed is, of hij
+              drukt en gelooft daarna dat er € 2.000 meer van zijn rekening is gegaan dan er ging.
+              Wat er van de kaart afgeleid werd, stond in twee losse berekeningen; nu in één.
+
+              En het bedrag staat er nu bíj. Dit is een bevestiging over geld, en die noemde geen
+              enkel getal. */}
           <div style={{ fontSize: 13.5, color: "#3c4043", marginBottom: 8 }}>
-            Betaald met — vandaag, het hele bedrag:
+            {openstaand !== null ? (
+              isPartial ? (
+                <>
+                  Betaald met — vandaag, het <strong>restant</strong> van{" "}
+                  <strong>{formatEuroNL(openstaand)}</strong>:
+                </>
+              ) : (
+                <>
+                  Betaald met — vandaag, het hele bedrag van{" "}
+                  <strong>{formatEuroNL(openstaand)}</strong>:
+                </>
+              )
+            ) : (
+              // Geen bedrag op de factuur: dan noemen we er ook geen. Liever een kale zin dan een
+              // verzonnen getal onder een knop die geld afboekt.
+              <>Betaald met — vandaag, wat er nog openstaat:</>
+            )}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {(["bank", "kas"] as const).map((m) => (

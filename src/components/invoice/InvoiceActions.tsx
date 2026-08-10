@@ -105,7 +105,10 @@ const canRequestPayment =
 
   return (
     <>
-      <div className="flex items-center gap-1">
+      {/* [DETAIL-BAR] flex-wrap: op een telefoon passen Bewerken / Verwijderen /
+          Betaalverzoek / UBL exporteren niet op één regel; zonder wrap duwde deze
+          rij de hele detailpagina zijwaarts (gemeten: 201px te breed op 360px). */}
+      <div className="flex flex-wrap items-center justify-end gap-1">
 
         {/* BOEK-001: Bewerken */}
         {canEdit && (

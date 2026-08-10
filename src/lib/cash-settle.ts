@@ -27,6 +27,9 @@ import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment 
 // [PAGINATION] PostgREST truncates at ~1000 rows SILENTLY. Everywhere else that is an
 // understatement; here it feeds a DESTRUCTIVE pass — see the note above the reads below.
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [KAS-STIL] Caught failures that must still reach someone — the same reporter incasso-settle.ts
+// uses for the same class, in the same hourly reconcile. See report-handled.ts.
+import { reportHandledFailure } from "@/lib/report-handled";
 
 // [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
 // (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
@@ -168,7 +171,20 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
         .in("id", openCashIds.slice(i, i + ID_CHUNK));
       // A failed chunk would silently shrink the paid set, so it bails instead of deleting.
-      if (error) return CASH_SETTLE_BAILED;
+      //
+      // [KAS-STIL] Bailing is the right call and it is still a failure: the pass that keeps the
+      // kasboek in step with the invoices did not run, and every caller ignores the returned
+      // `ok: false` (see the header). Refusing to delete on bad data protects the drawer; saying
+      // nothing about it is how a drawer stays out of step for weeks.
+      if (error) {
+        reportHandledFailure({
+          tag: "CASH-SETTLE",
+          message: "cash reconcile bailed on a failed read — the drawer was not brought in step",
+          severity: "gate-unavailable",
+          context: { userId, error: error.message },
+        });
+        return CASH_SETTLE_BAILED;
+      }
       openCashRows.push(...(data ?? []));
     }
 
@@ -224,7 +240,16 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         // Unique-index conflict (a concurrent reconcile already created it) is benign. NOT counted
         // as created either — the entry exists, but this run did not write it.
         if (!/duplicate key|unique/i.test(error.message)) {
-          console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: row.invoice_id, error: error.message });
+          // [KAS-STIL] Not "non-fatal" to the owner: this invoice was paid in cash and its drawer
+          // movement was never written, so the kas balance now stands HIGHER than the money that
+          // is actually in the drawer, permanently, until someone notices by counting. console
+          // output from an hourly cron reaches nobody.
+          reportHandledFailure({
+            tag: "CASH-SETTLE",
+            message: "cash settlement entry not created — the kas balance is now too high",
+            severity: "data-integrity",
+            context: { userId, invoiceId: row.invoice_id, error: error.message },
+          });
         }
       } else {
         created += 1;
@@ -244,8 +269,16 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         })
         .eq("id", id)
         .eq("user_id", userId);
-      if (error) console.error("[CASH-SETTLE] settlement update failed (non-fatal)", { entry: id, error: error.message });
-      else updated += 1;
+      if (error) {
+        // [KAS-STIL] The invoice's amount or date changed and the linked entry did not follow, so
+        // the drawer keeps a figure the invoice no longer says — the drift this pass exists to heal.
+        reportHandledFailure({
+          tag: "CASH-SETTLE",
+          message: "cash settlement entry not healed — the drawer keeps a stale amount or date",
+          severity: "data-integrity",
+          context: { userId, entryId: id, error: error.message },
+        });
+      } else updated += 1;
     }
 
     // Delete the orphaned settlements (their invoice is no longer paid-in-cash) — the reversal.
@@ -255,11 +288,27 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         .delete()
         .eq("user_id", userId)
         .in("id", toDeleteIds);
-      if (error) console.error("[CASH-SETTLE] orphan cleanup failed (non-fatal)", error.message);
-      else deleted += toDeleteIds.length;
+      if (error) {
+        // [KAS-STIL] The other direction: the invoice is no longer paid in cash, the drawer still
+        // says it was, and the balance stands LOWER than the money really there.
+        reportHandledFailure({
+          tag: "CASH-SETTLE",
+          message: "orphaned cash settlements not removed — the kas balance is now too low",
+          severity: "data-integrity",
+          context: { userId, entries: toDeleteIds.length, error: error.message },
+        });
+      } else deleted += toDeleteIds.length;
     }
   } catch (e) {
-    console.error("[CASH-SETTLE] reconcile threw (non-fatal)", e);
+    // [KAS-STIL] Non-fatal to the REQUEST — paying an invoice must not fail because a reconcile
+    // did — but never non-fatal to the books: partial work may already be committed, so the drawer
+    // is left half-healed with no other trace than this.
+    reportHandledFailure({
+      tag: "CASH-SETTLE",
+      message: "cash reconcile threw — the drawer may be left half-healed",
+      severity: "data-integrity",
+      context: { userId, created, updated, deleted, error: e instanceof Error ? e.message : String(e) },
+    });
     // Partial work may already be committed (the passes are separate writes), so report what
     // landed — but ok:false so the caller never claims the drawer is fully in sync.
     return { ok: false, created, updated, deleted };

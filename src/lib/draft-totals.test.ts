@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { computeDraftTotals, validateDraftLines, ALLOWED_BTW_RATES } from "./draft-totals";
+import { computeInvoiceTotals, round2 } from "./invoice-totals";
 
 const r = (quantity: number, unit_price: number, btw_rate: number, description = "werk") =>
   ({ quantity, unit_price, btw_rate, description });
@@ -14,9 +15,18 @@ test("the arithmetic is the same as the one in the browser on amounts that land 
   const lines = [r(2, 100, 21), r(1, 50, 9)];
   assert.deepEqual(computeDraftTotals(lines), {
     total_ex_btw: 250,
-    btw_amount: 2 * 100 * 0.21 + 1 * 50 * 0.09,
-    total_inc_btw: 250 + (2 * 100 * 0.21 + 1 * 50 * 0.09),
+    btw_amount: 46.5, // 200 @ 21% = 42,00 · 50 @ 9% = 4,50 — per rate, each rounded
+    total_inc_btw: 296.5,
   });
+  // Not merely equal by coincidence: the draft must produce EXACTLY what the same lines produce
+  // through the shared function, because /api/invoice/send recomputes with it at issue.
+  assert.deepEqual(
+    computeDraftTotals(lines),
+    computeInvoiceTotals([
+      { line_total: 200, btw_rate: 21 },
+      { line_total: 50, btw_rate: 9 },
+    ]),
+  );
 });
 
 // ── [REGEL-AFRONDING] the header may never disagree with its own lines ────────────────────────

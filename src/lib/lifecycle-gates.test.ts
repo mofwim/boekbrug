@@ -13,7 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -2311,6 +2311,295 @@ test("[BETAALPLAN] every money RPC that takes p_user_id checks the caller agains
   );
 });
 
+// ── [CREDITNOTA-VOLGORDE] A credit is applied BEFORE the invoices it reduces ──
+//
+// This one is held here because it was measured against a real PostgreSQL and it is the rare case
+// where ORDER, not arithmetic, decides whether an ordinary supplier payment books correctly.
+//
+// A supplier bills €1.000, credits €150 for a return, and debits €850. A credit does not spend the
+// bank line — it RAISES what the line has to give: worth €850 until the credit is booked, €1.000
+// after. Send the invoice first and allocate_bank_payment measures €1.000 against the €850 it can
+// see. The database now refuses that rather than shaving it (tests/sql/allocate_bank_payment.test.sql
+// pins both halves), so the wrong order no longer books a wrong number — but it does turn a
+// perfectly valid batch into "de verdeling is halverwege gestopt" for no reason the owner can act
+// on. The sort is what makes the feature work; the refusal is what makes it safe.
+//
+// Sorting by the SIGNED amount puts every negative line in front, which is why resolvePaymentPlan
+// returns signed amounts at all.
+test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the invoices", () => {
+  const src = code("src/app/api/bank/allocate/route.ts");
+
+  assert.match(
+    src,
+    /\.sort\(\(a, b\) => a\.amount - b\.amount\)/,
+    "the plan's lines must be sorted by SIGNED amount before they are applied — a credit that " +
+      "arrives after the invoices has nothing left to raise",
+  );
+  // And the loop has to walk the sorted copy. Sorting into a variable nothing reads is a change
+  // that looks right in a diff and does nothing at all, which is the exact shape of bug this file
+  // exists to catch.
+  assert.match(
+    src,
+    /const ordered = \[\.\.\.plan\.lines\]\.sort\([\s\S]{0,80}?\)[\s\S]{0,600}?for \(const line of ordered\)/,
+    "the apply loop must iterate the SORTED lines, not plan.lines",
+  );
+
+  // The database half of the same fact, in BOTH functions that spend a bank line. Read the
+  // migrations rather than trusting the comments: the route's sort is only correct because the
+  // function counts a credit against the line's own direction when it computes what is left.
+  //
+  // confirm_bank_payment is in this list because leaving it out is how the defect survived once
+  // already: allocate_bank_payment was fixed, its header explained the reasoning at length, and the
+  // sibling carrying the identical line was not touched — nothing ran either of them.
+  for (const file of [
+    "supabase/migrations/allocate_bank_payment.sql",
+    "supabase/migrations/bank_confirm_atomic.sql",
+  ]) {
+    const sql = readFileSync(file, "utf8");
+    // The sign is about DIRECTION, not about the invoice type. A supplier credit gives money back
+    // to a DEBIT and SPENDS a refund line that is the supplier paying that credit out — signed by
+    // type alone, two credit notes settled from one refund are measured against a budget that does
+    // not exist. `<>` on the two booleans is the XOR this rule is built from.
+    assert.match(
+      sql,
+      /\(i\.direction = 'incoming'\)\s*\n?\s*<>/,
+      `${file} must sign each link by whether its invoice moves money the same way the LINE did — ` +
+        "a creditnota is not inherently one or the other",
+    );
+    assert.match(
+      sql,
+      /=\s*\(coalesce\(t\.amount, 0\) < 0\)/,
+      `${file} must compare that against the bank line's OWN sign, joined from bank_transactions`,
+    );
+  }
+
+  const alloc = readFileSync("supabase/migrations/allocate_bank_payment.sql", "utf8");
+  assert.match(
+    alloc,
+    /v_sign\s*\*\s*v_applied/,
+    "allocate_bank_payment must apply this line's own sign when it computes the remainder — added " +
+      "as a magnitude, booking a €150 credit LOWERS the €850 line to €700",
+  );
+  assert.match(
+    alloc,
+    /=\s*\(v_tx_signed < 0\)/,
+    "…and that sign must come from the line's direction too, not from the invoice type alone",
+  );
+});
+
+// ── [LIJN-BUDGET] One sum for "what has this bank line already given away" ────
+//
+// Four places need it: the screen that offers a payment to be divided, the route that books the
+// division, the route that confirms a single invoice, and the bank page that decides which lines
+// are still open. It was written four times, with Math.abs around each, and the four then meant
+// four different things the moment a creditnota was involved:
+//
+//   · /api/bank/allocate  — the pre-flight refused plans the database would have accepted;
+//   · /api/bank/confirm   — capped the next invoice at a budget €300 too small and booked THAT;
+//   · the verdelen screen — showed "al helemaal verdeeld" with €1.000 still to divide;
+//   · /api/bank/match     — an €850 line made of a €150 credit and a €700 invoice summed to 850,
+//                           read as fully covered, and left "te bevestigen" with €300 on it that
+//                           nobody will look at again.
+//
+// The last one is the one to remember: the others report a wrong number, that one makes money
+// disappear from the owner's to-do list. bank_tx_invoices.amount_applied is a MAGNITUDE by design
+// — per invoice a credit really was settled by €150 — so every per-LINE reader has to re-derive
+// the sign, and re-deriving it four times is how they came to disagree.
+test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one shared sum", () => {
+  const readers = [
+    "src/app/api/bank/allocate/route.ts",
+    "src/app/api/bank/confirm/route.ts",
+    "src/app/api/bank/match/route.ts",
+    "src/app/dashboard/bank/verdelen/[txId]/page.tsx",
+  ];
+  for (const file of readers) {
+    const src = code(file);
+    assert.match(
+      src,
+      /from ['"]@\/lib\/bank-line-budget['"]/,
+      `${file} sums a bank line's applied total and must take it from bank-line-budget.ts — a ` +
+        "second copy of this sum is how the four readers came to disagree about the same line",
+    );
+    // The mechanism, not the symptom: an inlined `+= Math.abs(... amount_applied ...)` is the exact
+    // shape all four had, and it is sign-blind by construction.
+    assert.doesNotMatch(
+      src,
+      /\+=\s*Math\.(abs|max)\([^)]*amount_applied/,
+      `${file} accumulates amount_applied itself. Per INVOICE that magnitude is right; per LINE it ` +
+        "is not — a credit gives money back to the line. Use allocatedOnLine/allocatedByTransaction.",
+    );
+  }
+});
+
+// ── [BTW-ROUND] One summation for the three legal amounts on an invoice ──────
+//
+// invoice-totals.ts exists because there were two, and its own header says so. Then there were
+// three: draft-totals.ts kept a per-line, UNROUNDED version, and both invoice editors computed a
+// fourth for the screen the same way.
+//
+// The differences are small and they are the wrong kind of small:
+//   · a mixed-rate invoice comes out a cent apart (measured: 23,88 vs 23,89), so the amount in the
+//     editor is not the amount on the PDF — /api/invoice/send recomputes at issue;
+//   · unrounded, a draft of 3 × 33,33 at 21% was STORED as total_inc_btw = 120,9879. Four decimals
+//     in a money column, on a row an accountant reads;
+//   · and the same route rounds each line to cents, so the stored header did not equal the sum of
+//     the stored lines it came from.
+//
+// The rule is mechanical: anything that computes an invoice's BTW from a rate calls
+// computeInvoiceTotals. `quantity * unit_price * (rate / 100)` summed per line is the shape all
+// three copies had.
+test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
+  const owners = [
+    "src/lib/draft-totals.ts",
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ];
+  for (const file of owners) {
+    const src = code(file);
+    // Either shared summation is fine — computeInvoiceTotals, or applyDiscount, which groups per
+    // rate and rounds each rate's BTW the same way and additionally carries the korting. What is
+    // NOT fine is a third one written inline, which is the whole point.
+    assert.match(
+      src,
+      /computeInvoiceTotals|applyDiscount/,
+      `${file} states an invoice's totals and must take them from invoice-totals.ts or ` +
+        "invoice-discount.ts — those exist precisely because summations of the same legal amount " +
+        "disagreed once already",
+    );
+    // The per-line BTW multiplication, in the shape all three copies used. The per-RATE version
+    // inside computeInvoiceTotals looks different (it multiplies a grouped ex-amount), so this
+    // pattern does not catch the legitimate one.
+    assert.doesNotMatch(
+      src,
+      /unit_price\s*\*\s*\(?\s*(?:l|line)\.btw_rate\s*\/\s*100/,
+      `${file} multiplies a LINE by its own rate. The Belastingdienst and Peppol method — which the ` +
+        "PDF's btwBreakdown and the UBL export already use — groups the ex-amount per rate and " +
+        "rounds each rate's BTW. Summing per line is a cent apart on a mixed-rate invoice.",
+    );
+  }
+});
+
+// ── [DEP-VEILIG] The two overrides that are not decoration ───────────────────
+//
+// Next 16.2.12 fixes all nine of its own advisories — a middleware/proxy bypass, two SSRFs, cache
+// confusion, and an unauthenticated disclosure of internal Server Function endpoints among them —
+// but it NESTS its own postcss and sharp, both of which are still vulnerable. The sharp one is the
+// live surface: it is libvips behind the Image Optimization API, which any visitor can reach.
+//
+// npm's own answer was to take Next to 16.3.0, a minor bump this repo does not need for security
+// and which AGENTS.md warns is exactly where this framework breaks things. Two overrides get the
+// same result inside the 16.2 line.
+//
+// They look removable. `npm install <anything>` regenerates the lockfile happily without them, and
+// nothing in a diff says what they were for — so this test says it instead.
+test("[DEP-VEILIG] the nested postcss and sharp stay overridden", () => {
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+    dependencies?: Record<string, string>;
+    overrides?: Record<string, string>;
+  };
+
+  for (const [name, why] of [
+    ["postcss", "sourceMappingURL path traversal reads arbitrary .map files at build time"],
+    ["sharp", "libvips CVE-2026-33327/33328/35590/35591 — reachable through the Image Optimization API"],
+  ] as const) {
+    assert.ok(
+      pkg.overrides?.[name],
+      `package.json must override ${name}: Next nests its own vulnerable copy (${why}). ` +
+        "Removing this override reintroduces it silently — npm audit is the only thing that says so.",
+    );
+  }
+
+  // And the reason the overrides exist at all: staying inside the 16.2 patch line. If Next is ever
+  // moved to 16.3+ deliberately, its own postcss/sharp are fixed and these overrides can go — but
+  // that is a decision to make on purpose, not to arrive at through `npm audit fix`.
+  assert.match(
+    pkg.dependencies?.next ?? "",
+    /^[~^]?16\.2\./,
+    "next is pinned to the 16.2 line; a minor bump is a deliberate decision (AGENTS.md), not an audit side effect",
+  );
+});
+
+// ── [PARTIAL-PAY] A money confirmation names the money ────────────────────────
+//
+// /vandaag lets an owner tick an invoice off without leaving the page, and the panel that does it
+// said: "Betaald met — vandaag, het hele bedrag:". No amount in it, and on a partly-paid invoice
+// not true either — the card directly above showed €4.662,80 open of €6.662,80, and the panel
+// underneath offered to book "het hele bedrag".
+//
+// The WRITE was right the whole time: apply_manual_payment reads an absent amount as "the rest",
+// so €4.662,80 is what landed. That is what makes it worth a gate rather than a fix — the defect
+// is entirely in what the owner was told, so nothing downstream disagrees, no total is off, and
+// the only place it exists is a sentence. He hesitates over a correct action, or he presses it
+// and believes €2.000 more left his account than did.
+test("[PARTIAL-PAY] the /vandaag confirm panel states the amount it will actually book", () => {
+  const src = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+
+  assert.doesNotMatch(
+    src,
+    /vandaag, het hele bedrag:/,
+    "the confirm panel promises 'het hele bedrag' with no amount — on a partly-paid invoice that " +
+      "is the invoice total, and what gets booked is the remainder",
+  );
+  // It must say a number, and that number must be the one derived from amount_paid.
+  assert.match(
+    src,
+    /formatEuroNL\(openstaand\)/,
+    "the panel must name the amount it books, taken from the same `openstaand` the card shows",
+  );
+  // One derivation, not two. The card and the panel disagreeing is exactly how this happened, and
+  // an IIFE recomputing it inside the JSX is what let them.
+  assert.equal(
+    (src.match(/const openstaand\b/g) ?? []).length,
+    1,
+    "`openstaand` is computed once for the whole card — a second copy is how the amount shown and " +
+      "the amount booked came apart in the first place",
+  );
+});
+
+// ── [BANK-BATCH-AMBIGU] A function may not name an output after a column it writes ──
+//
+// book_bank_batch raised on EVERY call, on the simplest possible input:
+//
+//     column reference "invoice_id" is ambiguous
+//
+// RETURNS TABLE(invoice_id uuid) declares a plpgsql variable of that name, and the function then
+// writes ON CONFLICT (transaction_id, invoice_id). plpgsql will not guess which is meant.
+//
+// What made it survive is the shape worth remembering. The caller answers a raise with
+// `if (batchErr) continue`, under a comment reading "error ⇒ not payable / migration not applied
+// ⇒ the batch stays for the human". So the failure was indistinguishable from a normal outcome,
+// on every run, and multi-invoice auto-confirmation had simply never booked anything.
+//
+// A source sweep cannot type-check plpgsql — tests/sql/ is what proves these functions run. What
+// this gate does is cheaper and complementary: any function that declares an output column sharing
+// a name with a table column must say which one it means.
+test("[BANK-BATCH-AMBIGU] a plpgsql output named after a column declares its resolution", () => {
+  const dir = "supabase/migrations";
+  const offenders: string[] = [];
+  // The column names that appear both as OUT parameters and in a conflict target / DML in this
+  // schema. Adding to this list is cheap; the failure it prevents is a function that never runs.
+  const RISKY = ["invoice_id", "transaction_id", "user_id", "amount_applied"];
+
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".sql")) continue;
+    const sql = readFileSync(`${dir}/${name}`, "utf8");
+    // Only plpgsql functions that RETURN a table whose columns could collide.
+    const returnsRisky = new RegExp(`RETURNS TABLE\\s*\\(\\s*(?:[^)]*\\b)?(${RISKY.join("|")})\\b`, "i").test(sql);
+    if (!returnsRisky) continue;
+    // …and that actually write to a table (a pure reader cannot hit the ambiguity).
+    if (!/\b(INSERT INTO|UPDATE)\s+public\./i.test(sql)) continue;
+    if (!/#variable_conflict/.test(sql)) offenders.push(name);
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these functions RETURN a column name they also write, without a #variable_conflict directive: ` +
+      `${offenders.join(", ")}. plpgsql refuses the ambiguity at RUNTIME, so the function raises on ` +
+      `every call — and a caller that treats a raise as "not applicable" never notices.`,
+  );
+});
+
 test("[TWEEDE-KANS] a file we kept because we could not read it has a way back", () => {
   // THE DEAD END. A purchase invoice that failed to read is kept, counted, and named — and then
   // nothing could be done with it. Measured before this route existed:
@@ -2473,6 +2762,22 @@ test("[CI-PARITEIT] CI invokes the package.json scripts, so it cannot drift from
   assert.match(ci, /tsc --noEmit/, "CI must type-check");
   assert.match(ci, /next build/, "CI must build");
   assert.match(ci, /playwright test tests\/public-surface\.spec\.ts/, "CI must run the public smoke");
+
+  // [SEAM] The sixth gate, and the only one that can read a plpgsql contract. It is deliberately
+  // NOT in `npm run gates` — it needs a database, and the local gates are worth keeping runnable on
+  // a bare checkout with an empty environment. That makes CI its only home, so CI is where it has
+  // to be held.
+  assert.ok(pkg.scripts["test:sql"], "package.json must define test:sql");
+  assert.match(ci, /sql-seam-test\.sh/, "CI must run the SQL seam gate");
+  // The line that decides whether the gate proves anything. Without it the runner SKIPS when no
+  // database is reachable — correct on a laptop, a lie in CI: a green check that ran nothing. This
+  // is the same failure the render gate had (never wired up) and the unit glob had (drifted), both
+  // of which stayed green the whole time they were broken.
+  assert.match(
+    ci,
+    /SQL_SEAM_REQUIRED:\s*'?1'?/,
+    "CI must set SQL_SEAM_REQUIRED=1, or a missing database turns the SQL gate into a silent skip",
+  );
 });
 
 // ── [OBSERVABILITY] The kept-but-unread marker lives in ONE file, on both sides ──
@@ -3760,8 +4065,26 @@ test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STOR
   const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
   assert.match(
     nieuw,
-    /btwByRate\[rate\] = \(btwByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\) \* \(rate \/ 100\)/,
+    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\)/,
     "the on-screen BTW-per-rate breakdown must use the rounded line amounts too",
+  );
+  // [KORTING] And it must subtract the korting that applyDiscount assigned to each rate. This
+  // assertion used to pin a one-liner that summed `round2(line) * rate/100` straight into
+  // btwByRate — right about the rounding, and blind to the discount: with one set, the box showed
+  // the BTW over a base the customer does not pay, printed directly above a total that had already
+  // deducted it. Same failure as the cent, one line further down the same card.
+  //
+  // Deriving it from `allowances` rather than re-splitting the discount here is the point: the
+  // rows and the total are then the same sum by construction, not two sums that happen to agree.
+  assert.match(
+    nieuw,
+    /for \(const a of kortingTotalen\.allowances\)/,
+    "the per-rate box must take the discount from applyDiscount's own per-rate allowances",
+  );
+  assert.match(
+    nieuw,
+    /btwByRate\[r\] = round2\(\(\(ex - \(aftrekPerTarief\[r\] \?\? 0\)\) \* r\) \/ 100\)/,
+    "…and show the BTW over what is left after it, rounded per rate like every other total here",
   );
 });
 
@@ -3994,6 +4317,44 @@ test("[LEESBARE-MAIL] the mailer carries no text below the contrast threshold", 
   assert.match(mail, /color: #5f6368/, "…and the replacement colour is actually in use");
 });
 
+// ── [EIGEN-FACTUUR] Your own sales invoice is not a cost ──────────────────────
+//
+// Kiwi Food Market invoiced a customer €394,99, the copy landed in the mailbox the sync reads, and
+// it was booked as a purchase invoice. Wrong twice, in opposite directions: the €362,38 is
+// turnover now also standing as a cost, and the €32,61 is BTW OWED, now claimed as voorbelasting.
+// A €65 swing on one document, on the aangifte, and nothing anywhere contradicts itself — every
+// number is real and every total adds up.
+//
+// The envelope cannot answer it. [OWN-SENT] skips a message the owner sent UNLESS the owner is
+// also a recipient, because that is a supplier invoice forwarded to oneself. A self-copied
+// outgoing invoice is that case exactly.
+//
+// The document answers it: a purchase invoice whose supplier is you cannot exist.
+test("[EIGEN-FACTUUR] every door that reads a document asks it", () => {
+  // Superseded in place. This gate used to require the check in email-integration.ts, which is
+  // where it was first written and where it did NOT work — it read the vendor identity one line
+  // after the reader had cleared it, and it covered one of five doors. The behaviour it was
+  // protecting is now held by the ordering gate at the end of this file; what stays here is the
+  // reach: the reader is the single place, so no door can be added without it.
+  const ai = code("src/lib/ai.ts");
+  assert.match(
+    ai, /looksLikeOwnDocument\(/,
+    "verifyInvoiceFromPdf is the one function every intake door goes through",
+  );
+  for (const door of [
+    "src/lib/email-integration.ts",
+    "src/app/api/email/upload/route.ts",
+    "src/app/api/intake/route.ts",
+    "src/app/api/bank/attach-invoice/route.ts",
+    "src/app/api/documents/[id]/read-as-invoice/route.ts",
+  ]) {
+    assert.match(
+      code(door), /verifyInvoiceFromPdf/,
+      `${door} must read documents through the guarded reader, not around it`,
+    );
+  }
+});
+
 // ─── [PRIJS-KOLOM] The price column must multiply out to the total beside it ────────────────────
 //
 // invoice_lines.unit_price holds the EXACT price on purpose: someone selling at "EUR 0,90 all-in"
@@ -4039,6 +4400,248 @@ test("[PRIJS-KOLOM] the PDF and the screen format a unit price the same way", ()
   assert.match(
     mod, /if \(round2\(q \* roundTo\(p, d\)\) === target\) return d;/,
     "…and the test for 'enough decimals' is that the row reconciles",
+  );
+});
+
+// ─── [E-FACTUUR-VERLEGD] The PDF and the XML may not tell two tax stories ───────────────────────
+//
+// One sale to a German customer produced two documents. The PDF printed "Btw verlegd" because
+// reverseChargeNotice() derived it from the DOCUMENT (EU VAT number, zero BTW, not KOR); the UBL
+// put the same supply in category Z, because lineVatKind() looked only at the LINE DESCRIPTION.
+// Z says the seller taxed it at 0%, AE says the buyer owes the tax — the receiving system books
+// them differently, so the customer's ERP raised no liability at all.
+//
+// What is held here is the WIRING, not the arithmetic — ubl-reverse-charge.test.ts checks the XML
+// that comes out. The defect was never a wrong formula; it was two modules answering one legal
+// question separately. So: one predicate, and every reader must go to it.
+test("[E-FACTUUR-VERLEGD] one predicate answers 'is this verlegd', for both documents", () => {
+  const icp = code("src/lib/icp.ts");
+  assert.match(
+    icp, /export function isReverseChargedInvoice\(/,
+    "the legal predicate must be a named export, not inlined in the sentence builder",
+  );
+  // The sentence must be BUILT ON the predicate, so the two can never drift apart.
+  assert.match(
+    icp, /if \(!isReverseChargedInvoice\(args\)\) return null;/,
+    "reverseChargeNotice must ask the same question, not re-implement it",
+  );
+  // And the line-text check must stay OUT of the predicate: "the owner already wrote it" is a
+  // reason not to print the sentence twice, never a reason to export the supply as Z.
+  const predicate = icp.slice(
+    icp.indexOf("export function isReverseChargedInvoice("),
+    icp.indexOf("export function reverseChargeNotice("),
+  );
+  assert.ok(predicate.length > 0, "the predicate must sit before the sentence builder");
+  assert.doesNotMatch(
+    predicate, /lineTexts/,
+    "an invoice whose own line says 'btw verlegd' is the MOST certainly verlegd one — " +
+      "folding the de-duplication into the predicate would export exactly that case as Z",
+  );
+
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(
+    ubl, /import \{ isReverseChargedInvoice \} from "\.\/icp"/,
+    "the UBL export must read the document-level fact from the same module the PDF reads",
+  );
+  assert.match(
+    ubl, /const docReverseCharged = isReverseChargedInvoice\(\{/,
+    "asked ONCE for the whole document, so line, subtotal and allowance cannot disagree",
+  );
+  // All three places that emit a category must carry it. An AllowanceCharge left at Z would be the
+  // only Z on an AE document, and BR-Z-08 then demands a Z subtotal that does not exist — the
+  // access point refuses the whole invoice over a discount line.
+  for (const site of [
+    /groupByRate\(effLines, docReverseCharged\)/,
+    /taxCategoryId\(rate, lineVatKind\(l, docReverseCharged\)\)/,
+    /taxCategoryId\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
+  ]) {
+    assert.match(ubl, site, `every category in the XML must read docReverseCharged: ${site}`);
+  }
+  // The owner's KOR status has to reach the generator, or a KOR invoice to an EU customer would be
+  // exported as verlegd — a claim about a regime the owner is not in.
+  assert.match(
+    code("src/app/api/export/ubl/route.ts"), /kor_active/,
+    "the export route must read kor_active and pass it to the builder",
+  );
+});
+
+// ─── [LEVERDATUM] A legally required field must be reachable after it is first written ──────────
+//
+// Art. 35a lid 1 sub f Wet OB puts the date of supply on every invoice, distinct from the invoice
+// date. The create screen asked for it, /api/invoice/draft stored it and the PDF printed it — and
+// then nothing could touch it again. The edit screen had no field, and the PUT's header allowlist
+// did not name the column, so the owner could change the invoice date, watch the screen follow,
+// save, and get a PDF carrying the OLD leverdatum. A mandatory legal statement, wrong on a
+// document going out the door, with the only remedy being to throw the draft away.
+test("[LEVERDATUM] the edit path can read, show and write the delivery date", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(
+    route, /'delivery_date',/,
+    "the PUT header allowlist must name delivery_date — a key it does not list is silently dropped",
+  );
+
+  const screen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(screen, /setDeliveryDate\(/, "the screen must load the stored value");
+  assert.match(
+    screen, /aria-label="Leverdatum"/,
+    "…and offer a field to correct it, or the allowlist entry has no way to be used",
+  );
+  // Sent on BOTH save paths. The second one is the dangerous one: it saves and then issues a
+  // numbered invoice, so a leverdatum lost there goes out irreversibly (Art. 35).
+  const sends = screen.match(/delivery_date: deliveryDate \|\| invoiceDate/g) ?? [];
+  assert.equal(sends.length, 2, "both 'Opslaan' and 'Opslaan en versturen' must carry it");
+});
+
+// ─── [LEVERDATUM] Converting an offerte creates a factuur that needs one ────────────────────────
+//
+// An offerte is stored with delivery_date NULL — correct, an offer delivers nothing. Pressing
+// "Versturen" on it does not send the offer: it CONVERTS it into a numbered factuur. That factuur
+// went out with no leverdatum at all, and the PDF simply omitted the row, because showLeverdatum
+// needs a value to print. Past the number commit the document is immutable (Art. 35), so the only
+// remedy was a creditnota.
+//
+// Two readers, one answer: the UPDATE writes the row, and the PDF is rendered from the row as it
+// was READ. Fixing only the database would leave the document in the customer's mailbox wrong.
+test("[LEVERDATUM] an offerte converted on send gets one, in the row AND on the PDF", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+
+  assert.match(
+    send, /const leverdatumBijConversie: string \| null =/,
+    "resolved once — two call sites reading two expressions is how they drift",
+  );
+  // Only when the column is really there. This UPDATE is the point of no return: on a deployment
+  // where the FACTUUR-A migration is still open, an unknown column fails the WHOLE statement and
+  // the invoice is numbered nowhere and sent nowhere.
+  assert.match(
+    send, /'delivery_date' in invoice &&/,
+    "the row itself must answer whether the column exists, before it is written",
+  );
+  assert.match(
+    send, /!invoice\.delivery_date &&/,
+    "never overwrite a leverdatum the owner already chose",
+  );
+
+  const uses = send.match(/leverdatumBijConversie \? \{ delivery_date: leverdatumBijConversie \} : \{\}/g) ?? [];
+  assert.equal(
+    uses.length, 2,
+    "both the committing UPDATE and the rendered PDF must carry it — one of the two is not a fix",
+  );
+});
+
+// ─── [LEVERDATUM] Writing the column is not the same as naming the key ──────────────────────────
+//
+// Caught reviewing the duplicate route's own fix. `delivery_date: original.delivery_date` was safe
+// on a database without that column for a reason nobody chose: the value was `undefined`, and JSON
+// drops undefined, so the key never reached PostgREST. Rewriting it as
+// `original.delivery_date ? today : null` kept the same intent and put the KEY in the request —
+// which on an un-migrated deployment fails the whole INSERT (42703). Duplicating any invoice would
+// have stopped working, and the fix for a false date would have been worse than the date.
+//
+// Both routes that write this column conditionally must probe the ROW, not the value.
+test("[LEVERDATUM] a conditional write probes for the column, never just its value", () => {
+  for (const [path, subject] of [
+    ["src/app/api/invoice/[id]/duplicate/route.ts", "original"],
+    ["src/app/api/invoice/send/route.ts", "invoice"],
+  ] as const) {
+    const src = code(path);
+    assert.match(
+      src, new RegExp(`'delivery_date' in ${subject}`),
+      `${path}: select('*') returns the key iff the column exists — that is the only honest probe`,
+    );
+    // A bare `delivery_date: <expr>` at the top level of an insert/update object is the shape that
+    // sends the key unconditionally. It must be inside a spread instead.
+    assert.doesNotMatch(
+      src, /^\s{8}delivery_date: /m,
+      `${path}: the key must be spread in, so it is absent rather than null when the column is`,
+    );
+  }
+});
+
+// ─── [REGEL-PARITEIT] Two writers on invoice_lines, one definition of a valid line ──────────────
+//
+// /api/invoice/draft refuses a line with no description (Art. 35a: the nature of the supply belongs
+// on the invoice), refuses a quantity or price that is not a number, and caps the line count. The
+// PUT checked only the BTW rate and quietly turned the rest into zero — `Number(l.quantity) || 0`
+// makes "twee" a nought. So an invoice that could not be CREATED in that shape could be EDITED into
+// it, and then sent, because sending saves through this same route first.
+test("[REGEL-PARITEIT] the edit route keeps lines to the same standard as the create route", () => {
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(
+    route, /import \{ validateDraftLines \} from '@\/lib\/draft-totals'/,
+    "the PUT must use the create route's validator, not a second opinion",
+  );
+  assert.match(route, /const keuring = validateDraftLines\(rawLines\)/);
+  assert.match(
+    route, /if \(!keuring\.ok\) \{/,
+    "…and refuse on its verdict, before anything is written",
+  );
+  // The old single-question check must be gone, or a rejected line could still slip past on the
+  // other three grounds.
+  assert.doesNotMatch(
+    route, /rawLines\.findIndex\(\(l: any\) => !isValidBtwRate/,
+    "the rate-only check is superseded — leaving it would suggest the others are optional",
+  );
+  // And the validator must still be the one that demands a description; that is the Art. 35a part.
+  assert.match(
+    code("src/lib/draft-totals.ts"),
+    /een regel zonder omschrijving mag niet op een factuur/,
+    "the shared validator is where 'the nature of the supply' is required",
+  );
+});
+
+// ─── [EIGEN-FACTUUR] The guard must be asked BEFORE the evidence is destroyed ───────────────────
+//
+// This file's own defect class, and it caught me writing it.
+//
+// verifyInvoiceFromPdf ends with a [RECEIVER-IDENTITY] backstop that nulls vendor_kvk, vendor_btw
+// and vendor_iban whenever they equal the owner's own — correct, our identity may never be
+// recorded as a supplier. The own-invoice guard was placed in the CALLER, so it read those three
+// fields one line AFTER they were cleared. Measured on the reported case:
+//
+//   as the document reads   → certain, 4 identifiers → blocked
+//   after the three drops   → likely, name only      → blocked, softer wording
+//   …and the model also obeyed "never name the receiver as the vendor"
+//                           → nothing matched        → BOOKED AS A COST
+//
+// So it failed exactly when the reader worked best, and nothing anywhere turned red. Moving it one
+// line earlier restores 'certain' AND covers the four other doors that call the reader and never
+// had the check: the manual upload, /api/intake, bank attach, and "opnieuw inlezen".
+//
+// What is held here is the ORDER. A future tidy-up that moves the guard below the drops, or
+// re-adds a copy in a caller, puts the money back where it was.
+test("[EIGEN-FACTUUR] the own-invoice verdict precedes the identity scrub, in the reader", () => {
+  const ai = code("src/lib/ai.ts");
+
+  const verdict = ai.indexOf("const eigenStuk = looksLikeOwnDocument(");
+  // Anchored on the BACKSTOP's own line, not on any `parsed.vendor_kvk = undefined` — the
+  // canonicalization block a few lines above writes that same assignment for a malformed number,
+  // and indexOf would find it first and compare against the wrong position.
+  const firstDrop = ai.indexOf("if (myKvk && parsed.vendor_kvk === myKvk)");
+  assert.ok(verdict !== -1, "the verdict must be taken inside verifyInvoiceFromPdf");
+  assert.ok(firstDrop !== -1, "the receiver-identity backstop must still be there — it is correct");
+  assert.ok(
+    verdict < firstDrop,
+    "the guard reads vendor_kvk/btw/iban; below the drops those are null and it decides on nothing",
+  );
+
+  // It must read the PARSED fields, not something already laundered.
+  const block = ai.slice(verdict, firstDrop);
+  for (const field of ["parsed.vendor", "parsed.vendor_kvk", "parsed.vendor_btw", "parsed.vendor_iban"]) {
+    assert.ok(block.includes(field), `the verdict must be taken on ${field}, as the document read it`);
+  }
+  // …against the owner's identity, which the caller already hands in for the prompt.
+  for (const field of ["receiverName", "opts?.receiverKvk", "opts?.receiverBtw", "opts?.receiverIban"]) {
+    assert.ok(block.includes(field), `the owner side must come from ${field}`);
+  }
+  // Refused as "not an invoice" WITH a reason — that is the path the skip registry surfaces, so
+  // the file is kept and named instead of vanishing.
+  assert.match(block, /is_invoice: false/, "a refusal, not a throw and not a silent drop");
+  assert.match(block, /ownDocumentNotice\(eigenStuk\)/, "…and the owner is told why, in Dutch");
+
+  // And no second copy in a caller: one legal question, one place that answers it.
+  assert.doesNotMatch(
+    code("src/lib/email-integration.ts"), /looksLikeOwnDocument\(/,
+    "the caller-side copy is what read the cleared fields — it must not come back",
   );
 });
 
@@ -4097,6 +4700,67 @@ test("[KOR-FACTUUR] the screen offers no rate that would be refused, and the doo
   assert.doesNotMatch(mod, /btw_rate:\s*0|\.map\(/, "this module corrects nothing — it only reports");
   assert.match(mod, /if \(!args\.korActive\) return \{ ok: true \}/,
     "an owner outside the scheme must be untouched by every line of it");
+});
+
+// ─── [BATCH-STIL] The one place a bug could hide was the one place that said nothing ────────────
+//
+// bank-auto-confirm.ts is 530 lines that move money automatically after every invoice send, and it
+// had no unit test at all. What it did have was two bare swallows:
+//
+//     if (batchErr) continue;   // "not payable / migration not applied — stays for the human"
+//     if (payErr) continue;     // "verwerkt/RLS/other — leave for the human"
+//
+// The first is where a real defect lived unseen: book_bank_batch raised on EVERY call (a plpgsql
+// "column reference invoice_id is ambiguous"), so multi-invoice auto-confirmation had never booked
+// anything, for anyone. Nothing logged it and nothing counted it, and "no batches were booked"
+// reads exactly like "there were no batches". Forty lines further down the same file already knew
+// better: [ROLLBACK-LOUD] wakes someone, because "a promise nobody is told has been broken is not
+// a promise".
+//
+// The expected outcomes must STAY silent, or the alarm becomes noise nobody reads: the RPC's own
+// 55000 refusal is a race with a human and happens on any busy account, and for the single-invoice
+// write the two ordinary cases arrive as zero rows, not as an error.
+test("[BATCH-STIL] a bank booking that fails for an unexpected reason reaches someone", () => {
+  const src = code("src/lib/bank-auto-confirm.ts");
+
+  // Neither swallow may go back to being a bare continue.
+  assert.doesNotMatch(
+    src, /if \(batchErr\) continue;/,
+    "an RPC that refuses a planned batch must not vanish — that is how it hid for months",
+  );
+  assert.doesNotMatch(src, /if \(payErr\) continue;/, "…and neither must a failed pay write");
+
+  // The RPC's own business refusal stays quiet. Reporting a race on every busy account would bury
+  // the signal this gate exists to protect.
+  assert.match(
+    src, /if \(code !== "55000"\)/,
+    "55000 is the RPC saying the tie stopped being exact — expected, and not an alarm",
+  );
+
+  // A missing function is its own outcome: the whole tier books nothing, invisibly.
+  assert.match(
+    src, /code === "42883" \|\| code === "PGRST202"/,
+    "the not-applied-migration case must be told apart from a genuine refusal",
+  );
+  assert.match(
+    src, /severity: code === "42883" \|\| code === "PGRST202" \? "feature-off" : "data-integrity"/,
+    "…and carry a severity that says which of the two it is",
+  );
+
+  // Both sites must actually call the reporter, not merely console.log.
+  const calls = src.match(/reportHandledFailure\(\{/g) ?? [];
+  assert.ok(
+    calls.length >= 3,
+    `the batch swallow, the pay swallow and the rollback must all report — found ${calls.length}`,
+  );
+  // And no customer amounts in the context: report-handled.ts says ids and values, never bedragen.
+  const contexts = src.match(/context: \{[^}]*\}/g) ?? [];
+  for (const c of contexts) {
+    assert.doesNotMatch(
+      c, /total_inc_btw|amount:|bedrag/,
+      `a failure report must not carry a customer's amount — ${c.slice(0, 60)}…`,
+    );
+  }
 });
 
 // ─── [BTW-VERKLARING] A zero on an invoice must say what kind of zero it is ─────────────────────
@@ -4228,6 +4892,58 @@ test("[BETAALTERMIJN-LANG] both screens warn above sixty days and neither blocks
   }
 });
 
+// ─── [KAS-STIL] A drawer that goes out of step must say so ──────────────────────────────────────
+//
+// cash-settle.ts keeps the kasboek in step with the invoices paid in cash. It creates entries, it
+// heals them, and it DELETES them — and every one of those failures ended at console.error, with
+// the word "non-fatal" beside it. The module runs from the hourly cron, where console output
+// reaches nobody.
+//
+// Non-fatal to the REQUEST, which is right: paying an invoice must not fail because a reconcile
+// did. Never non-fatal to the BOOKS, and each direction is its own wrong number:
+//
+//   insert failed   the cash payment has no drawer movement → the balance is too HIGH
+//   update failed   the invoice's amount or date moved and the entry did not → stale
+//   delete failed   the invoice is no longer cash-paid and the entry stayed → too LOW
+//   read bailed     the whole pass did not run, and every caller ignores its ok:false
+//
+// Its own sibling in the same hourly reconcile — incasso-settle.ts — already imports the reporter
+// for exactly this class. This file was the one that did not.
+test("[KAS-STIL] every cash-drawer failure reaches the reporter, not just the console", () => {
+  const src = code("src/lib/cash-settle.ts");
+
+  assert.match(
+    src, /import \{ reportHandledFailure \} from "@\/lib\/report-handled"/,
+    "the same reporter its neighbour in the hourly reconcile already uses",
+  );
+  // Four write/read failure sites, four reports. A count, because the failure mode here is one
+  // branch quietly keeping its console.error while the others were converted.
+  const reports = src.match(/reportHandledFailure\(\{/g) ?? [];
+  assert.ok(
+    reports.length >= 5,
+    `insert, update, delete, the outer throw and the read bail must each report — found ${reports.length}`,
+  );
+  // And nothing may fall back to the console, which is what "non-fatal" meant here.
+  assert.doesNotMatch(
+    src, /console\.error/,
+    "a cron writing to stdout is the same as a cron writing nothing",
+  );
+
+  // The three that leave a WRONG BALANCE are data-integrity; a bail leaves the books untouched
+  // and is a gate-unavailable. Getting that backwards makes the severe ones easy to skim past.
+  assert.match(src, /message: "cash settlement entry not created[^"]*"/);
+  assert.match(src, /message: "orphaned cash settlements not removed[^"]*"/);
+  assert.match(src, /severity: "gate-unavailable"/, "the read bail is not a corrupted drawer");
+
+  // No customer amounts in a report — report-handled.ts asks for ids and counts, never bedragen.
+  for (const c of src.match(/context: \{[^}]*\}/g) ?? []) {
+    assert.doesNotMatch(
+      c, /\bamount\b|total_inc_btw|bedrag/,
+      `a failure report must not carry an amount — ${c.slice(0, 70)}…`,
+    );
+  }
+});
+
 // ─── [TYPES] Schema that exists must be typed, so the compiler checks the column names ─────────
 //
 // Six migrations were applied on 9 August. Until then seven schema objects were absent from the
@@ -4349,4 +5065,54 @@ test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of
   const camtAt = mod.indexOf("camt|053");
   const xmlAt = mod.indexOf("\\.xml$");
   assert.ok(camtAt > 0 && xmlAt > camtAt, "CAMT must be matched before the bare .xml rule");
+});
+
+// ─── [SENTRY-EEN-CONFIG] One browser Sentry config, and it is the one that runs ─────────────────
+//
+// There were two client Sentry.init calls: src/instrumentation-client.ts, scaffolded by the Sentry
+// wizard, and sentry.client.config.ts, which somebody had thought about carefully — a 5% replay
+// rate, 10% tracing in production, and a beforeSend deleting password, access_token,
+// refresh_token, kvk_number, btw_number and iban before anything left the browser.
+//
+// @sentry/nextjs 10 loads instrumentation-client.ts and ignores sentry.client.config.ts. Confirmed
+// against the BUILT BUNDLE, not the docs: the scaffold's replaysSessionSampleRate 0.1 shipped, the
+// considered 0.05 did not, and neither did its vercel.live frame filter. Every privacy decision in
+// this app was written down and never executed.
+//
+// The direction of the mistake is worth keeping in the record. An external review read the dead
+// file and reported "Session Replay records unmasked text (maskAllText: false)" — reasonable from
+// the source and wrong about production: that line never reached a bundle, and replayIntegration()
+// masks text by default. The real exposure was sendDefaultPii: true with no beforeSend at all.
+//
+// What is held: one config, no resurrection of the second, and the three settings that decide what
+// leaves a bookkeeper's browser.
+test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the privacy rules", () => {
+  // The dead file must stay dead. A wizard re-run recreates it, and it would silently take back
+  // over as the file people read while the other one runs.
+  assert.equal(
+    existsSync("sentry.client.config.ts"), false,
+    "a second client config that looks authoritative and executes nowhere is how this happened",
+  );
+
+  const src = code("src/instrumentation-client.ts");
+
+  // The line that mattered most. The scaffold turns it ON, which attaches IP addresses and user
+  // identifiers to every event and replay — on screens showing turnover, customers and balances.
+  assert.match(src, /sendDefaultPii: false/, "no PII by default, on a bookkeeping app");
+
+  // Stated, never inherited: these are today's library defaults, and a default is a decision
+  // someone else can change in a minor release.
+  for (const opt of ["maskAllText: true", "maskAllInputs: true", "blockAllMedia: true"]) {
+    assert.ok(src.includes(opt), `replay masking must be explicit: ${opt}`);
+  }
+
+  // The work that was written in the dead file has to actually be here.
+  assert.match(src, /beforeSend\(event\)/, "the PII stripper must run, not merely exist");
+  for (const field of ["password", "access_token", "refresh_token", "kvk_number", "btw_number", "iban"]) {
+    assert.ok(src.includes(`delete data.${field}`), `beforeSend must still strip ${field}`);
+  }
+
+  // And the sampling the project chose, not the scaffold's 100%.
+  assert.match(src, /tracesSampleRate: isProduction \? 0\.1 : 1\.0/);
+  assert.match(src, /replaysSessionSampleRate: 0\.05/);
 });

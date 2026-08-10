@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { settleableDirection } from '@/lib/payment-plan'
+import { allocatedOnLine } from '@/lib/bank-line-budget'
 import VerdeelClient, { type VerdeelFactuur } from './VerdeelClient'
 
 export const dynamic = 'force-dynamic'
@@ -35,10 +36,14 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
     .maybeSingle()
   if (!tx) redirect('/dashboard/bank')
 
-  // Wat eerdere koppelingen al van deze regel namen. amount_applied is de bestaande kolom die
-  // apply_bank_payment zelf schrijft; een koppeling zonder waarde stamt van vóór die kolom en
-  // verrekende per definitie de hele factuur — als 0 lezen zou dezelfde euro's twee keer laten
-  // uitgeven.
+  // Wat eerdere koppelingen al van deze regel namen — via allocatedOnLine, dezelfde som als
+  // /api/bank/allocate en als allocate_bank_payment onder zijn lock.
+  //
+  // [CREDITNOTA] Deze telling stond hier uitgeschreven, met Math.abs eromheen, en dat is precies
+  // waar hij misging: een creditnota van € 150 die al aan deze regel hing NAM geen € 150, hij GAF
+  // € 150. Als magnitude geteld verdween er € 300 uit het budget en toonde dit scherm een betaling
+  // die al "helemaal verdeeld" was terwijl er nog € 1.000 te verdelen viel. Drie kopieën van
+  // dezelfde som is hoe dat kon: één ervan wist het, twee niet. Nu is het er één.
   let alreadyAllocated = 0
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,14 +53,13 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
       .eq('transaction_id', txId)
       .eq('user_id', user.id)
     const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>
-    const unpriced = rows.filter((r) => r.amount_applied == null).map((r) => r.invoice_id)
-    for (const r of rows) if (r.amount_applied != null) alreadyAllocated += Math.abs(Number(r.amount_applied) || 0)
-    if (unpriced.length > 0) {
-      const { data: olds } = await pipeline
+    if (rows.length > 0) {
+      const { data: linked } = await pipeline
         .from('invoices')
-        .select('id, total_inc_btw')
-        .in('id', unpriced)
-      for (const o of olds ?? []) alreadyAllocated += Math.abs(Number(o.total_inc_btw) || 0)
+        .select('id, direction, invoice_type, total_inc_btw')
+        .in('id', rows.map((r) => r.invoice_id))
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      alreadyAllocated = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0).allocated
     }
   } catch {
     /* zonder deze telling is het scherm ruimer dan nodig; de route weigert alsnog */

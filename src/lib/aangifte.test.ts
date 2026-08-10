@@ -295,6 +295,46 @@ console.log("\n— [VRIJGESTELD] exempt turnover: named, in no rubriek, and neve
   check("blocked input BTW is disclosed", /4\.200/.test(notes) && /geen recht op aftrek/.test(notes));
 }
 
+console.log("\n— [VRIJGESTELD] blocked input BTW is disclosed in a quarter with no exempt turnover —");
+{
+  // A physio buys a EUR 3.000 treatment table in January and treats their first patient in April.
+  // Q1 has EUR 630 withheld from 5b and no exempt turnover to pair it with. The sentence explaining
+  // why 5b is EUR 630 lower than the purchase invoices say used to sit INSIDE the exempt-turnover
+  // block, so in exactly this quarter it did not appear: the figure was right and read like a bug.
+  const a = buildAangifte(
+    {
+      salesByRate: [{ rate: 21, omzet: 2000, btw: 420 }],
+      btwVoorbelasting: 0,
+      cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 0,
+      voorbelastingGeblokkeerd: 630,
+      exemptRegime: true,
+    },
+    compl(), "Q1 2026",
+  );
+  const notes = a.notes.join(" | ");
+  check("the blocked BTW is named even with zero exempt turnover", /630/.test(notes) && /geen recht op aftrek/.test(notes));
+  check("and no exempt-turnover sentence is invented alongside it", !/van je omzet is VRIJGESTELD/.test(notes));
+
+  // The rounding trap that made it worse: 40 cents of exempt turnover rounds to 0 in the sentence
+  // above, and used to take the blocked-BTW note down with it.
+  const cents = buildAangifte(
+    {
+      salesByRate: [], btwVoorbelasting: 0, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 0.4, voorbelastingGeblokkeerd: 630, exemptRegime: true,
+    },
+    compl(), "Q1 2026",
+  );
+  check("cent-sized exempt turnover no longer hides the blocked BTW", /630/.test(cents.notes.join(" | ")));
+
+  // And an owner with no blocked BTW at all is told nothing — the note is a disclosure, not decor.
+  const none = buildAangifte(
+    { salesByRate: [], btwVoorbelasting: 100, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  check("no blocked BTW → no sentence about it", !/geen recht op aftrek/.test(none.notes.join(" | ")));
+}
+
 console.log("\n— [VRIJGESTELD] a genuinely empty quarter still says so —");
 {
   const a = buildAangifte(

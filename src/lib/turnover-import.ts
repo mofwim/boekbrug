@@ -309,16 +309,33 @@ export function normalizeTurnoverSheet(
       base0 = r2(cols.htRate0.length ? sumCols(row, cols.htRate0) : sumCols(row, cols.otherRate0));
     } else {
       // Legacy single-set (feb.xls / a net-only POS): one "Base" set, gross-vs-net decided
-      // by arithmetic. With a Netto column, pick the closer of gross/net; without one, only
-      // call it gross when the columns SUM to the gross total (≤2%), else treat as net base.
+      // by arithmetic. With a Netto column that is a direct signal — pick the closer of the two
+      // totals. Without one, the question is answered by RECONSTRUCTING the gross under each
+      // reading and seeing which one lands on the number the sheet actually reports.
       const raw0 = sumCols(row, cols.otherRate0);
       const raw9 = sumCols(row, cols.otherRate9);
       const raw21 = sumCols(row, cols.otherRate21);
       const sumRates = raw0 + raw9 + raw21;
       const hasNet = cols.net >= 0 && netTotal > 0;
+      // [NO-NETTO] The no-Netto rule used to be a tolerance: "call it gross only when the columns
+      // sum to within 2% of the gross total, else net". That reads as conservative and is not,
+      // because 0% money is IDENTICAL under both readings and still counts toward the sum.
+      //
+      // A shop with statiegeld: €100 at 0% and €1 at 21%, net columns, gross €101,21. The columns
+      // sum to €101 — 0,2% off the gross — so the old rule called them gross, divided BTW out of
+      // the €1, and booked €0,83 + €0,17 where €1,00 + €0,21 was owed. The 0% money, which the
+      // decision cannot depend on, is what dragged the sum inside the tolerance. Turn the day
+      // around (columns really gross) and the same rule agrees — which is the tell that the
+      // tolerance was measuring the wrong thing.
+      //
+      // The two candidates below differ by exactly raw9·0,09 + raw21·0,21, which IS the BTW at
+      // stake. So they can only be close when there is nothing to get wrong, and no tolerance
+      // constant is needed: whichever reconstruction lands nearer the reported gross wins.
+      const grossIfGross = sumRates;                            // columns already carry the BTW
+      const grossIfNet = raw0 + raw9 * 1.09 + raw21 * 1.21;     // columns are net → add it
       const isGross = hasNet
         ? Math.abs(sumRates - gross) <= Math.abs(sumRates - netTotal)
-        : Math.abs(sumRates - gross) <= 0.02 * Math.max(1, Math.abs(gross));
+        : Math.abs(grossIfGross - gross) <= Math.abs(grossIfNet - gross);
       const split = (raw: number, rate: number) =>
         isGross
           ? { base: r2(raw / (1 + rate / 100)), btw: r2(raw - raw / (1 + rate / 100)) }

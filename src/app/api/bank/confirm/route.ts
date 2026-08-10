@@ -44,6 +44,7 @@ import { isEligible, normalizeRef, isFullyCovered, bankLineFullyApplied, parseRe
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
+import { allocatedOnLine } from "@/lib/bank-line-budget";
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
@@ -221,12 +222,28 @@ export async function POST(req: NextRequest) {
     if (linkReadErr) {
       appliedElsewhereKnown = false;
     } else {
-      for (const r of (linkRows ?? []) as { invoice_id: string; amount_applied: number | null }[]) {
-        if (r.invoice_id === invoiceId) continue;
-        // A link with no amount is a pre-[PARTIAL-PAY] row: we cannot tell what it settled, so we
-        // do not pretend to know what is left. The legacy reference rule takes over below.
-        if (r.amount_applied == null) { appliedElsewhereKnown = false; continue; }
-        appliedElsewhere += Math.max(0, Number(r.amount_applied));
+      const others = ((linkRows ?? []) as { invoice_id: string; amount_applied: number | null }[])
+        .filter((r) => r.invoice_id !== invoiceId);
+      // A link with no amount is a pre-[PARTIAL-PAY] row: we cannot tell what it settled, so we do
+      // not pretend to know what is left. The legacy reference rule takes over below.
+      if (others.some((r) => r.amount_applied == null)) appliedElsewhereKnown = false;
+      const priced = others.filter((r) => r.amount_applied != null);
+      if (priced.length > 0) {
+        // [CREDITNOTA] SIGNED, through the one module that owns this sum. A credit already on this
+        // line did not spend €150 of it, it returned €150 to it — counted as a magnitude the line
+        // looks €300 poorer, and this very route then caps the next invoice at the smaller number
+        // and books an amount that was never agreed. Same rule as allocate_bank_payment applies
+        // under its lock, which is the point of it living in one file.
+        const { data: linkedInvoices } = await pipeline
+          .from("invoices")
+          .select("id, direction, invoice_type, total_inc_btw")
+          .in("id", priced.map((r) => r.invoice_id))
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+        const sum = allocatedOnLine(priced, linkedInvoices ?? [], Number(tx.amount) || 0);
+        // A sibling link whose invoice this user cannot read is the same situation as a missing
+        // amount: the total is not measurable, so we say so rather than under-count it.
+        if (sum.unknownInvoiceIds.length > 0) appliedElsewhereKnown = false;
+        appliedElsewhere = sum.allocated;
       }
     }
   }

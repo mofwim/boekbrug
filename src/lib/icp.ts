@@ -331,28 +331,54 @@ export function buildForeignPurchaseCsv(r: ForeignPurchaseResult, periodLabel: s
 // article (138 for goods, 44/196 for services) would be a guess about which of the two this
 // invoice is, and a wrong citation is worse than none.
 
-/** The mandatory reverse-charge sentence for this invoice, or null when it does not apply. */
-export function reverseChargeNotice(args: {
+/** What the invoice has to be, for the reverse charge to be a fact about it. */
+export interface ReverseChargeFacts {
   clientVatNumber: string | null | undefined;
   btwAmount: number | null | undefined;
   invoiceType: string | null | undefined;
   korActive?: boolean;
+}
+
+/**
+ * IS the BTW on this invoice shifted to the customer?
+ *
+ * [E-FACTUUR-VERLEGD] Split out of reverseChargeNotice() because the answer has TWO readers who
+ * must never disagree: the PDF prints a sentence, and the UBL export has to put the supply in
+ * category AE instead of Z. It used to be the sentence only, so the same invoice went out saying
+ * "Btw verlegd" on paper and "zero rated" in the XML — and from the 2027/2028 Dutch mandate the
+ * XML is the one that counts.
+ *
+ * Note what is NOT here: the line-text check. "The owner already wrote it, so do not say it twice"
+ * is about the SENTENCE, not about whether the reverse charge applies. Folding it in would mean an
+ * invoice that says "btw verlegd" in its own line description exports as Z — the exact case that
+ * is most certainly reverse-charged.
+ */
+export function isReverseChargedInvoice(args: ReverseChargeFacts): boolean {
+  // An offerte or pro forma is not a legal invoice and may not carry a BTW statement at all.
+  const type = args.invoiceType ?? "factuur";
+  if (type !== "factuur" && type !== "creditnota") return false;
+  // Under KOR nothing is charged for a different reason entirely; claiming verlegging there
+  // would be a statement about a regime the owner is not in.
+  if (args.korActive === true) return false;
+  // BTW on the invoice means it was NOT shifted to the customer, whatever the VAT number says.
+  if (Math.abs(Number(args.btwAmount) || 0) >= 0.005) return false;
+  return classifyVatNumber(args.clientVatNumber).kind === "eu";
+}
+
+/** The mandatory reverse-charge sentence for this invoice, or null when it does not apply. */
+export function reverseChargeNotice(args: ReverseChargeFacts & {
   /** The invoice's own line texts — if the owner already wrote it, we do not say it twice. */
   lineTexts?: Array<string | null | undefined>;
 }): string | null {
-  // An offerte or pro forma is not a legal invoice and may not carry a BTW statement at all.
-  const type = args.invoiceType ?? "factuur";
-  if (type !== "factuur" && type !== "creditnota") return null;
-  // Under KOR nothing is charged for a different reason entirely; claiming verlegging there
-  // would be a statement about a regime the owner is not in.
-  if (args.korActive === true) return null;
-  // BTW on the invoice means it was NOT shifted to the customer, whatever the VAT number says.
-  if (Math.abs(Number(args.btwAmount) || 0) >= 0.005) return null;
-  const shape = classifyVatNumber(args.clientVatNumber);
-  if (shape.kind !== "eu") return null;
+  if (!isReverseChargedInvoice(args)) return null;
   for (const t of args.lineTexts ?? []) {
     if (/btw\s*verlegd|reverse\s*charge|verleggingsregeling/i.test(String(t ?? ""))) return null;
   }
+  // isReverseChargedInvoice() already established kind === "eu"; this narrows the union for the
+  // compiler rather than trusting it, so a future change to that predicate cannot print "undefined"
+  // as a customer's BTW number on a legal document.
+  const shape = classifyVatNumber(args.clientVatNumber);
+  if (shape.kind !== "eu") return null;
   return `Btw verlegd — intracommunautaire prestatie. BTW-nummer afnemer: ${shape.vat}.`;
 }
 

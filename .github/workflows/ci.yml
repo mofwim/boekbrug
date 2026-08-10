@@ -10,6 +10,11 @@
 # `npm run gates`; everything else must match, and steps 2 and 3 now call the
 # package.json scripts by name so they cannot drift apart again.
 #
+# A second job runs a sixth gate that `npm run gates` does NOT:
+#   6. tests/sql/ — the migrations, against a real PostgreSQL.
+# It is not in `gates` because it needs a service and the local gates are worth
+# keeping runnable on a bare checkout. See the [SEAM] block above that job.
+#
 # [PUBLIC-SMOKE] Why a fourth gate. The first three are all STATIC: none of them ever starts the
 # app. They therefore share one blind spot, and it is not theoretical — /eerlijk-gebruik was
 # written, type-checked, built, prerendered, linked from the footer of every public page and listed
@@ -111,3 +116,52 @@ jobs:
       # are fake — the point of this gate is that the public surface needs no real backend.
       - name: Public-surface smoke test
         run: npx playwright test tests/public-surface.spec.ts
+
+  # [SEAM] Gate 6 — the one that can read plpgsql.
+  #
+  # Its own job because it is the only gate that needs a service, and the job above is worth keeping
+  # runnable on a bare checkout with an empty environment. They run in parallel.
+  #
+  # WHY IT EXISTS. Every other test in this repo is pure. payment-plan.ts has 22 that prove a
+  # payment plan is arithmetically sound, and not one of them crosses into SQL — so the seam between
+  # a proven plan and the function that writes it was untested, and it produced two defects that
+  # walked through the entire gate set untouched:
+  #
+  #   · the route looped apply_bank_payment, which consumes the bank line on its FIRST call, so
+  #     every multi-invoice allocation failed after its first invoice — the whole feature;
+  #   · allocate_bank_payment was sign-blind, so the creditnota case payment-plan.ts exists FOR
+  #     booked a €1.000 invoice as €850 paid and never settled the credit.
+  #
+  # TypeScript cannot see either: the contract that was wrong lives in plpgsql. This job runs the
+  # migration that ships against a real PostgreSQL and asserts what it actually does.
+  #
+  # SQL_SEAM_REQUIRED=1 is the important line. Without it the runner SKIPS when no database is
+  # reachable, which is right on a laptop and would be a lie here — a green check that ran nothing.
+  sql-seam:
+    name: SQL contracts (real PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: seam
+          POSTGRES_DB: seamtest
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # psql only — no npm install, no build. The gate is a few hundred milliseconds of SQL.
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: SQL seam tests
+        env:
+          DATABASE_URL: postgres://postgres:seam@localhost:5432/seamtest
+          SQL_SEAM_REQUIRED: '1'
+        run: bash scripts/sql-seam-test.sh

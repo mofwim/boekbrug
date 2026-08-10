@@ -112,15 +112,37 @@ export function splitSliceByShares(
   const totalEx = shares.reduce((s, r) => s + r.ex, 0);
   if (Math.abs(totalEx) < EPS) return null;
 
+  // ── [BTW-EIGEN-GEWICHT] The turnover splits by ex; the BTW splits by BTW ──
+  //
+  // Both used to divide by the ex-share, and on a MIXED-rate invoice that is simply the wrong
+  // arithmetic. A plumber's invoice of €1.000 materials @21% (BTW €210) and €1.000 labour @9%
+  // (BTW €90) has an even ex-split, so half a payment gave each bucket €75 of BTW — declaring
+  // rubriek 1a as €500 turnover with €75 BTW (a 15% rate in the 21% box) and 1b as €500 with €75
+  // (a 15% rate in the 9% box). €30 in the wrong rubriek on each side, from a correct invoice.
+  //
+  // A 0% line makes it worse rather than smaller: €10.000 intracommunautair @0% beside €1.000
+  // domestic @21% has 91% of the ex and none of the BTW, so it absorbed 91% of the BTW too — real
+  // BTW booked into a rubriek that carries none, and the taxed rubriek left short.
+  //
+  // The BTW of a slice belongs to each rate in proportion to THAT RATE'S OWN BTW. The ex-weight
+  // is kept only for the ex, and as the fallback when there is no BTW to distribute at all (an
+  // all-0% mix), where every bucket's share is zero either way.
+  const totalBtw = shares.reduce((s, r) => s + r.btw, 0);
+  const btwWeighted = Math.abs(totalBtw) >= EPS;
+
   const out: RateShare[] = shares.map((r) => ({
     rate: r.rate,
     ex: cents(sliceEx * (r.ex / totalEx)),
-    btw: cents(sliceBtw * (r.ex / totalEx)),
+    btw: cents(sliceBtw * (btwWeighted ? r.btw / totalBtw : r.ex / totalEx)),
   }));
   const sumEx = cents(out.reduce((s, r) => s + r.ex, 0));
   const sumBtw = cents(out.reduce((s, r) => s + r.btw, 0));
-  const biggest = out.reduce((a, b) => (Math.abs(b.ex) > Math.abs(a.ex) ? b : a));
-  biggest.ex = cents(biggest.ex + (cents(sliceEx) - sumEx));
-  biggest.btw = cents(biggest.btw + (cents(sliceBtw) - sumBtw));
+  // The rounding residue lands on the biggest bucket of its OWN axis. Since the two axes are now
+  // weighted differently, the largest ex-bucket is not necessarily the largest BTW-bucket — and
+  // putting a BTW cent on a 0% bucket would be the very error this function just stopped making.
+  const biggestEx = out.reduce((a, b) => (Math.abs(b.ex) > Math.abs(a.ex) ? b : a));
+  const biggestBtw = out.reduce((a, b) => (Math.abs(b.btw) > Math.abs(a.btw) ? b : a));
+  biggestEx.ex = cents(biggestEx.ex + (cents(sliceEx) - sumEx));
+  biggestBtw.btw = cents(biggestBtw.btw + (cents(sliceBtw) - sumBtw));
   return out;
 }

@@ -241,5 +241,38 @@ console.log("\n— [DATE-WINDOW] a slipped digit in the year is refused, not boo
   check("the preview warns about the impossible year", warnings.some((w) => w.code === "date_out_of_window"));
 }
 
+console.log("\n— [NO-NETTO] a legacy sheet without a Netto column: gross or net? —");
+{
+  // The columns are NET and the day is mostly statiegeld: EUR 100 at 0% + EUR 1 at 21%, gross
+  // EUR 101,21. The old rule ("call it gross when the columns sum to within 2% of the gross")
+  // saw EUR 101 against EUR 101,21 — 0,2% off — and called them gross, dividing BTW out of the
+  // EUR 1. The 0% money is what dragged the sum inside the tolerance, and 0% money is exactly
+  // what the decision cannot depend on: it reads the same either way.
+  const H = ["Datum", "Omzet incl.", "Base TC 0 %", "Base TC 21 %"];
+  const netDay = normalizeTurnoverSheet([H, ["01-02-2026", 101.21, 100, 1]]).rows[0];
+  check("net columns are read as net, not divided down",
+    near(netDay.base_21!, 1) && near(netDay.btw_21!, 0.21));
+  check("and the 0% money is untouched", near(netDay.base_0!, 100));
+  check("so the day still adds up to its own gross",
+    near(netDay.base_0! + netDay.base_21! + netDay.btw_21!, 101.21));
+
+  // Turn the same day around — columns really gross — and it must go the other way. The old rule
+  // agreed with BOTH, which is the tell that it was measuring the wrong thing.
+  const grossDay = normalizeTurnoverSheet([H, ["01-02-2026", 101, 100, 1]]).rows[0];
+  check("gross columns are still divided down", near(grossDay.base_21!, 0.83) && near(grossDay.btw_21!, 0.17));
+  check("…and that day adds up too", near(grossDay.base_0! + grossDay.base_21! + grossDay.btw_21!, 101));
+
+  // The plain cases the old rule already got right must not move.
+  const plainNet = normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 21 %"], ["01-02-2026", 121, 100]]).rows[0];
+  check("a net-only sheet is unchanged", near(plainNet.base_21!, 100) && near(plainNet.btw_21!, 21));
+  const plainGross = normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["01-02-2026", 109, 109]]).rows[0];
+  check("a gross-only sheet is unchanged", near(plainGross.base_9!, 100) && near(plainGross.btw_9!, 9));
+
+  // A day where the two readings are close is a day where nothing is at stake: they differ by
+  // exactly raw9x0,09 + raw21x0,21, which IS the BTW being decided. All-0% is that case.
+  const zeroOnly = normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 0 %"], ["01-02-2026", 250, 250]]).rows[0];
+  check("an all-0% day carries no BTW either way", near(zeroOnly.base_0!, 250) && near(zeroOnly.btw_9! + zeroOnly.btw_21!, 0));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -49,8 +49,27 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+-- [BANK-BATCH-AMBIGU] This function RETURNS TABLE(invoice_id uuid), which declares a plpgsql
+-- variable of that name -- and step (3) below says ON CONFLICT (transaction_id, invoice_id).
+-- plpgsql cannot tell whether that means the variable or the column, and its default
+-- (variable_conflict = error) refuses to guess. So EVERY call raised
+--
+--     column reference "invoice_id" is ambiguous
+--
+-- on the simplest possible input: two invoices tying exactly to the line. The batch pass in
+-- bank-auto-confirm.ts answers a raise with `if (batchErr) continue`, and its comment reads
+-- "error => not payable / migration not applied => the batch stays for the human" -- so the
+-- failure looked like an expected outcome, every time, forever. Multi-invoice auto-confirmation
+-- has never booked anything.
+--
+-- One line settles it: inside the conflict target a bare name means the COLUMN. Nothing else in
+-- this function shares a name with a column, so this directive touches exactly that identifier.
+#variable_conflict use_column
 DECLARE
   v_tx_status text;
+  v_tx_amount numeric;
+  v_sum_open  numeric;
+  v_elsewhere numeric;
   v_rep       uuid;
   v_bad       int;
 BEGIN
@@ -67,6 +86,14 @@ BEGIN
     RAISE EXCEPTION '[BANK-BATCH] no invoices supplied' USING ERRCODE = '22023';
   END IF;
 
+  -- [BANK-BATCH-DUBBEL] The same invoice twice in one batch is not a batch. Left as given, the tie
+  -- below counted that invoice's open balance once per occurrence while the INSERT wrote a single
+  -- link row: measured, ARRAY[a, a] on a EUR 500 invoice tied against a EUR 1.000 line, booked
+  -- EUR 500, and flipped the line to 'matched' with EUR 500 explained by nothing. De-duplicating
+  -- makes the tie fail on its own arithmetic (500 <> 1000) and the batch abort, which is the
+  -- honest answer — the caller planned something that only works if one invoice counts twice.
+  SELECT array_agg(DISTINCT id) INTO p_invoice_ids FROM unnest(p_invoice_ids) AS u(id);
+
   -- (1) MUTEX — lock the bank line. A concurrent booker for the same tx blocks
   --     here; after we commit it re-reads the row and sees status <> 'pending'
   --     and returns 0 rows. This empty-return path assumes READ COMMITTED (the
@@ -74,7 +101,7 @@ BEGIN
   --     'matched' row. Under REPEATABLE READ / SERIALIZABLE the loser's FOR
   --     UPDATE instead raises a serialization error — which the caller catches
   --     as batchErr and skips, so it still fails SAFE (never double-books).
-  SELECT status INTO v_tx_status
+  SELECT status, abs(coalesce(amount, 0)) INTO v_tx_status, v_tx_amount
   FROM public.bank_transactions
   WHERE id = p_tx_id AND user_id = p_user_id
   FOR UPDATE;
@@ -110,6 +137,58 @@ BEGIN
       USING ERRCODE = '55000';   -- object_not_in_prerequisite_state
   END IF;
 
+  -- [BANK-BATCH-GELIJK] This file and bank_confirm_atomic.sql BOTH define book_bank_batch, and
+  -- whichever is applied last wins. That is an ordering hazard with money on the end of it: the
+  -- newer file added the tie re-proof, and applying this one afterwards would have removed it
+  -- again, silently. The two bodies are therefore kept IDENTICAL — the tie block below is the same
+  -- one that lives there. Duplication is the lesser evil; a function whose behaviour depends on
+  -- migration order is not.
+
+  -- (2b) [BANK-BATCH-TIE-LOCKED] Re-prove the cent-exact tie on the CURRENT
+  --      open balances, under the lock. The caller planned against a snapshot;
+  --      if an instalment landed since, these amounts no longer sum to the
+  --      line and booking them would settle invoices with money that is not
+  --      there. A broken tie aborts everything — nothing half-books.
+  --
+  --      [BANK-BATCH-ELDERS] Against what the line STILL HAS, not its face amount. This comparison
+  --      ignored the euros already sitting on OTHER invoices of the same line, and a bank line
+  --      stays 'pending' precisely while part of it is spent (confirm_bank_payment leaves it so).
+  --      Measured: a EUR 1.000 debit with EUR 400 already booked elsewhere accepted a batch of
+  --      EUR 1.000 and left Σ amount_applied at EUR 1.400 — the same euros booked twice, which is
+  --      the exact state [BANK-OVERAPPLIED-LOUD] exists to shout about after the fact.
+  --
+  --      Signed, and by the LINE's direction: identical to the sum in confirm_bank_payment and to
+  --      bank-line-budget.ts's spendsTheLine. A credit note gives money back to a debit and spends
+  --      a refund, so summing magnitudes here would refuse a batch that fits.
+  SELECT coalesce(sum(
+           CASE WHEN ((i.direction = 'incoming')
+                       <> (coalesce(i.invoice_type, 'factuur') = 'creditnota'
+                           OR coalesce(i.total_inc_btw, 0) < 0))
+                     = (coalesce(t.amount, 0) < 0)
+                THEN  abs(coalesce(l.amount_applied, 0))
+                ELSE -abs(coalesce(l.amount_applied, 0)) END
+         ), 0) INTO v_elsewhere
+  FROM public.bank_tx_invoices l
+  JOIN public.invoices i ON i.id = l.invoice_id
+  JOIN public.bank_transactions t ON t.id = l.transaction_id
+  WHERE l.transaction_id = p_tx_id AND l.user_id = p_user_id;
+  -- EVERY link on the line, including ones to invoices IN this batch. Excluding those was the
+  -- first version of this fix and it double-counts: an invoice the line already part-paid carries
+  -- that money BOTH in its own reduced open balance and in the link row, so leaving the link out
+  -- of `elsewhere` lets the batch spend it twice. Measured on a EUR 1.000 line with EUR 200 already
+  -- on one of its own batch invoices: Σ amount_applied came out at EUR 1.200.
+
+  SELECT coalesce(sum(GREATEST(0, abs(coalesce(i.total_inc_btw, 0)) - coalesce(i.amount_paid, 0))), 0)
+    INTO v_sum_open
+  FROM unnest(p_invoice_ids) AS ids(id)
+  JOIN public.invoices i ON i.id = ids.id;
+
+  IF abs(v_sum_open - (v_tx_amount - v_elsewhere)) > 0.01 THEN
+    RAISE EXCEPTION '[BANK-BATCH] tie no longer exact (open sum % vs line % with % already applied) — batch aborted',
+      v_sum_open, v_tx_amount, v_elsewhere USING ERRCODE = '55000';
+  END IF;
+
+
   -- (3) [PARTIAL-PAY] Record EVERY invoice this payment paid, WITH the amount applied —
   --     and do it BEFORE the invoices are updated, because the amount this batch applies is
   --     the balance that is still OPEN right now: abs(total) − amount_paid. Using the full
@@ -118,12 +197,18 @@ BEGIN
   --     recompute_invoice_amount_paid (which re-derives amount_paid from that SUM on every
   --     unlink) would then clamp/overstate. The rows are locked FOR UPDATE above, so this
   --     pre-update read is stable. Also the collision-free reversal index (unchanged role).
+  -- [BANK-BATCH-ELDERS] ACCUMULATE on conflict, never DO NOTHING. When this same line had already
+  -- put money on one of these invoices, dropping the new row left amount_paid at the invoice's full
+  -- magnitude (step 4) while Σ amount_applied still read the older, smaller figure — and
+  -- amount_paid = Σ amount_applied is the one invariant this whole system rests on. The next unlink
+  -- would then recompute the invoice back to that smaller number, silently reopening a paid bill.
   INSERT INTO public.bank_tx_invoices (user_id, transaction_id, invoice_id, amount_applied)
   SELECT p_user_id, p_tx_id, i.id,
          GREATEST(0, abs(coalesce(i.total_inc_btw, 0)) - coalesce(i.amount_paid, 0))
   FROM unnest(p_invoice_ids) AS ids(id)
   JOIN public.invoices i ON i.id = ids.id
-  ON CONFLICT (transaction_id, invoice_id) DO NOTHING;
+  ON CONFLICT (transaction_id, invoice_id)
+  DO UPDATE SET amount_applied = coalesce(public.bank_tx_invoices.amount_applied, 0) + EXCLUDED.amount_applied;
 
   -- (4) Pay every invoice. All verified unpaid above → each flips exactly once.
   --     [PARTIAL-PAY] amount_paid must land on the FULL magnitude: this batch settles the
