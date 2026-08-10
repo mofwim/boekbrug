@@ -44,6 +44,9 @@ import { invoiceOwnerId, invoiceCreatedBy, isActingForOther, canAccessInvoice } 
 import { writeWithTrail } from '@/lib/created-by'
 // [ALARM] Een poort die niet kon draaien moet iemand bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
+// [KLANT-EXTRA] De twee vrije klantregels reizen mee naar het nieuwe document — in een
+// aparte, mislukbare schrijfbeurt. Zie de kop van dat bestand.
+import { copyExtraLinesOnto } from '@/lib/client-extra-lines-write'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -247,6 +250,15 @@ export async function POST(request: NextRequest) {
       console.error('[FACTUUR-A] Creditnota insert failed', { original_invoice_id, insertError })
       return NextResponse.json({ error: 'Creditnota aanmaken mislukt' }, { status: 500 })
     }
+
+    // [KLANT-EXTRA] Dezelfde klantregels als op de factuur die deze creditnota corrigeert. Zonder
+    // ze belandt de correctie op een ander bureau dan de factuur — bij precies de klant die de
+    // factuur zonder die regels niet kon verwerken.
+    await copyExtraLinesOnto(
+      (fields) => supabase.from('invoices').update(fields as never).eq('id', creditnota.id),
+      original,
+      { original: original_invoice_id, creditnota: creditnota.id },
+    )
 
     // [BOEK-031] Haal originele regels op en kopieer ze negatief
     const { data: originalLines } = await supabase

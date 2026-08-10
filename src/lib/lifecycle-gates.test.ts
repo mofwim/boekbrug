@@ -3673,7 +3673,7 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
   const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
 
   assert.doesNotMatch(
-    route, /\.update\(patch as never\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
+    route, /\.update\(\{ \.\.\.patch[^)]*\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
     "the compare-and-swap may not demand 'draft' — that refuses every editable sent quote",
   );
   assert.match(
@@ -3681,9 +3681,21 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
     "…it guards on the status that was READ, which is what protects against a change in between",
   );
   assert.match(
-    route, /if \(existing\.status !== 'draft'\) cas = cas\.is\('invoice_number', null\)/,
+    route, /if \(existing\.status !== 'draft'\) q = q\.is\('invoice_number', null\)/,
     "…and a non-draft may only be written while it still carries no number",
   );
+
+  // [KLANT-EXTRA] The update is now RETRIED when the two customer lines name a column the schema
+  // does not have yet, and the retry must carry the same lock as the first attempt. Both guards
+  // therefore have to sit INSIDE the retried closure — outside it, the fallback would write with
+  // no status test at all, onto exactly the invoice that may have been issued in the meantime.
+  const runPatch = route.slice(
+    route.indexOf("const runPatch = "),
+    route.indexOf("const { data: patched"),
+  );
+  assert.ok(runPatch.length > 0, "the patch is no longer built in a re-runnable function");
+  assert.match(runPatch, /\.eq\('status', existing\.status \?\? 'draft'\)/, "the retry keeps the status lock");
+  assert.match(runPatch, /q = q\.is\('invoice_number', null\)/, "…and the number lock");
   assert.match(
     route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
     "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
@@ -5398,4 +5410,114 @@ test("[FOCUS-KOP] a deep link that cannot land says so instead of returning sile
   assert.ok(guard > 0, "the not-in-list guard is gone");
   const branch = screen.slice(guard, guard + 400);
   assert.match(branch, /showToast\(/, "a focus that cannot land must be reported, never swallowed");
+});
+
+// ─── [KLANT-EXTRA] Two free lines under the customer's name ─────────────────────────────────────
+//
+// Asked for: two extra inputs in the customer block of an invoice, for information the owner needs
+// to put on their customer's document — and they come DIRECTLY AFTER THE NAME. That last part is
+// the requirement, not a detail: an addressee line printed under the postcode is not an addressee
+// line. So the order is asserted here on the form, and on a rendered PDF in
+// invoice-pdf-document.test.ts, which is the only place that can say where the text came out.
+//
+// The other half of this feature is that it CANNOT COST AN INVOICE. The columns arrive with
+// supabase/migrations/client_extra_lines.sql, applied by the owner, so between a deploy and that
+// moment the code is newer than the schema. PostgREST answers a write naming an unknown column by
+// rejecting the whole row, which would turn two decorative address lines into "your invoice was
+// not saved". Every write path therefore carries a fallback, and this gate checks that none of
+// them names these columns without one.
+
+const EXTRA_FORMS = [
+  ["src/app/dashboard/invoice/new/page.tsx", "clientExtra1", "clientExtra2"],
+  ["src/app/dashboard/invoice/[id]/edit/page.tsx", "clientExtra1", "clientExtra2"],
+] as const;
+
+test("[KLANT-EXTRA] both invoice screens put the two lines directly after the customer name", () => {
+  for (const [f, one, two] of EXTRA_FORMS) {
+    const screen = code(f);
+    // The inputs must be BOUND to state, not merely mentioned.
+    assert.match(screen, new RegExp(`value=\\{${one}\\}`), `${f}: line 1 is not a bound input`);
+    assert.match(screen, new RegExp(`value=\\{${two}\\}`), `${f}: line 2 is not a bound input`);
+
+    // ORDER on the form, which is what was asked for. The name field comes first, then the two
+    // extra lines, then the e-mail — the same order they take on the document.
+    const name = screen.indexOf("label=\"Bedrijfsnaam\"") >= 0
+      ? screen.indexOf("label=\"Bedrijfsnaam\"")
+      : screen.indexOf("Bedrijfsnaam");
+    const l1 = screen.indexOf(`value={${one}}`);
+    const l2 = screen.indexOf(`value={${two}}`);
+    const email = screen.indexOf(`value={clientEmail}`);
+    assert.ok(name >= 0 && l1 > name, `${f}: line 1 must follow the Bedrijfsnaam field`);
+    assert.ok(l2 > l1, `${f}: line 2 must follow line 1`);
+    assert.ok(email > l2, `${f}: both lines must sit ABOVE the e-mail field, not after the address`);
+
+    // A bound input with no ceiling lets a pasted paragraph reach a customer's document.
+    assert.match(screen, /maxLength=\{MAX_EXTRA_LINE_LENGTH\}/, `${f}: the inputs need the shared bound`);
+
+    // …and the screen must actually SEND them, or the fields are decoration.
+    assert.match(screen, new RegExp(`client_extra_line1: ${one}`), `${f}: line 1 is never sent`);
+    assert.match(screen, new RegExp(`client_extra_line2: ${two}`), `${f}: line 2 is never sent`);
+  }
+});
+
+test("[KLANT-EXTRA] the two screens send them on EVERY save path, not just one", () => {
+  // Both screens have two submit paths — save as draft and send. A field carried by only one of
+  // them is worse than no field: the owner types it, saves, and it is there until the moment they
+  // send, which is the moment it matters.
+  for (const [f] of EXTRA_FORMS) {
+    const screen = code(f);
+    const sends = (screen.match(/client_extra_line1:/g) ?? []).length;
+    const snapshots = (screen.match(/client_btw_number: clientBtw/g) ?? []).length;
+    assert.equal(
+      sends, snapshots,
+      `${f}: the two lines travel on ${sends} of the ${snapshots} payloads that carry the customer snapshot`,
+    );
+  }
+});
+
+test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
+  // The rule this gate exists for. PostgREST rejects the WHOLE row on an unknown column, so a bare
+  // mention in an insert or update payload is an invoice that cannot be saved on any database
+  // where the migration is still open.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+  const SAFE = /writeWithExtraLines|extraLineFields|copyExtraLinesOnto/;
+  const offenders = walk("src/app/api")
+    .filter((f) => /client_extra_line[12]/.test(code(f)))
+    .filter((f) => !SAFE.test(code(f)));
+  assert.deepEqual(
+    offenders, [],
+    "these routes name client_extra_line1/2 directly. An unknown column makes PostgREST reject " +
+      "the whole row, so this is an invoice that cannot be saved — route it through " +
+      "client-extra-lines-write.ts instead",
+  );
+});
+
+test("[KLANT-EXTRA] the migration is additive and the generated types carry all three blocks", () => {
+  const raw = readFileSync("supabase/migrations/client_extra_lines.sql", "utf8");
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line1 text/);
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line2 text/);
+
+  // The STATEMENTS, without the prose. The first draft of this assertion read the whole file and
+  // failed on its own header — the sentence "Nullable, no default, no backfill" contains the word
+  // it was forbidding. A gate that reads comments is checking what the file SAYS about itself
+  // rather than what it does.
+  const sql = raw.replace(/--[^\n]*/g, " ");
+  // Nullable, no default, no backfill: every existing invoice must keep the document it renders
+  // now. A NOT NULL or a DEFAULT would rewrite the customer block of every invoice ever issued.
+  assert.doesNotMatch(sql, /NOT NULL|DEFAULT|UPDATE public\.invoices/i);
+  // …and the columns must be added to invoices, not to some other table.
+  assert.match(sql, /ALTER TABLE public\.invoices/);
+
+  // Row, Insert and Update — a missing one means the compiler cannot see the column on that path.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  assert.equal((types.match(/client_extra_line1/g) ?? []).length, 3, "Row + Insert + Update");
+  assert.equal((types.match(/client_extra_line2/g) ?? []).length, 3);
 });

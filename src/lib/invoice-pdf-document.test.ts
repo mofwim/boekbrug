@@ -338,3 +338,63 @@ test("[BTW-VERKLARING] an invoice that DOES charge btw explains nothing", async 
   assert.ok(!text.includes(NOTE), "and no explanation of an absence that is not happening");
   assert.ok(!text.includes("kleineondernemersregeling"));
 });
+
+// ─── [KLANT-EXTRA] The two free lines under the customer's name ────────────────────────────────
+//
+// Read off a rendered document, because the claim is about ORDER on a page: the lines have to sit
+// between the customer's name and their street. A source-level check can see that the JSX exists;
+// only the document can say where the text came out.
+
+test("[KLANT-EXTRA] both lines print between the customer name and the street", async () => {
+  const text = await pdfText(await renderInvoicePdf(
+    { ...INVOICE, client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: "PO-2026-114" },
+    ZERO_LINE, PROFILE,
+  ));
+  assert.match(text, /t\.a\.v\. mevrouw Jansen/, "the addressee must be on the page");
+  assert.match(text, /PO-2026-114/, "…and the reference the customer's system needs");
+
+  // ORDER is the whole point — under the name, above the address.
+  const name = text.indexOf("Stichting Contour de Twern");
+  const one = text.indexOf("t.a.v. mevrouw Jansen");
+  const two = text.indexOf("PO-2026-114");
+  const street = text.indexOf("Spoorlaan 444");
+  assert.ok(name >= 0 && one > name, "line 1 must follow the customer name");
+  assert.ok(two > one, "line 2 must follow line 1, in the order they were typed");
+  assert.ok(street > two, "…and the street must still come after both");
+});
+
+test("[KLANT-EXTRA] only the second filled leaves no blank line above it", async () => {
+  const text = await pdfText(await renderInvoicePdf(
+    { ...INVOICE, client_extra_line1: null, client_extra_line2: "Afdeling Inkoop" },
+    ZERO_LINE, PROFILE,
+  ));
+  const name = text.indexOf("Stichting Contour de Twern");
+  const dept = text.indexOf("Afdeling Inkoop");
+  const street = text.indexOf("Spoorlaan 444");
+  assert.ok(dept > name && street > dept, "the filled line must sit directly under the name");
+  // Nothing empty rendered between them: the text between the name and the department is only the
+  // line break, never a second one for a row that was left blank.
+  assert.doesNotMatch(text.slice(name + "Stichting Contour de Twern".length, dept), /\S/);
+});
+
+test("[KLANT-EXTRA] an invoice without them renders exactly the block it always had", async () => {
+  // Every invoice that exists today has both columns null. This is the regression that matters.
+  const before = await pdfText(await renderInvoicePdf(INVOICE, ZERO_LINE, PROFILE));
+  const after = await pdfText(await renderInvoicePdf(
+    { ...INVOICE, client_extra_line1: null, client_extra_line2: "" }, ZERO_LINE, PROFILE,
+  ));
+  assert.equal(after, before, "a null/empty pair must change nothing on the page");
+  assert.match(before, /Stichting Contour de Twern/);
+});
+
+test("[KLANT-EXTRA] a pasted paragraph cannot push the address block down the page", async () => {
+  // Bounded at 60 characters — roughly one rendered line in a block that is 48% of an A4 page.
+  const text = await pdfText(await renderInvoicePdf(
+    { ...INVOICE, client_extra_line1: "R".repeat(400) }, ZERO_LINE, PROFILE,
+  ));
+  assert.doesNotMatch(text, /R{61}/, "the line must not reach the page unbounded");
+  assert.match(text, /R{60}/, "…and what fits must still be printed");
+  // The rest of the document must survive it.
+  assert.match(text, /Spoorlaan 444/);
+  assert.match(text, /Advies/);
+});

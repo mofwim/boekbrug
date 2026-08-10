@@ -40,6 +40,8 @@ import {
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
+// [KLANT-EXTRA] Zelfde bovengrens als het document en de schrijfroute — zie de kop daarvan.
+import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -268,6 +270,7 @@ function LineInput({
 // Enter key moves focus to next input
 function OutlinedInput({
   value, onChange, onFocus, placeholder, label, type = 'text', required = false, focusColor, hasError = false,
+  maxLength,
 }: {
   value: string | number
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
@@ -278,6 +281,9 @@ function OutlinedInput({
   required?: boolean
   focusColor: string
   hasError?: boolean
+  /** [KLANT-EXTRA] Een harde bovengrens die de INVOERDER ziet. Pas afkappen bij het renderen zou
+   *  betekenen dat een klant een half inkoopordernummer ontvangt zonder dat iemand het merkt. */
+  maxLength?: number
 }) {
   const [focused, setFocused] = useState(false)
 
@@ -318,6 +324,7 @@ function OutlinedInput({
         type={type}
         value={value}
         onChange={onChange}
+        maxLength={maxLength}
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onBlur={() => setFocused(false)}
@@ -482,6 +489,11 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
+  // afdeling of het inkoopordernummer dat de klant op de factuur wil zien staan. Per document,
+  // niet per klant: een inkoopordernummer verschilt per factuur.
+  const [clientExtra1, setClientExtra1]   = useState('')
+  const [clientExtra2, setClientExtra2]   = useState('')
   // [ICP] A customer number that names another EU member state but cannot have that length.
   // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
   // impossible for that country, so a valid number is never called wrong.
@@ -968,6 +980,8 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_extra_line1: clientExtra1,
+        client_extra_line2: clientExtra2,
         lines: lines.map(l => ({
           description: l.description,
           quantity: l.quantity,
@@ -1121,6 +1135,8 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_extra_line1: clientExtra1,
+        client_extra_line2: clientExtra2,
         // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
         replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
         // [KORTING] Ruwe invoer; de server valideert opnieuw met dezelfde parseDiscount. Het scherm
@@ -1434,6 +1450,16 @@ function NewInvoicePageContent() {
                   </div>
                 )}
               </div>
+              {/* [KLANT-EXTRA] Direct onder de naam, want dat is ook waar ze op het document
+                  terechtkomen. Optioneel: leeg laten levert precies de factuur op die dit scherm
+                  altijd al maakte. */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <OutlinedInput value={clientExtra1} onChange={e => setClientExtra1(e.target.value)} placeholder="t.a.v. mevrouw Jansen" label="Extra regel 1" focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+                <OutlinedInput value={clientExtra2} onChange={e => setClientExtra2(e.target.value)} placeholder="Afdeling of PO-2026-114" label="Extra regel 2" focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+              </div>
+              <p style={{ fontSize: 11, color: '#5F6368', margin: '-4px 0 0', lineHeight: 1.45 }}>
+                Deze twee regels komen op het document direct onder de klantnaam te staan.
+              </p>
               <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
               <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
