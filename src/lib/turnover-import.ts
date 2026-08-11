@@ -14,6 +14,7 @@
 // net base + BTW accordingly. Trust the math, not the label.
 
 import type { DailyTurnover } from "./turnover";
+import { round2 } from "./invoice-totals";
 
 export interface ImportWarning {
   row: number;                 // 1-based data row (as the owner sees it), 0 = sheet-level
@@ -59,7 +60,7 @@ export function amsterdamToday(now: Date = new Date()): string {
 
 export type Cell = string | number | null | undefined;
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /** Parse a cell to a number: accepts a JS number or an NL/EN string ("1.234,56" / "1234.56"). */
 function num(v: Cell): number {

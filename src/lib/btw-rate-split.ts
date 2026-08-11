@@ -21,6 +21,7 @@
 // better one, so it is refused rather than trusted.
 
 import { nearestLegalRate } from "./btw-rate";
+import { round2 } from "./invoice-totals";
 
 /** Omzet + BTW for ONE legal rate. Signed: a creditnota's shares are negative and net correctly. */
 export interface RateShare {
@@ -41,9 +42,7 @@ const EPS = 0.005;
  *  line is normal rounding; more than two cents overall means they describe something else. */
 const HEADER_TOLERANCE = 0.02;
 
-function cents(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+const cents = round2;
 
 /**
  * Turn an invoice's lines into rate buckets that sum EXACTLY to its header.

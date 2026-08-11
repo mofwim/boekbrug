@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
 import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+import { round2 } from '@/lib/invoice-totals'
 
 type Locale = 'nl' | 'en'
 
@@ -110,7 +111,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
     const perKm = parseNum(rate)
     const n = Math.max(1, Math.round(parseNum(trips)) || 1)
     const totalKm = oneWay * (retour ? 2 : 1) * n
-    return { totalKm, perKm, total: Math.round(totalKm * perKm * 100) / 100 }
+    return { totalKm, perKm, total: round2(totalKm * perKm) }
   }, [km, rate, retour, trips])
 
   return (

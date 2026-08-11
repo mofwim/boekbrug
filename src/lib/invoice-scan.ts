@@ -27,6 +27,7 @@
 import { quarterKeyOf } from "./quarter";
 import { looksLikeCreditnota, creditnotaSignConflict } from "./creditnota-signal";
 import { reconcileBtw } from "./btw-reconcile";
+import { round2 } from "./invoice-totals";
 
 /** The highest Dutch btw rate. No blend of 0/9/21 exceeds it — so above this is impossible. */
 const MAX_NL_RATE = 21;
@@ -156,7 +157,7 @@ export function scanInvoices(rows: readonly ScanRow[]): InvoiceScan {
     if (f.kind === "sign_conflict") t.signConflict++;
     else if (f.kind === "credit_suspect") t.creditSuspect++;
     else t.arithmetic++;
-    t.amount = Math.round((t.amount + f.amount) * 100) / 100;
+    t.amount = round2(t.amount + f.amount);
     perQuarter.set(key, t);
   }
 

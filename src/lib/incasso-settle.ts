@@ -43,6 +43,7 @@ import {
   type IncassoInvoice,
   type IncassoHold,
 } from '@/lib/auto-incasso'
+import { round2 } from './invoice-totals'
 
  
 type Client = SupabaseClient<Database>
@@ -267,7 +268,7 @@ export async function settleIncassoForUser(
         invoiceId: inv.id,
         invoiceNumber: inv.invoice_number ?? null,
         supplier: supplier.name,
-        amount: Math.round((row.applied ?? 0) * 100) / 100,
+        amount: round2(row.applied ?? 0),
         paidOn: decision.paymentDate,
       })
     }

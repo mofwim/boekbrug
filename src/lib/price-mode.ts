@@ -38,6 +38,8 @@
 // meebewegen. Dat is een keuze van de ondernemer over zijn eigen prijs, en die hoort bij hem —
 // niet bij een afrondingsregel die het verschil wegmoffelt.
 
+import { round2 } from './invoice-totals'
+
 export type PriceMode = "excl" | "incl";
 
 /** Een tarief als factor: 21 → 1.21. Onbekend/kapot tarief telt als 0% (geen stille verhoging). */
@@ -65,7 +67,7 @@ export function inclFromEx(ex: number, rate: number | null | undefined): number 
 export function toDisplayCents(value: number): number {
   const v = Number(value);
   if (!Number.isFinite(v)) return 0;
-  return Math.round(v * 100) / 100;
+  return round2(v);
 }
 
 /**

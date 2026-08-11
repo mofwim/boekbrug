@@ -76,6 +76,7 @@ import { resolveSchemeSettlements, mergeSchemeOpts } from "./kas-payment-events-
 import { fetchRateShares } from "./btw-rate-split-fetch";
 import { collectVatExemption } from "./vat-exemption-collect";
 import { exemptShareOf } from "./vat-exemption";
+import { round2 } from "./invoice-totals";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1056,7 +1057,7 @@ async function costLinesWithoutInvoice(
       .range(from, to),
   ).catch(() => [] as { id: string; amount: number | null }[]);
   const total = rows.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
-  return { count: rows.length, total: Math.round(total * 100) / 100 };
+  return { count: rows.length, total: round2(total) };
 }
 
 // [PACKAGE-VOORBELASTING-KAS] The same loss, one drawer over.
@@ -1095,7 +1096,7 @@ export function cashCostsWithoutReceipt(
     count++;
     total += Math.abs(Number(c.amount) || 0);
   }
-  return { count, total: Math.round(total * 100) / 100 };
+  return { count, total: round2(total) };
 }
 
 export function costWithoutInvoiceWarning(count: number, total: number): ClosingPackageWarning | null {
@@ -1269,7 +1270,7 @@ export async function summarizeClosingPackage(args: {
   ).catch(() => [] as { id: string; amount: number | null }[]);
   const unresolvedBankCount = unresolvedBank.length;
   const unresolvedBankTotal =
-    Math.round(unresolvedBank.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0) * 100) / 100;
+    round2(unresolvedBank.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0));
 
   // Whether the statement FILE will actually be attached — separate from "we have bank
   // data". Reported truthfully so the preview matches the ZIP (which two-tiers the same way).

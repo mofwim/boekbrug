@@ -34,6 +34,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (AGENTS.md); `message` is Dutch because
 // the owner and their accountant read it.
 
+import { round2 } from "./invoice-totals";
+
 /** One cent. Below this, two money figures are the same number. */
 export const MONEY_EPSILON = 0.005;
 
@@ -82,7 +84,8 @@ export interface Violation {
   message: string;
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const eur = (n: number) =>
   `€ ${Math.abs(n).toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

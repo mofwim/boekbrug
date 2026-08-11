@@ -24,6 +24,7 @@ import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { resolvePaymentPlan, type PlanInvoice } from '@/lib/payment-plan'
 import { formatEuroNL, formatDateNL } from '@/lib/format-nl'
+import { round2 } from '@/lib/invoice-totals'
 
 export interface VerdeelTransactie {
   id: string
@@ -92,7 +93,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
   )
 
   const verdeeld = plan.ok ? plan.allocated : regels.reduce((s, r) => s + (Number.isFinite(r.amount) ? r.amount : 0), 0)
-  const restant = Math.round((beschikbaar - verdeeld) * 100) / 100
+  const restant = round2(beschikbaar - verdeeld)
 
   const zichtbaar = useMemo(() => {
     const q = zoek.trim().toLowerCase()

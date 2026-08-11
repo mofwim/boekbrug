@@ -17,6 +17,7 @@ import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
 import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+import { round2 } from '@/lib/invoice-totals'
 
 type Locale = 'nl' | 'en'
 
@@ -71,7 +72,8 @@ const P = {
   zvwMax: 79409,
 }
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
 function box1(belastbaar: number): number {

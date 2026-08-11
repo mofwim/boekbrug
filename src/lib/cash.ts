@@ -11,6 +11,8 @@
 // while computeCashBalance still counts it in the drawer. This is exactly how the bank side works
 // (a bank line matched to an invoice is skipped as a cost, counted only as settlement).
 // [CASH-COST-VAT] 'salaris' = cash wages: a real business cost, never any BTW/voorbelasting.
+import { round2 } from './invoice-totals'
+
 export const CASH_CATEGORIES = ["omzet", "kosten", "salaris", "prive", "transfer", "tax", "fee", "betaling"] as const;
 export type CashCategory = (typeof CASH_CATEGORIES)[number];
 
@@ -100,7 +102,7 @@ export function settlementGross(inv: SettleableInvoice): number | null {
 
   // 1) Recorded cash instalments are the truth when we have them.
   if (inv.cash_paid != null) {
-    const cash = Math.round(Math.max(0, Number(inv.cash_paid)) * 100) / 100;
+    const cash = round2(Math.max(0, Number(inv.cash_paid)));
     return cash > 0.005 ? cash : null;
   }
 
@@ -108,7 +110,7 @@ export function settlementGross(inv: SettleableInvoice): number | null {
   // paid in cash → the drawer moved €200, not €500. Rounded to cents so float noise never
   // produces a €0.004 entry.
   const paidByBank = Math.max(0, Number(inv.amount_paid ?? 0));
-  const remainder = Math.round((raw - paidByBank) * 100) / 100;
+  const remainder = round2(raw - paidByBank);
   return remainder > 0.005 ? remainder : null;
 }
 
@@ -125,9 +127,7 @@ export interface CashSettlementRow {
 }
 
 /** Round to cents; the drawer is counted in coins, not in float dust. */
-function cents(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+const cents = round2;
 
 /**
  * [CASH-CREDITNOTA] Is this document a credit rather than a bill?
@@ -439,5 +439,5 @@ export function computeDrawerBalance(input: {
     return e.date ? !coveredDays.has(e.date) : coveredDays.size === 0;
   });
 
-  return Math.round((opening + computeCashBalance(counted) + tillCashIn) * 100) / 100;
+  return round2(opening + computeCashBalance(counted) + tillCashIn);
 }

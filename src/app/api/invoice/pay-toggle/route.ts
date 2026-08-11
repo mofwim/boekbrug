@@ -22,6 +22,7 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
 import { buildPaymentResult } from "@/lib/partial-payment";
 import { requireOwner } from '@/lib/owner-only'
+import { round2 } from "@/lib/invoice-totals";
 
 export const dynamic = "force-dynamic";
 
@@ -150,7 +151,7 @@ export async function POST(req: NextRequest) {
       if (!Number.isFinite(parsed) || parsed <= 0) {
         return NextResponse.json({ error: "invalid_amount" }, { status: 400 });
       }
-      payAmount = Math.round(parsed * 100) / 100;
+      payAmount = round2(parsed);
     }
 
     // [CASH-INSTALMENT] A partial CASH payment used to be refused here. The reason was real: the
@@ -216,7 +217,7 @@ export async function POST(req: NextRequest) {
     if (!row) return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
 
     const fullyPaid = row.is_paid === true;
-    const remaining = Math.max(0, Math.round(((row.total ?? 0) - (row.amount_paid ?? 0)) * 100) / 100);
+    const remaining = Math.max(0, round2((row.total ?? 0) - (row.amount_paid ?? 0)));
 
     // A replayed request changed nothing on the INVOICE — report the already-booked state, never a
     // second audit row. Same shape as the real booking below: both go through buildPaymentResult so

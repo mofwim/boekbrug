@@ -48,6 +48,7 @@ import { allocatedOnLine } from "@/lib/bank-line-budget";
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
+import { round2 } from "@/lib/invoice-totals";
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -250,7 +251,7 @@ export async function POST(req: NextRequest) {
   // What this payment still has to give. Unknown sibling amounts ⇒ fall back to the full amount,
   // which is exactly how it behaved before per-link amounts existed.
   const payAvailable = appliedElsewhereKnown
-    ? Math.round(Math.max(0, payAmount - appliedElsewhere) * 100) / 100
+    ? round2(Math.max(0, payAmount - appliedElsewhere))
     : payAmount;
 
   const moneyLeftOver = paymentExceedsOpenBalance(payAvailable, invMoney);
@@ -482,7 +483,7 @@ export async function POST(req: NextRequest) {
     // rare, and exactly the case that must not stay invisible. Measured against what this
     // booking was allowed to spend (payAvailable), not the whole line: euros already booked on
     // other invoices of this same payment are accounted for, not "left over".
-    const residue = Math.round((payAvailable - (row.applied ?? 0)) * 100) / 100;
+    const residue = round2(payAvailable - (row.applied ?? 0));
     const hasResidue = residue > 0.01;
     // [BANK-TX-INVOICES] The RPC already wrote the join row (with amount_applied) inside its
     // transaction — no recordPaymentLinks needed here.
@@ -612,7 +613,7 @@ export async function POST(req: NextRequest) {
   //    token was not a paid invoice number — and a line the money says is finished then never left
   //    "Te bevestigen".
   const settledByThisBooking = appliedElsewhere + invOpen;
-  const moneyRemaining = Math.round((payAmount - settledByThisBooking) * 100) / 100;
+  const moneyRemaining = round2(payAmount - settledByThisBooking);
   // [BANK-COVERED-FAIL-CLOSED] When the sibling links are NOT measurable (a failed read, or a
   // pre-amount_applied link) the default is `false` — the line stays visible. We are in the
   // overpay branch, so by arithmetic THIS booking leaves money on the line; only measured
@@ -767,7 +768,7 @@ export async function POST(req: NextRequest) {
         action: "bank.overapplied",
         entityType: "bank_transaction",
         entityId: transactionId,
-        newValue: { transaction_amount: payAmount, applied_sum: Math.round(appliedSum * 100) / 100, invoice_id: invoiceId },
+        newValue: { transaction_amount: payAmount, applied_sum: round2(appliedSum), invoice_id: invoiceId },
       });
       await createNotification({
         userId: user.id,

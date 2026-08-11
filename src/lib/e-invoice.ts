@@ -63,6 +63,7 @@
 
 import zlib from 'node:zlib'
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream, PDFHexString, PDFString } from 'pdf-lib'
+import { round2 } from './invoice-totals'
 
 /** What an e-invoice states about the money. Every field required — see completeness below. */
 export interface EInvoiceFigures {
@@ -394,9 +395,8 @@ function decodeXmlEntities(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100
-}
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 /**
  * Does the supplier's own statement contradict what was read off the page?

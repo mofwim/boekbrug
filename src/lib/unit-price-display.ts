@@ -31,11 +31,14 @@
 // units it is two. A fixed "always four" is wrong in both directions: noisy on small quantities and
 // still false on large ones.
 
+import { round2 } from "./invoice-totals";
+
 /** Beyond this a price column stops being readable, and the remaining error is under a cent anyway. */
 const MAX_DECIMALS = 6;
 const MIN_DECIMALS = 2;
 
-const round2 = (n: number) => Math.round(n * 100 + 1e-9) / 100;
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 function roundTo(n: number, decimals: number): number {
   const f = 10 ** decimals;

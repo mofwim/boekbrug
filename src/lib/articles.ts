@@ -6,6 +6,7 @@
 // [SMART-FILTER] foldText lives in one place (src/lib/search.ts) so every search box
 // folds accents identically; re-exported here because consumers import it from this module.
 import { foldText } from "./search";
+import { round2 } from "./invoice-totals";
 export { foldText };
 
 export interface Article {
@@ -48,7 +49,7 @@ export function normalizeArticleInput(raw: unknown): NormalizeResult {
 
   const priceNum = typeof r.unit_price === "number" ? r.unit_price : Number(r.unit_price);
   if (!Number.isFinite(priceNum) || priceNum < 0) return { ok: false, error: "Prijs moet 0 of hoger zijn." };
-  const unit_price = Math.round(priceNum * 100) / 100;
+  const unit_price = round2(priceNum);
 
   const rateNum = typeof r.btw_rate === "number" ? r.btw_rate : Number(r.btw_rate);
   if (!VALID_RATES.has(rateNum)) return { ok: false, error: "BTW-tarief moet 0%, 9% of 21% zijn." };

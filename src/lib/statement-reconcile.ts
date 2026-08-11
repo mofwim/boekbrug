@@ -21,6 +21,8 @@
 //
 // Puur en zonder I/O, zodat de matchregels los te testen zijn (statement-reconcile.test.ts).
 
+import { round2 } from "./invoice-totals";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Eén regel zoals hij op het overzicht van de leverancier staat. */
@@ -288,9 +290,8 @@ export function derivePeriod(lines: StatementLine[]): { from: string; to: string
   return { from: dates[0], to: dates[dates.length - 1] };
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 // ─── Eén eerlijke zin voor de eigenaar ────────────────────────────────────────
 

@@ -25,6 +25,8 @@
 //
 // Pure: no I/O, no clock. The caller passes the rows and which quarters are filed.
 
+import { round2 } from './invoice-totals'
+
 /** The row fields this reads. A structural subset of the pay screen's list. */
 export interface UndoCandidateRow {
   id: string
@@ -109,7 +111,7 @@ export function planBulkUndo(
   return {
     eligible,
     refused,
-    total: Math.round(total * 100) / 100,
+    total: round2(total),
     touchesCash: eligible.some((r) => (r.payment_method ?? '') === 'kas'),
     filedQuarters: [...quarters].sort(),
   }

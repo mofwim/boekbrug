@@ -15,6 +15,7 @@
 import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
 // [CREDIT-SAFE] The one answer to "is this a debt?" that the whole money line shares.
 import { creditStance, payableAsDebt } from "./creditnota-signal";
+import { round2 } from "./invoice-totals";
 
 /** The incoming-invoice fields the bundle logic reads. A subset of the row. */
 export interface BundelBetalingInvoice {
@@ -52,7 +53,7 @@ export const MAX_BUNDEL_BETALING = 20;
 function openAmount(invoice: BundelBetalingInvoice): number {
   const total = Math.abs(invoice.total_inc_btw ?? 0);
   const paid = Math.max(0, invoice.amount_paid ?? 0);
-  return Math.round(Math.max(0, total - paid) * 100) / 100;
+  return round2(Math.max(0, total - paid));
 }
 
 /**
@@ -126,7 +127,7 @@ export function buildBundelBetaling(
   if (items.some((it) => it.amount <= 0)) {
     return { ok: false, error: "Een van de geselecteerde facturen heeft geen openstaand bedrag." };
   }
-  const amount = Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100;
+  const amount = round2(items.reduce((s, it) => s + it.amount, 0));
 
   // Reference: betalingskenmerk when present, else the invoice number — per
   // invoice, comma-separated. These are the strings the supplier's own

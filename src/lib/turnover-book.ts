@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkTurnoverArithmetic, type DailyTurnover } from "./turnover";
 import type { LedgerKind } from "./ledger-import";
+import { round2 } from "./invoice-totals";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any>;
@@ -87,7 +88,7 @@ export async function bookTurnoverRows(
   const { error } = await supabase.from("daily_turnover").upsert(records, { onConflict: "user_id,turnover_date" });
   const dates = rows.map((r) => r.turnover_date).sort();
   const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : "";
-  const total_incl = Math.round(records.reduce((s, r) => s + (r.total_incl ?? 0), 0) * 100) / 100;
+  const total_incl = round2(records.reduce((s, r) => s + (r.total_incl ?? 0), 0));
   return { ok: !error, days: records.length, span, total_incl, rejected: [] };
 }
 

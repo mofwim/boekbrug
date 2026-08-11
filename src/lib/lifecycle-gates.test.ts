@@ -5758,3 +5758,62 @@ test("[GRENS-ZICHTBAAR] the cron names the cause it has, and stops retrying a mo
   assert.match(email, /heldByFairUse: number/, "the sync result must carry the hold");
   assert.match(email, /heldByFairUse: hold\?\.held \?\? 0/, "…and report the real number");
 });
+
+test("[CENT] rounding to cents is defined in exactly one place", () => {
+  // The class this session kept finding — two definitions of one fact, and the wrong one is live —
+  // at its most fundamental. round2 existed five times, in four different shapes:
+  //
+  //   Math.round(n * 100) / 100                       seven modules
+  //   Math.round((n + Number.EPSILON) * 100) / 100    ubl-export and four public calculators
+  //   sign * Math.round(|n| * 100) / 100              snelstart-mapping
+  //   Math.round(n * 100 + 1e-9) / 100                unit-price-display
+  //   invoice-totals                                  the one that is right about both problems
+  //
+  // On one line of € 21,50 at 21% the ledger said 4,52 and the e-invoice XML said 4.51. Nothing
+  // failed: the XML is internally consistent, so Peppol accepts it, and the customer books a cent
+  // less than the invoice they were sent. See src/lib/cent-rounding.test.ts.
+  //
+  // A gate rather than a comment, because the next copy will be written by someone who needs a
+  // rounding helper and does not know this one exists — which is exactly how the five happened.
+  const CANONICAL = "src/lib/invoice-totals.ts";
+  const offenders: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p)) continue;
+      // A test may define its own oracle — checking the code against an independent
+      // re-implementation is the point of invoice-discount.test.ts and amount-triplet.test.ts.
+      if (p.endsWith(".test.ts") || p.endsWith(".test.tsx")) continue;
+      if (p === CANONICAL) continue;
+      const src = code(p);
+      // The NAME is the smaller half of the problem. The same function also existed as `r2`,
+      // `cents` and `afgerond2`, and inline in 65 more places — so the gate looks for the SHAPE:
+      // `Math.round(<anything> * 100) / 100`, whatever it is called or not called.
+      //
+      // What it deliberately does NOT match: `Math.round(x * 100)` without the division (an
+      // integer-cent key or comparison, which is exact and correct), and `Math.round(btw / ex *
+      // 100)` (a percentage rate, not an amount).
+      if (/(?:function|const|let)\s+round2\b\s*[(=]/.test(src)) { offenders.push(p); continue; }
+      if (/Math\.round\([^;]*\*\s*100\s*\)\s*\/\s*100(?![\d.])/.test(src)) offenders.push(p);
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    offenders, [],
+    `cent rounding must come from invoice-totals.round2, not be written again:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[CENT] the canonical round2 still does the two things it exists for", () => {
+  // The gate above only proves there is ONE. This proves it is the RIGHT one — a future edit that
+  // simplified it back to Math.round(n * 100) / 100 would pass the gate above and reintroduce both
+  // defects in every module at once, which is worse than what was there before.
+  const src = code("src/lib/invoice-totals.ts");
+  const fn = src.slice(src.indexOf("export function round2"));
+  assert.match(fn.slice(0, 400), /1e-9/, "the half cent a multiplication loses must be recovered");
+  assert.match(fn.slice(0, 400), /v < 0 \? -1 : 1/, "the sign must be taken off first (creditnota)");
+  assert.match(fn.slice(0, 400), /Number\.isFinite/, "a non-finite amount may not reach a document");
+});

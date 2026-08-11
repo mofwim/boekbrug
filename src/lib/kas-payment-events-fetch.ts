@@ -32,6 +32,7 @@ import { exemptShareOf } from "./vat-exemption";
 // [VRIJGESTELD · KASSTELSEL] The purchase-side attributions for the invoices the SETTLEMENTS
 // point at — a different set from the ones the window DATES. See the call site.
 import { fetchVatDeductions } from "./vat-exemption-collect";
+import { round2 } from "./invoice-totals";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -158,7 +159,7 @@ export async function fetchSettlementEvents(
     // exact → estimate → undated ladder, so money can never be settled yet uncounted.
     // Structurally the remainder is 0 once every path maintains amount_paid; this is the net.
     const datedMag = dated.reduce((s, d) => s + d.mag, 0);
-    const remainderMag = Math.round((paidMag - datedMag) * 100) / 100;
+    const remainderMag = round2(paidMag - datedMag);
     if (remainderMag <= 0.005) continue;
     if (i.payment_date) raw.push({ invoiceId: i.id, payDate: i.payment_date.slice(0, 10), magnitude: remainderMag, estimated: false });
     else if (i.marked_paid_at) raw.push({ invoiceId: i.id, payDate: i.marked_paid_at.slice(0, 10), magnitude: remainderMag, estimated: true });

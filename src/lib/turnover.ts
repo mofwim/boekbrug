@@ -18,6 +18,8 @@
 // fee modeling (reconcile against the gross terminal batch, or subtract an expected fee)
 // needs real settlement data and is deferred. A residual pin break is informational.
 
+import { round2 } from './invoice-totals'
+
 export interface DailyTurnover {
   turnover_date: string;       // ISO 'YYYY-MM-DD'
   base_0: number;              // net taxable base per rate (excl. BTW)
@@ -286,7 +288,7 @@ function rateBreak(
   // Signed, not magnitude: a correction day with more refunds than sales has a negative base, and
   // its btw is negative too. Comparing signed values gets that right for free, and would catch a
   // negative base carrying a positive btw — which no till produces.
-  const expected = Math.round(base * (rate / 100) * 100) / 100;
+  const expected = round2(base * (rate / 100));
   const tolerance = Math.max(RATE_ABS_TOLERANCE, RATE_PCT_TOLERANCE * Math.abs(expected));
   if (Math.abs(btw - expected) <= tolerance) return null;
   return {
@@ -317,7 +319,7 @@ export function checkTurnoverArithmetic(t: DailyTurnover): TurnoverArithmeticBre
   // one runs on the SCREEN, against bank and cash figures it needs as inputs — it is not, and
   // cannot be, a gate on the write.
   if (t.total_incl != null) {
-    const gross = Math.round((turnoverNetOmzet(t) + turnoverBtw(t).total) * 100) / 100;
+    const gross = round2(turnoverNetOmzet(t) + turnoverBtw(t).total);
     const tolerance = Math.max(TOTAL_ABS_TOLERANCE, TOTAL_PCT_TOLERANCE * Math.abs(t.total_incl));
     if (Math.abs(gross - t.total_incl) > tolerance) {
       breaks.push({

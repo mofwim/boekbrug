@@ -13,6 +13,7 @@ import { paymentDateOutOfWindow } from "@/lib/payment-date";
 import { amsterdamToday } from "@/lib/format-nl";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { round2 } from "@/lib/invoice-totals";
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
@@ -203,7 +204,7 @@ export async function PATCH(req: NextRequest) {
   if (!Number.isFinite(val) || val < 0) {
     return NextResponse.json({ error: "beginsaldo moet 0 of hoger zijn" }, { status: 400 });
   }
-  const opening = Math.round(val * 100) / 100;
+  const opening = round2(val);
 
   const { error } = await supabase
     .from("profiles")

@@ -30,6 +30,7 @@ import {
   clampExemptPortion,
   type ProRata,
 } from "./vat-exemption";
+import { round2 } from "./invoice-totals";
 
 // [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
 // quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
@@ -279,7 +280,7 @@ const INCOMING_OK = new Set(["paid", "received"]);
  * the route can build a buffer-inclusive budget map identical to this rule.
  */
 export function cardBudgetBound(t: DailyTurnover): number {
-  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const r2 = round2;
   if (t.pin_amount != null && t.pin_amount > 0) return r2(t.pin_amount);
   const gross = t.total_incl ?? 0;
   if (gross > 0) {
@@ -555,8 +556,8 @@ export function computeResult(
           if (!cardRemaining.has(day)) continue; // prior-quarter buffer day w/o budget → belongs there
           const rem = Math.max(0, cardRemaining.get(day) ?? 0);
           const suppressed = Math.min(raw, rem);
-          cardRemaining.set(day, Math.round((rem - suppressed) * 100) / 100);
-          const excess = Math.round((raw - suppressed) * 100) / 100;
+          cardRemaining.set(day, round2(rem - suppressed));
+          const excess = round2(raw - suppressed);
           if (excess <= EXCESS_EPS) continue; // within the till's card takings (+rounding) → witness
           // The part beyond the till's card takings is real off-till revenue with no BTW rate.
           omzet += excess;

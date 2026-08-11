@@ -15,6 +15,7 @@
 //      never leak it, even by accident. This is the single allowlist.
 
 import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
+import { round2 } from "./invoice-totals";
 
 // ─── Inputs ────────────────────────────────────────────────────────────────────
 
@@ -144,7 +145,7 @@ export interface BundelBetaalverzoekResult extends BetaalverzoekResult {
 function openAmount(invoice: BetaalverzoekInvoice): number {
   const total = Math.abs(invoice.total_inc_btw ?? 0);
   const paid = Math.max(0, invoice.amount_paid ?? 0);
-  return Math.round(Math.max(0, total - paid) * 100) / 100;
+  return round2(Math.max(0, total - paid));
 }
 
 /** Case/whitespace-insensitive client key — a bundle is paid by ONE customer. */
@@ -214,7 +215,7 @@ export function buildBundelBetaalverzoek(
   if (items.some((it) => it.amount <= 0)) {
     return { ok: false, error: "Een van de geselecteerde facturen heeft geen openstaand bedrag." };
   }
-  const amount = Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100;
+  const amount = round2(items.reduce((s, it) => s + it.amount, 0));
 
   // Reference: EVERY invoice number, comma-separated — exactly the strings
   // bank-matching.referenceMatches() looks for in the incoming bank line.
@@ -362,14 +363,13 @@ export function toPublicBundlePayView(
     };
   });
 
-  const remaining = Math.round(
-    items.filter((it) => !it.alreadyPaid).reduce((s, it) => s + it.amount, 0) * 100
-  ) / 100;
+  const remaining = round2(
+    items.filter((it) => !it.alreadyPaid).reduce((s, it) => s + it.amount, 0));
   const alreadyPaid = remaining <= 0;
   // Once everything is settled we still render the view (the "al betaald"
   // banner) — show the settled sum, since asking for €0 is meaningless.
   const amount = alreadyPaid
-    ? Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100
+    ? round2(items.reduce((s, it) => s + it.amount, 0))
     : remaining;
 
   // Reference: only the invoices that still need paying — the numbers the

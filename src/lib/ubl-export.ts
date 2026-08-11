@@ -28,6 +28,7 @@ import { toUnitCode } from "./units";
 import { RE_REVERSE_CHARGE } from "./regime-flags";
 import { isReverseChargedInvoice } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
+import { round2 } from "./invoice-totals";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
 
@@ -108,10 +109,23 @@ export class UblValidationError extends Error {
 
 // ─── Small helpers ─────────────────────────────────────────────────────────────
 
-/** Round to 2 decimals (avoids float drift), return number. */
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
+// [CENT] round2 comes from invoice-totals — the same function the draft, the issue route, the
+// screen and the PDF round with. It used to be defined here as
+// `Math.round((n + Number.EPSILON) * 100) / 100`, which is a DIFFERENT function, and the
+// difference reached the customer:
+//
+//     one line, € 21,50 excl., 21%
+//     screen · database · PDF · aangifte     btw 4,52     total 26,02
+//     the XML this file produced             btw 4.51     PayableAmount 26.01
+//
+// Number.EPSILON is 2,2e-16 — far too small to recover the half cent that 21,50 × 0,21 loses in
+// binary floating point (it is 4,514999999999999), so this rounded down where every other surface
+// rounded up. The file is internally consistent, so no Peppol rule fires and the header cross-check
+// below only warns above one cent: the e-invoice simply arrives at the customer's bookkeeping a
+// cent lighter than the invoice they were sent. They pay 26,01, the ledger expects 26,02, and the
+// invoice never closes.
+//
+// 492 amounts under € 5.000 at 9% and 21% do this — every price on a half euro.
 
 /** Format a number as a UBL amount: dot decimal, exactly 2 places. */
 function money(n: number): string {

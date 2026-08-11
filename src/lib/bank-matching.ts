@@ -17,6 +17,7 @@
 //   - AI arbiter (ai.ts → matchTransaction) is a SEPARATE later phase; not called here.
 
 import type { BankTransaction } from "./bank-parser";
+import { round2 } from "./invoice-totals";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -1224,7 +1225,7 @@ export function bankLineFullyApplied(
   const amount = Math.abs(Number(txAmount ?? 0));
   if (!Number.isFinite(amount)) return null;
   // Same cent tolerance the confirm route books with, so the two can never disagree.
-  return Math.round((amount - Math.max(0, appliedTotal)) * 100) / 100 <= 0.01;
+  return round2(amount - Math.max(0, appliedTotal)) <= 0.01;
 }
 
 /**

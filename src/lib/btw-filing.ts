@@ -4,6 +4,8 @@
 // past quarter); a filed aangifte does not. When they diverge, the owner must be told — and told
 // WHICH correction path applies. No I/O, fully testable.
 
+import { round2 } from "./invoice-totals";
+
 /**
  * [FILING-NO-OVERWRITE] What a "mark as filed" request may do to the record that is already there.
  *
@@ -69,9 +71,9 @@ const EPS = 0.005;
 // less may be carried into the next regular aangifte. Compared on the absolute saldo difference.
 export const SUPPLETIE_THRESHOLD = 1000;
 
-function round2(n: number): number {
-  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-}
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
+// (The non-finite guard this file had is now in the canonical one, so nothing is lost.)
 
 /**
  * Compare the current live figures to what was filed. Deltas are current − filed (a positive

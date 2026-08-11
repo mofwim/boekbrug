@@ -32,6 +32,8 @@
 // credit reaches this table — the type is what the app writes, a negative total is what an import
 // can leave behind.
 
+import { round2 } from './invoice-totals'
+
 /** A row of bank_tx_invoices, as every caller reads it. */
 export interface BudgetLink {
   invoice_id: string;
@@ -124,7 +126,7 @@ export function allocatedOnLine(
     allocated += (spendsTheLine(inv, lineMovesOut) ? 1 : -1) * magnitude;
   }
 
-  return { allocated: Math.round(allocated * 100) / 100, unknownInvoiceIds };
+  return { allocated: round2(allocated), unknownInvoiceIds };
 }
 
 /** A link that knows which transaction it belongs to. */
@@ -179,7 +181,7 @@ export function allocatedByTransaction(
   }
 
   for (const [txId, total] of byTransaction) {
-    byTransaction.set(txId, Math.round(total * 100) / 100);
+    byTransaction.set(txId, round2(total));
   }
   return { byTransaction, unknownByTransaction };
 }

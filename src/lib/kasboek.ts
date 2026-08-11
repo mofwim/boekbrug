@@ -18,6 +18,8 @@
 //
 // Pure + node-testable (run: npx tsx src/lib/kasboek.test.ts).
 
+import { round2 } from './invoice-totals'
+
 export type Quarter = 1 | 2 | 3 | 4;
 
 /** Minimal structural view of a daily_turnover row — only what the drawer needs. */
@@ -65,7 +67,7 @@ export interface Kasboek {
 const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const nlDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}-${m}-${y}`; };
 const pad = (n: number) => String(n).padStart(2, "0");
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 function quarterRange(year: number, q: Quarter): { start: string; end: string } {
   const startMonth = (q - 1) * 3; // 0-based

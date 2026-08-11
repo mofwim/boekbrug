@@ -23,6 +23,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { round2 } from '@/lib/invoice-totals'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
@@ -89,12 +90,8 @@ const DOC_LABELS: Record<InvoiceType, string> = {
 
 const NL_BTW_RE = /^NL\d{9}B\d{2}$/i
 
-// Round to whole cents, symmetric around zero so a creditnota's -2.105 mirrors
-// a factuur's 2.105 exactly (Math.round alone rounds halves toward +∞).
-function round2(n: number): number {
-  const v = Number(n) || 0
-  return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
-}
+// [CENT] round2 comes from invoice-totals — the same one the paid app rounds with, so a figure
+// this free tool shows is the figure the invoice gets. It was a byte-identical copy.
 
 // Dutch amount parsing lives in lib/parse-nl (parseAmountNL, imported as
 // parseNum) — shared with the BTW/km/uurtarief tools so "1.000" is 1000, not 1.

@@ -27,6 +27,7 @@
 //     invoice line keeps every word of what it said either way.
 
 import { foldText } from "./search";
+import { round2 } from "./invoice-totals";
 
 /** A line as it was written on the invoice, after the route's own validation. */
 export interface LearnableLine {
@@ -149,7 +150,7 @@ export function planCatalogLearning(
     handled.add(key);
     plan.toInsert.push({
       description,
-      unit_price: Math.round(line.unit_price * 100) / 100,
+      unit_price: round2(line.unit_price),
       btw_rate: line.btw_rate,
       unit: (line.unit ?? "").trim() || null,
     });

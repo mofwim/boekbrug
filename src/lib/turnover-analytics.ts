@@ -11,6 +11,7 @@
 // as such; cash ticket counts are unknown.
 
 import type { DailyTurnover } from "./turnover";
+import { round2 } from "./invoice-totals";
 
 export interface MonthlyPoint { month: string; omzet: number } // month = 'YYYY-MM'
 export interface VatMixEntry { rate: 0 | 9 | 21; net: number; share: number } // share 0..1 of net
@@ -32,7 +33,7 @@ export interface TurnoverAnalytics {
   anomalies: Anomaly[];
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 const gross = (t: DailyTurnover) => t.total_incl ?? ((t.base_0 ?? 0) + (t.base_9 ?? 0) + (t.base_21 ?? 0) + (t.btw_9 ?? 0) + (t.btw_21 ?? 0));
 
 /**

@@ -23,6 +23,7 @@ import type { VatScheme } from "./vat-scheme";
 import { fetchRateShares } from "./btw-rate-split-fetch";
 import { collectVatExemption, fetchVatDeductions } from "./vat-exemption-collect";
 import { exemptShareOf } from "./vat-exemption";
+import { round2 } from "./invoice-totals";
 
 // [FIN-4] Infer a NULL direction from ownership (the owner is the receiver of an incoming
 // invoice) — the SAME rule effectiveDirection / aangifte / readiness use — so a null-direction
@@ -469,7 +470,7 @@ export async function computeResultForRange(args: {
     reconciliation: {
       totalCommission: triangle.totalCommission,
       commissionBooked: commissionActuallyBooked,
-      acquirerFeeInvoices: Math.round(acquirerFeesBooked * 100) / 100,
+      acquirerFeeInvoices: round2(acquirerFeesBooked),
       grossMismatchDays: triangle.grossMismatchDays,
       incompleteDays: triangle.incompleteDays,
       commissionIssueDays: triangle.commissionIssueDays,

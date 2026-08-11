@@ -33,6 +33,7 @@ import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
 import { unitLabel } from './units'
 import { applyDiscount, parseDiscount, discountLabel } from './invoice-discount'
+import { round2 } from './invoice-totals'
 // [LOGO-INITIALEN] Het monogram woont in een eigen bestand, samen met de avatar in de
 // dashboardkop — die twee gaven een ander antwoord over hetzelfde bedrijf.
 import { deriveInitials } from './logo-initials'
@@ -177,12 +178,9 @@ const DOC_TITLES: Record<string, string> = {
   offerte: 'Offerte',
 }
 
-// Symmetric round-to-cents (magnitude-based, so a creditnota's -2.105 mirrors a
-// factuur's 2.105 exactly). Used for on-document total reconciliation.
-function round2(n: number): number {
-  const v = Number(n) || 0
-  return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
-}
+// [CENT] round2 lives in invoice-totals. This file held a byte-identical copy — which is the way
+// the divergence starts: the day one of the two is improved, the PDF and the ledger disagree and
+// nothing says so. See the header of invoice-totals.round2.
 
 // Quantity for display: Dutch decimal comma, integers stay bare (2 → "2").
 function formatQtyNL(q: number | null | undefined): string {

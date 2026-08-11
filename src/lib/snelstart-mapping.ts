@@ -193,13 +193,16 @@ export function isPushable(invoice: SnelStartInvoice): PushableCheck {
 
 // ─── Geld ─────────────────────────────────────────────────────────────────────────
 
-export function round2(n: number): number {
-  // Math.round(x*100) op een negatief getal rondt .5 de verkeerde kant op voor bedragen
-  // (−0.005 → −0). Teken apart houden geeft symmetrisch afronden, wat een creditnota
-  // exact het spiegelbeeld van de factuur maakt.
-  const sign = n < 0 ? -1 : 1;
-  return (sign * Math.round(Math.abs(n) * 100)) / 100;
-}
+// [CENT] Deze module had zijn eigen round2 — met de juiste tekenbehandeling (het commentaar
+// hieronder klopte), maar zonder de 1e-9 die het halve cent terughaalt dat een vermenigvuldiging
+// in drijvende komma kwijtraakt. Op € 21,50 × 21% gaf hij 4,51 waar de factuur 4,52 zegt. Dat
+// ontsnapte hier niet, omdat de BTW verderop tegen het kopbedrag wordt geijkt en een cent ruis op
+// de zwaarste BTW-soort wordt gelegd — maar dat is een vangnet, geen reden om twee antwoorden op
+// dezelfde vraag te hebben. Hij komt nu uit invoice-totals, net als de rest.
+//
+// Nog steeds een re-export: snelstart-mapping.test.ts en de mapper-callers importeren round2 hier.
+import { round2 } from "./invoice-totals";
+export { round2 };
 
 /** Cent-tolerantie voor optel-controles. Twee cent: genoeg voor afrondingsruis over
  *  een handvol regels, te weinig om een echte fout te verbergen. */
@@ -244,7 +247,7 @@ export function deriveHeaderRate(invoice: SnelStartInvoice): number {
   for (const standard of [0, 9, 21]) {
     if (Math.abs(raw - standard) < 0.6) return standard;
   }
-  return Math.round(raw * 100) / 100;
+  return round2(raw);
 }
 
 // ─── Regels bouwen ────────────────────────────────────────────────────────────────

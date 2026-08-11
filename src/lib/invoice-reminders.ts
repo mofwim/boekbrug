@@ -20,6 +20,8 @@
 //     same method as VandaagClient — no `new Date('YYYY-MM-DD')` UTC-midnight
 //     drift. Today is passed IN (as a day-number) so the function stays pure.
 
+import { round2 } from './invoice-totals'
+
 /** One cent of slack — OCR/xlsx totals can sit a rounding tick under the payment. */
 const PAID_EPS = 0.01;
 
@@ -170,5 +172,5 @@ export function openstaandOf(
   const p = typeof amountPaid === "number" && Number.isFinite(amountPaid) && amountPaid > 0 ? amountPaid : 0;
   const remaining = t - p;
   if (remaining <= 0) return 0;
-  return Math.round(remaining * 100) / 100;
+  return round2(remaining);
 }

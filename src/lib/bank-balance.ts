@@ -34,6 +34,8 @@
 //
 // NOTE ON LANGUAGE: identifiers and comments are English (AGENTS.md).
 
+import { round2 } from './invoice-totals'
+
 /** One uploaded statement's period, as bank_statement_periods stores it. */
 export interface StatementPeriod {
   /** The account it belongs to. Null when the file did not state one. */
@@ -122,7 +124,7 @@ export function bankBalanceOf(periods: readonly StatementPeriod[]): BankBalance 
   }
 
   return {
-    balance: Math.round(total * 100) / 100,
+    balance: round2(total),
     asOf: oldest,
     accounts: newestWithBalance.size,
     partial: seen.size > newestWithBalance.size,

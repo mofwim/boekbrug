@@ -19,6 +19,8 @@
 // report the card gross as verified but the payout/commission as "not yet matched", rather
 // than inventing a number.
 
+import { round2 } from './invoice-totals'
+
 export interface CardDayInput {
   date: string;                 // ISO 'YYYY-MM-DD'
   tillPin: number | null;       // till pin_amount for the day (GROSS)
@@ -52,7 +54,7 @@ export interface CardDayResult {
   notes: string[];              // Dutch, honest — what is and isn't verified
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /**
  * Reconcile one day's card takings across the triangle. Pure; the caller aggregates

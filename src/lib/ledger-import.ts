@@ -12,6 +12,8 @@
 // import. Before this, such an .xlsx sent to the bank endpoint decoded a binary ZIP as
 // UTF-8 and silently yielded ZERO transactions — a file that looked ingested but wasn't.
 
+import { round2 } from './invoice-totals'
+
 export type Cell = string | number | null | undefined;
 
 /** What kind of money this ledger account holds — drives how reconciliation uses it. */
@@ -37,7 +39,7 @@ export interface LedgerWarning { code: string; message: string; } // Dutch
 
 export interface LedgerParseResult { ledger: LedgerImport | null; warnings: LedgerWarning[]; }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /** NL/EN number ("1.234,56" / "1234.56" / number) → number. */
 function num(v: Cell): number {
