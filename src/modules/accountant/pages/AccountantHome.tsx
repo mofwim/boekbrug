@@ -31,6 +31,7 @@ import type { NotificationRow } from '@/types/rows'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
+import DashboardTools from '@/components/tools/DashboardTools'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -596,6 +597,12 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             )}
           </div>
         )}
+
+        {/* [DASHBOARD-TOOLS] Een boekhouder werkt de hele dag met andermans
+            bestanden — samenvoegen, splitsen, een scheve scan rechtzetten. Dit
+            staat onderaan omdat het gereedschap is, geen werkvoorraad. Links,
+            geen componenten: zie de notitie boven in DashboardTools. */}
+        <DashboardTools audience="accountant" />
 
       </main>
 

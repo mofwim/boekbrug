@@ -232,3 +232,106 @@ test("[LIST-PAINT] and it renders every row it was given — no window, no slice
     "`displayed` is being sliced before it is rendered: some invoices are not on the screen at all",
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [DASHBOARD-TOOLS] The same rule, on the screen that is opened most
+// ─────────────────────────────────────────────────────────────────────────────
+// The gate above walks src/app/factuur-maken and nothing else, which was right
+// when /factuur-maken was the only place a heavy library had reached. It is no
+// longer: the file tools live in src/lib/tools and src/components/tools, and the
+// dashboard now touches them — /dashboard/upload shrinks an oversized PDF, and
+// both home screens link to the tool pages.
+//
+// Links cost nothing. The shrink does not, and that is exactly why it is behind
+// `await import()`. Nothing enforced that: the dashboard is authenticated, so
+// the public-surface sweep never loads it, and a static import here would put
+// pdf-lib and pdfjs — a megabyte between them — into the first download of the
+// screen a shop owner opens every morning. It would look completely fine in
+// development.
+
+/** Everything the logged-in dashboard loads eagerly. */
+function dashboardSources(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+  };
+  walk("src/app/dashboard");
+  walk("src/modules/accountant");
+  return out;
+}
+
+/** The tool engines, which pull pdf-lib or pdfjs behind them. */
+const TOOL_ENGINES = [
+  "@/lib/tools/pdf",
+  "@/lib/tools/pdfjs",
+  "@/lib/tools/pdfcompress",
+  "@/lib/tools/zip",
+  "@/components/tools/ui",
+  "@/components/tools/PageGrid",
+  "@/components/tools/usePreview",
+];
+
+test("[DASHBOARD-TOOLS] the dashboard does not pull a heavy library into its first load", () => {
+  const files = dashboardSources();
+  assert.ok(files.length >= 20, `walked ${files.length} dashboard files — the walk broke`);
+
+  const offenders: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    for (const mod of [...HEAVY, ...TOOL_ENGINES, "pdf-lib", "pdfjs-dist"]) {
+      if (staticallyImports(src, mod)) offenders.push(`${f} → ${mod}`);
+    }
+  }
+
+  assert.deepEqual(
+    offenders, [],
+    `these static imports land a heavy library in the first download of the dashboard:\n` +
+      offenders.map((o) => `  · ${o}`).join("\n") +
+      `\n\nThe dashboard is opened every day by people who may never touch a PDF. Load it where it ` +
+      `is used — see shrinkAndRetry in upload/UploadClient.tsx, which imports pdfcompress inside ` +
+      `the handler. A next/dynamic() elsewhere in the file does NOT help: one static import ` +
+      `anywhere in the chain pulls the whole library in.`,
+  );
+});
+
+test("[DASHBOARD-TOOLS] the tool links are links, not embedded tools", () => {
+  // The cheap way to get this wrong is to render the tool components in the
+  // dashboard section rather than linking to their pages. That would be a nicer
+  // demo and a megabyte on every load, so it is asserted rather than trusted.
+  const src = readFileSync("src/components/tools/DashboardTools.tsx", "utf8");
+  assert.match(src, /from "next\/link"/, "DashboardTools stopped using Link");
+  for (const mod of ["@/lib/tools/pdf", "@/lib/tools/pdfcompress", "pdf-lib"]) {
+    assert.ok(
+      !staticallyImports(src, mod),
+      `DashboardTools imports ${mod} — it is meant to be a list of links, nothing more`,
+    );
+  }
+});
+
+test("[SIZE-SHRINK] the upload's shrink offer keeps its escape hatch", () => {
+  const src = readFileSync("src/app/dashboard/upload/UploadClient.tsx", "utf8");
+  // A file that cannot get under the ceiling must not be uploaded anyway: the
+  // server would refuse it and the owner would be back where they started, one
+  // wasted wait later.
+  assert.match(
+    src, /if \(!fits\)/,
+    "shrinkAndRetry no longer checks whether the result actually fits before queueing it",
+  );
+  // And the flag has to be cleared on a retry, or "Verklein en probeer opnieuw"
+  // turns up on a row whose second attempt failed for some other reason.
+  //
+  // Read as the BLOCK rather than as "within N characters of the name". The
+  // first version of this used a 400-character window and failed the moment a
+  // comment was added inside the object — a gate that breaks when somebody
+  // explains themselves is a gate that teaches people not to.
+  const reset = src.match(/const RESET_ON_RETRY[^}]*\}/)?.[0];
+  assert.ok(reset, "RESET_ON_RETRY is gone or no longer a plain object literal");
+  assert.match(
+    reset, /tooBig: false/,
+    "tooBig is no longer reset on a retry — the shrink button can appear on an unrelated failure",
+  );
+});
