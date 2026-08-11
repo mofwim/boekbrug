@@ -66,14 +66,34 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const [saving, setSaving]         = useState(false)
   const [error, setError]           = useState<string | null>(null)
 
-  useEffect(() => { loadClients() }, [])
-
+  // [TAAL] The effect moved BELOW the declaration it calls. It sat above it for months without
+  // complaint — a function declaration hoists, so it worked — but the React compiler refuses the
+  // order now that this component compiles (adding the translator binding un-bailed it), and the
+  // compiler is right: an effect reading a binding declared later cannot be updated correctly if
+  // that binding ever becomes reactive.
+  // `loading` begint als true, dus de mount hoeft hem niet nogmaals te zetten — en de compiler
+  // weigert een synchrone setState in een effect terecht. De ene her-lader (na opslaan, r. 150)
+  // zet de spinner zelf, vóór de aanroep.
   async function loadClients() {
-    setLoading(true)
     const { data } = await supabase.from('clients').select('*').eq('user_id', profile.id).order('name')
     setClients(data ?? [])
     setLoading(false)
   }
+
+  useEffect(() => {
+    // Zelfde vorm als settings/page.tsx: de async functie IN het effect, met elke setState pas
+    // ná een await. De compiler keurt een aanroep van een buiten het effect gedeclareerde functie
+    // conservatief af (hij kan er niet in kijken); deze vorm bewijst wat hij wil weten.
+    let alive = true
+    ;(async () => {
+      const { data } = await supabase.from('clients').select('*').eq('user_id', profile.id).order('name')
+      if (!alive) return
+      setClients(data ?? [])
+      setLoading(false)
+    })()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // [SEARCH] Accent-insensitive filter across the full customer record — not just
   // name/email (KVK, BTW, IBAN, city, address are all findable now).
@@ -142,6 +162,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     showToast(editingId ? 'Klant bijgewerkt' : 'Klant toegevoegd')
 
     setForm(EMPTY); setShowForm(false); setEditingId(null)
+    setLoading(true)
     await loadClients()
     setSaving(false)
   }
