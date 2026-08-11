@@ -235,7 +235,7 @@ function LoginContent() {
                 placeholder="••••••••"
                 style={{ fontSize: '16px' }} // prevent iOS zoom
               />
-              <div className="text-right mt-1">
+              <div className="text-end mt-1">
                 <a href="/wachtwoord-vergeten" className="text-sm text-blue-600 hover:underline">
                   Wachtwoord vergeten?
                 </a>

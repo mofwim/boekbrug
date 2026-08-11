@@ -370,12 +370,12 @@ export function SnelStartCard() {
                       <span className="font-mono text-xs text-gray-500">{h.invoiceNumber ?? "—"}</span>
                       <span className="font-semibold text-gray-900">{h.clientName ?? "—"}</span>
                       {typeof h.totalIncBtw === "number" && (
-                        <span className="ml-auto font-mono text-sm text-gray-900">
+                        <span className="ms-auto font-mono text-sm text-gray-900">
                           {h.totalIncBtw.toLocaleString("nl-NL", { style: "currency", currency: "EUR" })}
                         </span>
                       )}
                     </div>
-                    <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-amber-900">
+                    <ul className="mt-1.5 list-disc space-y-0.5 ps-4 text-xs leading-relaxed text-amber-900">
                       {h.reasons.map((r, i) => (
                         <li key={i}>{r}</li>
                       ))}

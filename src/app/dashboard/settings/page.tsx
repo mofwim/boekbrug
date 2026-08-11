@@ -741,7 +741,7 @@ export default function SettingsPage() {
               </span>
             </label>
             {remindersEnabled && (
-              <div className="pl-7">
+              <div className="ps-7">
                 <label className="block text-xs font-medium text-gray-500 mb-1">
                   Herinner na (dagen na vervaldatum)
                 </label>

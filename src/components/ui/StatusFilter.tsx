@@ -51,7 +51,7 @@ function Badge({ count, active }: { count: number; active: boolean }) {
   if (count === 0) return null
   return (
     <span
-      className={`ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-bold leading-none ${
+      className={`ms-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-bold leading-none ${
         active ? 'bg-white/25 text-white' : 'bg-gray-300 text-gray-600'
       }`}
     >

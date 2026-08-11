@@ -877,7 +877,7 @@ function AccountantView({ role }: { role: Role }) {
                     href={`/dashboard/invoice/${inv.id}`}
                     className="flex items-center justify-between px-4 py-3.5 active:bg-muted/60 transition-colors"
                   >
-                    <div className="min-w-0 flex-1 mr-3">
+                    <div className="min-w-0 flex-1 me-3">
                       {/* [QUARTER-VENDOR-NAME] party name as primary, invoice_number as fallback */}
                       <p className="text-sm font-medium truncate">
                         {inv.client_name || inv.invoice_number}

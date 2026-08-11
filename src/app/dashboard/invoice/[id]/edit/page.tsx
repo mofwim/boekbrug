@@ -726,7 +726,7 @@ export default function InvoiceEditPage() {
 
         {/* Totalen */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <div className="space-y-2 text-sm max-w-xs ml-auto">
+          <div className="space-y-2 text-sm max-w-xs ms-auto">
             <div className="flex justify-between text-gray-500">
               <span>Subtotaal excl. BTW</span>
               <span>€{subtotalEx.toFixed(2)}</span>
