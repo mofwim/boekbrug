@@ -332,7 +332,7 @@ export default function BankClient() {
       if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
     }
     setSelected(pre)
-  }, [])
+  }, [showToast, t])
 
   // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).
   const unlink = useCallback(async (txId: string) => {
@@ -356,7 +356,7 @@ export default function BankClient() {
       else showToast(t('bank.fout.ontkoppelen'))
     } catch { showToast(t('bank.fout.ontkoppelen')) }
     finally { setProcessingId(null) }
-  }, [runMatch])
+  }, [runMatch, showToast, t])
 
   // [KAS-AUTO-BOOK] The other answer to the amber "even controleren" flag. Ontkoppelen says the
   // booking is wrong; this says it is right, and until now only the first had a button — so the
@@ -383,7 +383,7 @@ export default function BankClient() {
       }
     } catch { showToast(t('bank.fout.opslaan')) }
     finally { setProcessingId(null) }
-  }, [runMatch])
+  }, [runMatch, showToast, t])
 
   // [MOVE-PAYMENT] "This line is booked on the wrong invoice." The owner meets that realisation
   // from two directions and this is the second one: looking at the bank line, not at the invoice.
@@ -407,7 +407,7 @@ export default function BankClient() {
       setMoveCtx({ txId, source: json.source as MoveSource, payments })
     } catch { showToast(t('bank.fout.offline')) }
     finally { setProcessingId(null) }
-  }, [showToast])
+  }, [showToast, t])
 
   const doMove = useCallback(async (linkId: string, target: MoveTarget) => {
     setMoveCtx(null)
@@ -426,7 +426,7 @@ export default function BankClient() {
       await runMatch()
       showToast(`Betaling verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}.`)
     } catch { showToast(t('bank.fout.offlineNiets')) }
-  }, [runMatch, showToast])
+  }, [runMatch, showToast, t])
 
   // [BANK-AUTO-CONFIRM] Let the app handle the near-certain payments (reference number +
   // exact amount, single invoice) so the owner only deals with what's genuinely ambiguous.
@@ -447,7 +447,7 @@ export default function BankClient() {
     } finally {
       setAutoRunning(false)
     }
-  }, [runMatch])
+  }, [runMatch, showToast, t])
 
   // [BANK-AUTO-RUN] The circle should run itself: when the matches load and the app finds
   // near-certain payments (invoice number printed in the statement + exact amount, single
