@@ -3764,11 +3764,13 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
     quoteButton.length > 100 && quoteButton.length < 2400,
     `the slice must be that ONE button — it is ${quoteButton.length} chars`,
   );
-  assert.match(quoteButton, /Omzetten naar factuur/, "the label states the act");
+  // [TAAL] Pinned on the KEY — third gate that went red on translation, same lesson as
+  // [ARTIKEL-CODE]: a gate written against one language fails the day the app gains a second.
+  assert.match(quoteButton, /t\('lijst\.omzetten'\)/, "the label states the act");
   assert.doesNotMatch(
-    quoteButton, /> Versturen</,
-    "…and not the expectation. A bare 'Versturen' on a quote promises to send a quote and issues " +
-      "a numbered invoice instead",
+    quoteButton, /> Versturen<|t\('lijst\.versturen'\)/,
+    "…and not the expectation. A bare 'send' on a quote promises to send a quote and issues " +
+      "a numbered invoice instead — in any language",
   );
 
   assert.match(
@@ -6281,7 +6283,7 @@ test("[STATUS] the word for an invoice's state is written once", () => {
   }
 });
 
-test("[TAAL] the invoice screen has no Dutch of its own left", () => {
+test("[TAAL] the translated screens have no Dutch of their own left", () => {
   // The first whole PAGE in the catalogue, and the one the owner uses most. A screen is either
   // translated or it is not: half of it in Arabic and half in Dutch is harder to use than all of
   // it in Dutch, so "mostly done" is not a state this may rest in.
@@ -6289,7 +6291,10 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
   // The gate is a re-scan, not a checklist — it looks for the SHAPE of a Dutch string in a
   // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
   // part a list of keys cannot do.
-  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  const SCREENS = [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+  ];
   const leftovers: string[] = [];
 
   const patterns = [
@@ -6300,6 +6305,8 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     // A message handed to the owner when something goes wrong.
     /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
   ];
+  for (const screen of SCREENS) {
+  const page = code(screen);
   for (const re of patterns) {
     for (const m of page.matchAll(re)) {
       const text = m[1].trim();
@@ -6309,8 +6316,11 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
       // A city and a street are FORMAT examples, not words: an Arabic example would have the
       // owner typing a postcode that does not exist here. Same for the VAT number shape.
       if (/^(Amsterdam|Straatnaam 1|NL\d)/.test(text)) continue;
-      leftovers.push(text);
+      leftovers.push(`${screen}: ${text}`);
     }
+  }
+  // And the translator must be bound in each, or every t() above is a crash rather than a word.
+  assert.match(page, /translator\(/, `${screen} uses keys but binds no translator`);
   }
 
   assert.deepEqual(
@@ -6318,8 +6328,6 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     `these still bypass the catalogue:\n  ${[...new Set(leftovers)].join("\n  ")}`,
   );
 
-  // And the translator must actually be bound, or every t() above is a crash rather than a word.
-  assert.match(page, /const t = translator\(taal\)/);
 });
 
 test("[TAAL] an arrow that means a direction flips for Arabic", () => {
