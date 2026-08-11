@@ -5569,6 +5569,34 @@ test("[KLANT-EXTRA] the two screens send them on EVERY save path, not just one",
   }
 });
 
+test("[KLANT-EXTRA] every route that rebuilds the customer snapshot carries the lines too", () => {
+  // A route that copies client_name / client_address / client_btw_number field by field is
+  // building a NEW document from an old one — a creditnota, a duplicate, a recurring invoice. Each
+  // one that stops short of these columns drops the addressee silently, and a recurring invoice
+  // drops it every single month. The list is derived, not written down: any future route that
+  // rebuilds the snapshot is caught by the same rule.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+  const rebuilders = walk("src/app/api")
+    .filter((f) => /client_btw_number:\s*(src|original)\./.test(code(f)));
+  assert.ok(rebuilders.length >= 3, `expected the copy routes, found ${rebuilders.length}`);
+
+  for (const f of rebuilders) {
+    assert.match(
+      code(f), /copyExtraLinesOnto\(/,
+      `${f} rebuilds the customer snapshot but never carries the extra lines — the new document ` +
+        "loses the addressee, and a recurring one loses it every month",
+    );
+  }
+});
+
 test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
   // The rule this gate exists for. PostgREST rejects the WHOLE row on an unknown column, so a bare
   // mention in an insert or update payload is an invoice that cannot be saved on any database
