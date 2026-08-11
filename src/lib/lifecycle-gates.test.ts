@@ -2231,8 +2231,9 @@ test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () 
     "a contradicted e-invoice may never wear the reassuring badge",
   );
   // And the sentence tells the owner what it MEANS, not merely that it happened.
-  assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
-  assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
+  assert.match(ui, /t\('inkoop\.eFactuurUitleg', \{ syntax: e\.syntax \}\)/, "the tooltip must say what it is for");
+  // [TAAL] Pinned on the key — sixth gate that went red on translation alone.
+  assert.match(ui, /t\('inkoop\.cijfersLeverancier'\)/, "and the badge must be on the row");
 });
 
 // ── [DEEL-BEDRAG] The stated amount must REACH the database ──────────────────
@@ -6316,6 +6317,7 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/zzp/ZzpDashboard.tsx",
     "src/app/dashboard/zzp/DailyTruth.tsx",
     "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
   ];
   const leftovers: string[] = [];
 
