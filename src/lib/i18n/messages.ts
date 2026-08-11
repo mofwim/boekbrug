@@ -922,6 +922,68 @@ export const MESSAGES = {
   'dq.nietGevonden': { nl: 'Niet gevonden', ar: 'لم يُعثر عليه', en: 'Not found' },
   'dq.netwerkfout': { nl: 'Netwerkfout. Probeer het opnieuw.', ar: 'خطأ في الشبكة. حاول مرة أخرى.', en: 'Network error. Try again.' },
 
+  // ─── [KWARTAAL-KAART] Het kwartaaloverzicht per klant ───────────────────────────────────────
+
+  'kw.inkomsten': { nl: 'Inkomsten incl. BTW', ar: 'الإيرادات شاملة الضريبة', en: 'Income incl. VAT' },
+  'kw.uitgaven': { nl: 'Uitgaven incl. BTW', ar: 'المصروفات شاملة الضريبة', en: 'Spending incl. VAT' },
+  'kw.teBetalen5g': { nl: 'BTW te betalen (5g)', ar: 'ضريبة مستحقة (5g)', en: 'VAT to pay (5g)' },
+  'kw.teBetalen5gKort': { nl: 'Te betalen (5g)', ar: 'مستحق (5g)', en: 'To pay (5g)' },
+  'kw.klant': { nl: 'Klant', ar: 'العميل', en: 'Client' },
+  'kw.openstaand': { nl: 'Openstaand', ar: 'معلّق', en: 'Outstanding' },
+  'kw.nietIngediend': { nl: 'Nog niet als ingediend gemarkeerd', ar: 'لم يُعلَّم كمُقدَّم بعد', en: 'Not yet marked as filed' },
+  'kw.btwMet': { nl: 'De BTW is met', ar: 'تغيّرت الضريبة بمقدار', en: 'The VAT changed by' },
+  'kw.geenKlanten': { nl: 'Geen klanten gekoppeld', ar: 'لا عملاء مرتبطون', en: 'No clients linked' },
+  'kw.nodigUit': { nl: 'Klant uitnodigen', ar: 'ادعُ عميلاً', en: 'Invite a client' },
+  'kw.nodigUitUitleg': { nl: 'Nodig een klant uit om kwartaaloverzichten te bekijken', ar: 'ادعُ عميلاً لعرض ملخصات الأرباع', en: 'Invite a client to view quarterly overviews' },
+  'kw.dashboard': { nl: 'Dashboard', ar: 'اللوحة', en: 'Dashboard' },
+
+  // ─── [KOP] De vaste kop: meldingen, profielmenu, uitloggen ──────────────────────────────────
+
+  'kop.meldingen': { nl: 'Meldingen', ar: 'التنبيهات', en: 'Notifications' },
+  'kop.geenMeldingen': { nl: 'Geen meldingen', ar: 'لا تنبيهات', en: 'No notifications' },
+  'kop.allesGelezen': { nl: 'Alles gelezen', ar: 'قُرئ الكل', en: 'All read' },
+  'kop.berichten': { nl: 'Berichten', ar: 'الرسائل', en: 'Messages' },
+  'kop.profielmenu': { nl: 'Profielmenu', ar: 'قائمة الحساب', en: 'Profile menu' },
+  'kop.instellingen': { nl: 'Instellingen', ar: 'الإعدادات', en: 'Settings' },
+  'kop.uitloggen': { nl: 'Uitloggen', ar: 'تسجيل الخروج', en: 'Log out' },
+
+  // ─── [ZOEKBALK] ─────────────────────────────────────────────────────────────────────────────
+
+  'zb.zoeken': { nl: 'Zoeken', ar: 'بحث', en: 'Search' },
+  'zb.openen': { nl: 'Zoeken openen', ar: 'فتح البحث', en: 'Open search' },
+  'zb.recent': { nl: 'Recent', ar: 'الأخيرة', en: 'Recent' },
+  'zb.resultaten': { nl: 'Zoekresultaten', ar: 'نتائج البحث', en: 'Search results' },
+
+  // ─── [PLAN] Facturering & eerlijk gebruik ───────────────────────────────────────────────────
+
+  'plan.titel': { nl: 'Plan', ar: 'الخطة', en: 'Plan' },
+  'plan.uitleg': { nl: 'Welk plan er voor je geldt, en waar je je btw-facturen vindt.', ar: 'أي خطة تنطبق عليك، وأين تجد فواتير الضريبة الخاصة بك.', en: 'Which plan applies to you, and where your VAT invoices are.' },
+  'plan.gebruik': { nl: 'Je gebruik deze maand', ar: 'استهلاكك هذا الشهر', en: 'Your usage this month' },
+  'plan.prijsPlus': { nl: 'Prijs van Plus', ar: 'سعر Plus', en: 'The price of Plus' },
+  'plan.beleid': { nl: 'Lees het beleid eerlijk gebruik', ar: 'اقرأ سياسة الاستخدام العادل', en: 'Read the fair-use policy' },
+  'plan.beleidVolledig': { nl: 'Het volledige beleid', ar: 'السياسة كاملة', en: 'The full policy' },
+  'plan.betaald': { nl: 'Bedankt — je betaling is gelukt.', ar: 'شكراً — تم دفعك بنجاح.', en: 'Thank you — your payment went through.' },
+  'plan.jeWordt': { nl: 'Je wordt', ar: 'ستصبح', en: 'You become' },
+
+  // ─── [VERPLAATSEN] ──────────────────────────────────────────────────────────────────────────
+
+  'mv.naar': { nl: 'Verplaatsen naar', ar: 'نقل إلى', en: 'Move to' },
+  'mv.hier': { nl: 'Hier verplaatsen', ar: 'انقل إلى هنا', en: 'Move here' },
+  'mv.hoofdmap': { nl: 'Hoofdmap', ar: 'المجلد الرئيسي', en: 'Root folder' },
+  'mv.zoek': { nl: 'Zoek een map…', ar: 'ابحث عن مجلد…', en: 'Search for a folder…' },
+  'mv.zoekAria': { nl: 'Mappen zoeken', ar: 'البحث في المجلدات', en: 'Search folders' },
+  'mv.geen': { nl: 'Geen mappen gevonden.', ar: 'لم يُعثر على مجلدات.', en: 'No folders found.' },
+
+  // ─── [VERKOOP] Het scherm van de verkoopmedewerker ──────────────────────────────────────────
+  // De medewerker die namens de eigenaar factureert kan net zo goed Arabischtalig zijn.
+
+  'vk.jouwFacturen': { nl: 'Jouw facturen', ar: 'فواتيرك', en: 'Your invoices' },
+  'vk.maken': { nl: 'Facturen maken', ar: 'إنشاء الفواتير', en: 'Creating invoices' },
+  'vk.namens': { nl: 'Je maakt facturen namens', ar: 'تُنشئ الفواتير باسم', en: 'You create invoices on behalf of' },
+  'vk.staatOpen': { nl: 'Staat open', ar: 'مستحق', en: 'Outstanding' },
+  'vk.teLaat': { nl: 'Te laat', ar: 'متأخر', en: 'Overdue' },
+  'vk.geenFacturen': { nl: 'Je hebt nog geen facturen gemaakt. Begin met de knop hierboven.', ar: 'لم تُنشئ فواتير بعد. ابدأ بالزر أعلاه.', en: 'You have not created any invoices yet. Start with the button above.' },
+
   // ─── [VERSTUURD] The confirmation after an invoice actually goes out ─────────────────────────
 
   'sent.factuur.title': {

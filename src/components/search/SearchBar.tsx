@@ -22,6 +22,7 @@ import { flattenGroups, type SearchResult, type SearchResultGroup } from "@/lib/
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -271,6 +272,7 @@ function SearchInput({
   inputRef, query, open, loading, placeholder,
   fontSize = 14, activeId, onChange, onFocus, onKeyDown, onClear,
 }: SearchInputProps) {
+  const t = translator(useLocale())
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8,
@@ -288,7 +290,7 @@ function SearchInput({
         placeholder={placeholder}
         autoComplete="off"
         spellCheck={false}
-        aria-label="Zoeken"
+        aria-label={t('zb.zoeken')}
         aria-expanded={open}
         aria-haspopup="listbox"
         role="combobox"
@@ -306,7 +308,7 @@ function SearchInput({
       {query && (
         <button className="tap-44"
           tabIndex={-1}
-          aria-label="Wissen"
+          aria-label={t('inkoop.wissen')}
           onClick={onClear}
           style={{
             background: "#E0E0E0", border: "none", borderRadius: "50%",
@@ -347,12 +349,13 @@ function DropdownContent({
   groups, flatResults, selectedIdx, totalCount,
   onSelectRecent, onSelectResult, onHoverIdx, onSeeAll,
 }: DropdownContentProps) {
+  const t = translator(useLocale())
   return (
     <>
       {/* Recent searches */}
       {showRecent && recent.length > 0 && (
         <>
-          <SectionLabel>Recent</SectionLabel>
+          <SectionLabel>{t('zb.recent')}</SectionLabel>
           {recent.map((term, i) => (
             <button
               key={term}
@@ -380,10 +383,10 @@ function DropdownContent({
       {showResults && error && (
         <div role="status" style={{ padding: "28px 16px", textAlign: "center" }}>
           <p style={{ fontSize: 14, color: "#b3261e", margin: 0, fontWeight: 500 }}>
-            Zoeken mislukt
+            {t('zoek.mislukt')}
           </p>
           <p style={{ fontSize: 13, color: "#80868b", margin: "4px 0 0" }}>
-            Controleer je verbinding en probeer het opnieuw.
+            {t('zoek.verbinding')}
           </p>
         </div>
       )}
@@ -519,6 +522,7 @@ function DropdownContent({
 // ─── Main SearchBar ───────────────────────────────────────────────────────────
 
 export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launcher" } = {}) {
+  const t = translator(useLocale())
   const router = useRouter();
   const { query, setQuery, groups, totalCount, loading, error, clear } = useSearch({ debounceMs: 200 });
 
@@ -749,7 +753,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
             ref={portalDropdownRef}
             id="bb-search-listbox"
             role="listbox"
-            aria-label="Zoekresultaten"
+            aria-label={t('zb.resultaten')}
             style={{
               position: "fixed",
               top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width,
@@ -780,7 +784,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
       {/* Compact tap-target (mobile always; desktop only in launcher variant).
           In launcher mode it's a floating action button; otherwise a header icon. */}
       <button
-        aria-label="Zoeken openen"
+        aria-label={t('zb.openen')}
         onClick={openSearch}
         style={{
           display: compact ? "flex" : "none",
@@ -817,14 +821,14 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
                   WebkitTapHighlightColor: "transparent",
                 }}
               >
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
             </div>
           </div>
           <div
             id="bb-search-listbox"
             role="listbox"
-            aria-label="Zoekresultaten"
+            aria-label={t('zb.resultaten')}
             style={{
               flex: 1, overflowY: "auto", overscrollBehavior: "contain",
               WebkitOverflowScrolling: "touch",

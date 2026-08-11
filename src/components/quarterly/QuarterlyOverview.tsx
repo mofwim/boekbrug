@@ -17,6 +17,7 @@ import { formatDateNL } from "@/lib/format-nl";
 import { useToast } from "@/components/ui/Toast";
 import { statusLabel } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
@@ -73,6 +74,7 @@ export function QuarterlyOverview({ isAccountant, role }: Props) {
 // ZZP View
 // ─────────────────────────────────────────────────────────
 function ZzpView({ role }: { role: Role }) {
+  const t = translator(useLocale())
   const toast = useToast();
   const parentHref = useParentPath(role);
   // [QUARTER-DEEPLINK] Seed from ?year&quarter (the link that sent us here), else the shared
@@ -226,7 +228,7 @@ function ZzpView({ role }: { role: Role }) {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Dashboard
+          {t('kw.dashboard')}
         </Link>
       </div>
 
@@ -355,7 +357,7 @@ function ZzpView({ role }: { role: Role }) {
               <p className="text-[11px] text-muted-foreground mt-1.5">incl. pin & contant</p>
             </div>
             <div className="bg-background border-2 border-blue-400 rounded-2xl p-4 shadow-sm">
-              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">BTW te betalen (5g)</p>
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">{t('kw.teBetalen5g')}</p>
               <p className="text-2xl font-bold tabular-nums text-blue-700 leading-none mt-1.5">{recon ? formatEur(recon.saldo) : "…"}</p>
               <p className="text-[11px] text-muted-foreground mt-1.5">na voorbelasting</p>
             </div>
@@ -387,7 +389,7 @@ function ZzpView({ role }: { role: Role }) {
                   <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
-                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-semibold">{t('kw.teBetalen5gKort')}</p>
                   <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
               </div>
@@ -428,7 +430,7 @@ function ZzpView({ role }: { role: Role }) {
                     {filed.divergence.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd sinds indiening"}
                   </p>
                   <p style={{ fontSize: 12.5, margin: "4px 0 0", lineHeight: 1.5, color: filed.divergence.needsSuppletie ? "#7a1c1c" : "#7a4f00" }}>
-                    De BTW is met <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}.{" "}
+                    {t('kw.btwMet')} <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}.{" "}
                     {filed.divergence.needsSuppletie
                       ? "Meer dan €1.000 — dien een suppletie in."
                       : "Onder €1.000 — verwerk dit in je volgende aangifte."}
@@ -457,7 +459,7 @@ function ZzpView({ role }: { role: Role }) {
                   </p>
                 ) : (
                   <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
-                    Nog niet als ingediend gemarkeerd
+                    {t('kw.nietIngediend')}
                   </span>
                 )}
                 {/* Deep-linked to THIS quarter, so the action opens on the period you were
@@ -485,7 +487,7 @@ function ZzpView({ role }: { role: Role }) {
               <div className="grid grid-cols-2 divide-x divide-emerald-100 border-b border-emerald-100 bg-emerald-50">
                 <div className="px-4 py-2.5">
                   <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">
-                    Inkomsten incl. BTW
+                    {t('kw.inkomsten')}
                   </p>
                 </div>
                 <div className="px-4 py-2.5">
@@ -523,7 +525,7 @@ function ZzpView({ role }: { role: Role }) {
               <div className="grid grid-cols-2 divide-x divide-red-100 border-b border-red-100 bg-red-50">
                 <div className="px-4 py-2.5">
                   <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
-                    Uitgaven incl. BTW
+                    {t('kw.uitgaven')}
                   </p>
                 </div>
                 <div className="px-4 py-2.5">
@@ -557,6 +559,7 @@ function ZzpView({ role }: { role: Role }) {
 // Accountant View — unchanged
 // ─────────────────────────────────────────────────────────
 function AccountantView({ role }: { role: Role }) {
+  const t = translator(useLocale())
   const toast = useToast();
   const parentHref = useParentPath(role);
   // [QUARTER-DEEPLINK] Same rule as the ZZP view — a link may choose the period it opens on.
@@ -701,10 +704,10 @@ function AccountantView({ role }: { role: Role }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </div>
-        <p className="text-sm font-medium mb-1">Geen klanten gekoppeld</p>
-        <p className="text-xs text-muted-foreground mb-5">Nodig een klant uit om kwartaaloverzichten te bekijken</p>
+        <p className="text-sm font-medium mb-1">{t('kw.geenKlanten')}</p>
+        <p className="text-xs text-muted-foreground mb-5">{t('kw.nodigUitUitleg')}</p>
         <Link href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
-          Klant uitnodigen
+          {t('kw.nodigUit')}
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
@@ -720,14 +723,14 @@ function AccountantView({ role }: { role: Role }) {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Dashboard
+          {t('kw.dashboard')}
         </Link>
       </div>
 
       {clients.length > 0 && (
         <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
           <div className="px-4 py-3 border-b bg-muted/30">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Klant</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('kw.klant')}</p>
           </div>
           <select
             value={selectedClientId}
@@ -798,10 +801,10 @@ function AccountantView({ role }: { role: Role }) {
           <div className="grid grid-cols-2 gap-3">
             {/* [TRUST-ACCOUNTANT] Reconciled omzet + BTW-saldo (5g), not invoices-only. */}
             <SummaryCard label="Omzet (excl. BTW)" value={recon ? formatEur(recon.omzet) : "…"} accent="default" />
-            <SummaryCard label="BTW te betalen (5g)" value={recon ? formatEur(recon.saldo) : "…"} accent="default" />
-            <SummaryCard label="Betaald" value={formatEur(data.paid)} accent="green" />
+            <SummaryCard label={t('kw.teBetalen5g')} value={recon ? formatEur(recon.saldo) : "…"} accent="default" />
+            <SummaryCard label={t('lijst.betaald')} value={formatEur(data.paid)} accent="green" />
             <SummaryCard
-              label="Openstaand"
+              label={t('kw.openstaand')}
               value={formatEur((data.outstanding ?? 0) + (data.overdue ?? 0))}
               accent={(data.overdue ?? 0) > 0 ? "red" : "default"}
               sub={(data.overdue ?? 0) > 0 ? `${formatEur(data.overdue)} te laat` : undefined}
@@ -835,7 +838,7 @@ function AccountantView({ role }: { role: Role }) {
                   <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
-                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-semibold">{t('kw.teBetalen5gKort')}</p>
                   <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
               </div>
@@ -861,9 +864,9 @@ function AccountantView({ role }: { role: Role }) {
           <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <h3 className="text-sm font-semibold">
-                Facturen <span className="text-muted-foreground font-normal">({data.invoiceCount})</span>
+                {t('zoek.cat.facturen')} <span className="text-muted-foreground font-normal">({data.invoiceCount})</span>
               </h3>
-              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Betaald</span>
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{t('lijst.betaald')}</span>
             </div>
             {(data.invoices?.length ?? 0) === 0 ? (
               <div className="py-12 text-center">

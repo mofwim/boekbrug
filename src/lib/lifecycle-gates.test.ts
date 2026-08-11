@@ -6340,6 +6340,12 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/bestanden/components/Trash.tsx",
     "src/app/dashboard/aangifte/AangifteClient.tsx",
     "src/components/draft-queue/DraftQueue.tsx",
+    "src/components/quarterly/QuarterlyOverview.tsx",
+    "src/app/dashboard/_shared/index.tsx",
+    "src/components/search/SearchBar.tsx",
+    "src/app/dashboard/settings/facturering/page.tsx",
+    "src/app/dashboard/bestanden/components/modals/MoveModal.tsx",
+    "src/app/dashboard/verkoop/VerkoopClient.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -6366,7 +6372,8 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     }
   }
   // And the translator must be bound in each, or every t() above is a crash rather than a word.
-  assert.match(page, /translator\(/, `${screen} uses keys but binds no translator`);
+  // serverTranslator counts too: a dashboard servercomponent binds via the request, not a hook.
+  assert.match(page, /(?:translator\(|serverTranslator\()/, `${screen} uses keys but binds no translator`);
   }
 
   assert.deepEqual(
