@@ -5707,3 +5707,67 @@ test("[GRENS-ZICHTBAAR] the cron names the cause it has, and stops retrying a mo
   assert.match(email, /heldByFairUse: number/, "the sync result must carry the hold");
   assert.match(email, /heldByFairUse: hold\?\.held \?\? 0/, "…and report the real number");
 });
+
+// ─── [PRIJSVELD-CENT] The edit screen showed a different total than the invoice it was editing ──
+//
+// Reported with both screens side by side. Invoice 20260001, four lines, prices typed INCLUSIVE of
+// btw at 9% (€ 0,90 / € 1,90 / € 1,75 all-in), which is what a food business always types:
+//
+//     the sent invoice   subtotaal € 368,80   totaal € 401,99
+//     the edit screen    subtotaal € 368,69   totaal € 401,87
+//
+// Reproduced to the cent. Typing prices inclusive makes the STORED ex-price a fraction
+// (0,8256880734), and the price field rounded it to two decimals for display — which is a
+// DIFFERENT PRICE. Two failures came out of that one rounding:
+//
+//   · the field showed a price that does not multiply to its own line total: 38 x 1,61 = 61,18
+//     while the line says 61,01. Exactly the defect the PDF and the price column already had, and
+//     which unitPriceDecimals fixed there — the edit screen was never brought along;
+//   · and because it is a controlled input, the rounded number replaced the stored fraction the
+//     moment anything committed it. Three of the four lines had already been rewritten that way.
+//
+// The owner saw more than a euro of difference on a larger invoice, which is the same arithmetic
+// with a bigger quantity: the error is (rounded price − real price) × quantity.
+
+test("[PRIJSVELD-CENT] the price field is told the quantity, so it can show enough decimals", () => {
+  for (const f of [
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/invoice/new/page.tsx",
+  ]) {
+    const screen = code(f);
+    assert.doesNotMatch(
+      screen, /priceFieldValue\(line\.unit_price, line\.btw_rate, priceMode\)/,
+      `${f}: the field is still rounded to cents — a fraction becomes a different price`,
+    );
+    assert.match(
+      screen, /priceFieldValue\(line\.unit_price, line\.btw_rate, priceMode, line\.quantity/,
+      `${f}: the quantity is what makes "enough decimals" answerable`,
+    );
+  }
+
+  // The edit screen must also READ the stored line total — it is the number the field has to
+  // reconcile with, and it was not in the select at all.
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(edit, /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total'\)/);
+  assert.match(edit, /priceFieldValue\([^)]*line_total/, "…and pass it to the field");
+
+  // step="0.01" makes the BROWSER refuse a third decimal, whatever the value says.
+  assert.doesNotMatch(edit, /type="number" value=\{priceFieldValue[\s\S]{0,200}?step="0\.01"/,
+    "step must not pin the field to cents");
+});
+
+test("[PRIJSVELD-CENT] the shared helper decides the precision, not each screen", () => {
+  const lib = code("src/lib/price-mode.ts");
+  assert.match(lib, /import \{ unitPriceDecimals \} from "\.\/unit-price-display"/,
+    "one answer to 'how do you write this unit price', shared with the PDF and the price column");
+  assert.match(lib, /const decimals = unitPriceDecimals\(shown, quantity, target\)/);
+
+  // The line total belongs to the MODE: in incl mode the field times the quantity must make the
+  // amount INCLUDING btw, so reconciling against the stored ex-total would look for a number that
+  // is not there.
+  assert.match(lib, /mode === "incl" \? inclFromEx\(Number\(lineTotal\), rate\) : Number\(lineTotal\)/);
+
+  // And the new arguments must be optional, so a caller that has not been updated does not move.
+  assert.match(lib, /quantity\?: number \| null,/);
+  assert.match(lib, /if \(quantity === undefined \|\| quantity === null\) return toDisplayCents\(shown\)/);
+});

@@ -131,7 +131,7 @@ export default function InvoiceEditPage() {
         // [VRIJGESTELD-ROUNDTRIP] unit en vat_treatment horen erbij, want dit scherm PUT terug wat het
         // leest en de PUT vervangt alle regels. Wat hier niet wordt gelezen, bestaat na het opslaan
         // niet meer — en vat_treatment is de vlag waaraan de aangifte vrijgestelde omzet herkent.
-        .select('description, quantity, unit_price, btw_rate, unit, vat_treatment')
+        .select('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total')
         .eq('invoice_id', invoiceId)
 
       // تعبئة الـ state بالبيانات الموجودة
@@ -645,7 +645,12 @@ export default function InvoiceEditPage() {
                 {/* [PRIJS-MODUS] Toont en accepteert de prijs in de gekozen stand; de regel
                     bewaart altijd ex-btw. */}
                 <input
-                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode)} min="0" step="0.01"
+                  /* [PRIJSVELD-CENT] Aantal en regeltotaal mee, zodat het veld net zoveel
+                     decimalen toont als de regel nodig heeft. Op centen afgerond toonde het een
+                     prijs die niet met zijn eigen regeltotaal vermenigvuldigt — en verving die
+                     afgeronde prijs de opgeslagen breuk zodra er iets in het veld terechtkwam.
+                     step="any": met step="0.01" weigert de browser zelf al een derde decimaal. */
+                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity, (line as { line_total?: number | null }).line_total)} min="0" step="any"
                   onChange={e => updateLinePrice(index, parseFloat(e.target.value) || 0)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                   placeholder="0.00"
