@@ -36,6 +36,45 @@ the top of `src/lib/owner-only.ts`.
 Do not start a mass rename. Convert a file to English when you are already changing it for
 another reason, and keep the rename in its own commit so the real change stays readable.
 
+## The screen has more than one language now — the documents still do not
+
+The app has published in four languages since the blog was built: 53 articles each in `nl`, `en`,
+`ar` and `tr`, with an `/ar/blog` route and a locale table that knows Arabic is right-to-left. The
+product was Dutch-only for a structural reason, not a linguistic one — that table lived in
+`src/lib/blog.ts`, which reads the filesystem and may never be imported by a screen. It now lives
+in `src/lib/i18n/locale.ts`, and `blog.ts` re-exports it.
+
+So "Dutch on the screen" becomes: **Dutch is the SOURCE language of everything on screen, and the
+screen may be shown in another one.**
+
+- New user-facing text goes in `src/lib/i18n/messages.ts`, written in Dutch first. Dutch is
+  required per key; other languages are optional and a gap falls back to Dutch — never to a key,
+  never to a blank. A bookkeeping app with `sent.action.view` on a button is worse than one in a
+  language the owner reads less comfortably.
+- **A noun inside a sentence is not a parameter.** `Een verstuurde {woord} pas je niet aan` works
+  in Dutch and breaks Arabic agreement and Turkish suffix harmony. Give the document type its own
+  key per sentence.
+- **A sentence that points at a button names the button as it is written.** While the nav still
+  says `Facturen`, the Arabic sentence says `Facturen` too — otherwise the owner hunts for a word
+  that is nowhere in the interface.
+- **A component holds no language of its own.** Copy lives in a pure module (see
+  `invoice-sent-notice.ts`), the component renders what it is handed, and text direction travels
+  with the words on the same object. One hard-coded string left in a component is how a
+  translation stays permanently half-finished — the screen still looks right in Dutch, so nothing
+  points at the gap.
+- Use `textAlign: 'end'` and `paddingInlineStart`, never `right`/`paddingLeft`. Physical sides are
+  wrong in exactly one language, which is the one nobody checks.
+
+**What is never translated, in any language:** the invoice PDF, the e-mail that carries it, the
+e-factuur XML, and everything in `src/content/legal/`. Those are read by a Dutch customer, an
+accountant and the Belastingdienst — not by the owner's language setting. Translating them would
+change what the documents ARE, and would leave an owner sending a Dutch company a bill it cannot
+book. Database values and URL segments stay Dutch for the reasons already given above.
+
+The `[TAAL]` gates in `lifecycle-gates.test.ts` enforce the mechanical half of this: the vocabulary
+stays importable, every key used exists, every key declared is rendered, and the translated panel
+carries no Dutch of its own.
+
 # More than one session works on this repo
 
 `main` moves while you work: another session merges its own branch, and sometimes it touches the

@@ -43,6 +43,9 @@ export default function InvoiceSentModal({
       aria-modal="true"
       aria-labelledby="verstuurd-title"
       onClick={onView}
+      // [TAAL] Arabic is written right to left. The direction travels WITH the words, on the same
+      // notice object, so the panel cannot end up reading Arabic in a left-to-right box.
+      dir={notice.dir}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
         backgroundColor: 'rgba(0,0,0,0.45)',
@@ -104,7 +107,7 @@ export default function InvoiceSentModal({
           {notice.rows.map(([label, value]) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
               <span style={{ fontSize: 13, color: '#5F6368' }}>{label}</span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', textAlign: 'end', maxWidth: '60%', wordBreak: 'break-word' }}>
                 {value}
               </span>
             </div>
@@ -114,9 +117,10 @@ export default function InvoiceSentModal({
         {/* "How do I know it arrived correctly?" — the question this panel exists to answer, so it
             is on the screen rather than in a help page nobody opens at this moment. */}
         <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 6px' }}>
-          Zo controleer je het zelf
+          {notice.controleKop}
         </p>
-        <ul style={{ margin: '0 0 20px', padding: '0 0 0 18px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {/* paddingInlineStart, not paddingLeft: the bullets have to sit on the reading side. */}
+        <ul style={{ margin: '0 0 20px', paddingInlineStart: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {notice.controle.map((regel) => (
             <li key={regel} style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.6 }}>{regel}</li>
           ))}
@@ -130,7 +134,7 @@ export default function InvoiceSentModal({
               color: 'white', fontSize: 16, fontWeight: 600, cursor: 'pointer', width: '100%',
             }}
           >
-            Bekijk de factuur
+            {notice.acties.bekijk}
           </button>
           <button
             onClick={onNew}
@@ -139,7 +143,7 @@ export default function InvoiceSentModal({
               color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', width: '100%',
             }}
           >
-            Nog een factuur maken
+            {notice.acties.nieuw}
           </button>
         </div>
       </div>

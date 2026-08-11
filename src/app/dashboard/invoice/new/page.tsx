@@ -34,6 +34,9 @@ import { round2 } from '@/lib/invoice-totals'
 // zwijgend door de detailpagina. Zie invoice-sent-notice.ts.
 import InvoiceSentModal from '@/components/ui/InvoiceSentModal'
 import { invoiceSentNotice, type InvoiceSentNotice } from '@/lib/invoice-sent-notice'
+// [TAAL] De taal die de ondernemer heeft gekozen. Niets anders op dit scherm hangt eraan: de
+// factuur, de PDF en de mail blijven Nederlands.
+import { useLocale } from '@/lib/i18n/use-locale'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
@@ -533,6 +536,7 @@ function NewInvoicePageContent() {
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   // [VERSTUURD] Gevuld zodra /api/invoice/send klaar is met een nummer. Zolang dit staat blijft
   // de pagina staan: elke uitgang van het paneel navigeert zelf, want de factuur bestaat al.
+  const taal = useLocale()
   const [sentNotice, setSentNotice] = useState<InvoiceSentNotice | null>(null)
   const [sentInvoiceId, setSentInvoiceId] = useState<string | null>(null)
   useCloseOnBack(!!showSendConfirm, () => setShowSendConfirm(false))
@@ -1045,7 +1049,7 @@ function NewInvoicePageContent() {
         clientEmail,
         totalInc,
         replyTo: result.reply_to,
-      })
+      }, taal)
       if (notice) {
         setSentInvoiceId(factuur.id)
         setSentNotice(notice)
@@ -1266,7 +1270,7 @@ function NewInvoicePageContent() {
           clientEmail,
           totalInc,
           replyTo: result.reply_to,
-        })
+        }, taal)
         if (notice) {
           setSentInvoiceId(invoice.id)
           setSentNotice(notice)

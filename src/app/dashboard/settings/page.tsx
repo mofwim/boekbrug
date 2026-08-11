@@ -6,6 +6,9 @@ import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
+// [TAAL] De taal van het SCHERM. Niet van de documenten — die blijven Nederlands, want die leest
+// de klant en de Belastingdienst. Zie src/lib/i18n/locale.ts.
+import { LanguageCard } from '@/components/settings/LanguageCard'
 // [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
 import { SnelStartCard } from '@/components/settings/SnelStartCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
@@ -767,6 +770,8 @@ export default function SettingsPage() {
         </div>
 
         {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
+        <LanguageCard />
+
         <PushNotificationCard />
 
         {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}

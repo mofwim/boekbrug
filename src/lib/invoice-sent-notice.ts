@@ -23,6 +23,11 @@
 // because they are what the entrepreneur reads.
 
 import { formatEuroNL } from "./format-nl";
+// [TAAL] The words come from the catalogue; this module still decides WHICH words. Dutch is the
+// source and the fallback, so an owner who has not chosen a language sees exactly what they saw
+// before — the tests below assert that literally.
+import { translator } from "./i18n/t";
+import { localeDir, type Locale } from "./i18n/locale";
 
 /** Exactly what /api/invoice/send returns on the success path, plus what the screen knows. */
 export interface InvoiceSentFacts {
@@ -53,15 +58,21 @@ export interface InvoiceSentNotice {
   rows: Array<[label: string, value: string]>;
   /** How to check it themselves, which is the question this whole notice exists to answer. */
   controle: string[];
+  /** Heading above that list. */
+  controleKop: string;
+  /** The two exits. Labels live here, not in the component — see the note below. */
+  acties: { bekijk: string; nieuw: string };
+  /**
+   * Text direction for the panel. Carried on the notice rather than looked up in the component so
+   * that ONE object fully describes what is on the screen: an owner reading Arabic gets the words
+   * and the direction from the same call, and a component cannot render the two out of step.
+   */
+  dir: "ltr" | "rtl";
 }
 
 /** "factuur" / "creditnota" as a sentence-leading word. Anything unknown reads as "factuur". */
 function documentWord(invoiceType: string | null | undefined): "factuur" | "creditnota" {
   return invoiceType === "creditnota" ? "creditnota" : "factuur";
-}
-
-function capitalise(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
@@ -70,47 +81,61 @@ function capitalise(s: string): string {
  * Null on a missing number is deliberate and not defensive noise: the number IS the event. A
  * modal that says "verstuurd" without one would be claiming something the response did not.
  */
-export function invoiceSentNotice(facts: InvoiceSentFacts): InvoiceSentNotice | null {
+export function invoiceSentNotice(
+  facts: InvoiceSentFacts,
+  locale?: Locale | string | null,
+): InvoiceSentNotice | null {
   const number = (facts.invoiceNumber ?? "").trim();
   if (!number) return null;
 
+  const t = translator(locale);
   const woord = documentWord(facts.invoiceType);
   const naam = (facts.clientName ?? "").trim();
   const email = (facts.clientEmail ?? "").trim();
   const replyTo = (facts.replyTo ?? "").trim();
 
   const rows: Array<[string, string]> = [];
-  rows.push([capitalise(woord) + "nummer", number]);
-  if (naam) rows.push(["Aan", naam]);
+  rows.push([t(`sent.${woord}.numberLabel`), number]);
+  if (naam) rows.push([t("sent.row.to"), naam]);
   // No placeholder dash for a missing e-mail: this row is a claim about where the document went,
   // and "—" next to "Verstuurd naar" reads as if it went nowhere. Better absent than ambiguous.
-  if (email) rows.push(["Verstuurd naar", email]);
+  if (email) rows.push([t("sent.row.sentTo"), email]);
   if (typeof facts.totalInc === "number" && Number.isFinite(facts.totalInc)) {
-    rows.push(["Bedrag", formatEuroNL(facts.totalInc)]);
+    rows.push([t("sent.row.amount"), formatEuroNL(facts.totalInc)]);
   }
 
   return {
-    title: capitalise(woord) + " verstuurd",
+    title: t(`sent.${woord}.title`),
     lead: naam
-      ? `${capitalise(woord)} ${number} is onderweg naar ${naam}.`
-      : `${capitalise(woord)} ${number} is verstuurd.`,
+      ? t(`sent.${woord}.lead`, { number, name: naam })
+      : t(`sent.${woord}.leadNoName`, { number }),
     // Art. 35 Wet OB: a numbered invoice belongs to an unbroken series and may not be altered
     // afterwards. This is the one thing the owner cannot undo, so it is the one thing that is
     // stated before anything else — including before the reassurance.
+    //
+    // Converting is something an OFFERTE does, and what it becomes is a factuur — so there is no
+    // creditnota variant of this sentence and the key is not built from `woord`.
     definitief: facts.converted
-      ? `Je offerte is nu ${woord} ${number}. Dat nummer ligt vast: een verstuurde ${woord} pas je niet meer aan — een fout corrigeer je met een creditnota.`
-      : `Nummer ${number} ligt vast. Een verstuurde ${woord} pas je niet meer aan — een fout corrigeer je met een creditnota.`,
+      ? t("sent.factuur.fixedConverted", { number })
+      : t(`sent.${woord}.fixed`, { number }),
     rows,
     controle: [
       // Each of these is something the owner can verify with their own eyes, today. Nothing here
       // is a promise about the future or about the customer's mailbox.
-      `De ${woord} staat nu bij Facturen met de status Verzonden.`,
-      `Open hem om de PDF te bekijken — dat is hetzelfde bestand dat de klant heeft gekregen.`,
+      t(`sent.${woord}.checkList`),
+      t("sent.check.pdf"),
       // Only when the route actually set a Reply-To, and then WITH the address — an owner who
       // knows which mailbox to watch can check it; one who is told "it comes to you" cannot.
-      ...(replyTo ? [`Antwoordt de klant op deze mail, dan komt dat binnen op ${replyTo}.`] : []),
+      ...(replyTo ? [t("sent.check.reply", { email: replyTo })] : []),
       // The honest limit, and the reason the lines above can be relied on.
-      `Was het versturen mislukt, dan had je dit scherm niet gezien maar een herstelscherm.`,
+      t("sent.check.failed"),
     ],
+    controleKop: t("sent.check.heading"),
+    // [TAAL] The button labels live here and not in InvoiceSentModal so that the component holds
+    // no language at all. A component with one Dutch string left in it is the shape that keeps a
+    // translation permanently half-finished — and it is invisible, because the screen still looks
+    // right in Dutch.
+    acties: { bekijk: t("sent.action.view"), nieuw: t("sent.action.new") },
+    dir: localeDir(locale),
   };
 }

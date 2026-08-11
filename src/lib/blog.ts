@@ -12,27 +12,24 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import readingTime from 'reading-time'
 
-export type Locale = 'nl' | 'en' | 'ar' | 'tr'
-export const LOCALES: Locale[] = ['nl', 'en', 'ar', 'tr']
-export const DEFAULT_LOCALE: Locale = 'nl'
+// [TAAL] The language vocabulary used to be declared HERE, in a module whose own header says
+// "never import this into a client component" — it reads the filesystem. So the app knew about
+// four languages, and knew Arabic is right-to-left, in the one place no screen could ask.
+//
+// It now lives in src/lib/i18n/locale.ts, which is pure, and is re-exported here so every
+// existing import of Locale/LOCALES/LOCALE_META from '@/lib/blog' keeps working unchanged.
+export {
+  LOCALES,
+  DEFAULT_LOCALE,
+  LOCALE_META,
+  isLocale,
+  resolveLocale,
+  localeDir,
+  localePrefix,
+} from './i18n/locale'
+export type { Locale, LocaleMeta } from './i18n/locale'
 
-// Per-locale presentation + SEO metadata. `dir` drives RTL for Arabic; `intl`
-// is the BCP-47 tag for Intl date formatting (ar forces Latin digits so money
-// and dates read consistently); `label` is the language's own name for the
-// language switch; `hreflang`/`ogLocale` feed SEO.
-export interface LocaleMeta {
-  dir: 'ltr' | 'rtl'
-  label: string
-  hreflang: string
-  ogLocale: string
-  intl: string
-}
-export const LOCALE_META: Record<Locale, LocaleMeta> = {
-  nl: { dir: 'ltr', label: 'Nederlands', hreflang: 'nl-NL', ogLocale: 'nl_NL', intl: 'nl-NL' },
-  en: { dir: 'ltr', label: 'English', hreflang: 'en-GB', ogLocale: 'en_GB', intl: 'en-GB' },
-  ar: { dir: 'rtl', label: 'العربية', hreflang: 'ar', ogLocale: 'ar_AR', intl: 'ar-u-nu-latn' },
-  tr: { dir: 'ltr', label: 'Türkçe', hreflang: 'tr-TR', ogLocale: 'tr_TR', intl: 'tr-TR' },
-}
+import { DEFAULT_LOCALE, LOCALES, type Locale } from './i18n/locale'
 
 // Frontmatter contract — mirrors the schema in the build spec. `alternateSlug`
 // is the slug of the SAME article in the other language; it drives the hreflang
