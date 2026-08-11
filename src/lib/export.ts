@@ -5,6 +5,8 @@
 // Structured for future UBL/XML (BOEK-020)
 
 import { csvCell } from "./csv-safe";
+// [TZ] Eén datumopmaak voor de hele app — zie de noot bij fmtDateNL hieronder.
+import { formatDateNL } from "./format-nl";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,21 +48,23 @@ export interface InvRow {
 }
 
 /** BTW breakdown used for aangifte PDF and quarterly summary */
-export interface BtwSummary {
-  period: string;           // "Q1 2026"
-  year: number;
-  quarter: number;
-  invoiceCount: number;
-  totalExBtw: number;       // totale omzet excl. BTW
-  btw0: number;             // omzet belast 0%
-  btw9: number;             // omzet belast 9%
-  btw21: number;            // omzet belast 21%
-  btwBedrag0: number;       // BTW te betalen 0%
-  btwBedrag9: number;       // BTW te betalen 9%
-  btwBedrag21: number;      // BTW te betalen 21%
-  btwTeBetalen: number;     // totaal BTW te betalen
-  totalIncBtw: number;      // totale omzet incl. BTW
-}
+// [DODE CODE] BtwSummary + calcBtwSummary zijn hier verwijderd, en niet alleen omdat niets ze
+// aanriep — ze gaven een FOUT antwoord, en dood-en-fout is erger dan dood.
+//
+// calcBtwSummary leidde één tarief per FACTUUR af uit de kop (btw_amount / total_ex_btw) en
+// sorteerde dat in drie emmers: 0, 9, en "al het andere" als 21. Een factuur met EUR 500 à 21% en
+// EUR 500 à 9% heeft EUR 150 btw over EUR 1.000, dus een afgeleid tarief van 15% — en die viel
+// heel in de 21%-emmer. De totalen klopten (het geld telt op), de SPLITSING niet, en juist die
+// splitsing is wat een aangifte nodig heeft: rubriek 1a tegenover 1b.
+//
+// Dat is geen randgeval maar precies het scheve-tarief-verhaal dat calcBtwRate hierboven zelf
+// noemt ("een 8% uit een 9%+statiegeld-mix"). De rest van de app splitst per tarief uit de REGELS
+// (btw-rate-split.ts, financial-result.ts); een tweede, kop-gebaseerde splitsing ernaast is de
+// vorm waarin dit soort fouten terugkomt.
+//
+// Weggehaald in plaats van gerepareerd: wie hem ooit aansluit, sluit dan een som aan die uit de
+// regels moet komen. Dezelfde afweging als bij invoicesToUbl, onderaan dit bestand.
+
 
 /**
  * Extended export row — includes all client fields for the full CSV.
@@ -99,10 +103,26 @@ export function calcBtwRate(
 }
 
 /** Format date ISO → dd-mm-yyyy (NL style) */
+// [TZ] Delegates. This file had its OWN date formatter, and it was the unsafe one:
+//
+//     new Date("2026-08-08").toLocaleDateString("nl-NL")
+//
+// invoice_date is a DATE column with no zone. Parsing it into a Date makes it UTC midnight, and
+// rendering that anywhere WEST of UTC gives the day before. Measured on this very function:
+//
+//     UTC / Europe/Amsterdam   8-8-2026
+//     America/New_York         7-8-2026
+//     Pacific/Honolulu         7-8-2026
+//
+// On the file that leaves the building for someone else's bookkeeping. It also produced an
+// unpadded 8-8-2026 where every screen in the app shows 08-08-2026, so the CSV and the invoice
+// beside it disagreed about how a date is written.
+//
+// format-nl.ts already solved this — a string path, no Date object, no timezone — and this repo
+// carries a documented [TZ] scar from exactly this parse. A second date formatter next to it,
+// used only on the export, is how the wrong one ends up where it matters most.
 export function fmtDateNL(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleDateString("nl-NL");
+  return formatDateNL(iso);
 }
 
 /** Format number → NL amount string (no symbol) */
@@ -110,23 +130,9 @@ export function fmtAmountNL(n: number): string {
   return n.toFixed(2).replace(".", ",");
 }
 
-/** Map InvRow → InvoiceExportRow (basic) */
-export function toExportRow(inv: InvRow, period: string): InvoiceExportRow {
-  const exBtw = Number(inv.total_ex_btw ?? 0);
-  const btwAmt = Number(inv.btw_amount ?? 0);
-  return {
-    invoice_number: inv.invoice_number ?? "",
-    client_name: inv.client_name ?? "",
-    status: inv.status ?? "",
-    total_ex_btw: exBtw,
-    btw_amount: btwAmt,
-    total_inc_btw: Number(inv.total_inc_btw ?? 0),
-    btw_rate: calcBtwRate(btwAmt, exBtw),
-    invoice_date: fmtDateNL(inv.invoice_date),
-    due_date: fmtDateNL(inv.due_date),
-    period,
-  };
-}
+// [DODE CODE] toExportRow is verwijderd — nul aanroepers. Elke exportweg bouwt
+// toExportRowFull, en twee mappers naast elkaar waarvan er één nooit draait, is een
+// uitnodiging om de verkeerde te kiezen.
 
 /**
  * Map InvRow → InvoiceExportRowFull (includes all client fields).
@@ -163,7 +169,11 @@ export function toExportRowFull(inv: InvRow, period: string): InvoiceExportRowFu
  * Encoding: UTF-8 BOM added by downloadCsv().
  * [BOEK-014] Added "Type" column
  */
-export function invoicesToCsv(rows: InvoiceExportRow[]): string {
+// [TYPE-EERLIJK] Neemt FULL rijen, want dat is wat hij leest. De handtekening zei
+// `InvoiceExportRow[]` en het lichaam haalde de klantvelden er met zes casts uit — een
+// functie die om minder vraagt dan ze gebruikt, en dus een compiler die niets controleert.
+// Beide aanroepers gaven altijd al FULL rijen.
+export function invoicesToCsv(rows: InvoiceExportRowFull[]): string {
   const headers = [
     "Factuurnummer",
     "Type",           // [BOEK-014]
@@ -193,14 +203,14 @@ export function invoicesToCsv(rows: InvoiceExportRow[]): string {
     ...rows.map((r) =>
       [
         r.invoice_number,
-        (r as InvoiceExportRowFull).invoice_type ?? "factuur", // [BOEK-014]
+        r.invoice_type ?? "factuur", // [BOEK-014]
         r.client_name,
-        (r as InvoiceExportRowFull).client_email ?? "",
-        (r as InvoiceExportRowFull).client_address ?? "",
-        (r as InvoiceExportRowFull).client_postal_code ?? "",
-        (r as InvoiceExportRowFull).client_city ?? "",
+        r.client_email ?? "",
+        r.client_address ?? "",
+        r.client_postal_code ?? "",
+        r.client_city ?? "",
         r.status,
-        (r as InvoiceExportRowFull).direction ?? "",
+        r.direction ?? "",
         fmtAmountNL(r.total_ex_btw),
         fmtAmountNL(r.btw_amount),
         `${r.btw_rate}%`,
@@ -319,58 +329,6 @@ export function downloadFile(
  * Calculate BTW summary from a list of InvRows.
  * Used by the API route (?format=btw-summary) and the PDF generator.
  */
-export function calcBtwSummary(
-  invoices: InvRow[],
-  year: number,
-  quarter: number
-): BtwSummary {
-  let totalExBtw = 0;
-  let totalIncBtw = 0;
-  let btw0 = 0;
-  let btw9 = 0;
-  let btw21 = 0;
-  let btwBedrag0 = 0;
-  let btwBedrag9 = 0;
-  let btwBedrag21 = 0;
-
-  for (const inv of invoices) {
-    const exBtw = Number(inv.total_ex_btw ?? 0);
-    const btwAmt = Number(inv.btw_amount ?? 0);
-    const incBtw = Number(inv.total_inc_btw ?? 0);
-    const rate = calcBtwRate(btwAmt, exBtw);
-
-    totalExBtw += exBtw;
-    totalIncBtw += incBtw;
-
-    if (rate === 0) {
-      btw0 += exBtw;
-      btwBedrag0 += btwAmt;
-    } else if (rate === 9) {
-      btw9 += exBtw;
-      btwBedrag9 += btwAmt;
-    } else {
-      btw21 += exBtw;
-      btwBedrag21 += btwAmt;
-    }
-  }
-
-  return {
-    period: `Q${quarter} ${year}`,
-    year,
-    quarter,
-    invoiceCount: invoices.length,
-    totalExBtw,
-    btw0,
-    btw9,
-    btw21,
-    btwBedrag0,
-    btwBedrag9,
-    btwBedrag21,
-    btwTeBetalen: btwBedrag0 + btwBedrag9 + btwBedrag21,
-    totalIncBtw,
-  };
-}
-
 // ─── UBL/XML Stub (BOEK-020) ──────────────────────────────────────────────────
 
 
