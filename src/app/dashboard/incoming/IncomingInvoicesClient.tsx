@@ -1217,7 +1217,7 @@ function ConfirmPaidModal({
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
-                      textAlign: "right", outline: "none",
+                      textAlign: "end", outline: "none",
                     }}
                   />
                 ) : (
@@ -1239,7 +1239,7 @@ function ConfirmPaidModal({
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
                       border: `1.5px solid ${rateFlag ? "#EA8600" : "#1a73e8"}`,
-                      textAlign: "right", outline: "none",
+                      textAlign: "end", outline: "none",
                     }}
                   />
                 ) : (
@@ -1276,7 +1276,7 @@ function ConfirmPaidModal({
                     style={{
                       width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
                       borderRadius: 10, border: "1.5px solid #1a73e8",
-                      textAlign: "right", outline: "none", color: "#202124",
+                      textAlign: "end", outline: "none", color: "#202124",
                     }}
                   />
                 ) : (
@@ -1358,7 +1358,7 @@ function ConfirmPaidModal({
                     style={{
                       flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 15,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
-                      textAlign: "right", outline: "none",
+                      textAlign: "end", outline: "none",
                     }}
                   />
                 ) : (
@@ -1380,7 +1380,7 @@ function ConfirmPaidModal({
                       flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 15,
                       borderRadius: 8,
                       border: `1.5px solid ${numberFlag ? "#EA8600" : "#1a73e8"}`,
-                      textAlign: "right", outline: "none",
+                      textAlign: "end", outline: "none",
                     }}
                   />
                 ) : (
@@ -1418,7 +1418,7 @@ function ConfirmPaidModal({
                     style={{
                       padding: "6px 10px", fontSize: 15,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
-                      textAlign: "right", outline: "none",
+                      textAlign: "end", outline: "none",
                     }}
                   />
                 ) : (
@@ -1431,7 +1431,7 @@ function ConfirmPaidModal({
                 )}
               </div>
               {dateMissing && (
-                <div style={{ fontSize: 12.5, color: M3.error, textAlign: "right", marginTop: 6 }}>
+                <div style={{ fontSize: 12.5, color: M3.error, textAlign: "end", marginTop: 6 }}>
                   Factuurdatum ontbreekt — verplicht om te bevestigen.
                 </div>
               )}
@@ -1732,7 +1732,7 @@ function ConfirmDialog({
         {/* [NEGEER-REDEN] Vrijwillig. Nog een keer klikken op een gekozen reden zet hem weer uit,
             zodat "ik weet het niet" een echte uitkomst is en niet iets wat je moet omzeilen. */}
         {choices && choices.length > 0 && (
-          <div style={{ textAlign: "left", marginBottom: 18 }}>
+          <div style={{ textAlign: "start", marginBottom: 18 }}>
             <div style={{ fontSize: 12, color: "#80868b", marginBottom: 8, fontWeight: 600 }}>
               Waarom? (optioneel)
             </div>
@@ -1746,7 +1746,7 @@ function ConfirmDialog({
                     onClick={() => onChoice?.(active ? null : c.value)}
                     style={{
                       display: "flex", alignItems: "baseline", gap: 8, width: "100%",
-                      padding: "9px 11px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                      padding: "9px 11px", borderRadius: 10, cursor: "pointer", textAlign: "start",
                       background: active ? "#e8f0fe" : "#f8f9fa",
                       border: `1px solid ${active ? "#1a73e8" : "#e8eaed"}`,
                     }}
@@ -2105,7 +2105,7 @@ export function InvoiceCard({
         // cluster right, so justify-content:space-between is no longer needed here.
         style={{
           width: "100%", padding: "16px", border: "none",
-          background: "transparent", cursor: "pointer", textAlign: "left",
+          background: "transparent", cursor: "pointer", textAlign: "start",
         }}
       >
         {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
@@ -2374,7 +2374,7 @@ export function InvoiceCard({
                       onClick={handleSupersede}
                       disabled={superseding}
                       style={{
-                        marginTop: 10, marginLeft: 8, padding: "7px 12px", borderRadius: 9,
+                        marginTop: 10, marginInlineStart: 8, padding: "7px 12px", borderRadius: 9,
                         background: superseding ? "#f0d9b8" : "#fff", cursor: superseding ? "default" : "pointer",
                         border: "1px solid #e0a94f", color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
                         display: "inline-flex", alignItems: "center", gap: 6,
@@ -2396,7 +2396,7 @@ export function InvoiceCard({
                       onClick={handleDismissDuplicate}
                       disabled={superseding}
                       style={{
-                        marginTop: 10, marginLeft: 8, padding: "7px 12px", borderRadius: 9,
+                        marginTop: 10, marginInlineStart: 8, padding: "7px 12px", borderRadius: 9,
                         background: "transparent", cursor: superseding ? "default" : "pointer",
                         border: "1px solid transparent", color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
                         display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "underline",
@@ -2417,7 +2417,7 @@ export function InvoiceCard({
                       onClick={handleDismissMultiInvoice}
                       disabled={dismissingMulti}
                       style={{
-                        marginTop: 10, marginLeft: 8, padding: "7px 12px", borderRadius: 9,
+                        marginTop: 10, marginInlineStart: 8, padding: "7px 12px", borderRadius: 9,
                         background: dismissingMulti ? "#f1f3f4" : "#fff", cursor: dismissingMulti ? "default" : "pointer",
                         border: "1px solid #dadce0", color: "#3c4043", fontWeight: 600, fontSize: 12.5,
                         display: "inline-flex", alignItems: "center", gap: 6,
@@ -2577,7 +2577,7 @@ export function InvoiceCard({
               </span>
               <a
                 href="/dashboard/incoming/manage"
-                style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
+                style={{ marginInlineStart: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
               >
                 Beheren ›
               </a>
@@ -2644,7 +2644,7 @@ function DetailRow({ label, value, bold }: { label: string; value: string; bold?
         style={{
           fontSize: 13, color: "#202124",
           fontWeight: bold ? 700 : 500,
-          textAlign: "right", overflow: "hidden", textOverflow: "ellipsis",
+          textAlign: "end", overflow: "hidden", textOverflow: "ellipsis",
         }}
       >
         {value}
@@ -4111,7 +4111,7 @@ export default function IncomingInvoicesClient({
             <Link
               href="/dashboard/incoming/manage"
               style={{
-                marginLeft: "auto", color: "#1a73e8", fontSize: 14, fontWeight: 600,
+                marginInlineStart: "auto", color: "#1a73e8", fontSize: 14, fontWeight: 600,
                 textDecoration: "none", whiteSpace: "nowrap", padding: "8px 0",
               }}
             >

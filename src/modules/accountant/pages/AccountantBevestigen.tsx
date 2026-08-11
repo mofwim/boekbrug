@@ -308,7 +308,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   {rij.factuurnummer || 'zonder nummer'} · {datumNl(rij.datum)}
                 </p>
               </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ textAlign: 'end', flexShrink: 0 }}>
                 <p style={{ margin: 0, fontSize: 16, fontWeight: 500, color: M3.onSurface }}>
                   {euro(rij.totaalInc)}
                 </p>

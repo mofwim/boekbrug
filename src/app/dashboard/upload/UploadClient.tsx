@@ -691,7 +691,7 @@ export default function UploadClient() {
               const extracted = [it.vendor, it.total != null ? eur.format(it.total) : null, it.number ? `nr. ${it.number}` : null]
                 .filter(Boolean).join('  ·  ')
               return (
-                <div key={it.id} style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderLeft: `4px solid ${border}`, borderRadius: 12, padding: '10px 12px' }}>
+                <div key={it.id} style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderInlineStart: `4px solid ${border}`, borderRadius: 12, padding: '10px 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     {/* Thumbnail (image) or a status/type glyph — recognise the file instantly. */}
                     {isImg && it.preview ? (

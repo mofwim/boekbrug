@@ -294,7 +294,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                   <p style={{ margin: 0, fontSize: 14.5, color: M3.onSurface, fontWeight: 500 }}>
                     {f.partyName || 'Onbekend'}
                     {isCredit && (
-                      <span style={{ color: M3.success, fontWeight: 600, marginLeft: 8, fontSize: 12.5 }}>
+                      <span style={{ color: M3.success, fontWeight: 600, marginInlineStart: 8, fontSize: 12.5 }}>
                         creditnota — gaat eraf
                       </span>
                     )}
@@ -309,7 +309,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                     negen van de tien keer het antwoord — en overschrijfbaar, want de tiende keer
                     is precies waarom dit scherm bestaat. */}
                 {gekozen && (
-                  <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  <div style={{ flexShrink: 0, textAlign: 'end' }}>
                     <input
                       value={bedragen[f.id]}
                       onChange={(e) => setBedragen((b) => ({ ...b, [f.id]: e.target.value }))}
@@ -321,7 +321,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                         border: `1px solid ${M3.outline}`,
                         borderRadius: R.sm,
                         fontSize: 14.5,
-                        textAlign: 'right',
+                        textAlign: 'end',
                         boxSizing: 'border-box',
                       }}
                     />

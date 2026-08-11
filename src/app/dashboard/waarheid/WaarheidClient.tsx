@@ -439,7 +439,7 @@ export default function WaarheidClient() {
               </button>
             );
           })}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingInlineStart: 6 }}>
             <button
               onClick={() => setPickYear((y) => Math.max(2015, y - 1))}
               title="Vorig jaar"

@@ -326,7 +326,7 @@ function OutlinedInput({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
-        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginInlineStart: 2 }}>*</span>}
       </label>
       <input
         type={type}
@@ -386,7 +386,7 @@ function DateField({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focusColor }}>
-        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginInlineStart: 2 }}>*</span>}
       </label>
       <DateFieldNL
         value={value}
@@ -1385,7 +1385,7 @@ function NewInvoicePageContent() {
                     flex: 1,
                     padding: '10px 8px',
                     border: 'none',
-                    borderLeft: idx > 0 ? '1px solid #E0E0E0' : 'none',
+                    borderInlineStart: idx > 0 ? '1px solid #E0E0E0' : 'none',
                     backgroundColor: active ? c.activeBg : 'transparent',
                     color: active ? c.activeColor : '#5F6368',
                     fontWeight: active ? 600 : 400,
@@ -1408,7 +1408,7 @@ function NewInvoicePageContent() {
 
         {/* [DS] Credit banner — border-left 4px style */}
         {invoiceType === 'creditnota' && (
-          <div style={{ backgroundColor: '#F9DEDC', borderLeft: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <div style={{ backgroundColor: '#F9DEDC', borderInlineStart: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <span style={{ fontSize: 16, color: '#B3261E', flexShrink: 0 }}>↩</span>
             <div style={{ margin: 0 }}>
               <p style={{ fontSize: 13, color: '#B3261E', margin: 0, lineHeight: 1.5 }}>
@@ -1427,7 +1427,7 @@ function NewInvoicePageContent() {
 
         <>
             {replacesNumber && (
-              <div style={{ backgroundColor: '#E8F0FE', borderLeft: '4px solid #1A73E8', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ backgroundColor: '#E8F0FE', borderInlineStart: '4px solid #1A73E8', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#1967D2', flexShrink: 0 }}>🔄</span>
                 <p style={{ fontSize: 13, color: '#1967D2', margin: 0 }}>
                   <strong>Vervangende factuur</strong> voor <span style={{ fontFamily: 'Roboto Mono, monospace', fontWeight: 600 }}>{replacesNumber}</span>. De oude factuur wordt automatisch gearchiveerd.
@@ -1437,7 +1437,7 @@ function NewInvoicePageContent() {
 
             {/* [BOEK-031] from_offerte banner — May 2026 */}
             {offerteId && !replacesNumber && (
-              <div style={{ backgroundColor: '#E6F4EA', borderLeft: '4px solid #34A853', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ backgroundColor: '#E6F4EA', borderInlineStart: '4px solid #34A853', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#137333', flexShrink: 0 }}>📄</span>
                 <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
                   <strong>Factuur op basis van offerte</strong> — gegevens zijn vooringevuld. De offerte wordt gearchiveerd na opslaan.
@@ -1446,7 +1446,7 @@ function NewInvoicePageContent() {
             )}
 
             {invoiceType === 'offerte' && (
-              <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ backgroundColor: '#FEF7E0', borderInlineStart: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#EA8600', flexShrink: 0 }}>📋</span>
                 <p style={{ fontSize: 13, color: '#EA8600', margin: 0 }}>
                   <strong>Offerte</strong> — geen factuurnummer. Gebruik &ldquo;Omzetten naar factuur&rdquo; als de klant akkoord gaat.
@@ -1479,7 +1479,7 @@ function NewInvoicePageContent() {
                     }
                     if (missing.length === 0) return null
                     return (
-                      <div style={{ marginTop: 10, backgroundColor: '#FEF7E0', borderLeft: '3px solid #FBBC04', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
+                      <div style={{ marginTop: 10, backgroundColor: '#FEF7E0', borderInlineStart: '3px solid #FBBC04', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
                         <p style={{ fontSize: 12, color: '#EA8600', margin: 0, lineHeight: 1.5 }}>
                           Je gegevens missen: {missing.join(', ')}. Een factuur is wettelijk pas volledig met deze gegevens.{' '}
                           <Link href="/dashboard/settings" style={{ color: '#1967D2', textDecoration: 'underline' }}>Aanvullen</Link>
@@ -1499,7 +1499,7 @@ function NewInvoicePageContent() {
                 {showDropdown && filteredClients.length > 0 && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, backgroundColor: 'white', border: '1px solid #E0E0E0', borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 20, overflow: 'hidden' }}>
                     {filteredClients.map(c => (
-                      <button key={c.id} onClick={() => selectClient(c)} style={{ width: '100%', textAlign: 'left', padding: '10px 16px', border: 'none', borderBottom: '1px solid #F1F3F4', backgroundColor: 'white', cursor: 'pointer', display: 'block' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
+                      <button key={c.id} onClick={() => selectClient(c)} style={{ width: '100%', textAlign: 'start', padding: '10px 16px', border: 'none', borderBottom: '1px solid #F1F3F4', backgroundColor: 'white', cursor: 'pointer', display: 'block' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
                         <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{c.name}</p>
                         {c.email && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{c.email}</p>}
                       </button>
@@ -1732,7 +1732,7 @@ function NewInvoicePageContent() {
                       {sug.length > 0 && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.14)', maxHeight: 220, overflowY: 'auto' }}>
                           {sug.map(a => (
-                            <button key={a.id} type="button" onMouseDown={e => { e.preventDefault(); pickArticle(i, a) }} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', alignItems: 'center', gap: 8, padding: '9px 12px', border: 'none', borderBottom: '1px solid #F1F3F4', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+                            <button key={a.id} type="button" onMouseDown={e => { e.preventDefault(); pickArticle(i, a) }} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', alignItems: 'center', gap: 8, padding: '9px 12px', border: 'none', borderBottom: '1px solid #F1F3F4', background: 'transparent', cursor: 'pointer', textAlign: 'start' }}>
                               {a.code && <span style={{ fontFamily: 'Roboto Mono, monospace', fontSize: 12, fontWeight: 700, color: '#1A73E8', background: '#D3E3FD', borderRadius: 6, padding: '2px 6px' }}>{a.code}</span>}
                               <span style={{ flex: 1, fontSize: 13.5, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.description}</span>
                               <span style={{ fontSize: 12.5, color: '#5F6368', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>{NL_NUMBER.format(a.unit_price)} · {a.btw_rate}%</span>
@@ -1875,7 +1875,7 @@ function NewInvoicePageContent() {
 
             {/* [DS] Totalen */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-              <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ maxWidth: 280, marginInlineStart: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                   <span>Subtotaal excl. BTW</span>
                   <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * subtotalEx)}</span>
@@ -1916,7 +1916,7 @@ function NewInvoicePageContent() {
                   {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], ['Vervaldatum', new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' }).format(new Date(dueDate || today))], ...(invoiceNumber ? [['Betalingskenmerk', invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.8 }}>{label}</span>
-                      <span style={{ fontSize: label === 'IBAN' ? 13 : 14, fontWeight: 500, color: '#202124', fontFamily: label === 'IBAN' ? 'Roboto Mono, monospace' : 'inherit', maxWidth: '55%', textAlign: 'right' }}>{value}</span>
+                      <span style={{ fontSize: label === 'IBAN' ? 13 : 14, fontWeight: 500, color: '#202124', fontFamily: label === 'IBAN' ? 'Roboto Mono, monospace' : 'inherit', maxWidth: '55%', textAlign: 'end' }}>{value}</span>
                     </div>
                   ))}
                 </div>
@@ -1924,7 +1924,7 @@ function NewInvoicePageContent() {
             )}
 
             {error && (
-              <div style={{ backgroundColor: '#F9DEDC', borderLeft: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px' }}>
+              <div style={{ backgroundColor: '#F9DEDC', borderInlineStart: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px' }}>
                 <p style={{ fontSize: 14, color: '#B3261E', margin: 0 }}>{error}</p>
               </div>
             )}
@@ -2001,7 +2001,7 @@ function NewInvoicePageContent() {
               ] as [string, string][]).map(([label, value]) => (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                   <span style={{ fontSize: 13, color: '#5F6368' }}>{label}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>{value}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', textAlign: 'end', maxWidth: '60%', wordBreak: 'break-word' }}>{value}</span>
                 </div>
               ))}
             </div>

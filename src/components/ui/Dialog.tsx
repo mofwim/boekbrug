@@ -355,7 +355,7 @@ function DialogSurface({
         )}
 
         {kind === 'prompt' && (options as PromptOptions).maxLength && (
-          <div style={{ marginTop: 6, fontSize: 12, color: M3.onSurfaceVariant, textAlign: 'right' }}>
+          <div style={{ marginTop: 6, fontSize: 12, color: M3.onSurfaceVariant, textAlign: 'end' }}>
             {value.length} / {(options as PromptOptions).maxLength}
           </div>
         )}

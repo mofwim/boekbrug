@@ -1003,7 +1003,7 @@ export default function FacturenClient({
                     onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
                     style={{
                       display: 'block', width: '100%', padding: '12px 16px',
-                      textAlign: 'left', border: 'none', cursor: 'pointer',
+                      textAlign: 'start', border: 'none', cursor: 'pointer',
                       fontFamily: FONT, fontSize: 14,
                       fontWeight: filter === f.id ? 600 : 400,
                       background: filter === f.id ? M3.primaryContainer : '#fff',
@@ -1434,7 +1434,7 @@ export default function FacturenClient({
                         aria-label={`Factuur ${inv.invoice_number ?? ''} verwijderen`}
                         title="Verwijderen"
                         style={{
-                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
+                          flexShrink: 0, marginInlineStart: 2, width: 34, height: 34, borderRadius: R.full,
                           border: 'none', background: 'transparent', color: '#9AA0A6',
                           cursor: processingId === inv.id ? 'default' : 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2001,7 +2001,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {details.map(d => (
               <div key={d.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 13, color: '#5F6368', flexShrink: 0 }}>{d.label}</span>
-                <span style={{ fontSize: 13, color: '#202124', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
+                <span style={{ fontSize: 13, color: '#202124', fontWeight: 600, textAlign: 'end', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
               </div>
             ))}
           </div>

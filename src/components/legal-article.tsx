@@ -30,8 +30,8 @@ const components: Components = {
     <h3 style={{ fontSize: 17, fontWeight: 700, color: '#202124', margin: '22px 0 8px' }} {...omitNode(p)} />
   ),
   p: (p) => <p style={{ ...text, margin: '0 0 14px' }} {...omitNode(p)} />,
-  ul: (p) => <ul style={{ ...text, margin: '0 0 14px', paddingLeft: 22 }} {...omitNode(p)} />,
-  ol: (p) => <ol style={{ ...text, margin: '0 0 14px', paddingLeft: 22 }} {...omitNode(p)} />,
+  ul: (p) => <ul style={{ ...text, margin: '0 0 14px', paddingInlineStart: 22 }} {...omitNode(p)} />,
+  ol: (p) => <ol style={{ ...text, margin: '0 0 14px', paddingInlineStart: 22 }} {...omitNode(p)} />,
   li: (p) => <li style={{ margin: '4px 0' }} {...omitNode(p)} />,
   strong: (p) => <strong style={{ color: '#202124', fontWeight: 700 }} {...omitNode(p)} />,
   hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '28px 0' }} />,
@@ -45,13 +45,13 @@ const components: Components = {
     </div>
   ),
   th: (p) => (
-    <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #e0e0e0', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
+    <th style={{ textAlign: 'start', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #e0e0e0', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
   ),
   td: (p) => (
     <td style={{ padding: '9px 12px', borderBottom: '1px solid #f1f3f4', color: '#3c4043', verticalAlign: 'top' }} {...omitNode(p)} />
   ),
   blockquote: (p) => (
-    <blockquote style={{ borderLeft: '3px solid #dadce0', margin: '0 0 14px', padding: '4px 0 4px 16px', color: '#5f6368' }} {...omitNode(p)} />
+    <blockquote style={{ borderInlineStart: '3px solid #dadce0', margin: '0 0 14px', padding: '4px 0 4px 16px', color: '#5f6368' }} {...omitNode(p)} />
   ),
 }
 

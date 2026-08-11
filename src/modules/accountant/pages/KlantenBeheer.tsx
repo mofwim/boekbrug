@@ -249,7 +249,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                   {/* Name + email — clickable to client page */}
                   <button
                     onClick={() => router.push(`/dashboard/clients/${client.id}`)}
-                    style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                    style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'start', padding: 0 }}
                   >
                     <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {client.company_name ?? client.full_name ?? '—'}

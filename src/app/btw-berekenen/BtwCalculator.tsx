@@ -88,7 +88,7 @@ const s = {
     padding: '0 14px',
     marginBottom: 20,
   } as React.CSSProperties,
-  euro: { fontSize: 22, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
+  euro: { fontSize: 22, color: '#bdc1c6', marginInlineEnd: 8 } as React.CSSProperties,
   amountInput: {
     flex: 1,
     fontSize: 24,

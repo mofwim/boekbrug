@@ -168,7 +168,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
           <button
             onClick={() => router.push('/dashboard/vragen')}
             style={{
-              display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+              display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'start',
               padding: '15px 16px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
               border: '1px solid #F0C36D', background: M3.warningContainer,
               boxShadow: EL1, marginBottom: 18,
@@ -199,7 +199,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
         <button
           onClick={() => router.push('/dashboard/klaar')}
           style={{
-            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'start',
             padding: '18px 18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
             border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)',
             boxShadow: EL1, margin: '20px 0 8px',
@@ -360,7 +360,7 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         background: active && activeBg ? activeBg : '#fff',
         borderRadius: R.lg, padding: '18px 16px',
         border: active && activeColor ? `2px solid ${activeColor}` : '2px solid transparent',
-        boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
+        boxShadow: EL1, cursor: 'pointer', textAlign: 'start', width: '100%',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         WebkitTapHighlightColor: 'transparent',
       }}
@@ -449,7 +449,7 @@ function MiniCard({ icon, tint, label, sub, onClick }: {
       style={{
         display: 'flex', alignItems: 'center', gap: 11,
         background: '#fff', borderRadius: R.lg, padding: '13px 12px',
-        border: 'none', boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
+        border: 'none', boxShadow: EL1, cursor: 'pointer', textAlign: 'start', width: '100%',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
     >

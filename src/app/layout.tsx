@@ -1,5 +1,9 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata, Viewport } from "next";
+// [TAAL] Zie de kop van locale-boot.ts: de taal wordt met een script in <head> gezet en NIET met
+// cookies() uit next/headers, want dat maakt élke route in de app dynamisch — inclusief de 53
+// statisch gebouwde Arabische blogartikelen die de Arabische ondernemer hier brengen.
+import { LOCALE_BOOT_SCRIPT } from "@/lib/i18n/locale-boot";
 import { Roboto, Noto_Sans_Arabic } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
@@ -80,12 +84,21 @@ export default function RootLayout({
 }>) {
   return (
     <html
+      // De taal in de MARKUP is Nederlands, en dat blijft zo: dat is wat er statisch wordt
+      // gebouwd. Het script hieronder zet lang/dir om vóór de eerste paint als de ondernemer
+      // een andere taal heeft gekozen.
       lang="nl"
+      dir="ltr"
       /* [SCROLL] No `h-full` here: height:100% on the root is half of what
          broke scroll restoration — see the note on html/body in globals.css. */
       className={`${roboto.variable} ${notoArabic.variable} antialiased`}
     >
       <head>
+        {/* [TAAL] Vóór alles: de gekozen taal op <html>, synchroon, vóór de eerste paint. Een
+            client-effect zou de hele layout ná het schilderen van kant laten wisselen — op een
+            Arabisch scherm is dat geen flikkering maar een sprong. */}
+        <script dangerouslySetInnerHTML={{ __html: LOCALE_BOOT_SCRIPT }} />
+
         {/* [Design System] Material Symbols — icon font, CDN.
             PERFORMANCE: icon_names= subsets the font to ONLY the glyphs the app
             uses (96 icons), cutting the download from ~313 KB to ~9 KB (~97%).

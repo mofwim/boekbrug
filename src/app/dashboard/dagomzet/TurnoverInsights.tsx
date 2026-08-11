@@ -305,8 +305,8 @@ function MixRow({ label, share, amount }: { label: string; share: number; amount
       <div style={{ flex: 1, height: 10, background: M3.track, borderRadius: 6, overflow: 'hidden' }}>
         <div style={{ width: pct(share), height: '100%', background: M3.primary }} />
       </div>
-      <div style={{ width: 48, textAlign: 'right', fontSize: 12.5, color: M3.neutral, fontFamily: FONT_NUM }}>{pct(share)}</div>
-      <div style={{ width: 92, textAlign: 'right', fontSize: 12.5, color: M3.onSurface, fontFamily: FONT_NUM }}>{amount}</div>
+      <div style={{ width: 48, textAlign: 'end', fontSize: 12.5, color: M3.neutral, fontFamily: FONT_NUM }}>{pct(share)}</div>
+      <div style={{ width: 92, textAlign: 'end', fontSize: 12.5, color: M3.onSurface, fontFamily: FONT_NUM }}>{amount}</div>
     </div>
   )
 }

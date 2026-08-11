@@ -72,7 +72,7 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
     padding: "10px 16px", background: active ? T.primaryContainer : "none",
     border: "none", borderRadius: T.md,
     fontSize: 14, color: active ? T.primary : T.onSurface,
-    cursor: "pointer", textAlign: "left",
+    cursor: "pointer", textAlign: "start",
     fontWeight: active ? 600 : 400,
     transition: "background 0.1s",
   });

@@ -326,7 +326,7 @@ export default function DraftQueue({ clients }: Props) {
                         {item.source === 'not_found' && (
                           <span style={{
                             fontSize: 10, fontWeight: 600, color: '#C5221F', background: '#FCE8E6',
-                            borderRadius: 4, padding: '1px 5px', marginRight: 6, textTransform: 'uppercase',
+                            borderRadius: 4, padding: '1px 5px', marginInlineEnd: 6, textTransform: 'uppercase',
                           }}>Niet gevonden</span>
                         )}
                         {item.description}
@@ -435,7 +435,7 @@ export default function DraftQueue({ clients }: Props) {
                     style={{
                       background: '#FFFFFF', color: '#5F6368', border: '1px solid #dadce0',
                       borderRadius: 8, padding: '0 16px', height: 36, fontSize: 14, fontWeight: 500,
-                      cursor: 'pointer', opacity: ((!subject && !bodyText) || sending) ? 0.5 : 1, marginLeft: 'auto',
+                      cursor: 'pointer', opacity: ((!subject && !bodyText) || sending) ? 0.5 : 1, marginInlineStart: 'auto',
                     }}
                   >Annuleren</button>
                 </div>

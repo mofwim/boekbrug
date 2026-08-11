@@ -209,7 +209,7 @@ export default function DagomzetImportClient() {
               <div style={{ overflowX: 'auto', maxHeight: 260 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: FONT_NUM }}>
                   <thead>
-                    <tr style={{ color: M3.neutral, textAlign: 'right' }}>
+                    <tr style={{ color: M3.neutral, textAlign: 'end' }}>
                       <th style={thL}>Datum</th><th style={thR}>Ontvangen</th><th style={thR}>Uitgaven</th>
                     </tr>
                   </thead>
@@ -280,7 +280,7 @@ export default function DagomzetImportClient() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: FONT_NUM }}>
                   <thead>
-                    <tr style={{ color: M3.neutral, textAlign: 'right' }}>
+                    <tr style={{ color: M3.neutral, textAlign: 'end' }}>
                       <th style={thL}>Datum</th><th style={thR}>Omzet incl.</th>
                       <th style={thR}>BTW 9%</th><th style={thR}>BTW 21%</th>
                       <th style={thR}>PIN</th><th style={thR}>Contant</th>
@@ -333,7 +333,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   )
 }
 
-const thL: CSSProperties = { textAlign: 'left', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
-const thR: CSSProperties = { textAlign: 'right', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
-const tdL: CSSProperties = { textAlign: 'left', padding: '9px 14px', color: '#202124' }
-const tdR: CSSProperties = { textAlign: 'right', padding: '9px 14px', color: '#202124' }
+const thL: CSSProperties = { textAlign: 'start', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
+const thR: CSSProperties = { textAlign: 'end', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
+const tdL: CSSProperties = { textAlign: 'start', padding: '9px 14px', color: '#202124' }
+const tdR: CSSProperties = { textAlign: 'end', padding: '9px 14px', color: '#202124' }

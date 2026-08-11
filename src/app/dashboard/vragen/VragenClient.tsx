@@ -99,7 +99,7 @@ export default function VragenClient({
           <button
             onClick={() => router.push('/dashboard/upload')}
             style={{
-              marginTop: 20, width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+              marginTop: 20, width: '100%', textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
               background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: R.lg,
               padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, boxShadow: EL1,
             }}

@@ -190,7 +190,7 @@ export default function VerkoopClient({
                           {f.due_date ? ` · vervalt ${DATUM(f.due_date)}` : ''}
                         </div>
                       </Link>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ textAlign: 'end', flexShrink: 0 }}>
                         <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.onSurface }}>
                           {EURO.format(Math.abs(Number(f.total_inc_btw ?? 0)))}
                         </div>
@@ -228,7 +228,7 @@ export default function VerkoopClient({
                           </p>
                         )}
                         {(f.reminder_count ?? 0) > 0 && (
-                          <span style={{ fontSize: 12, color: M3.mutedText, marginLeft: oordeel.allowed ? 10 : 0 }}>
+                          <span style={{ fontSize: 12, color: M3.mutedText, marginInlineStart: oordeel.allowed ? 10 : 0 }}>
                             {f.reminder_count} eerder verstuurd
                           </span>
                         )}

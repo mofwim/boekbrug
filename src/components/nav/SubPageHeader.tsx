@@ -60,8 +60,8 @@ export default function SubPageHeader({
         alignItems: "center",
         gap: 8,
         height: `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`,
-        paddingLeft: 8,
-        paddingRight: 12,
+        paddingInlineStart: 8,
+        paddingInlineEnd: 12,
         fontFamily: FONT,
       }}
     >
@@ -138,7 +138,7 @@ export default function SubPageHeader({
 
       {/* Optional page-provided actions, right-aligned */}
       {actions ? (
-        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 4, marginInlineStart: 8 }}>
           {actions}
         </div>
       ) : null}

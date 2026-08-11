@@ -431,7 +431,7 @@ function RegisterContent() {
               style={{
                 background: "#E6F4EA", border: "1px solid #137333", color: "#137333",
                 borderRadius: "12px", padding: "12px 14px", margin: "0 0 24px",
-                fontSize: "14px", lineHeight: 1.5, textAlign: "left",
+                fontSize: "14px", lineHeight: 1.5, textAlign: "start",
               }}
             >
               <strong>Je factuur is bewaard.</strong> Zodra je je account activeert staat hij

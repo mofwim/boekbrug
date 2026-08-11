@@ -113,7 +113,7 @@ export default function InvoiceDocumentSheet({
   const row = (label: string, value: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0' }}>
       <span style={{ fontSize: 12.5, color: M3.onSurfaceVariant, flexShrink: 0 }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, textAlign: 'right', minWidth: 0, overflowWrap: 'anywhere' }}>{value}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, textAlign: 'end', minWidth: 0, overflowWrap: 'anywhere' }}>{value}</span>
     </div>
   )
 

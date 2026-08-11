@@ -289,7 +289,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
           <button
             onClick={() => { setOpen(false); router.push('/dashboard/settings') }}
             style={{
-              width: '100%', padding: '10px 16px', textAlign: 'left',
+              width: '100%', padding: '10px 16px', textAlign: 'start',
               background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 14, color: '#202124', fontWeight: 500,
               borderBottom: '1px solid #F1F3F4',
@@ -298,7 +298,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginRight: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginInlineEnd: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
             Instellingen
           </button>
 
@@ -306,7 +306,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
           <button
             onClick={() => { setOpen(false); onLogout() }}
             style={{
-              width: '100%', padding: '10px 16px', textAlign: 'left',
+              width: '100%', padding: '10px 16px', textAlign: 'start',
               background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 14, color: M3.error, fontWeight: 500,
               transition: 'background 0.1s ease',

@@ -132,7 +132,7 @@ export default function AangifteClient() {
               <button key={q} onClick={() => setQuarter(q)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, fontFamily: FONT }}>Q{q}</button>
             )
           })}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingLeft: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingInlineStart: 6 }}>
             <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary, fontSize: 18, lineHeight: 1 }}>‹</button>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, minWidth: 38, textAlign: 'center' }}>{year}</span>
             <button onClick={() => setYear((y) => Math.min(y + 1, curYear))} disabled={year >= curYear} style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, fontSize: 18, lineHeight: 1, opacity: year >= curYear ? 0.5 : 1 }}>›</button>
@@ -239,8 +239,8 @@ export default function AangifteClient() {
                   <thead>
                     <tr style={{ background: '#F7F9FB', color: M3.neutral }}>
                       <th style={th}>Rubriek</th>
-                      <th style={{ ...th, textAlign: 'right', fontFamily: FONT_NUM }}>Omzet</th>
-                      <th style={{ ...th, textAlign: 'right', fontFamily: FONT_NUM }}>BTW</th>
+                      <th style={{ ...th, textAlign: 'end', fontFamily: FONT_NUM }}>Omzet</th>
+                      <th style={{ ...th, textAlign: 'end', fontFamily: FONT_NUM }}>BTW</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -250,8 +250,8 @@ export default function AangifteClient() {
                           <span style={{ fontWeight: 700, fontFamily: FONT_NUM }}>{r.code}</span>
                           <span style={{ color: M3.neutral, marginInlineStart: 8, fontSize: 12.5 }}>{r.label}</span>
                         </td>
-                        <td style={{ ...td, textAlign: 'right', fontFamily: FONT_NUM }}>{eur.format(r.omzet)}</td>
-                        <td style={{ ...td, textAlign: 'right', fontFamily: FONT_NUM }}>{r.btw ? eur.format(r.btw) : '—'}</td>
+                        <td style={{ ...td, textAlign: 'end', fontFamily: FONT_NUM }}>{eur.format(r.omzet)}</td>
+                        <td style={{ ...td, textAlign: 'end', fontFamily: FONT_NUM }}>{r.btw ? eur.format(r.btw) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -340,5 +340,5 @@ function TotRow({ label, value, strong, color }: { label: string; value: string;
   )
 }
 
-const th = { padding: '10px 14px', textAlign: 'left' as const, fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '.03em' }
+const th = { padding: '10px 14px', textAlign: 'start' as const, fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '.03em' }
 const td = { padding: '11px 14px', color: '#202124', verticalAlign: 'top' as const }

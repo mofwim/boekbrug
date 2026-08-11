@@ -292,7 +292,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         <button
           onClick={() => router.push("/dashboard/incoming")}
           style={{
-            width: "100%", textAlign: "left", cursor: "pointer",
+            width: "100%", textAlign: "start", cursor: "pointer",
             display: "flex", alignItems: "center", gap: 12,
             background: "#FEF7E0", border: `1px solid #FBBC04`, borderRadius: 16,
             padding: "14px 16px", marginBottom: 16,
@@ -318,7 +318,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         <button
           onClick={() => router.push("/dashboard/incoming/manage?from=vandaag")}
           style={{
-            width: "100%", textAlign: "left", cursor: "pointer",
+            width: "100%", textAlign: "start", cursor: "pointer",
             display: "flex", alignItems: "center", gap: 12,
             background: "#FEF7E0", border: `1px solid #FBBC04`, borderRadius: 16,
             padding: "14px 16px", marginBottom: 16,
@@ -383,7 +383,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
                 <button
                   key={s.id}
                   onClick={() => { setSortBy(s.id); setShowSortMenu(false); }}
-                  style={{ display: "block", width: "100%", padding: "12px 16px", textAlign: "left", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? "#D3E3FD" : "#fff", color: sortBy === s.id ? "#041E49" : M3.onSurface, borderBottom: "0.5px solid #F1F3F4" }}
+                  style={{ display: "block", width: "100%", padding: "12px 16px", textAlign: "start", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? "#D3E3FD" : "#fff", color: sortBy === s.id ? "#041E49" : M3.onSurface, borderBottom: "0.5px solid #F1F3F4" }}
                 >
                   {s.label}
                 </button>
@@ -625,7 +625,7 @@ function InvoiceCard({
         background: "#ffffff",
         border: `1px solid ${M3.hairline}`,
         borderRadius: 16,
-        borderLeft: `4px solid ${accent}`,
+        borderInlineStart: `4px solid ${accent}`,
         padding: "14px 16px",
         display: "flex",
         flexDirection: "column",

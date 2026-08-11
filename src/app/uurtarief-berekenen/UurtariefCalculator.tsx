@@ -63,7 +63,7 @@ const s = {
     padding: '0 14px',
     marginBottom: 18,
   } as React.CSSProperties,
-  prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
+  prefix: { fontSize: 18, color: '#bdc1c6', marginInlineEnd: 8 } as React.CSSProperties,
   input: {
     flex: 1,
     fontSize: 20,
@@ -143,7 +143,7 @@ export default function UurtariefCalculator({ locale = 'nl' }: { locale?: Locale
       <div style={s.hint}>{t.hoursHint}</div>
       <div style={s.field}>
         <input style={s.input} value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" aria-label={t.hoursAria} />
-        <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>{t.hoursSuffix}</span>
+        <span style={{ ...s.prefix, marginInlineEnd: 0, marginInlineStart: 8 }}>{t.hoursSuffix}</span>
       </div>
 
       <div style={s.toggleRow}>
@@ -155,10 +155,10 @@ export default function UurtariefCalculator({ locale = 'nl' }: { locale?: Locale
               onChange={(e) => setBuffer(e.target.value)}
               inputMode="decimal"
               aria-label={t.bufferAria}
-              style={{ width: 52, marginLeft: 10, padding: '6px 8px', borderRadius: 8, border: '1.5px solid #e0e0e0', fontSize: 14, fontWeight: 600, textAlign: 'center', fontFamily: 'inherit' }}
+              style={{ width: 52, marginInlineStart: 10, padding: '6px 8px', borderRadius: 8, border: '1.5px solid #e0e0e0', fontSize: 14, fontWeight: 600, textAlign: 'center', fontFamily: 'inherit' }}
             />
           )}
-          {useBuffer && <span style={{ color: '#3c4043', fontWeight: 600, marginLeft: 4 }}>%</span>}
+          {useBuffer && <span style={{ color: '#3c4043', fontWeight: 600, marginInlineStart: 4 }}>%</span>}
         </div>
         <button
           onClick={() => setUseBuffer((v) => !v)}

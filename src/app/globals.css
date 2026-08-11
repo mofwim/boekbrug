@@ -556,11 +556,11 @@ input::placeholder, textarea::placeholder {
   grid-template-columns: minmax(0, 1fr) 64px 96px 56px 104px;
   gap: 8px;
 }
-.inv-lines-desc { text-align: left; }
+.inv-lines-desc { text-align: start; }
 .inv-lines-qty,
-.inv-lines-btw { text-align: right; }
+.inv-lines-btw { text-align: end; }
 .inv-lines-price,
-.inv-lines-total { text-align: right; white-space: nowrap; }
+.inv-lines-total { text-align: end; white-space: nowrap; }
 
 @media (max-width: 520px) {
   /* Kolomkoppen zeggen niets meer zodra er geen kolommen zijn. */
@@ -574,10 +574,10 @@ input::placeholder, textarea::placeholder {
   .inv-lines-row .inv-lines-desc { flex: 1 1 100%; }
   .inv-lines-row .inv-lines-qty,
   .inv-lines-row .inv-lines-price,
-  .inv-lines-row .inv-lines-btw { flex: 0 0 auto; text-align: left; }
+  .inv-lines-row .inv-lines-btw { flex: 0 0 auto; text-align: start; }
   /* "150 × € 0,82569  9%" leest als een zin zodra de kop weg is. */
   .inv-lines-row .inv-lines-qty::after { content: ' ×'; }
-  .inv-lines-row .inv-lines-total { flex: 1 1 auto; text-align: right; }
+  .inv-lines-row .inv-lines-total { flex: 1 1 auto; text-align: end; }
 }
 
 /* ── Dashboard header — mobile declutter ─────────────────────────────────────── */
@@ -645,7 +645,7 @@ input::placeholder, textarea::placeholder {
    Measured in Chromium at 390px, the toolbar this replaces was 282px tall — a third
    of a phone screen, permanently, above the list it is meant to help you read. It ran
    four rows of buttons before the period picker and the filters: the bulk pair, the
-   Verificatie shortcut ALONE on its own row (`margin-left: auto` pushed it past the
+   Verificatie shortcut ALONE on its own row (`margin-inline-start: auto` pushed it past the
    two bulk pills), "Matchen met bank & kas" full width, and "Reken mijn boeken na".
 
    WHY THE WRAPPER, AND NOT A RULE ON THE TWO BUTTONS
@@ -734,8 +734,8 @@ input::placeholder, textarea::placeholder {
   }
 
   .public-header-wrap {
-    padding-left: 12px !important;
-    padding-right: 12px !important;
+    padding-inline-start: 12px !important;
+    padding-inline-end: 12px !important;
   }
 }
 

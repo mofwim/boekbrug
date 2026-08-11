@@ -64,7 +64,7 @@ export default function SteunPage() {
           Niets. En dat is met opzet: een donatie is een gift, geen aankoop. Concreet
           betekent dat:
         </p>
-        <ul style={{ ...text, paddingLeft: 22 }}>
+        <ul style={{ ...text, paddingInlineStart: 22 }}>
           <li style={{ margin: '4px 0' }}>geen extra functies, geen hogere grenzen, geen voorrang bij support;</li>
           <li style={{ margin: '4px 0' }}>geen invloed op wat er gebouwd wordt;</li>
           <li style={{ margin: '4px 0' }}>geen vermelding, tenzij je daar zelf om vraagt;</li>
@@ -80,7 +80,7 @@ export default function SteunPage() {
         </p>
 
         <h2 style={h2}>Het fiscale eerlijke verhaal</h2>
-        <ul style={{ ...text, paddingLeft: 22 }}>
+        <ul style={{ ...text, paddingInlineStart: 22 }}>
           <li style={{ margin: '4px 0' }}>
             <strong>BoekBrug is geen goed doel en geen ANBI.</strong> Je bijdrage is dus{' '}
             <strong>niet aftrekbaar</strong> van je inkomsten- of vennootschapsbelasting.

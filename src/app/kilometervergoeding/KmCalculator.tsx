@@ -61,7 +61,7 @@ const s = {
     padding: '0 14px',
     marginBottom: 18,
   } as React.CSSProperties,
-  prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
+  prefix: { fontSize: 18, color: '#bdc1c6', marginInlineEnd: 8 } as React.CSSProperties,
   input: {
     flex: 1,
     fontSize: 20,
@@ -127,7 +127,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
           aria-label={t.kmAria}
           autoFocus
         />
-        <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>km</span>
+        <span style={{ ...s.prefix, marginInlineEnd: 0, marginInlineStart: 8 }}>km</span>
       </div>
 
       <div style={s.label}>{t.rateLabel}</div>
@@ -185,7 +185,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
           placeholder="1"
           aria-label={t.tripsAria}
         />
-        <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>×</span>
+        <span style={{ ...s.prefix, marginInlineEnd: 0, marginInlineStart: 8 }}>×</span>
       </div>
 
       <div style={s.resultPanel}>

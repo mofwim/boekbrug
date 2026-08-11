@@ -143,7 +143,7 @@ export default function KlaarClient() {
               <button key={q} onClick={() => !future && setQuarter(q)} disabled={future} title={future ? 'Dit kwartaal is nog niet begonnen' : undefined} style={{ flex: 1, padding: '9px 0', borderRadius: 10, cursor: future ? 'default' : 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, opacity: future ? 0.4 : 1 }}>Q{q}</button>
             )
           })}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
             <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
@@ -185,7 +185,7 @@ export default function KlaarClient() {
                   <div style={{ fontSize: 19, fontWeight: 700, color: meta.fg }}>{meta.title}</div>
                   <div style={{ fontSize: 13, color: meta.fg, opacity: 0.85 }}>{report.quarterLabel}</div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
+                <div style={{ textAlign: 'end' }}>
                   <div style={{ fontSize: 30, fontWeight: 800, color: meta.fg, fontFamily: FONT_NUM, lineHeight: 1 }}>{report.score}%</div>
                   <div style={{ fontSize: 11, color: meta.fg, opacity: 0.8 }}>compleet</div>
                 </div>
@@ -342,17 +342,17 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
             weegt {d.weight}%
           </span>
         )}
-        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'right' }}>
+        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'end' }}>
           {pct == null ? 'n.v.t.' : `${pct}%`}
         </span>
       </div>
       {/* Thin fill bar — makes the colored percentage read as a completeness level. */}
       {pct != null && (
-        <div style={{ height: 4, borderRadius: 2, background: '#f1f3f4', marginTop: 8, marginLeft: 30, overflow: 'hidden' }}>
+        <div style={{ height: 4, borderRadius: 2, background: '#f1f3f4', marginTop: 8, marginInlineStart: 30, overflow: 'hidden' }}>
           <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2 }} />
         </div>
       )}
-      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 6, marginLeft: 30, lineHeight: 1.45 }}>{d.detail}</div>
+      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 6, marginInlineStart: 30, lineHeight: 1.45 }}>{d.detail}</div>
     </div>
   )
 }

@@ -159,7 +159,7 @@ export default function NettoCalculator({ locale = 'nl' }: { locale?: Locale }) 
       <div style={s.label}>{t.profitLabel}</div>
       <div style={s.hint}>{t.profitHint}</div>
       <div style={s.field}>
-        <span style={{ fontSize: 20, color: '#bdc1c6', marginRight: 8 }}>€</span>
+        <span style={{ fontSize: 20, color: '#bdc1c6', marginInlineEnd: 8 }}>€</span>
         <input style={s.input} value={winstStr} onChange={(e) => setWinstStr(e.target.value)} inputMode="decimal" aria-label={t.profitAria} autoFocus />
       </div>
 

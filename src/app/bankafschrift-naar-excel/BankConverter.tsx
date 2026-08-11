@@ -243,10 +243,10 @@ export default function BankConverter() {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                 <thead>
-                  <tr style={{ color: '#5f6368', textAlign: 'left' }}>
+                  <tr style={{ color: '#5f6368', textAlign: 'start' }}>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Datum</th>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Tegenpartij</th>
-                    <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Bedrag</th>
+                    <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'end' }}>Bedrag</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -254,7 +254,7 @@ export default function BankConverter() {
                     <tr key={i} style={{ borderTop: '1px solid #f8f9fa' }}>
                       <td style={{ padding: '9px 16px', color: '#5f6368', whiteSpace: 'nowrap' }}>{dateNL(t.date)}</td>
                       <td style={{ padding: '9px 16px', color: '#202124' }}>{t.counterpartName || t.description || '—'}</td>
-                      <td style={{ padding: '9px 16px', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', color: t.amount < 0 ? '#b3261e' : '#137333' }}>{eur.format(t.amount)}</td>
+                      <td style={{ padding: '9px 16px', textAlign: 'end', fontWeight: 600, whiteSpace: 'nowrap', color: t.amount < 0 ? '#b3261e' : '#137333' }}>{eur.format(t.amount)}</td>
                     </tr>
                   ))}
                 </tbody>

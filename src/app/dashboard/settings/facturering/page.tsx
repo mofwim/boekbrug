@@ -266,7 +266,7 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '10px 0', borderBottom: '1px solid #f1f3f4', fontSize: 15 }}>
       <span style={{ color: '#5f6368' }}>{label}</span>
-      <span style={{ color: '#202124', fontWeight: 500, textAlign: 'right' }}>{value}</span>
+      <span style={{ color: '#202124', fontWeight: 500, textAlign: 'end' }}>{value}</span>
     </div>
   )
 }

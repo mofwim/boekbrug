@@ -557,7 +557,7 @@ export default function InvoiceDetailPage() {
 
           {/* [FACTUUR-A] Delivery recovery banner — shows when ?delivery=pdf_failed|email_failed — June 2026 */}
           {deliveryWarning && (
-            <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ backgroundColor: '#FEF7E0', borderInlineStart: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
                 <span style={{ color: M3.warning, flexShrink: 0, fontSize: 16 }}>⚠</span>
                 <div>
@@ -610,7 +610,7 @@ export default function InvoiceDetailPage() {
               <button
                 onClick={() => setShowSendModal(true)}
                 disabled={sending}
-                style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#1A73E8', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: sending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: sending ? 0.6 : 1 }}
+                style={{ flexShrink: 0, marginInlineStart: 12, backgroundColor: '#1A73E8', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: sending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: sending ? 0.6 : 1 }}
               >
                 {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
               </button>
@@ -652,7 +652,7 @@ export default function InvoiceDetailPage() {
               </div>
               <button
                 onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
-                style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
+                style={{ flexShrink: 0, marginInlineStart: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
               >↩ Creditnota</button>
             </div>
           )}
@@ -732,7 +732,7 @@ export default function InvoiceDetailPage() {
 
           {/* [DS] Totalen */}
           <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
-            <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ maxWidth: 280, marginInlineStart: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>Subtotaal excl. BTW</span>
                 <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_ex_btw ?? 0)}</span>

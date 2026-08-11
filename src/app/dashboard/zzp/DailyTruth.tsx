@@ -201,7 +201,7 @@ export default function DailyTruth() {
             <button
               onClick={() => router.push('/dashboard/facturen')}
               style={{
-                width: '100%', textAlign: 'left', marginTop: 10, padding: '12px 14px',
+                width: '100%', textAlign: 'start', marginTop: 10, padding: '12px 14px',
                 borderRadius: 14, border: '1px solid #ffd9a8', background: '#fff8ef',
                 color: '#7a4f00', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5, cursor: 'pointer',
               }}
@@ -240,7 +240,7 @@ export default function DailyTruth() {
         <button
           onClick={() => router.push('/dashboard/bank')}
           style={{
-            width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+            width: '100%', textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
             marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
             background: M3.surface, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -268,7 +268,7 @@ export default function DailyTruth() {
         <button
           onClick={() => router.push('/dashboard/kas')}
           style={{
-            width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+            width: '100%', textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
             marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
             background: M3.surface, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -324,7 +324,7 @@ function MoneyCard({ label, bucket, emptyText, subject, onClick }: {
     <button
       onClick={onClick}
       style={{
-        flex: 1, textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+        flex: 1, textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
         borderRadius: R.lg, padding: '14px 16px', minWidth: 0,
         background: has ? M3.primaryContainer : M3.surface,
         boxShadow: EL1,
@@ -370,7 +370,7 @@ function AttentionRow({ item, onClick, divider }: {
     <button
       onClick={onClick}
       style={{
-        width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+        width: '100%', textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
         display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px',
         border: 'none', background: 'transparent',
         borderTop: divider ? `1px solid ${M3.hairline}` : 'none',
@@ -385,7 +385,7 @@ function AttentionRow({ item, onClick, divider }: {
           {dueText && <span style={{ color: accent, fontWeight: 500 }}> · {dueText}</span>}
         </div>
       </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+      <div style={{ textAlign: 'end', flexShrink: 0 }}>
         <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: isCredit ? M3.success : M3.onSurface, whiteSpace: 'nowrap' }}>
           {eur.format(item.total)}
         </div>

@@ -403,7 +403,7 @@ export default function KasClient() {
             <button
               type="button"
               onClick={() => { setOpeningInput(openingBalance ? String(openingBalance).replace('.', ',') : ''); setOpeningEdit(true); setError('') }}
-              style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'left' }}
+              style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'start' }}
             >
               Beginsaldo kas: <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
             </button>
@@ -458,7 +458,7 @@ export default function KasClient() {
               Een kas kan niet onder nul komen — je kunt geen geld uitgeven dat er niet was. Voor de
               Belastingdienst is dit het duidelijkste signaal dat er iets ontbreekt. Meestal is het één van deze drie:
             </div>
-            <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+            <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
               <li>het <strong>beginsaldo</strong> staat te laag (het geld dat al in de kassa lag)</li>
               <li>een <strong>contante ontvangst</strong> is nog niet geboekt</li>
               <li>een uitgave staat op de <strong>verkeerde datum</strong> — vóór het geld binnenkwam</li>
@@ -624,7 +624,7 @@ export default function KasClient() {
         <div style={{ marginTop: 28 }}>
           {!kbOpen ? (
             <button onClick={openKasboek}
-              style={{ width: '100%', padding: '13px 16px', borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface, fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              style={{ width: '100%', padding: '13px 16px', borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface, fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textAlign: 'start', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>📗 Kasboek per kwartaal — voor de boekhouder</span>
               <span style={{ color: M3.primary, fontSize: 20, lineHeight: 1 }}>＋</span>
             </button>
@@ -693,7 +693,7 @@ export default function KasClient() {
                             </span>
                             {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap', flexShrink: 0 }}>+{eur.format(r.ontvangsten)}</span>}
                             {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap', flexShrink: 0 }}>−{eur.format(r.uitgaven)}</span>}
-                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'right', whiteSpace: 'nowrap', flexShrink: 0 }}>{eur.format(r.eindsaldo)}</span>
+                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'end', whiteSpace: 'nowrap', flexShrink: 0 }}>{eur.format(r.eindsaldo)}</span>
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', borderTop: `1px solid ${M3.outlineVariant}`, background: '#FAFAFA', fontSize: 12.5, fontWeight: 600, color: M3.neutral }}>
