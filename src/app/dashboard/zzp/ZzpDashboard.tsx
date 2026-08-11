@@ -60,6 +60,7 @@ import type { NotificationRow } from '@/types/rows'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
+import DashboardTools from '@/components/tools/DashboardTools'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -325,6 +326,12 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
               />
             </div>
           </section>
+
+          {/* [DASHBOARD-TOOLS] Het laatste blok, en met opzet het laatste: dit is
+              gereedschap dat je pakt wanneer je het nodig hebt, geen werk dat op
+              je ligt te wachten. Links, geen componenten — zie de notitie boven
+              in DashboardTools. */}
+          <DashboardTools audience="owner" />
 
         </div>
       </main>

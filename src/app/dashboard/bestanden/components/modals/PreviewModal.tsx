@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { T } from "../../tokens";
+import { sheetPaddingBottom } from "@/lib/design/tokens";
 import { Icon } from "../ui/Icon";
 import { Spinner } from "../ui/Spinner";
 import { BestandRow } from "../../types";
@@ -56,6 +57,9 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
         width: "100%", maxWidth: 560, margin: "0 auto",
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,
+        // [SHEET-BOTTOM] Reserve the bottom bar. Without it the last button in
+        // this panel lands behind BottomNav, which paints at z-index 2000.
+        paddingBottom: sheetPaddingBottom(0),
         boxShadow: T.elev3, overflow: "hidden",
         display: "flex", flexDirection: "column", maxHeight: "92dvh",
       }}>
