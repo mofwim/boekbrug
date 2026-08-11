@@ -61,7 +61,7 @@ export function InvoiceDetailSkeleton() {
 
       {/* Totalen */}
       <div className="bg-white rounded-2xl p-5 shadow-sm">
-        <div className="space-y-3 max-w-xs ml-auto">
+        <div className="space-y-3 max-w-xs ms-auto">
           <div className="flex justify-between">
             <div className="h-2.5 w-28 bg-gray-100 rounded-full" />
             <div className="h-2.5 w-16 bg-gray-100 rounded-full" />

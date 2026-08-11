@@ -476,14 +476,14 @@ function RegisterContent() {
             <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
             <button
               onClick={() => { setRole('zzper'); setStep(2) }}
-              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
+              className="w-full border-2 border-gray-200 rounded-xl p-4 text-start hover:border-blue-500 active:scale-[0.98] transition-all"
             >
               <p className="font-medium text-gray-900">ZZP&rsquo;er</p>
               <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
             </button>
             <button
               onClick={() => { setRole('accountant'); setStep(2) }}
-              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
+              className="w-full border-2 border-gray-200 rounded-xl p-4 text-start hover:border-blue-500 active:scale-[0.98] transition-all"
             >
               <p className="font-medium text-gray-900">Boekhouder</p>
               <p className="text-sm text-gray-500">Ik beheer facturen van mijn klanten</p>

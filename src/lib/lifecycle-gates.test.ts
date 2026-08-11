@@ -6170,6 +6170,14 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
       const src = code(p);
       if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
       if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
+      // Tailwind too. The inline-style sweep missed these entirely on the first pass — 33 classes
+      // in nine files — because they do not look like styles. Tailwind v4 ships the logical
+      // utilities (ms/me/ps/pe/text-start/text-end/border-s/border-e/rounded-s/start/end), and in
+      // a left-to-right document they render identically to the physical ones.
+      for (const m of src.matchAll(/className=(?:"[^"]*"|\{`[^`]*`\}|\{[^}]*\})/g)) {
+        const bad = m[0].match(/\b(?:text-(?:left|right)|[mp][lr]-(?:\d|\[|auto|px)|border-[lr]\b|rounded-[lr](?:-|\b)|(?:left|right)-(?:\d|\[))/);
+        if (bad) { offenders.push(`${p} — Tailwind ${bad[0]}`); break; }
+      }
     }
   };
   scan("src");
