@@ -188,6 +188,56 @@ export interface CompressResult {
 }
 
 /**
+ * [SIZE-GUARD] Get a PDF under a byte budget, or say plainly that it cannot.
+ *
+ * The upload has a hard 10 MB ceiling and the screen already tells people to
+ * "splits een grote PDF" — this is what makes that sentence actionable. It is
+ * separate from compressImages() because the caller there has one question,
+ * "does it fit now", and no interest in dpi.
+ *
+ * Two passes, and no more: a sensible one first, then a harder one only if the
+ * first missed. Grinding further trades readability for bytes on a document
+ * somebody has to be able to READ — a bonnetje nobody can make out is worth
+ * less than one that needed splitting.
+ *
+ * Always resolves. A document that cannot get under the budget comes back with
+ * `fits: false` and the size it reached, so the screen can say which.
+ */
+export async function compressToFit(
+  file: File,
+  maxBytes: number,
+  onProgress?: (done: number, total: number) => void
+): Promise<{ file: File; fits: boolean; before: number; after: number }> {
+  const before = file.size;
+  let best: Blob | null = null;
+
+  for (const attempt of [
+    { dpi: 150, quality: 0.72 },
+    { dpi: 110, quality: 0.58 },
+  ]) {
+    const result = await compressImages(file, { ...attempt, onProgress });
+    // Keep whichever pass got furthest — the harder one is not guaranteed to
+    // win, since an image already below the lower ceiling is left alone by both.
+    if (!best || result.blob.size < best.size) best = result.blob;
+    if (best.size <= maxBytes) break;
+  }
+
+  const after = best ? best.size : before;
+  // Nothing was gained? Hand back the original rather than a same-sized copy
+  // that has quietly lost detail for no reason.
+  if (!best || after >= before) {
+    return { file, fits: before <= maxBytes, before, after: before };
+  }
+
+  return {
+    file: new File([best], file.name, { type: "application/pdf" }),
+    fits: after <= maxBytes,
+    before,
+    after,
+  };
+}
+
+/**
  * Compress a document by rewriting its images.
  *
  * `dpi` is the resolution the images are worth keeping at, judged against the

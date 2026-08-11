@@ -297,8 +297,17 @@ export function mergeSchemeOpts(
     deductionByInvoice?: ComputeOpts["deductionByInvoice"]
   },
 ): ComputeOpts {
-  // The caller's own map goes LAST, so where both know an invoice the freshly-read value wins —
-  // the same precedence the working call site already used.
+  // [MERGE-SCHEME] Precedence, stated to match what the code DOES.
+  //
+  // A Map built from two spreads keeps the LAST value for a repeated key, and `local` is spread
+  // last — so where both maps know an invoice, the LOCAL one wins. That is the scheme-resolved
+  // read: the map gathered for the invoices actually SETTLED in this quarter, which is the more
+  // specific fact about them than whatever the caller happened to read for its own date window.
+  //
+  // This note used to say the opposite ("the caller's own map goes LAST"), while `opts` is spread
+  // first. On the one function that exists so this cannot be got wrong, a comment describing the
+  // reverse of the behaviour is the next version of the bug: a reader who trusts it and "restores"
+  // the order flips the precedence on exempt shares, silently, on a filed quarter.
   const merge = <V>(a?: Map<string, V>, b?: Map<string, V>): Map<string, V> | undefined =>
     a || b ? new Map([...(a ?? new Map<string, V>()), ...(b ?? new Map<string, V>())]) : undefined
   const rateSharesByInvoice = merge(opts.rateSharesByInvoice, local.rateSharesByInvoice)

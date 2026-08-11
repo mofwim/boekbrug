@@ -5450,6 +5450,57 @@ test("[FOCUS-KOP] a deep link that cannot land says so instead of returning sile
   assert.match(branch, /showToast\(/, "a focus that cannot land must be reported, never swallowed");
 });
 
+// ─── [EERLIJK-GEBRUIK-UITLEG] The month running out is a modal, not a toast ─────────────────────
+//
+// Reaching the monthly allowance is the most consequential thing this app says to an owner: from
+// that moment documents are stored but no longer READ, so every screen they open afterwards is
+// missing invoices they believe were processed. It was a toast — a black strip over the dashboard
+// that fades in a few seconds — carrying the onExceed clause alone, which says what pauses and
+// never that a LIMIT was reached, which one, or where they stand against it.
+test("[EERLIJK-GEBRUIK-UITLEG] the fair-use refusal opens a modal and quotes published numbers", () => {
+  const btn = code("src/components/intake/IntakeButton.tsx");
+
+  // Intercepted BEFORE the generic upload-failure toast, or the modal never opens.
+  assert.match(btn, /const fu = fairUseNotice\(data\)/);
+  assert.match(
+    btn, /if \(fu\) setFairUse\(fu\)\s*\n\s*else showToast\(describeUploadFailure/,
+    "the toast must be the ELSE branch — a fair-use pause may not fade away",
+  );
+  assert.match(btn, /<FairUseModal notice=\{fairUse\}/, "and it must actually be rendered");
+
+  // Keyed on the reason, never on the 402 status: a payment provider answers 402 too.
+  const mod = code("src/lib/fair-use-notice.ts");
+  assert.match(
+    mod, /\(payload as \{ reason\?: unknown \}\)\.reason === "fair_use"/,
+    "a declined card must not open a monthly-allowance explanation",
+  );
+
+  // The numbers are the PUBLISHED ones. /eerlijk-gebruik and Instellingen › Facturering read the
+  // same table; a hand-written "50 documenten" in a component is a fourth place that can disagree
+  // with a promise.
+  assert.match(mod, /import \{ FAIR_USE_LIMITS/, "the limits come from the policy table");
+
+  // The component RENDERS the notice and composes none of it. Checked by what it imports and what
+  // it reads, not by hunting for digits — the first version of this assertion looked for the
+  // numbers themselves and matched `zIndex: 1000` and `width: '100%'`, which is a gate that fails
+  // on a style change and teaches people to weaken it.
+  const view = code("src/components/ui/FairUseModal.tsx");
+  assert.doesNotMatch(
+    view, /from '@\/lib\/fair-use'/,
+    "a component that reads the limits table could quote a number the policy page does not",
+  );
+  for (const field of ["notice.title", "notice.count", "notice.stillWorks", "notice.pauses", "notice.resets"]) {
+    assert.ok(view.includes(field), `the modal must show ${field} rather than wording of its own`);
+  }
+
+  // And the server has to send the limit, or the modal can only state a count with nothing to
+  // place it against.
+  assert.match(
+    code("src/lib/fair-use-gate.ts"), /limit: plan === "plus" \? fairUseLimit\(params\.metric\)\.plus/,
+    "the 402 body must carry the limit beside the count",
+  );
+});
+
 // ─── [KLANT-EXTRA] Two free lines under the customer's name ─────────────────────────────────────
 //
 // Asked for: two extra inputs in the customer block of an invoice, for information the owner needs
