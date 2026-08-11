@@ -13,6 +13,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -50,6 +52,7 @@ function prettyKey(key: string): string {
 }
 
 export default function CategoriseClient() {
+  const t = translator(useLocale())
   const [items, setItems] = useState<Item[]>([])
   const [choice, setChoice] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
@@ -90,10 +93,10 @@ export default function CategoriseClient() {
         setChoice(initial)
         setError(null)
       } else {
-        setError('We konden de banktransacties niet laden. Probeer het opnieuw.')
+        setError(t('cat.fout.laden'))
       }
     } catch {
-      setError('We konden de banktransacties niet laden. Probeer het opnieuw.')
+      setError(t('cat.fout.laden'))
     } finally {
       setLoading(false)
     }
@@ -139,10 +142,10 @@ export default function CategoriseClient() {
         // Only the to-do queue tracks a DB-wide remaining count; review mode doesn't.
         if (mode === 'todo') setTotalRemaining((n) => Math.max(0, n - 1))
       } else {
-        setError('Deze transactie kon niet worden opgeslagen. Probeer het opnieuw.')
+        setError(t('cat.fout.opslaan'))
       }
     } catch {
-      setError('Deze transactie kon niet worden opgeslagen. Probeer het opnieuw.')
+      setError(t('cat.fout.opslaan'))
     } finally {
       setBusy(null)
     }
@@ -165,11 +168,11 @@ export default function CategoriseClient() {
         setLoading(true)
         await load()
       } else {
-        setError('De automatische verwerking is niet gelukt. Probeer het opnieuw.')
+        setError(t('cat.fout.automatisch'))
       }
       return json
     } catch {
-      setError('De automatische verwerking is niet gelukt. Probeer het opnieuw.')
+      setError(t('cat.fout.automatisch'))
     } finally {
       setBulkBusy(false)
     }
@@ -234,13 +237,13 @@ export default function CategoriseClient() {
         ) : mode === 'todo' && trulyDone ? (
           <div style={{ background: M3.successContainer, borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 32, marginBottom: 6 }}>✓</div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#0B5345' }}>Alles is gecategoriseerd</div>
-            <div style={{ fontSize: 14, color: '#0B5345', marginTop: 2 }}>Geen transacties die nog aandacht nodig hebben.</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#0B5345' }}>{t('cat.klaar')}</div>
+            <div style={{ fontSize: 14, color: '#0B5345', marginTop: 2 }}>{t('cat.geenAandacht')}</div>
           </div>
         ) : mode === 'review' && items.length === 0 ? (
           <div style={{ background: '#F1F3F4', borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface }}>Nog niets ingevuld</div>
-            <div style={{ fontSize: 14, color: M3.neutral, marginTop: 2 }}>Zodra je transacties een categorie geeft, kun je ze hier wijzigen.</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{t('cat.nogNiets')}</div>
+            <div style={{ fontSize: 14, color: M3.neutral, marginTop: 2 }}>{t('cat.zodra')}</div>
           </div>
         ) : (
           <>
@@ -296,12 +299,12 @@ export default function CategoriseClient() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Zoek op tegenpartij, omschrijving of bedrag…"
-                aria-label="Transacties zoeken"
+                placeholder={t('cat.zoek')}
+                aria-label={t('bank.zoek.aria')}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14.5, outline: 'none', background: M3.surface, color: M3.onSurface, fontFamily: FONT }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label={t('inkoop.wissen')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
               )}
             </div>
 
@@ -381,7 +384,7 @@ export default function CategoriseClient() {
                   Nog {totalRemaining} {totalRemaining === 1 ? 'transactie' : 'transacties'} te doen
                 </div>
                 <div style={{ fontSize: 13.5, color: '#7A4F00', marginTop: 4 }}>
-                   Vernieuw de pagina om de volgende te zien.
+                   {t('cat.vernieuw')}
                 </div>
               </div>
             )}

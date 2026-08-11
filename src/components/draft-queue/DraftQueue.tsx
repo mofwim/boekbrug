@@ -27,6 +27,8 @@
 
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { DraftItem } from '@/app/api/draft-queue/route'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ─────────────────────────────────────────────────────────
 // Props
@@ -48,6 +50,7 @@ interface Props {
 // ─────────────────────────────────────────────────────────
 
 export default function DraftQueue({ clients }: Props) {
+  const t = translator(useLocale())
   const [open, setOpen] = useState(false)
   const [queues, setQueues] = useState<Record<string, DraftItem[]>>({})
   const [selectedId, setSelectedId] = useState('')
@@ -124,7 +127,7 @@ export default function DraftQueue({ clients }: Props) {
       setInput('')
       clearStatus()
     } catch {
-      setError('Netwerkfout. Probeer het opnieuw.')
+      setError(t('dq.netwerkfout'))
     }
   }
 
@@ -161,7 +164,7 @@ export default function DraftQueue({ clients }: Props) {
       setSubject(json.subject ?? '')
       setBodyText(json.body ?? '')
     } catch {
-      setError('Netwerkfout. Probeer het opnieuw.')
+      setError(t('dq.netwerkfout'))
     } finally {
       setComposing(false)
     }
@@ -199,7 +202,7 @@ export default function DraftQueue({ clients }: Props) {
         setBodyText('')
       }
     } catch {
-      setError('Netwerkfout. Probeer het opnieuw.')
+      setError(t('dq.netwerkfout'))
     } finally {
       setSending(false)
     }
@@ -284,7 +287,7 @@ export default function DraftQueue({ clients }: Props) {
               </div>
               <button
                 onClick={() => setOpen(false)}
-                aria-label="Sluiten"
+                aria-label={t('lijst.sluiten')}
                 style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.85)', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}
               >✕</button>
             </div>
@@ -302,7 +305,7 @@ export default function DraftQueue({ clients }: Props) {
                   color: '#202124', outline: 'none',
                 }}
               >
-                <option value="">Kies een klant…</option>
+                <option value="">{t('dq.kiesKlant')}</option>
                 {clients.map(c => {
                   const n = (queues[c.id] ?? []).length
                   return (
@@ -327,13 +330,13 @@ export default function DraftQueue({ clients }: Props) {
                           <span style={{
                             fontSize: 10, fontWeight: 600, color: '#C5221F', background: '#FCE8E6',
                             borderRadius: 4, padding: '1px 5px', marginInlineEnd: 6, textTransform: 'uppercase',
-                          }}>Niet gevonden</span>
+                          }}>{t('dq.nietGevonden')}</span>
                         )}
                         {item.description}
                       </span>
                       <button
                         onClick={() => removeItem(item.id)}
-                        aria-label="Verwijderen"
+                        aria-label={t('lijst.verwijderen')}
                         style={{ background: 'none', border: 'none', color: '#5F6368', fontSize: 15, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}
                       >✕</button>
                     </div>
@@ -343,7 +346,7 @@ export default function DraftQueue({ clients }: Props) {
 
               {selectedId && selectedItems.length === 0 && !sentOk && (
                 <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
-                  Nog geen openstaande punten voor deze klant.
+                  {t('dq.geenPunten')}
                 </p>
               )}
 
@@ -354,7 +357,7 @@ export default function DraftQueue({ clients }: Props) {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && addManual()}
-                    placeholder="Punt toevoegen…"
+                    placeholder={t('dq.puntToevoegen')}
                     style={{
                       flex: 1, height: 36, fontSize: 14, padding: '0 10px',
                       border: '1px solid #dadce0', borderRadius: 8, background: '#F8F9FA',
@@ -365,7 +368,7 @@ export default function DraftQueue({ clients }: Props) {
                     onClick={addManual}
                     disabled={!input.trim()}
                     style={{ ...btnPrimary, opacity: input.trim() ? 1 : 0.4, whiteSpace: 'nowrap' }}
-                  >Toevoegen</button>
+                  >{t('ink.toevoegen')}</button>
                 </div>
               )}
 
@@ -380,22 +383,22 @@ export default function DraftQueue({ clients }: Props) {
                   </div>
                 ) : (
                   <div style={editorBox}>
-                    <label style={labelStyle}>Onderwerp</label>
+                    <label style={labelStyle}>{t('dq.onderwerp')}</label>
                     <input
                       value={subject}
                       onChange={e => { setSubject(e.target.value); clearStatus() }}
-                      placeholder="Onderwerp van de e-mail…"
+                      placeholder={t('dq.onderwerpPh')}
                       style={{
                         height: 34, fontSize: 13, padding: '0 8px',
                         border: '1px solid #dadce0', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
                       }}
                     />
-                    <label style={labelStyle}>Bericht</label>
+                    <label style={labelStyle}>{t('dq.bericht')}</label>
                     <textarea
                       value={bodyText}
                       onChange={e => { setBodyText(e.target.value); clearStatus() }}
                       rows={7}
-                      placeholder="Schrijf hier je bericht, of gebruik 'AI opstellen'…"
+                      placeholder={t('dq.berichtPh')}
                       style={{
                         fontSize: 13, padding: 8, lineHeight: 1.5, resize: 'vertical',
                         border: '1px solid #dadce0', borderRadius: 6, background: '#FFFFFF',
@@ -437,7 +440,7 @@ export default function DraftQueue({ clients }: Props) {
                       borderRadius: 8, padding: '0 16px', height: 36, fontSize: 14, fontWeight: 500,
                       cursor: 'pointer', opacity: ((!subject && !bodyText) || sending) ? 0.5 : 1, marginInlineStart: 'auto',
                     }}
-                  >Annuleren</button>
+                  >{t('lijst.annuleren')}</button>
                 </div>
               )}
             </div>

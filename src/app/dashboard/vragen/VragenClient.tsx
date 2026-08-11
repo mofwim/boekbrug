@@ -17,6 +17,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FONT, M3, R, COLUMN } from '@/lib/design/tokens'
 import { bouwAntwoordBericht, type OpenVraag } from '@/lib/vragen'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -46,6 +48,7 @@ export default function VragenClient({
   accountantNaam: string | null
   loadFailed: boolean
 }) {
+  const t = translator(useLocale())
   const router = useRouter()
   const boekhouder = accountantNaam ?? 'je boekhouder'
 
@@ -65,7 +68,7 @@ export default function VragenClient({
         {/* [NO-FALSE-CLEAR] Een mislukte lezing mag nooit als "geen vragen" lezen. */}
         {loadFailed ? (
           <div style={{ background: M3.warningContainer, borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
-            <div style={{ fontSize: 14.5, fontWeight: 600, color: '#7a4f00' }}>Kon je vragen niet ophalen</div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: '#7a4f00' }}>{t('vr.fout.ophalen')}</div>
             <div style={{ fontSize: 13.5, color: '#7a4f00', margin: '4px 0 12px', lineHeight: 1.5 }}>
               Dit betekent <strong>niet</strong> dat er niets openstaat — we konden de lijst even
               niet lezen.
@@ -74,12 +77,12 @@ export default function VragenClient({
               onClick={() => router.refresh()}
               style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '8px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
             >
-              Opnieuw proberen
+              {t('inkoop.opnieuwProberen')}
             </button>
           </div>
         ) : vragen.length === 0 ? (
           <div style={{ background: M3.successContainer, borderRadius: R.lg, padding: '20px 18px', boxShadow: EL1 }}>
-            <div style={{ fontSize: 15.5, fontWeight: 600, color: '#0B5345' }}>Geen openstaande vragen</div>
+            <div style={{ fontSize: 15.5, fontWeight: 600, color: '#0B5345' }}>{t('vr.geen')}</div>
             <div style={{ fontSize: 13.5, color: '#0B5345', marginTop: 4, lineHeight: 1.55 }}>
               {accountantId
                 ? 'Er staat op dit moment niets van je boekhouder open. Zodra er een vraag komt, krijg je er bericht van en staat hij hier.'
@@ -106,8 +109,8 @@ export default function VragenClient({
           >
             <span className="material-symbols-outlined" style={{ color: M3.primary, fontSize: 22 }}>upload_file</span>
             <span style={{ flex: 1 }}>
-              <span style={{ display: 'block', fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>Mist er een bon?</span>
-              <span style={{ display: 'block', fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>Voeg hem toe — de app sorteert hem</span>
+              <span style={{ display: 'block', fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{t('vr.misBon')}</span>
+              <span style={{ display: 'block', fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>{t('vr.voegToe')}</span>
             </span>
             <span className="material-symbols-outlined icon-dir" style={{ color: '#9aa0a6', fontSize: 20 }}>chevron_right</span>
           </button>
@@ -119,6 +122,7 @@ export default function VragenClient({
 
 // ─────────────────────────────────────────────────────────────────────────────
 function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: string | null }) {
+  const t = translator(useLocale())
   const [antwoord, setAntwoord] = useState('')
   const [bezig, setBezig] = useState(false)
   const [verstuurd, setVerstuurd] = useState(false)
@@ -185,7 +189,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
               rel="noopener noreferrer"
               style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 600, color: M3.primary, textDecoration: 'none', padding: '4px 2px' }}
             >
-              Bekijk
+              {t('kl.bekijk')}
             </a>
           )}
           {/* [FACTUURVRAAG] Dezelfde plek, dezelfde belofte: de vraag brengt je bij het ding waar
@@ -196,7 +200,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
               href={factuurHref}
               style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 600, color: M3.primary, textDecoration: 'none', padding: '4px 2px' }}
             >
-              Bekijk
+              {t('kl.bekijk')}
             </a>
           )}
         </div>
@@ -225,7 +229,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
           </p>
         ) : verstuurd ? (
           <div style={{ background: M3.successContainer, borderRadius: R.md, padding: '12px 14px' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#0B5345' }}>Je antwoord is verstuurd</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#0B5345' }}>{t('vr.verstuurd')}</div>
             <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 3, lineHeight: 1.5 }}>
               De vraag blijft hier staan tot je boekhouder hem zelf afvinkt — wij zetten geen vinkje
               namens hem.
@@ -234,14 +238,14 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
         ) : (
           <>
             <label htmlFor={`antwoord-${vraag.documentId}`} style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: M3.neutral, marginBottom: 6 }}>
-              Jouw antwoord
+              {t('vr.jouwAntwoord')}
             </label>
             <textarea
               id={`antwoord-${vraag.documentId}`}
               value={antwoord}
               onChange={(e) => setAntwoord(e.target.value)}
               rows={3}
-              placeholder="Bijvoorbeeld: die bon zit in de map van juni, ik stuur hem vandaag."
+              placeholder={t('vr.voorbeeld')}
               style={{
                 width: '100%', boxSizing: 'border-box', fontFamily: FONT, fontSize: 14.5,
                 color: M3.onSurface, padding: '10px 12px', lineHeight: 1.5,

@@ -841,6 +841,87 @@ export const MESSAGES = {
   'int.fout.toevoegen': { nl: 'Toevoegen mislukt — probeer opnieuw', ar: 'فشلت الإضافة — حاول مرة أخرى', en: 'Adding failed — please try again' },
   'int.terug': { nl: 'Terug', ar: 'رجوع', en: 'Back' },
 
+  // ─── [DAGOMZET-IMPORT] Het inlezen van omzetbestanden ───────────────────────────────────────
+
+  'dzi.goedkeuren': { nl: 'Goedkeuren', ar: 'موافقة', en: 'Approve' },
+  'dzi.afwijzen': { nl: 'Afwijzen', ar: 'رفض', en: 'Reject' },
+  'dzi.dagen': { nl: 'Dagen', ar: 'الأيام', en: 'Days' },
+  'dzi.uitgaven': { nl: 'Uitgaven', ar: 'المصروفات', en: 'Spending' },
+  'dzi.omzetIncl': { nl: 'Omzet incl.', ar: 'الإيراد شاملاً', en: 'Turnover incl.' },
+  'dzi.totaleOmzet': { nl: 'Totale omzet (incl.)', ar: 'إجمالي الإيراد (شاملاً)', en: 'Total turnover (incl.)' },
+  'dzi.geenDagen': { nl: 'Geen dagen met omzet gevonden in dit bestand.', ar: 'لم يُعثر في هذا الملف على أيام ذات إيراد.', en: 'No days with turnover found in this file.' },
+  'dzi.fout.bestand': { nl: 'Er ging iets mis bij het lezen van het bestand', ar: 'حدث خطأ أثناء قراءة الملف', en: 'Something went wrong reading the file' },
+  'dzi.fout.grootboek': { nl: 'Er ging iets mis bij het lezen van het grootboek', ar: 'حدث خطأ أثناء قراءة دفتر الأستاذ', en: 'Something went wrong reading the ledger' },
+  'dzi.fout.opslaan': { nl: 'Opslaan mislukt', ar: 'فشل الحفظ', en: 'Saving failed' },
+
+  // ─── [CATEGORISEREN] Banktransacties een categorie geven ────────────────────────────────────
+
+  'cat.zoek': { nl: 'Zoek op tegenpartij, omschrijving of bedrag…', ar: 'ابحث بالطرف الآخر أو الوصف أو المبلغ…', en: 'Search by counterparty, description or amount…' },
+  'cat.klaar': { nl: 'Alles is gecategoriseerd', ar: 'كل شيء مصنَّف', en: 'Everything is categorised' },
+  'cat.geenAandacht': { nl: 'Geen transacties die nog aandacht nodig hebben.', ar: 'لا معاملات تحتاج انتباهاً بعد.', en: 'No transactions still needing attention.' },
+  'cat.nogNiets': { nl: 'Nog niets ingevuld', ar: 'لا شيء مُدخل بعد', en: 'Nothing filled in yet' },
+  'cat.zodra': { nl: 'Zodra je transacties een categorie geeft, kun je ze hier wijzigen.', ar: 'حين تعطي معاملاتك تصنيفاً، تستطيع تعديلها هنا.', en: 'Once you categorise transactions, you can change them here.' },
+  'cat.vernieuw': { nl: 'Vernieuw de pagina om de volgende te zien.', ar: 'حدّث الصفحة لرؤية التالية.', en: 'Refresh the page to see the next one.' },
+  'cat.fout.laden': { nl: 'We konden de banktransacties niet laden. Probeer het opnieuw.', ar: 'تعذّر تحميل معاملات البنك. حاول مرة أخرى.', en: 'Could not load the bank transactions. Try again.' },
+  'cat.fout.opslaan': { nl: 'Deze transactie kon niet worden opgeslagen. Probeer het opnieuw.', ar: 'تعذّر حفظ هذه المعاملة. حاول مرة أخرى.', en: 'This transaction could not be saved. Try again.' },
+  'cat.fout.automatisch': { nl: 'De automatische verwerking is niet gelukt. Probeer het opnieuw.', ar: 'لم تنجح المعالجة التلقائية. حاول مرة أخرى.', en: 'Automatic processing did not work. Try again.' },
+
+  // ─── [VRAGEN] Vragen van je boekhouder ──────────────────────────────────────────────────────
+
+  'vr.geen': { nl: 'Geen openstaande vragen', ar: 'لا أسئلة معلّقة', en: 'No open questions' },
+  'vr.jouwAntwoord': { nl: 'Jouw antwoord', ar: 'جوابك', en: 'Your answer' },
+  'vr.voorbeeld': { nl: 'Bijvoorbeeld: die bon zit in de map van juni, ik stuur hem vandaag.', ar: 'مثلاً: ذلك الإيصال في مجلد يونيو، سأرسله اليوم.', en: 'For example: that receipt is in the June folder, I will send it today.' },
+  'vr.verstuurd': { nl: 'Je antwoord is verstuurd', ar: 'أُرسل جوابك', en: 'Your answer was sent' },
+  'vr.misBon': { nl: 'Mist er een bon?', ar: 'أينقص إيصال؟', en: 'Missing a receipt?' },
+  'vr.voegToe': { nl: 'Voeg hem toe — de app sorteert hem', ar: 'أضِفه — والتطبيق يرتّبه', en: 'Add it — the app sorts it' },
+  'vr.fout.ophalen': { nl: 'Kon je vragen niet ophalen', ar: 'تعذّر جلب أسئلتك', en: 'Could not fetch your questions' },
+
+  // ─── [TEAM] Wie mag er factureren ───────────────────────────────────────────────────────────
+
+  'team.titel': { nl: 'Team', ar: 'الفريق', en: 'Team' },
+  'team.email': { nl: 'E-mailadres van de medewerker', ar: 'البريد الإلكتروني للموظف', en: "The employee's e-mail address" },
+  'team.magFactureren': { nl: 'Mag facturen maken', ar: 'يحق له إنشاء فواتير', en: 'May create invoices' },
+  'team.niemand': { nl: 'Niemand. Alleen jij maakt facturen voor je bedrijf.', ar: 'لا أحد. أنت وحدك تُنشئ فواتير شركتك.', en: 'Nobody. Only you create invoices for your business.' },
+  'team.nietGeaccepteerd': { nl: 'Nog niet geaccepteerd', ar: 'لم يُقبل بعد', en: 'Not yet accepted' },
+  'team.intrekken': { nl: 'Intrekken', ar: 'سحب', en: 'Revoke' },
+  'team.eerder': { nl: 'Eerder', ar: 'سابقاً', en: 'Previously' },
+  'team.nietAan': { nl: 'De teamfunctie staat nog niet aan.', ar: 'ميزة الفريق ليست مفعّلة بعد.', en: 'The team feature is not on yet.' },
+
+  // ─── [PRULLENBAK] ───────────────────────────────────────────────────────────────────────────
+
+  'prul.titel': { nl: 'Prullenbak', ar: 'سلة المهملات', en: 'Bin' },
+  'prul.leeg': { nl: 'Prullenbak is leeg', ar: 'سلة المهملات فارغة', en: 'The bin is empty' },
+  'prul.verschijnen': { nl: 'Verwijderde bestanden verschijnen hier', ar: 'تظهر هنا الملفات المحذوفة', en: 'Deleted files appear here' },
+  'prul.herstellen': { nl: 'Herstellen', ar: 'استعادة', en: 'Restore' },
+  'prul.permanent': { nl: 'Permanent verwijderen', ar: 'حذف نهائي', en: 'Delete permanently' },
+  'prul.legen': { nl: 'Prullenbak legen', ar: 'إفراغ السلة', en: 'Empty the bin' },
+  'prul.selectieWissen': { nl: 'Selectie wissen', ar: 'مسح التحديد', en: 'Clear the selection' },
+
+  // ─── [AANGIFTE] De concept-aangifte ─────────────────────────────────────────────────────────
+  // De RUBRIEKnamen zelf (5a, 3b) zijn Belastingdienst-terminologie en blijven letterlijk; de
+  // zinnen eromheen bewegen mee.
+
+  'aang.rubriek': { nl: 'Rubriek', ar: 'البند', en: 'Section' },
+  'aang.omzet': { nl: 'Omzet', ar: 'الإيراد', en: 'Turnover' },
+  'aang.5a': { nl: '5a · Verschuldigde omzetbelasting', ar: '5a · ضريبة المبيعات المستحقة', en: '5a · VAT owed' },
+  'aang.totaal3b': { nl: 'Totaal · gelijk aan 3b', ar: 'الإجمالي · يساوي 3b', en: 'Total · equals 3b' },
+  'aang.icp': { nl: 'ICP-opgaaf · aparte aangifte', ar: 'إقرار ICP · تصريح منفصل', en: 'ICP statement · separate filing' },
+  'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
+  'aang.verschil': { nl: 'Bekijk het verschil op Waarheid', ar: 'اعرض الفرق في «حقيقتك»', en: 'View the difference on Truth' },
+  'aang.jeHebt': { nl: 'Je hebt', ar: 'لديك', en: 'You have' },
+
+  // ─── [CONCEPTEN] De wachtrij met klaargezette e-mails ───────────────────────────────────────
+
+  'dq.onderwerp': { nl: 'Onderwerp', ar: 'الموضوع', en: 'Subject' },
+  'dq.onderwerpPh': { nl: 'Onderwerp van de e-mail…', ar: 'موضوع الرسالة…', en: 'Subject of the e-mail…' },
+  'dq.bericht': { nl: 'Bericht', ar: 'الرسالة', en: 'Message' },
+  'dq.berichtPh': { nl: "Schrijf hier je bericht, of gebruik 'AI opstellen'…", ar: "اكتب رسالتك هنا، أو استخدم «صياغة بالذكاء الاصطناعي»…", en: "Write your message here, or use 'AI draft'…" },
+  'dq.kiesKlant': { nl: 'Kies een klant…', ar: 'اختر عميلاً…', en: 'Choose a client…' },
+  'dq.puntToevoegen': { nl: 'Punt toevoegen…', ar: 'أضف بنداً…', en: 'Add a point…' },
+  'dq.geenPunten': { nl: 'Nog geen openstaande punten voor deze klant.', ar: 'لا بنود معلّقة لهذا العميل بعد.', en: 'No open points for this client yet.' },
+  'dq.nietGevonden': { nl: 'Niet gevonden', ar: 'لم يُعثر عليه', en: 'Not found' },
+  'dq.netwerkfout': { nl: 'Netwerkfout. Probeer het opnieuw.', ar: 'خطأ في الشبكة. حاول مرة أخرى.', en: 'Network error. Try again.' },
+
   // ─── [VERSTUURD] The confirmation after an invoice actually goes out ─────────────────────────
 
   'sent.factuur.title': {

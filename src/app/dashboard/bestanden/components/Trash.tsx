@@ -11,12 +11,15 @@ import { BestandRow } from "../types";
 import { fileEmoji, formatDate, formatSize } from "../helpers";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 interface TrashProps {
   onBack: () => void;
 }
 
 export function Trash({ onBack }: TrashProps) {
+  const t = translator(useLocale())
   const dialog = useDialog();
   const toast = useToast();
   const [items, setItems] = useState<BestandRow[]>([]);
@@ -91,7 +94,7 @@ export function Trash({ onBack }: TrashProps) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} aria-label="Terug" style={{
+          <button onClick={onBack} aria-label={t('best.terug')} style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer",
@@ -100,7 +103,7 @@ export function Trash({ onBack }: TrashProps) {
           </button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Icon name="delete" size={22} color={T.outline} />
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: T.onSurface, margin: 0 }}>Prullenbak</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: T.onSurface, margin: 0 }}>{t('prul.titel')}</h2>
           </div>
         </div>
 
@@ -116,7 +119,7 @@ export function Trash({ onBack }: TrashProps) {
             onMouseLeave={e => (e.currentTarget.style.background = "none")}
           >
             <Icon name="delete_forever" size={18} color={T.error} />
-            Prullenbak legen
+            {t('prul.legen')}
           </button>
         )}
       </div>
@@ -148,16 +151,16 @@ export function Trash({ onBack }: TrashProps) {
             padding: "7px 14px", background: T.primary, color: T.onPrimary,
             border: "none", borderRadius: T.full, fontSize: 13, fontWeight: 500, cursor: "pointer",
           }}>
-            <Icon name="restore" size={16} color={T.onPrimary} /> Herstellen
+            <Icon name="restore" size={16} color={T.onPrimary} /> {t('prul.herstellen')}
           </button>
           <button onClick={() => permanentDelete([...selected])} style={{
             display: "flex", alignItems: "center", gap: 6,
             padding: "7px 14px", background: T.error, color: "white",
             border: "none", borderRadius: T.full, fontSize: 13, fontWeight: 500, cursor: "pointer",
           }}>
-            <Icon name="delete_forever" size={16} color="white" /> Verwijderen
+            <Icon name="delete_forever" size={16} color="white" /> {t('lijst.verwijderen')}
           </button>
-          <button onClick={() => setSelected(new Set())} aria-label="Selectie wissen" style={{
+          <button onClick={() => setSelected(new Set())} aria-label={t('prul.selectieWissen')} style={{
             width: 28, height: 28, border: "none", background: "none",
             cursor: "pointer", borderRadius: T.full,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -183,10 +186,10 @@ export function Trash({ onBack }: TrashProps) {
             <Icon name="delete" size={40} color={T.outline} />
           </div>
           <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>
-            Prullenbak is leeg
+            {t('prul.leeg')}
           </p>
           <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>
-            Verwijderde bestanden verschijnen hier
+            {t('prul.verschijnen')}
           </p>
         </div>
       ) : (
@@ -238,7 +241,7 @@ export function Trash({ onBack }: TrashProps) {
                 <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                   <button
                     onClick={e => { e.stopPropagation(); restore([doc.id]); }}
-                    title="Herstellen"
+                    title={t('prul.herstellen')}
                     style={{ width: 32, height: 32, border: "none", background: "none", cursor: "pointer", borderRadius: T.full, display: "flex", alignItems: "center", justifyContent: "center" }}
                     onMouseEnter={e => (e.currentTarget.style.background = T.successContainer)}
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
@@ -247,7 +250,7 @@ export function Trash({ onBack }: TrashProps) {
                   </button>
                   <button
                     onClick={e => { e.stopPropagation(); permanentDelete([doc.id]); }}
-                    title="Permanent verwijderen"
+                    title={t('prul.permanent')}
                     style={{ width: 32, height: 32, border: "none", background: "none", cursor: "pointer", borderRadius: T.full, display: "flex", alignItems: "center", justifyContent: "center" }}
                     onMouseEnter={e => (e.currentTarget.style.background = T.errorContainer)}
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
