@@ -13,7 +13,7 @@
 // weeks left gets locked out immediately. That failure is completely invisible
 // until it hits a real, paying, already-annoyed customer, so it is pinned here.
 
-import { subscriptionPeriodEnd, epochToIso } from "./billing";
+import { subscriptionPeriodEnd, epochToIso, kluisSessionAction } from "./billing";
 
 let passed = 0;
 let failed = 0;
@@ -89,6 +89,46 @@ check("undefined → null", epochToIso(undefined) === null);
 check("NaN → null", epochToIso(NaN) === null);
 check("Infinity → null", epochToIso(Infinity) === null);
 check("epoch 0 is a real date, not falsy-dropped", epochToIso(0) === "1970-01-01T00:00:00.000Z");
+
+console.log("\n[KLUIS] kluisSessionAction — no recording before the money is confirmed");
+
+// The webhook records a seven-year storage obligation off this decision. The
+// dangerous direction is recording money that never arrives: a session
+// COMPLETES before the payment confirms when the customer used a
+// delayed-notification method (SEPA-incasso, bank transfer), and those can be
+// enabled from the Stripe Dashboard without a deploy. So: unknown or unpaid
+// status must read as "wait", never as "record".
+
+check(
+  "completed + paid → record (the normal iDEAL/card case)",
+  kluisSessionAction("checkout.session.completed", "paid") === "record"
+);
+check(
+  "completed + unpaid → wait for the async verdict, record nothing yet",
+  kluisSessionAction("checkout.session.completed", "unpaid") === "wait"
+);
+check(
+  "async_payment_succeeded + paid → record (the verdict arrived)",
+  kluisSessionAction("checkout.session.async_payment_succeeded", "paid") === "record"
+);
+check(
+  "async_payment_failed → abandon, regardless of what payment_status claims",
+  kluisSessionAction("checkout.session.async_payment_failed", "paid") === "abandon" &&
+    kluisSessionAction("checkout.session.async_payment_failed", "unpaid") === "abandon"
+);
+check(
+  "no_payment_required → record — nothing is owed, and no further event will come",
+  kluisSessionAction("checkout.session.completed", "no_payment_required") === "record"
+);
+check(
+  "a missing status fails toward wait, never toward record",
+  kluisSessionAction("checkout.session.completed", null) === "wait" &&
+    kluisSessionAction("checkout.session.completed", undefined) === "wait"
+);
+check(
+  "an unknown future status fails toward wait, never toward record",
+  kluisSessionAction("checkout.session.completed", "processing") === "wait"
+);
 
 console.log(`\n[BILLING] ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

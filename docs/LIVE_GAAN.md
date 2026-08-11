@@ -225,8 +225,12 @@ kort na de 5e van januari/april/juli/oktober.
 - **Resend → domein verifiëren** (SPF + DKIM). Zonder verificatie mag je alleen naar je eigen
   adres mailen, en dat merk je pas bij de eerste echte uitnodiging aan een boekhouder.
 - **Stripe → webhook** naar `https://<domein>/api/billing/webhook`, events
-  `checkout.session.completed`, `customer.subscription.created`, `.updated`, `.deleted`,
-  `invoice.payment_failed`. Het ondertekengeheim in `STRIPE_WEBHOOK_SECRET`.
+  `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+  `checkout.session.async_payment_failed`, `customer.subscription.created`, `.updated`,
+  `.deleted`, `invoice.payment_failed`. Het ondertekengeheim in `STRIPE_WEBHOOK_SECRET`.
+  De twee `async_payment_*`-events zijn de late uitslag van betaalmethoden die de sessie
+  eerst afronden en het geld daarna bevestigen (SEPA-incasso, overboeking) — iDEAL en kaart
+  sturen ze nooit, maar de webhook verwerkt ze al (docs/BILLING.md §4.2).
 
 ---
 

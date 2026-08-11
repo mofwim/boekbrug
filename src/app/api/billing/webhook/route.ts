@@ -34,6 +34,7 @@ import {
   constructWebhookEvent,
   isWebhookConfigured,
   subscriptionPeriodEnd,
+  kluisSessionAction,
 } from "@/lib/billing";
 import { normalizeStripeStatus } from "@/lib/subscription";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -47,6 +48,12 @@ export const dynamic = "force-dynamic";
 /** Events we act on. Anything else is acknowledged and ignored. */
 const HANDLED = new Set([
   "checkout.session.completed",
+  // The late verdict on a delayed-notification payment method (SEPA-incasso,
+  // bank transfer): those complete the session first and confirm the money
+  // later. iDEAL and card never emit these — they exist for the day the
+  // method list changes, so that day changes nothing here.
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
@@ -116,10 +123,38 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
   // subscription id en die is er bij `mode: "payment"` niet. Zonder dit blok liep een
   // Bewaarkluis-betaling in de tak "carried no subscription id — ignored": geld aangenomen,
   // verplichting nergens vastgelegd. Erger dan het product niet hebben.
-  if (event.type === "checkout.session.completed") {
+  //
+  // Recording is gated on the session actually being PAID. A session completes
+  // before the money is confirmed when the customer used a delayed-notification
+  // method, and the verdict then arrives as one of the async_payment events.
+  // The decision of what to do per (event, payment_status) is the pure
+  // kluisSessionAction() in billing.ts, truth-tabled in billing.test.ts.
+  if (
+    event.type === "checkout.session.completed" ||
+    event.type === "checkout.session.async_payment_succeeded" ||
+    event.type === "checkout.session.async_payment_failed"
+  ) {
     const session = event.data.object as Stripe.Checkout.Session;
     if (session.metadata?.product === "bewaarkluis") {
-      await recordBewaarkluis(session);
+      const action = kluisSessionAction(event.type, session.payment_status);
+      if (action === "record") {
+        await recordBewaarkluis(session);
+      } else if (action === "wait") {
+        // The money is still in flight. Acknowledge with a 200 and let the
+        // async verdict event decide — a 5xx here would only make Stripe
+        // re-deliver an event we cannot act on yet.
+        console.log(
+          `[KLUIS] bewaarkluis ${session.id} completed with payment_status=` +
+            `${session.payment_status} — waiting for the async payment verdict`
+        );
+      } else {
+        // The bank said no after checkout. Nothing was recorded, so there is
+        // nothing to undo; Stripe has already told the customer. Loud anyway:
+        // if this line shows up often, the method mix needs a human look.
+        console.error(
+          `[KLUIS] bewaarkluis payment failed after checkout (session ${session.id}) — nothing recorded`
+        );
+      }
       return;
     }
   }
@@ -128,7 +163,12 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
   let subscriptionId: string | null = null;
   let sessionProfileId: string | null = null;
 
-  if (event.type === "checkout.session.completed") {
+  // All three checkout.session.* events carry a Checkout Session, not a
+  // Subscription. For a subscription-mode session the async verdicts flow into
+  // the same re-read-and-write path below, which is exactly right: re-reading
+  // yields whatever the failed or confirmed first payment made the
+  // subscription (incomplete, active, …), and we cache that truth.
+  if (event.type.startsWith("checkout.session.")) {
     const session = event.data.object as Stripe.Checkout.Session;
     subscriptionId =
       typeof session.subscription === "string"

@@ -264,6 +264,50 @@ export function subscriptionPeriodEnd(sub: PeriodBearingSubscription): string | 
 
 // ── Bewaarkluis ──────────────────────────────────────────────────────
 
+/** What the webhook should do with a Bewaarkluis Checkout Session event. */
+export type KluisSessionAction = "record" | "wait" | "abandon";
+
+/**
+ * Decide whether a Bewaarkluis session event may be recorded.
+ *
+ * A Checkout Session can complete BEFORE the money is confirmed: with a
+ * delayed-notification payment method (SEPA-incasso, bank transfer) the
+ * `checkout.session.completed` event arrives with `payment_status: "unpaid"`,
+ * and the verdict follows later as `async_payment_succeeded` or
+ * `async_payment_failed`. Recording the purchase on an unpaid completion would
+ * promise seven years of storage for money that may never arrive — the exact
+ * mirror of the bug the [KLUIS] webhook block exists to prevent (money taken,
+ * obligation recorded nowhere).
+ *
+ * Today's hardcoded methods (iDEAL, card) confirm synchronously, so "wait" and
+ * "abandon" are currently unreachable. They become reachable the moment the
+ * method list changes — which Dashboard-managed dynamic payment methods can do
+ * without a deploy (docs/BILLING.md §4.3). This guard exists so that day is a
+ * non-event.
+ *
+ * Pure on purpose: the truth table lives in billing.test.ts next to the other
+ * webhook-shape pins.
+ *
+ *   - "record"  → write the kluis_subscriptions row (idempotent via the unique
+ *                 index on stripe_session_id, so paid-completed followed by
+ *                 async_payment_succeeded records exactly once).
+ *   - "wait"    → acknowledge and do nothing; the async verdict event decides.
+ *   - "abandon" → the bank said no. Record nothing; Stripe already told the
+ *                 customer.
+ *
+ * `no_payment_required` counts as record: Stripe's fulfillment contract treats
+ * it as settled (nothing is owed), and refusing it would strand a session that
+ * will never produce another event.
+ */
+export function kluisSessionAction(
+  eventType: string,
+  paymentStatus: string | null | undefined
+): KluisSessionAction {
+  if (eventType === "checkout.session.async_payment_failed") return "abandon";
+  if (paymentStatus === "paid" || paymentStatus === "no_payment_required") return "record";
+  return "wait";
+}
+
 /**
  * Een eenmalige betaling voor de resterende bewaarjaren van één archief.
  *
