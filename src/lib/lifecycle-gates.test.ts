@@ -5945,3 +5945,48 @@ test("[CENT] rounding to N decimals is shared between the chooser and the applie
   assert.match(price, /import \{[^}]*\broundTo\b[^}]*\} from "\.\/unit-price-display"/,
     "it must use the same one the decimal count was chosen with");
 });
+
+test("[VERSTUURD] the most consequential button in the app cannot go back to saying nothing", () => {
+  // "✉ Opslaan en versturen" mints a permanent invoice number, renders the PDF and mails it to a
+  // customer — and used to answer by silently replacing the screen with the invoice detail page.
+  // No "gelukt", no number, nothing naming what had become irreversible. An owner sending their
+  // first invoice could not tell success from a silent failure without going to look.
+  //
+  // This is a gate and not just a test because the failure mode is a DELETION: put the
+  // `router.replace` back on the success path and everything still compiles, still renders, still
+  // passes every unit test. The screen just goes quiet again.
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+
+  assert.match(page, /import InvoiceSentModal from '@\/components\/ui\/InvoiceSentModal'/);
+  assert.match(page, /<InvoiceSentModal/, "the panel must actually be rendered");
+
+  // BOTH send paths. This screen issues a numbered invoice in two places — the ordinary submit and
+  // the offerte conversion — and the second one is the easy one to forget: same event, same
+  // permanence, and it had the same silent ending.
+  const calls = page.match(/invoiceSentNotice\(\{/g) ?? [];
+  assert.equal(calls.length, 2, "the ordinary send AND the offerte conversion must both confirm");
+
+  // The confirmation may only be built from what the ROUTE reported. Reading the number off the
+  // page's own state would announce a number the server never minted.
+  assert.match(page, /invoiceNumber: result\.invoice_number/);
+  assert.match(page, /invoiceType: result\.invoice_type/);
+  assert.match(page, /replyTo: result\.reply_to/);
+
+  // And BOTH must STOP there. The `return` after setting the notice is the whole mechanism:
+  // without it the handler falls through to the router.replace below and the panel is never seen.
+  //
+  // Counted, not merely matched. A single /setSentNotice[\s\S]*?return/ is satisfied by EITHER
+  // path, so deleting the stop from the ordinary send — the one the owner uses every day — left
+  // this gate green. It did, on the first negative control of this test.
+  const stops = page.match(/setSentNotice\(notice\)[\s\S]{0,120}?return/g) ?? [];
+  assert.equal(
+    stops.length, 2,
+    "both paths must end the handler after setting the notice — otherwise the page navigates out from under it",
+  );
+
+  // The route has to keep reporting the two facts the panel is not allowed to guess.
+  const route = code("src/app/api/invoice/send/route.ts");
+  assert.match(route, /invoice_number: finalNumber/);
+  assert.match(route, /reply_to: profile\?\.email \?\? null/,
+    "the reply address is reported, not assumed — the panel names it or stays silent");
+});

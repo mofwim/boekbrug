@@ -29,6 +29,11 @@ import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-disco
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
+// [VERSTUURD] De bevestiging na verzenden. De knop deed het onomkeerbaarste wat deze app kan —
+// een definitief factuurnummer, een PDF, een mail naar een klant — en het scherm verving zichzelf
+// zwijgend door de detailpagina. Zie invoice-sent-notice.ts.
+import InvoiceSentModal from '@/components/ui/InvoiceSentModal'
+import { invoiceSentNotice, type InvoiceSentNotice } from '@/lib/invoice-sent-notice'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
@@ -526,6 +531,10 @@ function NewInvoicePageContent() {
   // [FACTUUR-A] Send confirmation dialog — sending is irreversible (number
   // consumed + e-mail delivered). Centered modal, per house convention.
   const [showSendConfirm, setShowSendConfirm] = useState(false)
+  // [VERSTUURD] Gevuld zodra /api/invoice/send klaar is met een nummer. Zolang dit staat blijft
+  // de pagina staan: elke uitgang van het paneel navigeert zelf, want de factuur bestaat al.
+  const [sentNotice, setSentNotice] = useState<InvoiceSentNotice | null>(null)
+  const [sentInvoiceId, setSentInvoiceId] = useState<string | null>(null)
   useCloseOnBack(!!showSendConfirm, () => setShowSendConfirm(false))
 
   // ── Lines — pre-filled from replace flow, offerte, or AI generation ──────────
@@ -1026,6 +1035,23 @@ function NewInvoicePageContent() {
         router.replace(`/dashboard/invoice/${factuur.id}?delivery=${result.warning}`)
         return
       }
+      // [VERSTUURD] Dezelfde gebeurtenis, dus dezelfde bevestiging: ook hier is een genummerde
+      // factuur de deur uit. `converted` staat aan, dus het paneel benoemt de offerte.
+      const notice = invoiceSentNotice({
+        invoiceNumber: result.invoice_number,
+        invoiceType: result.invoice_type,
+        converted: result.converted,
+        clientName,
+        clientEmail,
+        totalInc,
+        replyTo: result.reply_to,
+      })
+      if (notice) {
+        setSentInvoiceId(factuur.id)
+        setSentNotice(notice)
+        setConvertingOfferte(false)
+        return
+      }
     } catch {
       setShowConvertDialog(false)
       setError('Verzenden mislukt — opgeslagen als concept')
@@ -1225,6 +1251,30 @@ function NewInvoicePageContent() {
           router.replace(`/dashboard/invoice/${invoice.id}?delivery=${result.warning}`)
           return
         }
+
+        // [VERSTUURD] Alles is gelukt: nummer geslagen, PDF gemaakt, mail geaccepteerd. Pas HIER
+        // mag er "verstuurd" op het scherm staan — de twee returns hierboven vangen precies de
+        // gevallen waarin dat niet waar zou zijn.
+        //
+        // De pagina navigeert nu NIET zelf weg. Dat deed ze wel, en dat was het probleem: de enige
+        // aankondiging van een onomkeerbare handeling was een scherm dat vanzelf verdween.
+        const notice = invoiceSentNotice({
+          invoiceNumber: result.invoice_number,
+          invoiceType: result.invoice_type,
+          converted: result.converted,
+          clientName,
+          clientEmail,
+          totalInc,
+          replyTo: result.reply_to,
+        })
+        if (notice) {
+          setSentInvoiceId(invoice.id)
+          setSentNotice(notice)
+          setLoading(false)
+          return
+        }
+        // Geen nummer in het antwoord — dan is er niets te bevestigen en gaat het scherm door naar
+        // de factuur, zoals hiervoor. Liever geen melding dan een melding die iets beweert.
       } catch {
         // Network blip after a clean insert — the draft is intact.
         setError('Verzenden mislukt — de factuur is opgeslagen als concept')
@@ -1917,6 +1967,17 @@ function NewInvoicePageContent() {
             </div>
           </>
       </div>
+
+      {/* [VERSTUURD] Na afloop: wat er is gebeurd, wat vastligt, en hoe je het zelf nakijkt. */}
+      {sentNotice && sentInvoiceId && (
+        <InvoiceSentModal
+          notice={sentNotice}
+          onView={() => router.replace(`/dashboard/invoice/${sentInvoiceId}`)}
+          // Een verse nieuwe factuur, niet dit formulier opnieuw: de regels, de klant en de
+          // datums staan er nog, en die een tweede keer versturen is precies wat niet mag.
+          onNew={() => { window.location.href = '/dashboard/invoice/new' }}
+        />
+      )}
 
       {/* [FACTUUR-A] Send confirmation — centered modal (house convention) */}
       {showSendConfirm && (
