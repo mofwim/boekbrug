@@ -30,6 +30,9 @@ import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from
 import { amsterdamToday } from "@/lib/format-nl";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+// [KLANT-EXTRA] De vrije klantregels onder de klantnaam — zie de kop van dat bestand.
+import { CLIENT_EXTRA_LINE_COLUMNS } from "@/lib/client-extra-lines";
+import { copyExtraLinesOnto } from "@/lib/client-extra-lines-write";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -175,6 +178,32 @@ export async function GET(req: NextRequest) {
         })
         .select("id")
         .single();
+      // [KLANT-EXTRA] De drie vrije klantregels reizen mee naar de nieuwe factuur.
+      //
+      // In een EIGEN leesbeurt en een EIGEN schrijfbeurt, allebei mislukbaar. De hoofdselect van
+      // deze cron noemt zijn kolommen expliciet; er twee aan toevoegen die een database nog niet
+      // kent laat PostgREST die select weigeren — en dan draait er voor NIEMAND meer een
+      // terugkerende factuur. Een adresregel mag dat niet kunnen veroorzaken.
+      //
+      // Waarom het er hoort: een terugkerende factuur gaat naar dezelfde klant, elke maand, en
+      // juist daar is "t.a.v. mevrouw Jansen" of een inkoopordernummer geen sier maar de reden
+      // dat hij betaald wordt. Hem stil laten vallen bij elke herhaling is het soort verlies dat
+      // niemand aan de app toeschrijft.
+      if (!insErr && draft) {
+        const { data: bron } = await db
+          .from("invoices")
+          .select(CLIENT_EXTRA_LINE_COLUMNS.join(", "))
+          .eq("id", s.source_invoice_id)
+          .maybeSingle();
+        if (bron) {
+          await copyExtraLinesOnto(
+            (fields) => db.from("invoices").update(fields as never).eq("id", draft.id),
+            bron as Record<string, unknown>,
+            { schedule: s.id, from: s.source_invoice_id, to: draft.id },
+          );
+        }
+      }
+
       if (insErr || !draft) {
         // The unique index caught a concurrent run — benign, and the schedule still advances.
         if (insErr && /duplicate key|unique/i.test(insErr.message ?? "")) {
