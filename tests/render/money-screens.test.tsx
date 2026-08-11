@@ -1571,3 +1571,60 @@ test("[VERSTUURD] the send confirmation renders, and puts the irreversible part 
   );
   assert.ok(credit.includes("Creditnota verstuurd"));
 });
+
+test("[TAAL] the send confirmation renders in Arabic, right to left", async () => {
+  // The first translated surface in the product. The blog has spoken Arabic for 53 articles; this
+  // is the first thing inside the app that does. What a render proves and a unit test cannot: the
+  // panel survives being called with Arabic, and the DIRECTION reaches the DOM — an Arabic panel
+  // laid out left-to-right is legible word by word and unusable as a screen.
+  const { default: InvoiceSentModal } = await import("@/components/ui/InvoiceSentModal");
+  const { invoiceSentNotice } = await import("@/lib/invoice-sent-notice");
+
+  const facts = {
+    invoiceNumber: "2026-014",
+    invoiceType: "factuur",
+    clientName: "Stichting Contour de Twern",
+    clientEmail: "info@example.nl",
+    totalInc: 394.99,
+    replyTo: "mo@boekbrug.nl",
+  };
+
+  const ar = renderToStaticMarkup(
+    React.createElement(InvoiceSentModal as any, {
+      notice: invoiceSentNotice(facts, "ar")!, onView: () => {}, onNew: () => {},
+    }),
+  );
+  assert.ok(ar.includes('dir="rtl"'), "Arabic must be laid out right to left");
+  assert.ok(ar.includes("تم إرسال الفاتورة"), "the title is Arabic");
+  assert.ok(ar.includes("كيف تتحقّق بنفسك"), "and so is the heading over the checks");
+
+  // The facts are data, not language: they must come through a translation unchanged, or the
+  // owner is reading a confirmation about a different invoice than the one that was sent.
+  assert.ok(ar.includes("2026-014"), "the number survives");
+  assert.ok(ar.includes("394,99"), "the amount survives, in euros and Latin digits");
+  assert.ok(ar.includes("info@example.nl"), "and the address it went to");
+  // Rule 2: a sentence pointing at a Dutch on-screen label keeps the Dutch label.
+  assert.ok(ar.includes("Facturen") && ar.includes("Verzonden"));
+
+  // Dutch is unchanged and still ltr — the language of everyone using the app today.
+  const nl = renderToStaticMarkup(
+    React.createElement(InvoiceSentModal as any, {
+      notice: invoiceSentNotice(facts, "nl")!, onView: () => {}, onNew: () => {},
+    }),
+  );
+  assert.ok(nl.includes('dir="ltr"'));
+  assert.ok(nl.includes("Factuur verstuurd") && nl.includes("Bekijk de factuur"));
+});
+
+test("[TAAL] the language switch renders, and names each language in its own script", async () => {
+  const { LanguageCard } = await import("@/components/settings/LanguageCard");
+  const html = renderToStaticMarkup(React.createElement(LanguageCard as any, {}));
+  assert.ok(html.length > 0);
+  // Someone looking for their own language scans for the shape of their own script, so these are
+  // never translated.
+  for (const label of ["Nederlands", "English", "العربية", "Türkçe"]) {
+    assert.ok(html.includes(label), `the switch must offer ${label}`);
+  }
+  // The promise the card must keep making: the documents do not follow the interface language.
+  assert.ok(html.includes("Belastingdienst"), "it says which language the documents stay in");
+});

@@ -5946,3 +5946,81 @@ test("[VERSTUURD] the most consequential button in the app cannot go back to say
   assert.match(route, /reply_to: profile\?\.email \?\? null/,
     "the reply address is reported, not assumed — the panel names it or stays silent");
 });
+
+test("[TAAL] the language vocabulary stays where a screen can reach it", () => {
+  // The app already spoke four languages — 53 Arabic articles, an /ar/blog route, a locale table
+  // that knows Arabic is right-to-left. All of it lived in src/lib/blog.ts, whose own header says
+  // "never import this into a client component" because it reads the filesystem. So the product
+  // was Dutch-only for a structural reason, not a linguistic one: the vocabulary existed in the
+  // one file no screen was allowed to ask.
+  //
+  // Moving it back would not break a build — blog.ts re-exports the names, so both copies would
+  // type-check and the app would quietly have two locale tables that can disagree about which
+  // languages exist. That is the [CENT] class again, on language instead of money.
+  const blog = code("src/lib/blog.ts");
+  assert.doesNotMatch(blog, /export type Locale = /, "Locale is declared in i18n/locale.ts");
+  assert.doesNotMatch(blog, /export const LOCALE_META/, "…and so is the metadata");
+  assert.match(blog, /export \{[\s\S]{0,200}LOCALE_META[\s\S]{0,200}\} from '\.\/i18n\/locale'/,
+    "blog.ts re-exports it, so every existing import keeps working");
+
+  const locale = code("src/lib/i18n/locale.ts");
+  assert.doesNotMatch(locale, /from ['"]node:/, "the vocabulary must stay importable from a screen");
+  assert.doesNotMatch(locale, /require\(/);
+});
+
+test("[TAAL] every message key is real, and every message is used", () => {
+  // Two rots, both silent. A `t('sent.foo')` that does not exist renders the key on screen in
+  // whatever language it is missing from — invisible to anyone testing in Dutch. And a message
+  // nobody calls is a translated sentence quietly drifting away from the screen it describes.
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const declared = new Set(
+    [...messages.matchAll(/^\s{2}'([\w.]+)':\s*\{/gm)].map((m) => m[1]),
+  );
+  assert.ok(declared.size > 0, "the catalogue may not be empty");
+
+  const used = new Set<string>();
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p)) continue;
+      if (p.endsWith("src/lib/i18n/messages.ts")) continue;
+      // Production files only. A test may legitimately mention a key that does not exist (this
+      // gate's own comment does, to describe the failure) and a key used ONLY by a test is an
+      // orphan on the screen, which is exactly what the second half of this check is for.
+      if (/\.test\.tsx?$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      // t('key'), translate(x, 'key'), and the template form t(`sent.${woord}.title`) — the last
+      // one is expanded over the two document words rather than skipped, because skipping it
+      // would let the orphan half of the check pass on keys nothing reaches.
+      for (const m of src.matchAll(/['"]([a-z]+(?:\.[\w]+)+)['"]/g)) used.add(m[1]);
+      for (const m of src.matchAll(/`(sent\.\$\{woord\}\.[\w]+)`/g)) {
+        for (const w of ["factuur", "creditnota"]) used.add(m[1].replace("${woord}", w));
+      }
+    }
+  };
+  scan("src");
+
+  const missing = [...used].filter((k) => k.startsWith("sent.") && !declared.has(k));
+  assert.deepEqual(missing, [], `used but not in the catalogue:\n  ${missing.join("\n  ")}`);
+
+  const orphans = [...declared].filter((k) => !used.has(k));
+  assert.deepEqual(orphans, [], `in the catalogue but never rendered:\n  ${orphans.join("\n  ")}`);
+});
+
+test("[TAAL] the translated panel holds no language of its own", () => {
+  // A component with one hard-coded sentence left in it is how a translation stays permanently
+  // half-finished: the screen still looks correct in Dutch, so nothing points at the gap. Every
+  // word InvoiceSentModal paints comes off the notice object.
+  const modal = code("src/components/ui/InvoiceSentModal.tsx");
+  // Whole sentences, not words: "verstuurd" also appears in the element id and in the [VERSTUURD]
+  // tag, and a gate that fires on those teaches people to weaken it.
+  for (const dutch of ["Zo controleer je", "Bekijk de factuur", "Nog een factuur maken", "ligt vast", "is onderweg naar"]) {
+    assert.ok(!modal.includes(dutch), `a Dutch string is still baked into the panel: "${dutch}"`);
+  }
+  // And the direction travels with the words, or Arabic renders in a left-to-right box.
+  assert.match(modal, /dir=\{notice\.dir\}/);
+  // Physical left/right would be wrong in exactly one language, which is the one nobody checks.
+  assert.doesNotMatch(modal, /textAlign: 'right'/, "use textAlign: 'end'");
+  assert.doesNotMatch(modal, /paddingLeft:/, "use paddingInlineStart");
+});
