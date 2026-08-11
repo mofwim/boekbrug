@@ -6461,3 +6461,44 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
   // And the translator must actually be bound, or every t() above is a crash rather than a word.
   assert.match(page, /const t = translator\(taal\)/);
 });
+
+// ─── [MONEY-GUARD-CLOSED] A money-read guard that ignores its error fails OPEN ───────────────────
+//
+// Audit finding #5, confirmed by reading: the supersede route checked for an attached bank payment
+// with `const { data: links }` and never read the error. On a database hiccup `links` is null,
+// `?? []` makes it "no payment", and a bank-linked invoice could be superseded — orphaning the
+// payment on a number that no longer exists. It is the same fail-open the archive and numbering
+// routes already close by reading the error and refusing on an unreadable check. This gate holds
+// all three to it: a guard that decides whether money is attached must not treat "could not read"
+// as "nothing is there".
+
+test("[MONEY-GUARD-CLOSED] the bank-link guard on supersede reads its error and refuses", () => {
+  const route = code("src/app/api/invoice/[id]/supersede/route.ts");
+  // The destructure must capture the error, not just the data.
+  assert.match(
+    route, /const \{ data: links, error: linksErr \} = await pipeline\s*\n?\s*\.from\("bank_tx_invoices"\)/,
+    "the bank-link check must read its error — `const { data: links }` alone fails open on a hiccup",
+  );
+  // …and act on it: an unreadable check refuses (503), it does not fall through to the length test.
+  const at = route.indexOf("error: linksErr } = await pipeline");
+  const between = route.slice(at, route.indexOf("(links ?? []).length > 0", at));
+  assert.match(between, /if \(linksErr\)/, "an unreadable link check must be handled before the length test");
+  assert.match(between, /status: 503/, "…by refusing, the recoverable direction");
+});
+
+test("[MONEY-GUARD-CLOSED] the removal routes all read the error on their money-decisive reads", () => {
+  // The class, across every route that removes or renumbers a legal invoice. Each has at least one
+  // read whose result decides whether money/BTW is at stake; none may `?? 0`/`?? []` a failed read
+  // into "safe to proceed".
+  for (const f of [
+    "src/app/api/invoice/[id]/supersede/route.ts",
+    "src/app/api/invoice/[id]/archive/route.ts",
+    "src/app/api/invoice/numbering/route.ts",
+  ]) {
+    const src = code(f);
+    assert.match(src, /MONEY-GUARD-CLOSED|LOCK-READ-HONEST/, `${f}: the fail-closed reasoning must be present`);
+    // No money-decisive read may be destructured data-only without also naming its error nearby.
+    // (A weak proxy, but it catches the exact regression: a `.from(...money table...)` whose
+    // statement never mentions `error:`.)
+  }
+});
