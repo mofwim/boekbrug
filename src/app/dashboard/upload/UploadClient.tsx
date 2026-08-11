@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+// [SIZE-SHRINK] Alleen de beslissing, geen compressor — dit bestand blijft licht.
+import { shouldOfferShrink } from '@/lib/tools/upload-shrink'
 // [INTAKE-IMG-NORMALIZE] Convert a picked HEIC/HEIF/WebP/BMP/TIFF (or an oversized JPG/PNG)
 // to a bounded JPEG in the browser BEFORE upload — otherwise an iPhone invoice reaches the
 // reader as an "unsupported type" and is silently filed away as unreadable. Same shared
@@ -236,7 +238,7 @@ export default function UploadClient() {
             // een opdracht ("splits een grote PDF") zonder gereedschap. Bij een afbeelding is
             // normalizeImageForUpload hierboven al langs geweest, dus die is zo klein als hij
             // verantwoord kan; daar valt niets meer te winnen en bieden we het niet aan.
-            const isPdf = uploadFile.type === 'application/pdf' || /\.pdf$/i.test(uploadFile.name)
+            const isPdf = shouldOfferShrink(uploadFile, MAX_INTAKE_UPLOAD_BYTES)
             patch(item.id, {
               status: 'error',
               tooBig: isPdf,
