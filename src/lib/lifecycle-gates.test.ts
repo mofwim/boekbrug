@@ -5896,19 +5896,69 @@ test("[PRIJSVELD-CENT] the shared helper decides the precision, not each screen"
 // is not flagged, the discounted one is skipped, an incoming supplier invoice is out of scope, a
 // negative creditnota is not flagged, and the rounded price is caught at EUR 0,65.
 
-test("[AFROND-AUDIT] the audit query cannot write", () => {
-  const raw = readFileSync("supabase/queries/invoice_rounding_audit.sql", "utf8");
-  // The STATEMENTS, without the prose — the header explains what it does not do, using the very
-  // words being forbidden. A gate that reads comments checks what a file says about itself.
-  const sql = raw.replace(/--[^\n]*/g, " ");
-  for (const verb of ["INSERT", "UPDATE", "DELETE", "ALTER", "DROP", "TRUNCATE", "CREATE", "GRANT"]) {
-    assert.doesNotMatch(
-      sql, new RegExp(`\\b${verb}\\b`, "i"),
-      `the audit query contains ${verb}. It is run by hand against a live database with the ` +
-        "service role, where nothing stops it",
+test("[AFROND-AUDIT] nothing under supabase/queries/ can write", () => {
+  // The guarantee is about the DIRECTORY, not about one file. These are meant to be pasted into
+  // the Supabase SQL editor, where they run with the service role and RLS does not apply — so a
+  // file here has more power over an owner's books than any route in the app.
+  //
+  // Scripts that DO write live in supabase/admin/, and that split is the whole point: it is what
+  // lets someone open anything in queries/ and run it without reading it first. Widened from a
+  // single hard-coded path the day the first admin script was written, because a guarantee about
+  // one file says nothing about the next one added beside it.
+  const files = readdirSync("supabase/queries").filter((f) => f.endsWith(".sql"));
+  assert.ok(files.length > 0, "the read-only directory is empty — the guard is guarding nothing");
+
+  for (const f of files) {
+    const raw = readFileSync(`supabase/queries/${f}`, "utf8");
+    // The STATEMENTS, without the prose — a header explains what it does not do, using the very
+    // words being forbidden. A gate that reads comments checks what a file says about itself.
+    const sql = raw.replace(/--[^\n]*/g, " ");
+    for (const verb of ["INSERT", "UPDATE", "DELETE", "ALTER", "DROP", "TRUNCATE", "CREATE", "GRANT"]) {
+      assert.doesNotMatch(
+        sql, new RegExp(`\\b${verb}\\b`, "i"),
+        `supabase/queries/${f} contains ${verb}. Anything under queries/ is run by hand against a ` +
+          "live database with the service role, where nothing stops it — move it to supabase/admin/",
+      );
+    }
+    assert.match(sql, /\bSELECT\b/i, `${f}: …and it must still actually query something`);
+  }
+});
+
+test("[PLAN-HAND] the by-hand plan grant uses the mechanism the product already has", () => {
+  const sql = readFileSync("supabase/admin/set_plan.sql", "utf8");
+  // Data, not a second code path. decidePlan already turns subscription_status 'active' into the
+  // plus plan, and limitForPlan already returns 0 (no limit) for anything that is not free — so a
+  // hardcoded id or an env allowlist would be a SECOND answer to "who has a limit", and two
+  // answers is how the billing screen ends up disagreeing with the gate.
+  // The LIVE statements, comments stripped. The first draft of this checked `WHERE id =` against
+  // the raw file — and the commented-out revoke block below contains that string, so deleting the
+  // WHERE from the real UPDATE changed nothing and the gate stayed silent. Its own negative
+  // control caught it. A bare UPDATE here exempts every account in the database.
+  const live = sql.replace(/--[^\n]*/g, " ");
+  assert.match(live, /UPDATE public\.profiles/);
+  assert.match(live, /SET subscription_status = 'active'/);
+  for (const stmt of live.split(";")) {
+    if (!/\bUPDATE\b/i.test(stmt)) continue;
+    assert.match(
+      stmt, /\bWHERE\b[\s\S]*\bid\b/i,
+      "an UPDATE without a WHERE id here exempts every account in the database",
     );
   }
-  assert.match(sql, /\bSELECT\b/i, "…and it must still actually query something");
+
+  // The way back has to be written down beside the way in. An exemption you cannot find the
+  // revert for is one that quietly becomes permanent.
+  assert.match(sql, /═══ REVOKE/, "the revert must be in the same file");
+  assert.match(sql, /SET subscription_status = NULL/);
+
+  // And role must not be the lever: it also lifts the limit, and it replaces the whole interface
+  // with the accountant portal.
+  assert.doesNotMatch(live, /SET role/, "role is not the exemption switch");
+
+  // The code side must still be the single mechanism — no allowlist grew beside it.
+  const usage = code("src/lib/fair-use-usage.ts");
+  assert.match(usage, /if \(plan !== "free"\) return 0;/, "one rule decides who has no limit");
+  assert.doesNotMatch(usage, /process\.env\.[A-Z_]*(UNLIMITED|BYPASS|EXEMPT)/, "no env bypass");
+  assert.doesNotMatch(code("src/lib/fair-use-gate.ts"), /process\.env\.[A-Z_]*(UNLIMITED|BYPASS|EXEMPT)/);
 });
 
 test("[AFROND-AUDIT] it says what it cannot find, where that cannot be missed", () => {
