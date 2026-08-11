@@ -219,7 +219,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
 
           {/* Material You search bar */}
           <div style={{ position: 'relative' }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               aria-label="Klanten zoeken"
@@ -231,7 +231,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
               <button
                 onClick={() => setSearch('')}
                 aria-label="Zoekopdracht wissen"
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
+                style={{ position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
               </button>
             )}

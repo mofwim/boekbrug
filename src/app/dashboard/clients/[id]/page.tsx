@@ -175,7 +175,7 @@ export default function ClientDetailPage() {
               💬 Stuur bericht
               {unreadCount > 0 && (
                 <span style={{
-                  position: 'absolute', top: 8, right: 12,
+                  position: 'absolute', top: 8, insetInlineEnd: 12,
                   backgroundColor: '#EA4335', color: '#fff',
                   fontSize: 10, borderRadius: 9999, width: 16, height: 16,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,

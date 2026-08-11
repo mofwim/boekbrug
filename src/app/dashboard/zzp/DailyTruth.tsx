@@ -18,6 +18,8 @@ import { useRouter } from 'next/navigation'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 // [DESIGN] Radius from the shared scale (src/lib/design/tokens.ts).
 import { R } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -93,6 +95,7 @@ function formatDate(iso: string | null): string | null {
 }
 
 export default function DailyTruth() {
+  const t = translator(useLocale())
   const router = useRouter()
   const [data, setData] = useState<TruthData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -129,9 +132,9 @@ export default function DailyTruth() {
   if (failed || !data?.ok) {
     return (
       <div style={{ marginBottom: 20, fontFamily: FONT, background: '#FFF4E5', borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: '#7a4f00' }}>Kon je overzicht niet laden</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#7a4f00' }}>{t('waarheid.laadfout')}</div>
         <div style={{ fontSize: 12.5, color: '#7a4f00', margin: '4px 0 10px' }}>Dit is géén &quot;alles is bij&quot; — we konden je cijfers even niet ophalen.</div>
-        <button onClick={retry} style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Opnieuw proberen</button>
+        <button onClick={retry} style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>{t('waarheid.opnieuw')}</button>
       </div>
     )
   }
@@ -175,9 +178,9 @@ export default function DailyTruth() {
         }}>
           <span style={{ fontSize: 22 }}>✓</span>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#0B5345' }}>Alles is bij</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#0B5345' }}>{t('waarheid.allesBij')}</div>
             <div style={{ fontSize: 13, color: '#0B5345', marginTop: 2 }}>
-              Niets openstaand — geen facturen te betalen of te ontvangen.
+              {t('waarheid.nietsOpen')}
             </div>
           </div>
         </div>
@@ -186,9 +189,9 @@ export default function DailyTruth() {
           <div style={{ display: 'flex', gap: 10 }}>
             {/* [NAV-FROM] ?from=home — this card sits on the dashboard, so Terug must come back
                 here and not to the verification list the owner skipped. */}
-            <MoneyCard label="Te betalen" bucket={toPay} emptyText="Niets te betalen"
+            <MoneyCard label={t('waarheid.teBetalen')} bucket={toPay} emptyText={t('waarheid.nietsTeBetalen')}
               subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
-            <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
+            <MoneyCard label={t('waarheid.teOntvangen')} bucket={toReceive} emptyText={t('waarheid.nietsOpenKort')}
               subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
           {/* [BETALINGSVERSCHIL] Onder 'Te ontvangen', want dat is het getal dat het vertekent.
@@ -248,7 +251,7 @@ export default function DailyTruth() {
         >
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
-              {(data.bank.accounts ?? 1) > 1 ? `Bank — ${data.bank.accounts} rekeningen` : 'Bank — op de rekening'}
+              {(data.bank.accounts ?? 1) > 1 ? t('waarheid.bankMeerdere', { n: data.bank.accounts ?? 0 }) : t('waarheid.bank')}
             </div>
             <div style={{ fontSize: 11.5, color: '#70757a', marginTop: 2, lineHeight: 1.45 }}>
               saldo op {formatDate(data.bank.balanceAsOf ?? null)}
@@ -274,7 +277,7 @@ export default function DailyTruth() {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>Kas — in kassa</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{t('waarheid.kas')}</div>
           <span style={{ fontFamily: FONT_NUM, fontSize: 18, fontWeight: 700, color: data.kas.balance < 0 ? '#B3261E' : M3.onSurface }}>
             {eur.format(data.kas.balance)}
           </span>
@@ -305,8 +308,8 @@ export default function DailyTruth() {
               }}
             >
               {attentionCount > attention.length
-                ? `Alle ${attentionCount} bekijken →`
-                : 'Alles bekijken →'}
+                ? `${t('waarheid.alleBekijken', { n: attentionCount })} →`
+                : `${t('waarheid.allesBekijken')} →`}
             </button>
           </div>
         </div>
@@ -356,13 +359,14 @@ function MoneyCard({ label, bucket, emptyText, subject, onClick }: {
 function AttentionRow({ item, onClick, divider }: {
   item: AttentionItem; onClick: () => void; divider: boolean
 }) {
+  const t = translator(useLocale())
   const isCredit = item.direction === 'incoming' && item.total < 0
   const accent = item.dueDate ? dueAccent(item.dueDate) : M3.neutral
 
   // [HONEST-HOME] Make money-out vs money-in unmistakable at a glance — the same
   // vocabulary as the totals above ("Te betalen" / "Te ontvangen"), so a daily user
   // never has to wonder "is this a bill I owe or an invoice owed to me?".
-  const kind = isCredit ? 'Creditnota' : item.direction === 'incoming' ? 'Te betalen' : 'Te ontvangen'
+  const kind = isCredit ? t('waarheid.creditnota') : item.direction === 'incoming' ? t('waarheid.teBetalen') : t('waarheid.teOntvangen')
   const kindColor = item.direction === 'incoming' ? '#8A4B00' : M3.primary
   const dueText = !isCredit && item.dueDate ? dueLabel(item.dueDate) : ''
 

@@ -6176,6 +6176,21 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
       const src = code(p);
       if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
       if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
+      // Fixed/absolute positioning: a FAB pinned `right: 20` sits in the mirrored thumb zone's
+      // wrong corner. Matched narrowly — `right: <number>` as a style property — because CSS
+      // `left`/`right` also appear as string values ('to the right') and in prose.
+      // insetInlineStart/End are unaffected. `left: 0, right: 0` full-bleed pairs are fine in
+      // either language and common (overlays), so a line containing BOTH sides is skipped.
+      for (const line of src.split("\n")) {
+        if (/\bleft: *[\d'"]/.test(line) && /\bright: *[\d'"]/.test(line)) continue;
+        // A position MEASURED with getBoundingClientRect is physical by definition; applying a
+        // logical property to a measured number would mirror an already-correct element. Files
+        // mark those with the [TAAL] "Bewust FYSIEK" note — which lives in a COMMENT, so it must
+        // be read from the raw file: `src` here is comment-stripped, and the first version of
+        // this exemption tested the stripped text and could never see its own marker.
+        if (readFileSync(p, "utf8").includes("Bewust FYSIEK") && /dropdownPos|getBoundingClientRect|rect\./.test(line)) continue;
+        if (/[{,] *(?:left|right): *\d/.test(line)) { offenders.push(`${p} — positioned on a physical side`); break; }
+      }
       // Tailwind too. The inline-style sweep missed these entirely on the first pass — 33 classes
       // in nine files — because they do not look like styles. Tailwind v4 ships the logical
       // utilities (ms/me/ps/pe/text-start/text-end/border-s/border-e/rounded-s/start/end), and in

@@ -1148,7 +1148,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
           {/* Search */}
           <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
-            <Icon name="search" size={18} color={T.outline} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <Icon name="search" size={18} color={T.outline} style={{ position: "absolute", insetInlineStart: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Zoeken..."
               style={{
@@ -1162,7 +1162,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             />
             {search && (
               <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen" style={{
-                position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                position: "absolute", insetInlineEnd: 8, top: "50%", transform: "translateY(-50%)",
                 width: 18, height: 18, border: "none", background: T.outline,
                 borderRadius: T.full, display: "flex", alignItems: "center",
                 justifyContent: "center", cursor: "pointer",
@@ -1922,7 +1922,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           // [SAFE-AREA] Matches every other FAB in the app (ZzpDashboard,
           // WerkplekClient, KlantenClient). A flat `24` put it on top of the
           // home indicator once viewportFit:cover was enabled in app/layout.tsx.
-          position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", right: 24, zIndex: 40,
+          position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", insetInlineEnd: 24, zIndex: 40,
           width: 56, height: 56, borderRadius: T.full,
           background: T.primary, border: "none", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",

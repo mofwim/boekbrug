@@ -324,7 +324,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
               </select>
-              <span className="material-symbols-outlined" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
+              <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineEnd: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
             </div>
             {/* [PAKKET-STAY] Fetched, not navigated to. This was a plain <a href>, and the route
                 answers every refusal with JSON — so a 403/500 replaced the hub with a page of raw
@@ -468,7 +468,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       {/* [SMART-FILTER] Zoek binnen deze klant/map — plat over alle submappen. */}
       {nodes.length > 0 && (
         <div style={{ position: 'relative', marginBottom: 12 }}>
-          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -477,7 +477,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
             style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: R.lg, border: `1px solid ${M3.outline}`, fontSize: 14.5, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
           />
           {search && (
-            <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>
       )}

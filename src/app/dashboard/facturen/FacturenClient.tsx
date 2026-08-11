@@ -957,7 +957,7 @@ export default function FacturenClient({
               [SMART-FILTER] …and the amount: the server query below also matches
               total_inc_btw, so the placeholder names "bedrag" too. */}
           <div style={{ position: 'relative', marginBottom: 10 }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -969,7 +969,7 @@ export default function FacturenClient({
               <button
                 onClick={() => setSearch('')}
                 aria-label={t('lijst.zoek.wissen')}
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
+                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
               </button>

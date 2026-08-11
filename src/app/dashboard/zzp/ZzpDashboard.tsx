@@ -61,6 +61,8 @@ import type { NotificationRow } from '@/types/rows'
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
 import DashboardTools from '@/components/tools/DashboardTools'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -68,6 +70,7 @@ const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
   const router   = useRouter()
+  const t        = translator(useLocale())
   const supabase = createClient()
 
   const [notifications, setNotifications]         = useState<NotificationRow[]>([])
@@ -180,7 +183,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 {vragenBannerTekst(vragenCount)}
               </span>
               <span style={{ display: 'block', fontSize: 12.5, color: '#7a4f00', marginTop: 2 }}>
-                Bekijk de vraag en antwoord hier
+                {t('start.vraag')}
               </span>
             </span>
             <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
@@ -207,8 +210,8 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
         >
           <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>fact_check</span>
           <span style={{ flex: 1 }}>
-            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Ben ik klaar?</span>
-            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>Status van je kwartaal — en klaar voor de boekhouder</span>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>{t('start.klaar')}</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{t('start.waarheid.sub')}</span>
           </span>
           <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
         </button>
@@ -223,7 +226,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
 
           {/* ── 1. TOEVOEGEN — the daily input actions ─────────────────────────── */}
           <section>
-            <SectionLabel>Toevoegen</SectionLabel>
+            <SectionLabel>{t('start.toevoegen')}</SectionLabel>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {/* Bon/factuur toevoegen — foto of bestand → AI sorteert. Own modal
                   (camera/upload); kept full-width as the primary daily action. */}
@@ -231,7 +234,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
               {/* [UPLOAD-HUB] Alles uploaden — many files at once; the app sorts them. */}
               <ActionCard
                 icon="upload_file" iconBg="#1A73E8" iconColor="#fff"
-                label="Alles uploaden" sub="Meerdere bestanden tegelijk — de app sorteert"
+                label={t('start.allesUploaden')} sub={t('start.allesUploaden.sub')}
                 onClick={() => router.push('/dashboard/upload')}
               />
             </div>
@@ -247,24 +250,24 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
               queue. Surfaced here so the owner reaches their te-betalen bills
               straight from home. */}
           <section>
-            <SectionLabel>Mijn administratie</SectionLabel>
+            <SectionLabel>{t('start.administratie')}</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              <AdminTile icon="description" tint="#00897B" label="Facturen"
+              <AdminTile icon="description" tint="#00897B" label={t('start.tegel.facturen')}
                 onClick={() => router.push('/dashboard/facturen')} />
-              <AdminTile icon="mark_email_unread" tint="#0288D1" label="Inkomend" badge={pendingCount}
+              <AdminTile icon="mark_email_unread" tint="#0288D1" label={t('start.tegel.inkomend')} badge={pendingCount}
                 onClick={() => router.push('/dashboard/incoming')} />
               {/* [NAV-FROM] ?from=home so Terug on Inkoopfacturen returns HERE. Without it the
                   canonical parent is /dashboard/incoming — a verification list this visitor never
                   passed through, since this tile jumps straight to the manage surface. */}
-              <AdminTile icon="request_quote" tint="#E37400" label="Inkoopfacturen"
+              <AdminTile icon="request_quote" tint="#E37400" label={t('start.tegel.inkoop')}
                 onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
-              <AdminTile icon="account_balance" tint="#1A73E8" label="Bank"
+              <AdminTile icon="account_balance" tint="#1A73E8" label={t('start.tegel.bank')}
                 onClick={() => router.push('/dashboard/bank')} />
               <AdminTile icon="payments" tint="#00897B" label="Kas"
                 onClick={() => router.push('/dashboard/kas')} />
-              <AdminTile icon="point_of_sale" tint="#7B1FA2" label="Dagomzet"
+              <AdminTile icon="point_of_sale" tint="#7B1FA2" label={t('start.tegel.dagomzet')}
                 onClick={() => router.push('/dashboard/dagomzet')} />
-              <AdminTile icon="inventory_2" tint="#5F6368" label="Artikelen"
+              <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
             </div>
           </section>
@@ -281,7 +284,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                   winst, BTW) met tijd-lens. Zelfde reconcile-pijplijn als de aangifte. */}
               <ActionCard
                 icon="monitoring" iconBg="#0B8043" iconColor="#fff"
-                label="Je waarheid" sub="Omzet, winst en BTW — live, elke periode"
+                label={t('start.waarheid')} sub={t('start.waarheid.kaartSub')}
                 onClick={() => router.push('/dashboard/waarheid')}
               />
               {/* [RESULT→WAARHEID] "Financieel overzicht" (/dashboard/resultaat) is gone as a
@@ -300,11 +303,11 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
 
           {/* ── 4. MEER — secondary workspace ──────────────────────────────────── */}
           <section>
-            <SectionLabel>Meer</SectionLabel>
+            <SectionLabel>{t('start.meer')}</SectionLabel>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <ActionCard
                 icon="work" iconBg={M3.success} iconColor="#fff"
-                label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
+                label={t('start.tegel.werkplek')} sub={t('start.werkplek.sub')}
                 onClick={() => router.push('/dashboard/werkplek')}
               />
               {/* [ACTING-FOR] Team — wie mag er onder JOUW BTW-nummer factureren.
@@ -321,7 +324,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                   niet in staat rendert als rauwe ligatuurtekst (zie material-icons.test.ts). */}
               <ActionCard
                 icon="person_add" iconBg="#7B1FA2" iconColor="#fff"
-                label="Team" sub="Wie mag er facturen maken voor je bedrijf"
+                label={t('start.tegel.team')} sub={t('start.team.sub')}
                 onClick={() => router.push('/dashboard/settings/team')}
               />
             </div>
@@ -469,13 +472,14 @@ function MiniCard({ icon, tint, label, sub, onClick }: {
 
 // [BOEK-029] Shared FAB — + Nieuwe factuur — all ZZP pages
 function Fab({ onClick }: { onClick: () => void }) {
+  const t = translator(useLocale())
   return (
     <button
       onClick={onClick}
       style={{
         position: 'fixed',
         bottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
-        right: 20,
+        insetInlineEnd: 20,
         background: '#D3E3FD',
         color: '#041E49',
         borderRadius: 16,
@@ -490,7 +494,7 @@ function Fab({ onClick }: { onClick: () => void }) {
       }}
     >
       <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
-      Nieuwe factuur
+      {t('start.nieuweFactuur')}
     </button>
   )
 }

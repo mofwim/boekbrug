@@ -273,7 +273,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
 
       {open && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+          position: 'absolute', top: 'calc(100% + 6px)', insetInlineEnd: 0,
           backgroundColor: '#fff', border: '1px solid #E0E0E0',
           borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           minWidth: 180, zIndex: 100, overflow: 'hidden',
@@ -389,7 +389,7 @@ function NotificationsBell({
           const effectiveUnread = notifications.filter(n => !(readOverride[n.id] ?? n.read)).length
           return effectiveUnread > 0 ? (
             <span style={{
-              position: 'absolute', top: 4, right: 4,
+              position: 'absolute', top: 4, insetInlineEnd: 4,
               backgroundColor: M3.error, color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',
@@ -404,7 +404,7 @@ function NotificationsBell({
 
       {showNotifications && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+          position: 'absolute', top: 'calc(100% + 8px)', insetInlineEnd: 0,
           backgroundColor: '#fff', border: '1px solid #E0E0E0',
           borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
           width: 320, zIndex: 200, overflow: 'hidden',
@@ -706,7 +706,7 @@ export function DashboardHeader({
           </button>
           {unreadMessages > 0 && (
             <span style={{
-              position: 'absolute', top: 4, right: 4,
+              position: 'absolute', top: 4, insetInlineEnd: 4,
               backgroundColor: '#1A73E8', color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',

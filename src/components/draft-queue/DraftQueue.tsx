@@ -261,7 +261,7 @@ export default function DraftQueue({ clients }: Props) {
             left: 0; right: 0; bottom: 0; width: 100%; max-width: 100%;
             border-radius: 12px 12px 0 0; max-height: 85vh;
           }
-          .bq-dq-fab { right: 12px; bottom: 12px; }
+          .bq-dq-fab { insetInlineEnd: 12px; bottom: 12px; }
         }
       `}</style>
 

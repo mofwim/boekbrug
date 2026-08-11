@@ -536,6 +536,9 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
   // button + full-screen overlay on ALL viewports, not just mobile.
   const compact = variant === "launcher" || isMobile;
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  // [TAAL] Bewust FYSIEK `left`: dit is een gemeten positie uit getBoundingClientRect, en die is
+  // per definitie fysiek. insetInlineStart op een gemeten getal zou hem in het Arabisch juist
+  // SPIEGELEN — een al goed staand element naar de verkeerde kant verplaatsen.
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
   const inputRef = useRef<HTMLInputElement>(null);

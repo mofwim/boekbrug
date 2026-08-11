@@ -81,7 +81,7 @@ export function FolderCard({
       <div
         onClick={e => { e.stopPropagation(); onSelect(e); }}
         style={{
-          position: "absolute", top: 8, left: 8,
+          position: "absolute", top: 8, insetInlineStart: 8,
           width: 20, height: 20, borderRadius: T.full,
           background: selected ? T.primary : "rgba(255,255,255,0.9)",
           border: `2px solid ${selected ? T.primary : "#dadce0"}`,
@@ -103,7 +103,7 @@ export function FolderCard({
           onClick={e => { e.stopPropagation(); onContextMenu(e, folder); }}
           aria-label="Meer opties"
           style={{
-            position: "absolute", top: 6, right: 6,
+            position: "absolute", top: 6, insetInlineEnd: 6,
             width: 26, height: 26, border: "none",
             background: "rgba(255,255,255,0.92)",
             borderRadius: T.full,
@@ -140,7 +140,7 @@ export function FolderCard({
       )}
       {folder.starred && (
         <Icon name="star" size={14} color={T.star}
-          style={{ position: "absolute", bottom: 8, right: 8 }} />
+          style={{ position: "absolute", bottom: 8, insetInlineEnd: 8 }} />
       )}
     </div>
   );

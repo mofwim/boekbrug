@@ -1850,7 +1850,7 @@ export default function BankClient() {
             <div style={{ position: 'relative', marginTop: 12 }}>
               <span
                 className="material-symbols-outlined"
-                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#70757a', pointerEvents: 'none' }}
+                style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#70757a', pointerEvents: 'none' }}
               >
                 search
               </span>
@@ -1872,7 +1872,7 @@ export default function BankClient() {
                   onClick={() => setFilterText('')}
                   aria-label="Wis zoekopdracht"
                   style={{
-                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)',
                     border: 'none', background: 'none', cursor: 'pointer', color: '#9aa0a6',
                     display: 'flex', alignItems: 'center', padding: 4,
                   }}

@@ -168,7 +168,7 @@ export default function ArtikelenClient() {
               style={{ width: '100%', boxSizing: 'border-box', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 36px 10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
             {search && (
               <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
+                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
             )}
           </div>
           <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuw</button>
