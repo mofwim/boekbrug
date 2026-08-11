@@ -8,6 +8,8 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { M3, FONT_NUM } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const pct = (x: number) => `${Math.round(x * 100)}%`
@@ -30,6 +32,7 @@ const monthLabel = (ym: string) => { const m = /^\d{4}-(\d{2})$/.exec(ym); retur
 interface DayRow { date: string; total: number }
 
 export default function TurnoverInsights() {
+  const t = translator(useLocale())
   const [data, setData] = useState<{ label: string; year: number; quarter: number; analytics: Analytics; days: DayRow[] } | null>(null)
   const [loading, setLoading] = useState(true)
   // null = "let the server pick the latest quarter that has data"; set = an explicit quarter to view.
@@ -121,16 +124,16 @@ export default function TurnoverInsights() {
   if (loadError) {
     return (
       <div style={{ marginTop: 24, background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 18px' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: M3.error }}>We konden je geboekte omzet niet laden</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: M3.error }}>{t('dz.fout.laden')}</div>
         <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
-          Dit is <strong>niet</strong> hetzelfde als “nog geen omzet geboekt”. Probeer het opnieuw.
+          {t('dz.fout.nietLeeg')}
         </div>
         <button
           type="button"
           onClick={() => setReloadTick((t) => t + 1)}
           style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
         >
-          Opnieuw proberen
+          {t('inkoop.opnieuwProberen')}
         </button>
       </div>
     )
@@ -142,10 +145,10 @@ export default function TurnoverInsights() {
 
   const Nav = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <button onClick={() => shift(-1)} aria-label="Vorig kwartaal"
+      <button onClick={() => shift(-1)} aria-label={t('kas.vorigKwartaal')}
         style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface }}>‹</button>
       <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, minWidth: 64, textAlign: 'center' }}>{data?.label ?? '—'}</div>
-      <button onClick={() => shift(1)} disabled={atLatest} aria-label="Volgend kwartaal"
+      <button onClick={() => shift(1)} disabled={atLatest} aria-label={t('kas.volgendKwartaal')}
         style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: atLatest ? 'default' : 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface, opacity: atLatest ? 0.4 : 1 }}>›</button>
     </div>
   )
@@ -155,7 +158,7 @@ export default function TurnoverInsights() {
     return (
       <div style={{ marginTop: 24, background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
         <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>Geboekte omzet</div>
+          <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>{t('dz.geboekt')}</div>
           {Nav}
         </div>
         <div style={{ padding: '20px 18px', fontSize: 13.5, color: M3.neutral }}>Geen kassa-omzet geboekt in {data?.label}.</div>
@@ -166,15 +169,15 @@ export default function TurnoverInsights() {
   return (
     <div style={{ marginTop: 24, background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
       <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>Geboekte omzet</div>
+        <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>{t('dz.geboekt')}</div>
         {Nav}
       </div>
 
       {/* KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, padding: '16px 18px' }}>
         <Kpi label={`Omzet (${a.days} dagen)`} value={eur.format(a.totalOmzetIncl)} />
-        <Kpi label="Gemiddeld per dag" value={eur.format(a.avgDayOmzet)} />
-        {a.busiestDay && <Kpi label="Drukste dag" value={eur.format(a.busiestDay.omzet)} sub={a.busiestDay.date} />}
+        <Kpi label={t('dz.gemiddeld')} value={eur.format(a.avgDayOmzet)} />
+        {a.busiestDay && <Kpi label={t('dz.drukste')} value={eur.format(a.busiestDay.omzet)} sub={a.busiestDay.date} />}
         {a.avgPinTicket != null
           ? <Kpi label="Gem. pinbon" value={eur.format(a.avgPinTicket)} sub={a.posTicketCount ? `${a.posTicketCount} pintransacties` : undefined} />
           : <Kpi label="Gem. pinbon" value="—" sub="geen pin-aantallen in de bank" />}
@@ -182,7 +185,7 @@ export default function TurnoverInsights() {
 
       {/* Monthly trend */}
       {a.monthly.length > 1 && (
-        <Section title="Omzet per maand">
+        <Section title={t('dz.perMaand')}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 90, padding: '4px 0' }}>
             {a.monthly.map((m) => (
               <div key={m.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -195,23 +198,23 @@ export default function TurnoverInsights() {
       )}
 
       {/* VAT mix */}
-      <Section title="BTW-verdeling (aandeel van de netto-omzet)">
+      <Section title={t('dz.btwVerdeling')}>
         {a.vatMix.filter((v) => v.net > 0).map((v) => (
           <MixRow key={v.rate} label={`${v.rate}%`} share={v.share} amount={eur.format(v.net)} />
         ))}
       </Section>
 
       {/* Payment mix */}
-      <Section title="Betaalwijzen">
+      <Section title={t('dz.betaalwijzen')}>
         <MixRow label="PIN" share={a.payment.pinShare} amount={eur.format(a.payment.pin)} />
-        <MixRow label="Contant" share={a.payment.cashShare} amount={eur.format(a.payment.cash)} />
-        {a.payment.other > 0 && <MixRow label="Overig" share={a.payment.otherShare} amount={eur.format(a.payment.other)} />}
+        <MixRow label={t('lijst.contant')} share={a.payment.cashShare} amount={eur.format(a.payment.cash)} />
+        {a.payment.other > 0 && <MixRow label={t('dz.overig')} share={a.payment.otherShare} amount={eur.format(a.payment.other)} />}
       </Section>
 
       {/* Anomalies */}
       {a.anomalies.length > 0 && (
         <div style={{ padding: '14px 18px', background: M3.warningContainer, borderTop: `1px solid ${M3.outlineVariant}` }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: M3.warning, marginBottom: 6 }}>Opvallende dagen</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: M3.warning, marginBottom: 6 }}>{t('dz.opvallend')}</div>
           <ul style={{ margin: 0, paddingInlineStart: 18 }}>
             {a.anomalies.map((x) => (
               <li key={x.date} style={{ fontSize: 13, color: M3.onSurface, lineHeight: 1.5 }}>
@@ -252,7 +255,7 @@ export default function TurnoverInsights() {
                     </div>
                     {pendingDelete === d.date ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12, color: M3.neutral }}>Zeker weten?</span>
+                        <span style={{ fontSize: 12, color: M3.neutral }}>{t('dz.zeker')}</span>
                         <button onClick={() => deleteDay(d.date)} disabled={deleting === d.date}
                           style={{ border: 'none', background: M3.error, color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
                           {deleting === d.date ? 'Bezig…' : 'Verwijder'}

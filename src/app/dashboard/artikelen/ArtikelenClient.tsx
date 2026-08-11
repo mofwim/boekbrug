@@ -14,6 +14,8 @@ import { useToast } from '@/components/ui/Toast'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -25,6 +27,7 @@ type Form = { code: string; description: string; unit_price: string; btw_rate: n
 const EMPTY: Form = { code: '', description: '', unit_price: '', btw_rate: 21, unit: '' }
 
 export default function ArtikelenClient() {
+  const t = translator(useLocale())
   const dialog = useDialog()
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -68,7 +71,7 @@ export default function ArtikelenClient() {
   async function save() {
     setError(null)
     const price = form.unit_price === '' ? 0 : Number(form.unit_price.replace(',', '.'))
-    if (!Number.isFinite(price) || price < 0) { setError('Prijs moet 0 of hoger zijn.'); return }
+    if (!Number.isFinite(price) || price < 0) { setError(t('art.prijsNegatief')); return }
     setSaving(true)
     const payload = {
       code: form.code, description: form.description,
@@ -84,7 +87,7 @@ export default function ArtikelenClient() {
       if (!res.ok) { setError(json.error ?? 'Kon niet opslaan.'); return }
       setShowForm(false); setToast(editingId ? 'Artikel bijgewerkt' : 'Artikel toegevoegd')
       await load()
-    } catch { setError('Er ging iets mis.') } finally { setSaving(false) }
+    } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }
   }
 
   async function toggleArchive(a: Article) {
@@ -156,18 +159,18 @@ export default function ArtikelenClient() {
             the in-body h1 was removed. Subtitle + the search / new-item controls
             row below stay. */}
         <header style={{ margin: '16px 0 18px' }}>
-          <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>Je vaste factuurregels — één keer opslaan, steeds hergebruiken.</p>
+          <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>{t('art.uitleg')}</p>
         </header>
 
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           {/* [SMART-FILTER] Zoekveld met label voor schermlezers en een wis-knop, net als bij facturen/categoriseren. */}
           <div style={{ flex: 1, position: 'relative' }}>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op code, omschrijving of bedrag…"
-              aria-label="Artikelen zoeken"
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('art.zoek')}
+              aria-label={t('art.zoek.aria')}
               style={{ width: '100%', boxSizing: 'border-box', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 36px 10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
+              <button onClick={() => setSearch('')} aria-label={t('inkoop.wissen')} className="tap-44"
                 style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
             )}
           </div>
@@ -192,11 +195,11 @@ export default function ArtikelenClient() {
           <div style={{ background: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 18, marginBottom: 16 }}>
             <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, margin: '0 0 14px' }}>{editingId ? 'Artikel bewerken' : 'Nieuw artikel'}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Field label="Omschrijving *" value={form.description} onChange={(v) => setForm((p) => ({ ...p, description: v }))} placeholder="Transport tafel" />
+              <Field label="Omschrijving *" value={form.description} onChange={(v) => setForm((p) => ({ ...p, description: v }))} placeholder={t('art.voorbeeld')} />
               <div style={{ display: 'flex', gap: 12 }}>
-                <div style={{ width: 110 }}><Field label="Code" value={form.code} onChange={(v) => setForm((p) => ({ ...p, code: v }))} placeholder="22" /></div>
+                <div style={{ width: 110 }}><Field label={t('art.code')} value={form.code} onChange={(v) => setForm((p) => ({ ...p, code: v }))} placeholder="22" /></div>
                 <div style={{ flex: 1 }}><Field label="Prijs (excl. BTW)" value={form.unit_price} onChange={(v) => setForm((p) => ({ ...p, unit_price: v }))} placeholder="45,00" inputMode="decimal" /></div>
-                <div style={{ width: 90 }}><Field label="Eenheid" value={form.unit} onChange={(v) => setForm((p) => ({ ...p, unit: v }))} placeholder="stuk" /></div>
+                <div style={{ width: 90 }}><Field label={t('art.eenheid')} value={form.unit} onChange={(v) => setForm((p) => ({ ...p, unit: v }))} placeholder="stuk" /></div>
               </div>
               <div>
                 <div style={{ fontSize: 12, color: M3.neutral, marginBottom: 6 }}>BTW-tarief</div>
@@ -208,7 +211,7 @@ export default function ArtikelenClient() {
               </div>
               {error && <div style={{ color: M3.error, fontSize: 13 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+                <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
                 <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
               </div>
             </div>
@@ -232,9 +235,9 @@ export default function ArtikelenClient() {
                 </div>
                 <span style={{ fontFamily: FONT_NUM, fontSize: 14, fontWeight: 700, color: M3.onSurface }}>{eur.format(a.unit_price)}</span>
                 <div style={{ display: 'flex', gap: 4 }}>
-                  <IconBtn label="Bewerk" onClick={() => openEdit(a)}>✎</IconBtn>
+                  <IconBtn label={t('art.bewerk')} onClick={() => openEdit(a)}>✎</IconBtn>
                   <IconBtn label={a.active ? 'Archiveer' : 'Herstel'} onClick={() => toggleArchive(a)}>{a.active ? '⌫' : '↩'}</IconBtn>
-                  <IconBtn label="Verwijder" onClick={() => remove(a.id)} danger>🗑</IconBtn>
+                  <IconBtn label={t('art.verwijder')} onClick={() => remove(a.id)} danger>🗑</IconBtn>
                 </div>
               </div>
             ))}
