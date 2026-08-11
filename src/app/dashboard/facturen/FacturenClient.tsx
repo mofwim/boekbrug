@@ -41,6 +41,10 @@ import { useToast } from "@/components/ui/Toast"
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
+import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -64,12 +68,9 @@ function newPayKey(): string | undefined {
   return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined
 }
 
-const CHIP: Record<string, { bg: string; color: string }> = {
-  paid:    { bg: '#CEEAD6', color: '#137333' },
-  sent:    { bg: '#D3E3FD', color: '#1967D2' },
-  overdue: { bg: '#F9DEDC', color: '#B3261E' },
-  draft:   { bg: '#f1f3f4', color: '#5f6368' },
-}
+// [STATUS] De negende kopie van de statuskleuren stond hier, met er twintig regels verderop een
+// losse ternary voor het WOORD — twee halve waarheden over hetzelfde chipje. Allebei komen ze nu
+// uit src/lib/invoice-status.ts.
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -140,14 +141,16 @@ interface SendCtx {
   isResend?: boolean
 }
 
-const FILTERS: { id: FilterTab; label: string }[] = [
-  { id: 'all',     label: 'Alle'     },
-  { id: 'sent',    label: 'Verzonden'},
-  { id: 'paid',    label: 'Betaald'  },
-  { id: 'draft',   label: 'Concept'  },
-  { id: 'overdue', label: 'Verlopen' },
-  { id: 'offerte', label: 'Offerte'  },
-  { id: 'credit',  label: 'Credit'   },
+// [STATUS] Vier van deze zeven zijn statussen en halen hun woord uit invoice-status.ts; 'all',
+// 'offerte' en 'credit' zijn filters over iets anders en houden hun eigen sleutel.
+const FILTERS: { id: FilterTab; key: MessageKey }[] = [
+  { id: 'all',     key: 'filter.all'      },
+  { id: 'sent',    key: 'status.sent'     },
+  { id: 'paid',    key: 'status.paid'     },
+  { id: 'draft',   key: 'status.draft'    },
+  { id: 'overdue', key: 'status.overdue'  },
+  { id: 'offerte', key: 'filter.offerte'  },
+  { id: 'credit',  key: 'status.credit'   },
 ]
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -165,6 +168,8 @@ export default function FacturenClient({
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
+  const taal = useLocale()
+  const t = translator(taal)
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -983,7 +988,7 @@ export default function FacturenClient({
               }}
             >
               <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer }}>
-                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
+                {t(FILTERS.find(f => f.id === filter)?.key ?? 'filter.all')}
               </span>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }}>
                 {showFilterMenu ? 'expand_less' : 'expand_more'}
@@ -1011,7 +1016,7 @@ export default function FacturenClient({
                       borderBottom: '0.5px solid #F1F3F4',
                     }}
                   >
-                    {f.label}
+                    {t(f.key)}
                   </button>
                 ))}
               </div>
@@ -1155,11 +1160,14 @@ export default function FacturenClient({
                             inv.status raw therefore labelled every row in that tab a blue
                             "Verzonden" — the list said overdue, each row denied it. getDisplayStatus
                             is the shared derivation the row component already exports. */}
-                        {CHIP[displayStatus] && (
-                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[displayStatus].bg, color: CHIP[displayStatus].color }}>
-                            {displayStatus === 'paid' ? 'Betaald' : displayStatus === 'sent' ? 'Verzonden' : displayStatus === 'overdue' ? 'Verlopen' : 'Concept'}
-                          </span>
-                        )}
+                        {isInvoiceStatus(displayStatus) && (() => {
+                          const chip = statusChip(displayStatus, taal)
+                          return (
+                            <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: chip.bg, color: chip.color }}>
+                              {chip.label}
+                            </span>
+                          )
+                        })()}
                         {/* [ACTING-FOR] Wie maakte deze factuur? Alleen zichtbaar als dat NIET de
                             eigenaar zelf was — anders staat er op elke rij een naam die niets
                             toevoegt. Dit is de leesbare kant van created_by; zonder deze chip

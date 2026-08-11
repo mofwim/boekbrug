@@ -122,7 +122,10 @@ export function invoiceSentNotice(
     controle: [
       // Each of these is something the owner can verify with their own eyes, today. Nothing here
       // is a promise about the future or about the customer's mailbox.
-      t(`sent.${woord}.checkList`),
+      // The tab and the status are filled from the SAME keys the navigation bar and the status
+      // chip render, so this sentence always names the words that are actually on the screen —
+      // in whatever language the owner has chosen.
+      t(`sent.${woord}.checkList`, { tab: t("nav.invoices"), status: t("status.sent") }),
       t("sent.check.pdf"),
       // Only when the route actually set a Reply-To, and then WITH the address — an owner who
       // knows which mailbox to watch can check it; one who is told "it comes to you" cannot.

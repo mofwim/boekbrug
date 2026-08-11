@@ -1603,8 +1603,14 @@ test("[TAAL] the send confirmation renders in Arabic, right to left", async () =
   assert.ok(ar.includes("2026-014"), "the number survives");
   assert.ok(ar.includes("394,99"), "the amount survives, in euros and Latin digits");
   assert.ok(ar.includes("info@example.nl"), "and the address it went to");
-  // Rule 2: a sentence pointing at a Dutch on-screen label keeps the Dutch label.
-  assert.ok(ar.includes("Facturen") && ar.includes("Verzonden"));
+  // Rule 2, in its stronger form. This used to assert the literal words "Facturen" and
+  // "Verzonden", which was right while the navigation bar and the status chip were Dutch. Both
+  // are translated now, so the sentence must name what the screen ACTUALLY says — it fills itself
+  // from nav.invoices and status.sent, the very keys the bar and the chip render.
+  const { translate } = await import("@/lib/i18n/t");
+  assert.ok(ar.includes(translate("ar", "nav.invoices")), "must name the tab as the bar labels it");
+  assert.ok(ar.includes(translate("ar", "status.sent")), "must name the status as the chip labels it");
+  assert.ok(!ar.includes("{tab}") && !ar.includes("{status}"), "no unfilled placeholder");
 
   // Dutch is unchanged and still ltr — the language of everyone using the app today.
   const nl = renderToStaticMarkup(

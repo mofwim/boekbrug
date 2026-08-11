@@ -13,22 +13,18 @@ import { isPartiallyPaid, openAmount } from '@/lib/partial-payment'
 // [OVER-DATUM] De ene afleiding van "over datum", in hele Amsterdamse dagen. Zie isOverdue below.
 import { overdueDays } from '@/lib/overdue'
 import { amsterdamToday } from '@/lib/format-nl'
+// [STATUS] Het woord en de kleur van een status, uit één module — zie de kop daar.
+import { statusChip, statusLabel } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
 // Source: BoekBrug_Design_System_v1.0.md
 
 const DS = {
-  // Status chip colors — same values, different radius per mode
-  chip: {
-    paid:    { bg: '#CEEAD6', color: '#137333' },
-    sent:    { bg: '#D3E3FD', color: '#1967D2' },
-    received:{ bg: '#FEF7E0', color: '#B26A00' }, // [BRIDGE-A] incoming unpaid (Crediteuren)
-    processing:{ bg: '#FEF7E0', color: '#EA8600' }, // [BRIDGE-B] incoming awaiting human verification
-    overdue: { bg: '#F9DEDC', color: '#B3261E' },
-    draft:   { bg: '#f1f3f4', color: '#5f6368' },
-    credit:  { bg: '#FCE8E6', color: '#C5221F' },
-  },
+  // [STATUS] De statuskleuren stonden hier — als achtste kopie, in een object dat DS heet maar
+  // niet uit design/tokens komt. Ze wonen nu in src/lib/invoice-status.ts, samen met het woord,
+  // zodat een scherm de kleur en het label niet meer van twee plekken kan halen.
   // Accountant action chips — Workspace palette
   action: {
     verwerkt:       { bg: '#E6F4EA', color: '#137333', activeBorder: '#34A853' },
@@ -107,20 +103,16 @@ export function getDisplayStatus(invoice: { status: string; due_date: string | n
   return isOverdue(invoice) ? 'overdue' : invoice.status
 }
 
-export const STATUS_LABEL: Record<string, string> = {
-  draft:    'Concept',
-  sent:     'Verzonden',
-  received: 'Ontvangen', // [BRIDGE-A] shared now includes received
-  processing: 'Te verifiëren', // [BRIDGE-B] incoming awaiting human verification
-  paid:     'Betaald',
-  overdue:  'Verlopen',
-}
+// [STATUS] Het woord én de kleur komen uit src/lib/invoice-status.ts. Hier stond een eigen kopie;
+// er waren er zeven in de app, en ze waren al uit elkaar gelopen — 'overdue' las op één scherm
+// "Te laat" en op vijf andere "Verlopen", en 'sent' had twee verschillende blauwtinten.
 
 // ── Chip helpers ──────────────────────────────────────────────────────────────
 
 // [DS] ZZP → pill (borderRadius 9999), Accountant → rect (borderRadius 4px)
 function StatusChip({ status, mode }: { status: string; mode: 'zzp' | 'accountant' }) {
-  const chip = DS.chip[status as keyof typeof DS.chip] ?? DS.chip.draft
+  const taal = useLocale()
+  const chip = statusChip(status, taal)
   return (
     <span style={{
       display: 'inline-flex',
@@ -134,7 +126,7 @@ function StatusChip({ status, mode }: { status: string; mode: 'zzp' | 'accountan
       lineHeight: 1,
       whiteSpace: 'nowrap',
     }}>
-      {STATUS_LABEL[status] ?? status}
+      {statusLabel(status, taal)}
     </span>
   )
 }

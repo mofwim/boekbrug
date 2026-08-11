@@ -20,18 +20,16 @@ import { useSearch } from "@/hooks/useSearch";
 import { flattenGroups, type SearchResult, type SearchResultGroup } from "@/lib/search";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { statusChip } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const RECENT_KEY = "bb_recent_searches";
 const MAX_RECENT = 5;
 
-const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  draft:   { label: "Concept",   bg: "#f1f3f4", text: "#5f6368" },
-  sent:    { label: "Verzonden", bg: "#e8f0fe", text: "#1967d2" },
-  paid:    { label: "Betaald",   bg: "#e6f4ea", text: "#137333" },
-  overdue: { label: "Verlopen",  bg: "#fce8e6", text: "#b3261e" },
-};
+// [STATUS] Eén bron voor het woord én de kleur — zie src/lib/invoice-status.ts. Hier stond een
+// eigen kopie; er waren er acht in de app en ze waren al uit elkaar gelopen.
 
 const TYPE_CONFIG: Record<string, { bg: string; color: string }> = {
   invoice:        { bg: "#e8f0fe", color: "#1967d2" },
@@ -197,7 +195,9 @@ function ResultRow({
   item: SearchResult; query: string; selected: boolean; optionId?: string;
   onMouseEnter: () => void; onClick: () => void;
 }) {
-  const st = STATUS_CONFIG[item.status ?? ""];
+  const taal = useLocale();
+  // [STATUS] Label én kleuren in één keer, zodat een scherm ze niet van twee plekken kan halen.
+  const st = item.status ? statusChip(item.status, taal) : null;
   return (
     <button
       id={optionId}
@@ -223,7 +223,7 @@ function ResultRow({
           {item.type === "invoice" && st && (
             <span style={{
               fontSize: 11, fontWeight: 600, padding: "2px 7px",
-              borderRadius: 20, background: st.bg, color: st.text, flexShrink: 0,
+              borderRadius: 20, background: st.bg, color: st.color, flexShrink: 0,
             }}>
               {st.label}
             </span>

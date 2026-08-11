@@ -15,6 +15,8 @@ import { quarterFromParams } from "@/lib/quarter";
 // [TZ] The filing date pinned to Europe/Amsterdam — a legal record's date is the record.
 import { formatDateNL } from "@/lib/format-nl";
 import { useToast } from "@/components/ui/Toast";
+import { statusLabel } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
@@ -921,21 +923,18 @@ function SummaryCard({ label, value, accent, sub }: {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const taal = useLocale()
   const map: Record<string, string> = {
     paid: "bg-green-100 text-green-700",
     sent: "bg-blue-100 text-blue-700",
     draft: "bg-muted text-muted-foreground",
     overdue: "bg-red-100 text-red-700",
   };
-  const labels: Record<string, string> = {
-    paid: "Betaald",
-    sent: "Verzonden",
-    draft: "Concept",
-    overdue: "Te laat",
-  };
+  // [STATUS] Dit was de enige plek die 'overdue' "Te laat" noemde; vijf andere zeiden "Verlopen",
+  // en dat is ook het woord op het filtertabblad. Het woord komt nu uit invoice-status.ts.
   return (
     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${map[status] ?? "bg-muted text-muted-foreground"}`}>
-      {labels[status] ?? status}
+      {statusLabel(status, taal)}
     </span>
   );
 }

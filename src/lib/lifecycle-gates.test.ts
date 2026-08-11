@@ -6132,3 +6132,61 @@ test("[TAAL] the document becomes right-to-left before it is painted, and stays 
   assert.match(boot, /try\{/, "it runs first on every page; a throw there is a broken app");
   assert.match(boot, /indexOf\(l\)<0\)return/, "a user-written cookie may not reach document.lang");
 });
+
+test("[STATUS] the word for an invoice's state is written once", () => {
+  // There were ELEVEN copies of these labels, most of them carrying colours too, and they had
+  // drifted on four statuses. One customer's invoice read "Verstuurd" on their client card,
+  // "Verzonden" in the list and in the filter tab; an overdue one was "Verlopen" in five places
+  // and "Te laat" in two; an incoming bill was "Ontvangen" here and "Te betalen" there, in three
+  // different ambers.
+  //
+  // None of that was worth a sweep while the app spoke one language. With two, eleven copies is
+  // eleven places to translate, and the honest prediction is that two of them get done and the
+  // owner reads a screen that is half Arabic. So the gate is about translation as much as tidiness.
+  const CANONICAL = "src/lib/invoice-status.ts";
+  const offenders: string[] = [];
+  // The Dutch words that ARE a status. Not 'Alles'/'Offerte' — those are filters over something
+  // else and legitimately have their own keys.
+  //
+  // 'Verwerkt' is deliberately NOT in this list. It is a homonym: an invoice status ('processed')
+  // and, separately, the accountant's action state on a document (verwerkt / in_behandeling /
+  // vraag). Those are a different vocabulary with their own consolidation still to do — putting
+  // the word here would fire on correct code in BrugClient and the quarterly page.
+  const WORDS = /'(Verzonden|Verstuurd|Betaald|Verlopen|Te laat|Te verifiëren|Onduidelijk)'/;
+  // src/lib/bridge-tree.ts is exempt, and not because it is hard. Its own header says its labels
+  // are folder path segments that must match "byte-for-byte, or the merge silently fails" — so
+  // making them a function of the language is a change to a merge key, not to a caption. It is
+  // listed as remaining work in the header of invoice-status.ts rather than half-done here.
+  const EXEMPT = new Set(["src/lib/bridge-tree.ts"]);
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || p === CANONICAL || EXEMPT.has(p)) continue;
+      if (/\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/lib/i18n/messages.ts") continue; // the catalogue is where the words live
+      const src = code(p);
+      // A status word next to `label:` or in a chip map — not the word appearing in prose.
+      if (/label:\s*/.test(src) && WORDS.test(src)) {
+        for (const line of src.split("\n")) {
+          if (/label:\s*/.test(line) && WORDS.test(line)) { offenders.push(`${p} — ${line.trim().slice(0, 70)}`); break; }
+        }
+      }
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    offenders, [],
+    `status labels come from invoice-status.ts:\n  ${offenders.join("\n  ")}`,
+  );
+
+  // And 'Concept' deserves its own line: it is also what an invoice WITHOUT a number is called in
+  // prose ("invoice_number || 'Concept'"), so it cannot go in the pattern above without firing on
+  // correct code. It is checked here instead — no chip map may define it.
+  const chipMaps = ["src/app/dashboard/facturen/FacturenClient.tsx", "src/components/invoice/InvoiceRow.tsx"];
+  for (const p of chipMaps) {
+    assert.doesNotMatch(code(p), /label:\s*'Concept'/, `${p} may not define the status words again`);
+  }
+});

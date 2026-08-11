@@ -5,6 +5,9 @@
 "use client";
 
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
+import { statusLabel } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ── ZZP filters ───────────────────────────────────────────────────────────────
 
@@ -17,13 +20,10 @@ interface ZzpProps {
 }
 
 // [BOEK-009] overdue tab added — May 2026
-const ZZP_FILTERS: { value: InvoiceStatusFilter; label: string }[] = [
-  { value: 'all',     label: 'Alles' },
-  { value: 'sent',    label: 'Verzonden' },
-  { value: 'paid',    label: 'Betaald' },
-  { value: 'draft',   label: 'Concept' },
-  { value: 'overdue', label: 'Verlopen' },
-]
+// [STATUS] Alleen 'all' houdt een eigen woord: dat is een FILTER, geen status. De vier andere
+// halen hun woord uit invoice-status.ts, zodat het tabblad en de chip in de rij eronder nooit
+// een ander woord voor hetzelfde kunnen tonen — in welke taal dan ook.
+const ZZP_FILTERS: InvoiceStatusFilter[] = ['all', 'sent', 'paid', 'draft', 'overdue']
 
 // ── Accountant filters ────────────────────────────────────────────────────────
 
@@ -65,6 +65,9 @@ function Badge({ count, active }: { count: number; active: boolean }) {
 type Props = ZzpProps | AccountantProps
 
 export function StatusFilter(props: Props) {
+  // Before the branch: a hook may not sit behind a condition.
+  const taal = useLocale()
+  const t = translator(taal)
   if (props.mode === 'accountant') {
     return (
       <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto scrollbar-none">
@@ -91,17 +94,17 @@ export function StatusFilter(props: Props) {
   return (
     <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto scrollbar-none">
       {ZZP_FILTERS.map(f => {
-        const isActive = props.value === f.value
-        const count = props.counts?.[f.value] ?? 0
+        const isActive = props.value === f
+        const count = props.counts?.[f] ?? 0
         return (
           <button
-            key={f.value}
-            onClick={() => props.onChange(f.value)}
+            key={f}
+            onClick={() => props.onChange(f)}
             className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors ${
               isActive ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
-            {f.label}
+            {f === 'all' ? t('filter.all') : statusLabel(f, taal)}
             {count > 0 && <Badge count={count} active={isActive} />}
           </button>
         )

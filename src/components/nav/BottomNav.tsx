@@ -25,12 +25,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 import { M3, FONT } from '@/lib/design/tokens'
 import type { Role } from '@/lib/navigation'
 
 type Destination = {
   href: string
-  label: string
+  label: MessageKey
   icon: string
   /** Extra paths that should light this tab up (children of the destination). */
   also?: string[]
@@ -47,18 +50,21 @@ type Destination = {
 
 // Chosen from what each role's home screen puts first, so the bar shortcuts the
 // journeys people already take rather than inventing a new hierarchy.
+// [TAAL] `label` is a catalogue KEY, not a word. The bar is on every screen, so it is the first
+// thing an owner reads in their own language — and the sentence in the send confirmation fills
+// itself from nav.invoices, so the two can never name the tab differently.
 const OWNER: Destination[] = [
-  { href: '/dashboard', label: 'Start', icon: 'home', exact: true },
-  { href: '/dashboard/facturen', label: 'Facturen', icon: 'receipt_long', also: ['/dashboard/invoice'] },
-  { href: '/dashboard/incoming', label: 'Inkomend', icon: 'inbox', also: ['/dashboard/upload'] },
-  { href: '/dashboard/bestanden', label: 'Bestanden', icon: 'folder_open' },
+  { href: '/dashboard', label: 'nav.start', icon: 'home', exact: true },
+  { href: '/dashboard/facturen', label: 'nav.invoices', icon: 'receipt_long', also: ['/dashboard/invoice'] },
+  { href: '/dashboard/incoming', label: 'nav.incoming', icon: 'inbox', also: ['/dashboard/upload'] },
+  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
 ]
 
 const ACCOUNTANT: Destination[] = [
-  { href: '/dashboard/accountant', label: 'Start', icon: 'home', exact: true },
-  { href: '/dashboard/clients/beheer', label: 'Klanten', icon: 'people', also: ['/dashboard/clients'] },
-  { href: '/dashboard/quarterly', label: 'Kwartaal', icon: 'bar_chart' },
-  { href: '/dashboard/bestanden', label: 'Bestanden', icon: 'folder_open' },
+  { href: '/dashboard/accountant', label: 'nav.start', icon: 'home', exact: true },
+  { href: '/dashboard/clients/beheer', label: 'nav.clients', icon: 'people', also: ['/dashboard/clients'] },
+  { href: '/dashboard/quarterly', label: 'nav.quarter', icon: 'bar_chart' },
+  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
 ]
 
 /**
@@ -85,15 +91,18 @@ function activeHref(pathname: string, items: Destination[]): string | null {
 
 export function BottomNav({ role }: { role: Role | null }) {
   const pathname = usePathname()
+  // Before the early return: a hook may not sit behind a condition.
+  const taal = useLocale()
   if (!pathname) return null
 
+  const t = translator(taal)
   const items = role === 'accountant' ? ACCOUNTANT : OWNER
   const active = activeHref(pathname, items)
 
   return (
     <nav
       className="bottom-nav"
-      aria-label="Hoofdnavigatie"
+      aria-label={t('nav.aria')}
       style={{
         position: 'fixed',
         left: 0,
@@ -181,7 +190,7 @@ export function BottomNav({ role }: { role: Role | null }) {
                 maxWidth: '100%',
               }}
             >
-              {item.label}
+              {t(item.label)}
             </span>
           </Link>
         )

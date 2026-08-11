@@ -25,23 +25,18 @@ const PDFDownloadLink = dynamic(
   { ssr: false }
 )
 
-// [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
-const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft:      { label: 'Concept',        bg: '#f1f3f4', color: '#5f6368' },
-  sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
-  paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
-  overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
-  received:   { label: 'Ontvangen',      bg: '#D3E3FD', color: '#1967D2' },
-  processing: { label: 'Te verifiëren', bg: '#FEF7E0', color: '#EA8600' },
-  processed:  { label: 'Verwerkt',       bg: '#CEEAD6', color: '#137333' },
-  unclear:    { label: 'Onduidelijk',    bg: '#F9DEDC', color: '#B3261E' },
-  archived:   { label: 'Gearchiveerd',   bg: '#F1F3F4', color: '#5F6368' },
-}
+// [STATUS] Deze kaart was de "Design System"-kopie van de statuskleuren, en won daarmee terecht
+// van vijf andere — maar het waren er acht in totaal. Woord én kleur komen nu uit
+// src/lib/invoice-status.ts. Eén verschil is bewust NIET overgenomen: 'received' stond hier op
+// hetzelfde blauw als 'sent', wat leest als "dit is afgehandeld", terwijl het een rekening is die
+// je nog moet betalen. InvoiceRow had daar amber voor, mét reden. Zie de kop van die module.
 
 // [DS] NL formatting — fixed, never changes
 // [PRIJS-KOLOM] De prijskolom draait via unit-price-display.ts, zodat dit scherm en de PDF
 // dezelfde prijs tonen — en een prijs die vermenigvuldigd het regeltotaal oplevert.
 import { formatUnitPriceNL } from '@/lib/unit-price-display'
+import { statusChip } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 // [TZ] timeZone PINNED. This formats invoice_date / due_date / payment_date — all DATE-ONLY
@@ -53,6 +48,7 @@ const CREDITABLE_STATUSES = ['sent', 'paid', 'overdue', 'received', 'processing'
 
 export default function InvoiceDetailPage() {
   const router = useRouter()
+  const taal = useLocale()
   const params = useParams()
   const invoiceId = params.id as string
   const supabase = createClient()
@@ -360,9 +356,9 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  // [DS] STATUS_CONFIG — Material You chip tokens
+  // [STATUS] Woord én kleur in één keer, uit de gedeelde module.
   const statusCfg = invoice
-    ? STATUS_CONFIG[invoice.status ?? ''] ?? { label: invoice.status ?? 'Onbekend', bg: '#F1F3F4', color: '#5F6368' }
+    ? statusChip(invoice.status, taal)
     : null
 
   // [ACC-INVOICE-DETAIL] Owner = the logged-in viewer whose id equals the

@@ -175,14 +175,26 @@ test('[TAAL] the send confirmation reads Arabic, with the number and the amount 
   assert.equal(ar.controle.length, 4)
 })
 
-test('[TAAL] an Arabic sentence that points at a Dutch button keeps the Dutch word', () => {
-  // Rule 2 of the catalogue. "Facturen" and "Verzonden" are what is printed on the screen today.
-  // An Arabic sentence that translated them would send the owner looking for a label that exists
-  // nowhere in the interface — a translation that is linguistically right and practically wrong.
-  const ar = invoiceSentNotice({ invoiceNumber: '2026-014', invoiceType: 'factuur' }, 'ar')!
-  const lijst = ar.controle[0]
-  assert.ok(lijst.includes('Facturen'), lijst)
-  assert.ok(lijst.includes('Verzonden'), lijst)
+test('[TAAL] the check sentence names the words that are actually on the screen', () => {
+  // Rule 2 of the catalogue, in its stronger form. This sentence used to spell "Facturen" and
+  // "Verzonden" literally in every language, and that was RIGHT while those words were Dutch on
+  // the screen: an owner told to look for a translated word would have found nothing.
+  //
+  // Both are translated now, so the literals became the wrong half of the rule. They are
+  // parameters filled from nav.invoices and status.sent — the very keys the navigation bar and
+  // the status chip render — so the sentence cannot name a label the interface does not have.
+  // That is the property worth pinning, not the words themselves.
+  for (const l of ['nl', 'ar', 'en'] as Locale[]) {
+    const zin = invoiceSentNotice({ invoiceNumber: '2026-014', invoiceType: 'factuur' }, l)!.controle[0]
+    assert.ok(zin.includes(translate(l, 'nav.invoices')), `${l}: must name the tab as the bar labels it — ${zin}`)
+    assert.ok(zin.includes(translate(l, 'status.sent')), `${l}: must name the status as the chip labels it — ${zin}`)
+    assert.ok(!zin.includes('{tab}') && !zin.includes('{status}'), `${l}: unfilled placeholder — ${zin}`)
+  }
+  // And in Dutch it still reads exactly as it did before any of this existed.
+  assert.equal(
+    invoiceSentNotice({ invoiceNumber: '2026-014', invoiceType: 'factuur' }, 'nl')!.controle[0],
+    'De factuur staat nu bij Facturen met de status Verzonden.',
+  )
 })
 
 test('[TAAL] Dutch is untouched by all of this', () => {

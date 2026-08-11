@@ -13,6 +13,8 @@ import { flattenGroups, EMPTY_GROUP, type SearchResult, type SearchResultGroup, 
 import { M3, FONT, COLUMN } from "@/lib/design/tokens";
 import { BackLink } from "@/components/ui/BackLink";
 import type { Role } from "@/lib/navigation";
+import { statusChip } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // ─── icons (compact, self-contained) ─────────────────────────────────────────
 const IconSearch = ({ size = 20 }: { size?: number }) => (
@@ -73,12 +75,8 @@ const TYPE_STYLE: Record<string, { bg: string; color: string }> = {
   cashentry: { bg: "#FFF3E0", color: "#B26A00" },
 };
 
-const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  draft: { label: "Concept", bg: "#f1f3f4", text: "#5f6368" },
-  sent: { label: "Verzonden", bg: "#e8f0fe", text: "#1967d2" },
-  paid: { label: "Betaald", bg: "#e6f4ea", text: "#137333" },
-  overdue: { label: "Verlopen", bg: "#fce8e6", text: "#b3261e" },
-};
+// [STATUS] Eén bron voor het woord én de kleur — zie src/lib/invoice-status.ts. Hier stond een
+// eigen kopie; er waren er acht in de app en ze waren al uit elkaar gelopen.
 
 // ─── highlight matched fragments ─────────────────────────────────────────────
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -108,7 +106,9 @@ function TypeIcon({ type }: { type: string }) {
 }
 
 function ResultRow({ item, query, onClick }: { item: SearchResult; query: string; onClick: () => void }) {
-  const st = STATUS_CONFIG[item.status ?? ""];
+  const taal = useLocale();
+  // [STATUS] Label én kleuren in één keer, zodat een scherm ze niet van twee plekken kan halen.
+  const st = item.status ? statusChip(item.status, taal) : null;
   return (
     <button
       onClick={onClick}
@@ -128,7 +128,7 @@ function ResultRow({ item, query, onClick }: { item: SearchResult; query: string
             <Highlight text={item.title} query={query} />
           </span>
           {item.type === "invoice" && st && (
-            <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: st.bg, color: st.text, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: st.bg, color: st.color, flexShrink: 0 }}>
               {st.label}
             </span>
           )}

@@ -11,7 +11,9 @@ import React from 'react'
 import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
-import { InvoiceRowItem, STATUS_LABEL, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
+import { InvoiceRowItem, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
+import { statusLabel } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
 import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
@@ -99,6 +101,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
   // [BANK-RECON-BADGE] Owner-facing reconciliation badges (never in accountant mode).
   // Self-wired here so every consumer of the shared table gets them without prop threading.
   const router = useRouter()
+  const taal = useLocale()
   const { byInvoice: reconByInvoice, confirmMatch } = useInvoiceReconciliation(!isAccountant)
 
   const emptyLabel = isAccountant
@@ -107,7 +110,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
       : `Geen facturen met status "${statusFilter}"`
     : statusFilter === 'all'
       ? 'Nog geen facturen'
-      : `Geen ${STATUS_LABEL[statusFilter as string]?.toLowerCase() ?? statusFilter} facturen`
+      : `Geen ${statusLabel(statusFilter, taal).toLowerCase()} facturen`
 
   return (
     <div className="card overflow-hidden">

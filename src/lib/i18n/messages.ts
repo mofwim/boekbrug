@@ -39,6 +39,41 @@ import type { Locale } from './locale'
 export type Message = { nl: string } & Partial<Record<Locale, string>>
 
 export const MESSAGES = {
+  // ─── [STATUS] The word for an invoice's state. One definition, seven former ones ────────────
+
+  'status.draft': { nl: 'Concept', ar: 'مسودة', en: 'Draft' },
+  'status.sent': { nl: 'Verzonden', ar: 'مُرسَلة', en: 'Sent' },
+  'status.paid': { nl: 'Betaald', ar: 'مدفوعة', en: 'Paid' },
+  'status.overdue': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
+  // 'Te betalen', not 'Ontvangen'. Eleven copies of these labels disagreed about four statuses,
+  // and this is the only one where the disagreement was about MEANING rather than wording:
+  // "Ontvangen" describes the document, "Te betalen" describes what the owner has to do about it.
+  // The second is the useful one on a screen full of incoming bills, and it matches the amber chip
+  // — see the note in invoice-status.ts about why an unpaid bill may not look settled.
+  'status.received': { nl: 'Te betalen', ar: 'مستحقة للدفع', en: 'To pay' },
+  // 'Te verifiëren' over 'In behandeling': it names what is actually waiting — a human still has
+  // to check this reading — where "in behandeling" could mean anything is happening.
+  'status.processing': { nl: 'Te verifiëren', ar: 'بانتظار التدقيق', en: 'To verify' },
+  'status.processed': { nl: 'Verwerkt', ar: 'مُعالَجة', en: 'Processed' },
+  'status.unclear': { nl: 'Onduidelijk', ar: 'غير واضحة', en: 'Unclear' },
+  'status.credit': { nl: 'Creditnota', ar: 'إشعار دائن', en: 'Credit note' },
+
+  // 'Alles' is a FILTER, not a status — it is the absence of one, so it has no entry above.
+  'filter.all': { nl: 'Alles', ar: 'الكل', en: 'All' },
+  'filter.offerte': { nl: 'Offerte', ar: 'عرض سعر', en: 'Quote' },
+  // Not a status: the OPPOSITE direction. Money coming to you instead of leaving.
+  'chip.toReceive': { nl: 'Te ontvangen', ar: 'مستحقة لك', en: 'To receive' },
+
+  // ─── [NAV] The bar the owner sees on every screen ────────────────────────────────────────────
+
+  'nav.aria': { nl: 'Hoofdnavigatie', ar: 'التنقّل الرئيسي', en: 'Main navigation' },
+  'nav.start': { nl: 'Start', ar: 'البداية', en: 'Start' },
+  'nav.invoices': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
+  'nav.incoming': { nl: 'Inkomend', ar: 'الوارد', en: 'Incoming' },
+  'nav.files': { nl: 'Bestanden', ar: 'الملفات', en: 'Files' },
+  'nav.clients': { nl: 'Klanten', ar: 'العملاء', en: 'Clients' },
+  'nav.quarter': { nl: 'Kwartaal', ar: 'الربع', en: 'Quarter' },
+
   // ─── [VERSTUURD] The confirmation after an invoice actually goes out ─────────────────────────
 
   'sent.factuur.title': {
@@ -103,18 +138,23 @@ export const MESSAGES = {
     ar: 'كيف تتحقّق بنفسك',
     en: 'How to check it yourself',
   },
-  // "Facturen" and "Verzonden" are the words ON THE SCREEN, so they stay as they are in every
-  // language — see rule 2 in the header. Translating them would send the owner hunting for a
-  // label that does not exist anywhere in the interface.
+  // Rule 2 in the header, now applied properly. This sentence used to spell "Facturen" and
+  // "Verzonden" literally in every language, because those words were Dutch on the screen and
+  // an owner told to look for a translated word would have found nothing.
+  //
+  // The tab and the status are translated now, so the literals would be the wrong half of the
+  // rule — pointing at labels that no longer exist. They are PARAMETERS instead, filled from
+  // nav.invoices and status.sent, so this sentence names whatever the screen actually says and
+  // cannot drift from it again in any language.
   'sent.factuur.checkList': {
-    nl: 'De factuur staat nu bij Facturen met de status Verzonden.',
-    ar: 'الفاتورة الآن ضمن قائمة «Facturen» بالحالة «Verzonden».',
-    en: 'The invoice is now under Facturen with the status Verzonden.',
+    nl: 'De factuur staat nu bij {tab} met de status {status}.',
+    ar: 'الفاتورة الآن ضمن قائمة {tab} بالحالة {status}.',
+    en: 'The invoice is now under {tab} with the status {status}.',
   },
   'sent.creditnota.checkList': {
-    nl: 'De creditnota staat nu bij Facturen met de status Verzonden.',
-    ar: 'الإشعار الدائن الآن ضمن قائمة «Facturen» بالحالة «Verzonden».',
-    en: 'The credit note is now under Facturen with the status Verzonden.',
+    nl: 'De creditnota staat nu bij {tab} met de status {status}.',
+    ar: 'الإشعار الدائن الآن ضمن قائمة {tab} بالحالة {status}.',
+    en: 'The credit note is now under {tab} with the status {status}.',
   },
   'sent.check.pdf': {
     nl: 'Open hem om de PDF te bekijken — dat is hetzelfde bestand dat de klant heeft gekregen.',

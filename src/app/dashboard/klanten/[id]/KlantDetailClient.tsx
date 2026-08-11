@@ -10,6 +10,8 @@ import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { createClient } from '@/lib/supabase'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
+import { statusChip } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -23,16 +25,15 @@ interface Client {
   postal_code: string | null; city: string | null; notes: string | null
 }
 
-const STATUS: Record<string, { label: string; color: string; bg: string }> = {
-  paid: { label: 'Betaald', color: M3.success, bg: '#E6F4EA' },
-  sent: { label: 'Verstuurd', color: M3.primary, bg: M3.primaryContainer },
-  overdue: { label: 'Te laat', color: M3.error, bg: '#FCE8E6' },
-  processing: { label: 'In behandeling', color: M3.warning, bg: '#FEF7E0' },
-}
+// [STATUS] Kopie elf. Deze week af op DRIE van de vier woorden — "Verstuurd" waar de rest
+// "Verzonden" zegt, "Te laat" waar het filtertabblad "Verlopen" zegt, en "In behandeling" waar de
+// verificatiewachtrij "Te verifiëren" zegt. Eén klant zag dus drie andere woorden voor dezelfde
+// drie statussen, afhankelijk van het scherm. Nu uit src/lib/invoice-status.ts.
 
 export default function KlantDetailClient({ client, invoices, totals }: {
   client: Client; invoices: KlantInvoice[]; totals: { billed: number; open: number; count: number }
 }) {
+  const taal = useLocale()
   const router = useRouter()
   // [SUBNAV] Push the client's name as the shared sub-page header title, and the
   // "+ Nieuwe factuur" action into the bar's actions slot. [HEADER-SYSTEM] The
@@ -125,7 +126,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {invoices.map((iv) => {
-              const st = STATUS[iv.status ?? ''] ?? { label: iv.status ?? '—', color: M3.neutral, bg: '#F1F3F4' }
+              const st = statusChip(iv.status, taal)
               return (
                 <Link key={iv.id} href={`/dashboard/facturen`} style={{ textDecoration: 'none' }}>
                   <div style={{ background: M3.surface, borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>

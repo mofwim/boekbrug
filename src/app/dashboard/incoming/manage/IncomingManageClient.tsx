@@ -87,6 +87,9 @@ import { rowMatchesQuery } from '@/lib/search'
 import { useToast } from '@/components/ui/Toast'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
+import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
 // both sides of the app — and the server re-checks it before writing.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
@@ -99,11 +102,9 @@ const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
-// Status chip colors — Material You
-const CHIP: Record<string, { bg: string; color: string; label: string }> = {
-  received: { bg: '#FEE8C4', color: '#7C5800', label: 'Te betalen' },
-  paid:     { bg: '#CEEAD6', color: '#137333', label: 'Betaald'   },
-}
+// [STATUS] Woord en kleur komen uit src/lib/invoice-status.ts. Dit was kopie tien van elf, en
+// het was de enige die 'received' "Te betalen" noemde — het bruikbaarste woord van de vier die in
+// omloop waren, dus dat is het woord geworden. Zie de kop van die module.
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -403,7 +404,7 @@ type FilterTab = 'all' | 'received' | 'paid' | 'auto' | 'geen-document'
 const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'all',      label: 'Alle'                  },
   { id: 'received', label: 'Te betalen'            },
-  { id: 'paid',     label: 'Betaald'               },
+  { id: 'paid',     label: statusLabel('paid')   },
   { id: 'auto',     label: 'Automatisch verwerkt'  },
   { id: 'geen-document', label: 'Zonder origineel'  },
 ]
@@ -467,6 +468,8 @@ export default function IncomingManageClient({
   // Betalen button back on invoices the bank has already taken the money for.
   incassoKeys?: string[] | null
 }) {
+  const taal = useLocale()
+  const t = translator(taal)
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
@@ -2416,7 +2419,7 @@ export default function IncomingManageClient({
               // [ROW-HEAD] Does this row have ANY status chip? The chip row sits between the
               // header and the dates, so rendering it empty would push every plain row 5px taller
               // for nothing — across a list this long that reads as sloppy spacing.
-              const hasChips = !!CHIP[inv.status] || !!recon[inv.id] || !!xq
+              const hasChips = isInvoiceStatus(inv.status) || !!recon[inv.id] || !!xq
                 || isAutoVerified(inv) || isVerwerkt || isPrepared || !!incasso
 
               return (
@@ -2504,9 +2507,11 @@ export default function IncomingManageClient({
                             The chip, the vervaldatum, the "Heb je betaald?" and the Betalen button
                             all read the same status column, so all four were wrong together — and
                             the last one prepares a real transfer of money the supplier owes YOU. */}
-                        {CHIP[inv.status] && (
-                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: payable || isPaid ? CHIP[inv.status].bg : '#E3F0FD', color: payable || isPaid ? CHIP[inv.status].color : '#0B57D0' }}>
-                            {payable || isPaid ? CHIP[inv.status].label : 'Te ontvangen'}
+                        {isInvoiceStatus(inv.status) && (
+                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: payable || isPaid ? statusChip(inv.status, taal).bg : '#E3F0FD', color: payable || isPaid ? statusChip(inv.status, taal).color : '#0B57D0' }}>
+                            {/* "Te ontvangen" is geen status maar de TEGENGESTELDE richting: geld dat
+                                naar je toe komt in plaats van weg. Blijft daarom een eigen woord. */}
+                            {payable || isPaid ? statusChip(inv.status, taal).label : t('chip.toReceive')}
                           </span>
                         )}
                         {recon[inv.id] && (
