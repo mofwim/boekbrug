@@ -20,19 +20,24 @@
 // say which of the two is being risked.
 
 import { isUnknownColumn } from "./created-by";
-import { cleanExtraLine } from "./client-extra-lines";
+import { cleanExtraLine, CLIENT_EXTRA_LINE_COLUMNS } from "./client-extra-lines";
 
-/** The two columns, cleaned, ready to spread into an insert or an update. */
-export function extraLineFields(
-  line1: unknown,
-  line2: unknown,
-): { client_extra_line1: string | null; client_extra_line2: string | null } {
-  const one = cleanExtraLine(line1 as string);
-  const two = cleanExtraLine(line2 as string);
-  // Empty becomes NULL rather than "". An empty string is a value the owner chose; null is the
-  // absence of one, and every reader of these columns treats them the same — so store the one that
-  // matches what the column means when nobody filled it in.
-  return { client_extra_line1: one || null, client_extra_line2: two || null };
+/**
+ * The columns, cleaned, ready to spread into an insert or an update.
+ *
+ * Driven by CLIENT_EXTRA_LINE_COLUMNS rather than by named arguments: a third line was added after
+ * the first two shipped, and a signature of (line1, line2) is exactly the thing that has to be
+ * hunted down at every call site when a fourth arrives.
+ */
+export function extraLineFields(...values: unknown[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  CLIENT_EXTRA_LINE_COLUMNS.forEach((column, i) => {
+    // Empty becomes NULL rather than "". An empty string is a value the owner chose; null is the
+    // absence of one, and every reader treats them the same — so store the one that matches what
+    // the column means when nobody filled it in.
+    out[column] = cleanExtraLine(values[i] as string) || null;
+  });
+  return out;
 }
 
 export interface ExtraLineWriteResult<T> {
@@ -59,13 +64,13 @@ export async function writeWithExtraLines<T>(
   // a real failure into a confusing partial success.
   if (
     !first.error ||
-    !(isUnknownColumn(first.error, "client_extra_line1") || isUnknownColumn(first.error, "client_extra_line2"))
+    !CLIENT_EXTRA_LINE_COLUMNS.some((c) => isUnknownColumn(first.error, c))
   ) {
     return { data: first.data, error: first.error, linesWritten: true };
   }
   // Loud, because it is meant to be temporary.
   console.warn(
-    "[KLANT-EXTRA] client_extra_line1/2 do not exist yet — the invoice was saved WITHOUT the two " +
+    "[KLANT-EXTRA] client_extra_line1/2/3 do not exist yet — the invoice was saved WITHOUT the two " +
       "customer lines. Apply supabase/migrations/client_extra_lines.sql.",
   );
   const second = await run({});
@@ -90,12 +95,13 @@ export async function writeWithExtraLines<T>(
  */
 export async function copyExtraLinesOnto(
   update: (fields: Record<string, unknown>) => PromiseLike<{ error: unknown }>,
-  source: { client_extra_line1?: unknown; client_extra_line2?: unknown } | null | undefined,
+  source: Record<string, unknown> | null | undefined,
   context: Record<string, unknown> = {},
 ): Promise<boolean> {
-  const fields = extraLineFields(source?.client_extra_line1, source?.client_extra_line2);
+  const row = (source ?? {}) as Record<string, unknown>;
+  const fields = extraLineFields(...CLIENT_EXTRA_LINE_COLUMNS.map((c) => row[c]));
   // Nothing to copy is not a failure — it is the normal state of almost every invoice.
-  if (!fields.client_extra_line1 && !fields.client_extra_line2) return true;
+  if (CLIENT_EXTRA_LINE_COLUMNS.every((c) => !fields[c])) return true;
   try {
     const { error } = await update(fields);
     if (!error) return true;

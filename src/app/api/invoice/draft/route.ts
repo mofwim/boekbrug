@@ -38,6 +38,7 @@ import { writeWithTrail } from '@/lib/created-by'
 import { learnFromLines } from '@/lib/article-learning-store'
 // [KLANT-EXTRA] Twee vrije klantregels onder de klantnaam — zie de kop van dat bestand.
 import { extraLineFields } from '@/lib/client-extra-lines-write'
+import { CLIENT_EXTRA_LINE_COLUMNS } from '@/lib/client-extra-lines'
 
 export const dynamic = 'force-dynamic'
 
@@ -249,8 +250,8 @@ export async function POST(request: NextRequest) {
     //
     // Dus: de factuur staat er al, en dit is een aparte update die mag mislukken. Kost één extra
     // rondje, en alleen wanneer de ondernemer de velden ook echt heeft ingevuld.
-    const extraLines = extraLineFields(body.client_extra_line1, body.client_extra_line2)
-    if (extraLines.client_extra_line1 || extraLines.client_extra_line2) {
+    const extraLines = extraLineFields(...CLIENT_EXTRA_LINE_COLUMNS.map((c) => body[c]))
+    if (CLIENT_EXTRA_LINE_COLUMNS.some((c) => extraLines[c])) {
       const { error: extraErr } = await pipeline
         .from('invoices')
         .update(extraLines as never)

@@ -45,6 +45,7 @@ import { isInvoiceEditable, editRefusalText, isQuote } from '@/lib/invoice-edita
 import { isKnownUnit } from '@/lib/units'
 // [KLANT-EXTRA] Twee vrije klantregels met een eigen terugval — zie de kop van dat bestand.
 import { writeWithExtraLines, extraLineFields } from '@/lib/client-extra-lines-write'
+import { CLIENT_EXTRA_LINE_COLUMNS } from '@/lib/client-extra-lines'
 
 /**
  * Eén regel klaarmaken voor de database.
@@ -362,7 +363,7 @@ export async function PUT(
   // De CAS zit binnen de poging en niet eromheen, met opzet: de tweede poging moet dezelfde
   // vergrendeling dragen als de eerste. Zou hij eromheen staan, dan schreef de terugval zonder
   // statustest — precies op de factuur die intussen verstuurd en genummerd kan zijn.
-  const extraSent = 'client_extra_line1' in body || 'client_extra_line2' in body
+  const extraSent = CLIENT_EXTRA_LINE_COLUMNS.some((c) => c in body)
   const runPatch = (extra: Record<string, unknown>) => {
     let q = supabase
       .from('invoices')
@@ -380,7 +381,7 @@ export async function PUT(
     // Alleen patchen wat het scherm meestuurde — dezelfde regel als de lus hierboven. Stuurt een
     // andere aanroeper deze velden niet mee, dan blijft de opgeslagen waarde staan in plaats van
     // stilletjes leeggemaakt te worden.
-    extraSent ? extraLineFields(body.client_extra_line1, body.client_extra_line2) : {},
+    extraSent ? extraLineFields(...CLIENT_EXTRA_LINE_COLUMNS.map((c) => body[c])) : {},
   )
   if (upErr) return NextResponse.json({ error: 'Opslaan mislukt' }, { status: 500 })
   if (!patched || patched.length === 0) {

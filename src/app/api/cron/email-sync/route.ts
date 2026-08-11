@@ -18,6 +18,8 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [PAGINATE] The mailbox list is the WORK, not a report — see the read below.
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [GRENS-ZICHTBAAR] De reden waarom de drain stopt, in de woorden die bij de echte oorzaak horen.
+import { drainStopReason } from '@/lib/fair-use-hold';
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
@@ -146,8 +148,18 @@ export async function GET(req: NextRequest) {
       // syncing while items remain, bounded by a round cap — BUT stop the moment a round makes NO
       // progress, so a poison-pill attachment (one that fails to import every round and keeps the
       // batch head) can't burn all 5 rounds re-processing the same failing slice every hour.
+      // [GRENS-ZICHTBAAR] …en niet dóórdraaien op een MAANDgrens. `remaining > 0` alleen kon dat
+      // niet zien: de bijlagen liggen er nog, dus het ziet eruit als werk dat wacht. Maar wat het
+      // tegenhoudt is een maandteller, en die vult zich niet bij tussen twee aanroepen — elke
+      // ronde haalt dan de hele mailbox opnieuw op om exact hetzelfde antwoord te krijgen. In de
+      // gemeten log stonden de twee aanroepen zes seconden uit elkaar.
+      if (r && r.heldByFairUse > 0) {
+        console.warn(drainStopReason(r.heldByFairUse), {
+          uid, remaining: r.remaining, heldByFairUse: r.heldByFairUse,
+        });
+      }
       let rounds = 0;
-      while (r && r.remaining > 0 && rounds < 5) {
+      while (r && r.remaining > 0 && r.heldByFairUse === 0 && rounds < 5) {
         rounds++;
         const prevSaved = r.saved;
         const next = await syncUserEmails(uid);
@@ -155,7 +167,23 @@ export async function GET(req: NextRequest) {
         const progressed = !!next && (next.saved > 0 || next.remaining < r.remaining);
         r = next;
         if (!progressed) {
-          console.warn("[CRON-EMAIL-SYNC] drain made no progress — likely a stuck attachment; deferring", { uid, remaining: r?.remaining ?? null, prevSaved });
+          // [GRENS-ZICHTBAAR] Twee oorzaken zien er hier identiek uit, en er is er maar één waar
+          // opnieuw proberen iets aan verandert.
+          //
+          // Gemeten in de log: wanted 10, granted 0, plan 'free' — de MAANDgrens was op. De drain
+          // riep syncUserEmails zes seconden later nog eens, kreeg vanzelfsprekend hetzelfde
+          // antwoord, en meldde toen "likely a stuck attachment". Er was geen bijlage die hing;
+          // er was geen bijlage die überhaupt geprobeerd is. Wie die regel leest gaat een kapotte
+          // PDF zoeken die niet bestaat, terwijl de echte oorzaak één regel hoger staat.
+          //
+          // Een maandgrens vult zich niet bij tussen twee aanroepen. Dus: eigen woorden, en
+          // stoppen zonder de mailbox nog een keer op te halen.
+          console.warn(drainStopReason(r?.heldByFairUse ?? 0), {
+            uid,
+            remaining: r?.remaining ?? null,
+            prevSaved,
+            heldByFairUse: r?.heldByFairUse ?? 0,
+          });
           break;
         }
       }

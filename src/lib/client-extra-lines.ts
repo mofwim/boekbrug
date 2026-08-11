@@ -1,5 +1,5 @@
 // src/lib/client-extra-lines.ts
-// [KLANT-EXTRA] Two free lines under the customer's name. Pure, no I/O.
+// [KLANT-EXTRA] Three free lines under the customer's name. Pure, no I/O.
 // Run: npx tsx --test src/lib/client-extra-lines.test.ts
 //
 // WHAT THIS IS FOR
@@ -16,17 +16,18 @@
 // until now the only place to put one was the description of a line — where it becomes part of
 // what was supplied, which it is not.
 //
-// WHY TWO, AND WHY FREE TEXT
-// Two because that is what the addressee case needs: a person and a department or reference. Not
-// a fixed "t.a.v." field, because the second line is a reference at one customer, a building at
-// another, and a cost centre at a third — and a field that names one of those is wrong for the
-// other two. The owner writes what their customer asked for.
+// WHY THREE, AND WHY FREE TEXT
+// Three, because the addressee case routinely needs more than a person and a reference: a
+// department, a building, a cost centre, a contract number. Not fixed "t.a.v." / "afdeling" /
+// "referentie" fields, because the second line is a reference at one customer, a building at
+// another and a cost centre at a third — a field that names one of those is wrong for the other
+// two. The owner writes what their customer asked for, on as many lines as they need.
 //
 // PER DOCUMENT, NOT PER CUSTOMER. A purchase-order reference is different on every invoice, so
 // this belongs on the invoice. A customer's standing addressee would belong on the customer, and
 // that is a separate thing this does not pretend to be.
 //
-// NOTHING IS INVENTED AND NOTHING IS REQUIRED. Both lines empty is the normal state and produces
+// NOTHING IS INVENTED AND NOTHING IS REQUIRED. All three empty is the normal state and produces
 // exactly the document that existed before this field — the block collapses, it does not leave a
 // gap where a line would have been.
 
@@ -47,7 +48,21 @@ export const MAX_EXTRA_LINE_LENGTH = 60;
 export interface ClientExtraLineSource {
   client_extra_line1?: string | null;
   client_extra_line2?: string | null;
+  client_extra_line3?: string | null;
 }
+
+/**
+ * The columns, in the order they print. One list, so nothing can carry two of the three.
+ *
+ * A third line was added after the first two shipped, and the reason it is a LIST now rather than
+ * two more named reads is exactly that: every place that handled the pair had to be found again.
+ * The next line costs one entry here.
+ */
+export const CLIENT_EXTRA_LINE_COLUMNS = [
+  "client_extra_line1",
+  "client_extra_line2",
+  "client_extra_line3",
+] as const;
 
 /**
  * One line, trimmed, bounded, with any newline flattened.
@@ -72,7 +87,6 @@ export function cleanExtraLine(value: string | null | undefined): string {
  * have been. The result is what goes on the page — never a fixed-length pair.
  */
 export function clientExtraLines(source: ClientExtraLineSource | null | undefined): string[] {
-  return [source?.client_extra_line1, source?.client_extra_line2]
-    .map(cleanExtraLine)
-    .filter((l) => l.length > 0);
+  const row = (source ?? {}) as Record<string, string | null | undefined>;
+  return CLIENT_EXTRA_LINE_COLUMNS.map((c) => cleanExtraLine(row[c])).filter((l) => l.length > 0);
 }

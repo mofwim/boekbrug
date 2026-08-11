@@ -345,22 +345,43 @@ test("[BTW-VERKLARING] an invoice that DOES charge btw explains nothing", async 
 // between the customer's name and their street. A source-level check can see that the JSX exists;
 // only the document can say where the text came out.
 
-test("[KLANT-EXTRA] both lines print between the customer name and the street", async () => {
+test("[KLANT-EXTRA] all three lines print between the customer name and the street", async () => {
   const text = await pdfText(await renderInvoicePdf(
-    { ...INVOICE, client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: "PO-2026-114" },
+    {
+      ...INVOICE,
+      client_extra_line1: "t.a.v. mevrouw Jansen",
+      client_extra_line2: "Afdeling Inkoop",
+      client_extra_line3: "PO-2026-114",
+    },
     ZERO_LINE, PROFILE,
   ));
   assert.match(text, /t\.a\.v\. mevrouw Jansen/, "the addressee must be on the page");
+  assert.match(text, /Afdeling Inkoop/, "…the department");
   assert.match(text, /PO-2026-114/, "…and the reference the customer's system needs");
 
-  // ORDER is the whole point — under the name, above the address.
-  const name = text.indexOf("Stichting Contour de Twern");
+  // ORDER is the whole point — under the name, above the address, in the order typed.
+  const at = (s: string) => text.indexOf(s);
+  const name = at("Stichting Contour de Twern");
+  const seq = [at("t.a.v. mevrouw Jansen"), at("Afdeling Inkoop"), at("PO-2026-114")];
+  assert.ok(name >= 0 && seq[0] > name, "line 1 must follow the customer name");
+  assert.ok(seq[1] > seq[0] && seq[2] > seq[1], "the three must keep the order they were typed");
+  assert.ok(at("Spoorlaan 444") > seq[2], "…and the street must still come after all three");
+});
+
+test("[KLANT-EXTRA] a gap in the middle closes up on the page", async () => {
+  // The third line arrived after the first two shipped. What must not change: a line left empty
+  // does not leave a blank row in the address block of a document that goes to a customer.
+  const text = await pdfText(await renderInvoicePdf(
+    { ...INVOICE, client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: null, client_extra_line3: "PO-2026-114" },
+    ZERO_LINE, PROFILE,
+  ));
   const one = text.indexOf("t.a.v. mevrouw Jansen");
-  const two = text.indexOf("PO-2026-114");
-  const street = text.indexOf("Spoorlaan 444");
-  assert.ok(name >= 0 && one > name, "line 1 must follow the customer name");
-  assert.ok(two > one, "line 2 must follow line 1, in the order they were typed");
-  assert.ok(street > two, "…and the street must still come after both");
+  const three = text.indexOf("PO-2026-114");
+  assert.ok(one >= 0 && three > one);
+  assert.doesNotMatch(
+    text.slice(one + "t.a.v. mevrouw Jansen".length, three), /\S/,
+    "an empty middle line must leave nothing between the two that are filled",
+  );
 });
 
 test("[KLANT-EXTRA] only the second filled leaves no blank line above it", async () => {
@@ -381,7 +402,7 @@ test("[KLANT-EXTRA] an invoice without them renders exactly the block it always 
   // Every invoice that exists today has both columns null. This is the regression that matters.
   const before = await pdfText(await renderInvoicePdf(INVOICE, ZERO_LINE, PROFILE));
   const after = await pdfText(await renderInvoicePdf(
-    { ...INVOICE, client_extra_line1: null, client_extra_line2: "" }, ZERO_LINE, PROFILE,
+    { ...INVOICE, client_extra_line1: null, client_extra_line2: "", client_extra_line3: null }, ZERO_LINE, PROFILE,
   ));
   assert.equal(after, before, "a null/empty pair must change nothing on the page");
   assert.match(before, /Stichting Contour de Twern/);

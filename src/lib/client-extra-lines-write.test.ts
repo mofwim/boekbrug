@@ -12,12 +12,14 @@ import { extraLineFields, writeWithExtraLines, copyExtraLinesOnto } from "./clie
 const UNKNOWN = { code: "PGRST204", message: "Could not find the 'client_extra_line1' column" };
 
 test("[KLANT-EXTRA] empty lines are stored as NULL, not as an empty string", () => {
-  assert.deepEqual(extraLineFields("", "   "), { client_extra_line1: null, client_extra_line2: null });
-  assert.deepEqual(extraLineFields(null, undefined), { client_extra_line1: null, client_extra_line2: null });
+  assert.deepEqual(extraLineFields("", "   ", null), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null });
+  assert.deepEqual(extraLineFields(), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null });
   assert.deepEqual(
-    extraLineFields(" t.a.v. Jansen ", "PO-114"),
-    { client_extra_line1: "t.a.v. Jansen", client_extra_line2: "PO-114" },
+    extraLineFields(" t.a.v. Jansen ", "Inkoop", "PO-114"),
+    { client_extra_line1: "t.a.v. Jansen", client_extra_line2: "Inkoop", client_extra_line3: "PO-114" },
   );
+  // A fourth value has no column and must be dropped, not smuggled in under a made-up name.
+  assert.deepEqual(Object.keys(extraLineFields("a", "b", "c", "d")).length, 3);
 });
 
 test("[KLANT-EXTRA] the ordinary path writes the fields once and reports them written", async () => {
@@ -118,10 +120,12 @@ test("[KLANT-EXTRA] the lines are carried onto the new document, cleaned", async
   let seen: Record<string, unknown> | null = null;
   const ok = await copyExtraLinesOnto(
     async (f) => { seen = f; return { error: null } },
-    { client_extra_line1: "  t.a.v. mevrouw Jansen ", client_extra_line2: "" },
+    { client_extra_line1: "  t.a.v. mevrouw Jansen ", client_extra_line2: "", client_extra_line3: "PO-114" },
   );
   assert.equal(ok, true);
-  assert.deepEqual(seen, { client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: null });
+  assert.deepEqual(seen, {
+    client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: null, client_extra_line3: "PO-114",
+  });
 });
 
 test("[KLANT-EXTRA] a failed copy is reported as failed, never as done", async () => {
@@ -140,7 +144,7 @@ test("[KLANT-EXTRA] a thrown query cannot take the calling route down with it", 
   // document into a 500, and the owner would try again and mint a second one.
   const ok = await copyExtraLinesOnto(
     async () => { throw new Error("connection reset") },
-    { client_extra_line2: "PO-114" },
+    { client_extra_line3: "PO-114" },
   );
   assert.equal(ok, false);
 });

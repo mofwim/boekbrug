@@ -7,12 +7,40 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { cleanExtraLine, clientExtraLines, MAX_EXTRA_LINE_LENGTH } from "./client-extra-lines";
+import {
+  cleanExtraLine, clientExtraLines, MAX_EXTRA_LINE_LENGTH, CLIENT_EXTRA_LINE_COLUMNS,
+} from "./client-extra-lines";
 
-test("[KLANT-EXTRA] both lines, in the order they were typed", () => {
+test("[KLANT-EXTRA] all three lines, in the order they were typed", () => {
   assert.deepEqual(
-    clientExtraLines({ client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: "PO-2026-114" }),
-    ["t.a.v. mevrouw Jansen", "PO-2026-114"],
+    clientExtraLines({
+      client_extra_line1: "t.a.v. mevrouw Jansen",
+      client_extra_line2: "Afdeling Inkoop",
+      client_extra_line3: "PO-2026-114",
+    }),
+    ["t.a.v. mevrouw Jansen", "Afdeling Inkoop", "PO-2026-114"],
+  );
+});
+
+test("[KLANT-EXTRA] a gap ANYWHERE in the three closes up", () => {
+  // The third line arrived after the first two shipped, and this is the property that had to keep
+  // holding across the change: whichever of the three the owner leaves empty, the rest move up.
+  assert.deepEqual(clientExtraLines({ client_extra_line3: "PO-114" }), ["PO-114"]);
+  assert.deepEqual(
+    clientExtraLines({ client_extra_line1: "t.a.v. Jansen", client_extra_line3: "PO-114" }),
+    ["t.a.v. Jansen", "PO-114"],
+  );
+  assert.deepEqual(
+    clientExtraLines({ client_extra_line2: " ", client_extra_line3: "PO-114" }), ["PO-114"],
+  );
+});
+
+test("[KLANT-EXTRA] the column list is what every caller walks", () => {
+  // The write helper, both routes and the PDF all drive off this list. If it and the type ever
+  // disagree, one of them silently carries fewer lines than the owner typed.
+  assert.deepEqual(
+    [...CLIENT_EXTRA_LINE_COLUMNS],
+    ["client_extra_line1", "client_extra_line2", "client_extra_line3"],
   );
 });
 
@@ -25,8 +53,8 @@ test("[KLANT-EXTRA] only the second filled leaves no gap above it", () => {
 
 test("[KLANT-EXTRA] nothing filled is nothing rendered — the document that existed before", () => {
   // Every invoice ever created has these two columns null. They must all keep rendering unchanged.
-  for (const src of [null, undefined, {}, { client_extra_line1: null, client_extra_line2: null },
-                     { client_extra_line1: "", client_extra_line2: "  \n " }]) {
+  for (const src of [null, undefined, {}, { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null },
+                     { client_extra_line1: "", client_extra_line2: "  \n ", client_extra_line3: "\t" }]) {
     assert.deepEqual(clientExtraLines(src), [], JSON.stringify(src));
   }
 });

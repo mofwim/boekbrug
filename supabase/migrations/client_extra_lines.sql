@@ -34,7 +34,13 @@
 
 ALTER TABLE public.invoices
   ADD COLUMN IF NOT EXISTS client_extra_line1 text,
-  ADD COLUMN IF NOT EXISTS client_extra_line2 text;
+  ADD COLUMN IF NOT EXISTS client_extra_line2 text,
+  -- [KLANT-EXTRA-3] Een derde regel, toegevoegd nadat de eerste twee al waren toegepast. Daarom
+  -- staat hij in DIT bestand en niet in een tweede migratie: ADD COLUMN IF NOT EXISTS is
+  -- idempotent, dus opnieuw draaien voegt alleen de ontbrekende kolom toe en laat de twee die er
+  -- al zijn ongemoeid. Eén bestand dat de hele vorm van dit blok beschrijft leest beter dan twee
+  -- die je naast elkaar moet leggen om te weten hoeveel regels er zijn.
+  ADD COLUMN IF NOT EXISTS client_extra_line3 text;
 
 COMMENT ON COLUMN public.invoices.client_extra_line1 IS
   'Vrije regel direct onder de klantnaam op het document, bijvoorbeeld "t.a.v. mevrouw Jansen". '
@@ -43,3 +49,7 @@ COMMENT ON COLUMN public.invoices.client_extra_line1 IS
 COMMENT ON COLUMN public.invoices.client_extra_line2 IS
   'Tweede vrije regel onder de klantnaam, bijvoorbeeld een afdeling, kostenplaats of '
   'inkoopordernummer dat de klant op de factuur wil zien staan.';
+
+COMMENT ON COLUMN public.invoices.client_extra_line3 IS
+  'Derde vrije regel onder de klantnaam. Alle drie zijn optioneel en lege regels vallen weg, '
+  'zodat het adresblok nooit een gat krijgt waar een regel had kunnen staan.';

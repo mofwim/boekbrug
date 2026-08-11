@@ -71,6 +71,8 @@ import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '
 // [HERINNERING-ORIGINEEL] Een herinnering waarvan het origineel al geboekt is, is geen kost.
 import { decideReminder } from '@/lib/reminder-original'
 import { createNotification } from '@/lib/notifications'
+// [GRENS-ZICHTBAAR] Wat een maandgrens betekent voor de ondernemer, en hoe vaak je het zegt.
+import { fairUseHold, fairUseHoldMonth, fairUseHoldNotice } from '@/lib/fair-use-hold'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
@@ -2297,6 +2299,11 @@ export async function syncUserEmails(
   autoAdvanced: number
   errors: number
   remaining: number
+  // [GRENS-ZICHTBAAR] Hoeveel documenten deze run NIET zijn gelezen omdat de maandgrens op was.
+  // De cron heeft dit nodig om twee dingen uit elkaar te houden die er allebei uitzien als "geen
+  // voortgang": een bijlage die blijft hangen (opnieuw proberen helpt) en een MAANDgrens (opnieuw
+  // proberen kan per definitie niets opleveren).
+  heldByFairUse: number
   skipped: number
   // [COULD-NOT-READ] Attachments kept in bestanden because we couldn't read them
   // (never asserted "not an invoice"). Surfaced so the owner can go check them.
@@ -2419,7 +2426,7 @@ export async function syncUserEmails(
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [H3] The per-message "already done" skip set was removed — it was prefix-matched on
@@ -2470,7 +2477,7 @@ export async function syncUserEmails(
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [MAILTEKST] The invoices that never had an attachment. A separate, bounded pass appended to
@@ -2899,7 +2906,8 @@ export async function syncUserEmails(
     plan: fairUsePlan,
     wanted: aiCandidates.length,
   })
-  if (fairUse.granted < aiCandidates.length) {
+  const hold = fairUseHold(aiCandidates.length, fairUse.granted, fairUsePlan === 'plus' ? 'plus' : 'free')
+  if (hold) {
     console.warn('[EERLIJK-GEBRUIK] maandgrens bereikt — rest van de batch wordt bewaard, niet gelezen', {
       userId,
       wanted: aiCandidates.length,
@@ -2907,6 +2915,43 @@ export async function syncUserEmails(
       plan: fairUsePlan,
       freeOfCharge: batchCandidates.length - aiCandidates.length,
     })
+
+    // [GRENS-ZICHTBAAR] En nu de ondernemer zelf. Tien facturen kwamen binnen en er werd er geen
+    // gelezen; op geen enkel scherm stond iets. De uploadpagina zegt dit wél — maar dat is de weg
+    // waar de ondernemer ernaast staat te kijken. Deze weg loopt terwijl hij er niet is, en dan is
+    // stilte hetzelfde als "je leverancier heeft niets gestuurd".
+    //
+    // EENS PER MAAND. De cron draait elk uur en de grens is een MAANDgrens: dezelfde zin
+    // vierentwintig keer per dag tot de maand omslaat is een melding die je uitzet, en daarna
+    // wordt er weer niets verteld — precies waar dit begon. De sleutel staat in de titel, zodat
+    // het bestaan van de vorige melding zelf de dubbele tegenhoudt; geen extra tabel, geen
+    // migratie, en er is niets te vergeten op te ruimen.
+    try {
+      const maand = fairUseHoldMonth(new Date().toISOString())
+      const notice = fairUseHoldNotice(hold, maand)
+      const titel = notice.title
+      const { data: alGemeld } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('title', titel)
+        .limit(1)
+      if (!alGemeld || alGemeld.length === 0) {
+        await createNotification({
+          userId,
+          title: titel,
+          body: notice.body,
+          type: 'status',
+          link: notice.link,
+        })
+      }
+    } catch (e) {
+      // Niet-fataal: het melden van de grens mag de facturen-sync nooit breken. De facturen zelf
+      // staan al veilig bewaard; wat hier misgaat kost de melding, niet het werk.
+      console.error('[GRENS-ZICHTBAAR] melden van de maandgrens mislukt (niet-fataal)', {
+        userId, error: e instanceof Error ? e.message : String(e),
+      })
+    }
   }
 
   // Oudste eerst, precies zoals hierboven: loop de batch in volgorde af, houd elke e-factuur XML
@@ -4812,6 +4857,7 @@ export async function syncUserEmails(
     // client keeps auto-continuing across slice boundaries instead of stopping until the next cron;
     // the no-progress guard still stops it if a round genuinely advances nothing.
     remaining: windowNarrowed ? Math.max(remainingAfterBatch, 1) : remainingAfterBatch,
+    heldByFairUse: hold?.held ?? 0,
     // [BOEK-011] Attachments registered as non-invoice this run — the client
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
