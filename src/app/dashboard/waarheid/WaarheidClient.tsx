@@ -20,6 +20,8 @@ import { amsterdamToday, formatDateNL } from "@/lib/format-nl";
 import { assessBtwCertainty } from "@/lib/btw-certainty";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // [HEADER-SYSTEM] This screen previously shipped its own Inter font — the only
 // Inter surface in an otherwise Roboto app. It now uses the shared FONT token
@@ -146,6 +148,7 @@ function periodFromParams(get: (k: string) => string | null): Period {
 }
 
 export default function WaarheidClient() {
+  const t = translator(useLocale())
   const dialog = useDialog();
   const toast = useToast();
   // [NAMED-QUARTER] One `period` instead of a bare lens, so the explicit quarter picker and the
@@ -442,14 +445,14 @@ export default function WaarheidClient() {
           <div style={{ display: "flex", alignItems: "center", gap: 4, paddingInlineStart: 6 }}>
             <button
               onClick={() => setPickYear((y) => Math.max(2015, y - 1))}
-              title="Vorig jaar"
+              title={t('wh.vorigJaar')}
               style={{ width: 26, height: 26, border: "none", background: "none", cursor: "pointer", color: M.primary, fontSize: 18, lineHeight: 1 }}
             >‹</button>
             <span style={{ fontSize: 13.5, fontWeight: 700, minWidth: 38, textAlign: "center" }}>{pickYear}</span>
             <button
               onClick={() => setPickYear((y) => Math.min(y + 1, curYear))}
               disabled={pickYear >= curYear}
-              title="Volgend jaar"
+              title={t('wh.volgendJaar')}
               style={{
                 width: 26, height: 26, border: "none", background: "none", fontSize: 18, lineHeight: 1,
                 cursor: pickYear >= curYear ? "default" : "pointer",
@@ -462,12 +465,12 @@ export default function WaarheidClient() {
       )}
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: "56px 0", color: M.muted, fontSize: 14 }}>Bezig met berekenen…</div>
+        <div style={{ textAlign: "center", padding: "56px 0", color: M.muted, fontSize: 14 }}>{t('wh.berekenen')}</div>
       ) : error ? (
         <div style={{ textAlign: "center", padding: "40px 24px", color: M.muted }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
-          <div style={{ fontWeight: 600, color: M.onSurface, marginBottom: 6 }}>Kon je waarheid niet laden</div>
-          <button onClick={() => load(period)} style={{ marginTop: 8, background: M.primary, color: "#fff", border: "none", borderRadius: 980, padding: "9px 20px", fontWeight: 600, cursor: "pointer" }}>Opnieuw proberen</button>
+          <div style={{ fontWeight: 600, color: M.onSurface, marginBottom: 6 }}>{t('wh.fout.laden')}</div>
+          <button onClick={() => load(period)} style={{ marginTop: 8, background: M.primary, color: "#fff", border: "none", borderRadius: 980, padding: "9px 20px", fontWeight: 600, cursor: "pointer" }}>{t('inkoop.opnieuwProberen')}</button>
         </div>
       ) : data && r ? (
         <>
@@ -511,7 +514,7 @@ export default function WaarheidClient() {
               <div style={{ fontSize: 12.5, color: div.needsSuppletie ? "#7a1c1c" : M.warnFg, lineHeight: 1.5 }}>
                 {div.btwChanged && (
                   <>
-                    Sinds je indiening is de BTW met <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta > 0 ? "gestegen" : "gedaald"}
+                    {t('wh.sindsIndiening')} <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta > 0 ? "gestegen" : "gedaald"}
                     {" "}(je {div.btwSaldoDelta > 0 ? "moet meer betalen" : "krijgt meer terug"}).{" "}
                     {div.needsSuppletie
                       ? "Dat is meer dan €1.000 — dien een suppletie in bij de Belastingdienst."
@@ -542,14 +545,14 @@ export default function WaarheidClient() {
               not "resultaat". The bookkeeping term stays as the small second line so the
               accountant's vocabulary is still learnable from the screen. */}
           <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>Wat je overhoudt</div>
+            <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>{t('wh.overhouden')}</div>
             <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>omzet − kosten · je winst</div>
             <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5, color: r.resultaat >= 0 ? "#137333" : "#c5221f" }}>
               {eur.format(r.resultaat)}
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
-              <Stat label="Omzet" value={eur.format(r.omzet)} sub="wat je verdiende" />
-              <Stat label="Kosten" value={eur.format(r.kosten)} sub="wat je uitgaf" />
+              <Stat label={t('wh.omzet')} value={eur.format(r.omzet)} sub="wat je verdiende" />
+              <Stat label={t('wh.kosten')} value={eur.format(r.kosten)} sub="wat je uitgaf" />
             </div>
           </div>
 
@@ -593,7 +596,7 @@ export default function WaarheidClient() {
                 same card, never further down the page. */}
             {certainty.level === "sign-could-flip" && (
               <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 12, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
-                Dit lijkt geld terug, maar <strong>{eur.format(certainty.unrated)}</strong> van je omzet heeft nog geen
+                {t('wh.geldTerugMaar')} <strong>{eur.format(certainty.unrated)}</strong> van je omzet heeft nog geen
                 BTW-tarief. Zodra je die tarieven toekent, wordt dit waarschijnlijk een bedrag dat je
                 juist moet <strong>betalen</strong>. Reken er dus nog niet op.
               </div>
@@ -607,8 +610,8 @@ export default function WaarheidClient() {
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
               {/* Plain meaning as the label, the aangifte's own word underneath — the owner can
                   follow the screen AND recognise the term when the accountant uses it. */}
-              <Stat label="Over je omzet" value={eur.format(r.btwVerschuldigd)} sub="verschuldigd" />
-              <Stat label="Over je inkopen" value={eur.format(r.btwVoorbelasting)} sub="voorbelasting" />
+              <Stat label={t('wh.overOmzet')} value={eur.format(r.btwVerschuldigd)} sub="verschuldigd" />
+              <Stat label={t('wh.overInkopen')} value={eur.format(r.btwVoorbelasting)} sub="voorbelasting" />
             </div>
             {/* Quarter lens → the aangifte for this exact period is one tap away (same numbers). */}
             {data.quarter && data.year && (
@@ -616,7 +619,7 @@ export default function WaarheidClient() {
                 href={`/dashboard/quarterly?year=${data.year}&quarter=${data.quarter}`}
                 style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 14, fontSize: 13.5, fontWeight: 600, color: M.primary, textDecoration: "none" }}
               >
-                Naar de BTW-aangifte van deze periode
+                {t('wh.naarAangifte')}
                 <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>chevron_right</span>
               </Link>
             )}
@@ -640,7 +643,7 @@ export default function WaarheidClient() {
             || data.reconciliation.commissionIssueDays > 0) && (
             <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
               <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>
-                Pinbetalingen gecontroleerd
+                {t('wh.pinGecontroleerd')}
               </div>
               <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 10 }}>
                 kassa · terminal · bank moeten hetzelfde zeggen
@@ -658,8 +661,8 @@ export default function WaarheidClient() {
                       only the booked figure next to the flat claim "de commissie is verwerkt in het
                       resultaat hierboven" — so a kasstelsel shop read "€ 0,00" on a control surface
                       that had in fact measured a real cost. */}
-                  <Stat label="Kosten van de betaalautomaat" value={eur.format(data.reconciliation.totalCommission)} sub="gemeten commissie" />
-                  <Stat label="Afrekeningen ontvangen" value={String(data.reconciliation.eftSettlements)} sub="van de terminal" />
+                  <Stat label={t('wh.kostenAutomaat')} value={eur.format(data.reconciliation.totalCommission)} sub="gemeten commissie" />
+                  <Stat label={t('wh.afrekeningen')} value={String(data.reconciliation.eftSettlements)} sub="van de terminal" />
                 </div>
               )}
               <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: 0 }}>
@@ -697,10 +700,10 @@ export default function WaarheidClient() {
           {todos.length > 0 && (
             <div style={{ background: M.warnBg, border: "1px solid #fbbc04", borderRadius: 18, padding: "16px 18px", marginBottom: 12 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: M.warnFg }}>
-                Nog te doen voor een compleet beeld
+                {t('wh.nogTeDoen')}
               </div>
               <div style={{ fontSize: 12, color: M.warnFg, opacity: 0.85, margin: "2px 0 6px" }}>
-                Tot dan zijn de bedragen hierboven te laag.
+                {t('wh.teLaag')}
               </div>
               {todos.map((t) => (
                 <TodoRow key={t.href + t.text} text={t.text} href={t.href} cta={t.cta} />

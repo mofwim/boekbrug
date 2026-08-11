@@ -24,8 +24,11 @@ import { useToast } from '@/components/ui/Toast'
 import { COLUMN } from '@/lib/design/tokens';
 // [BTW-VERKLARING] Zelfde normalisatie en zelfde maximum als de PDF gebruikt.
 import { cleanVatNote, MAX_NOTE_LENGTH } from '@/lib/vat-statement'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 export default function SettingsPage() {
+  const t = translator(useLocale())
   const dialog = useDialog()
   const toast = useToast()
   const router = useRouter()
@@ -495,25 +498,25 @@ export default function SettingsPage() {
         {/* تعديل الملف الشخصي */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-            Jouw profiel
+            {t('inst.profiel')}
           </p>
 
           <div className="grid grid-cols-2 gap-3">
             {/* الاسم الكامل */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Volledige naam</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.volledigeNaam')}</label>
               <input
                 type="text"
                 value={fullName}
                 onChange={e => setFullName(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="Jan de Vries"
+                placeholder={t('inst.naamVoorbeeld')}
               />
             </div>
 
             {/* اسم الشركة */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Bedrijfsnaam</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.bedrijfsnaam')}</label>
               <input
                 type="text"
                 value={companyName}
@@ -564,7 +567,7 @@ export default function SettingsPage() {
 
             {/* العنوان */}
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Adres</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.adres')}</label>
               <input
                 type="text"
                 value={address}
@@ -576,7 +579,7 @@ export default function SettingsPage() {
 
             {/* الرمز البريدي */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Postcode</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.postcode')}</label>
               <input
                 type="text"
                 value={postalCode}
@@ -588,13 +591,13 @@ export default function SettingsPage() {
 
             {/* المدينة */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Stad</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.stad')}</label>
               <input
                 type="text"
                 value={city}
                 onChange={e => setCity(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="Vul je stad in"
+                placeholder={t('inst.stadInvullen')}
               />
             </div>
           </div>
@@ -613,7 +616,7 @@ export default function SettingsPage() {
               />
               <span>
                 <span className="block text-sm font-medium text-gray-800">
-                  Ik gebruik de kleineondernemersregeling (KOR)
+                  {t('inst.kor')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
                   Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een
@@ -637,7 +640,7 @@ export default function SettingsPage() {
               />
               <span>
                 <span className="block text-sm font-medium text-gray-800">
-                  Ik heb (deels) vrijgestelde omzet
+                  {t('inst.vrijgesteld')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
                   Voor werk dat is vrijgesteld van BTW (art. 11) — zoals zorg, onderwijs of
@@ -662,13 +665,13 @@ export default function SettingsPage() {
               zetten, en dat is erger dan de stilte die het vervangt. */}
           <div className="border-t border-gray-100 pt-4 space-y-2">
             <label htmlFor="vat-note" className="block text-sm font-medium text-gray-800">
-              Toelichting op je factuur bij 0% of vrijgesteld
+              {t('inst.toelichting')}
             </label>
             <p className="text-xs text-gray-500">
               Deze zin komt onder het totaal te staan op elke factuur waar geen BTW op zit. Zonder
               toelichting ziet je klant een factuur zonder BTW en niets dat uitlegt waarom — zijn
               boekhouder kan hem dan niet plaatsen. Vul de grond in die voor jouw werk geldt,
-              bijvoorbeeld: <em>Vrijgesteld van btw op grond van artikel 11-1-g Wet OB (zorg).</em>
+              bijvoorbeeld: <em>{t('inst.toelichtingVoorbeeld')}</em>
               {' '}Voor de KOR en voor btw verlegd hoef je niets in te vullen — die zet de app er
               zelf op.
             </p>
@@ -697,7 +700,7 @@ export default function SettingsPage() {
               <span>
                 <span className="block text-sm text-gray-800">Factuurstelsel (standaard)</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  BTW telt op de factuurdatum. De meeste ondernemers gebruiken dit.
+                  {t('inst.factuurstelsel.uitleg')}
                 </span>
               </span>
             </label>
@@ -710,7 +713,7 @@ export default function SettingsPage() {
                 className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span>
-                <span className="block text-sm text-gray-800">Kasstelsel</span>
+                <span className="block text-sm text-gray-800">{t('inst.kasstelsel')}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
                   BTW telt op de betaaldatum — voor veel winkels/horeca verplicht. Ingaat vanaf het
                   huidige kwartaal; eerdere kwartalen blijven ongewijzigd. Een betaalde factuur
@@ -731,7 +734,7 @@ export default function SettingsPage() {
               />
               <span>
                 <span className="block text-sm font-medium text-gray-800">
-                  Stuur automatisch betalingsherinneringen
+                  {t('inst.herinneringen')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
                   Staat een verstuurde factuur na de vervaldatum nog open, dan mailt BoekBrug je klant
@@ -743,7 +746,7 @@ export default function SettingsPage() {
             {remindersEnabled && (
               <div className="ps-7">
                 <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Herinner na (dagen na vervaldatum)
+                  {t('inst.herinnerNa')}
                 </label>
                 <input
                   type="text"
@@ -781,7 +784,7 @@ export default function SettingsPage() {
         {profile.role === 'zzper' && (
           <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-              Factuurnummering
+              {t('inst.nummering')}
             </p>
 
             {numberingNext && (
@@ -847,7 +850,7 @@ export default function SettingsPage() {
         {profile.role === 'zzper' && (
           <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-              Boekhouder koppelen
+              {t('inst.boekhouderKoppelen')}
             </p>
             <p className="text-sm text-gray-500">
               Vul het e-mailadres van je boekhouder in. Hij ontvangt een uitnodiging om je facturen te beheren.
@@ -881,7 +884,7 @@ export default function SettingsPage() {
              "hij deed het". */
           <div id="boekhouder" className="bg-white rounded-2xl p-5 shadow-sm space-y-3 scroll-mt-20">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-              Jouw boekhouder
+              {t('inst.boekhouder')}
             </p>
             <div className="flex items-center justify-between">
               <div>
@@ -894,7 +897,7 @@ export default function SettingsPage() {
                 onClick={unlinkAccountant}
                 className="text-xs text-red-400 hover:text-red-600 font-medium"
               >
-                Ontkoppelen
+                {t('inst.ontkoppelen')}
               </button>
             </div>
 
@@ -961,9 +964,9 @@ export default function SettingsPage() {
           >
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                Facturering
+                {t('inst.facturering')}
               </p>
-              <p className="text-sm font-medium text-gray-900">Je plan en je btw-facturen</p>
+              <p className="text-sm font-medium text-gray-900">{t('inst.plan')}</p>
             </div>
             <span className="material-symbols-outlined text-gray-400 icon-dir" aria-hidden>chevron_right</span>
           </Link>
@@ -979,9 +982,9 @@ export default function SettingsPage() {
           >
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                Team
+                {t('inst.team')}
               </p>
-              <p className="text-sm font-medium text-gray-900">Wie mag er facturen maken voor je bedrijf</p>
+              <p className="text-sm font-medium text-gray-900">{t('start.team.sub')}</p>
             </div>
             <span className="material-symbols-outlined text-gray-400 icon-dir" aria-hidden>chevron_right</span>
           </Link>
@@ -990,7 +993,7 @@ export default function SettingsPage() {
         {/* [BOEK-032] Gevarenzone — gegevens exporteren + account verwijderen */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3 border border-red-100">
           <p className="text-xs font-semibold text-red-400 uppercase tracking-wide">
-            Gevarenzone
+            {t('inst.gevarenzone')}
           </p>
           <p className="text-sm text-gray-500">
             Exporteer eerst al je gegevens. Daarna kun je je account verwijderen.
@@ -1015,12 +1018,12 @@ export default function SettingsPage() {
               disabled={!exportConfirmed}
               className="flex-1 border border-red-300 text-red-600 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Account verwijderen
+              {t('inst.accountVerwijderen')}
             </button>
           </div>
           {!exportConfirmed && (
             <p className="text-xs text-gray-400">
-              Verwijderen is pas mogelijk nadat je je gegevens hebt geëxporteerd.
+              {t('inst.eerstExporteren')}
             </p>
           )}
         </div>
@@ -1038,7 +1041,7 @@ export default function SettingsPage() {
             style={{ borderRadius: 28 }}
             onClick={e => e.stopPropagation()}
           >
-            <h2 className="text-base font-bold text-gray-900">Account verwijderen</h2>
+            <h2 className="text-base font-bold text-gray-900">{t('inst.accountVerwijderen')}</h2>
             <p className="text-sm text-gray-500">
               Bevestig met je e-mailadres en wachtwoord. Je account wordt
               gedeactiveerd en is daarna niet meer toegankelijk. Je gegevens
@@ -1057,7 +1060,7 @@ export default function SettingsPage() {
                 value={delPassword}
                 onChange={e => setDelPassword(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="Wachtwoord"
+                placeholder={t('inst.wachtwoord')}
               />
             </div>
             {delError && <p className="text-sm text-red-500">{delError}</p>}
@@ -1067,7 +1070,7 @@ export default function SettingsPage() {
                 disabled={delLoading}
                 className="flex-1 border border-gray-300 text-gray-600 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
               >
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
               <button
                 onClick={confirmDelete}
