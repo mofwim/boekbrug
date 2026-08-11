@@ -6276,3 +6276,143 @@ test("[STATUS] the word for an invoice's state is written once", () => {
     assert.doesNotMatch(code(p), /label:\s*'Concept'/, `${p} may not define the status words again`);
   }
 });
+
+// ─── [RLS-UIT] Where row level security is OFF, something else must do its job ──────────────────
+//
+// createPipelineClient() is the service-role client: it bypasses RLS completely. On those queries
+// the only thing between one customer's invoices and another's is the filter written by hand. On
+// the invoice and money line there are 57 such queries.
+//
+// All 57 were read. Every one is scoped, for one of four reasons — and the four are what this gate
+// encodes, because a list of files would say nothing about the next file added beside them:
+//
+//   1. an owner column in the query (sender_id / receiver_id / user_id / zzper_id …), or the same
+//      thing written as .or("sender_id.eq.X,receiver_id.eq.X");
+//   2. an INSERT that STAMPS the authenticated owner into the row — an insert has nothing to
+//      filter, so what matters is that the id it writes comes from the session and not the body;
+//   3. a row created earlier in the SAME request (a rollback, a link-up), so the id was never
+//      attacker-supplied;
+//   4. the public payment link, where the pay_token IS the credential: a uuid, format-checked
+//      before the database is touched, rate-limited per token.
+//
+// What the audit did NOT do, said here so nobody reads more into this gate than it holds: it is
+// static. No cross-tenant request was executed — proving isolation by experiment needs two real
+// accounts and a running app. It also covers the money line only; the bank, accountant, aangifte
+// and messaging surfaces have their own service-role queries and were not read.
+
+test("[RLS-UIT] every service-role query on the money line is scoped to one owner", () => {
+  const ROOTS = ["src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email"];
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    if (!existsSync(dir)) return out;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+
+  // Reason 1 — the filter is in the query.
+  const OWNER_COL = /\.eq\(\s*["'](sender_id|receiver_id|user_id|owner_id|created_by|profile_id|zzper_id|accountant_id|bundle_id|original_invoice_id|invoice_id|content_hash)["']/;
+  const OR_SCOPE = /\.or\(\s*`?(sender_id|receiver_id|user_id)\.eq\./;
+  const ID_IS_USER = /\.eq\(\s*["']id["']\s*,\s*[^)]*\b(user|userId|uid|ownerId|sender_id|bundle\.user_id)\b/;
+  // Reason 4 — the token is the credential.
+  const TOKEN = /\.eq\(\s*["'](pay_token|token|public_token)["']/;
+  // Reason 2 — an INSERT that stamps the owner it got from the session.
+  const STAMPS_OWNER = /\.insert\(\s*\{[\s\S]{0,400}?(sender_id|receiver_id|user_id)\s*:\s*[^,\n]*\b(user\.id|userId|ownerId|uid)\b/;
+  // Reason 3 — acting on a row this same request created. The id is a local const from an insert,
+  // never a request field, so it is named after what it is rather than taken from params/body.
+  const OWN_NEW_ROW = /\.eq\(\s*["']id["']\s*,\s*(documentId|factuur\.id|doc\.id|invoice\.id|draft\.id|creditnota\.id|newInvoice\.id)\s*\)/;
+
+  const offenders: string[] = [];
+  for (const f of ROOTS.flatMap(walk)) {
+    const src = readFileSync(f, "utf8");
+    if (!/createPipelineClient\(/.test(src)) continue;
+
+    const names = new Set(
+      [...src.matchAll(/(?:const|let)\s+(\w+)\s*(?::[^=]+)?=\s*(?:await\s+)?createPipelineClient\(/g)].map((m) => m[1]),
+    );
+    for (const m of src.matchAll(/(\w+)\s*[:=]\s*[^;\n]*\?\s*createPipelineClient\(\)/g)) names.add(m[1]);
+
+    for (const name of names) {
+      const re = new RegExp(`\\b${name}\\s*(?:as any\\s*)?\\n?\\s*\\.from\\(\\s*["'](\\w+)["']`, "g");
+      for (const m of src.matchAll(re)) {
+        const chain = src.slice(m.index, m.index + 900)
+          .split(/\n\s*\n|\n\s*(?:const|let|return|if|await(?!\s))/)[0];
+        const ok = OWNER_COL.test(chain) || OR_SCOPE.test(chain) || ID_IS_USER.test(chain)
+          || TOKEN.test(chain) || STAMPS_OWNER.test(chain) || OWN_NEW_ROW.test(chain);
+        if (!ok) offenders.push(`${f} → ${m[1]} :: ${chain.replace(/\s+/g, " ").slice(0, 110)}`);
+      }
+    }
+  }
+
+  // ── REVIEWED EXCEPTIONS ──
+  //
+  // Four queries are safe for a reason no filter shape can express, so they are listed rather than
+  // pattern-matched. That is deliberate: another regex would make this gate permissive enough to
+  // wave through the next real hole, while a list forces a human to look and to write down why.
+  //
+  // Each entry is a file + table + the reason it was cleared. A NEW unscoped query fails this test
+  // until someone reads it and adds it here — which is the whole point.
+  const REVIEWED: readonly { file: string; table: string; why: string }[] = [
+    {
+      file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices",
+      why: "reads the invoice by id, then refuses with 403 unless sender_id or receiver_id is the " +
+        "caller — the guard is in code, before the update, not in the query",
+    },
+    {
+      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines",
+      why: "inserts lines against factuur.id, the invoice this same request just created; the id " +
+        "is never attacker-supplied",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      why: "the ids come from a bundle already found BY the pay_token, and the route rejects " +
+        "anything that is not a uuid before touching the database",
+    },
+  ];
+
+  const unreviewed = offenders.filter(
+    (o) => !REVIEWED.some((r) => o.startsWith(`${r.file} → ${r.table} ::`)),
+  );
+  assert.deepEqual(
+    unreviewed, [],
+    "a service-role query on the money line with no owner scope, and no written reason. RLS is " +
+      "OFF on these, so this is one customer's invoices reachable from another's request unless " +
+      "the filter is there. Read it; if it is safe, add it to REVIEWED with why:\n  " +
+      unreviewed.join("\n  "),
+  );
+
+  // …and the list may not rot. An entry matching nothing means the code moved out from under the
+  // review, and the sentence explaining why it was safe is now about a query that no longer
+  // exists — which is worse than no list, because it reads as though someone checked.
+  const stale = REVIEWED.filter(
+    (r) => !offenders.some((o) => o.startsWith(`${r.file} → ${r.table} ::`)),
+  ).map((r) => `${r.file} → ${r.table}`);
+  assert.deepEqual(stale, [], `reviewed exceptions that no longer match any query: ${stale.join(", ")}`);
+});
+
+test("[RLS-UIT] the audit has something to audit", () => {
+  // The control. Every assertion above is a doesNotMatch over a derived set, and a derived set
+  // that came back EMPTY — a moved directory, a renamed factory — would pass in silence while
+  // checking nothing at all. Measured at the time of the audit: 57 queries across 4 roots.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    if (!existsSync(dir)) return out;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+  const files = ["src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email"]
+    .flatMap(walk)
+    .filter((f) => /createPipelineClient\(/.test(readFileSync(f, "utf8")));
+  assert.ok(
+    files.length >= 10,
+    `only ${files.length} service-role files found on the money line — the walk is looking in the ` +
+      "wrong place, and the gate above is passing because it checked nothing",
+  );
+});
