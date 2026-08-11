@@ -177,12 +177,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // A booked payment always leaves a join row. Refuse on its mere existence — the rows written
   // before amount_applied existed carry no amount, so refuseSupersede's money check cannot see
   // them. Same guard, same reason, as /api/invoice/[id]/archive.
-  const { data: links } = await pipeline
+  //
+  // [MONEY-GUARD-CLOSED] The error is READ, and an unreadable check REFUSES. `const { data: links }`
+  // alone made a failed read answer `null`, which `?? []` turned into "no bank link" — so the guard
+  // opened on a database hiccup and a bank-linked invoice could be superseded, orphaning the
+  // payment on a number that no longer exists. That is the fail-OPEN direction on a money guard, and
+  // it is the same one the archive and numbering routes already close: a hiccup is not evidence that
+  // no payment is attached. Refusing is the recoverable direction — the owner retries in a moment.
+  const { data: links, error: linksErr } = await pipeline
     .from("bank_tx_invoices")
     .select("transaction_id")
     .eq("user_id", user.id)
     .eq("invoice_id", oldId)
     .limit(1);
+  if (linksErr) {
+    console.error("[MONEY-GUARD-CLOSED] supersede bank-link check failed — refusing", {
+      invoiceId: oldId, userId: user.id, error: linksErr.message,
+    });
+    return NextResponse.json(
+      {
+        error: "link_check_unavailable",
+        detail:
+          "We konden nu niet nagaan of er een betaling aan de oude factuur hangt. Er is niets " +
+          "gewijzigd — probeer het zo meteen opnieuw.",
+      },
+      { status: 503 },
+    );
+  }
   if ((links ?? []).length > 0) {
     return NextResponse.json(
       {

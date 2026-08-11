@@ -83,3 +83,68 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')  THEN CREATE ROLE service_role;  END IF;
 END $$;
+
+-- ═══ [RLS-PROEF] What the mandate migrations need to exist ══════════════════════════════════════
+-- Added for invoice_rls_isolation.test.sql, which applies accountant_invoice_mandate.sql and
+-- accountant_confirm_mandate.sql — the policies that let an ACCOUNTANT touch a CLIENT's invoices,
+-- which is the one cross-tenant surface with real teeth. Same philosophy as the header: exactly
+-- the columns those migrations read, and nothing invented.
+
+-- The columns the policies and the amount-guard trigger compare on NEW/OLD.
+ALTER TABLE public.invoices
+  ADD COLUMN created_by          uuid,
+  ADD COLUMN confirmed_by        uuid,
+  ADD COLUMN btw_amount          numeric,
+  ADD COLUMN total_ex_btw        numeric,
+  ADD COLUMN invoice_number      text,
+  ADD COLUMN invoice_date        date,
+  ADD COLUMN due_date            date,
+  ADD COLUMN pay_token           uuid,
+  ADD COLUMN payment_prepared_at timestamptz;
+
+CREATE TABLE public.invoice_lines (
+  -- invoice_id is a PLAIN uuid, no FK — same as bank_transactions.invoice_id above. A foreign key
+  -- here would block the TRUNCATE public.invoices that the seven bank/payment seam tests run, and
+  -- this fixture is shared with all of them. The RLS test only needs the join, not the constraint.
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id uuid,
+  description text,
+  quantity    numeric,
+  unit_price  numeric,
+  btw_rate    numeric,
+  line_total  numeric
+);
+
+-- FK target for accountant_invoice_mandates / confirmed_by.
+CREATE TABLE public.profiles (
+  id   uuid PRIMARY KEY,
+  role text
+);
+
+-- The link an accountant must hold BESIDE the mandate — has_active_invoice_mandate joins both.
+CREATE TABLE public.accountant_clients (
+  accountant_id uuid NOT NULL,
+  zzper_id      uuid NOT NULL,
+  PRIMARY KEY (accountant_id, zzper_id)
+);
+
+-- next_invoice_seq's verkoop-member exception reads these four columns.
+CREATE TABLE public.company_members (
+  owner_id   uuid NOT NULL,
+  member_id  uuid NOT NULL,
+  role       text,
+  revoked_at timestamptz,
+  PRIMARY KEY (owner_id, member_id)
+);
+
+-- In production RLS on invoices/invoice_lines is ON (enabled outside these migrations, from the
+-- original dashboard setup — the base invoices_zzp_* policies are NOT in this repo). Enabling it
+-- here means: under the test, ONLY the mandate policies exist, so any row an impersonated session
+-- can reach is reached THROUGH the policy under test. The seven existing seam tests run as the
+-- superuser table owner, which RLS never applies to, so they are untouched by this.
+ALTER TABLE public.invoices      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoice_lines ENABLE ROW LEVEL SECURITY;
+
+GRANT USAGE ON SCHEMA public, auth TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated;
