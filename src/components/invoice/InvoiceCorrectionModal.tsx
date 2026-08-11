@@ -204,7 +204,7 @@ export default function InvoiceCorrectionModal({
               value={amounts[f.key]}
               onChange={(e) => setAmounts(f.apply(amounts, parseFloat(e.target.value) || 0))}
               aria-label={f.label}
-              style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'right', outline: 'none', color: '#202124' }}
+              style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'end', outline: 'none', color: '#202124' }}
             />
           </div>
         ))}

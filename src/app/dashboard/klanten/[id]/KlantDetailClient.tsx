@@ -134,7 +134,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
                       <div style={{ fontSize: 12.5, color: M3.neutral }}>{dateNL(iv.invoice_date)}</div>
                     </div>
                     <span style={{ fontSize: 11.5, fontWeight: 700, color: st.color, background: st.bg, borderRadius: 999, padding: '3px 9px', whiteSpace: 'nowrap' }}>{st.label}</span>
-                    <span style={{ fontFamily: FONT_NUM, fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 82, textAlign: 'right' }}>{eur.format(iv.total_inc_btw ?? 0)}</span>
+                    <span style={{ fontFamily: FONT_NUM, fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 82, textAlign: 'end' }}>{eur.format(iv.total_inc_btw ?? 0)}</span>
                   </div>
                 </Link>
               )
@@ -166,7 +166,7 @@ function Row({ k, v }: { k: string; v: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0', fontSize: 14 }}>
       <span style={{ color: M3.neutral }}>{k}</span>
-      <span style={{ color: M3.onSurface, fontWeight: 500, textAlign: 'right' }}>{v}</span>
+      <span style={{ color: M3.onSurface, fontWeight: 500, textAlign: 'end' }}>{v}</span>
     </div>
   )
 }

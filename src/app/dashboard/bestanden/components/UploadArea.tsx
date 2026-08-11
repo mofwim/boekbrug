@@ -265,7 +265,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                     onClick={() => openExistingFolder(f.existing!.folder_id, f.existing!.id)}
                     style={{
                       background: "none", border: "none", padding: 0, cursor: "pointer",
-                      textAlign: "left", display: "flex", alignItems: "center", gap: 4,
+                      textAlign: "start", display: "flex", alignItems: "center", gap: 4,
                       fontSize: 12, color: T.primary, textDecoration: "underline",
                     }}
                   >

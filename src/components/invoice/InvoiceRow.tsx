@@ -314,7 +314,7 @@ export function InvoiceRowItem({
             {invoice.client_name}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 16, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginInlineStart: 16, flexShrink: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', fontFamily: 'Roboto Mono, monospace', textDecoration: 'line-through' }}>
             {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.total_inc_btw ?? 0)}
           </span>
@@ -340,7 +340,7 @@ export function InvoiceRowItem({
         cursor: 'pointer',
         borderBottom: '1px solid #E0E0E0',
         backgroundColor: 'white',
-        borderLeft: `3px solid ${accountantBorderColor}`,
+        borderInlineStart: `3px solid ${accountantBorderColor}`,
         transition: isAccountantMode ? 'background 0.1s ease' : 'all 0.15s ease',
         // [PERF] native list virtualization: skip rendering off-screen rows.
         contentVisibility: 'auto',
@@ -357,7 +357,7 @@ export function InvoiceRowItem({
         <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {invoice.client_name}
           {invoice.invoice_date && (
-            <span style={{ marginLeft: 8, color: '#9AA0A6' }}>
+            <span style={{ marginInlineStart: 8, color: '#9AA0A6' }}>
               {new Date(invoice.invoice_date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
           )}
@@ -365,7 +365,7 @@ export function InvoiceRowItem({
       </div>
 
       {/* ── Right ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 16, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginInlineStart: 16, flexShrink: 0 }}>
 
         {/* [DS] Amount — Roboto Mono */}
         <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>

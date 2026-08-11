@@ -67,7 +67,7 @@ export function ContextMenu({
               width: "100%", display: "flex", alignItems: "center", gap: 12,
               padding: "9px 16px", background: "none", border: "none",
               fontSize: 14, color: item.danger ? T.error : T.onSurface,
-              cursor: "pointer", textAlign: "left", transition: "background 0.1s",
+              cursor: "pointer", textAlign: "start", transition: "background 0.1s",
             }}
             onMouseEnter={e => (e.currentTarget.style.background = item.danger ? T.errorContainer : T.surfaceVariant)}
             onMouseLeave={e => (e.currentTarget.style.background = "none")}

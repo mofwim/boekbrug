@@ -207,7 +207,7 @@ function ResultRow({
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 12,
-        padding: "11px 16px", textAlign: "left",
+        padding: "11px 16px", textAlign: "start",
         background: selected ? "#f1f3f4" : "transparent",
         border: "none", cursor: "pointer",
         transition: "background 0.1s",
@@ -363,7 +363,7 @@ function DropdownContent({
               onClick={() => onSelectRecent(term)}
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 16px", textAlign: "left",
+                padding: "10px 16px", textAlign: "start",
                 background: selectedIdx === i ? "#f1f3f4" : "transparent",
                 border: "none", cursor: "pointer",
                 WebkitTapHighlightColor: "transparent",

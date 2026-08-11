@@ -119,7 +119,7 @@ export default function InvoiceSentModal({
         <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 6px' }}>
           {notice.controleKop}
         </p>
-        {/* paddingInlineStart, not paddingLeft: the bullets have to sit on the reading side. */}
+        {/* paddingInlineStart, not paddingInlineStart: the bullets have to sit on the reading side. */}
         <ul style={{ margin: '0 0 20px', paddingInlineStart: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {notice.controle.map((regel) => (
             <li key={regel} style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.6 }}>{regel}</li>

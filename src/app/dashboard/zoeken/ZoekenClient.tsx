@@ -114,7 +114,7 @@ function ResultRow({ item, query, onClick }: { item: SearchResult; query: string
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 12,
-        padding: "12px 14px", textAlign: "left", background: "transparent",
+        padding: "12px 14px", textAlign: "start", background: "transparent",
         border: "none", borderRadius: 12, cursor: "pointer",
         WebkitTapHighlightColor: "transparent",
       }}

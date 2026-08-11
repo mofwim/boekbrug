@@ -153,7 +153,7 @@ export default function ClientDetailPage() {
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                 padding: '12px', fontSize: 14, fontWeight: 500, color: '#1A73E8',
-                borderRight: '1px solid #E0E0E0', textDecoration: 'none',
+                borderInlineEnd: '1px solid #E0E0E0', textDecoration: 'none',
                 transition: 'background 0.1s ease',
               }}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}

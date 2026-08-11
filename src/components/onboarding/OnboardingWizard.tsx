@@ -878,7 +878,7 @@ function ChoiceCard({ active, onClick, icon, title, desc }: {
       onClick={onClick}
       style={{
         width: "100%",
-        textAlign: "left",
+        textAlign: "start",
         padding: "18px 20px",
         borderRadius: "18px",
         border: "none",
@@ -1150,7 +1150,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
             window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding";
           }}
           style={{
-            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f8f9fa",
+            textAlign: "start", padding: "20px", borderRadius: "18px", background: "#f8f9fa",
             border: "none", cursor: "pointer", width: "100%", display: "flex", alignItems: "flex-start", gap: "16px",
           }}
         >
@@ -1241,11 +1241,11 @@ function StepDone({ firstName, role, missingSendFields }: { firstName: string; r
         </p>
       </div>
       {needsMore ? (
-        <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "left", width: "100%", lineHeight: 1.5 }}>
+        <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "start", width: "100%", lineHeight: 1.5 }}>
           Vul nog je <strong>{missingSendFields.join(", ")}</strong> in bij <strong>Instellingen</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
         </div>
       ) : (
-        <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "left", width: "100%" }}>
+        <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "start", width: "100%" }}>
           💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
         </div>
       )}

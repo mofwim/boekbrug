@@ -463,7 +463,7 @@ export default function KwartaalPage() {
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
               Facturen
-              <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 6, color: '#5F6368' }}>
+              <span style={{ fontSize: 14, fontWeight: 400, marginInlineStart: 6, color: '#5F6368' }}>
                 ({invoices.length})
               </span>
             </h2>
@@ -631,7 +631,7 @@ export default function KwartaalPage() {
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                               <span style={{ color: '#5F6368' }}>Aan</span>
-                              <span style={{ fontWeight: 500, textAlign: 'right', color: '#202124' }}>
+                              <span style={{ fontWeight: 500, textAlign: 'end', color: '#202124' }}>
                                 {invoice.client_name || '—'}
                               </span>
                             </div>

@@ -778,9 +778,9 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
             <div style={{ ...s.lineRow, marginBottom: 6 }}>
               <span style={s.label}>Omschrijving</span>
               <span style={{ ...s.label, textAlign: 'center' }}>Aantal</span>
-              <span style={{ ...s.label, textAlign: 'right' }}>Prijs</span>
+              <span style={{ ...s.label, textAlign: 'end' }}>Prijs</span>
               <span style={{ ...s.label, textAlign: 'center' }}>BTW</span>
-              <span style={{ ...s.label, textAlign: 'right' }}>Totaal</span>
+              <span style={{ ...s.label, textAlign: 'end' }}>Totaal</span>
               <span />
             </div>
             {lines.map((l, i) => {
@@ -801,7 +801,7 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
                     inputMode="decimal"
                   />
                   <input
-                    style={{ ...s.input, textAlign: 'right' }}
+                    style={{ ...s.input, textAlign: 'end' }}
                     value={l.unit_price}
                     onChange={(e) => updateLine(i, { unit_price: e.target.value })}
                     inputMode="decimal"
@@ -816,7 +816,7 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
                     <option value={9}>9%</option>
                     <option value={0}>0%</option>
                   </select>
-                  <span style={{ textAlign: 'right', fontSize: 14 }}>
+                  <span style={{ textAlign: 'end', fontSize: 14 }}>
                     {formatEuroNL(qty * price * sign)}
                   </span>
                   <button

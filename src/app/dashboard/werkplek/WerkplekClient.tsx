@@ -42,7 +42,7 @@ export default function WerkplekClient() {
                 display: 'flex', alignItems: 'center', gap: 16,
                 background: '#fff', borderRadius: R.lg, padding: '18px 16px',
                 border: 'none', boxShadow: EL1,
-                cursor: 'pointer', textAlign: 'left', width: '100%',
+                cursor: 'pointer', textAlign: 'start', width: '100%',
                 transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
                 WebkitTapHighlightColor: 'transparent',
               }}

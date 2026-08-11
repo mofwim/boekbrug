@@ -6068,3 +6068,67 @@ test("[TAAL] the translated panel holds no language of its own", () => {
   assert.doesNotMatch(modal, /textAlign: 'right'/, "use textAlign: 'end'");
   assert.doesNotMatch(modal, /paddingLeft:/, "use paddingInlineStart");
 });
+
+test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a mess", () => {
+  // 209 physical properties were converted in one sweep. That was safe in a way worth recording:
+  // in a LEFT-TO-RIGHT document `start` IS `left` and `end` IS `right`, so nothing a Dutch user
+  // sees changed by a pixel. The entire difference lands in Arabic, where physical sides put the
+  // labels, the bullets and the amounts on the wrong side of every row.
+  //
+  // THE ONE EXEMPTION, and it is not cosmetic: src/lib/invoice-pdf.tsx is @react-pdf/renderer,
+  // not the DOM. It supports `textAlign: left|right|center` and physical padding, and silently
+  // ignores the logical forms — so the sweep would have collapsed the amount columns on the
+  // invoice PDF, which is the legal document. It is also correct for it to stay physical: the PDF
+  // is Dutch in every language (see the header of messages.ts), so it is never right-to-left.
+  const PDF_STYLES = "src/lib/invoice-pdf.tsx";
+  const offenders: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || p === PDF_STYLES) continue;
+      if (/\.test\.tsx?$/.test(p)) continue;
+      const src = code(p);
+      if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
+      if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    offenders, [],
+    `use textAlign start/end and the Inline box properties:\n  ${offenders.join("\n  ")}`,
+  );
+
+  // And the exemption must still BE the exemption — if this file stops being a react-pdf
+  // stylesheet, the reason for the carve-out is gone and it should join the rest.
+  const pdf = readFileSync(PDF_STYLES, "utf8");
+  assert.match(pdf, /from '@react-pdf\/renderer'/, "the carve-out exists because this is not the DOM");
+});
+
+test("[TAAL] the document becomes right-to-left before it is painted, and stays static", () => {
+  // Two things at once, and they pull against each other.
+  //
+  // Setting <html dir> the obvious way — cookies() from next/headers in the root layout — opts
+  // EVERY route in the app into dynamic rendering, because every route inherits that layout. The
+  // 53 statically built Arabic blog articles that bring Arab shop owners here would stop being
+  // static, to set two attributes.
+  //
+  // Setting it in a client effect keeps the app static and makes the whole layout jump sides
+  // after first paint, which on an Arabic screen is not a flicker.
+  //
+  // A synchronous script in <head> does both. It is also invisible to every other gate — tsc does
+  // not parse a dangerouslySetInnerHTML string, eslint does not lint it, next build does not
+  // compile it — which is why its source is an exported constant with its own test that RUNS it.
+  const layout = code("src/app/layout.tsx");
+  assert.match(layout, /LOCALE_BOOT_SCRIPT/, "the pre-paint script must be injected");
+  assert.doesNotMatch(layout, /from ['"]next\/headers['"]/,
+    "reading cookies in the root layout would make every route in the app dynamic");
+  assert.match(layout, /lang="nl"[\s\S]{0,40}dir="ltr"/,
+    "the static markup stays Dutch — the script changes it only when a choice was made");
+
+  const boot = code("src/lib/i18n/locale-boot.ts");
+  assert.match(boot, /try\{/, "it runs first on every page; a throw there is a broken app");
+  assert.match(boot, /indexOf\(l\)<0\)return/, "a user-written cookie may not reach document.lang");
+});

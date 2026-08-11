@@ -471,7 +471,7 @@ export default function IntakeButton({
           display: 'flex', alignItems: 'center', gap: 16,
           background: '#fff', borderRadius: R.lg, padding: '18px 16px',
           border: 'none', boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
-          cursor: inFlight >= MAX_PARALLEL_INTAKE ? 'not-allowed' : 'pointer', textAlign: 'left', width: '100%',
+          cursor: inFlight >= MAX_PARALLEL_INTAKE ? 'not-allowed' : 'pointer', textAlign: 'start', width: '100%',
           fontFamily: FONT,
         }}
       >
@@ -558,7 +558,7 @@ export default function IntakeButton({
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 28 }}>photo_camera</span>
-                  <div style={{ flex: 1, textAlign: 'left' }}>
+                  <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Foto maken</p>
                     <p style={{ fontSize: 13, opacity: 0.9 }}>Bon of factuur fotograferen</p>
                   </div>
@@ -569,7 +569,7 @@ export default function IntakeButton({
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primaryContainer, color: M3.onPrimaryContainer, borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 28 }}>upload_file</span>
-                  <div style={{ flex: 1, textAlign: 'left' }}>
+                  <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Bestand uploaden</p>
                     <p style={{ fontSize: 13, opacity: 0.85 }}>PDF, afbeelding of bankafschrift</p>
                   </div>
@@ -581,7 +581,7 @@ export default function IntakeButton({
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: '#fff', color: M3.onSurface, borderRadius: R.lg, padding: '16px', border: '1.5px solid #DADCE0', cursor: 'pointer', fontFamily: FONT }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>description</span>
-                  <div style={{ flex: 1, textAlign: 'left' }}>
+                  <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>Factuur met meerdere pagina&apos;s</p>
                     <p style={{ fontSize: 12.5, color: '#5F6368' }}>Meerdere pagina&apos;s → samen één factuur</p>
                   </div>

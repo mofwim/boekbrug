@@ -57,7 +57,7 @@ export default function AccepterenClient() {
               Als je dit accepteert, kun je verkoopfacturen maken en versturen die uitgaan op naam
               en BTW-nummer van je werkgever.
             </p>
-            <ul style={{ fontSize: 14, color: M3.neutral, lineHeight: 1.7, paddingLeft: 18, margin: '0 0 20px' }}>
+            <ul style={{ fontSize: 14, color: M3.neutral, lineHeight: 1.7, paddingInlineStart: 18, margin: '0 0 20px' }}>
               <li>Je ziet <strong>alleen wat je zelf aanmaakt</strong>.</li>
               <li>Niet de bankrekening, de omzet of de facturen van collega&apos;s.</li>
               <li>Je werkgever kan je toegang op elk moment intrekken.</li>

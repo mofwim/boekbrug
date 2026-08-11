@@ -1450,7 +1450,7 @@ export default function BankClient() {
                       <button
                         key={t.id}
                         onClick={() => doMove(pm.id, t)}
-                        style={{ width: '100%', textAlign: 'left', marginBottom: 8, padding: '12px 14px', borderRadius: R.sm, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', cursor: 'pointer', fontFamily: FONT, display: 'block' }}
+                        style={{ width: '100%', textAlign: 'start', marginBottom: 8, padding: '12px 14px', borderRadius: R.sm, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', cursor: 'pointer', fontFamily: FONT, display: 'block' }}
                       >
                         <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
                           {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
@@ -1943,7 +1943,7 @@ export default function BankClient() {
                     ? 'Selectie wissen'
                     : `Selecteer alle (${batchEligibleList.length})`}
                 </button>
-                <span style={{ fontSize: 12.5, color: '#5F6368', marginLeft: 'auto' }}>
+                <span style={{ fontSize: 12.5, color: '#5F6368', marginInlineStart: 'auto' }}>
                   {batchSelectedCount > 0 ? `${batchSelectedCount} geselecteerd` : 'Vink sterke matches aan'}
                 </span>
                 <button
@@ -2469,7 +2469,7 @@ function TxCard({
             <button
               onClick={onMove}
               disabled={processing}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px', marginLeft: 6 }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px', marginInlineStart: 6 }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 15 }}>swap_horiz</span>
               Andere factuur
@@ -2782,7 +2782,7 @@ function TxCard({
                       owner can check each factuur before confirming a batch payment. Only
                       when a real invoice is matched to this number (else "Koppelen"). */}
                   {sl.cand && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, paddingLeft: 22, flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, paddingInlineStart: 22, flexWrap: 'wrap' }}>
                       {sl.cand.amount != null && (
                         <span style={{ fontSize: 12, fontWeight: 600, fontFamily: FONT_NUM, color: '#5F6368' }}>
                           {eur.format(Math.abs(sl.cand.amount))}
@@ -3126,7 +3126,7 @@ function TxCard({
               onClick={() => onSelect(c.invoiceId)}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c.invoiceId) } }}
               style={{
-                textAlign: 'left', border: `1.5px solid ${isSel ? M3.primary : '#E0E0E0'}`,
+                textAlign: 'start', border: `1.5px solid ${isSel ? M3.primary : '#E0E0E0'}`,
                 background: isSel ? M3.primaryContainer : '#fff',
                 borderRadius: R.md, padding: '8px 10px', cursor: 'pointer', fontFamily: FONT,
               }}
@@ -3237,7 +3237,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>task_alt</span>}
+          {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginInlineEnd: 4 }}>task_alt</span>}
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
         {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
@@ -3266,7 +3266,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
               // the key event here so opening the PDF doesn't ALSO select the candidate.
               onKeyDown={(e) => e.stopPropagation()}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 'auto',
+                display: 'inline-flex', alignItems: 'center', gap: 3, marginInlineStart: 'auto',
                 border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}
@@ -3284,7 +3284,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
               onKeyDown={(e) => e.stopPropagation()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
-                marginLeft: onOpenFile ? 0 : 'auto',
+                marginInlineStart: onOpenFile ? 0 : 'auto',
                 border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}
@@ -3319,7 +3319,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
             <button
               onClick={() => onOpenFile(cand.invoiceId)}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 'auto',
+                display: 'inline-flex', alignItems: 'center', gap: 4, marginInlineStart: 'auto',
                 border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}

@@ -202,7 +202,7 @@ interface BestandenPageProps {
 const newMenuItemStyle: React.CSSProperties = {
   width: "100%", display: "flex", alignItems: "center", gap: 12,
   padding: "10px 16px", background: "none", border: "none",
-  fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+  fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "start",
 };
 
 export function BestandenPage({ role }: BestandenPageProps = {}) {
@@ -1152,7 +1152,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Zoeken..."
               style={{
-                width: "100%", paddingLeft: 38, paddingRight: search ? 32 : 10,
+                width: "100%", paddingInlineStart: 38, paddingInlineEnd: search ? 32 : 10,
                 paddingTop: 8, paddingBottom: 8,
                 fontSize: 14, background: "#F1F3F4", border: "none", borderRadius: T.full,
                 color: T.onSurface, outline: "none", boxSizing: "border-box",
@@ -1208,7 +1208,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                         width: "100%", display: "flex", alignItems: "center", gap: 12,
                         padding: "10px 16px", background: "none", border: "none",
                         fontSize: 14, color: sortField === field ? T.primary : T.onSurface,
-                        fontWeight: sortField === field ? 600 : 400, cursor: "pointer", textAlign: "left",
+                        fontWeight: sortField === field ? 600 : 400, cursor: "pointer", textAlign: "start",
                       }}
                       onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
                       onMouseLeave={e => (e.currentTarget.style.background = "none")}
@@ -1225,7 +1225,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     style={{
                       width: "100%", display: "flex", alignItems: "center", gap: 12,
                       padding: "10px 16px", background: "none", border: "none",
-                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "start",
                     }}
                     onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
@@ -1411,7 +1411,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         <aside
           className={`bb-sidebar${sidebarOpen ? " open" : ""}`}
           style={{
-            width: 240, background: "white", borderRight: "1px solid #E0E0E0",
+            width: 240, background: "white", borderInlineEnd: "1px solid #E0E0E0",
             overflowY: "auto", flexShrink: 0, height: "100%",
           }}
         >
@@ -1445,7 +1445,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 <button onClick={() => navigateTo(null)} style={{
                   width: "100%", display: "flex", alignItems: "center", gap: 10,
                   padding: "8px 12px", border: "none", cursor: "pointer",
-                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  borderRadius: T.md, textAlign: "start", fontSize: 14,
                   background: rootActive ? T.primaryContainer : "transparent",
                   color: rootActive ? T.primary : T.onSurface,
                   fontWeight: rootActive ? 600 : 400,
@@ -1466,7 +1466,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 <button key={view} onClick={() => navigateToSmart(view)} style={{
                   width: "100%", display: "flex", alignItems: "center", gap: 10,
                   padding: "8px 12px", border: "none", cursor: "pointer",
-                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  borderRadius: T.md, textAlign: "start", fontSize: 14,
                   background: active ? T.primaryContainer : "transparent",
                   color: active ? T.primary : T.onSurface,
                   fontWeight: active ? 600 : 400,
@@ -1544,7 +1544,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 <button onClick={() => navigateTo(null, { trash: true })} style={{
                   width: "100%", display: "flex", alignItems: "center", gap: 10,
                   padding: "8px 12px", border: "none", cursor: "pointer",
-                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  borderRadius: T.md, textAlign: "start", fontSize: 14,
                   background: dragOverFolder === "__trash__" ? T.errorContainer : showTrash ? T.errorContainer : "transparent",
                   color: showTrash || dragOverFolder === "__trash__" ? T.error : T.outline,
                   transition: "background 0.1s",
@@ -1718,7 +1718,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           onClick={() => { setSearch(""); setSearchResults(null); setFolderResults([]); navigateTo(f.id); }}
                           style={{
                             width: "100%", display: "flex", alignItems: "center", gap: 12,
-                            padding: "12px 16px", textAlign: "left", cursor: "pointer",
+                            padding: "12px 16px", textAlign: "start", cursor: "pointer",
                             background: "transparent", border: "none",
                             borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none",
                           }}

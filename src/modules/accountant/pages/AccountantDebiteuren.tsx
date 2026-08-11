@@ -219,7 +219,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
                   )}
                 </div>
 
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ textAlign: 'end', flexShrink: 0 }}>
                   <p style={{ margin: 0, fontSize: 14.5, fontWeight: 500, color: M3.onSurface }}>
                     {euro(rij.outstanding)}
                   </p>

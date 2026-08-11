@@ -270,7 +270,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         <button
           onClick={() => router.push('/dashboard/accountant/agenda')}
           style={{
-            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'start',
             padding: '18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
             border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)', boxShadow: EL1,
           }}
@@ -302,7 +302,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 onClick={() => router.push('/dashboard/accountant/bevestigen')}
                 style={{
                   backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '14px 12px',
-                  border: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
+                  border: 'none', textAlign: 'start', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
                 }}
               >
                 <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: workQueues.toConfirm > 0 ? '#188038' : '#5F6368' }}>
@@ -324,7 +324,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 onClick={() => router.push('/dashboard/accountant/debiteuren')}
                 style={{
                   backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '14px 12px',
-                  border: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
+                  border: 'none', textAlign: 'start', cursor: 'pointer', fontFamily: 'inherit', minHeight: 88,
                 }}
               >
                 <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: workQueues.overdueCount > 0 ? '#C5221F' : '#5F6368' }}>
@@ -383,7 +383,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '12px 16px', background: 'none', border: 'none',
                   borderBottom: idx < todos.length - 1 ? '1px solid #F1F3F4' : 'none',
-                  cursor: 'pointer', textAlign: 'left', minHeight: 48,
+                  cursor: 'pointer', textAlign: 'start', minHeight: 48,
                 }}
               >
                 <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[t.type] ?? '•'}</span>
@@ -466,7 +466,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                     border: 'none',
                     borderBottom: idx < shownClients.length - 1 ? '1px solid #F1F3F4' : 'none',
                     cursor: 'pointer',
-                    textAlign: 'left',
+                    textAlign: 'start',
                     transition: 'background 0.1s',
                     minHeight: 56,
                   }}
@@ -527,7 +527,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             onClick={() => openClient(lastClientId)}
             style={{
               width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '14px 16px', cursor: 'pointer', textAlign: 'left',
+              padding: '14px 16px', cursor: 'pointer', textAlign: 'start',
               backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1,
               background: 'none',
             }}
@@ -547,7 +547,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
           onClick={() => { setShowAiPanel(p => !p); setAiResult(null); setAiPrompt('') }}
           style={{
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '14px 16px', cursor: 'pointer', textAlign: 'left',
+            padding: '14px 16px', cursor: 'pointer', textAlign: 'start',
             backgroundColor: '#202124', color: '#FFFFFF', border: 'none', borderRadius: 8,
           }}
         >

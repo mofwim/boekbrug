@@ -78,7 +78,7 @@ const s = {
   primary: { backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' } as React.CSSProperties,
   row: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
   key: { color: '#5f6368', flexShrink: 0 } as React.CSSProperties,
-  val: { color: '#202124', fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' } as React.CSSProperties,
+  val: { color: '#202124', fontWeight: 600, textAlign: 'end', wordBreak: 'break-word' } as React.CSSProperties,
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {

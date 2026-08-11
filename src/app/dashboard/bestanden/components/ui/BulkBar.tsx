@@ -38,7 +38,7 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
         }
       `}</style>
 
-      <span style={{ fontSize: 14, fontWeight: 600, color: "white", marginRight: 4 }}>
+      <span style={{ fontSize: 14, fontWeight: 600, color: "white", marginInlineEnd: 4 }}>
         {selectedCount} geselecteerd
       </span>
       <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)", margin: "0 4px" }} />

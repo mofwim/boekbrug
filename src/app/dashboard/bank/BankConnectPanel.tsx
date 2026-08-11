@@ -244,7 +244,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
           type="button"
           onClick={() => void openPicker()}
           style={{
-            display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+            display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'start',
             padding: '14px 16px', borderRadius: R.lg, background: M3.surface, boxShadow: EL1,
             border: `1px solid ${M3.outline}`, cursor: 'pointer', fontFamily: FONT,
           }}
@@ -295,7 +295,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                     disabled={busy !== null}
                     onClick={() => void connect(inst)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'start',
                       padding: '10px 12px', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}`,
                       background: busy === inst.name ? M3.primaryContainer : M3.surface,
                       cursor: busy ? 'default' : 'pointer', fontFamily: FONT, fontSize: 13.5, color: M3.onSurface,

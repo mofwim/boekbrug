@@ -218,7 +218,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         {/* ── Deadline hero (from #1) — follows the selected quarter ── */}
         <div style={{
           backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '20px',
-          display: 'flex', alignItems: 'center', gap: 16, borderLeft: `4px solid ${heroColor}`,
+          display: 'flex', alignItems: 'center', gap: 16, borderInlineStart: `4px solid ${heroColor}`,
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ fontSize: 13, fontWeight: 600, color: '#5F6368', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
@@ -245,7 +245,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
               }}>Q{q}</button>
             )
           })}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
             <button onClick={() => setYear(y => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: '#1A73E8' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
@@ -324,7 +324,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                     {/* Name + facts → opens the client's quarter */}
                     <button
                       onClick={() => openClient(row.id)}
-                      style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                      style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'start', padding: 0 }}
                     >
                       <span style={{ fontSize: 14, fontWeight: 500, color: '#202124', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
                       <span style={{ fontSize: 12, color: '#5F6368', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -389,7 +389,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                           Hij kwam voor het bestand; dat hoort niet drie klikken verderop. */}
                       <a
                         href={`/api/closing-package?year=${year}&quarter=${quarter}&clientId=${encodeURIComponent(row.id)}`}
-                        style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
+                        style={{ marginInlineStart: 'auto', flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
                       >
                         ⬇︎ Pakket
                       </a>

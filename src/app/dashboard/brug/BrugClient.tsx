@@ -372,7 +372,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     </button>
                   )
                 })}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 8 }}>
                   <button
                     onClick={() => setSelectedYear(y => Math.max(2000, y - 1))}
                     title="Vorig jaar"
@@ -514,7 +514,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                 <button
                   key={f.name}
                   onClick={() => setCwd([...cwd, f.name])}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'left', width: '100%' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'start', width: '100%' }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
                   <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
@@ -715,7 +715,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
         {row}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingLeft: 4 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingInlineStart: 4 }}>
           {([['verwerkt', 'Verwerkt'], ['in_behandeling', 'In behandeling'], ['vraag', 'Vraag']] as const).map(([key, label]) => {
             const active = status === key
             const meta = DOC_STATUS_META[key]
@@ -738,7 +738,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
           })}
         </div>
         {saveError && (
-          <div role="alert" style={{ fontSize: 12, color: M3.error, paddingLeft: 4, lineHeight: 1.45 }}>
+          <div role="alert" style={{ fontSize: 12, color: M3.error, paddingInlineStart: 4, lineHeight: 1.45 }}>
             {saveError}
           </div>
         )}

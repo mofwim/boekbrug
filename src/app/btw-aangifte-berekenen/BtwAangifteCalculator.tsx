@@ -50,9 +50,9 @@ const s = {
   label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 4 } as React.CSSProperties,
   hint: { fontSize: 12, color: '#bdc1c6', marginBottom: 8 } as React.CSSProperties,
   field: { display: 'flex', alignItems: 'center', border: '1px solid #e0e0e0', borderRadius: 12, backgroundColor: '#f8f9fa', padding: '0 14px' } as React.CSSProperties,
-  prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
+  prefix: { fontSize: 18, color: '#bdc1c6', marginInlineEnd: 8 } as React.CSSProperties,
   input: { flex: 1, fontSize: 19, fontWeight: 600, padding: '13px 0', border: 'none', outline: 'none', background: 'transparent', color: '#202124', width: '100%', fontFamily: 'inherit' } as React.CSSProperties,
-  suffix: { fontSize: 13, color: '#bdc1c6', marginLeft: 8, whiteSpace: 'nowrap' } as React.CSSProperties,
+  suffix: { fontSize: 13, color: '#bdc1c6', marginInlineStart: 8, whiteSpace: 'nowrap' } as React.CSSProperties,
   row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
 }
 

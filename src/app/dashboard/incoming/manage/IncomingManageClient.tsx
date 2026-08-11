@@ -1981,7 +1981,7 @@ export default function IncomingManageClient({
                     <button
                       key={p.id}
                       onClick={() => { setPeriod(p.id); setShowPeriodMenu(false) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: period === p.id ? 600 : 400, background: period === p.id ? M3.primaryContainer : '#fff', color: period === p.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: period === p.id ? 600 : 400, background: period === p.id ? M3.primaryContainer : '#fff', color: period === p.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
                       <span>{p.label}</span>
                       {win.label && (
@@ -2017,7 +2017,7 @@ export default function IncomingManageClient({
                     <button
                       key={f.id}
                       onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
                       <span>{f.label}</span>
                       {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
@@ -2054,7 +2054,7 @@ export default function IncomingManageClient({
                     <button
                       key={s.id}
                       onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
-                      style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                      style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
                       {s.label}
                     </button>
@@ -2183,7 +2183,7 @@ export default function IncomingManageClient({
         {autoCount > 0 && filter !== 'auto' && (
           <button
             onClick={() => { setFilter('auto'); setShowFilterMenu(false) }}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginBottom: 10, padding: '10px 14px', borderRadius: R.md, border: '1px solid #D2E3FC', background: '#E8F0FE', color: '#1A73E8', cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, textAlign: 'left' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginBottom: 10, padding: '10px 14px', borderRadius: R.md, border: '1px solid #D2E3FC', background: '#E8F0FE', color: '#1A73E8', cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, textAlign: 'start' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>auto_awesome</span>
             {autoCount === 1 ? '1 factuur is automatisch verwerkt — bekijk' : `${autoCount} facturen zijn automatisch verwerkt — bekijk`}
@@ -3468,7 +3468,7 @@ export default function IncomingManageClient({
                         key={t.id}
                         onClick={() => executeMovePayment(p.id, t, moveCtx.inv)}
                         style={{
-                          width: '100%', textAlign: 'left', marginBottom: 8, padding: '12px 14px',
+                          width: '100%', textAlign: 'start', marginBottom: 8, padding: '12px 14px',
                           borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
                           cursor: 'pointer', fontFamily: FONT, display: 'block',
                         }}
