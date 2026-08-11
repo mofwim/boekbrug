@@ -307,7 +307,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
               Controleer ze zodat de kosten en BTW-aftrek in je boeken komen.
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
         </button>
       )}
 
@@ -333,7 +333,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
               Deze staan op geen betaallijst — controleer of betaal ze.
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
         </button>
       )}
 

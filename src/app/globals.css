@@ -752,3 +752,19 @@ input::placeholder, textarea::placeholder {
     padding: 9px 10px;
   }
 }
+
+/* [TAAL] Een pijl die "terug" of "verder" betekent, wijst in het Arabisch de andere kant op.
+ *
+ * Material Symbols kantelt niet mee: het is een LETTERTYPE, en de glyph voor `chevron_right` is
+ * een naar rechts wijzende chevron in elke taal. Op een rechts-naar-links scherm betekent dat een
+ * terugknop met een pijl die van de terugweg af wijst, en een "volgende" die naar het begin
+ * wijst. Niemand meldt dat als bug; het maakt de navigatie alleen onbetrouwbaar.
+ *
+ * Wat NIET meekantelt, en dat is een keuze: verticale pijlen (omhoog is omhoog in elke taal) en
+ * tweerichtingspictogrammen zoals swap_horiz — die spiegelen verandert niets aan de betekenis en
+ * kan wél tegen hun eigen pijlpunten in gaan. Zie de lijst in het script dat `icon-dir` zet, en
+ * de [TAAL]-poort die controleert dat elk richtingsicoon hem heeft.
+ */
+[dir="rtl"] .icon-dir {
+  transform: scaleX(-1);
+}

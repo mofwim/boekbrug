@@ -378,7 +378,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     title="Vorig jaar"
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
                   </button>
                   <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>
                     {selectedYear}
@@ -389,7 +389,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     title="Volgend jaar"
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: selectedYear >= curYear ? 'default' : 'pointer', color: selectedYear >= curYear ? M3.outline : M3.primary, opacity: selectedYear >= curYear ? 0.4 : 1 }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
                   </button>
                 </div>
               </div>
@@ -441,7 +441,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
         </button>
         {cwd.map((seg, i) => (
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
             <button
               onClick={() => setCwd(cwd.slice(0, i + 1))}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === cwd.length - 1 ? M3.onSurface : M3.primary, fontWeight: i === cwd.length - 1 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
@@ -519,7 +519,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
                   <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
                   <span style={{ fontSize: 12, color: M3.outline, fontWeight: 600 }}>{f.count}</span>
-                  <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
                 </button>
               ))}
             </div>

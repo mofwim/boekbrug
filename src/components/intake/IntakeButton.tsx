@@ -490,7 +490,7 @@ export default function IntakeButton({
               : 'Maak een foto of upload — AI sorteert het'}
           </p>
         </div>
-        <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+        <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
       </button>
     )
 
@@ -672,7 +672,7 @@ export default function IntakeButton({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: restoring ? 'default' : 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10, opacity: restoring ? 0.6 : 1 }}
               >
                 {restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
-                {!restoring && <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>}
+                {!restoring && <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>}
               </button>
             )}
 
@@ -682,7 +682,7 @@ export default function IntakeButton({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10 }}
               >
                 Bekijk de bestaande factuur
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>arrow_forward</span>
               </button>
             )}
             {/* [INTAKE-FORCE] A semantic match can be a false positive (two distinct

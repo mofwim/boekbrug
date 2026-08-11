@@ -390,7 +390,7 @@ function AttentionRow({ item, onClick, divider }: {
           {eur.format(item.total)}
         </div>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#9aa0a6', fontSize: 20, flexShrink: 0 }}>chevron_right</span>
+      <span className="material-symbols-outlined icon-dir" style={{ color: '#9aa0a6', fontSize: 20, flexShrink: 0 }}>chevron_right</span>
     </button>
   )
 }

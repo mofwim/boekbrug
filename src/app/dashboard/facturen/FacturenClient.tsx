@@ -1328,7 +1328,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>forward_to_inbox</span> Opnieuw versturen</>}
+                            : <><span className="material-symbols-outlined icon-dir" style={{ fontSize: 14 }}>forward_to_inbox</span> Opnieuw versturen</>}
                         </button>
                       )}
 

@@ -1864,7 +1864,7 @@ export default function IncomingManageClient({
                   borderRadius: R.full, background: '#fff', border: `1px solid ${M3.surfaceVariant}`,
                   fontSize: 13, fontWeight: 600, fontFamily: FONT, color: '#3c4043', cursor: 'pointer',
                 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>
                 Meerdere annuleren
               </button>
             )}
@@ -3228,7 +3228,7 @@ export default function IncomingManageClient({
                 color: undoPlan.eligible.length > 0 && !bundleBusy ? '#7C5800' : '#9AA0A6',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>undo</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>undo</span>
               {bundleBusy ? 'Bezig…' : 'Terugdraaien'}
             </button>
           </div>
@@ -3678,7 +3678,7 @@ export default function IncomingManageClient({
                   onClick={() => viewOriginal(dupWarn.match.id)}
                   style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   Bekijk de betaalde factuur
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>arrow_forward</span>
                 </button>
               )}
               <button

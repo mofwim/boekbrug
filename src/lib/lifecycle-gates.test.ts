@@ -6321,3 +6321,58 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
   // And the translator must actually be bound, or every t() above is a crash rather than a word.
   assert.match(page, /const t = translator\(taal\)/);
 });
+
+test("[TAAL] an arrow that means a direction flips for Arabic", () => {
+  // Material Symbols is a FONT. The glyph for `chevron_right` is a right-pointing chevron in
+  // every language, so on a right-to-left screen a back button points away from the way back and
+  // "next" points at the beginning. Nobody reports that as a bug; it just makes the navigation
+  // untrustworthy for the people the translation was for.
+  //
+  // The fix is one CSS rule keyed on the direction the boot script already sets, and a class on
+  // the icons that mean a direction. This gate is the half that rots: the rule keeps working, and
+  // the NEXT chevron somebody adds simply does not carry the class.
+  const DIRECTIONAL = [
+    "arrow_back", "arrow_forward", "chevron_left", "chevron_right",
+    "arrow_back_ios", "arrow_forward_ios", "first_page", "last_page",
+    "keyboard_arrow_left", "keyboard_arrow_right",
+    // These three were tagged by the sweep but were missing from this list — so a future
+    // `undo` would have been added untagged and the gate would have stayed green. The list that
+    // ENFORCES and the list that APPLIED have to be the same list, which is the same defect class
+    // as [CENT]: one fact, two definitions, and only one of them is checked.
+    "undo", "redo", "reply",
+  ];
+  const untagged: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!p.endsWith(".tsx") || /\.test\.tsx$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      for (const m of src.matchAll(/<span\b[^>]*className="(material-symbols-outlined[^"]*)"[^>]*>\s*([a-z_]+)\s*<\/span>/g)) {
+        if (DIRECTIONAL.includes(m[2]) && !m[1].includes("icon-dir")) untagged.push(`${p} — ${m[2]}`);
+      }
+      // A bare ← or → in its own span is the same affordance in text form.
+      for (const m of src.matchAll(/<span\b([^>]*)>\s*[←→]\s*<\/span>/g)) {
+        if (!m[1].includes("icon-dir")) untagged.push(`${p} — a bare arrow`);
+      }
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    untagged, [],
+    `these point the wrong way in Arabic — add the icon-dir class:\n  ${untagged.join("\n  ")}`,
+  );
+
+  // And the rule they depend on. Without it the class is decoration.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /\[dir="rtl"\]\s*\.icon-dir\s*\{[^}]*scaleX\(-1\)/,
+    "the flip rule must exist, and must be keyed on dir=rtl so Dutch is untouched");
+
+  // Vertical arrows deliberately do NOT carry it: up is up in every language, and mirroring a
+  // two-way exchange icon changes nothing while risking a wrong-looking arrowhead.
+  const anyFile = readFileSync("src/app/dashboard/facturen/FacturenClient.tsx", "utf8");
+  const vertical = anyFile.match(/className="[^"]*icon-dir[^"]*"[^>]*>\s*(arrow_upward|arrow_downward|expand_more|expand_less|swap_horiz)\s*</);
+  assert.equal(vertical, null, `a non-directional icon was tagged: ${vertical?.[1]}`);
+});

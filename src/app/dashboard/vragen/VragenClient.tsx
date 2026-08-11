@@ -109,7 +109,7 @@ export default function VragenClient({
               <span style={{ display: 'block', fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>Mist er een bon?</span>
               <span style={{ display: 'block', fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>Voeg hem toe — de app sorteert hem</span>
             </span>
-            <span className="material-symbols-outlined" style={{ color: '#9aa0a6', fontSize: 20 }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ color: '#9aa0a6', fontSize: 20 }}>chevron_right</span>
           </button>
         )}
       </div>

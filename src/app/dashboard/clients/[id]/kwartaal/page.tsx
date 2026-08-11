@@ -402,7 +402,7 @@ export default function KwartaalPage() {
         >
           <span className="text-xl">📂</span>
           <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
-          <span style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
+          <span className="icon-dir" style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
         </button>
 
         {/* [COHERENCE-CLOSING] Download the closing package HERE — the exact place the

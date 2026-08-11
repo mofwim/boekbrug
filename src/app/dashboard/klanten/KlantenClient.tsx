@@ -311,7 +311,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
                     </div>
-                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
                   </div>
 
                   {/* Inline expand */}

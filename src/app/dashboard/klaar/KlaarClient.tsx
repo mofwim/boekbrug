@@ -145,13 +145,13 @@ export default function KlaarClient() {
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
             <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>{year}</span>
             {/* Stepping INTO the current year can strand the selection on a quarter that has not
                 started (Q4 2025 → 2026 in January), so the quarter is clamped with the year. */}
             <button onClick={() => { const next = Math.min(year + 1, curYear); setYear(next); if (next === curYear && quarter > curQuarter) setQuarter(curQuarter) }} disabled={year >= curYear} title="Volgend jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
         </div>
@@ -266,7 +266,7 @@ export default function KlaarClient() {
               </div>
               <Link href={`/dashboard/aangifte?year=${year}&quarter=${quarter}`} style={{ fontSize: 12.5, color: M3.primary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
                 Bekijk de concept-aangifte
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
               </Link>
             </div>
 
@@ -310,7 +310,7 @@ function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
         {item.fix && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6, fontSize: 12.5, fontWeight: 700, color: M3.primary }}>
             {item.fix.label}
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
           </span>
         )}
       </div>

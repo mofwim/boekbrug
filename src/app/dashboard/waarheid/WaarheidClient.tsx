@@ -617,7 +617,7 @@ export default function WaarheidClient() {
                 style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 14, fontSize: 13.5, fontWeight: 600, color: M.primary, textDecoration: "none" }}
               >
                 Naar de BTW-aangifte van deze periode
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chevron_right</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>chevron_right</span>
               </Link>
             )}
           </div>

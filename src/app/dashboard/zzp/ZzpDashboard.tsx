@@ -183,7 +183,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 Bekijk de vraag en antwoord hier
               </span>
             </span>
-            <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
           </button>
         )}
 
@@ -210,7 +210,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
             <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Ben ik klaar?</span>
             <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>Status van je kwartaal — en klaar voor de boekhouder</span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
         </button>
 
         {/* [DASH-SIMPLIFY] Grouped home — same destinations as before, now in four
@@ -376,7 +376,7 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 2 }}>{label}</p>
         <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+      <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
     </button>
   )
 }

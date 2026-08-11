@@ -965,9 +965,7 @@ export default function SettingsPage() {
               </p>
               <p className="text-sm font-medium text-gray-900">Je plan en je btw-facturen</p>
             </div>
-            <span className="material-symbols-outlined text-gray-400" aria-hidden>
-              chevron_right
-            </span>
+            <span className="material-symbols-outlined text-gray-400 icon-dir" aria-hidden>chevron_right</span>
           </Link>
         )}
 
@@ -985,9 +983,7 @@ export default function SettingsPage() {
               </p>
               <p className="text-sm font-medium text-gray-900">Wie mag er facturen maken voor je bedrijf</p>
             </div>
-            <span className="material-symbols-outlined text-gray-400" aria-hidden>
-              chevron_right
-            </span>
+            <span className="material-symbols-outlined text-gray-400 icon-dir" aria-hidden>chevron_right</span>
           </Link>
         )}
 
