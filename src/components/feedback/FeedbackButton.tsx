@@ -23,6 +23,9 @@ import { useState, useRef, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import { FEEDBACK_MAX_CHARS, FEEDBACK_MAX_IMAGE_BYTES } from '@/lib/feedback'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [FEEDBACK-SEND] Dezelfde helper als elk ander bodempaneel. Dit bestand rekende
+// zijn onderrand met de hand uit en vergat de balk; de helper kan dat niet vergeten.
+import { sheetPaddingBottom } from '@/lib/design/tokens'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 
@@ -141,8 +144,25 @@ export default function FeedbackButton() {
     >
       <div style={{
         background: '#fff', width: '100%', maxWidth: 520, borderRadius: '16px 16px 0 0',
-        padding: 16, paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-        maxHeight: '85vh', overflowY: 'auto',
+        padding: 16,
+        // [FEEDBACK-SEND] Reserve the bottom bar, not only the device's safe area.
+        // This panel sticks to the bottom of the screen and on mobile a 64px
+        // BottomNav sits on top of it, so the send button ended 48px BEHIND that
+        // bar. It was drawn; a tap on it reached the bar and opened Bestanden
+        // instead. Measured on this component at 393x830: the button ended at
+        // 814px, the bar started at 766px, and elementFromPoint at the button's
+        // centre returned the bar.
+        //
+        // On this panel in particular that is the most expensive bug available:
+        // whoever opens it has already watched something break, types it up, and
+        // then cannot send it — so we never hear about it. The floating button
+        // further up this same file already counted --bottom-nav-h (line 117), as
+        // does InvoiceCorrectionModal; only this panel did not.
+        paddingBottom: sheetPaddingBottom(16),
+        // dvh rather than vh: with the keyboard open the visible viewport shrinks
+        // and vh does not, so 85vh ran on behind the keyboard — same button, same
+        // problem, second cause.
+        maxHeight: '85dvh', overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <strong style={{ fontSize: 15, color: '#202124' }}>Er ging iets mis</strong>

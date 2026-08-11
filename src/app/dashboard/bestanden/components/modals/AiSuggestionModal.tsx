@@ -3,6 +3,7 @@
 // [BOEK-033] AI classification suggestion popup after file upload
 
 import { T } from "../../tokens";
+import { sheetPaddingBottom } from "@/lib/design/tokens";
 import { Icon } from "../ui/Icon";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
@@ -34,6 +35,9 @@ export function AiSuggestionModal({
         width: "100%", maxWidth: 480, margin: "0 auto",
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,
+        // [SHEET-BOTTOM] Reserve the bottom bar. Without it the last button in
+        // this panel lands behind BottomNav, which paints at z-index 2000.
+        paddingBottom: sheetPaddingBottom(0),
         boxShadow: "0 -4px 32px rgba(0,0,0,0.18)",
         fontFamily: "'Roboto',sans-serif",
         overflow: "hidden",
