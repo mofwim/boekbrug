@@ -5559,3 +5559,69 @@ test("[KLANT-EXTRA] the migration is additive and the generated types carry all 
   assert.equal((types.match(/client_extra_line1/g) ?? []).length, 3, "Row + Insert + Update");
   assert.equal((types.match(/client_extra_line2/g) ?? []).length, 3);
 });
+
+// ─── [GEGROND-NAAM] The supplier name had no witness ────────────────────────────────────────────
+//
+// Reported: an invoice from BALKIP B.V. — its own letterhead, KVK, IBAN, sent from info@balkip.nl
+// — was imported as "GROOTHANDEL M.H. BAL V.O.F.". A different company. Its three amounts were
+// read correctly and the app said so.
+//
+// Three explanations were checked and ruled out before anything was written: supplierNameKey is
+// token-exact so nothing could merge "balkip" and "groothandel mh bal"; the supplier registry
+// never overwrites what was read; and the learned reading hints are computed per screen for
+// display and never reach the model's prompt. The reader produced a name that is not on the paper.
+//
+// What let it through is the asymmetry this closes. amount-grounding.ts searches the document's
+// own characters for each of the three figures — an independent witness that does not ask the
+// reader to check its own work. Nothing asked the same question about the NAME, so the one field
+// that was wrong was the one field with no check on it.
+//
+// The name is not a label. invoices.client_name is the identity key knownIbanForVendor uses, and
+// that is what stands between the owner and a payment redirected to a stranger: a name read as a
+// DIFFERENT company does not fail it — it looks up a different supplier and passes clean.
+
+test("[GEGROND-NAAM] the reader grounds the vendor name on the document's own text", () => {
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /_vendorGrounding = \{/, "the verdict must be stored beside _grounding");
+  assert.match(
+    ai, /verdict: groundVendorName\(parsed\.vendor, statementText\)/,
+    "…grounded on the name that BECOMES client_name, against the document's own text",
+  );
+  // Never against the OCR transcription: that second read is asked for the AMOUNTS, so finding no
+  // name in it would say nothing about the invoice.
+  assert.doesNotMatch(ai, /groundVendorName\([^)]*transcribed/, "the OCR text carries no name");
+});
+
+test("[GEGROND-NAAM] an unfound name reaches the owner, on the vendor field", () => {
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /_vendorGrounding\?: \{ verdict\?: string/, "health must read the verdict");
+  const block = health.slice(health.indexOf("vendorGrounding?.verdict === 'absent'"));
+  assert.ok(block.length > 0, "nothing acts on the verdict — a check nobody is shown did not happen");
+  assert.match(block.slice(0, 700), /flags\.vendor = true/, "the SUPPLIER field is the one at fault");
+  // Not the amounts: on the measured invoice all three were correct, and pointing at them would
+  // send the owner to the only part that was right.
+  assert.doesNotMatch(block.slice(0, 400), /flags\.arithmetic = true/);
+  assert.match(block.slice(0, 900), /staat nergens in de tekst van dit document/);
+});
+
+test("[GEGROND-NAAM] only 'absent' speaks, and it blocks nothing", () => {
+  const lib = code("src/lib/vendor-grounding.ts");
+  // A great many invoices print their name only inside a logo, which carries no characters — a
+  // perfectly correct read then has nothing to find. Flagging those would put a warning on
+  // ordinary invoices, and a warning nobody reads is worse than none.
+  assert.match(lib, /if \(verdict !== "absent"\) return null/, "found/unreadable must say nothing");
+  assert.match(lib, /if \(t\.length < MIN_TEXT_LENGTH\) return "unreadable"/, "no text layer, no verdict");
+  assert.match(lib, /if \(!isReliableSupplierName\(name\)\) return "unreadable"/, "a placeholder proves nothing");
+  assert.match(lib, /if \(tokens\.length === 0\) return "unreadable"/, "nor a name with no distinctive part");
+
+  // Whole tokens only. "bal" occurs inside "balans" and "totaal", so substring matching would have
+  // CONFIRMED the very read this exists to catch, using the word TOTAAL.
+  assert.match(lib, /haystack\.includes\(` \$\{tok\} `\)/, "a fragment match is false corroboration");
+
+  // And it must not become a blocker. groundingBlocksAutoBooking is the amount check's escalation;
+  // this one is deliberately not in it, because it cannot tell a logo from a misread.
+  assert.doesNotMatch(
+    code("src/lib/amount-grounding.ts"), /vendorGrounding|groundVendorName/,
+    "the vendor verdict may not enter the auto-booking gate",
+  );
+});
