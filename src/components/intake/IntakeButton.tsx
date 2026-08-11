@@ -34,6 +34,10 @@ import { useToast } from '@/components/ui/Toast'
 import { M3, R, sheetPaddingBottom } from '@/lib/design/tokens'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [EERLIJK-GEBRUIK-UITLEG] De uitleg bij een bereikte maandgrens — één plek, gedeeld met het
+// beleid en Instellingen, zodat de drie nooit andere getallen noemen.
+import { fairUseNotice, type FairUseNotice } from '@/lib/fair-use-notice'
+import FairUseModal from '@/components/ui/FairUseModal'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -79,6 +83,10 @@ export default function IntakeButton({
     { message: string; originalId?: string; canForce?: boolean; archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }; file?: File; source?: 'camera' | 'upload' } | null
   >(null)
   useCloseOnBack(!!dupModal, () => setDupModal(null))
+  // [EERLIJK-GEBRUIK-UITLEG] The monthly allowance running out is a decision point, not a
+  // status line — see FairUseModal. Its own state beside dupModal, because the two can both
+  // be true in one session and neither may swallow the other.
+  const [fairUse, setFairUse] = useState<FairUseNotice | null>(null)
   const [restoring, setRestoring] = useState(false)
   // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
   // the owner needs to KNOW where it landed — a persistent modal (iOS-styled,
@@ -285,7 +293,16 @@ export default function IntakeButton({
           // een storing terwijl de server de reden én de uitweg meestuurt, en een 413/504 komt van
           // het platform met een HTML-body — dus data.error bestond daar niet eens en de eigenaar
           // kreeg "Toevoegen mislukt" over een bestand waar niets mis mee was.
-          showToast(describeUploadFailure(res.status, data.error).message)
+          // [EERLIJK-GEBRUIK-UITLEG] The fair-use refusal gets a modal, not a toast. It is the
+        // most consequential thing this app says: from here documents are stored but no longer
+        // READ, so every screen the owner opens afterwards is missing invoices they believe were
+        // processed. As a toast it faded in a few seconds and never named the limit at all.
+        //
+        // Keyed on `reason === 'fair_use'`, never on the 402 status alone — a payment provider
+        // answers 402 too, and a monthly-allowance explanation would be nonsense there.
+        const fu = fairUseNotice(data)
+        if (fu) setFairUse(fu)
+        else showToast(describeUploadFailure(res.status, data.error).message)
           outcome = 'error'
         }
         return outcome
@@ -629,6 +646,8 @@ export default function IntakeButton({
 
       {/* [DUP-MODAL] Persistent duplicate dialog — stays until dismissed, with
           a link to the existing invoice (same deep-link as notifications). */}
+      {fairUse && <FairUseModal notice={fairUse} onClose={() => setFairUse(null)} />}
+
       {dupModal && (
         <div
           onClick={() => setDupModal(null)}
