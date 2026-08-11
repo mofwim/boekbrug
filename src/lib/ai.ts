@@ -82,6 +82,10 @@ import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE } from './ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 // [GEGROND] The independent witness on a money field — see amount-grounding.ts.
 import { groundMoneyFields } from './amount-grounding';
+// [GEGROND-NAAM] The same independent witness, for the supplier NAME — the one field on an
+// incoming invoice that had no check at all. See the header of that file for the read that
+// showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
+import { groundVendorName } from './vendor-grounding';
 // [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
 // factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
 import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
@@ -1972,6 +1976,19 @@ Return JSON only.`;
       }
 
       (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
+
+      // [GEGROND-NAAM] And the same question about the NAME, on the same characters. Grounded
+      // against `statementText` only — never against an OCR transcription, because that
+      // transcription is asked for the AMOUNTS and finding no name in it would say nothing.
+      //
+      // The name is not a label: invoices.client_name is the identity key knownIbanForVendor uses,
+      // and that check is what stands between the owner and a payment redirected to a stranger. A
+      // name read as a DIFFERENT company does not fail it — it looks up a different supplier and
+      // passes clean.
+      (parsed.field_confidence as unknown as Record<string, unknown>)._vendorGrounding = {
+        verdict: groundVendorName(parsed.vendor, statementText),
+        name: typeof parsed.vendor === 'string' ? parsed.vendor : null,
+      };
 
       // [DOCCHECK] The sharper question, on the same text. Grounding proves a figure is PRINTED;
       // this asks whether it is printed WHERE A TOTAL IS PRINTED — which is what tells a real total

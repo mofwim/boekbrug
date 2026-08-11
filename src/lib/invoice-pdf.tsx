@@ -44,6 +44,10 @@ import { formatUnitPriceNL } from './unit-price-display'
 // [BTW-VERKLARING] Waarom er geen btw op deze factuur staat — KOR, vrijstelling of de eigen zin
 // van de ondernemer. Spreekt nooit over de verleggingsregel heen; zie de kop van vat-statement.ts.
 import { vatStatement } from './vat-statement'
+// [KLANT-EXTRA] De twee vrije regels onder de klantnaam ("t.a.v. …", een afdeling of een
+// inkoopordernummer). Lege regels vallen weg, zodat een factuur zonder deze velden precies het
+// blok houdt dat hij altijd al had.
+import { clientExtraLines } from './client-extra-lines'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -368,6 +372,14 @@ export function InvoicePDF({
           {/* Klant — Art. 35a sub c: name AND address of the customer */}
           <View style={styles.klantBlock}>
             <Text style={styles.partyName}>{invoice.client_name || '—'}</Text>
+            {/* [KLANT-EXTRA] The owner's own lines, directly under the name and above the street:
+                "t.a.v. mevrouw Jansen", a department, a purchase-order reference the customer's
+                system needs to match the invoice. Empty ones are dropped by clientExtraLines, so
+                an invoice with neither filled — which is every invoice created before this field —
+                renders exactly the block it rendered before, with no gap where a line would be. */}
+            {clientExtraLines(invoice).map((line, i) => (
+              <Text key={i} style={styles.partyText}>{line}</Text>
+            ))}
             <Text style={styles.partyText}>{invoice.client_address || ''}</Text>
             <Text style={styles.partyText}>
               {invoice.client_postal_code || ''} {invoice.client_city || ''}

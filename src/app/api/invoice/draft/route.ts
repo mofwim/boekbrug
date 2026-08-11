@@ -36,6 +36,9 @@ import { writeWithTrail } from '@/lib/created-by'
 // [ARTIKEL-LEREN] Eén module voor beide deuren (deze en het bewerkscherm) — twee kopieën van
 // dezelfde regel lopen uit elkaar zonder dat er iets rood wordt.
 import { learnFromLines } from '@/lib/article-learning-store'
+// [KLANT-EXTRA] Twee vrije klantregels onder de klantnaam — zie de kop van dat bestand.
+import { extraLineFields } from '@/lib/client-extra-lines-write'
+import { CLIENT_EXTRA_LINE_COLUMNS } from '@/lib/client-extra-lines'
 
 export const dynamic = 'force-dynamic'
 
@@ -236,6 +239,30 @@ export async function POST(request: NextRequest) {
     if (insertErr || !factuur) {
       console.error('[ACTING-FOR] concept aanmaken mislukt', { insertErr, ownerId, namens: isActingForOther(acting) })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
+    }
+
+    // ── [KLANT-EXTRA] De twee vrije klantregels, in een EIGEN schrijfbeurt ───
+    //
+    // Bewust NIET in de insert hierboven en ook niet in het spoor ernaast. Zou een onbekende kolom
+    // die insert laten mislukken, dan valt writeWithTrail terug op een poging ZONDER spoor — en
+    // dan verliest deze factuur ook created_by, de vastlegging van wie hem namens wie heeft
+    // aangemaakt. Twee adresregels mogen dat spoor niet meenemen in hun val.
+    //
+    // Dus: de factuur staat er al, en dit is een aparte update die mag mislukken. Kost één extra
+    // rondje, en alleen wanneer de ondernemer de velden ook echt heeft ingevuld.
+    const extraLines = extraLineFields(...CLIENT_EXTRA_LINE_COLUMNS.map((c) => body[c]))
+    if (CLIENT_EXTRA_LINE_COLUMNS.some((c) => extraLines[c])) {
+      const { error: extraErr } = await pipeline
+        .from('invoices')
+        .update(extraLines as never)
+        .eq('id', factuur.id)
+        .eq('sender_id', ownerId)
+      if (extraErr) {
+        // Luid, want dit is tijdelijk: het betekent dat de migratie nog open staat. Het concept
+        // zelf staat er, met alle bedragen — wat ontbreekt zijn de twee regels onder de klantnaam.
+        console.warn('[KLANT-EXTRA] de twee klantregels konden niet worden opgeslagen — pas ' +
+          'supabase/migrations/client_extra_lines.sql toe', { invoiceId: factuur.id, error: extraErr.message })
+      }
     }
 
     // ── De regels ────────────────────────────────────────────────────────────

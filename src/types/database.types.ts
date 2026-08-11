@@ -1517,6 +1517,9 @@ export type Database = {
           client_btw_number: string | null
           client_city: string | null
           client_email: string | null
+          client_extra_line1: string | null
+          client_extra_line2: string | null
+          client_extra_line3: string | null
           client_id: string | null
           client_name: string | null
           client_postal_code: string | null
@@ -1572,6 +1575,9 @@ export type Database = {
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_extra_line1?: string | null
+          client_extra_line2?: string | null
+          client_extra_line3?: string | null
           client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null
@@ -1626,6 +1632,9 @@ export type Database = {
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_extra_line1?: string | null
+          client_extra_line2?: string | null
+          client_extra_line3?: string | null
           client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null

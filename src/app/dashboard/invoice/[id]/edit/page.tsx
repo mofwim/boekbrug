@@ -25,6 +25,8 @@ import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMo
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
+// [KLANT-EXTRA] Zelfde bovengrens als het document en de schrijfroute — zie de kop daarvan.
+import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
 
 type InvoiceLine = {
   description: string
@@ -79,6 +81,12 @@ export default function InvoiceEditPage() {
   const [clientCity, setClientCity] = useState('')
   const [clientEmail, setClientEmail] = useState('')
   const [clientBtw, setClientBtw] = useState('')
+  // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
+  // afdeling of het inkoopordernummer dat de klant op de factuur wil zien. Leeg is de normale
+  // toestand en levert precies het documentblok op dat er altijd al stond.
+  const [clientExtra1, setClientExtra1] = useState('')
+  const [clientExtra2, setClientExtra2] = useState('')
+  const [clientExtra3, setClientExtra3] = useState('')
 
   // التواريخ
   const [invoiceDate, setInvoiceDate] = useState('')
@@ -144,6 +152,9 @@ export default function InvoiceEditPage() {
       setClientPostal(invoice.client_postal_code || '')
       setClientCity(invoice.client_city || '')
       setClientBtw(invoice.client_btw_number || '')
+      setClientExtra1(invoice.client_extra_line1 || '')
+      setClientExtra2(invoice.client_extra_line2 || '')
+      setClientExtra3(invoice.client_extra_line3 || '')
       setInvoiceDate(invoice.invoice_date || '')
       setDueDate(invoice.due_date || '')
       // [LEVERDATUM] Terugvallen op de factuurdatum, precies zoals /api/invoice/draft hem zet.
@@ -250,6 +261,9 @@ export default function InvoiceEditPage() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_extra_line1: clientExtra1,
+        client_extra_line2: clientExtra2,
+        client_extra_line3: clientExtra3,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -301,6 +315,9 @@ export default function InvoiceEditPage() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_extra_line1: clientExtra1,
+        client_extra_line2: clientExtra2,
+        client_extra_line3: clientExtra3,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -396,6 +413,42 @@ export default function InvoiceEditPage() {
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                 placeholder="Klant BV"
               />
+            </div>
+            {/* [KLANT-EXTRA] Direct onder de naam, want dat is ook waar ze op het document staan.
+                col-span-2 zodat een regel als "t.a.v. mevrouw Jansen · afdeling Inkoop" leesbaar
+                blijft in een raster dat verder uit halve kolommen bestaat. */}
+            <div className="col-span-2 grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 1</label>
+                <input
+                  type="text" value={clientExtra1} maxLength={MAX_EXTRA_LINE_LENGTH}
+                  onChange={e => setClientExtra1(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="t.a.v. mevrouw Jansen"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 2</label>
+                <input
+                  type="text" value={clientExtra2} maxLength={MAX_EXTRA_LINE_LENGTH}
+                  onChange={e => setClientExtra2(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="Afdeling Inkoop of PO-2026-114"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 3</label>
+                <input
+                  type="text" value={clientExtra3} maxLength={MAX_EXTRA_LINE_LENGTH}
+                  onChange={e => setClientExtra3(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="Kostenplaats of contractnummer"
+                />
+              </div>
+              <p className="col-span-2 text-xs text-gray-500 -mt-1">
+                Deze drie regels komen op het document direct onder de klantnaam te staan. Laat ze
+                leeg als je ze niet nodig hebt.
+              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">

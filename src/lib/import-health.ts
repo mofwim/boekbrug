@@ -287,6 +287,37 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     )
   }
 
+  // [GEGROND-NAAM] Dezelfde vraag over de NAAM, en tot nu toe stelde niemand hem.
+  //
+  // Gemeten: een factuur van BALKIP B.V. — eigen briefhoofd, eigen KVK, eigen IBAN, verstuurd
+  // vanaf info@balkip.nl — kwam binnen als "GROOTHANDEL M.H. BAL V.O.F.". Een ander bedrijf. De
+  // drie bedragen waren goed gelezen en dat werd ook gemeld; het ENIGE veld dat fout was, was het
+  // enige veld zonder controle erop.
+  //
+  // Het is geen etiket. invoices.client_name is de identiteitssleutel waarmee knownIbanForVendor
+  // de leverancier opzoekt — de controle die tussen de ondernemer en een omgeleide betaling staat.
+  // Een naam die als een ANDER bedrijf wordt gelezen zakt daar niet voor: hij zoekt een andere
+  // leverancier op en komt schoon door.
+  //
+  // Blokkeert met opzet niets. Veel facturen drukken hun naam alleen in een logo af, en dat is een
+  // afbeelding zonder letters — dan heeft een volkomen juiste lezing niets te vinden. Daarom
+  // spreekt alleen 'absent', en spreekt het als "kijk hier even naar", nooit als "dit is fout".
+  const vendorGrounding = (fc as unknown as {
+    _vendorGrounding?: { verdict?: string; name?: string | null }
+  } | null)?._vendorGrounding
+  if (vendorGrounding?.verdict === 'absent') {
+    // `vendor`, niet `arithmetic`: het is de LEVERANCIER die niet klopt, en de kaart moet dat veld
+    // kunnen aanwijzen. De bedragen waren op de gemeten factuur juist — ze aanwijzen zou de
+    // ondernemer naar het enige deel sturen dat wél goed was.
+    flags.vendor = true
+    const naam = String(vendorGrounding.name ?? '').trim()
+    reasons.push(
+      naam
+        ? `de naam "${naam}" staat nergens in de tekst van dit document — controleer bij welke leverancier deze factuur hoort`
+        : 'de gelezen leveranciersnaam staat nergens in de tekst van dit document — controleer bij welke leverancier deze factuur hoort',
+    )
+  }
+
   // [DOCCHECK] En de scherpere vorm van dezelfde vraag. 'present' betekent: het bedrag STAAT wel op
   // het document, maar niet op de plek waar een totaal staat — het draagt geen totaal-label en het
   // is niet het hoogste bedrag op de pagina. Dat is precies hoe een SUBTOTAAL, een REGELBEDRAG en

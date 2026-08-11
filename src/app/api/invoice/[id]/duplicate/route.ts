@@ -12,6 +12,9 @@ import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, canAccessInvoice } from '@/lib/acting-for'
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder terugval faalt het dupliceren.
 import { writeWithTrail } from '@/lib/created-by'
+// [KLANT-EXTRA] De twee vrije klantregels reizen mee naar het nieuwe document — in een
+// aparte, mislukbare schrijfbeurt. Zie de kop van dat bestand.
+import { copyExtraLinesOnto } from '@/lib/client-extra-lines-write'
 
 export async function POST(
   request: NextRequest,
@@ -113,6 +116,14 @@ export async function POST(
     if (insertError || !newInvoice) {
       return NextResponse.json({ error: 'Dupliceren mislukt' }, { status: 500 })
     }
+
+    // [KLANT-EXTRA] Een kopie zonder de twee klantregels is een kopie die de ondernemer opnieuw
+    // moet invullen — precies het werk dat dupliceren bespaart.
+    await copyExtraLinesOnto(
+      (fields) => supabase.from('invoices').update(fields as never).eq('id', newInvoice.id),
+      original,
+      { from: id, to: newInvoice.id },
+    )
 
     const { data: originalLines } = await supabase
       .from('invoice_lines')

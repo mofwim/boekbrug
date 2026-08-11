@@ -3673,7 +3673,7 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
   const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
 
   assert.doesNotMatch(
-    route, /\.update\(patch as never\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
+    route, /\.update\(\{ \.\.\.patch[^)]*\)[\s\S]{0,200}?\.eq\('status', 'draft'\)/,
     "the compare-and-swap may not demand 'draft' — that refuses every editable sent quote",
   );
   assert.match(
@@ -3681,9 +3681,21 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
     "…it guards on the status that was READ, which is what protects against a change in between",
   );
   assert.match(
-    route, /if \(existing\.status !== 'draft'\) cas = cas\.is\('invoice_number', null\)/,
+    route, /if \(existing\.status !== 'draft'\) q = q\.is\('invoice_number', null\)/,
     "…and a non-draft may only be written while it still carries no number",
   );
+
+  // [KLANT-EXTRA] The update is now RETRIED when the two customer lines name a column the schema
+  // does not have yet, and the retry must carry the same lock as the first attempt. Both guards
+  // therefore have to sit INSIDE the retried closure — outside it, the fallback would write with
+  // no status test at all, onto exactly the invoice that may have been issued in the meantime.
+  const runPatch = route.slice(
+    route.indexOf("const runPatch = "),
+    route.indexOf("const { data: patched"),
+  );
+  assert.ok(runPatch.length > 0, "the patch is no longer built in a re-runnable function");
+  assert.match(runPatch, /\.eq\('status', existing\.status \?\? 'draft'\)/, "the retry keeps the status lock");
+  assert.match(runPatch, /q = q\.is\('invoice_number', null\)/, "…and the number lock");
   assert.match(
     route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
     "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
@@ -5487,4 +5499,262 @@ test("[EERLIJK-GEBRUIK-UITLEG] the fair-use refusal opens a modal and quotes pub
     code("src/lib/fair-use-gate.ts"), /limit: plan === "plus" \? fairUseLimit\(params\.metric\)\.plus/,
     "the 402 body must carry the limit beside the count",
   );
+});
+
+// ─── [KLANT-EXTRA] Two free lines under the customer's name ─────────────────────────────────────
+//
+// Asked for: two extra inputs in the customer block of an invoice, for information the owner needs
+// to put on their customer's document — and they come DIRECTLY AFTER THE NAME. That last part is
+// the requirement, not a detail: an addressee line printed under the postcode is not an addressee
+// line. So the order is asserted here on the form, and on a rendered PDF in
+// invoice-pdf-document.test.ts, which is the only place that can say where the text came out.
+//
+// The other half of this feature is that it CANNOT COST AN INVOICE. The columns arrive with
+// supabase/migrations/client_extra_lines.sql, applied by the owner, so between a deploy and that
+// moment the code is newer than the schema. PostgREST answers a write naming an unknown column by
+// rejecting the whole row, which would turn two decorative address lines into "your invoice was
+// not saved". Every write path therefore carries a fallback, and this gate checks that none of
+// them names these columns without one.
+
+const EXTRA_FORMS = [
+  "src/app/dashboard/invoice/new/page.tsx",
+  "src/app/dashboard/invoice/[id]/edit/page.tsx",
+] as const;
+/** The state names, in the order they print. A fourth line costs one entry here and nowhere else. */
+const EXTRA_STATE = ["clientExtra1", "clientExtra2", "clientExtra3"] as const;
+
+test("[KLANT-EXTRA] both invoice screens put the three lines directly after the customer name", () => {
+  for (const f of EXTRA_FORMS) {
+    const screen = code(f);
+    const name = screen.indexOf('label="Bedrijfsnaam"') >= 0
+      ? screen.indexOf('label="Bedrijfsnaam"')
+      : screen.indexOf("Bedrijfsnaam");
+    const email = screen.indexOf("value={clientEmail}");
+    let previous = name;
+    EXTRA_STATE.forEach((state, i) => {
+      // BOUND to state, not merely mentioned.
+      const at = screen.indexOf(`value={${state}}`);
+      assert.ok(at > 0, `${f}: line ${i + 1} is not a bound input`);
+      // ORDER on the form, which is what was asked for: the name, then the extra lines in the
+      // order they print, then the e-mail.
+      assert.ok(at > previous, `${f}: line ${i + 1} must follow what comes before it`);
+      previous = at;
+      // …and the screen must actually SEND it, or the field is decoration.
+      assert.match(
+        screen, new RegExp(`client_extra_line${i + 1}: ${state}`), `${f}: line ${i + 1} is never sent`,
+      );
+    });
+    assert.ok(email > previous, `${f}: the lines must sit ABOVE the e-mail field, not after the address`);
+
+    // A bound input with no ceiling lets a pasted paragraph reach a customer's document.
+    const bounds = (screen.match(/maxLength=\{MAX_EXTRA_LINE_LENGTH\}/g) ?? []).length;
+    assert.equal(bounds, EXTRA_STATE.length, `${f}: every extra input needs the shared bound`);
+  }
+});
+
+test("[KLANT-EXTRA] the two screens send them on EVERY save path, not just one", () => {
+  // Both screens have two submit paths — save as draft and send. A field carried by only one of
+  // them is worse than no field: the owner types it, saves, and it is there until the moment they
+  // send, which is the moment it matters.
+  for (const f of EXTRA_FORMS) {
+    const screen = code(f);
+    const snapshots = (screen.match(/client_btw_number: clientBtw/g) ?? []).length;
+    EXTRA_STATE.forEach((_, i) => {
+      const sends = (screen.match(new RegExp(`client_extra_line${i + 1}:`, "g")) ?? []).length;
+      assert.equal(
+        sends, snapshots,
+        `${f}: line ${i + 1} travels on ${sends} of the ${snapshots} payloads carrying the customer snapshot`,
+      );
+    });
+  }
+});
+
+test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
+  // The rule this gate exists for. PostgREST rejects the WHOLE row on an unknown column, so a bare
+  // mention in an insert or update payload is an invoice that cannot be saved on any database
+  // where the migration is still open.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+  const SAFE = /writeWithExtraLines|extraLineFields|copyExtraLinesOnto/;
+  const offenders = walk("src/app/api")
+    .filter((f) => /client_extra_line[12]/.test(code(f)))
+    .filter((f) => !SAFE.test(code(f)));
+  assert.deepEqual(
+    offenders, [],
+    "these routes name client_extra_line1/2 directly. An unknown column makes PostgREST reject " +
+      "the whole row, so this is an invoice that cannot be saved — route it through " +
+      "client-extra-lines-write.ts instead",
+  );
+});
+
+test("[KLANT-EXTRA] the migration is additive and the generated types carry all three blocks", () => {
+  const raw = readFileSync("supabase/migrations/client_extra_lines.sql", "utf8");
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line1 text/);
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line2 text/);
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line3 text/);
+
+  // The STATEMENTS, without the prose. The first draft of this assertion read the whole file and
+  // failed on its own header — the sentence "Nullable, no default, no backfill" contains the word
+  // it was forbidding. A gate that reads comments is checking what the file SAYS about itself
+  // rather than what it does.
+  const sql = raw.replace(/--[^\n]*/g, " ");
+  // Nullable, no default, no backfill: every existing invoice must keep the document it renders
+  // now. A NOT NULL or a DEFAULT would rewrite the customer block of every invoice ever issued.
+  assert.doesNotMatch(sql, /NOT NULL|DEFAULT|UPDATE public\.invoices/i);
+  // …and the columns must be added to invoices, not to some other table.
+  assert.match(sql, /ALTER TABLE public\.invoices/);
+
+  // Row, Insert and Update — a missing one means the compiler cannot see the column on that path.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  for (const n of [1, 2, 3]) {
+    assert.equal(
+      (types.match(new RegExp(`client_extra_line${n}`, "g")) ?? []).length, 3,
+      `client_extra_line${n}: Row + Insert + Update`,
+    );
+  }
+});
+
+// ─── [GEGROND-NAAM] The supplier name had no witness ────────────────────────────────────────────
+//
+// Reported: an invoice from BALKIP B.V. — its own letterhead, KVK, IBAN, sent from info@balkip.nl
+// — was imported as "GROOTHANDEL M.H. BAL V.O.F.". A different company. Its three amounts were
+// read correctly and the app said so.
+//
+// Three explanations were checked and ruled out before anything was written: supplierNameKey is
+// token-exact so nothing could merge "balkip" and "groothandel mh bal"; the supplier registry
+// never overwrites what was read; and the learned reading hints are computed per screen for
+// display and never reach the model's prompt. The reader produced a name that is not on the paper.
+//
+// What let it through is the asymmetry this closes. amount-grounding.ts searches the document's
+// own characters for each of the three figures — an independent witness that does not ask the
+// reader to check its own work. Nothing asked the same question about the NAME, so the one field
+// that was wrong was the one field with no check on it.
+//
+// The name is not a label. invoices.client_name is the identity key knownIbanForVendor uses, and
+// that is what stands between the owner and a payment redirected to a stranger: a name read as a
+// DIFFERENT company does not fail it — it looks up a different supplier and passes clean.
+
+test("[GEGROND-NAAM] the reader grounds the vendor name on the document's own text", () => {
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /_vendorGrounding = \{/, "the verdict must be stored beside _grounding");
+  assert.match(
+    ai, /verdict: groundVendorName\(parsed\.vendor, statementText\)/,
+    "…grounded on the name that BECOMES client_name, against the document's own text",
+  );
+  // Never against the OCR transcription: that second read is asked for the AMOUNTS, so finding no
+  // name in it would say nothing about the invoice.
+  assert.doesNotMatch(ai, /groundVendorName\([^)]*transcribed/, "the OCR text carries no name");
+});
+
+test("[GEGROND-NAAM] an unfound name reaches the owner, on the vendor field", () => {
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /_vendorGrounding\?: \{ verdict\?: string/, "health must read the verdict");
+  const block = health.slice(health.indexOf("vendorGrounding?.verdict === 'absent'"));
+  assert.ok(block.length > 0, "nothing acts on the verdict — a check nobody is shown did not happen");
+  assert.match(block.slice(0, 700), /flags\.vendor = true/, "the SUPPLIER field is the one at fault");
+  // Not the amounts: on the measured invoice all three were correct, and pointing at them would
+  // send the owner to the only part that was right.
+  assert.doesNotMatch(block.slice(0, 400), /flags\.arithmetic = true/);
+  assert.match(block.slice(0, 900), /staat nergens in de tekst van dit document/);
+});
+
+test("[GEGROND-NAAM] only 'absent' speaks, and it blocks nothing", () => {
+  const lib = code("src/lib/vendor-grounding.ts");
+  // A great many invoices print their name only inside a logo, which carries no characters — a
+  // perfectly correct read then has nothing to find. Flagging those would put a warning on
+  // ordinary invoices, and a warning nobody reads is worse than none.
+  assert.match(lib, /if \(verdict !== "absent"\) return null/, "found/unreadable must say nothing");
+  assert.match(lib, /if \(t\.length < MIN_TEXT_LENGTH\) return "unreadable"/, "no text layer, no verdict");
+  assert.match(lib, /if \(!isReliableSupplierName\(name\)\) return "unreadable"/, "a placeholder proves nothing");
+  assert.match(lib, /if \(tokens\.length === 0\) return "unreadable"/, "nor a name with no distinctive part");
+
+  // Whole tokens only. "bal" occurs inside "balans" and "totaal", so substring matching would have
+  // CONFIRMED the very read this exists to catch, using the word TOTAAL.
+  assert.match(lib, /haystack\.includes\(` \$\{tok\} `\)/, "a fragment match is false corroboration");
+
+  // And it must not become a blocker. groundingBlocksAutoBooking is the amount check's escalation;
+  // this one is deliberately not in it, because it cannot tell a logo from a misread.
+  assert.doesNotMatch(
+    code("src/lib/amount-grounding.ts"), /vendorGrounding|groundVendorName/,
+    "the vendor verdict may not enter the auto-booking gate",
+  );
+});
+
+// ─── [GRENS-ZICHTBAAR] The month's allowance ran out and nobody was told ────────────────────────
+//
+// Straight from a production log, three lines inside five seconds:
+//
+//   [EERLIJK-GEBRUIK] maandgrens bereikt — rest van de batch wordt bewaard, niet gelezen
+//     { wanted: 10, granted: 0, plan: 'free' }
+//   [EERLIJK-GEBRUIK] …the same line again, six seconds later
+//   [CRON-EMAIL-SYNC] drain made no progress — likely a stuck attachment; deferring
+//     { remaining: 10, prevSaved: 0 }
+//
+// Ten supplier invoices reached the owner's mailbox and the app read none of them. Three problems:
+//
+//  1. THE OWNER WAS NOT TOLD. Nothing on any screen. The manual upload path says this — but that
+//     is the path where the owner is standing there watching. This one runs while they are not,
+//     and silence there reads as "my supplier never sent it".
+//  2. THE LOG BLAMED THE WRONG THING. "likely a stuck attachment" describes a poison pill. No
+//     attachment was stuck; none was tried. Whoever reads that goes looking for a broken PDF.
+//  3. THE RETRY COULD NOT WORK. A MONTHLY counter does not refill between two calls six seconds
+//     apart, and the drain re-fetched the whole mailbox to be told so again.
+
+test("[GRENS-ZICHTBAAR] the owner is told when their invoices arrive and are not read", () => {
+  const email = code("src/lib/email-integration.ts");
+  const at = email.indexOf("const hold = fairUseHold(");
+  assert.ok(at > 0, "the hold must be computed where the batch is cut");
+  const block = email.slice(at, at + 2200);
+  assert.match(block, /createNotification\(\{/, "a warning in a server log is not telling the owner");
+  assert.match(block, /body: notice\.body/, "…with the sentence from the shared module");
+
+  // ONCE PER MONTH. The cron runs hourly against a MONTHLY counter, so an unguarded notify would
+  // post the same message every hour until the month turned — which is the notification an owner
+  // switches off, and then they are not told at all.
+  assert.match(block, /\.from\('notifications'\)[\s\S]{0,200}\.eq\('title', titel\)/,
+    "the existing notification must be what stops the second one");
+  assert.match(block, /if \(!alGemeld \|\| alGemeld\.length === 0\)/, "…and only then is it posted");
+
+  // Telling the owner may never cost them the import. The invoices are already safely stored at
+  // this point; a failure here costs the message, not the work.
+  assert.match(block, /catch \(e\) \{/, "the notify must not be able to break the sync");
+});
+
+test("[GRENS-ZICHTBAAR] the notification key cannot move with the count", () => {
+  // The once-a-month promise rests entirely on the title being stable. Ten held this hour and
+  // three the next is the SAME situation, and a count in the key would notify twice for it.
+  const lib = code("src/lib/fair-use-hold.ts");
+  assert.match(lib, /title: `Niet alles is ingelezen \(\$\{month\}\)`/);
+  const notice = lib.slice(lib.indexOf("export function fairUseHoldNotice"));
+  assert.doesNotMatch(notice.slice(0, notice.indexOf("body:")), /\$\{n\}|\$\{stuks\}/,
+    "no count may enter the title — it is the deduplication key");
+});
+
+test("[GRENS-ZICHTBAAR] the cron names the cause it has, and stops retrying a monthly counter", () => {
+  const cron = code("src/app/api/cron/email-sync/route.ts");
+  // The wrong sentence must be gone from the code, not merely joined by a right one.
+  assert.doesNotMatch(
+    cron, /console\.warn\("\[CRON-EMAIL-SYNC\] drain made no progress/,
+    "the hard-coded stuck-attachment diagnosis must go through drainStopReason",
+  );
+  assert.match(cron, /console\.warn\(drainStopReason\(/, "…which picks the words from the real cause");
+
+  // And the loop must not run at all on a monthly hold. `remaining > 0` cannot see the difference:
+  // the attachments really are still there, so it looks like work that is waiting.
+  assert.match(
+    cron, /while \(r && r\.remaining > 0 && r\.heldByFairUse === 0 && rounds < 5\)/,
+    "a monthly hold must not be retried — the counter cannot refill inside one run",
+  );
+
+  // The signal has to actually exist on the result, or the guard above reads undefined forever.
+  const email = code("src/lib/email-integration.ts");
+  assert.match(email, /heldByFairUse: number/, "the sync result must carry the hold");
+  assert.match(email, /heldByFairUse: hold\?\.held \?\? 0/, "…and report the real number");
 });
