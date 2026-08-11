@@ -842,6 +842,12 @@ export async function POST(request: NextRequest) {
       invoice_number: finalNumber,
       invoice_type: finalType,
       converted: isConversion,
+      // [VERSTUURD] The address a reply lands on, so the confirmation can NAME it instead of
+      // promising it. It is profiles.email (filled from auth.users at registration) and it is
+      // passed to sendInvoiceToClient as senderEmail — the same value, read once. Null when the
+      // profile has none, and then the screen says nothing about replies rather than something
+      // that is not true: without it Resend falls back to the noreply sender.
+      reply_to: profile?.email ?? null,
     })
 
   } catch (err) {

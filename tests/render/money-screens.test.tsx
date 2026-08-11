@@ -1529,3 +1529,45 @@ test("[BETAALPLAN] een al volledig verdeelde betaling is een dichte deur, geen d
   assert.doesNotMatch(html, /Nog te verdelen/, "geen invulvelden voor een verdeling die niet kan");
   assert.match(html, /ontkoppel dan eerst/, "en het zegt hoe je er wél weer bij komt");
 });
+
+test("[VERSTUURD] the send confirmation renders, and puts the irreversible part on the screen", async () => {
+  // The panel that appears the instant an invoice becomes a legal document. Its words are tested
+  // in invoice-sent-notice.test.ts; what a render cannot be replaced by is whether the component
+  // that shows them survives being called — the whole reason this file exists.
+  const { default: InvoiceSentModal } = await import("@/components/ui/InvoiceSentModal");
+  const { invoiceSentNotice } = await import("@/lib/invoice-sent-notice");
+
+  const notice = invoiceSentNotice({
+    invoiceNumber: "2026-014",
+    invoiceType: "factuur",
+    clientName: "Stichting Contour de Twern",
+    clientEmail: "info@example.nl",
+    totalInc: 394.99,
+    replyTo: "mo@boekbrug.nl",
+  })!;
+
+  const html = renderToStaticMarkup(
+    React.createElement(InvoiceSentModal as any, { notice, onView: () => {}, onNew: () => {} }),
+  );
+
+  assert.ok(html.length > 0, "the panel may not render empty");
+  assert.ok(html.includes("2026-014"), "the number that was just minted");
+  assert.ok(html.includes("info@example.nl"), "where it went");
+  assert.ok(html.includes("394,99"), "the amount, in Dutch");
+  // The sentence the modal exists for. A layout change that dropped `definitief` would still
+  // render fine and would still look like a success panel.
+  assert.ok(html.includes("ligt vast"), "what can no longer be changed must be visible");
+  assert.ok(html.includes("creditnota"), "…and how to correct it");
+  assert.ok(html.includes("Zo controleer je het zelf"), "the owner's own question, answered here");
+  assert.ok(html.includes("Bekijk de factuur") && html.includes("Nog een factuur"),
+    "both exits — the panel must never be a dead end on a form that was already submitted");
+
+  // A creditnota may never be announced as a factuur: at that moment the number becomes permanent.
+  const credit = renderToStaticMarkup(
+    React.createElement(InvoiceSentModal as any, {
+      notice: invoiceSentNotice({ invoiceNumber: "2026-015", invoiceType: "creditnota" })!,
+      onView: () => {}, onNew: () => {},
+    }),
+  );
+  assert.ok(credit.includes("Creditnota verstuurd"));
+});
