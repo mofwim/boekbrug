@@ -48,8 +48,23 @@ function allTsx(dir: string, out: string[] = []): string[] {
 const PINNED = /alignItems: ?['"]flex-end['"]/;
 /** The clearance itself, or the helper that produces it. */
 const CLEARS_NAV = /--bottom-nav-h|sheetPaddingBottom/;
-/** How far below the overlay line the panel's own style may sit. */
-const PANEL_WINDOW = 14;
+/** A sheet on a screen that genuinely has no bottom bar, saying so and why.
+ *
+ *  --bottom-nav-h is declared on :root, so on a phone it reads 64px even on a
+ *  route that renders no bar — reserving it there is dead space under the last
+ *  button. /onboarding is the one such route today. The marker is deliberately
+ *  ugly and has to sit next to the reason. */
+const EXEMPT = /\[SHEET-BOTTOM-EXEMPT\]/;
+/** How far below the overlay line the panel's own style may sit.
+ *
+ *  Generous on purpose. At 14 lines this silently exempted the feedback sheet a
+ *  second time, the moment its fix arrived with a comment explaining itself — a
+ *  window tight enough to be tripped by prose is a window that rewards saying
+ *  nothing. A panel sits within a few dozen lines of its overlay or it is not
+ *  that overlay's panel. */
+const PANEL_WINDOW = 45;
+/** How far from `alignItems: flex-end` the overlay's `position: fixed` may sit. */
+const OVERLAY_WINDOW = 4;
 
 test("[SHEET-BOTTOM] every bottom-pinned sheet clears the bottom navigation", () => {
   const files = allTsx("src");
@@ -63,9 +78,21 @@ test("[SHEET-BOTTOM] every bottom-pinned sheet clears the bottom navigation", ()
     const lines = readFileSync(f, "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (!(PINNED.test(l) && l.includes("position:") && l.includes("fixed"))) continue;
+      if (!PINNED.test(l)) continue;
+      // [SHEET-BOTTOM-WINDOW] The overlay's `position: fixed` is not required to
+      // be on the SAME line as its alignItems. It used to be, and that is how
+      // the feedback sheet — the one people report bugs with — sat outside this
+      // gate entirely: its style was formatted across two lines, so the check
+      // never counted it, never failed, and its Versturen button spent its life
+      // 48px underneath the navigation bar. A gate that matches on where the
+      // line breaks fall is a gate that exempts whatever is formatted
+      // differently, silently, and only for as long as nobody looks.
+      const overlay = lines.slice(Math.max(0, i - OVERLAY_WINDOW), i + OVERLAY_WINDOW).join("\n");
+      if (!(overlay.includes("position:") && overlay.includes("fixed"))) continue;
       sheets++;
-      if (!CLEARS_NAV.test(lines.slice(i, i + PANEL_WINDOW).join("\n"))) {
+      const panel = lines.slice(i, i + PANEL_WINDOW).join("\n");
+      if (EXEMPT.test(overlay) || EXEMPT.test(panel)) continue;
+      if (!CLEARS_NAV.test(panel)) {
         offenders.push(`${f}:${i + 1}`);
       }
     }

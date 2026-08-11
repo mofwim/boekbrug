@@ -63,6 +63,17 @@ export function inclFromEx(ex: number, rate: number | null | undefined): number 
   return v * factor(rate);
 }
 
+// [PRIJSVELD-CENT] Zie priceFieldValue: het veld toont net zoveel decimalen als de regel nodig
+// heeft, en unitPriceDecimals is dezelfde functie die de PDF en de prijskolom daarvoor gebruiken.
+// Eén antwoord op "hoe schrijf je deze stuksprijs op", op alle drie de plekken.
+// [CENT] roundTo komt uit dezelfde module. Er stond hier een eigen versie zonder de 1e-9, en dat
+// is precies de fout die [PRIJSVELD-CENT] hierboven beschrijft, één laag dieper: unitPriceDecimals
+// KIEST het aantal decimalen met de ene afronding, dit veld PAST het toe met de andere. Op een
+// opgeslagen prijs van € 1,005 kiest hij 2 decimalen omdat 1,01 het regeltotaal oplevert, en toont
+// het veld 1,00 — een prijs die niet met zijn eigen regel vermenigvuldigt, en die de opgeslagen
+// breuk vervangt zodra iemand het veld aanraakt.
+import { unitPriceDecimals, roundTo } from "./unit-price-display";
+
 /** Op centen, voor weergave. Nooit voor opslag — zie de afrondingsnotitie in de kop. */
 export function toDisplayCents(value: number): number {
   const v = Number(value);
@@ -73,12 +84,46 @@ export function toDisplayCents(value: number): number {
 /**
  * Wat er in het prijsveld van een regel MOET STAAN, gegeven de opgeslagen ex-prijs en de modus.
  *
- * Afgerond op centen, omdat het veld een prijs toont en niet een breuk: in incl-modus is dat exact
- * het bedrag dat de ondernemer zelf intypte (10 → 8,2644…/ex → 10,00 terug), dus het heen-en-weer
- * is stabiel zolang hij in dezelfde modus blijft.
+ * [PRIJSVELD-CENT] Dit stond op centen, en die aanname klopt precies zo lang als de ondernemer
+ * zijn prijzen EXCLUSIEF btw intypt. Typt hij ze INCLUSIEF — wat dit scherm aanbiedt en wat een
+ * horecazaak altijd doet — dan is de opgeslagen ex-prijs een breuk, en op centen afronden is een
+ * ANDERE PRIJS.
+ *
+ * Gemeten op factuur 20260001, vier regels, prijzen ingetypt als € 0,90 / € 1,90 / € 1,75 all-in
+ * bij 9%:
+ *
+ *     opgeslagen ex   het veld toonde   150 x 0,83 = 124,50   maar de regel is 123,85
+ *     0,8256880734    0,83              100 x 1,74 = 174,00   maar de regel is 174,31
+ *     1,7431192661    1,74               38 x 1,61 =  61,18   maar de regel is  61,01
+ *     1,6055045872    1,61                6 x 1,61 =   9,66   maar de regel is   9,63
+ *
+ * Twee dingen tegelijk mis. Het veld toonde een prijs die niet met zijn EIGEN regeltotaal
+ * vermenigvuldigt — dezelfde fout die de PDF en de prijskolom al hadden en die daar met
+ * unitPriceDecimals is opgelost. En zodra er íets in dat veld terechtkwam, verving die afgeronde
+ * prijs de opgeslagen breuk: het bewerkscherm gaf € 368,69 waar de verstuurde factuur € 368,80
+ * zegt, en bij grotere aantallen loopt dat op tot boven een euro.
+ *
+ * Dus: net zoveel decimalen als de regel NODIG heeft, en geen meer. Twee blijft twee zolang twee
+ * klopt — een gewone prijs van € 12,50 verandert niet in "12,5000".
  */
-export function priceFieldValue(ex: number, rate: number | null | undefined, mode: PriceMode): number {
-  return toDisplayCents(mode === "incl" ? inclFromEx(ex, rate) : ex);
+export function priceFieldValue(
+  ex: number,
+  rate: number | null | undefined,
+  mode: PriceMode,
+  // Optioneel, en met opzet als LAATSTE argumenten: een aanroeper die ze niet meestuurt krijgt
+  // exact het gedrag van hiervoor terug, op de cent.
+  quantity?: number | null,
+  lineTotal?: number | null,
+): number {
+  const shown = mode === "incl" ? inclFromEx(ex, rate) : ex;
+  if (quantity === undefined || quantity === null) return toDisplayCents(shown);
+  // Het regeltotaal hoort bij de MODUS: in incl-modus moet aantal x incl-prijs het bedrag
+  // inclusief btw opleveren, anders zoekt de functie naar een getal dat er niet is.
+  const target = lineTotal === undefined || lineTotal === null
+    ? undefined
+    : mode === "incl" ? inclFromEx(Number(lineTotal), rate) : Number(lineTotal);
+  const decimals = unitPriceDecimals(shown, quantity, target);
+  return roundTo(shown, decimals);
 }
 
 /**

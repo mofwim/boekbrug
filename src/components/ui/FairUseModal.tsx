@@ -18,6 +18,7 @@
 // numbers — and the numbers are a published promise.
 
 import Link from 'next/link'
+import { sheetPaddingBottom } from '@/lib/design/tokens'
 import type { FairUseNotice } from '@/lib/fair-use-notice'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
@@ -50,7 +51,10 @@ export default function FairUseModal({
           backgroundColor: 'white',
           width: '100%', maxWidth: 480,
           borderTopLeftRadius: 20, borderTopRightRadius: 20,
-          padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
+          // [SHEET-BOTTOM] Count the bottom bar too, not only the device's safe
+          // area: this panel sticks to the bottom of the screen, and on mobile
+          // BottomNav paints on top of it.
+          padding: '24px 20px 0', paddingBottom: sheetPaddingBottom(20),
           maxHeight: '85vh', overflowY: 'auto',
           boxShadow: '0 -4px 24px rgba(0,0,0,0.18)',
         }}

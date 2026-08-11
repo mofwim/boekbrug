@@ -738,6 +738,10 @@ export function OnboardingWizard({
       {showResetConfirm && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          // [SHEET-BOTTOM-EXEMPT] /onboarding has no layout, so no BottomNav is
+          // rendered here. --bottom-nav-h is still 64px on mobile because it lives
+          // on :root, so sheetPaddingBottom() would reserve 64px of dead space
+          // under the button for a bar that is not on this screen.
           display: "flex", alignItems: "flex-end", justifyContent: "center",
           zIndex: 1000, paddingBottom: "env(safe-area-inset-bottom)",
         }}>

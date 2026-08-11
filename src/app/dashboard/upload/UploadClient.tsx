@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+// [SIZE-SHRINK] Alleen de beslissing, geen compressor — dit bestand blijft licht.
+import { shouldOfferShrink } from '@/lib/tools/upload-shrink'
 // [INTAKE-IMG-NORMALIZE] Convert a picked HEIC/HEIF/WebP/BMP/TIFF (or an oversized JPG/PNG)
 // to a bounded JPEG in the browser BEFORE upload — otherwise an iPhone invoice reaches the
 // reader as an "unsupported type" and is silently filed away as unreadable. Same shared
@@ -58,6 +60,12 @@ interface Item {
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
+  // [SIZE-SHRINK] Boven de 10 MB én een PDF, dus verkleinen is het aanbieden waard. De melding
+  // hieronder zei altijd al "splits een grote PDF" en gaf geen enkele manier om dat te doen —
+  // dit is wat die zin een knop maakt. De afbeeldingen in het document gaan omlaag, de tekst
+  // blijft tekst, dus de lezer aan de andere kant kan er nog steeds iets uit halen.
+  tooBig?: boolean
+  shrinking?: boolean
   // [DUP-ARCHIVED] De upload botste op een factuur die de eigenaar zelf genegeerd heeft. Die staat
   // in Genegeerd en is dus in geen enkele gewone lijst te vinden — bied terugzetten aan, want bij
   // een byte-hash-duplicaat (identiek bestand) is dat de ENIGE weg vooruit: die poort is met opzet
@@ -127,6 +135,10 @@ const nextId = () => `f${++idc}-${Date.now()}`
 // houden. `as const` niet: patch() verwacht een gewone Partial<Item>, geen readonly variant.
 const RESET_ON_RETRY: Partial<Item> = {
   message: undefined, rateLimited: false, fairUse: false, noRetry: false, couldNotRead: false,
+  // [SIZE-SHRINK] Ook deze twee, om dezelfde reden als de rest: een tweede poging kan op iets
+  // ANDERS stuklopen (verbinding weg, 429), en dan zou "Verklein en probeer opnieuw" op een regel
+  // staan waar de grootte het probleem niet is. De grootte wordt elke poging opnieuw vastgesteld.
+  tooBig: false, shrinking: false,
 }
 
 interface ReprocSummary { scanned: number; considered: number; booked: number; turnoverDays: number; ledgerDays: number; review: number; skipped: number; failed: number; capped: boolean }
@@ -221,9 +233,18 @@ export default function UploadClient() {
           // In practice this is only a very large PDF (we can't safely shrink a PDF here). Fail with
           // an honest reason instead of a wasted full upload that the server would refuse anyway.
           if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
+            // [SIZE-SHRINK] Een PDF kunnen we hier wél kleiner maken — alleen de afbeeldingen
+            // gaan omlaag, de tekst blijft tekst. Dat is een knop op deze regel in plaats van
+            // een opdracht ("splits een grote PDF") zonder gereedschap. Bij een afbeelding is
+            // normalizeImageForUpload hierboven al langs geweest, dus die is zo klein als hij
+            // verantwoord kan; daar valt niets meer te winnen en bieden we het niet aan.
+            const isPdf = shouldOfferShrink(uploadFile, MAX_INTAKE_UPLOAD_BYTES)
             patch(item.id, {
               status: 'error',
-              message: `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`,
+              tooBig: isPdf,
+              message: isPdf
+                ? `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB.`
+                : `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Maak er een foto van of splits het document.`,
             })
             continue
           }
@@ -350,6 +371,46 @@ export default function UploadClient() {
     setItems((prev) => prev.map((i) => (queued.has(i.id) ? { ...i, status: 'queued' as Status, ...RESET_ON_RETRY, message: 'Opnieuw in wachtrij…' } : i)))
     void kick()
   }, [items, kick])
+
+  // [SIZE-SHRINK] "Verklein en probeer opnieuw" — de PDF gaat door de compressor en de kleinere
+  // versie gaat als nieuwe poging de wachtrij in.
+  //
+  // [PDF-LAZY] pdfcompress en pdf-lib worden hier binnengehaald, niet bovenaan het bestand. Dit is
+  // het uploadscherm van een ingelogde eigenaar dat elke dag opengaat; wie nooit tegen de 10 MB
+  // aanloopt hoort er ook nooit een byte van te downloaden. Eén gewone import bovenaan zou dat
+  // stilletjes ongedaan maken — precies wat /factuur-maken 1,4 MB kostte.
+  const shrinkAndRetry = useCallback(async (item: Item) => {
+    patch(item.id, { shrinking: true, message: 'Bezig met verkleinen…' })
+    try {
+      const { compressToFit } = await import('@/lib/tools/pdfcompress')
+      const { file, fits, before, after } = await compressToFit(item.file, MAX_INTAKE_UPLOAD_BYTES)
+
+      if (!fits) {
+        // [UI-HONESTY] Niet stilletjes alsnog uploaden wat de server toch weigert. Zeggen hoever
+        // het kwam is bruikbaarder dan het nog een keer laten mislukken.
+        patch(item.id, {
+          shrinking: false,
+          tooBig: false,
+          message: `Verkleinen hielp niet genoeg: ${(before / 1024 / 1024).toFixed(1)} MB → ${(after / 1024 / 1024).toFixed(1)} MB, nog steeds boven de 10 MB. Splits het document in delen.`,
+        })
+        return
+      }
+
+      // De kleinere versie is een NIEUWE poging op een eigen regel, net als "toch toevoegen":
+      // de uitkomst hoort bij de poging die hem veroorzaakt, niet bij de regel die faalde.
+      const retry: Item = { id: nextId(), file, status: 'queued' }
+      setItems((prev) => [...prev, retry])
+      pending.current.push(retry)
+      patch(item.id, {
+        shrinking: false,
+        tooBig: false,
+        message: `Verkleind van ${(before / 1024 / 1024).toFixed(1)} MB naar ${(after / 1024 / 1024).toFixed(1)} MB — de kleinere versie staat hieronder.`,
+      })
+      void kick()
+    } catch {
+      patch(item.id, { shrinking: false, message: 'Verkleinen lukte niet. Splits het document in delen.' })
+    }
+  }, [patch, kick])
 
   // "Toch toevoegen" — re-submit an uncertain semantic duplicate with force=true as a NEW attempt.
   const forceAdd = useCallback((item: Item) => {
@@ -704,6 +765,15 @@ export default function UploadClient() {
                         style={{ marginTop: 8, background: '#FEF7E0', color: '#8A5A00', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
                         Bekijk in Bestanden →
                       </Link>
+                    )}
+                    {/* [SIZE-SHRINK] Te groot én een PDF → verkleinen is de handeling die hier
+                        werkt. De melding vroeg altijd al om iets ("splits een grote PDF"); dit is
+                        het gereedschap ernaast in plaats van een opdracht zonder middel. */}
+                    {it.status === 'error' && it.tooBig && (
+                      <button onClick={() => void shrinkAndRetry(it)} disabled={it.shrinking}
+                        style={{ marginTop: 8, background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: it.shrinking ? 'default' : 'pointer', opacity: it.shrinking ? 0.6 : 1, fontFamily: FONT }}>
+                        {it.shrinking ? 'Bezig met verkleinen…' : 'Verklein en probeer opnieuw'}
+                      </button>
                     )}
                     {/* [DUP-ARCHIVED] De bestaande factuur staat in Genegeerd → terugzetten is de
                         handeling die hier werkt. Eerst, want bij een identiek bestand is het de enige. */}

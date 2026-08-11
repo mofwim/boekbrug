@@ -5817,3 +5817,87 @@ test("[CENT] the canonical round2 still does the two things it exists for", () =
   assert.match(fn.slice(0, 400), /v < 0 \? -1 : 1/, "the sign must be taken off first (creditnota)");
   assert.match(fn.slice(0, 400), /Number\.isFinite/, "a non-finite amount may not reach a document");
 });
+
+// ─── [PRIJSVELD-CENT] The edit screen showed a different total than the invoice it was editing ──
+//
+// Reported with both screens side by side. Invoice 20260001, four lines, prices typed INCLUSIVE of
+// btw at 9% (€ 0,90 / € 1,90 / € 1,75 all-in), which is what a food business always types:
+//
+//     the sent invoice   subtotaal € 368,80   totaal € 401,99
+//     the edit screen    subtotaal € 368,69   totaal € 401,87
+//
+// Reproduced to the cent. Typing prices inclusive makes the STORED ex-price a fraction
+// (0,8256880734), and the price field rounded it to two decimals for display — which is a
+// DIFFERENT PRICE. Two failures came out of that one rounding:
+//
+//   · the field showed a price that does not multiply to its own line total: 38 x 1,61 = 61,18
+//     while the line says 61,01. Exactly the defect the PDF and the price column already had, and
+//     which unitPriceDecimals fixed there — the edit screen was never brought along;
+//   · and because it is a controlled input, the rounded number replaced the stored fraction the
+//     moment anything committed it. Three of the four lines had already been rewritten that way.
+//
+// The owner saw more than a euro of difference on a larger invoice, which is the same arithmetic
+// with a bigger quantity: the error is (rounded price − real price) × quantity.
+
+test("[PRIJSVELD-CENT] the price field is told the quantity, so it can show enough decimals", () => {
+  for (const f of [
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/invoice/new/page.tsx",
+  ]) {
+    const screen = code(f);
+    assert.doesNotMatch(
+      screen, /priceFieldValue\(line\.unit_price, line\.btw_rate, priceMode\)/,
+      `${f}: the field is still rounded to cents — a fraction becomes a different price`,
+    );
+    assert.match(
+      screen, /priceFieldValue\(line\.unit_price, line\.btw_rate, priceMode, line\.quantity/,
+      `${f}: the quantity is what makes "enough decimals" answerable`,
+    );
+  }
+
+  // The edit screen must also READ the stored line total — it is the number the field has to
+  // reconcile with, and it was not in the select at all.
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(edit, /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total'\)/);
+  assert.match(edit, /priceFieldValue\([^)]*line_total/, "…and pass it to the field");
+
+  // step="0.01" makes the BROWSER refuse a third decimal, whatever the value says.
+  assert.doesNotMatch(edit, /type="number" value=\{priceFieldValue[\s\S]{0,200}?step="0\.01"/,
+    "step must not pin the field to cents");
+});
+
+test("[PRIJSVELD-CENT] the shared helper decides the precision, not each screen", () => {
+  const lib = code("src/lib/price-mode.ts");
+  // The named list is matched loosely on purpose: the same import now also carries roundTo, so
+  // that the count and the rounding it is applied with come from ONE module. Pinning the exact
+  // text made this gate fail on a change that strengthens the very thing it is asserting.
+  assert.match(lib, /import \{[^}]*\bunitPriceDecimals\b[^}]*\} from "\.\/unit-price-display"/,
+    "one answer to 'how do you write this unit price', shared with the PDF and the price column");
+  assert.match(lib, /const decimals = unitPriceDecimals\(shown, quantity, target\)/);
+
+  // The line total belongs to the MODE: in incl mode the field times the quantity must make the
+  // amount INCLUDING btw, so reconciling against the stored ex-total would look for a number that
+  // is not there.
+  assert.match(lib, /mode === "incl" \? inclFromEx\(Number\(lineTotal\), rate\) : Number\(lineTotal\)/);
+
+  // And the new arguments must be optional, so a caller that has not been updated does not move.
+  assert.match(lib, /quantity\?: number \| null,/);
+  assert.match(lib, /if \(quantity === undefined \|\| quantity === null\) return toDisplayCents\(shown\)/);
+});
+
+test("[CENT] rounding to N decimals is shared between the chooser and the applier", () => {
+  // One layer below the round2 gate, and the same shape. unit-price-display DECIDES how many
+  // decimals a unit price needs so that quantity × price reproduces the line total; price-mode
+  // APPLIES that count to the price in the edit field. For a while each did its own rounding —
+  // the chooser with the 1e-9 nudge, the applier without — so on a stored € 1,005 the chooser said
+  // "two decimals reconcile" and the field printed 1,00, which does not. Touch that field and
+  // 1,00 is stored: the line loses a cent, which is the defect [PRIJSVELD-CENT] set out to fix.
+  const display = code("src/lib/unit-price-display.ts");
+  assert.match(display, /export function roundTo\(/, "the chooser must own the rounding");
+  assert.match(display, /Math\.round\(n \* f \+ 1e-9\) \/ f/, "…including the nudge");
+
+  const price = code("src/lib/price-mode.ts");
+  assert.doesNotMatch(price, /function roundTo\(/, "price-mode may not round to N decimals itself");
+  assert.match(price, /import \{[^}]*\broundTo\b[^}]*\} from "\.\/unit-price-display"/,
+    "it must use the same one the decimal count was chosen with");
+});

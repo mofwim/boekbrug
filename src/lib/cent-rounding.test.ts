@@ -26,6 +26,7 @@ import assert from 'node:assert/strict'
 
 import { computeInvoiceTotals, round2 } from './invoice-totals'
 import { buildInvoiceUbl } from './ubl-export'
+import { priceFieldValue } from './price-mode'
 
 // ── the function itself ────────────────────────────────────────────────────────────────────────
 
@@ -150,4 +151,34 @@ test('[CENT] a mixed-rate invoice too — the rates are rounded before they are 
   assert.equal(t.btw_amount, round2(4.52 + 2.39))
   assert.equal(ubl.btw, t.btw_amount)
   assert.equal(ubl.inc, t.total_inc_btw)
+})
+
+// ── the same class one layer down: rounding to N decimals ──────────────────────────────────────
+
+test('[CENT] the price field rounds the way the decimal count was CHOSEN', () => {
+  // unit-price-display decides how many decimals a price needs so that quantity × price equals the
+  // line total; price-mode then rounds the price to that many. For a while those were two
+  // different roundings — the chooser used the 1e-9 nudge, the applier did not — so on a stored
+  // price of € 1,005 the chooser said "two decimals is enough, because 1,01 reconciles" and the
+  // field printed 1,00, which does not. Touching that field then STORES 1,00 and the line loses a
+  // cent: exactly the defect [PRIJSVELD-CENT] was written to fix, one layer below where it looked.
+  //
+  // A three-decimal price is not exotic — in excl mode priceFieldToStored keeps what was typed
+  // verbatim, and article and OCR prices arrive with more than two decimals routinely.
+  assert.equal(priceFieldValue(1.005, 21, 'excl', 1, 1.01), 1.01)
+  assert.equal(priceFieldValue(0.145, 21, 'excl', 1, 0.15), 0.15)
+  assert.equal(priceFieldValue(0.565, 21, 'excl', 1, 0.57), 0.57)
+
+  // And the property behind those three: whatever the field shows must multiply back to the line.
+  for (const thousandths of [145, 285, 565, 575, 1005, 1015, 1025, 1035, 2505, 12505]) {
+    const p = thousandths / 1000
+    for (const q of [1, 2, 3, 6, 38, 150]) {
+      const lineTotal = round2(p * q)
+      const shown = priceFieldValue(p, 21, 'excl', q, lineTotal)
+      assert.equal(
+        round2(q * shown), lineTotal,
+        `€ ${p} × ${q}: the field shows ${shown}, which multiplies to ${round2(q * shown)}, not ${lineTotal}`,
+      )
+    }
+  }
 })
