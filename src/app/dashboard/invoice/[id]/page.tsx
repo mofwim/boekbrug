@@ -37,6 +37,7 @@ const PDFDownloadLink = dynamic(
 import { formatUnitPriceNL } from '@/lib/unit-price-display'
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 // [TZ] timeZone PINNED. This formats invoice_date / due_date / payment_date — all DATE-ONLY
@@ -49,6 +50,7 @@ const CREDITABLE_STATUSES = ['sent', 'paid', 'overdue', 'received', 'processing'
 export default function InvoiceDetailPage() {
   const router = useRouter()
   const taal = useLocale()
+  const t = translator(taal)
   const params = useParams()
   const invoiceId = params.id as string
   const supabase = createClient()
@@ -351,7 +353,7 @@ export default function InvoiceDetailPage() {
         data.creditnota_id ? `/dashboard/invoice/${data.creditnota_id}` : '/dashboard/facturen'
       )
     } catch {
-      setCreditError('Onbekende fout — probeer opnieuw')
+      setCreditError(t('detail.onbekendeFout'))
       setCreatingCredit(false)
     }
   }
@@ -558,7 +560,7 @@ export default function InvoiceDetailPage() {
                 <span style={{ color: M3.warning, flexShrink: 0, fontSize: 16 }}>⚠</span>
                 <div>
                   <p style={{ fontSize: 13, fontWeight: 600, color: '#7C4D00', margin: 0 }}>
-                    De factuur is uitgegeven, maar de bezorging is mislukt
+                    {t('detail.bezorgingMislukt')}
                   </p>
                   <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
                     {deliveryWarning === 'pdf_failed'
@@ -600,7 +602,7 @@ export default function InvoiceDetailPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#1967D2' }}>↗</span>
                 <p style={{ fontSize: 12, color: '#1967D2', margin: 0 }}>
-                  <strong>Klaar om te verzenden?</strong> De factuur krijgt een definitief nummer.
+                  <strong>{t('detail.klaar')}</strong> {t('detail.definitief')}
                 </p>
               </div>
               <button
@@ -627,7 +629,7 @@ export default function InvoiceDetailPage() {
                 <span style={{ color: '#B3261E' }}>↩</span>
                 <div>
                   <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>Gecrediteerd via {linkedCreditnota.invoice_number}</p>
-                  <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>Deze factuur is geannuleerd door een creditnota</p>
+                  <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>{t('detail.geannuleerd')}</p>
                 </div>
               </div>
               <button onClick={() => router.push(`/dashboard/invoice/${linkedCreditnota.id}`)}
@@ -643,7 +645,7 @@ export default function InvoiceDetailPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>⚠️</span>
                 <p style={{ fontSize: 12, color: '#EA8600', margin: 0 }}>
-                  <strong>Fout in deze factuur?</strong> Verzonden facturen mogen nooit worden verwijderd.
+                  <strong>{t('detail.foutIn')}</strong> {t('detail.nooitVerwijderen')}
                 </p>
               </div>
               <button
@@ -705,7 +707,7 @@ export default function InvoiceDetailPage() {
           {/* [DS] Factuurregels — Material You card */}
           <div style={{ backgroundColor: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F3F4' }}>
-              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Factuurregels</h2>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('nieuw.regels.factuur')}</h2>
             </div>
             {/* Header row — [LINES-LAYOUT] raster + uitlijning staan in globals.css
                 (.inv-lines-*), niet inline: anders wint de inline style van de
@@ -730,7 +732,7 @@ export default function InvoiceDetailPage() {
           <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
             <div style={{ maxWidth: 280, marginInlineStart: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
-                <span>Subtotaal excl. BTW</span>
+                <span>{t('nieuw.totaal.subtotaal')}</span>
                 <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_ex_btw ?? 0)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
@@ -738,7 +740,7 @@ export default function InvoiceDetailPage() {
                 <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.btw_amount ?? 0)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice?.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
-                <span>Totaal incl. BTW</span>
+                <span>{t('nieuw.totaal.incl')}</span>
                 <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_inc_btw ?? 0)}</span>
               </div>
             </div>
@@ -749,7 +751,7 @@ export default function InvoiceDetailPage() {
               not the ZZP'er's own profile. */}
           {!isIncoming && profile?.iban && invoice?.invoice_type !== 'creditnota' && (
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{t('nieuw.betaalinfo')}</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
                 Gelieve te betalen op{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
@@ -773,7 +775,7 @@ export default function InvoiceDetailPage() {
               Versturen naar {invoice.client_name}?
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
-              Bevestig de gegevens voordat je de factuur verstuurt.
+              {t('detail.bevestig')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
               <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>
@@ -792,7 +794,7 @@ export default function InvoiceDetailPage() {
               <button onClick={() => setShowSendModal(false)}
                 disabled={sending}
                 style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: sending ? 'default' : 'pointer' }}>
-                Annuleren
+                {t('nieuw.actie.annuleren')}
               </button>
               <button onClick={handleSendInvoice}
                 disabled={sending}
@@ -823,7 +825,7 @@ export default function InvoiceDetailPage() {
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
               <dt style={{ color: '#5F6368', margin: 0 }}>Klant:</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_name}</dd>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Te crediteren:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.teCrediteren')}</dt>
               <dd style={{ color: '#B3261E', fontWeight: 600, margin: 0 }}>
                 −{NL_NUMBER.format(Math.abs(invoice.total_inc_btw ?? 0))}
               </dd>
@@ -835,7 +837,7 @@ export default function InvoiceDetailPage() {
               type="text"
               value={creditReason}
               onChange={e => setCreditReason(e.target.value)}
-              placeholder="bijv. verkeerd bedrag, geannuleerde opdracht"
+              placeholder={t('detail.creditReden')}
               disabled={creatingCredit}
               style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, color: '#202124', boxSizing: 'border-box', marginBottom: 16, fontFamily: 'inherit' }}
             />
@@ -848,7 +850,7 @@ export default function InvoiceDetailPage() {
               <button onClick={() => setShowCreditDialog(false)}
                 disabled={creatingCredit}
                 style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: creatingCredit ? 'default' : 'pointer' }}>
-                Annuleren
+                {t('nieuw.actie.annuleren')}
               </button>
               <button onClick={createCreditnota}
                 disabled={creatingCredit}

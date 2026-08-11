@@ -3482,12 +3482,13 @@ test("[BETAALTERMIJN] the term is derived from the dates, and any term can be ty
 
   // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
   // prints. Showing a payment sentence there makes the screen contradict the document.
+  // [TAAL] Pinned on the key — fourth gate that went red on translation alone.
   assert.match(
-    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    edit, /\{quote \? \([\s\S]{0,400}?t\('bewerk\.geldigTot'\)/,
     "a quote states its validity, not a payment term",
   );
   assert.match(
-    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    edit, /\{!quote && \([\s\S]{0,200}?t\('nieuw\.termijn\.kort'\)/,
     "…and the term control is hidden there, so one field never means two things",
   );
 
@@ -4500,8 +4501,9 @@ test("[LEVERDATUM] the edit path can read, show and write the delivery date", ()
 
   const screen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
   assert.match(screen, /setDeliveryDate\(/, "the screen must load the stored value");
+  // [TAAL] Pinned on the key — fifth gate that went red on translation alone.
   assert.match(
-    screen, /aria-label="Leverdatum"/,
+    screen, /aria-label=\{t\('nieuw\.datum\.lever'\)\}/,
     "…and offer a field to correct it, or the allowlist entry has no way to be used",
   );
   // Sent on BOTH save paths. The second one is the dangerous one: it saves and then issues a
@@ -6309,6 +6311,10 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
   const SCREENS = [
     "src/app/dashboard/invoice/new/page.tsx",
     "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/invoice/[id]/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/zzp/ZzpDashboard.tsx",
+    "src/app/dashboard/zzp/DailyTruth.tsx",
   ];
   const leftovers: string[] = [];
 
