@@ -19,6 +19,8 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-no
 import { M3, COLUMN } from '@/lib/design/tokens'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -79,6 +81,7 @@ function todayIso(): string {
 }
 
 export default function KasClient() {
+  const t = translator(useLocale())
   const [entries, setEntries] = useState<Entry[]>([])
   // [SEARCH] in-page live ledger filter. Seeded from ?find= (set by the global Cmd+K search
   // when the owner opens a kas hit) and synced on param change, so the exact boeking surfaces.
@@ -185,7 +188,7 @@ export default function KasClient() {
   // [KAS-OPENING] Persist the starting float, then reload so the saldo reflects it immediately.
   async function saveOpeningBalance() {
     const val = Number((openingInput || '').replace(',', '.'))
-    if (!Number.isFinite(val) || val < 0) { setError('Beginsaldo moet 0 of hoger zijn'); return }
+    if (!Number.isFinite(val) || val < 0) { setError(t('kas.beginsaldoNegatief')); return }
     setOpeningSaving(true)
     try {
       const res = await fetch('/api/cash', {
@@ -194,7 +197,7 @@ export default function KasClient() {
       })
       if (res.ok) { setOpeningEdit(false); await load() }
       else { const j = await res.json().catch(() => ({})); setError(j.error || 'Kon beginsaldo niet opslaan') }
-    } catch { setError('Verbinding mislukt') } finally { setOpeningSaving(false) }
+    } catch { setError(t('kas.fout.verbinding')) } finally { setOpeningSaving(false) }
   }
   // Initial load — inline async IIFE so no setState runs synchronously in the effect.
   useEffect(() => {
@@ -241,7 +244,7 @@ export default function KasClient() {
 
   async function add() {
     const val = Number(amount.replace(',', '.'))
-    if (!Number.isFinite(val) || val <= 0) { setError('Vul een bedrag groter dan 0 in.'); return }
+    if (!Number.isFinite(val) || val <= 0) { setError(t('kas.fout.bedragNul')); return }
     setSaving(true); setError('')
     try {
       const res = await fetch('/api/cash', {
@@ -256,7 +259,7 @@ export default function KasClient() {
         const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
         setError(json?.detail || json?.error || 'Kon de boeking niet opslaan. Probeer opnieuw.')
       }
-    } catch { setError('Er ging iets mis.') } finally { setSaving(false) }
+    } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }
   }
 
   async function remove(id: string) {
@@ -276,7 +279,7 @@ export default function KasClient() {
       await load()
       if (kbOpen) void loadKasboek(kbPeriod)
     } catch {
-      setError('Geen verbinding — de boeking is niet verwijderd.')
+      setError(t('kas.fout.verwijderd'))
       await load()
     }
   }
@@ -372,16 +375,16 @@ export default function KasClient() {
             on error surface an honest banner with a retry instead of a false money figure. */}
         {loadError && (
           <div style={{ margin: '16px 0 0', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>We konden je kassaldo niet laden</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>{t('kas.fout.saldo')}</div>
             <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4 }}>
-              Het bedrag hieronder is daarom <strong>niet</strong> je echte saldo. Probeer het opnieuw.
+              {t('kas.fout.saldoNiet')}
             </div>
             <button
               type="button"
               onClick={() => { setLoading(true); void load() }}
               style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}
             >
-              Opnieuw proberen
+              {t('inkoop.opnieuwProberen')}
             </button>
           </div>
         )}
@@ -395,7 +398,7 @@ export default function KasClient() {
           {/* Gated on a successful load: the figure above already reads '—' on error, and a red
               "negatief saldo" line under a dash is a verdict on a number we did not get. */}
           {!loadError && balance < 0 && (
-            <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.</div>
+            <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>{t('kas.negatiefSaldo')}</div>
           )}
           {/* [KAS-OPENING] Beginsaldo — the cash already in the drawer when you started. Included in
               the saldo above; not counted as omzet. Set it once so the saldo matches reality. */}
@@ -405,11 +408,11 @@ export default function KasClient() {
               onClick={() => { setOpeningInput(openingBalance ? String(openingBalance).replace('.', ',') : ''); setOpeningEdit(true); setError('') }}
               style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'start' }}
             >
-              Beginsaldo kas: <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
+              {t('kas.beginsaldoKort')} <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
             </button>
           ) : (
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12.5, color: M3.neutral }}>Beginsaldo kas €</span>
+              <span style={{ fontSize: 12.5, color: M3.neutral }}>{t('kas.beginsaldoEuro')}</span>
               <input
                 inputMode="decimal" value={openingInput} onChange={(e) => setOpeningInput(e.target.value)}
                 placeholder="0,00" autoFocus
@@ -421,7 +424,7 @@ export default function KasClient() {
               </button>
               <button type="button" onClick={() => { setOpeningEdit(false); setError('') }}
                 style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, background: 'none', fontSize: 13, cursor: 'pointer', color: M3.neutral }}>
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
             </div>
           )}
@@ -439,9 +442,9 @@ export default function KasClient() {
             back — the same reason the saldo shows '—' instead of €0,00 when its load fails. */}
         {lowestPointUnknown && !lowestPoint && (
           <div style={{ margin: '0 0 20px', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 14, padding: '12px 16px' }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>We konden je kasboek nu niet controleren</div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>{t('kas.fout.controle')}</div>
             <div style={{ fontSize: 12.5, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
-              De controle op een negatief kassaldo is daarom <strong>niet</strong> uitgevoerd — dit betekent niet dat er niets aan de hand is. Open het kasboek hieronder om het opnieuw te proberen.
+              {t('kas.fout.controleNiet')}
             </div>
           </div>
         )}
@@ -473,7 +476,7 @@ export default function KasClient() {
             pre-marked "contant betaald"; the human confirms and the payment lands in the kasboek
             automatically — the BTW stays aftrekbaar (unlike a plain cash-cost entry). */}
         <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, marginBottom: 4 }}>Contant betaalde factuur toevoegen</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, marginBottom: 4 }}>{t('kas.contantToevoegen')}</div>
           <div style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 12, lineHeight: 1.45 }}>
             Foto of PDF van een bon die je contant hebt betaald. We lezen hem uit en zetten hem klaar als ‘contant betaald’ — jij bevestigt, daarna staat de betaling automatisch in je kasboek en blijft de BTW aftrekbaar.
           </div>
@@ -500,8 +503,8 @@ export default function KasClient() {
         {/* Add form */}
         <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 16, marginBottom: 20 }}>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <Toggle active={direction === 'in'} onClick={() => setDir('in')} label="Ontvangen" color={M3.success} />
-            <Toggle active={direction === 'out'} onClick={() => setDir('out')} label="Uitgegeven" color={M3.error} />
+            <Toggle active={direction === 'in'} onClick={() => setDir('in')} label={t('kas.ontvangen')} color={M3.success} />
+            <Toggle active={direction === 'out'} onClick={() => setDir('out')} label={t('kas.uitgegeven')} color={M3.error} />
           </div>
 
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -511,7 +514,7 @@ export default function KasClient() {
             />
             {/* [DATE-NL] The kasboek date decides the day a cash movement lands on, which is what
                 the drawer is reconciled against. Same reason as the payment dialogs. */}
-            <DateFieldNL value={date} onChange={setDate} aria-label="Datum" />
+            <DateFieldNL value={date} onChange={setDate} aria-label={t('kas.datum')} />
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -569,12 +572,12 @@ export default function KasClient() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Zoek in boekingen (omschrijving, categorie, bedrag)…"
-              aria-label="Kasboekingen zoeken"
+              placeholder={t('kas.zoek')}
+              aria-label={t('kas.zoek.aria')}
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
+              <button onClick={() => setSearch('')} aria-label={t('inkoop.wissen')} className="tap-44"
                 style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>
@@ -584,7 +587,7 @@ export default function KasClient() {
           <div style={{ height: 80, borderRadius: 16, background: '#f1f3f4' }} />
         ) : loadError ? (
           <div style={{ background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.onSurface, fontSize: 14 }}>
-            Kon de boekingen niet laden. Dit is <strong>niet</strong> hetzelfde als een lege kas — probeer het opnieuw.
+            {t('kas.fout.ladenNietLeeg')}
           </div>
         ) : entries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
@@ -611,7 +614,7 @@ export default function KasClient() {
                   <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
                     style={{ flexShrink: 0, color: '#70757a', fontSize: 16, lineHeight: 1 }}>🔗</span>
                 ) : (
-                  <button onClick={() => remove(e.id)} aria-label="Verwijderen"
+                  <button onClick={() => remove(e.id)} aria-label={t('lijst.verwijderen')}
                     style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
                 )}
               </div>
@@ -632,13 +635,13 @@ export default function KasClient() {
             <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KASBOEK — KWARTAAL</div>
-                <button onClick={() => setKbOpen(false)} aria-label="Sluiten"
+                <button onClick={() => setKbOpen(false)} aria-label={t('lijst.sluiten')}
                   style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
               </div>
 
               {/* Quarter selector */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, margin: '10px 0 6px' }}>
-                <button onClick={() => kbPeriod && loadKasboek(prevQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading} aria-label="Vorig kwartaal"
+                <button onClick={() => kbPeriod && loadKasboek(prevQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading} aria-label={t('kas.vorigKwartaal')}
                   style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 999, width: 34, height: 34, cursor: kbPeriod ? 'pointer' : 'default', fontSize: 16, color: M3.onSurface }}>◀</button>
                 <div style={{ fontSize: 15.5, fontWeight: 700, color: M3.onSurface, minWidth: 96, textAlign: 'center' }}>
                   {kbPeriod ? `Q${kbPeriod.quarter} ${kbPeriod.year}` : '—'}
@@ -647,7 +650,7 @@ export default function KasClient() {
                 {(() => {
                   const atEnd = !kbPeriod || isAtOrAfter(kbPeriod, currentQuarter())
                   return (
-                    <button onClick={() => kbPeriod && !atEnd && loadKasboek(nextQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading || atEnd} aria-label="Volgend kwartaal"
+                    <button onClick={() => kbPeriod && !atEnd && loadKasboek(nextQuarter(kbPeriod.year, kbPeriod.quarter))} disabled={!kbPeriod || kbLoading || atEnd} aria-label={t('kas.volgendKwartaal')}
                       style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 999, width: 34, height: 34, cursor: kbPeriod && !atEnd ? 'pointer' : 'default', fontSize: 16, color: M3.onSurface, opacity: atEnd ? 0.4 : 1 }}>▶</button>
                   )
                 })()}
@@ -657,18 +660,18 @@ export default function KasClient() {
                 <div style={{ height: 120, borderRadius: 12, background: '#F0F1F3', marginTop: 10 }} />
               ) : !kb ? (
                 <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '20px 0' }}>
-                  Kon het kasboek niet laden. <button onClick={() => loadKasboek(kbPeriod)} style={{ border: 'none', background: 'transparent', color: M3.primary, cursor: 'pointer', fontFamily: FONT, fontSize: 14 }}>Opnieuw</button>
+                  {t('kas.fout.laden')} <button onClick={() => loadKasboek(kbPeriod)} style={{ border: 'none', background: 'transparent', color: M3.primary, cursor: 'pointer', fontFamily: FONT, fontSize: 14 }}>{t('kas.opnieuw')}</button>
                 </div>
               ) : (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, color: M3.neutral, padding: '6px 2px', borderBottom: `1px solid ${M3.outlineVariant}` }}>
-                    <span>Beginsaldo kwartaal</span>
+                    <span>{t('kas.beginsaldo')}</span>
                     <span style={{ fontFamily: FONT_NUM, fontWeight: 600, color: M3.onSurface }}>{eur.format(kb.openingBalance)}</span>
                   </div>
 
                   {kb.months.length === 0 ? (
                     <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '18px 0' }}>
-                      Geen kasbewegingen in dit kwartaal.
+                      {t('kas.leeg')}
                     </div>
                   ) : kb.months.map((m) => (
                     <div key={m.key} style={{ marginTop: 14 }}>
@@ -707,7 +710,7 @@ export default function KasClient() {
                   ))}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, padding: '10px 2px 2px', marginTop: 8, borderTop: `2px solid ${M3.outlineVariant}` }}>
-                    <span>Eindsaldo kwartaal</span>
+                    <span>{t('kas.eindsaldo')}</span>
                     <span style={{ fontFamily: FONT_NUM, color: kb.closingBalance < 0 ? M3.error : M3.onSurface }}>{eur.format(kb.closingBalance)}</span>
                   </div>
 
