@@ -6315,6 +6315,7 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/invoice/[id]/edit/page.tsx",
     "src/app/dashboard/zzp/ZzpDashboard.tsx",
     "src/app/dashboard/zzp/DailyTruth.tsx",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
   ];
   const leftovers: string[] = [];
 
