@@ -12,6 +12,8 @@
 // Everything is a MAGNITUDE — a creditnota's negative total is abs()'d, exactly as the
 // database functions do (apply_bank_payment, recompute_invoice_amount_paid).
 
+import { round2 } from "./invoice-totals";
+
 /** The invoice fields the partial-payment vocabulary reads. A subset of the invoices row. */
 export interface PartialPayInvoice {
   status?: string | null;
@@ -24,7 +26,7 @@ export const CENT_EPSILON = 0.005;
 
 /** Round to cents, killing float dust (0.1 + 0.2 style) before it reaches the UI. */
 export function toCents(value: number): number {
-  return Math.round(value * 100) / 100;
+  return round2(value);
 }
 
 /** What has actually been settled so far (magnitude, never negative). */

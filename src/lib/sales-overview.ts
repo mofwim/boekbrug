@@ -19,6 +19,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The state VALUES and
 // the `reason` sentences stay Dutch — they are rendered on a Dutch screen.
 
+import { round2 } from './invoice-totals'
+
 export type InvoiceState = "concept" | "open" | "te-laat" | "betaald" | "vervallen";
 
 export interface SalesInvoice {
@@ -69,7 +71,7 @@ export function outstandingAmount(f: SalesInvoice): number {
     ? f.amount_paid
     : 0;
   const rest = total - paid;
-  return rest <= 0 ? 0 : Math.round(rest * 100) / 100;
+  return rest <= 0 ? 0 : round2(rest);
 }
 
 export interface SalesTotals {
@@ -96,8 +98,8 @@ export function summarise(invoices: readonly SalesInvoice[], nowMs: number): Sal
   }
   // Round AFTER summing: rounding per item and then adding gives a different number than the sum
   // of the real amounts, and that difference is exactly what someone will call about.
-  t.outstanding = Math.round(t.outstanding * 100) / 100;
-  t.overdueAmount = Math.round(t.overdueAmount * 100) / 100;
+  t.outstanding = round2(t.outstanding);
+  t.overdueAmount = round2(t.overdueAmount);
   return t;
 }
 

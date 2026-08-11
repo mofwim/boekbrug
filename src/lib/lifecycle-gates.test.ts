@@ -5759,6 +5759,65 @@ test("[GRENS-ZICHTBAAR] the cron names the cause it has, and stops retrying a mo
   assert.match(email, /heldByFairUse: hold\?\.held \?\? 0/, "…and report the real number");
 });
 
+test("[CENT] rounding to cents is defined in exactly one place", () => {
+  // The class this session kept finding — two definitions of one fact, and the wrong one is live —
+  // at its most fundamental. round2 existed five times, in four different shapes:
+  //
+  //   Math.round(n * 100) / 100                       seven modules
+  //   Math.round((n + Number.EPSILON) * 100) / 100    ubl-export and four public calculators
+  //   sign * Math.round(|n| * 100) / 100              snelstart-mapping
+  //   Math.round(n * 100 + 1e-9) / 100                unit-price-display
+  //   invoice-totals                                  the one that is right about both problems
+  //
+  // On one line of € 21,50 at 21% the ledger said 4,52 and the e-invoice XML said 4.51. Nothing
+  // failed: the XML is internally consistent, so Peppol accepts it, and the customer books a cent
+  // less than the invoice they were sent. See src/lib/cent-rounding.test.ts.
+  //
+  // A gate rather than a comment, because the next copy will be written by someone who needs a
+  // rounding helper and does not know this one exists — which is exactly how the five happened.
+  const CANONICAL = "src/lib/invoice-totals.ts";
+  const offenders: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p)) continue;
+      // A test may define its own oracle — checking the code against an independent
+      // re-implementation is the point of invoice-discount.test.ts and amount-triplet.test.ts.
+      if (p.endsWith(".test.ts") || p.endsWith(".test.tsx")) continue;
+      if (p === CANONICAL) continue;
+      const src = code(p);
+      // The NAME is the smaller half of the problem. The same function also existed as `r2`,
+      // `cents` and `afgerond2`, and inline in 65 more places — so the gate looks for the SHAPE:
+      // `Math.round(<anything> * 100) / 100`, whatever it is called or not called.
+      //
+      // What it deliberately does NOT match: `Math.round(x * 100)` without the division (an
+      // integer-cent key or comparison, which is exact and correct), and `Math.round(btw / ex *
+      // 100)` (a percentage rate, not an amount).
+      if (/(?:function|const|let)\s+round2\b\s*[(=]/.test(src)) { offenders.push(p); continue; }
+      if (/Math\.round\([^;]*\*\s*100\s*\)\s*\/\s*100(?![\d.])/.test(src)) offenders.push(p);
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    offenders, [],
+    `cent rounding must come from invoice-totals.round2, not be written again:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[CENT] the canonical round2 still does the two things it exists for", () => {
+  // The gate above only proves there is ONE. This proves it is the RIGHT one — a future edit that
+  // simplified it back to Math.round(n * 100) / 100 would pass the gate above and reintroduce both
+  // defects in every module at once, which is worse than what was there before.
+  const src = code("src/lib/invoice-totals.ts");
+  const fn = src.slice(src.indexOf("export function round2"));
+  assert.match(fn.slice(0, 400), /1e-9/, "the half cent a multiplication loses must be recovered");
+  assert.match(fn.slice(0, 400), /v < 0 \? -1 : 1/, "the sign must be taken off first (creditnota)");
+  assert.match(fn.slice(0, 400), /Number\.isFinite/, "a non-finite amount may not reach a document");
+});
+
 // ─── [PRIJSVELD-CENT] The edit screen showed a different total than the invoice it was editing ──
 //
 // Reported with both screens side by side. Invoice 20260001, four lines, prices typed INCLUSIVE of
@@ -5809,7 +5868,10 @@ test("[PRIJSVELD-CENT] the price field is told the quantity, so it can show enou
 
 test("[PRIJSVELD-CENT] the shared helper decides the precision, not each screen", () => {
   const lib = code("src/lib/price-mode.ts");
-  assert.match(lib, /import \{ unitPriceDecimals \} from "\.\/unit-price-display"/,
+  // The named list is matched loosely on purpose: the same import now also carries roundTo, so
+  // that the count and the rounding it is applied with come from ONE module. Pinning the exact
+  // text made this gate fail on a change that strengthens the very thing it is asserting.
+  assert.match(lib, /import \{[^}]*\bunitPriceDecimals\b[^}]*\} from "\.\/unit-price-display"/,
     "one answer to 'how do you write this unit price', shared with the PDF and the price column");
   assert.match(lib, /const decimals = unitPriceDecimals\(shown, quantity, target\)/);
 
@@ -5865,4 +5927,21 @@ test("[AFROND-AUDIT] it says what it cannot find, where that cannot be missed", 
   // A discount legitimately makes the header lower than the lines. Without this the report would
   // flag every discounted invoice ever issued, and be discarded on the first read.
   assert.match(raw, /i\.discount_type IS NULL/);
+});
+
+test("[CENT] rounding to N decimals is shared between the chooser and the applier", () => {
+  // One layer below the round2 gate, and the same shape. unit-price-display DECIDES how many
+  // decimals a unit price needs so that quantity × price reproduces the line total; price-mode
+  // APPLIES that count to the price in the edit field. For a while each did its own rounding —
+  // the chooser with the 1e-9 nudge, the applier without — so on a stored € 1,005 the chooser said
+  // "two decimals reconcile" and the field printed 1,00, which does not. Touch that field and
+  // 1,00 is stored: the line loses a cent, which is the defect [PRIJSVELD-CENT] set out to fix.
+  const display = code("src/lib/unit-price-display.ts");
+  assert.match(display, /export function roundTo\(/, "the chooser must own the rounding");
+  assert.match(display, /Math\.round\(n \* f \+ 1e-9\) \/ f/, "…including the nudge");
+
+  const price = code("src/lib/price-mode.ts");
+  assert.doesNotMatch(price, /function roundTo\(/, "price-mode may not round to N decimals itself");
+  assert.match(price, /import \{[^}]*\broundTo\b[^}]*\} from "\.\/unit-price-display"/,
+    "it must use the same one the decimal count was chosen with");
 });

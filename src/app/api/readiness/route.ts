@@ -35,6 +35,7 @@ import { resolveSchemeSettlements, mergeSchemeOpts } from "@/lib/kas-payment-eve
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 // [ICP] Sales to EU businesses: only the PROBLEMS reach readiness — see the call site.
 import { buildIcp, type IcpInvoice } from "@/lib/icp";
+import { round2 } from "@/lib/invoice-totals";
 
 export const dynamic = "force-dynamic";
 // [RUNTIME] Deze route doet ~22 databaseronden per klant en wordt door het werkbord één
@@ -467,7 +468,7 @@ export async function GET(req: NextRequest) {
         if (d.eftGross != null) continue;                    // has a terminal receipt → fee is booked
         if (!(typeof d.tillPin === "number" && d.tillPin > 0)) continue;
         if (!(typeof d.bankNet === "number" && d.bankNet > 0)) continue;
-        const feeApprox = Math.round((d.tillPin - d.bankNet) * 100) / 100;
+        const feeApprox = round2(d.tillPin - d.bankNet);
         if (feeApprox <= 0.01) continue;                     // net ≥ gross → no fee to book
         const key = d.date + "|commission";
         if (seen.has(key)) continue;

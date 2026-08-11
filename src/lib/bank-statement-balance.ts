@@ -13,6 +13,8 @@
 // statement contained), independent of dedup — so it also catches a line the parser dropped,
 // not just a user-truncated file. Pure; run: npx tsx src/lib/bank-statement-balance.test.ts
 
+import { round2 } from "./invoice-totals";
+
 export interface BalanceReconciliation {
   // Whether the identity holds within tolerance. When not checkable (a balance is missing) this
   // is true — an unknowable statement is never reported as "incomplete" (no false alarm), only
@@ -28,7 +30,8 @@ export interface BalanceReconciliation {
   tolerance: number;
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 /**
  * Reconcile a statement's declared balances against the sum of its transactions. `opening`/

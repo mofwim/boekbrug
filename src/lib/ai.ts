@@ -94,6 +94,7 @@ import { verifyDocument } from './document-verify';
 // [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
 // reader, one line before the receiver-identity backstop erases the evidence — see there.
 import { looksLikeOwnDocument, ownDocumentNotice } from './own-document';
+import { round2 } from './invoice-totals';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
@@ -315,7 +316,7 @@ export function fixMisSummedBtw(
   // The stated BTW must be provably wrong — not merely surprising.
   if (rateOver(btw) <= 21) return keep;
 
-  const derivedBtw = Math.round((incl - ex) * 100) / 100;
+  const derivedBtw = round2(incl - ex);
   // ...and the replacement must be provably plausible: a legal blended rate, charged in the same
   // direction as the base it sits on (a sign flip means a different document, not a bad sum).
   if (rateOver(derivedBtw) > 21) return keep;
@@ -2270,7 +2271,8 @@ Return JSON only.`;
     // A derived money value is rounded to the cent — an unrounded ex+btw (e.g. 42.99999999999999)
     // is stored verbatim into a numeric column and then never matches a clean re-read of 43.00 on
     // an exact-equality dedup query, silently defeating duplicate detection (a double-book).
-    const round2 = (n: number) => Math.round(n * 100) / 100;
+    // [CENT] round2 uit invoice-totals — zie de kop daar; deze functie had een eigen versie die
+    // een negatief half cent naar nul rondde en een gedreven half cent liet vallen.
     // [PRINTED-TOTAL] Reconcile: if total is missing but ex + btw exist → compute it.
     //
     // And RECORD that we did. Filling the third amount is the right call — an invoice with two of

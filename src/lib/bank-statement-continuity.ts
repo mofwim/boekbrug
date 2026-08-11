@@ -27,6 +27,8 @@
 //     dubbele transacties betekenen.
 // Puur, geen I/O — getest in bank-statement-continuity.test.ts.
 
+import { round2 } from './invoice-totals'
+
 /** Eén ingelezen afschrift, zoals het bij de import is vastgelegd. */
 export interface StatementPeriod {
   /** documents.id van het opgeslagen afschrift — zodat de UI het bestand kan aanwijzen. */
@@ -175,7 +177,7 @@ export function findStatementGaps(
       //    tussen deze twee bestanden iets ontbreekt of dat er iets van een andere rekening is.
       if (before.closing != null && after.opening != null) {
         balancesKnown = true;
-        const diff = Math.round((before.closing - after.opening) * 100) / 100;
+        const diff = round2(before.closing - after.opening);
         if (Math.abs(diff) > tol) {
           issues.push({
             kind: "balance_break",

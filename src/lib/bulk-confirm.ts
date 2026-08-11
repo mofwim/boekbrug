@@ -30,6 +30,8 @@
 // swap on status, the confirmed_by trail and the client's notification are inherited rather than
 // reimplemented. A second booking path is how two paths drift on the invariant that matters.
 
+import { round2 } from './invoice-totals'
+
 /** The row fields this reads. A structural subset of the confirm screen's list. */
 export interface ConfirmCandidateRow {
   id: string
@@ -91,7 +93,7 @@ export function planBulkConfirm(
   return {
     eligible,
     refused,
-    total: Math.round(total * 100) / 100,
+    total: round2(total),
     clientCount: new Set(eligible.map((r) => r.clientId)).size,
   }
 }

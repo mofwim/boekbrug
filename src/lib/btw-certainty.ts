@@ -28,6 +28,8 @@
 // bound against the current saldo answers one question honestly: could assigning rates flip a
 // refund into a payment? "Could" is the strongest claim available, and it is the one that matters.
 
+import { round2 } from './invoice-totals'
+
 /** The lowest non-zero Dutch VAT rate. The missing BTW cannot be smaller than this, if it is taxed. */
 const LOWEST_TAXED_RATE = 9;
 
@@ -63,7 +65,7 @@ export function assessBtwCertainty(input: {
   const btwSaldo = Number(input.btwSaldo) || 0;
 
   // The gross amount carries at most `rate/(100+rate)` of itself as BTW.
-  const minMissingBtw = Math.round(((unrated * LOWEST_TAXED_RATE) / (100 + LOWEST_TAXED_RATE)) * 100) / 100;
+  const minMissingBtw = round2((unrated * LOWEST_TAXED_RATE) / (100 + LOWEST_TAXED_RATE));
   const unratedShare = omzet > 0 ? Math.min(1, unrated / omzet) : 0;
 
   if (unrated <= EPS) return { level: "exact", unrated: 0, unratedShare: 0, minMissingBtw: 0 };

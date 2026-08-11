@@ -27,6 +27,8 @@
 // definitief geen match is, is het een échte vraag aan de ondernemer. Hier gokken naar 'privé'
 // zou een bewering zijn zonder bewijs.
 
+import { round2 } from './invoice-totals'
+
 /** De twee waarden die de rest van de app kent. */
 export type Betaalwijze = "bank" | "kas";
 
@@ -162,6 +164,4 @@ export function contantUitLade(
   return null;
 }
 
-function afgerond2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+const afgerond2 = round2;

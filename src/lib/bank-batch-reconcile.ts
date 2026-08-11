@@ -16,6 +16,7 @@
 // Run: npx tsx src/lib/bank-batch-reconcile.test.ts
 
 import { normalizeRef, parseReferenceNumbers, referenceMatches, isStrongNameIdentity, ibanMatches } from "./bank-matching";
+import { round2 } from "./invoice-totals";
 
 /** The payment text a batch is read from: the extracted reference AND the raw remittance. */
 export interface BatchPaymentText {
@@ -129,7 +130,7 @@ export function settleableAmount(
   const paid = Math.max(0, Number(amountPaid ?? 0));
   const open = Math.max(0, Math.abs(totalIncBtw) - paid);
   const signed = totalIncBtw < 0 ? -open : open;
-  return Math.round(signed * 100) / 100;
+  return round2(signed);
 }
 
 export type BatchStatus =

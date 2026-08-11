@@ -15,13 +15,14 @@
 // printed TOTAAL to the cent, or we emit a warning and the caller does NOT auto-book it.
 
 import type { DailyTurnover } from "./turnover";
+import { round2 } from "./invoice-totals";
 
 export interface DailySalesResult {
   row: DailyTurnover | null;
   warnings: string[]; // Dutch, human-readable
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /** NL money string → number: "1.886,58" → 1886.58, "2,70" → 2.70. Dots are thousands, comma is
  *  the decimal (a Dutch POS report is always NL-formatted). Returns 0 for junk. */

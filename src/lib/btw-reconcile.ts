@@ -36,6 +36,8 @@
 // may name it. In A and B both readings are legal, and then we say so honestly and leave the
 // choice standing. Deciding where you cannot is guessing.
 
+import { round2 } from "./invoice-totals";
+
 /** Same tolerance as the arithmetic gate in safecore.ts — rounding noise on cents, nothing more. */
 export const SUM_TOLERANCE = 0.02;
 
@@ -61,9 +63,8 @@ export type BtwReconcile = {
   btwRepairPossible: boolean;
 };
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 /** The rate in whole percent, rounded the way safecore rounds it. null on a zero base. */
 function rateOf(btw: number, base: number): number | null {

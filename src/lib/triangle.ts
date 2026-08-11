@@ -17,8 +17,9 @@
 import { reconcileCardPeriod, type CardDayInput, type CardPeriodResult } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
 import { posTakingsDay, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
+import { round2 } from "./invoice-totals";
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /**
  * Group bank pos_income lines into the NET card settlement per TAKINGS day. The takings day

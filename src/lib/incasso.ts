@@ -21,6 +21,8 @@
 // mentions that statutory interest may be charged; it never prints a figure this app cannot
 // guarantee. The collection-cost staffel below, by contrast, has been fixed since 2012.
 
+import { round2 } from './invoice-totals'
+
 /** The staffel of the Besluit BIK: [threshold of the band, percentage over that band]. */
 const BANDS: Array<{ upTo: number; pct: number }> = [
   { upTo: 2500, pct: 0.15 },
@@ -45,18 +47,19 @@ export const WIK_TERM_DAYS = 15;
 export type DebtorType = "consumer" | "business";
 
 /**
- * Round to cents the way a person does with a calculator.
+ * [CENT] Round to cents the way a person does with a calculator — now the app's one round2.
  *
- * The naive Math.round(n * 100) / 100 is a cent short here often enough to matter: 15% of
- * €1.000,50 is 150.075, and in binary `150.075 * 100` is 15007.499999999998, which rounds DOWN to
- * € 150,07. This number goes into a letter that a debtor may well recompute themselves — an
- * amount that does not match their own arithmetic is the kind of small wrongness that costs the
- * whole letter its credibility. Normalising the scaled value first removes the representation
- * error before the rounding decision is made.
+ * This file found the defect first, on its own, and solved it locally: the naive
+ * `Math.round(n * 100) / 100` is a cent short often enough to matter, because 15% of €1.000,50 is
+ * 150.075 and in binary `150.075 * 100` is 15007.499999999998, which rounds DOWN to € 150,07.
+ * The number goes into a letter that a debtor may well recompute themselves, and an amount that
+ * does not match their own arithmetic costs the whole letter its credibility.
+ *
+ * It is the same defect that sent an e-invoice out a cent light — the fix now lives in one place
+ * (invoice-totals.round2) instead of being rediscovered per module, and it also handles the
+ * negative half cent this local version still got wrong.
  */
-function cents(n: number): number {
-  return Math.round(Number((n * 100).toFixed(6))) / 100;
-}
+const cents = round2;
 
 /**
  * The buitengerechtelijke incassokosten over an unpaid principal, per the legal staffel.

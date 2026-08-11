@@ -40,6 +40,7 @@
 // never read as passed OR as failed. That rule is why this is worth trusting at all.
 
 import { groundAmount, type GroundingVerdict } from './amount-grounding'
+import { round2 } from './invoice-totals'
 
 /**
  * How well the read total is supported by the document.
@@ -295,7 +296,7 @@ export function findPrintedSplit(
   const goal = Math.abs(total)
   for (const excl of amounts) {
     if (excl >= goal) continue
-    const btw = Math.round((goal - excl) * 100) / 100
+    const btw = round2(goal - excl)
     // The complement must ALSO be printed. One printed number plus arithmetic is not the document
     // asserting a split; it is us inventing one, which is the very thing being guarded against.
     if (!amounts.some((a) => Math.abs(a - btw) < CENT)) continue

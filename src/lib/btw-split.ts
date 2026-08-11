@@ -53,6 +53,8 @@
 //
 // Pure: no I/O, no clock, no database.
 
+import { round2 } from './invoice-totals'
+
 /** One row of the per-rate summary block, as printed. */
 export interface BtwSplitRow {
   /** The rate as printed — 0, 9 or 21 on a Dutch invoice. */
@@ -106,9 +108,8 @@ function rateTolerance(base: number): number {
   return Math.max(SUM_TOLERANCE, Math.abs(base) * 0.0005)
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100
-}
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
 
 function isNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v)

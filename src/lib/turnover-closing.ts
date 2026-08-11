@@ -16,6 +16,7 @@ import {
   type ReconcileBreak,
   type PosSettlementLine,
 } from "./turnover";
+import { round2 } from "./invoice-totals";
 
 export interface CashOmzetForClosing {
   date: string;                 // entry_date 'YYYY-MM-DD'
@@ -63,7 +64,7 @@ export interface TurnoverClosing {
   audit: { date: string; totalIncl: number }[];
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /**
  * Build the retail turnover section for the closing package. `posLines` are the bank

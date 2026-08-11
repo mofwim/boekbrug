@@ -38,6 +38,8 @@
 // meebewegen. Dat is een keuze van de ondernemer over zijn eigen prijs, en die hoort bij hem —
 // niet bij een afrondingsregel die het verschil wegmoffelt.
 
+import { round2 } from './invoice-totals'
+
 export type PriceMode = "excl" | "incl";
 
 /** Een tarief als factor: 21 → 1.21. Onbekend/kapot tarief telt als 0% (geen stille verhoging). */
@@ -64,19 +66,19 @@ export function inclFromEx(ex: number, rate: number | null | undefined): number 
 // [PRIJSVELD-CENT] Zie priceFieldValue: het veld toont net zoveel decimalen als de regel nodig
 // heeft, en unitPriceDecimals is dezelfde functie die de PDF en de prijskolom daarvoor gebruiken.
 // Eén antwoord op "hoe schrijf je deze stuksprijs op", op alle drie de plekken.
-import { unitPriceDecimals } from "./unit-price-display";
-
-/** Afronden op een gegeven aantal decimalen, zonder de drijvende-komma-staart. */
-function roundTo(value: number, decimals: number): number {
-  const f = 10 ** decimals;
-  return Math.round(Number(value) * f) / f;
-}
+// [CENT] roundTo komt uit dezelfde module. Er stond hier een eigen versie zonder de 1e-9, en dat
+// is precies de fout die [PRIJSVELD-CENT] hierboven beschrijft, één laag dieper: unitPriceDecimals
+// KIEST het aantal decimalen met de ene afronding, dit veld PAST het toe met de andere. Op een
+// opgeslagen prijs van € 1,005 kiest hij 2 decimalen omdat 1,01 het regeltotaal oplevert, en toont
+// het veld 1,00 — een prijs die niet met zijn eigen regel vermenigvuldigt, en die de opgeslagen
+// breuk vervangt zodra iemand het veld aanraakt.
+import { unitPriceDecimals, roundTo } from "./unit-price-display";
 
 /** Op centen, voor weergave. Nooit voor opslag — zie de afrondingsnotitie in de kop. */
 export function toDisplayCents(value: number): number {
   const v = Number(value);
   if (!Number.isFinite(v)) return 0;
-  return Math.round(v * 100) / 100;
+  return round2(v);
 }
 
 /**

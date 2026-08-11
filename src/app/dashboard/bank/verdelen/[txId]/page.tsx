@@ -16,6 +16,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { settleableDirection } from '@/lib/payment-plan'
 import { allocatedOnLine } from '@/lib/bank-line-budget'
 import VerdeelClient, { type VerdeelFactuur } from './VerdeelClient'
+import { round2 } from '@/lib/invoice-totals'
 
 export const dynamic = 'force-dynamic'
 
@@ -110,7 +111,7 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
         invoiceNumber: r.invoice_number,
         partyName: r.client_name,
         invoiceDate: r.invoice_date,
-        open: Math.round(Math.max(0, total - paid) * 100) / 100,
+        open: round2(Math.max(0, total - paid)),
       }
     })
     .filter((f) => f.open > 0.005)

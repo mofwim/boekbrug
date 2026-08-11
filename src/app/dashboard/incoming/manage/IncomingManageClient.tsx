@@ -92,6 +92,7 @@ import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { round2 } from '@/lib/invoice-totals'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -987,13 +988,13 @@ export default function IncomingManageClient({
   // openAmountSigned, niet het factuurbedrag: een deelbetaling telt alleen voor de REST mee, een
   // betaalde factuur voor niets, en een creditnota van je leverancier gaat eraf — precies zoals
   // hij een regel lager met zijn minteken staat afgedrukt.
-  const openSumDisplayed = Math.round(displayed.reduce((s, i) => s + openAmountSigned(i), 0) * 100) / 100
+  const openSumDisplayed = round2(displayed.reduce((s, i) => s + openAmountSigned(i), 0))
   // Wat er op de getoonde rijen AL is afgerekend — inclusief het deel van een deelbetaling. Niet
   // "de facturen die op betaald staan": dan zou de €200 die je al hebt overgemaakt op een halve
   // factuur in geen van beide kolommen staan, terwijl hij wel in het totaal zit. Zie
   // settledAmountSigned: open + betaald === totaal, per factuur en dus per lijst.
-  const paidSumDisplayed = Math.round(displayed.reduce((s, i) => s + settledAmountSigned(i), 0) * 100) / 100
-  const totalSumDisplayed = Math.round(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0) * 100) / 100
+  const paidSumDisplayed = round2(displayed.reduce((s, i) => s + settledAmountSigned(i), 0))
+  const totalSumDisplayed = round2(displayed.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0))
 
   // ── [AMOUNT-CORRECTION] Correcting the amounts of a confirmed invoice ──
   // Local state only; nothing is written until the owner taps save, and the server re-checks every
@@ -3241,7 +3242,7 @@ export default function IncomingManageClient({
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
-                {selectedRows.length} geselecteerd · {fmtEur(Math.round(openSum * 100) / 100)}
+                {selectedRows.length} geselecteerd · {fmtEur(round2(openSum))}
               </p>
               <p style={{ fontSize: 11.5, color: bundleBuilt && !bundleBuilt.ok ? M3.error : '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {selectedRows.length < 2
@@ -3371,7 +3372,7 @@ export default function IncomingManageClient({
               ? [
                   'Facturen van deze leverancier krijgen geen betaalknop meer — je zou anders betalen wat de bank al heeft afgeschreven.',
                   openFromSupplier.length > 0
-                    ? `Wat de bank al heeft geïncasseerd zetten we meteen op betaald. Nu staan er ${openFromSupplier.length} facturen van ${name} open, samen ${fmtEur(Math.round(openSumHere * 100) / 100)} — daarvan gaat op betaald wat we in je bankafschrift terugvinden.`
+                    ? `Wat de bank al heeft geïncasseerd zetten we meteen op betaald. Nu staan er ${openFromSupplier.length} facturen van ${name} open, samen ${fmtEur(round2(openSumHere))} — daarvan gaat op betaald wat we in je bankafschrift terugvinden.`
                     : 'Wat de bank al heeft geïncasseerd zetten we meteen op betaald.',
                   'Je krijgt daarna een overzicht van precies welke facturen zijn verwerkt en welke niet.',
                 ].join('\n\n')

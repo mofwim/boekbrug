@@ -13,6 +13,8 @@
 // Without it the app compared a gross till figure to a net bank figure and silently threw
 // the commission away — overstating profit and losing the voorbelasting on it.
 
+import { round2 } from './invoice-totals'
+
 /** One card scheme's line on the settlement (V Pay / Maestro / Mastercard / …). */
 export interface EftScheme {
   scheme: string;   // as printed ("V Pay", "Maestro", "Debit Mastercard", …)
@@ -44,7 +46,7 @@ export interface EftParseResult {
   warnings: EftWarning[];
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
 
 /** Parse an NL money token ("1.546,46" / "1546,46" / "192.59") → number, or NaN. */
 function money(raw: string): number {

@@ -49,6 +49,7 @@ import { fetchAllRowsForIds } from "./supabase-paginate";
  * that drifts apart quietly.
  */
 import { isMissingRelation as isMissingTable } from "./pg-missing";
+import { round2 } from "./invoice-totals";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = SupabaseClient<any>;
 
@@ -83,7 +84,7 @@ export async function recordPaymentLinks(
       invoice_id,
       amount_applied:
         typeof applied === "number" && Number.isFinite(applied) && applied > 0
-          ? Math.round(applied * 100) / 100
+          ? round2(applied)
           : null,
     };
   });

@@ -37,6 +37,7 @@ import { parseAmountInput } from '@/lib/partial-payment'
 import InvoiceCorrectionModal, { type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { round2 } from '@/lib/invoice-totals'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -1905,7 +1906,7 @@ export default function BankClient() {
               genegeerd. Maar het bedrag hoort zichtbaar te zijn vóór het kwartaal dichtgaat, en
               tot nu toe was het dat nergens. Alleen tonen als er iets te tonen valt. */}
           {bankTab === 'ignored' && ignoredInQ.length > 0 && (() => {
-            const total = Math.round(ignoredInQ.reduce((a, x) => a + Math.abs(x.amount), 0) * 100) / 100
+            const total = round2(ignoredInQ.reduce((a, x) => a + Math.abs(x.amount), 0))
             const big = ignoredInQ.filter((x) => Math.abs(x.amount) >= 500).length
             return (
               <div style={{
@@ -2415,7 +2416,7 @@ function TxCard({
   const unassignedAmount =
     s.appliedAmount == null
       ? null
-      : Math.round((Math.abs(s.amount) - s.appliedAmount) * 100) / 100
+      : round2(Math.abs(s.amount) - s.appliedAmount)
   // [BANK-BATCH-RECONCILE] Sum the matched invoices and check the total equals the bank
   // debit. This is the honest proof a batch payment covers exactly these invoices — no
   // single invoice amount appears in the statement, only the sum was debited. Only shown
