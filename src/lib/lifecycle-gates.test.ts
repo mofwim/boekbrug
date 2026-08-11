@@ -5885,6 +5885,50 @@ test("[PRIJSVELD-CENT] the shared helper decides the precision, not each screen"
   assert.match(lib, /if \(quantity === undefined \|\| quantity === null\) return toDisplayCents\(shown\)/);
 });
 
+// ─── [AFROND-AUDIT] The query that is handed to an owner to run on their live database ──────────
+//
+// supabase/queries/invoice_rounding_audit.sql reports which invoices do not add up. It is meant to
+// be pasted into the Supabase SQL editor, where it runs with the service role and RLS does not
+// apply — so this file has more power over an owner's books than any route in the app, and the
+// only thing standing between it and their data is that every statement in it is a SELECT.
+//
+// Verified against a real Postgres 16 with the reported invoice as a fixture: the correct version
+// is not flagged, the discounted one is skipped, an incoming supplier invoice is out of scope, a
+// negative creditnota is not flagged, and the rounded price is caught at EUR 0,65.
+
+test("[AFROND-AUDIT] the audit query cannot write", () => {
+  const raw = readFileSync("supabase/queries/invoice_rounding_audit.sql", "utf8");
+  // The STATEMENTS, without the prose — the header explains what it does not do, using the very
+  // words being forbidden. A gate that reads comments checks what a file says about itself.
+  const sql = raw.replace(/--[^\n]*/g, " ");
+  for (const verb of ["INSERT", "UPDATE", "DELETE", "ALTER", "DROP", "TRUNCATE", "CREATE", "GRANT"]) {
+    assert.doesNotMatch(
+      sql, new RegExp(`\\b${verb}\\b`, "i"),
+      `the audit query contains ${verb}. It is run by hand against a live database with the ` +
+        "service role, where nothing stops it",
+    );
+  }
+  assert.match(sql, /\bSELECT\b/i, "…and it must still actually query something");
+});
+
+test("[AFROND-AUDIT] it says what it cannot find, where that cannot be missed", () => {
+  const raw = readFileSync("supabase/queries/invoice_rounding_audit.sql", "utf8");
+  // The limitation the fixtures exposed: an invoice whose prices were rounded AND whose totals
+  // were then recomputed from those rounded prices is INTERNALLY CONSISTENT, and passes both
+  // checks in silence. A clean result means "no invoice contradicts itself", never "every invoice
+  // is right", and a report that let someone believe the second would be worse than no report.
+  assert.match(raw, /WHAT THIS CANNOT FIND/, "the limitation must be stated");
+  assert.match(raw, /INTERNALLY CONSISTENT/);
+  assert.match(raw, /never as "every invoice is right"/);
+
+  // And the control, so an empty result is distinguishable from a query that cannot see the data.
+  assert.match(raw, /═══ 4\. CONTROL/, "an empty result has two opposite meanings without it");
+
+  // A discount legitimately makes the header lower than the lines. Without this the report would
+  // flag every discounted invoice ever issued, and be discarded on the first read.
+  assert.match(raw, /i\.discount_type IS NULL/);
+});
+
 test("[CENT] rounding to N decimals is shared between the chooser and the applier", () => {
   // One layer below the round2 gate, and the same shape. unit-price-display DECIDES how many
   // decimals a unit price needs so that quantity × price reproduces the line total; price-mode
