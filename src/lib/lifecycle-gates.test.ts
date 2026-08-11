@@ -3542,9 +3542,13 @@ test("[ARTIKEL-CODE] a line can be saved to the catalog WITH a code, and a clash
   );
   // The field itself, and the fact that it is optional: an owner who wants no code must still be
   // able to save, exactly as before.
-  assert.match(page, /aria-label="Artikelcode"/, "there must be a field to type it in");
+  // [TAAL] Pinned on the KEY, not the Dutch word. This gate asserted `aria-label="Artikelcode"`
+  // literally and went red the moment the screen was translated — on a change that does not touch
+  // what it is guarding. A gate written against one language fails on the day the app gains a
+  // second, and the tempting fix is to delete it.
+  assert.match(page, /aria-label=\{t\('nieuw\.regel\.artikelcode'\)\}/, "there must be a field to type it in");
   assert.match(
-    page, /placeholder="code \(bijv\. 22\)"/,
+    page, /placeholder=\{t\('nieuw\.regel\.codeVoorbeeld'\)\}/,
     "…labelled with the same example the description field already uses",
   );
 
@@ -6415,4 +6419,45 @@ test("[RLS-UIT] the audit has something to audit", () => {
     `only ${files.length} service-role files found on the money line — the walk is looking in the ` +
       "wrong place, and the gate above is passing because it checked nothing",
   );
+});
+
+test("[TAAL] the invoice screen has no Dutch of its own left", () => {
+  // The first whole PAGE in the catalogue, and the one the owner uses most. A screen is either
+  // translated or it is not: half of it in Arabic and half in Dutch is harder to use than all of
+  // it in Dutch, so "mostly done" is not a state this may rest in.
+  //
+  // The gate is a re-scan, not a checklist — it looks for the SHAPE of a Dutch string in a
+  // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
+  // part a list of keys cannot do.
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  const leftovers: string[] = [];
+
+  const patterns = [
+    // A text node: >Some Dutch words<
+    /> *([A-ZÉ][^<>{}\n]{3,70}?) *</g,
+    // An attribute a user reads.
+    /(?:label|placeholder|title|aria-label)="([^"]{3,70})"/g,
+    // A message handed to the owner when something goes wrong.
+    /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
+  ];
+  for (const re of patterns) {
+    for (const m of page.matchAll(re)) {
+      const text = m[1].trim();
+      // Two Dutch-looking words, or one capitalised Dutch word on its own.
+      if (!/[a-zé] [a-zé]|^[A-Z][a-zé]{3,}$/.test(text)) continue;
+      if (text.includes("/") || text.includes("http")) continue;
+      // A city and a street are FORMAT examples, not words: an Arabic example would have the
+      // owner typing a postcode that does not exist here. Same for the VAT number shape.
+      if (/^(Amsterdam|Straatnaam 1|NL\d)/.test(text)) continue;
+      leftovers.push(text);
+    }
+  }
+
+  assert.deepEqual(
+    [...new Set(leftovers)], [],
+    `these still bypass the catalogue:\n  ${[...new Set(leftovers)].join("\n  ")}`,
+  );
+
+  // And the translator must actually be bound, or every t() above is a crash rather than a word.
+  assert.match(page, /const t = translator\(taal\)/);
 });

@@ -37,6 +37,9 @@ import { invoiceSentNotice, type InvoiceSentNotice } from '@/lib/invoice-sent-no
 // [TAAL] De taal die de ondernemer heeft gekozen. Niets anders op dit scherm hangt eraan: de
 // factuur, de PDF en de mail blijven Nederlands.
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import { statusLabel } from '@/lib/invoice-status'
+import type { MessageKey } from '@/lib/i18n/messages'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
@@ -141,8 +144,9 @@ type InvoiceLine = {
 // ─── Config ────────────────────────────────────────────────────────────────────
 
 // [DS] Design System v1.0 — Type config with DS tokens
+// [TAAL] `label` is een sleutel, geen woord — zie src/lib/i18n/messages.ts.
 const TYPE_CONFIG: Record<InvoiceType, {
-  label: string
+  label: MessageKey
   activeBg: string      // active chip background
   activeColor: string   // active chip text
   activeBorder: string  // active chip border
@@ -150,17 +154,17 @@ const TYPE_CONFIG: Record<InvoiceType, {
   focusColor: string    // input focus border color
 }> = {
   factuur: {
-    label: 'Factuur',
+    label: 'nieuw.type.factuur',
     activeBg: '#D3E3FD', activeColor: '#1967D2', activeBorder: '#1A73E8',
     primaryBtn: '#1A73E8', focusColor: '#1A73E8',
   },
   offerte: {
-    label: 'Offerte',
+    label: 'nieuw.type.offerte',
     activeBg: '#FEF7E0', activeColor: '#EA8600', activeBorder: '#FBBC04',
     primaryBtn: '#FBBC04', focusColor: '#FBBC04',
   },
   creditnota: {
-    label: 'Credit',
+    label: 'nieuw.type.creditnota',
     activeBg: '#F9DEDC', activeColor: '#B3261E', activeBorder: '#EA4335',
     primaryBtn: '#EA4335', focusColor: '#EA4335',
   },
@@ -537,6 +541,7 @@ function NewInvoicePageContent() {
   // [VERSTUURD] Gevuld zodra /api/invoice/send klaar is met een nummer. Zolang dit staat blijft
   // de pagina staan: elke uitgang van het paneel navigeert zelf, want de factuur bestaat al.
   const taal = useLocale()
+  const t = translator(taal)
   const [sentNotice, setSentNotice] = useState<InvoiceSentNotice | null>(null)
   const [sentInvoiceId, setSentInvoiceId] = useState<string | null>(null)
   useCloseOnBack(!!showSendConfirm, () => setShowSendConfirm(false))
@@ -590,12 +595,12 @@ function NewInvoicePageContent() {
   useSubPageHeader(
     {
       title:
-        invoiceType === 'offerte' ? 'Nieuwe offerte' :
-        invoiceType === 'creditnota' ? 'Creditnota' : 'Nieuwe factuur',
+        invoiceType === 'offerte' ? t('nieuw.titel.offerte') :
+        invoiceType === 'creditnota' ? statusLabel('credit', taal) : t('nieuw.titel.factuur'),
       actions: invoiceType === 'offerte' && offerteId ? (
         <button onClick={() => setShowConvertDialog(true)}
           style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
-          Omzetten naar factuur →
+          {t('nieuw.omzetten')} →
         </button>
       ) : undefined,
     },
@@ -864,10 +869,10 @@ function NewInvoicePageContent() {
         // geweigerd, en de route zegt WELKE. Dat stil laten verdwijnen zou betekenen dat de
         // ondernemer denkt dat "22" nu bij deze regel hoort terwijl het bij een andere staat —
         // en dan haalt hij later de verkeerde regel binnen.
-        setCodeError(typeof j?.error === 'string' && j.error ? j.error : 'Opslaan in de catalogus lukte niet.')
+        setCodeError(typeof j?.error === 'string' && j.error ? j.error : t('nieuw.fout.catalogus'))
       }
     } catch {
-      setCodeError('Opslaan in de catalogus lukte niet.')
+      setCodeError(t('nieuw.fout.catalogus'))
     }
   }
 
@@ -1009,7 +1014,7 @@ function NewInvoicePageContent() {
     })
     const draftJson = await draftRes.json().catch(() => ({}))
     if (!draftRes.ok || !draftJson?.invoiceId) {
-      setError(draftJson?.error || 'Omzetten mislukt'); setConvertingOfferte(false); return
+      setError(draftJson?.error || t('nieuw.fout.omzetten')); setConvertingOfferte(false); return
     }
     const factuur = { id: draftJson.invoiceId as string }
 
@@ -1058,7 +1063,7 @@ function NewInvoicePageContent() {
       }
     } catch {
       setShowConvertDialog(false)
-      setError('Verzenden mislukt — opgeslagen als concept')
+      setError(t('nieuw.fout.versturen'))
       setConvertingOfferte(false)
       router.replace(`/dashboard/invoice/${factuur.id}`)
       return
@@ -1096,7 +1101,7 @@ function NewInvoicePageContent() {
     // [FACTUUR-A] Customer BTW-id: only block when it LOOKS Dutch but is
     // malformed. Empty or clearly-foreign numbers pass (valid cases).
     if (clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) {
-      setError('Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)')
+      setError(t('nieuw.fout.btwKlant'))
       return
     }
     // [ICP] A number that names another EU member state but cannot have that length is caught
@@ -1118,7 +1123,7 @@ function NewInvoicePageContent() {
 
     if (hasAnyError) {
       setFieldErrors({ ...errs, lines: lineErrs })
-      setError('Vul de rood gemarkeerde velden in')
+      setError(t('nieuw.fout.velden'))
       // Scroll to first error
       setTimeout(() => {
         const firstRed = document.querySelector('[data-form] input[style*="#EA4335"], [data-form] input[style*="FFF8F7"]') as HTMLElement
@@ -1189,7 +1194,7 @@ function NewInvoicePageContent() {
     })
     const draftJson = await draftRes.json().catch(() => ({}))
     if (!draftRes.ok || !draftJson?.invoiceId) {
-      setError(draftJson?.error || 'Aanmaken mislukt — probeer opnieuw')
+      setError(draftJson?.error || t('nieuw.fout.aanmaken'))
       setLoading(false); return
     }
     const invoice = { id: draftJson.invoiceId as string }
@@ -1281,7 +1286,7 @@ function NewInvoicePageContent() {
         // de factuur, zoals hiervoor. Liever geen melding dan een melding die iets beweert.
       } catch {
         // Network blip after a clean insert — the draft is intact.
-        setError('Verzenden mislukt — de factuur is opgeslagen als concept')
+        setError(t('nieuw.fout.versturen'))
         setLoading(false)
         router.replace(`/dashboard/invoice/${invoice.id}`)
         return
@@ -1318,7 +1323,7 @@ function NewInvoicePageContent() {
         {handoff && (
           <div style={{ backgroundColor: '#E6F4EA', border: '1px solid #137333', borderRadius: 16, padding: 16 }}>
             <p style={{ fontSize: 15, fontWeight: 600, color: '#137333', margin: '0 0 4px' }}>
-              We vonden de factuur die je eerder maakte
+              {t('nieuw.banner.gevonden')}
             </p>
             <p style={{ fontSize: 14, color: '#137333', margin: '0 0 12px', lineHeight: 1.5 }}>
               {describeHandoff(handoff)}. Wil je hem hier overnemen? Je factuurnummer krijg je van
@@ -1355,13 +1360,13 @@ function NewInvoicePageContent() {
                 }}
                 style={{ padding: '10px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#137333', color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
               >
-                Overnemen
+                {t('nieuw.banner.overnemen')}
               </button>
               <button
                 onClick={() => { clearHandoff(localStorage); setHandoff(null) }}
                 style={{ padding: '10px 16px', borderRadius: 9999, border: '1px solid #137333', backgroundColor: 'transparent', color: '#137333', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
               >
-                Nee, opnieuw beginnen
+                {t('nieuw.banner.opnieuw')}
               </button>
             </div>
           </div>
@@ -1369,18 +1374,21 @@ function NewInvoicePageContent() {
 
         {/* [DS] Segmented Button — Material You, één geheel */}
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-          <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Type document</p>
+          <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>{t('nieuw.type')}</p>
           <div style={{ display: 'flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden', backgroundColor: '#F1F3F4' }}>
             {/* [COHERENCE-CREDITNOTA] 'Credit' is selectable again as a STANDALONE creditnota
                 (own CR- number, negative amounts, −omzet) — for crediting an invoice issued
                 OUTSIDE BoekBrug or a loose correction. Crediting an in-app invoice still goes
                 through that invoice's own linked flow (kept the link + blocks a double credit);
                 the banner below steers the owner there when the original is in BoekBrug. */}
-            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map((t, idx, arr) => {
-              const c = TYPE_CONFIG[t]
-              const active = invoiceType === t
+            {/* [TAAL] De parameter heette `t` en schaduwde daarmee de vertaler die nu in dit
+                bestand staat. Binnen deze callback zou `t('...')` dan een InvoiceType aanroepen —
+                tsc vangt dat, maar alleen als er toevallig een aanroep in staat. Hernoemd. */}
+            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map((soort, idx, arr) => {
+              const c = TYPE_CONFIG[soort]
+              const active = invoiceType === soort
               return (
-                <button key={t} onClick={() => setInvoiceType(t)}
+                <button key={soort} onClick={() => setInvoiceType(soort)}
                   style={{
                     flex: 1,
                     padding: '10px 8px',
@@ -1398,7 +1406,7 @@ function NewInvoicePageContent() {
                   }}
                 >
                   {active && <span style={{ fontSize: 14 }}>✓</span>}
-                  {c.label}
+                  {t(c.label)}
                 </button>
               )
             })}
@@ -1412,7 +1420,7 @@ function NewInvoicePageContent() {
             <span style={{ fontSize: 16, color: '#B3261E', flexShrink: 0 }}>↩</span>
             <div style={{ margin: 0 }}>
               <p style={{ fontSize: 13, color: '#B3261E', margin: 0, lineHeight: 1.5 }}>
-                <strong>Losse creditnota</strong> — bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur. Gebruik dit voor een factuur die niet in BoekBrug staat.
+                <strong>{t('nieuw.type.creditnota')}</strong> — bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur. Gebruik dit voor een factuur die niet in BoekBrug staat.
               </p>
               {/* [COHERENCE-CREDITNOTA] Steer an in-app credit to the linked flow so the
                   credit↔origineel koppeling behouden blijft en er geen tweede credit ontstaat. */}
@@ -1430,7 +1438,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#E8F0FE', borderInlineStart: '4px solid #1A73E8', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#1967D2', flexShrink: 0 }}>🔄</span>
                 <p style={{ fontSize: 13, color: '#1967D2', margin: 0 }}>
-                  <strong>Vervangende factuur</strong> voor <span style={{ fontFamily: 'Roboto Mono, monospace', fontWeight: 600 }}>{replacesNumber}</span>. De oude factuur wordt automatisch gearchiveerd.
+                  <strong>{t('nieuw.banner.vervangend')}</strong> voor <span style={{ fontFamily: 'Roboto Mono, monospace', fontWeight: 600 }}>{replacesNumber}</span>. De oude factuur wordt automatisch gearchiveerd.
                 </p>
               </div>
             )}
@@ -1440,7 +1448,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#E6F4EA', borderInlineStart: '4px solid #34A853', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#137333', flexShrink: 0 }}>📄</span>
                 <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
-                  <strong>Factuur op basis van offerte</strong> — gegevens zijn vooringevuld. De offerte wordt gearchiveerd na opslaan.
+                  <strong>{t('nieuw.banner.vanOfferte')}</strong> — gegevens zijn vooringevuld. De offerte wordt gearchiveerd na opslaan.
                 </p>
               </div>
             )}
@@ -1449,7 +1457,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#FEF7E0', borderInlineStart: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#EA8600', flexShrink: 0 }}>📋</span>
                 <p style={{ fontSize: 13, color: '#EA8600', margin: 0 }}>
-                  <strong>Offerte</strong> — geen factuurnummer. Gebruik &ldquo;Omzetten naar factuur&rdquo; als de klant akkoord gaat.
+                  <strong>{t('nieuw.type.offerte')}</strong> — geen factuurnummer. Gebruik &ldquo;Omzetten naar factuur&rdquo; als de klant akkoord gaat.
                 </p>
               </div>
             )}
@@ -1457,7 +1465,7 @@ function NewInvoicePageContent() {
             {/* [DS] Van card */}
             {profile && (
               <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 8px' }}>Van</p>
+                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 8px' }}>{t('nieuw.klant.van')}</p>
                 <div style={{ borderTop: '0.5px solid #E0E0E0', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{profile.company_name || profile.full_name}</p>
                   {profile.address && <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{profile.address}</p>}
@@ -1482,7 +1490,7 @@ function NewInvoicePageContent() {
                       <div style={{ marginTop: 10, backgroundColor: '#FEF7E0', borderInlineStart: '3px solid #FBBC04', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
                         <p style={{ fontSize: 12, color: '#EA8600', margin: 0, lineHeight: 1.5 }}>
                           Je gegevens missen: {missing.join(', ')}. Een factuur is wettelijk pas volledig met deze gegevens.{' '}
-                          <Link href="/dashboard/settings" style={{ color: '#1967D2', textDecoration: 'underline' }}>Aanvullen</Link>
+                          <Link href="/dashboard/settings" style={{ color: '#1967D2', textDecoration: 'underline' }}>{t('nieuw.catalogus.aanvullen')}</Link>
                         </p>
                       </div>
                     )
@@ -1493,9 +1501,9 @@ function NewInvoicePageContent() {
 
             {/* [DS] Aan card */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Aan</p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{t('nieuw.klant.aan')}</p>
               <div ref={autocompleteRef} style={{ position: 'relative' }}>
-                <OutlinedInput value={clientSearch} onChange={e => { setClientSearch(e.target.value); setClientName(e.target.value); setSelectedClientId(null); setShowDropdown(true); clearFieldError('clientName') }} onFocus={() => setShowDropdown(true)} placeholder="Zoek of typ klantnaam..." focusColor={cfg.focusColor} label="Bedrijfsnaam" required hasError={!!fieldErrors.clientName} />
+                <OutlinedInput value={clientSearch} onChange={e => { setClientSearch(e.target.value); setClientName(e.target.value); setSelectedClientId(null); setShowDropdown(true); clearFieldError('clientName') }} onFocus={() => setShowDropdown(true)} placeholder={t('nieuw.klant.zoek')} focusColor={cfg.focusColor} label={t('nieuw.klant.bedrijf')} required hasError={!!fieldErrors.clientName} />
                 {showDropdown && filteredClients.length > 0 && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, backgroundColor: 'white', border: '1px solid #E0E0E0', borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 20, overflow: 'hidden' }}>
                     {filteredClients.map(c => (
@@ -1511,23 +1519,23 @@ function NewInvoicePageContent() {
                   terechtkomen. Optioneel: leeg laten levert precies de factuur op die dit scherm
                   altijd al maakte. */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <OutlinedInput value={clientExtra1} onChange={e => setClientExtra1(e.target.value)} placeholder="t.a.v. mevrouw Jansen" label="Extra regel 1" focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
-                <OutlinedInput value={clientExtra2} onChange={e => setClientExtra2(e.target.value)} placeholder="Afdeling of PO-2026-114" label="Extra regel 2" focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+                <OutlinedInput value={clientExtra1} onChange={e => setClientExtra1(e.target.value)} placeholder="t.a.v. mevrouw Jansen" label={t('nieuw.klant.extra1')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+                <OutlinedInput value={clientExtra2} onChange={e => setClientExtra2(e.target.value)} placeholder={t('nieuw.klant.extraHint')} label={t('nieuw.klant.extra2')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
               </div>
-              <OutlinedInput value={clientExtra3} onChange={e => setClientExtra3(e.target.value)} placeholder="Kostenplaats of contractnummer" label="Extra regel 3" focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+              <OutlinedInput value={clientExtra3} onChange={e => setClientExtra3(e.target.value)} placeholder={t('nieuw.betaalkenmerk.hint')} label={t('nieuw.klant.extra3')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
               <p style={{ fontSize: 11, color: '#5F6368', margin: '-4px 0 0', lineHeight: 1.45 }}>
                 Deze drie regels komen op het document direct onder de klantnaam te staan.
               </p>
-              <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
-              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />
+              <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label={t('nieuw.klant.email')} type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
+              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label={t('nieuw.klant.adres')} focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label="Postcode" focusColor={cfg.focusColor} />
-                <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
+                <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label={t('nieuw.klant.postcode')} focusColor={cfg.focusColor} />
+                <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label={t('nieuw.klant.stad')} focusColor={cfg.focusColor} />
               </div>
               <div>
-                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
+                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label={t('nieuw.klant.btw')} focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
-                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>{t('nieuw.klant.btwFormaat')}</p>
                 )}
                 {/* [ICP] Said while the number is still on screen and still fixable. */}
                 {euVatSuspect && (
@@ -1548,11 +1556,11 @@ function NewInvoicePageContent() {
             {/* [FACTUUR-A] Clean native date fields + Dutch DD-MM-YYYY caption
                 under each (DateField). Vervaldatum gets quick payment-term chips. */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Datums</p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{t('nieuw.datums')}</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <DateField
                   value={invoiceDate}
-                  label={invoiceType === 'offerte' ? 'Offertedatum' : 'Factuurdatum'}
+                  label={invoiceType === 'offerte' ? t('nieuw.datum.offerte') : t('nieuw.datum.factuur')}
                   required
                   focusColor={cfg.focusColor}
                   hasError={!!fieldErrors.invoiceDate}
@@ -1571,7 +1579,7 @@ function NewInvoicePageContent() {
                 />
                 <DateField
                   value={dueDate}
-                  label={invoiceType === 'offerte' ? 'Geldig tot' : 'Vervaldatum'}
+                  label={invoiceType === 'offerte' ? t('nieuw.datum.geldig') : t('nieuw.datum.verval')}
                   required
                   focusColor={cfg.focusColor}
                   hasError={!!fieldErrors.dueDate}
@@ -1589,7 +1597,7 @@ function NewInvoicePageContent() {
                   (an offerte uses "Geldig tot", not a payment term). */}
               {invoiceType !== 'offerte' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, color: '#70757a' }}>Betalingstermijn:</span>
+                  <span style={{ fontSize: 12, color: '#70757a' }}>{t('nieuw.termijn.kort')}</span>
                   {BETALINGSTERMIJNEN.map(days => {
                     const active = betalingstermijn === days
                     return (
@@ -1626,7 +1634,7 @@ function NewInvoicePageContent() {
                       min={0}
                       max={MAX_PAYMENT_TERM_DAYS}
                       inputMode="numeric"
-                      placeholder="dagen"
+                      placeholder={t('nieuw.termijn.dagen')}
                       value={betalingstermijn ?? ''}
                       onChange={e => {
                         const days = parsePaymentTerm(e.target.value)
@@ -1635,11 +1643,11 @@ function NewInvoicePageContent() {
                         if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
                       }}
                       style={{ width: 78, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 14, outline: 'none' }}
-                      aria-label="Betalingstermijn in dagen"
+                      aria-label={t('nieuw.termijn')}
                     />
                   </label>
                   {betalingstermijn === null && (
-                    <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>Aangepast</span>
+                    <span style={{ fontSize: 12, color: '#70757a', fontStyle: 'italic' }}>{t('nieuw.eenheid.aangepast')}</span>
                   )}
                 </div>
               )}
@@ -1662,7 +1670,7 @@ function NewInvoicePageContent() {
               {invoiceType === 'factuur' && (
                 <DateField
                   value={deliveryDate}
-                  label="Leverdatum"
+                  label={t('nieuw.datum.lever')}
                   required
                   focusColor={cfg.focusColor}
                   hasError={!!fieldErrors.deliveryDate}
@@ -1671,15 +1679,15 @@ function NewInvoicePageContent() {
               )}
               {invoiceType === 'factuur' && (
                 <p style={{ fontSize: 11, color: '#70757a', margin: '-4px 0 0' }}>
-                  Leverdatum = datum waarop de levering of dienst is verricht.
+                  {t('nieuw.datum.leverUitleg')}
                 </p>
               )}
             </div>
 
             {/* [DS] Factuurregels card */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}</p>
-              <p style={{ fontSize: 12, color: '#70757a', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? t('nieuw.regels.offerte') : t('nieuw.regels.factuur')}</p>
+              <p style={{ fontSize: 12, color: '#70757a', margin: '-4px 0 0' }}>{t('nieuw.vertaal.uitleg')} <strong>{t('nieuw.vertaal')}</strong> {t('nieuw.vertaal.doel')}</p>
 
               {/* ── [PRIJS-MODUS] Typ je prijzen met of zonder btw? ────────────────────────────
                   Boven de regels, want het bepaalt wat elk prijsveld eronder BETEKENT. Wie all-in
@@ -1688,8 +1696,8 @@ function NewInvoicePageContent() {
                   Wat er wordt opgeslagen verandert niet: de regel houdt de prijs ex-btw vast, en
                   dat is ook wat er op de factuur en in je aangifte komt te staan. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', backgroundColor: '#F8F9FA', borderRadius: 10, padding: '8px 10px' }}>
-                <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 500 }}>Prijzen invoeren</span>
-                <div role="group" aria-label="Prijzen invoeren inclusief of exclusief btw" style={{ display: 'flex', gap: 4, backgroundColor: '#E8EAED', borderRadius: 9999, padding: 3 }}>
+                <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 500 }}>{t('nieuw.prijsmodus')}</span>
+                <div role="group" aria-label={t('nieuw.prijsmodus.aria')} style={{ display: 'flex', gap: 4, backgroundColor: '#E8EAED', borderRadius: 9999, padding: 3 }}>
                   {([
                     { id: 'excl' as PriceMode, label: 'excl. btw' },
                     { id: 'incl' as PriceMode, label: 'incl. btw' },
@@ -1713,8 +1721,8 @@ function NewInvoicePageContent() {
                 </div>
                 <span style={{ fontSize: 11.5, color: '#80868B', flex: 1, minWidth: 180 }}>
                   {priceMode === 'incl'
-                    ? 'Je typt wat je klant betaalt; wij rekenen de btw eruit.'
-                    : 'Je typt de prijs zonder btw; wij tellen de btw erbij.'}
+                    ? t('nieuw.prijsmodus.incl')
+                    : t('nieuw.prijsmodus.excl')}
                 </span>
               </div>
 
@@ -1727,7 +1735,7 @@ function NewInvoicePageContent() {
                   )}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                     <div style={{ flex: 1, position: 'relative' }} onFocusCapture={() => setPickerLine(i)} onBlur={() => setTimeout(() => setPickerLine(cur => (cur === i ? null : cur)), 150)}>
-                      <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setPickerLine(i); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder="Omschrijving of code (bijv. 22)" label="Omschrijving" focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
+                      <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setPickerLine(i); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder={t('nieuw.regel.codeHint')} label={t('nieuw.regel.omschrijving')} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
                       {/* [ARTIKELEN] Catalog picker — fill the line from a saved article. */}
                       {sug.length > 0 && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.14)', maxHeight: 220, overflowY: 'auto' }}>
@@ -1747,11 +1755,11 @@ function NewInvoicePageContent() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                     {/* [BOEK-031] LineInput: no leading zero, comma=dot, step=1, Enter→next — May 2026 */}
-                    <LineInput label="Aantal" value={line.quantity} min={0.01} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
+                    <LineInput label={t('nieuw.regel.aantal')} value={line.quantity} min={0.01} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
                     {/* [PRIJS-MODUS] Het veld toont — en accepteert — de prijs in de gekozen stand.
                         De regel bewaart altijd ex-btw; priceFieldValue/priceFieldToStored zijn de
                         enige twee plekken waar dat verschil bestaat. */}
-                    <LineInput label={priceMode === 'incl' ? 'Prijs incl. (€)' : 'Prijs excl. (€)'} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
+                    <LineInput label={priceMode === 'incl' ? t('nieuw.regel.prijsIncl') : t('nieuw.regel.prijsExcl')} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
                       <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
@@ -1767,7 +1775,7 @@ function NewInvoicePageContent() {
                             geen optie maar een valkuil: vrijgesteld ziet eruit als 0%, en een
                             gewone dienst die per ongeluk zo wordt geboekt verdwijnt uit de
                             aangifte én kost de aftrek op de bijbehorende kosten. */}
-                        {profile?.vat_exempt_activity && <option value={EXEMPT_OPTION}>Vrijgesteld</option>}
+                        {profile?.vat_exempt_activity && <option value={EXEMPT_OPTION}>{t('nieuw.regel.vrijgesteld')}</option>}
                       </select>
                       {/* De reden staat ernaast, niet in een melding achteraf. Zonder deze zin is
                           een menu met één keuze gewoon een kapot menu. */}
@@ -1789,23 +1797,23 @@ function NewInvoicePageContent() {
                               <input
                                 value={codeDraft}
                                 onChange={e => { setCodeDraft(e.target.value.slice(0, 20)); setCodeError('') }}
-                                placeholder="code (bijv. 22)"
-                                aria-label="Artikelcode"
+                                placeholder={t('nieuw.regel.codeVoorbeeld')}
+                                aria-label={t('nieuw.regel.artikelcode')}
                                 autoFocus
                                 style={{ width: 120, minHeight: 32, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 8px', fontSize: 13, outline: 'none' }}
                               />
                               <button type="button" onClick={() => void saveLineToCatalog(i, line, codeDraft)}
                                 style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: '#1A73E8', fontWeight: 600 }}>
-                                Bewaar
+                                {t('nieuw.eenheid.bewaar')}
                               </button>
                               <button type="button" onClick={() => { setCodeForLine(null); setCodeDraft(''); setCodeError('') }}
                                 style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: '#70757a' }}>
-                                Annuleer
+                                {t('nieuw.eenheid.annuleer')}
                               </button>
                               {codeError && <span style={{ fontSize: 11.5, color: '#B3261E' }}>{codeError}</span>}
                             </span>
                           )
-                          : <button type="button" onClick={() => { setCodeForLine(i); setCodeDraft(''); setCodeError('') }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>)
+                          : <button type="button" onClick={() => { setCodeForLine(i); setCodeDraft(''); setCodeError('') }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? `✓ ${t('nieuw.catalogus.in')}` : `+ ${t('nieuw.catalogus.bewaar')}`}</button>)
                       : <span>{priceMode === 'incl' ? 'Totaal incl.' : 'Totaal excl.'}</span>}
                     {/* [PRIJS-MODUS] Het regeltotaal in dezelfde stand als het veld erboven: een rij
                         die "10,00" in het prijsveld toont en "8,26" als totaal bij aantal 1, leest
@@ -1837,7 +1845,7 @@ function NewInvoicePageContent() {
                 het blote oog kan controleren. */}
             {invoiceType !== ('creditnota' as InvoiceType) && (
               <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 14, fontWeight: 500, color: '#202124' }}>Korting</span>
+                <span style={{ fontSize: 14, fontWeight: 500, color: '#202124' }}>{t('nieuw.korting')}</span>
                 <div style={{ display: 'inline-flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden' }}>
                   {(['percent', 'amount'] as const).map(t => (
                     <button
@@ -1862,12 +1870,12 @@ function NewInvoicePageContent() {
                   placeholder={discountType === 'percent' ? 'bijv. 10' : 'bijv. 50,00'}
                   value={discountValue}
                   onChange={e => setDiscountValue(e.target.value)}
-                  aria-label={discountType === 'percent' ? 'Kortingspercentage' : 'Kortingsbedrag'}
+                  aria-label={discountType === 'percent' ? t('nieuw.korting.percentage') : t('nieuw.korting.bedrag')}
                   style={{ width: 120, minHeight: 40, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 15, outline: 'none' }}
                 />
                 {discountValue.trim() !== '' && !korting && (
                   <span style={{ fontSize: 12.5, color: '#B3261E' }}>
-                    {discountType === 'percent' ? 'Vul een percentage tussen 0 en 100 in.' : 'Vul een bedrag boven 0 in.'}
+                    {discountType === 'percent' ? t('nieuw.korting.foutPercentage') : t('nieuw.korting.foutBedrag')}
                   </span>
                 )}
               </div>
@@ -1877,7 +1885,7 @@ function NewInvoicePageContent() {
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <div style={{ maxWidth: 280, marginInlineStart: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
-                  <span>Subtotaal excl. BTW</span>
+                  <span>{t('nieuw.totaal.subtotaal')}</span>
                   <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * subtotalEx)}</span>
                 </div>
                 {/* [KORTING] Het BEDRAG dat er echt af gaat, niet het percentage dat is ingetikt.
@@ -1891,7 +1899,7 @@ function NewInvoicePageContent() {
                 )}
                 {kortingTotalen.discount_ex_btw > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
-                    <span>Na korting excl. BTW</span>
+                    <span>{t('nieuw.totaal.naKorting')}</span>
                     <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalEx)}</span>
                   </div>
                 )}
@@ -1902,7 +1910,7 @@ function NewInvoicePageContent() {
                   </div>
                 ))}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: sign === -1 ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
-                  <span>Totaal incl. BTW</span>
+                  <span>{t('nieuw.totaal.incl')}</span>
                   <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalInc)}</span>
                 </div>
               </div>
@@ -1911,9 +1919,9 @@ function NewInvoicePageContent() {
             {/* [DS] Betalingsinformatie */}
             {profile?.iban && invoiceType !== ('creditnota' as InvoiceType) && (
               <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Betalingsinformatie</p>
+                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>{t('nieuw.betaalinfo')}</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], ['Vervaldatum', new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' }).format(new Date(dueDate || today))], ...(invoiceNumber ? [['Betalingskenmerk', invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
+                  {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], [t('nieuw.datum.verval'), new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam' }).format(new Date(dueDate || today))], ...(invoiceNumber ? [[t('nieuw.betaalkenmerk'), invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.8 }}>{label}</span>
                       <span style={{ fontSize: label === 'IBAN' ? 13 : 14, fontWeight: 500, color: '#202124', fontFamily: label === 'IBAN' ? 'Roboto Mono, monospace' : 'inherit', maxWidth: '55%', textAlign: 'end' }}>{value}</span>
@@ -1945,7 +1953,7 @@ function NewInvoicePageContent() {
                     handleSubmit('sent')
                   }
                 }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' /* saves only — never /api/invoice/send, see handleSubmit */ : '↩ Versturen'}
+                  {linesLoading ? t('nieuw.actie.laden') : loading ? t('nieuw.actie.bezig') : invoiceType === 'factuur' ? `✉ ${t('nieuw.actie.versturen')}` : invoiceType === 'offerte' ? `📋 ${t('nieuw.actie.offerteOpslaan')}` /* saves only — never /api/invoice/send, see handleSubmit */ : '↩ Versturen'}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {/* [OFFERTE-EEN-KNOP] Voor een OFFERTE deed deze knop letterlijk hetzelfde als de
@@ -1958,13 +1966,13 @@ function NewInvoicePageContent() {
                       (versturen versus als concept bewaren). */}
                   {invoiceType !== 'offerte' && (
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                    {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
+                    {invoiceType === 'factuur' ? t('nieuw.actie.concept') : t('nieuw.actie.concept')}
                   </button>
                   )}
                   {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
                   <Link href={parentHref}
                     style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    Annuleren
+                    {t('nieuw.actie.annuleren')}
                   </Link>
                 </div>
               </div>
@@ -1987,17 +1995,17 @@ function NewInvoicePageContent() {
       {showSendConfirm && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
           <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 420, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Factuur versturen?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('nieuw.bevestig.titel')}</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
-              Bij verzenden krijgt de factuur een <strong>definitief nummer</strong> en wordt de PDF per e-mail bezorgd. Dit kan niet ongedaan worden gemaakt.
+              {t('nieuw.bevestig.uitleg')}
             </p>
             <div style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {([
-                ['Aan', clientName || '—'],
-                ['E-mail', clientEmail || '—'],
-                ['Bedrag', NL_NUMBER.format(totalInc)],
-                ['Factuurdatum', formatDateNL(invoiceDate)],
-                ['Vervaldatum', formatDateNL(dueDate)],
+                [t('nieuw.bevestig.aan'), clientName || '—'],
+                [t('nieuw.bevestig.email'), clientEmail || '—'],
+                [t('nieuw.bevestig.bedrag'), NL_NUMBER.format(totalInc)],
+                [t('nieuw.datum.factuur'), formatDateNL(invoiceDate)],
+                [t('nieuw.datum.verval'), formatDateNL(dueDate)],
               ] as [string, string][]).map(([label, value]) => (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                   <span style={{ fontSize: 13, color: '#5F6368' }}>{label}</span>
@@ -2008,11 +2016,11 @@ function NewInvoicePageContent() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => { setShowSendConfirm(false); handleSubmit('sent') }} disabled={loading}
                 style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading ? '#70757a' : '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}>
-                {loading ? 'Versturen...' : '✉ Ja, verstuur'}
+                {loading ? t('nieuw.actie.versturenBezig') : `✉ ${t('nieuw.bevestig.ja')}`}
               </button>
               <button onClick={() => setShowSendConfirm(false)} disabled={loading}
                 style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#F1F3F4', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer' }}>
-                Annuleren
+                {t('nieuw.actie.annuleren')}
               </button>
             </div>
           </div>
@@ -2023,19 +2031,19 @@ function NewInvoicePageContent() {
       {showConvertDialog && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', paddingBottom: sheetPaddingBottom(24), backgroundColor: 'rgba(0,0,0,0.4)' }}>
           <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Omzetten naar factuur</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('nieuw.omzetten')}</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
               Controleer de gegevens voor het aanmaken van de factuur. Een nieuw factuurnummer wordt automatisch toegewezen. De offerte wordt gearchiveerd.
             </p>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Weet u het zeker?</p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('nieuw.omzetten.zeker')}</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleConvertOfferte} disabled={convertingOfferte}
                 style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: convertingOfferte ? 'not-allowed' : 'pointer' }}>
-                {convertingOfferte ? 'Bezig...' : 'Ja, maak factuur aan'}
+                {convertingOfferte ? t('nieuw.actie.bezig') : t('nieuw.omzetten.ja')}
               </button>
               <button onClick={() => setShowConvertDialog(false)}
                 style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#F1F3F4', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
-                Annuleren
+                {t('nieuw.actie.annuleren')}
               </button>
             </div>
           </div>
