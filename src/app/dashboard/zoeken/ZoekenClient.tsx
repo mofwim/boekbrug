@@ -15,6 +15,7 @@ import { BackLink } from "@/components/ui/BackLink";
 import type { Role } from "@/lib/navigation";
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ─── icons (compact, self-contained) ─────────────────────────────────────────
 const IconSearch = ({ size = 20 }: { size?: number }) => (
@@ -174,6 +175,7 @@ const CHIPS: Array<{ key: Exclude<SearchTarget, "all"> | "all"; label: string }>
 ];
 
 export default function ZoekenClient({ initialQuery, role }: { initialQuery: string; role: Role }) {
+  const t = translator(useLocale())
   const router = useRouter();
   const searchParams = useSearchParams();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -250,14 +252,14 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Zoek in de hele app — facturen, bestanden, klanten…"
-            aria-label="Zoeken in de hele app"
+            placeholder={t('zoek.alles')}
+            aria-label={t('zoek.aria')}
             autoComplete="off"
             spellCheck={false}
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 16, color: M3.onSurface, minWidth: 0 }}
           />
           {query && (
-            <button className="tap-44" onClick={clear} aria-label="Wissen" style={{ background: M3.outlineVariant, border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M3.onSurfaceVariant, flexShrink: 0 }}>
+            <button className="tap-44" onClick={clear} aria-label={t('inkoop.wissen')} style={{ background: M3.outlineVariant, border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M3.onSurfaceVariant, flexShrink: 0 }}>
               <IconX size={12} />
             </button>
           )}
@@ -296,13 +298,13 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
           {!showResults ? (
             <div style={{ textAlign: "center", padding: "56px 16px", color: M3.outline }}>
               <div style={{ opacity: 0.5, marginBottom: 10 }}><IconSearch size={34} /></div>
-              <p style={{ fontSize: 14.5, margin: 0 }}>Begin met typen om overal in de app te zoeken.</p>
-              <p style={{ fontSize: 13, margin: "4px 0 0", color: "#70757a" }}>Facturen, bestanden en klanten — op naam, nummer of bedrag.</p>
+              <p style={{ fontSize: 14.5, margin: 0 }}>{t('zoek.begin')}</p>
+              <p style={{ fontSize: 13, margin: "4px 0 0", color: "#70757a" }}>{t('zoek.sub')}</p>
             </div>
           ) : error ? (
             <div style={{ textAlign: "center", padding: "48px 16px" }}>
-              <p style={{ fontSize: 14.5, color: M3.error, fontWeight: 500, margin: 0 }}>Zoeken mislukt</p>
-              <p style={{ fontSize: 13, color: M3.outline, margin: "4px 0 0" }}>Controleer je verbinding en probeer het opnieuw.</p>
+              <p style={{ fontSize: 14.5, color: M3.error, fontWeight: 500, margin: 0 }}>{t('zoek.mislukt')}</p>
+              <p style={{ fontSize: 13, color: M3.outline, margin: "4px 0 0" }}>{t('zoek.verbinding')}</p>
             </div>
           ) : loading && totalCount === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 16px", color: M3.outline }}>
@@ -311,17 +313,17 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
           ) : shownCount === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 16px" }}>
               <p style={{ fontSize: 14.5, color: M3.onSurfaceVariant, margin: 0 }}>
-                Geen resultaten voor <strong style={{ fontWeight: 600 }}>&ldquo;{trimmed}&rdquo;</strong>
+                {t('zoek.geenResultaten')} <strong style={{ fontWeight: 600 }}>&ldquo;{trimmed}&rdquo;</strong>
               </p>
-              <p style={{ fontSize: 13, color: M3.outline, margin: "4px 0 0" }}>Probeer een andere naam, factuurnummer of bedrag.</p>
+              <p style={{ fontSize: 13, color: M3.outline, margin: "4px 0 0" }}>{t('zoek.probeerAnders')}</p>
             </div>
           ) : (
             <>
-              <Section label="Facturen" items={shown.invoices} query={trimmed} onOpen={open} />
-              <Section label="Bestanden" items={shown.documents} query={trimmed} onOpen={open} />
-              <Section label="Klanten" items={shown.clients} query={trimmed} onOpen={open} />
-              <Section label="Bankmutaties" items={shown.bankTransactions} query={trimmed} onOpen={open} />
-              <Section label="Kasboekingen" items={shown.cashEntries} query={trimmed} onOpen={open} />
+              <Section label={t('zoek.cat.facturen')} items={shown.invoices} query={trimmed} onOpen={open} />
+              <Section label={t('zoek.cat.bestanden')} items={shown.documents} query={trimmed} onOpen={open} />
+              <Section label={t('zoek.cat.klanten')} items={shown.clients} query={trimmed} onOpen={open} />
+              <Section label={t('zoek.cat.bank')} items={shown.bankTransactions} query={trimmed} onOpen={open} />
+              <Section label={t('zoek.cat.kas')} items={shown.cashEntries} query={trimmed} onOpen={open} />
             </>
           )}
         </div>
