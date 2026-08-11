@@ -242,7 +242,7 @@ type PeriodBearingSubscription = {
  *
  * ⚠️ READ THIS BEFORE "SIMPLIFYING" IT TO `sub.current_period_end`.
  * Every Stripe tutorial written before 2026 reads that field off the
- * subscription. On the API version this SDK ships with (2026-06-24.dahlia) it
+ * subscription. On the API version this SDK ships with (2025-08-27.basil) it
  * DOES NOT EXIST there any more — it lives on each subscription ITEM. Reading
  * the old path yields `undefined`, which would silently store NULL, which the
  * access decision reads as "no paid period", which would cut off paying
