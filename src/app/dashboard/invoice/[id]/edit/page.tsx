@@ -92,6 +92,7 @@ export default function InvoiceEditPage() {
   const [clientExtra1, setClientExtra1] = useState('')
   const [clientExtra2, setClientExtra2] = useState('')
   const [clientExtra3, setClientExtra3] = useState('')
+  const [clientExtra4, setClientExtra4] = useState('')
 
   // التواريخ
   const [invoiceDate, setInvoiceDate] = useState('')
@@ -171,6 +172,7 @@ export default function InvoiceEditPage() {
       setClientExtra1(invoice.client_extra_line1 || '')
       setClientExtra2(invoice.client_extra_line2 || '')
       setClientExtra3(invoice.client_extra_line3 || '')
+      setClientExtra4((invoice as { client_extra_line4?: string | null }).client_extra_line4 || '')
       setInvoiceDate(invoice.invoice_date || '')
       setDueDate(invoice.due_date || '')
       // [LEVERDATUM] Terugvallen op de factuurdatum, precies zoals /api/invoice/draft hem zet.
@@ -280,6 +282,7 @@ export default function InvoiceEditPage() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -343,6 +346,7 @@ export default function InvoiceEditPage() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -461,13 +465,22 @@ export default function InvoiceEditPage() {
                   placeholder={t('nieuw.klant.extraHint')}
                 />
               </div>
-              <div className="col-span-2">
+              <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra3')}</label>
                 <input
                   type="text" value={clientExtra3} maxLength={MAX_EXTRA_LINE_LENGTH}
                   onChange={e => setClientExtra3(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                   placeholder={t('nieuw.betaalkenmerk.hint')}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra4')}</label>
+                <input
+                  type="text" value={clientExtra4} maxLength={MAX_EXTRA_LINE_LENGTH}
+                  onChange={e => setClientExtra4(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder={t('nieuw.klant.extraHint')}
                 />
               </div>
               <p className="col-span-2 text-xs text-gray-500 -mt-1">

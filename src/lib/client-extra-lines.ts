@@ -49,6 +49,7 @@ export interface ClientExtraLineSource {
   client_extra_line1?: string | null;
   client_extra_line2?: string | null;
   client_extra_line3?: string | null;
+  client_extra_line4?: string | null;
 }
 
 /**
@@ -62,6 +63,7 @@ export const CLIENT_EXTRA_LINE_COLUMNS = [
   "client_extra_line1",
   "client_extra_line2",
   "client_extra_line3",
+  "client_extra_line4",
 ] as const;
 
 /**

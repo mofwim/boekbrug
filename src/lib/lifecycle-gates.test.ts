@@ -5555,7 +5555,7 @@ const EXTRA_FORMS = [
   "src/app/dashboard/invoice/[id]/edit/page.tsx",
 ] as const;
 /** The state names, in the order they print. A fourth line costs one entry here and nowhere else. */
-const EXTRA_STATE = ["clientExtra1", "clientExtra2", "clientExtra3"] as const;
+const EXTRA_STATE = ["clientExtra1", "clientExtra2", "clientExtra3", "clientExtra4"] as const;
 
 test("[KLANT-EXTRA] both invoice screens put the three lines directly after the customer name", () => {
   for (const f of EXTRA_FORMS) {
@@ -5700,11 +5700,12 @@ test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
   );
 });
 
-test("[KLANT-EXTRA] the migration is additive and the generated types carry all three blocks", () => {
+test("[KLANT-EXTRA] the migration is additive and the generated types carry all four blocks", () => {
   const raw = readFileSync("supabase/migrations/client_extra_lines.sql", "utf8");
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line1 text/);
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line2 text/);
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line3 text/);
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line4 text/);
 
   // The STATEMENTS, without the prose. The first draft of this assertion read the whole file and
   // failed on its own header — the sentence "Nullable, no default, no backfill" contains the word
@@ -5719,7 +5720,7 @@ test("[KLANT-EXTRA] the migration is additive and the generated types carry all 
 
   // Row, Insert and Update — a missing one means the compiler cannot see the column on that path.
   const types = readFileSync("src/types/database.types.ts", "utf8");
-  for (const n of [1, 2, 3]) {
+  for (const n of [1, 2, 3, 4]) {
     assert.equal(
       (types.match(new RegExp(`client_extra_line${n}`, "g")) ?? []).length, 3,
       `client_extra_line${n}: Row + Insert + Update`,

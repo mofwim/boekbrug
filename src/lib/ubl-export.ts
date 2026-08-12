@@ -79,6 +79,7 @@ export interface UblInvoiceHeader {
   client_extra_line1?: string | null;
   client_extra_line2?: string | null;
   client_extra_line3?: string | null;
+  client_extra_line4?: string | null;
 }
 
 /** Invoice line, from `invoice_lines`. `line_total` is treated as EX BTW. */

@@ -345,27 +345,29 @@ test("[BTW-VERKLARING] an invoice that DOES charge btw explains nothing", async 
 // between the customer's name and their street. A source-level check can see that the JSX exists;
 // only the document can say where the text came out.
 
-test("[KLANT-EXTRA] all three lines print between the customer name and the street", async () => {
+test("[KLANT-EXTRA] all four lines print between the customer name and the street", async () => {
   const text = await pdfText(await renderInvoicePdf(
     {
       ...INVOICE,
       client_extra_line1: "t.a.v. mevrouw Jansen",
       client_extra_line2: "Afdeling Inkoop",
       client_extra_line3: "PO-2026-114",
+      client_extra_line4: "Summervibes Festival Tilburg noord",
     },
     ZERO_LINE, PROFILE,
   ));
   assert.match(text, /t\.a\.v\. mevrouw Jansen/, "the addressee must be on the page");
   assert.match(text, /Afdeling Inkoop/, "…the department");
-  assert.match(text, /PO-2026-114/, "…and the reference the customer's system needs");
+  assert.match(text, /PO-2026-114/, "…the reference the customer's system needs");
+  assert.match(text, /Summervibes Festival Tilburg noord/, "…and the fourth line");
 
   // ORDER is the whole point — under the name, above the address, in the order typed.
   const at = (s: string) => text.indexOf(s);
   const name = at("Stichting Contour de Twern");
-  const seq = [at("t.a.v. mevrouw Jansen"), at("Afdeling Inkoop"), at("PO-2026-114")];
+  const seq = [at("t.a.v. mevrouw Jansen"), at("Afdeling Inkoop"), at("PO-2026-114"), at("Summervibes Festival Tilburg noord")];
   assert.ok(name >= 0 && seq[0] > name, "line 1 must follow the customer name");
-  assert.ok(seq[1] > seq[0] && seq[2] > seq[1], "the three must keep the order they were typed");
-  assert.ok(at("Spoorlaan 444") > seq[2], "…and the street must still come after all three");
+  assert.ok(seq[1] > seq[0] && seq[2] > seq[1] && seq[3] > seq[2], "the four must keep the order they were typed");
+  assert.ok(at("Spoorlaan 444") > seq[3], "…and the street must still come after all four");
 });
 
 test("[KLANT-EXTRA] a gap in the middle closes up on the page", async () => {
