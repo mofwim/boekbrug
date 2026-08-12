@@ -421,3 +421,72 @@ test("[KLANT-EXTRA] a pasted paragraph cannot push the address block down the pa
   assert.match(text, /Spoorlaan 444/);
   assert.match(text, /Advies/);
 });
+
+// ─── [MIN-REGEL] A credit line on the paper the customer keeps ──────────────────────────────────
+//
+// ATAPACK Cash & Carry 26304787, 17-07-2026 — a real wholesaler invoice. Line AP290004 is a return
+// of three boxes of knoopzakken from an earlier delivery, settled here instead of on a separate
+// creditnota: −3 × € 23,95 = −71,85, netted against nine ordinary lines.
+//
+// The PDF is the document the customer checks by hand and the accountant books from. If the minus
+// is dropped anywhere between the row and the totals, the page still looks like a finished invoice
+// and asks for € 71,85 too much — a difference nothing in this app would ever report.
+
+const ATAPACK_LINES = [
+  { description: "Knoopzakken HDPE — credit over faktuur 26302362", quantity: -3, unit_price: 23.95, btw_rate: 21, line_total: -71.85 },
+  { description: "Houtskool Elly 2kg", quantity: 2, unit_price: 15.95, btw_rate: 21, line_total: 31.9 },
+  { description: "Briketten Elly 2kg", quantity: 2, unit_price: 13.95, btw_rate: 21, line_total: 27.9 },
+  { description: "Bak aluminium 9950ml", quantity: 1, unit_price: 13.95, btw_rate: 21, line_total: 13.95 },
+  { description: "Bak aluminium 2500ml", quantity: 1, unit_price: 5.5, btw_rate: 21, line_total: 5.5 },
+  { description: "Prikker bamboe", quantity: 3, unit_price: 5.75, btw_rate: 21, line_total: 17.25 },
+  { description: "Toiletpapier Only", quantity: 2, unit_price: 10.95, btw_rate: 21, line_total: 21.9 },
+  { description: "Keukenrol Evo", quantity: 1, unit_price: 10.9, btw_rate: 21, line_total: 10.9 },
+  { description: "Magnetronbak", quantity: 16, unit_price: 2.0208, btw_rate: 21, line_total: 32.33 },
+  { description: "PB Dikbleek Javel", quantity: 1, unit_price: 11.4, btw_rate: 21, line_total: 11.4 },
+];
+
+const ATAPACK = {
+  invoice_type: "factuur",
+  invoice_number: "26304787",
+  invoice_date: "2026-07-17",
+  due_date: "2026-08-16",
+  client_name: "Kiwi Food Market",
+  client_address: "Verdiplein 13-14",
+  client_postal_code: "5049NM",
+  client_city: "Tilburg",
+  total_ex_btw: 101.18,
+  btw_amount: 21.25,
+  total_inc_btw: 122.43,
+};
+
+test("[MIN-REGEL] the credit line prints as a credit, and the page still adds up", async () => {
+  const text = await pdfText(await renderInvoicePdf(ATAPACK, ATAPACK_LINES, PROFILE));
+
+  // The row itself: a negative amount and a positive price. The minus is the whole message of the
+  // line, and it is carried by the quantity — see negative-line.ts.
+  assert.ok(text.includes("Knoopzakken HDPE"), "the credit line must be on the page at all");
+  assert.ok(text.includes("€ -71,85"), "the row must show money going back, not money owed");
+  assert.ok(text.includes("€ 23,95"), "…at the price per box it was delivered for");
+  assert.ok(text.includes("-3"), "and the return is three pieces, negative");
+
+  // The totals are derived from the lines, so this is the assertion that the netting happened.
+  // 173,03 of deliveries − 71,85 = 101,18, and 21% of that is 21,25.
+  assert.ok(text.includes("€ 101,18"), "the subtotal must be the netted one, not the gross 173,03");
+  assert.ok(!text.includes("€ 173,03"), "the gross must not be what the customer is asked to pay");
+  assert.ok(text.includes("€ 21,25"), "the btw follows the netted base — 21% of 101,18");
+  assert.ok(text.includes("€ 122,43"), "and the amount due is the one on the paper invoice");
+  assert.ok(
+    text.includes("het bovenstaande bedrag van € 122,43"),
+    "the payment sentence names the same total as the totals block",
+  );
+});
+
+test("[MIN-REGEL] the same invoice without the credit line is 71,85 more expensive", async () => {
+  // The control. If the credit were silently dropped — a filter on quantity > 0, a Math.abs in a
+  // total — the document above would be this one, and every assertion about a total in it would
+  // still be about a plausible-looking invoice.
+  const text = await pdfText(await renderInvoicePdf(ATAPACK, ATAPACK_LINES.slice(1), PROFILE));
+  assert.ok(text.includes("€ 173,03"), "nine lines without the credit come to the gross figure");
+  assert.ok(!text.includes("€ 101,18"), "…which is not the netted total");
+  assert.ok(!text.includes("Knoopzakken HDPE"), "and the credit line is genuinely gone from this one");
+});

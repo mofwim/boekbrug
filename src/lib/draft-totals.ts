@@ -53,6 +53,9 @@
 
 import { computeInvoiceTotals, round2 } from "./invoice-totals";
 import { applyDiscount, type Discount } from "./invoice-discount";
+// [MIN-REGEL] When a set of lines stops describing a factuur — one definition, shared with the
+// screen that refuses it before the request is sent. See negative-line.ts.
+import { staysAFactuur, NOT_A_FACTUUR_REASON } from "./negative-line";
 
 export interface DraftLine {
   quantity: number;
@@ -116,12 +119,25 @@ export type LineError = { index: number; field: string; reason: string };
 /**
  * Checks the lines that come in.
  *
- * This is not a shape check but a money check: a negative quantity on an ordinary invoice, a BTW
- * rate of 13%, a price that is not a number — all things a browser can send and that then end up
- * in a tax return. The page checks them too, but the page is the side you do not control.
+ * This is not a shape check but a money check: a document that gives money back while calling
+ * itself a factuur, a BTW rate of 13%, a price that is not a number — all things a browser can
+ * send and that then end up in a tax return. The page checks them too, but the page is the side
+ * you do not control.
+ *
+ * [MIN-REGEL] This doc comment used to say it refused "a negative quantity on an ordinary
+ * invoice". It never did — nothing here has ever looked at a sign — and now it must not: a
+ * wholesaler settles a return as a negative line on the next invoice, and that is an ordinary
+ * factuur (see negative-line.ts). What DOES have to be refused is the document that has gone past
+ * that point, and `documentKind` is how this function is told which one it is looking at.
+ *
+ * @param documentKind The invoice_type this line set belongs to. A creditnota is exempt: its lines
+ *   are stored negative by design ([CREDIT-SIGN]), so the sum being below zero is what makes it
+ *   correct. Everything else — including an omitted value — is judged as a factuur, so a caller
+ *   that forgets gets the check rather than skips it.
  */
 export function validateDraftLines(
   lines: unknown,
+  documentKind?: string | null,
 ): { ok: true; lines: DraftLine[] } | { ok: false; errors: LineError[] } {
   const errors: LineError[] = [];
   if (!Array.isArray(lines) || lines.length === 0) {
@@ -149,6 +165,21 @@ export function validateDraftLines(
     }
     clean.push({ quantity: q, unit_price: p, btw_rate: t });
   });
+
+  // [MIN-REGEL] A factuur that gives more money back than it asks for is a creditnota, and issuing
+  // it as a factuur is wrong in three places at once: the number comes out of the doorlopende reeks
+  // (Art. 35 Wet OB) for a document that credits, the BTW is declared as omzet instead of on the
+  // other side of the aangifte, and the customer books a negative purchase invoice their own
+  // software may refuse. The screen refuses it first; this is the door, and the door is the side
+  // that is not the browser.
+  //
+  // Only when nothing else is wrong, so the owner gets ONE answer. A line that is not a number
+  // counts as zero in the sum (lineNetEx is defensive), so it cannot invent this refusal on its
+  // own — but next to a genuine credit line it would add "this is a creditnota" underneath "regel
+  // 1 is geen getal", which is advice about a document that has not been read yet.
+  if (errors.length === 0 && documentKind !== "creditnota" && !staysAFactuur(clean)) {
+    errors.push({ index: -1, field: "lines", reason: NOT_A_FACTUUR_REASON });
+  }
 
   return errors.length ? { ok: false, errors } : { ok: true, lines: clean };
 }

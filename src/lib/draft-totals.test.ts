@@ -149,3 +149,59 @@ test("an absurdly long invoice is refused before it touches the database", () =>
   assert.equal(validateDraftLines(many).ok, false);
   assert.equal(validateDraftLines(many.slice(0, 200)).ok, true);
 });
+
+// ─── [MIN-REGEL] A credit line at the door ──────────────────────────────────────────────────────
+//
+// The wholesaler invoice this comes from: ATAPACK 26304787, one line of −3 × € 23,95 for a return,
+// netted against nine ordinary ones. The screen allows it; this is the side the screen cannot
+// speak for.
+
+test("[MIN-REGEL] a credit line inside an ordinary invoice passes the door", () => {
+  const out = validateDraftLines([r(-3, 23.95, 21, "Credit over faktuur 26302362"), r(9, 20, 21)]);
+  assert.equal(out.ok, true, "a return settled on the next invoice is an ordinary factuur");
+});
+
+test("[MIN-REGEL] a factuur that gives money back is refused, by name", () => {
+  const out = validateDraftLines([r(-3, 23.95, 21, "Retour"), r(1, 20, 21)]);
+  assert.equal(out.ok, false, "−71,85 + 20,00 is a document that pays the customer");
+  if (!out.ok) {
+    assert.equal(out.errors[0].field, "lines", "it is about the document, not about one row");
+    assert.equal(out.errors[0].index, -1);
+    assert.match(out.errors[0].reason, /creditnota/, "the answer must name what to make instead");
+    assert.doesNotMatch(out.errors[0].reason, /\.$/, "the routes add the full stop themselves");
+  }
+});
+
+test("[MIN-REGEL] a creditnota is exempt — its lines are negative by design", () => {
+  // [CREDIT-SIGN]. The edit route sends a creditnota's lines back already signed, so without the
+  // exemption every edit of one would be refused with a sentence telling the owner to make the
+  // document they are already looking at.
+  const credit = [r(-3, 23.95, 21, "Retour"), r(-1, 20, 21, "Retour")];
+  assert.equal(validateDraftLines(credit, "creditnota").ok, true);
+  assert.equal(validateDraftLines(credit, "factuur").ok, false);
+  assert.equal(validateDraftLines(credit).ok, false, "a caller that says nothing gets the check");
+  // An offerte or a pro forma is judged as a factuur: it becomes one.
+  assert.equal(validateDraftLines(credit, "pro_forma").ok, false);
+  assert.equal(validateDraftLines(credit, "offerte").ok, false);
+});
+
+test("[MIN-REGEL] exactly zero still passes, and a cent below it does not", () => {
+  assert.equal(validateDraftLines([r(-1, 71.85, 21, "Retour"), r(3, 23.95, 21)]).ok, true, "nothing flows back");
+  assert.equal(validateDraftLines([r(-1, 71.86, 21, "Retour"), r(3, 23.95, 21)]).ok, false, "one cent does");
+});
+
+test("[MIN-REGEL] a line that is not a number gets its own answer, not this one", () => {
+  // A quantity of "twee" counts as zero in the sum, so it cannot invent this refusal by itself.
+  // Beside a real credit line it can: the total then IS below zero, and the owner would be told to
+  // make a creditnota of an invoice whose first line has not been read yet. One problem at a time.
+  const out = validateDraftLines([
+    { quantity: "twee", unit_price: 100, btw_rate: 21, description: "Werk" },
+    r(-1, 50, 21, "Retour"),
+  ]);
+  assert.equal(out.ok, false);
+  if (!out.ok) {
+    assert.equal(out.errors.length, 1, `one problem, one answer: ${JSON.stringify(out.errors)}`);
+    assert.equal(out.errors[0].field, "quantity");
+    assert.equal(out.errors[0].index, 0, "…and it points at the line the owner has to fix");
+  }
+});

@@ -4615,7 +4615,9 @@ test("[REGEL-PARITEIT] the edit route keeps lines to the same standard as the cr
     route, /import \{ validateDraftLines \} from '@\/lib\/draft-totals'/,
     "the PUT must use the create route's validator, not a second opinion",
   );
-  assert.match(route, /const keuring = validateDraftLines\(rawLines\)/);
+  // [MIN-REGEL] With the document type, which is the one thing the two routes may differ on: a
+  // creditnota's lines arrive here already signed and arrive at /draft still positive.
+  assert.match(route, /const keuring = validateDraftLines\(rawLines, existing\.invoice_type\)/);
   assert.match(
     route, /if \(!keuring\.ok\) \{/,
     "…and refuse on its verdict, before anything is written",
@@ -7732,4 +7734,118 @@ test("[SERVER-ZIN] the rule keeps sentences and drops codes", () => {
   // a "must start with a capital" rule would have thrown away.
   assert.match(spec, /opening_balance_lookup_failed/, "the codes that were actually reaching screens");
   assert.match(spec, /direction moet 'in' of 'out' zijn/, "…and the lowercase Dutch that must survive");
+});
+
+// ─── [MIN-REGEL] A credit line inside an ordinary invoice ────────────────────────────────────────
+//
+// From the owner's own supplier invoice: ATAPACK Cash & Carry 26304787, 17-07-2026. Line AP290004
+// reads "Credit over faktuur 26302362" — three boxes of knoopzakken going back, −3 × € 23,95 =
+// −71,85, netted against nine ordinary lines. Every wholesaler in this trade settles a return that
+// way, and retyping such an invoice into this app was impossible: the quantity field floored every
+// entry at 0,01, so −3 silently became 0,01 and the line said € 0,24 instead of € −71,85.
+//
+// The minus is allowed in exactly one place, and that is not a preference:
+//
+//   · EN 16931 BR-27 — the item net price shall NOT be negative. An access point refuses a file
+//     with a negative cbc:PriceAmount, so an invoice that looks right on paper never arrives.
+//   · It is what the paper says: three pieces went back, at the price they were sold for.
+//
+// And a document whose credits outweigh its deliveries is not a factuur any more. It gives money
+// back, which is a creditnota: its own number series (Art. 35 Wet OB) and the other side of the
+// aangifte. Nothing downstream would notice — the totals simply go negative and every screen
+// agrees with them — so it is refused by name, on the screen AND at the door.
+
+test("[MIN-REGEL] the sign rule has one definition, and three surfaces use it", () => {
+  const mod = code("src/lib/negative-line.ts");
+  assert.match(mod, /export function lineSignFault/, "the per-line judgement");
+  assert.match(mod, /export function staysAFactuur/, "the per-document judgement");
+  // Cents, not floats: this decides whether a document changes type, on a comparison with zero.
+  assert.match(mod, /cents\(invoiceNetEx\(lines\)\) >= 0/, "the boundary is decided in whole cents");
+  // The module decides and holds no language beyond the one shared refusal, which says why it is
+  // there. A screen sentence in here would render underneath an Arabic interface.
+  assert.doesNotMatch(mod, /supabase|fetch\(/, "a pure module — it books nothing");
+
+  const screen = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(screen, /import \{ lineSignFault, staysAFactuur \} from '@\/lib\/negative-line'/,
+    "the builder must ask the module, not re-decide");
+  const door = code("src/lib/draft-totals.ts");
+  assert.match(door, /import \{ staysAFactuur, NOT_A_FACTUUR_REASON \} from ".\/negative-line"/,
+    "and so must the door — a second opinion here is a screen and a server that disagree");
+});
+
+test("[MIN-REGEL] the quantity may go negative and the price may not", () => {
+  const screen = code("src/app/dashboard/invoice/new/page.tsx");
+  // The floor is what threw the minus away: Math.max(0.01, -3) is 0,01.
+  assert.match(screen, /onChange\(allowNegative \? parsed : Math\.max\(min, parsed\)\)/,
+    "the floor may only apply to a field that must not go negative");
+  // Exactly one field carries it. A grep for the prop, so a second one cannot be added quietly.
+  const withFlag = [...screen.matchAll(/<LineInput[^>]*allowNegative[^>]*>/g)].map((m) => m[0]);
+  assert.equal(withFlag.length, 1, `only the quantity field may go below zero: ${withFlag.join(" | ")}`);
+  assert.match(withFlag[0], /label=\{t\('nieuw\.regel\.aantal'\)\}/, "…and it is the aantal");
+  // A zero quantity stays an error — a line that moves nothing is a half-typed line, not a credit.
+  assert.match(screen, /quantity: lineSignFault\(l\) === 'quantity_zero'/, "zero is still refused, by name");
+});
+
+test("[MIN-REGEL] a document that gives money back is refused on the screen and at the door", () => {
+  const screen = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(screen, /!staysAFactuur\(lines\)/, "the screen refuses before anything is sent");
+  assert.match(screen, /setError\(t\('nieuw\.fout\.creditnota'\)\)/,
+    "…in the owner's language — a hard-coded Dutch sentence here is a translation that stays half-finished");
+
+  // The door. The screen is not the lock; this function is what both writers of invoice_lines call.
+  const door = code("src/lib/draft-totals.ts");
+  assert.match(door, /documentKind !== "creditnota" && !staysAFactuur\(clean\)/,
+    "a creditnota is exempt — its lines are negative by design — and everything else is checked");
+  assert.match(door, /errors\.length === 0 &&/, "one problem gets one answer");
+  assert.match(door, /reason: NOT_A_FACTUUR_REASON/, "and the refusal names the creditnota");
+
+  // Both routes must hand it the document type. Omitting it does not skip the check (the default
+  // judges as a factuur), but on the edit route it would refuse every creditnota edit.
+  assert.match(code("src/app/api/invoice/draft/route.ts"), /validateDraftLines\(body\.lines, soort\)/,
+    "the create route must say which document it is making");
+  assert.match(code("src/app/api/invoice/[id]/route.ts"), /validateDraftLines\(rawLines, existing\.invoice_type\)/,
+    "the edit route must say which document it is editing");
+});
+
+test("[MIN-REGEL] a refusal from the create route says which line and why", () => {
+  // It returned "De regels kloppen niet" and put the reason in `fouten`, which no screen reads.
+  // The owner was told the lines were wrong and never which one — the silence this repo keeps
+  // finding, in the one place that already knew the answer.
+  const route = code("src/app/api/invoice/draft/route.ts");
+  assert.match(route, /const eerste = gecontroleerd\.errors\[0\]/, "the first error must be spoken");
+  assert.match(route, /error: `\$\{waar\}\$\{eerste\.reason\}\.`/, "…as the error the screen shows");
+  assert.doesNotMatch(route, /error: 'De regels kloppen niet'/, "not as a sentence that says nothing");
+});
+
+test("[MIN-REGEL] the e-factuur can never carry a negative price", () => {
+  const ubl = code("src/lib/ubl-export.ts");
+  // The sign is moved once, before the quantity is written, so both fields come from one decision.
+  assert.match(ubl, /const priceCarriedTheMinus = storedPrice < 0/, "a stored negative price is recognised");
+  assert.match(ubl, /const aantal = priceCarriedTheMinus \? -storedQuantity : storedQuantity/,
+    "…and the minus moves to the quantity, which is where BR-27 allows it");
+  assert.match(ubl, /const stuksprijs = Math\.abs\(storedPrice\)/, "…leaving the price a magnitude");
+  assert.match(ubl, /"InvoicedQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(aantal\)\)/,
+    "the emitted quantity must be the normalized one, or the two fields disagree");
+  // The fallback branch: PriceAmount = the line total, which on a credit line is negative.
+  assert.match(ubl, /"PriceAmount", \{ currencyID: EUR \}\)\.txt\(money\(Math\.abs\(ex\)\)\)/,
+    "the per-line price form must be a magnitude too");
+  assert.match(ubl, /"BaseQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(Math\.abs\(aantal\)\)\)/,
+    "PEPPOL-EN16931-R121: the base quantity must be a positive number");
+
+  // Proven by a document, not only by a signature: the exporter test builds the ATAPACK line and
+  // reads every PriceAmount back out of the XML.
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /\[MIN-REGEL\] the ATAPACK credit line keeps its minus in the quantity/);
+  assert.match(spec, /BR-27/, "the rule must be named where it is enforced");
+});
+
+test("[MIN-REGEL] the invoice the customer keeps shows the credit and still adds up", () => {
+  // The PDF is where this is checked by hand. A minus dropped anywhere between the row and the
+  // totals leaves a document that looks finished and asks for € 71,85 too much.
+  const spec = readFileSync("src/lib/invoice-pdf-document.test.ts", "utf8");
+  assert.match(spec, /€ -71,85/, "the row must show money going back");
+  assert.match(spec, /€ 101,18/, "the subtotal is the netted one");
+  assert.match(spec, /€ 122,43/, "…and the amount due is the one on the paper invoice");
+  assert.match(spec, /the same invoice without the credit line is 71,85 more expensive/,
+    "with the control that makes those numbers mean something");
 });

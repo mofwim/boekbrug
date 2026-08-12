@@ -277,7 +277,14 @@ export async function PUT(
   //
   // De sign blijft van deze route: een creditnota houdt haar negatieve regels, en validateDraftLines
   // heeft daar geen mening over — zij keurt alleen of het getallen zijn die op een factuur kunnen.
-  const keuring = validateDraftLines(rawLines)
+  //
+  // [MIN-REGEL] Op één ding na, en daarvoor moet zij weten WAT dit is. Een negatieve regel op een
+  // factuur is gewoon (een retour die de leverancier op de volgende factuur verrekent); een factuur
+  // die per saldo geld TERUGGEEFT is een creditnota en hoort niet in de doorlopende factuurreeks.
+  // Die twee zijn alleen uit elkaar te houden met het type erbij — en anders dan bij /draft komen
+  // de regels hier al ondertekend binnen, dus zonder dit zou elke bewerking van een creditnota
+  // worden geweigerd.
+  const keuring = validateDraftLines(rawLines, existing.invoice_type)
   if (!keuring.ok) {
     const eerste = keuring.errors[0]
     const waar = eerste.index >= 0 ? `Regel ${eerste.index + 1}: ` : ''

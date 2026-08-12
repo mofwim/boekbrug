@@ -613,7 +613,34 @@ export function buildInvoiceUbl(
     // Peppol BIS Billing 3.0 eist een code uit UN/ECE Rec 20 rev. 11; toUnitCode() is de enige
     // plek waar die keuze wordt gemaakt, en valt terug op C62 zodra hij het niet zeker weet.
     // Daardoor verandert geen enkele bestaande factuur van betekenis.
-    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Number(l.quantity ?? 1)));
+    //
+    // [MIN-REGEL] The minus of a credit line lives in the QUANTITY, and in nothing else.
+    //
+    // A supplier who settles a return on the next invoice writes one negative line among the
+    // ordinary ones (ATAPACK 26304787: −3 × € 23,95 = −71,85). EN 16931 rule BR-27 says the item
+    // net price shall not be negative, and an access point REFUSES a file that breaks it. So the
+    // same line can be stored two ways, and only one of them can be delivered:
+    //
+    //     quantity −3, price 23.95    → −71,85   deliverable
+    //     quantity 3, price −23.95    → −71,85   refused by BR-27
+    //
+    // Both look identical on the PDF, which is what makes the second one dangerous: the invoice
+    // is right on paper and never arrives electronically. This app's line editor now refuses a
+    // negative price outright (negative-line.ts), but rows already in the database were typed
+    // before that — a "Statiegeld retour" line at 1 × € −3,86 is exactly this shape — and an
+    // imported line carries whatever the source put in it.
+    //
+    // So the sign is moved here, once, for both fields: whatever the row says, the document says
+    // −3 × 23,95. The arithmetic the validator checks (PEPPOL-EN16931-R120: line amount =
+    // quantity × price ÷ base quantity) gives back the same signed line total either way, so
+    // LineExtensionAmount keeps its minus and the totals are untouched. A line whose price was
+    // already positive is emitted byte-for-byte as before.
+    const storedQuantity = Number(l.quantity ?? 1);
+    const storedPrice = round2(Number(l.unit_price ?? 0));
+    const priceCarriedTheMinus = storedPrice < 0;
+    const aantal = priceCarriedTheMinus ? -storedQuantity : storedQuantity;
+    const stuksprijs = Math.abs(storedPrice);
+    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
     const item = line.ele(NS.cac, "Item");
     const desc = l.description?.trim() || "Artikel";
@@ -648,15 +675,23 @@ export function buildInvoiceUbl(
     // De gewone factuur verandert niet. Is de stuksprijs al een rond bedrag — verreweg de meeste
     // regels — dan klopt de vermenigvuldiging en blijft er precies staan wat er stond, zonder
     // BaseQuantity. Alleen de regel die anders zou liegen, krijgt de andere vorm.
-    const aantal = Number(l.quantity ?? 1);
-    const stuksprijs = round2(Number(l.unit_price ?? 0));
+    //
+    // [MIN-REGEL] The fallback branch carries the same rule, and it did not get it for free.
+    //
+    // The exact branch above reproduces the sign by itself: −3 × 23,95 = −71,85, so the price
+    // stays 23,95 and only the quantity is negative. This one wrote `PriceAmount = ex`, and on a
+    // credit line `ex` is a negative amount — a BR-27 violation on precisely the lines that need
+    // this form (a fractional price on a return). Both fields are therefore expressed as
+    // magnitudes: the sign is already in InvoicedQuantity, and (quantity ÷ BaseQuantity) × price
+    // hands the signed line total back. PEPPOL-EN16931-R121 also requires BaseQuantity itself to
+    // be a positive number, which is the same abs().
     const price = line.ele(NS.cac, "Price");
     if (round2(aantal * stuksprijs) === ex) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
-      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(ex));
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(ex)));
       // Zelfde eenheidscode als InvoicedQuantity — anders vergelijkt de validator appels met peren.
-      price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
+      price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Math.abs(aantal)));
     }
   });
 

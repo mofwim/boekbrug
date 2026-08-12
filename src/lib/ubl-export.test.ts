@@ -109,6 +109,103 @@ test("[UBL-CREDIT] the sign rule applies to the creditnota and to nothing else",
   );
 });
 
+// ── [MIN-REGEL] A credit line inside an ordinary invoice ──────────────────────────────────────
+//
+// Read off a real supplier invoice: ATAPACK Cash & Carry 26304787, 17-07-2026. Line AP290004 is
+// "Credit over faktuur 26302362" — a return of 3 boxes of knoopzakken at € 23,95, settled on the
+// next invoice instead of on a separate creditnota. Nine ordinary lines total € 173,03, the credit
+// takes off € 71,85, and the document asks for € 101,18 + € 21,25 btw = € 122,43.
+//
+// The document stays a factuur (type 380). Only the LINE is negative, and EN 16931 BR-27 decides
+// where that minus is allowed to be: in the quantity, never in the price.
+
+/** Every PriceAmount in the file, as a number. BR-27 applies to each one of them. */
+function priceAmounts(xml: string): number[] {
+  return [...xml.matchAll(/<cbc:PriceAmount[^>]*>(-?[\d.]+)<\/cbc:PriceAmount>/g)].map((m) => Number(m[1]));
+}
+
+test("[MIN-REGEL] the ATAPACK credit line keeps its minus in the quantity", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ invoice_number: "26304787", total_ex_btw: 101.18, btw_amount: 21.25, total_inc_btw: 122.43 }),
+    [
+      line({ description: "Knoopzakken HDPE — credit over faktuur 26302362", quantity: -3, unit_price: 23.95, line_total: -71.85 }),
+      line({ description: "Houtskool Elly 2kg", quantity: 2, unit_price: 15.95, line_total: 31.9 }),
+      line({ description: "Keukenrol Evo", quantity: 1, unit_price: 10.9, line_total: 10.9 }),
+    ],
+    supplier,
+  );
+  assert.match(xml, /<cbc:InvoiceTypeCode>380<\/cbc:InvoiceTypeCode>/, "one credit line does not make it a creditnota");
+  assert.match(
+    xml, /<cbc:InvoicedQuantity[^>]*>-3<\/cbc:InvoicedQuantity>/,
+    "the return is three pieces going back — the quantity is where UBL puts that",
+  );
+  assert.match(
+    xml, /<cbc:LineExtensionAmount[^>]*>-71\.85<\/cbc:LineExtensionAmount>/,
+    "and the line amount stays negative, or the customer is charged for a credit",
+  );
+  const prices = priceAmounts(xml);
+  assert.equal(prices.length, 3, "one PriceAmount per line — the extraction must not have missed any");
+  assert.ok(
+    prices.every((p) => p >= 0),
+    `BR-27: the item net price shall not be negative, so the access point refuses this file: ${prices.join(", ")}`,
+  );
+  assert.ok(prices.includes(23.95), "the price per piece is still the price per piece");
+});
+
+test("[MIN-REGEL] a minus typed into the price is moved to the quantity", () => {
+  // The shape already sitting in the database. Before the line editor refused a negative price,
+  // "Statiegeld retour" was typed as 1 × € −3,86 — the same money, in the one form Peppol rejects.
+  // Nothing warns the owner: the PDF is right and the file simply never arrives.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 96.14, btw_amount: 20.19, total_inc_btw: 116.33 }),
+    [line(), line({ description: "Statiegeld retour", quantity: 1, unit_price: -3.86, line_total: -3.86 })],
+    supplier,
+  );
+  assert.ok(
+    priceAmounts(xml).every((p) => p >= 0),
+    `a stored negative price must not reach the file: ${priceAmounts(xml).join(", ")}`,
+  );
+  assert.match(xml, /<cbc:PriceAmount[^>]*>3\.86<\/cbc:PriceAmount>/, "the magnitude is kept");
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>-1<\/cbc:InvoicedQuantity>/, "and the minus moved to the quantity");
+  assert.match(
+    xml, /<cbc:LineExtensionAmount[^>]*>-3\.86<\/cbc:LineExtensionAmount>/,
+    "R120 checks quantity × price against this — −1 × 3,86 must still be −3,86",
+  );
+});
+
+test("[MIN-REGEL] a credit line with a fractional price takes the BaseQuantity form", () => {
+  // The fallback branch: 16 × 2,0208 does not reproduce −32,33 from a rounded price, so the price
+  // is expressed per line. That branch used to write the line total straight into PriceAmount,
+  // which on a credit line is negative — BR-27 again, on exactly the lines that need this form.
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 67.67, btw_amount: 14.21, total_inc_btw: 81.88 }),
+    [
+      line({ description: "Levering", quantity: 1, unit_price: 100, line_total: 100 }),
+      line({ description: "Magnetronbak — retour", quantity: -16, unit_price: 2.0208, line_total: -32.33 }),
+    ],
+    supplier,
+  );
+  const prices = priceAmounts(xml);
+  assert.ok(prices.every((p) => p >= 0), `BR-27 in the fallback branch too: ${prices.join(", ")}`);
+  assert.match(xml, /<cbc:PriceAmount[^>]*>32\.33<\/cbc:PriceAmount>/, "the price is the magnitude of the line");
+  assert.match(
+    xml, /<cbc:BaseQuantity[^>]*>16<\/cbc:BaseQuantity>/,
+    "PEPPOL-EN16931-R121: the base quantity must be a positive number above zero",
+  );
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>-16<\/cbc:InvoicedQuantity>/);
+  // (−16 ÷ 16) × 32,33 = −32,33 — the same figure the line reports, with its sign.
+  assert.match(xml, /<cbc:LineExtensionAmount[^>]*>-32\.33<\/cbc:LineExtensionAmount>/);
+});
+
+test("[MIN-REGEL] an ordinary line is emitted exactly as it was before", () => {
+  // The narrow half. The sign normalization must be invisible to every invoice that has no credit
+  // line — which is almost all of them.
+  const { xml } = buildInvoiceUbl(header(), [line()], supplier);
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>2<\/cbc:InvoicedQuantity>/);
+  assert.match(xml, /<cbc:PriceAmount[^>]*>50\.00<\/cbc:PriceAmount>/);
+  assert.doesNotMatch(xml, /<cbc:BaseQuantity/, "a round price needs no base quantity");
+});
+
 // ── [E-FACTUUR] Three different supplies, all stored as 0% ────────────────────────────────────
 //
 // UBL has a separate code for each, and this exporter sent every one of them as Z (zero rated):

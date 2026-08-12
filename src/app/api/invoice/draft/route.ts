@@ -103,9 +103,21 @@ export async function POST(request: NextRequest) {
       body.invoiceType === 'creditnota' ? 'creditnota' : body.invoiceType === 'offerte' ? 'offerte' : 'factuur'
 
     // ── De regels, gecontroleerd vóór ze de database raken ───────────────────
-    const gecontroleerd = validateDraftLines(body.lines)
+    // [MIN-REGEL] `soort` comes with them: a creditnota's lines are sent POSITIVE here and the sign
+    // is applied below, so on this route the exemption changes nothing today — it is passed because
+    // the rule is about which document this is, and a route that answers that question by accident
+    // is one refactor away from answering it wrong.
+    const gecontroleerd = validateDraftLines(body.lines, soort)
     if (!gecontroleerd.ok) {
-      return NextResponse.json({ error: 'De regels kloppen niet', fouten: gecontroleerd.errors }, { status: 400 })
+      // The reason travelled in `fouten` and no screen reads that array, so every rejection here
+      // said "De regels kloppen niet" and stopped — the owner was told the lines were wrong and
+      // never which line, or why. Both facts are already in the error; this only says one out loud.
+      const eerste = gecontroleerd.errors[0]
+      const waar = eerste.index >= 0 ? `Regel ${eerste.index + 1}: ` : ''
+      return NextResponse.json(
+        { error: `${waar}${eerste.reason}.`, fouten: gecontroleerd.errors },
+        { status: 400 }
+      )
     }
     const sign = soort === 'creditnota' ? -1 : 1
     // [KORTING] De korting komt uit het verzoek en wordt hier GEVALIDEERD, niet vertrouwd. Een
