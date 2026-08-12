@@ -23,6 +23,8 @@
 
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [E-FACTUUR-ZICHTBAAR] De cijfers die de leverancier zelf meestuurde — het sterkste bewijs dat
 // deze app heeft, en het enige waar het scherm nog niets over zei.
 import { eInvoiceOf } from '@/lib/e-invoice'
@@ -92,6 +94,8 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REASON] One rule for what a refused pay-toggle says, shared with /vandaag and /facturen.
 import { payToggleAnswer, type PayToggleError } from '@/lib/pay-toggle-reason'
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
 // both sides of the app — and the server re-checks it before writing.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
@@ -1014,7 +1018,7 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/email/reimport/${inv.id}`, { method: 'POST' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(json?.error || 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.')
+        showToast(failureText(res.status, json, 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.'))
         return
       }
       if (json?.returnedToQueue) {
@@ -1042,9 +1046,13 @@ export default function IncomingManageClient({
     if (attachingId) return
     setAttachingId(inv.id)
     try {
-      const body = new FormData()
-      body.append('file', file)
-      const res = await fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
+      // [UPLOAD-PLAFOND] Fitted like every other document path — this one carries the invoice
+      // itself, so a refusal leaves a booked invoice with no document behind it.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const body = new FormData()
+        body.append('file', f)
+        return fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
+      })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // Each refusal says what to DO about it. "Mislukt" on its own is how a dead end starts.

@@ -6,6 +6,8 @@
 // invitation with themselves as the accountant).
 
 import { useState } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { ErrorMessage } from '@/components/ui/Feedback'
 import { COLUMN } from '@/lib/design/tokens';
 
@@ -30,7 +32,7 @@ export default function InviteClient() {
     const data = await res.json()
 
     if (!res.ok) {
-      setError(data.error || 'Uitnodiging mislukt')
+      setError(failureText(res.status, data, 'Uitnodiging mislukt'))
     } else {
       setSuccess(`Uitnodiging verstuurd naar ${clientEmail}`)
       setClientEmail('')

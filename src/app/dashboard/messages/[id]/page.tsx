@@ -4,6 +4,8 @@
 // BOEK-007: صفحة المحادثة — مع skeleton + optimistic UI + realtime
 
 import { useState, useEffect, useRef } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
@@ -130,7 +132,7 @@ export default function ConversationPage() {
       // eeuwig iets te herhalen dat nooit kan lukken: een scherm dat de weigering van de server
       // overschrijft met een raadgeving die hij niet gaf.
       const data = await res.json().catch(() => null)
-      setError(data?.error || 'Verzenden mislukt — probeer opnieuw')
+      setError(failureText(res.status, data, 'Verzenden mislukt — probeer opnieuw'))
     } else {
       await fetchMessages()
     }

@@ -13,6 +13,8 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
 import Link from "next/link";
@@ -33,7 +35,8 @@ import {
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-normalize-client";
+// [UPLOAD-PLAFOND] One shared fit-and-send — see upload-fit.ts.
+import { sendWithFit } from "@/lib/upload-fit";
 // [UPLOAD-ERRORS] One HTTP-status → owner-sentence translator, shared with /dashboard/upload and
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
@@ -56,6 +59,9 @@ interface ImportHealth {
   level: "clean" | "needs-review";
   // Plain-language Dutch reasons, owner-facing. Empty when level === 'clean'.
   reasons: string[];
+  // [ANDER-TOTAAL] A totals block that IS on the document, when the one we read is not. Offered
+  // below as one tap, never applied — see the button beside the arithmetic warning.
+  alternativeTotals?: { ex: number; btw: number; inc: number };
   flags: {
     arithmetic: boolean;
     vendor: boolean;
@@ -897,7 +903,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
 // ── Confirm-paid modal — review & edit AI-extracted amounts ───────────────────
 
-function ConfirmPaidModal({
+// [ANDER-TOTAAL] Exported for tests/render, for the same reason InvoiceCard is: the one-tap offer
+// below lives in the modal's BODY, and a prop that never arrives there is perfectly typed and
+// perfectly invisible to tsc. A render is the only thing that can see it.
+export function ConfirmPaidModal({
   invoice,
   onVerify,
   onPay,
@@ -1157,6 +1166,40 @@ function ConfirmPaidModal({
                       enters the books. The paper decides; these buttons only spare the typing.
 
                       Nothing is saved by tapping — the fields fill and the owner still confirms. */}
+                  {/* [ANDER-TOTAAL] The document's own totals block, when the one we read is not
+                      on it. [ONE-TAP-REPAIR] below cannot help here: it repairs ex OR btw to match
+                      a total it treats as given, and here the TOTAL is what is in doubt.
+
+                      Reached by a second, blind read of the page ("write down every amount you can
+                      see") that failed to find our total and did find a triple that adds up to the
+                      cent. On the invoice this came from: we read € 1.149,56; the document says
+                      € 1.065,14 + € 95,54 = € 1.160,68.
+
+                      One tap fills the three fields and opens the editor. Nothing is saved — the
+                      owner still confirms, with the paper in hand. Both figures come from a model
+                      reading a scan, so the app may not pick; it may only stop making the owner
+                      type a number it is already holding. */}
+                  {invoice.health.alternativeTotals && (() => {
+                    const alt = invoice.health.alternativeTotals!
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          Staat dit bedrag op je factuur?
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { applyTriplet({ ex: alt.ex, btw: alt.btw, incl: alt.inc }); setEditing(true) }}
+                          style={{
+                            padding: "7px 12px", borderRadius: 9, background: "#fff",
+                            border: "1px solid #e0a94f", color: "#9a5b00",
+                            fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                          }}
+                        >
+                          Neem {NL_CURRENCY.format(alt.inc)} over
+                        </button>
+                      </div>
+                    )
+                  })()}
                   {(() => {
                     const rec = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
                     if (rec.ok) return null
@@ -2736,12 +2779,14 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // structured outcome (never throws) — the modal renders the destination.
   const uploadOne = async (file: File): Promise<IntakeResult> => {
     try {
-      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
-      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
-      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES);
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      const res = await fetch("/api/intake", { method: "POST", body: formData });
+      // [UPLOAD-PLAFOND] Fit an image OR a PDF to the upload budget, and answer a platform 413 by
+      // squeezing harder rather than failing. This path normalized images only, so a scanned
+      // supplier PDF over the budget was refused by the platform with no sentence at all.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const formData = new FormData();
+        formData.append("file", f);
+        return fetch("/api/intake", { method: "POST", body: formData });
+      });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
 
       if (res.ok) {
@@ -3763,7 +3808,9 @@ export default function IncomingInvoicesClient({
         // niet kan opheffen. De server maakt onderscheid tussen "tabel bestaat niet" (echt geen
         // regels, stille lege lijst) en een echte fout; die laatste zeggen we hardop.
         const data = await res.json().catch(() => ({}));
-        if (data?.error) showToast(data.error);
+        // [SERVER-ZIN] A code here would say "rules_read_failed" where the comment above
+        // promises the owner is told out loud what went wrong.
+        if (data?.error) showToast(failureText(res.status, data, 'We konden je regels niet lezen — probeer het zo opnieuw.'));
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -3787,7 +3834,7 @@ export default function IncomingInvoicesClient({
         void loadSenderRules();
       } else {
         // [UI-HONESTY] Nooit "regel ingesteld" zeggen als er niets is ingesteld.
-        showToast(data.error || "Regel instellen mislukt — probeer het opnieuw");
+        showToast(failureText(res.status, data, "Regel instellen mislukt — probeer het opnieuw"));
       }
     } catch {
       showToast("Regel instellen mislukt — controleer je verbinding");

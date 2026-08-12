@@ -11,8 +11,11 @@
 // its own A4 sheet, centered and scaled to fit, exactly like the single-image server path — so
 // a page opens uniformly and can carry the "Betaald op" stamp later.
 //
-// [MULTI-PAGE-FIT] …but that lossless embed had NO size bound, while /api/intake refuses
-// anything over 10 MB (MAX_BYTES). A modern phone photo is 3–5 MB, so THREE pages already
+// [MULTI-PAGE-FIT] …but that lossless embed had NO size bound, while the upload has one.
+// ([UPLOAD-PLAFOND]: that bound used to be read as /api/intake's 10 MB; the real one is the
+// PLATFORM's request-body ceiling, which is under half of it — so the ladder below was aiming
+// at a target more than twice too generous, and every tier could 'succeed' into a refusal.)
+// A modern phone photo is 3–5 MB, so TWO pages already
 // produced a PDF the server rejected — and the sheet then re-offered the same pages, so the
 // retry failed forever. Worse, the failure was arbitrary: a HEIC page went through toJpegBytes
 // (bounded to 2500px) and stayed small, so the very same invoice combined fine on an iPhone

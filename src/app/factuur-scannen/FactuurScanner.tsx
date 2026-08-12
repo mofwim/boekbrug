@@ -1,4 +1,6 @@
 'use client'
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 
 // src/app/factuur-scannen/FactuurScanner.tsx
 // [SCAN-TOOL] AI invoice scanner (client). Uploads a PDF/photo to
@@ -133,9 +135,13 @@ export default function FactuurScanner() {
     setBusy(true)
     setFileName(file.name)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      const res = await fetch('/api/tools/scan-invoice', { method: 'POST', body: form })
+      // [UPLOAD-PLAFOND] The free scanner is where a visitor's first photo lands. A platform 413
+      // there reads as "this app does not work", so it gets the same fit as every logged-in path.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const form = new FormData()
+        form.append('file', f)
+        return fetch('/api/tools/scan-invoice', { method: 'POST', body: form })
+      })
       const json = await res.json().catch(() => null)
       if (!res.ok) {
         setError((json && json.error) || 'Het scannen is mislukt. Probeer het opnieuw.')

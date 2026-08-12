@@ -7,6 +7,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 import Link from 'next/link'
 import { reconcileBatch, resolveBatchNumbers, settleableAmount } from '@/lib/bank-batch-reconcile'
 // [PAYMENT-NAMES-MISSING] What the payment NAMED, including invoices not yet imported.
@@ -967,7 +971,8 @@ export default function BankClient() {
         setStatements((prev) => (prev ? prev.filter((st) => st.id !== documentId) : prev))
         showToast(t('bank.afschrift.verwijderd'))
       } else {
-        showToast(json?.error || 'Verwijderen mislukt.')
+        // [SERVER-ZIN] `json?.error` showed lookup_failed when the document read failed.
+        showToast(failureText(res.status, json, t('bank.fout.algemeen')))
       }
     } catch {
       showToast(t('bank.fout.algemeen'))
@@ -1036,9 +1041,13 @@ export default function BankClient() {
   async function addMissingInvoice(file: File) {
     setAddingMissing(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/intake', { method: 'POST', body: fd })
+      // [UPLOAD-PLAFOND] A photographed or scanned invoice is exactly the file that overruns the
+      // platform's body limit. Fitted and, if the platform still refuses, sent again smaller.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const fd = new FormData()
+        fd.append('file', f)
+        return fetch('/api/intake', { method: 'POST', body: fd })
+      })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok) {
         showToast(typeof json?.error === 'string' ? json.error : 'Toevoegen mislukt — er is niets opgeslagen.')
@@ -1076,13 +1085,17 @@ export default function BankClient() {
       // total covers the transaction amount (fixes the multi-invoice disappear
       // bug: confirming one of three must not hide the rest).
       for (const file of files) {
+        // [UPLOAD-PLAFOND] Same fit as every other document path; without it a scanned bill
+        // attached to a transaction met a bare platform 413 with no sentence at all.
         const postAttach = async (force: boolean) => {
-          const form = new FormData()
-          form.append('file', file)
-          form.append('transactionId', txId)
-          form.append('direction', isCredit ? 'outgoing' : 'incoming')
-          if (force) form.append('force', 'true')
-          const r = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
+          const { response: r } = await sendWithFit(file, (f) => {
+            const form = new FormData()
+            form.append('file', f)
+            form.append('transactionId', txId)
+            form.append('direction', isCredit ? 'outgoing' : 'incoming')
+            if (force) form.append('force', 'true')
+            return fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
+          })
           return { r, j: await r.json() }
         }
         let { r: res, j: json } = await postAttach(false)
@@ -1379,7 +1392,7 @@ export default function BankClient() {
           body: JSON.stringify({}),
         })
         const json = await res.json()
-        if (!res.ok) { showToast(json?.error ?? 'Ophalen mislukt.'); return }
+        if (!res.ok) { showToast(failureText(res.status, json, 'Ophalen mislukt.')); return }
         const inserted = Number(json.inserted ?? 0)
         const unread = Array.isArray(json.warnings) ? json.warnings.length : 0
         // Nooit stil een transactie kwijtraken — dezelfde regel als bij een upload.

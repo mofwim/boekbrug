@@ -7483,3 +7483,253 @@ test("[SCROLL-VEL] the shared rule caps the whole panel, padding included", () =
   assert.match(rule, /box-sizing:\s*border-box/, "max-height must include the padding, or the cap is short by it");
   assert.match(rule, /overscroll-behavior:\s*contain/, "…and the list behind the dialog must stay put");
 });
+
+// ─── [UPLOAD-PLAFOND] The ceiling the app enforces must be the one that applies ──────────────────
+//
+// Reported from a phone, with two pages of a supplier invoice already picked and the sheet still
+// open: "Dit bestand is te groot om te versturen. Splits een grote PDF, of maak er een foto van."
+//
+// The client compressed every upload down to MAX_INTAKE_UPLOAD_BYTES, which was 10 MB, "mirroring
+// /api/intake's server-side MAX_BYTES" — the APP's limit. The limit that bites belongs to the
+// platform: a function's request body is capped around 4.5 MB and refused before any of our code
+// runs, with no JSON and no sentence. So the app compressed to a size it believed was fine, handed
+// it to a platform that refused it, and then asked the owner to split the PDF by hand.
+//
+// Everything needed already existed and was not joined up: an image normalizer, a real PDF
+// compressor that downsamples embedded images while leaving text as text — wired into ONE screen —
+// and the budget. One module joins them, and answers a 413 by squeezing harder and sending again,
+// so a wrong estimate of someone else's limit is recoverable instead of terminal.
+
+test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
+  const src = code("src/lib/image-normalize-client.ts");
+  const m = /MAX_INTAKE_UPLOAD_BYTES = (\d+) \* 1024 \* 1024/.exec(src);
+  assert.ok(m, "the shared budget must stay a plain, readable number of megabytes");
+  const mb = Number(m[1]);
+  assert.ok(mb <= 4, `the budget is ${mb} MB — at or above the platform ceiling, so every file ` +
+    `compressed to exactly it is refused with a bare 413 the owner cannot act on`);
+  assert.ok(mb >= 2, `the budget is ${mb} MB — too small for a legible multi-page scan`);
+  // The server keeps its own, larger cap on purpose: it guards the paths a browser does not walk.
+  const route = code("src/app/api/intake/route.ts");
+  assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
+});
+
+test("[UPLOAD-PLAFOND] every browser upload of a document goes through the shared fit", () => {
+  // By SHAPE, not by a list: a new upload screen added next month fails this too. A CSV or an
+  // MT940 is exempt — compression cannot make a text file smaller, and pretending otherwise would
+  // spend an upload proving it.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const EXEMPT = /\/api\/(bank\/upload|turnover\/import|ledger\/import|eft\/import)/;
+
+  const raw: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components"))) {
+    if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
+    // code(), not readFileSync: a negative control removed the call from IntakeButton and left the
+    // COMMENT explaining it, and this gate went green on the word `sendWithFit` inside that
+    // comment. It is the defect class this file exists to catch — an assertion matching a mention
+    // rather than the wiring — and it caught it in the gate itself.
+    const src = code(f);
+    for (const m of src.matchAll(/append\(\s*['"]file['"]\s*,/g)) {
+      const at = m.index ?? 0;
+      const around = src.slice(Math.max(0, at - 1400), at + 900);
+      const url = /fetch\(\s*[`'"]([^`'"]+)[`'"]/.exec(around.slice(around.indexOf(m[0])))?.[1] ?? "";
+      if (EXEMPT.test(url)) continue;
+      if (!/sendWithFit|fitForUpload/.test(around)) {
+        raw.push(`${f}:${src.slice(0, at).split("\n").length} → ${url}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    raw, [],
+    "these post a document straight at the platform's ceiling, so a large scan is refused with a " +
+      `bare 413 and no sentence:\n  ${raw.join("\n  ")}`,
+  );
+});
+
+test("[UPLOAD-PLAFOND] no screen quotes a size the app does not enforce", () => {
+  // Two messages on the upload screen said "max 10 MB" long after the real ceiling had become 4.
+  // A number the owner is given must be one an upload can actually meet, so the sentences derive
+  // it from the constant.
+  for (const f of [
+    "src/app/dashboard/upload/UploadClient.tsx",
+    "src/components/intake/IntakeButton.tsx",
+  ]) {
+    const src = code(f); // comments stripped — only what the owner can read
+    assert.doesNotMatch(src, /max 10 ?MB|boven de 10 MB/i, `${f}: quotes a ceiling that is not the one enforced`);
+  }
+});
+
+test("[UPLOAD-PLAFOND] the retry is real, and it is bounded", () => {
+  const mod = code("src/lib/upload-fit.ts");
+  assert.match(mod, /res\.status !== 413/, "a platform refusal must be recognised");
+  assert.match(mod, /retryBudget\(budget\)/, "…and answered against a smaller budget");
+  // Exactly two sends in the worst case. A loop here would spend an owner's mobile data proving
+  // that a file which is not a size problem is still not a size problem.
+  assert.equal((mod.match(/await send\(/g) ?? []).length, 2, "two sends at most, never a loop");
+  // And no second upload when the squeeze gained nothing.
+  assert.match(mod, /second\.after >= first\.after/, "identical bytes must not be sent twice");
+  // The fitter is injectable, or the retry is untestable and would sit unexercised.
+  assert.match(mod, /fit: \(f: File, b: number\) => Promise<FitResult> = fitForUpload/);
+  const spec = readFileSync("src/lib/upload-fit.test.ts", "utf8");
+  assert.match(spec, /becomes a smaller second attempt that succeeds/, "the retry must be exercised");
+  assert.match(spec, /happens once, never in a loop/, "…and its bound asserted");
+});
+
+// ─── [ANDER-TOTAAL] The document's own total, when the read one is not on it ─────────────────────
+//
+// Reported with the paper invoice beside the screen. NemaFood B.V. 262697, three scanned pages with
+// no text layer: the app read € 1.149,56 with € 94,92 BTW; the document says
+// € 1.065,14 + € 95,54 = € 1.160,68. Eleven euro of cost and sixty-two cents of voorbelasting.
+//
+// The app had already noticed. [GEGROND-OCR] pays for a second, blind read of the page — "write
+// down every amount you can see" — and checks whether the extracted total is among them. It was
+// not, and the owner was told: "controleer het aan de factuur zelf". True, and a dead end: it sends
+// them to find the paper while the app is holding a transcription of that paper and discards it.
+//
+// Among those amounts there is usually exactly one triple that adds up to the cent. That is not a
+// guess about which number is the total — it is the arithmetic every invoice's totals block
+// satisfies and very little else does. So the question goes on the screen instead.
+
+test("[ANDER-TOTAAL] the transcription is used, not discarded", () => {
+  const grounding = code("src/lib/amount-grounding.ts");
+  // The verdict must carry the alternative, or the finder is unreachable from the screen.
+  assert.match(grounding, /alternative\?: \{ ex: number; btw: number; inc: number \}/,
+    "the grounding verdict must be able to carry the document's own totals block");
+  assert.match(grounding, /alternativeTotals\(amounts\.totalIncBtw/, "…and must actually look for one");
+  // Only when the read total is NOT on the document. Raising a second figure on a correct invoice
+  // is how a warning stops being read.
+  const at = grounding.indexOf("alternativeTotals(");
+  const before = grounding.slice(Math.max(0, at - 300), at);
+  assert.match(before, /totalIncBtw === 'absent'/, "the alternative is for the absent case only");
+});
+
+test("[ANDER-TOTAAL] a candidate must add up exactly, and be a plausible totals block", () => {
+  const mod = code("src/lib/amount-candidates.ts");
+  // Cents, not floats: 0.1 + 0.2 !== 0.3 in binary, and this is an equality test on money.
+  assert.match(mod, /Math\.round\(n \* 100\)/, "the comparison must be in whole cents");
+  // Distinct amounts — an invoice prints the same figure twice and x + x = 2x means nothing.
+  assert.match(mod, /seen\.has\(c\)/, "a printed amount may not pair with itself");
+  // BTW never exceeds the net it is charged on.
+  assert.match(mod, /if \(b > a\) continue/, "the BTW side must be the smaller one");
+  // A floor, because small change sums coincidentally on every receipt.
+  assert.match(mod, /MIN_TOTAL/, "small change must not become a totals block");
+  // Bounded: the search is quadratic and a model can transcribe a whole page.
+  assert.match(mod, /MAX_CONSIDERED/, "a pathological transcription must not stall a request");
+});
+
+test("[ANDER-TOTAAL] the finding is shown, never applied", () => {
+  // Both figures come from a model reading a scan. The app knows they disagree and does not know
+  // which is right, so naming a winner would be the same overconfidence that produced the wrong
+  // number. It must not write to the invoice.
+  const mod = code("src/lib/amount-candidates.ts");
+  assert.doesNotMatch(mod, /\.update\(|\.insert\(|supabase/, "this module decides nothing and writes nothing");
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /alternativeReason\(grounding\.alternative\)/, "the owner is told");
+  assert.match(health, /controleer welk bedrag op de factuur staat/, "…and asked, not overruled");
+  // And when there is no candidate the honest old sentence must remain, not disappear.
+  assert.match(health, /controleer het aan de factuur zelf/, "no candidate ⇒ the plain warning stays");
+});
+
+test("[ANDER-TOTAAL] the invoice it was built from is the fixture", () => {
+  // A synthetic example proves the arithmetic; this document proves the FEATURE. Its per-rate block
+  // (3,60 + 1.061,54 = 1.065,14) also adds up, so it is what shows the ordering has to prefer the
+  // grand total — the number that becomes money.
+  const spec = readFileSync("src/lib/amount-candidates.test.ts", "utf8");
+  assert.match(spec, /1160\.68/, "the document's real total");
+  assert.match(spec, /1149\.56/, "…and the one the app read instead");
+  assert.match(spec, /GRAND total wins over the per-rate blocks/, "the ordering must be exercised");
+  assert.match(spec, /the pieces, joined/i, "and the chain end to end, not just the finder");
+});
+
+test("[ANDER-TOTAAL] the offer reaches the screen where the total is edited", () => {
+  // The card shows the warning; the MODAL is where the owner types the number, so that is where
+  // the one tap has to be. A prop that never arrives in a modal body is perfectly typed and
+  // perfectly invisible to tsc — which is why this is asserted by a render, not by a signature.
+  const client = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(client, /alternativeTotals\?: \{ ex: number; btw: number; inc: number \}/,
+    "the client's ImportHealth mirror must carry it, or the modal cannot see it");
+  assert.match(client, /invoice\.health\.alternativeTotals && \(\(\) => \{/, "…and the modal must offer it");
+  // One tap fills and opens the editor. It must NOT save: both figures come from a model reading a
+  // scan, and the owner confirms with the paper in hand.
+  const at = client.indexOf("invoice.health.alternativeTotals && (() =>");
+  const offer = client.slice(at, at + 900);
+  assert.match(offer, /applyTriplet\(\{ ex: alt\.ex, btw: alt\.btw, incl: alt\.inc \}\)/, "fills all three fields");
+  assert.match(offer, /setEditing\(true\)/, "…and opens the editor");
+  assert.doesNotMatch(offer, /onVerify|onPay|fetch\(/, "tapping must not book anything");
+  // And the modal is exported for the render suite, or the assertion above has nothing to render.
+  assert.match(client, /export function ConfirmPaidModal/);
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /reaches the confirm modal as one tap/, "the render proof must exist");
+  assert.match(render, /no offer on an invoice that reads right/, "…and the silent case with it");
+});
+
+// ─── [SERVER-ZIN] A machine code is not a sentence, on any screen ────────────────────────────────
+//
+// The routes in this app answer failures two ways and a screen cannot tell them apart by looking:
+//
+//     { error: "Bankafschrift niet gevonden" }   ← written for a person
+//     { error: "invoice_read_failed" }           ← written for a program
+//
+// Both arrive as `json.error`, so `showToast(json.error || 'Mislukt')` is right half the time. The
+// reported case was /vandaag ("invoice_already_paid" under the "Al betaald?" button), and a sweep
+// found the same shape on the payment-allocation screen (unauthorized, transaction_not_found,
+// invoice_read_failed), in the kasboek (opening_balance_lookup_failed), on the bank statement list
+// (lookup_failed) and in the restore-from-ignored flow (bank_linked, money_settled).
+//
+// One rule, in server-message.ts: a code has no spaces. Every site goes through it — including the
+// ones whose route emits only sentences today, because "today" is the operative word and a route
+// gaining one code would otherwise regress a screen silently.
+
+test("[SERVER-ZIN] no screen renders a route's error straight", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  // The offence is RENDERING the error, not reading it. A site that compares the code and maps it
+  // to a sentence — `showToast(json?.error === 'lookup_failed' ? '…' : '…')` — is doing exactly the
+  // right thing, and the first version of this gate flagged one of those.
+  const RAW = /(showToast|setError|setMessage|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+
+  const offenders: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components"))) {
+    if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
+    const src = code(f); // comments stripped — a note about the old shape must not count
+    for (const m of src.matchAll(RAW)) {
+      offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these put whatever the route happened to send in front of the owner — a Dutch sentence on a " +
+      `good day and "invoice_read_failed" on a bad one:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SERVER-ZIN] the rule keeps sentences and drops codes", () => {
+  const mod = code("src/lib/server-message.ts");
+  // The test is the absence of a space, and nothing else. A catalogue would only cover the codes
+  // somebody remembered; this covers the route written next month.
+  assert.match(mod, /\^\[a-z\]\[a-z0-9\]\*\(\?:_\[a-z0-9\]\+\)\*\$/, "a code is one lowercase token or snake_case");
+  // A 5xx detail is a raw PostgreSQL string with a tag and a uuid in it.
+  assert.match(mod, /if \(status < 500\)/, "a 5xx detail may never reach a phone");
+  // The fallback is the caller's, already translated — this module may hold no language of its own.
+  assert.match(mod, /fallback: string/, "the screen's line, in the screen's language");
+  assert.doesNotMatch(mod, /'[A-Z][a-z]+ (niet|mislukt|gelukt)/, "no Dutch copy inside the rule");
+  const spec = readFileSync("src/lib/server-message.test.ts", "utf8");
+  // The vocabulary is read off the routes, not invented — including the lowercase Dutch sentences
+  // a "must start with a capital" rule would have thrown away.
+  assert.match(spec, /opening_balance_lookup_failed/, "the codes that were actually reaching screens");
+  assert.match(spec, /direction moet 'in' of 'out' zijn/, "…and the lowercase Dutch that must survive");
+});

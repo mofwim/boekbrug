@@ -5,6 +5,8 @@
 // مكون مشترك — يُستخدم في صفحة تفاصيل الفاتورة
 
 import { useState } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { isInvoiceEditable } from '@/lib/invoice-editable'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
@@ -98,7 +100,7 @@ const canRequestPayment =
     const data = await res.json()
 
     if (!res.ok) {
-      setError(data.error || t('act.verwijderenMislukt'))
+      setError(failureText(res.status, data, t('act.verwijderenMislukt')))
       setLoadingDelete(false)
       setShowDeleteConfirm(false)
       return
