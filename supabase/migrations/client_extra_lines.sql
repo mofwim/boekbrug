@@ -40,7 +40,11 @@ ALTER TABLE public.invoices
   -- idempotent, dus opnieuw draaien voegt alleen de ontbrekende kolom toe en laat de twee die er
   -- al zijn ongemoeid. Eén bestand dat de hele vorm van dit blok beschrijft leest beter dan twee
   -- die je naast elkaar moet leggen om te weten hoeveel regels er zijn.
-  ADD COLUMN IF NOT EXISTS client_extra_line3 text;
+  ADD COLUMN IF NOT EXISTS client_extra_line3 text,
+  -- [KLANT-EXTRA-4] A fourth line, same argument as the third: ADD COLUMN IF NOT EXISTS is
+  -- idempotent, so re-running this one file only adds what is missing. One file describing the
+  -- whole shape of the block beats a trail of one-line migrations.
+  ADD COLUMN IF NOT EXISTS client_extra_line4 text;
 
 COMMENT ON COLUMN public.invoices.client_extra_line1 IS
   'Vrije regel direct onder de klantnaam op het document, bijvoorbeeld "t.a.v. mevrouw Jansen". '
@@ -51,5 +55,9 @@ COMMENT ON COLUMN public.invoices.client_extra_line2 IS
   'inkoopordernummer dat de klant op de factuur wil zien staan.';
 
 COMMENT ON COLUMN public.invoices.client_extra_line3 IS
-  'Derde vrije regel onder de klantnaam. Alle drie zijn optioneel en lege regels vallen weg, '
+  'Derde vrije regel onder de klantnaam. Alle regels zijn optioneel en lege regels vallen weg, '
   'zodat het adresblok nooit een gat krijgt waar een regel had kunnen staan.';
+
+COMMENT ON COLUMN public.invoices.client_extra_line4 IS
+  'Vierde vrije regel onder de klantnaam — zelfde regels als de eerste drie: optioneel, '
+  'leeg valt weg, en hij reist mee naar creditnota, duplicaat en terugkerende factuur.';

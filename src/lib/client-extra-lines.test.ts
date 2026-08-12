@@ -40,7 +40,7 @@ test("[KLANT-EXTRA] the column list is what every caller walks", () => {
   // disagree, one of them silently carries fewer lines than the owner typed.
   assert.deepEqual(
     [...CLIENT_EXTRA_LINE_COLUMNS],
-    ["client_extra_line1", "client_extra_line2", "client_extra_line3"],
+    ["client_extra_line1", "client_extra_line2", "client_extra_line3", "client_extra_line4"],
   );
 });
 

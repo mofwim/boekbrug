@@ -507,6 +507,7 @@ function NewInvoicePageContent() {
   const [clientExtra1, setClientExtra1]   = useState('')
   const [clientExtra2, setClientExtra2]   = useState('')
   const [clientExtra3, setClientExtra3]   = useState('')
+  const [clientExtra4, setClientExtra4]   = useState('')
   // [ICP] A customer number that names another EU member state but cannot have that length.
   // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
   // impossible for that country, so a valid number is never called wrong.
@@ -1002,6 +1003,7 @@ function NewInvoicePageContent() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         lines: lines.map(l => ({
           description: l.description,
           quantity: l.quantity,
@@ -1175,6 +1177,7 @@ function NewInvoicePageContent() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
         replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
         // [KORTING] Ruwe invoer; de server valideert opnieuw met dezelfde parseDiscount. Het scherm
@@ -1522,9 +1525,12 @@ function NewInvoicePageContent() {
                 <OutlinedInput value={clientExtra1} onChange={e => setClientExtra1(e.target.value)} placeholder="t.a.v. mevrouw Jansen" label={t('nieuw.klant.extra1')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
                 <OutlinedInput value={clientExtra2} onChange={e => setClientExtra2(e.target.value)} placeholder={t('nieuw.klant.extraHint')} label={t('nieuw.klant.extra2')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
               </div>
-              <OutlinedInput value={clientExtra3} onChange={e => setClientExtra3(e.target.value)} placeholder={t('nieuw.betaalkenmerk.hint')} label={t('nieuw.klant.extra3')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <OutlinedInput value={clientExtra3} onChange={e => setClientExtra3(e.target.value)} placeholder={t('nieuw.betaalkenmerk.hint')} label={t('nieuw.klant.extra3')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+                <OutlinedInput value={clientExtra4} onChange={e => setClientExtra4(e.target.value)} placeholder={t('nieuw.klant.extraHint')} label={t('nieuw.klant.extra4')} focusColor={cfg.focusColor} maxLength={MAX_EXTRA_LINE_LENGTH} />
+              </div>
               <p style={{ fontSize: 11, color: '#5F6368', margin: '-4px 0 0', lineHeight: 1.45 }}>
-                Deze drie regels komen op het document direct onder de klantnaam te staan.
+                {t('nieuw.klant.extraUitleg')}
               </p>
               <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label={t('nieuw.klant.email')} type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
               <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label={t('nieuw.klant.adres')} focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />

@@ -12,14 +12,14 @@ import { extraLineFields, writeWithExtraLines, copyExtraLinesOnto } from "./clie
 const UNKNOWN = { code: "PGRST204", message: "Could not find the 'client_extra_line1' column" };
 
 test("[KLANT-EXTRA] empty lines are stored as NULL, not as an empty string", () => {
-  assert.deepEqual(extraLineFields("", "   ", null), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null });
-  assert.deepEqual(extraLineFields(), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null });
+  assert.deepEqual(extraLineFields("", "   ", null), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null, client_extra_line4: null });
+  assert.deepEqual(extraLineFields(), { client_extra_line1: null, client_extra_line2: null, client_extra_line3: null, client_extra_line4: null });
   assert.deepEqual(
     extraLineFields(" t.a.v. Jansen ", "Inkoop", "PO-114"),
-    { client_extra_line1: "t.a.v. Jansen", client_extra_line2: "Inkoop", client_extra_line3: "PO-114" },
+    { client_extra_line1: "t.a.v. Jansen", client_extra_line2: "Inkoop", client_extra_line3: "PO-114", client_extra_line4: null },
   );
-  // A fourth value has no column and must be dropped, not smuggled in under a made-up name.
-  assert.deepEqual(Object.keys(extraLineFields("a", "b", "c", "d")).length, 3);
+  // A FIFTH value has no column and must be dropped, not smuggled in under a made-up name.
+  assert.deepEqual(Object.keys(extraLineFields("a", "b", "c", "d", "e")).length, 4);
 });
 
 test("[KLANT-EXTRA] the ordinary path writes the fields once and reports them written", async () => {
@@ -125,6 +125,7 @@ test("[KLANT-EXTRA] the lines are carried onto the new document, cleaned", async
   assert.equal(ok, true);
   assert.deepEqual(seen, {
     client_extra_line1: "t.a.v. mevrouw Jansen", client_extra_line2: null, client_extra_line3: "PO-114",
+    client_extra_line4: null,
   });
 });
 

@@ -240,6 +240,7 @@ test("[KLANT-EXTRA] the extra lines land in the buyer address, in schema order",
       client_extra_line1: "t.a.v. Floor van Berkel",
       client_extra_line2: "Projectnummer 10400 jongerenwerk",
       client_extra_line3: "Summervibes Festival Tilburg noord",
+      client_extra_line4: "Kostenplaats 88",
     }),
     [line()],
     supplier,
@@ -247,9 +248,10 @@ test("[KLANT-EXTRA] the extra lines land in the buyer address, in schema order",
   const buyer = /<cac:AccountingCustomerParty>([\s\S]*?)<\/cac:AccountingCustomerParty>/.exec(xml)?.[1] ?? "";
   assert.ok(buyer, "no buyer block found — the extraction broke, not the export");
   assert.match(buyer, /<cbc:AdditionalStreetName>t\.a\.v\. Floor van Berkel<\/cbc:AdditionalStreetName>/);
+  // Lines 2..4 share BT-163 (EN 16931 allows ONE cac:AddressLine) — joined, nothing dropped.
   assert.match(
     buyer,
-    /<cac:AddressLine>\s*<cbc:Line>Projectnummer 10400 jongerenwerk, Summervibes Festival Tilburg noord<\/cbc:Line>\s*<\/cac:AddressLine>/,
+    /<cac:AddressLine>\s*<cbc:Line>Projectnummer 10400 jongerenwerk, Summervibes Festival Tilburg noord, Kostenplaats 88<\/cbc:Line>\s*<\/cac:AddressLine>/,
   );
   // Order inside PostalAddress: StreetName → AdditionalStreetName → CityName → PostalZone →
   // AddressLine → Country. Wrong order = schema-invalid = refused file.

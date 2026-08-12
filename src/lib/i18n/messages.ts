@@ -107,6 +107,12 @@ export const MESSAGES = {
   'nieuw.klant.extra1': { nl: 'Extra regel 1', ar: 'سطر إضافي 1', en: 'Extra line 1' },
   'nieuw.klant.extra2': { nl: 'Extra regel 2', ar: 'سطر إضافي 2', en: 'Extra line 2' },
   'nieuw.klant.extra3': { nl: 'Extra regel 3', ar: 'سطر إضافي 3', en: 'Extra line 3' },
+  'nieuw.klant.extra4': { nl: 'Extra regel 4', ar: 'سطر إضافي 4', en: 'Extra line 4' },
+  'nieuw.klant.extraUitleg': {
+    nl: 'Deze vier regels komen op het document direct onder de klantnaam te staan. Laat ze leeg als je ze niet nodig hebt.',
+    ar: 'هذه الأسطر الأربعة تظهر على المستند مباشرة تحت اسم العميل. اتركها فارغة إن لم تحتجها.',
+    en: 'These four lines appear on the document directly under the customer name. Leave them empty if you do not need them.',
+  },
 
   'nieuw.datums': { nl: 'Datums', ar: 'التواريخ', en: 'Dates' },
   'nieuw.datum.factuur': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
