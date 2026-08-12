@@ -44,6 +44,8 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
+import { payToggleAnswer, isVerwerktConflict } from '@/lib/pay-toggle-reason'
 import type { MessageKey } from '@/lib/i18n/messages'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
@@ -548,16 +550,28 @@ export default function FacturenClient({
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
     // error CODE would reach the owner as gibberish.
-    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
-    if (error) {
+    //
+    // [PAY-REDEN] …which is what `detail || json.error` did for every refusal that carries no
+    // detail: "invoice_already_paid", "not_payable", "unauthorized" went straight to the toast.
+    // The rule is shared now (pay-toggle-reason.ts), so this screen, /vandaag and /manage answer
+    // the same refusal with the same words, and the half that is not the server's sentence comes
+    // from the catalogue in the owner's language.
+    if (!res.ok) {
+      const answer = payToggleAnswer(res.status, json)
+      const message = answer.kind === 'server' ? answer.text : t(answer.key)
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
-      // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast
-      if (error.message && error.message.includes('verwerkt')) {
+      // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast.
+      //
+      // [PAY-REDEN] Decided from the CODE, not by searching the displayed message for the word
+      // "verwerkt". That search was two bugs waiting: the dialog stops opening the moment the
+      // message is translated — no Arabic sentence contains a Dutch word — and it opens wrongly
+      // for any other refusal whose sentence happens to mention the boekhouder.
+      if (isVerwerktConflict(json)) {
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
       } else {
-        showToast(error.message || 'Bijwerken mislukt')
+        showToast(message)
       }
     } else if (ctx.newStatus === 'paid') {
       // [MANUAL-PARTIAL-PAY] The SERVER decides whether this settled the invoice — the typed
