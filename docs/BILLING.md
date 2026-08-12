@@ -269,30 +269,66 @@ The delayed-notification hazard this unlocks (a Dashboard-enabled SEPA-incasso c
 session before the money confirms) is already handled by 4.2's guard. That guard is now
 load-bearing rather than precautionary — the comment in `billing.ts` says so.
 
-### 4.4 · P2 — Secret key could be a restricted key
+### 4.4 · P2 — Secret key could be a restricted key — **ready; Dashboard action**
 
-The integration calls a fixed, small API surface: Checkout Sessions (write), Billing Portal
-sessions (write), Customers (write), Subscriptions (read), plus webhook signature checking
-(no key permission at all). A restricted key (`rk_…`) with exactly those permissions turns a
-leaked key from "can move money and read everything" into "can do what the app does". Create
-in Dashboard → Developers → API keys → Create restricted key; same env var, no code change
-(`isBillingConfigured()` checks emptiness, not prefix). While there: store it as a Vercel
-*sensitive* environment variable, per Stripe's Vercel guidance — write-only, never echoed in
-the UI — which is also exactly the discipline `LIVE_GAAN.md` §"Waar je een geheim MAAKT"
-already teaches for the other secrets.
+No code change is needed or wanted here: `isBillingConfigured()` checks that the key is
+non-empty, never its prefix, so an `rk_…` key drops into `STRIPE_SECRET_KEY` and works. What
+was missing was knowing exactly which permissions to tick, so here is the whole API surface
+the app calls — verified by enumerating every Stripe method in `src/`:
 
-### 4.5 · P3 — SDK three majors behind
+| Call site | Stripe method | Permission needed |
+|---|---|---|
+| `resolveCustomerId` | `customers.create`, `customers.retrieve` | **Customers — write** |
+| `createCheckoutSession`, `createKluisCheckoutSession` | `checkout.sessions.create` | **Checkout Sessions — write** |
+| `createPortalSession` | `billingPortal.sessions.create` | **Billing Portal sessions — write** |
+| webhook | `subscriptions.retrieve` | **Subscriptions — read** |
+| webhook | `webhooks.constructEvent` | *none* — local HMAC, never calls Stripe |
 
-Installed: `stripe` 18.5.0, pinning API `2025-08-27.basil`. Current: 22.4.0, API
-`2026-07-29.dahlia`. Our pin-by-SDK policy (no `apiVersion` literal — documented in
-`getStripe()`) is sound and means an SDK upgrade *is* an API upgrade: do it as its own change,
-read the SDK changelogs across 19→22, and lean on `subscriptionPeriodEnd`'s tests — that helper
-was built for exactly the kind of shape move these version bumps carry. The upgrade also
-unlocks `integration_identifier` on `checkout.sessions.create` (available from API
-`2026-03-25.dahlia`; not in 18.5.0's types), which Stripe now recommends for tracking checkout
-flows in the Dashboard — add it with a fixed label per flow when the SDK lands, e.g.
-`plus-checkout-<8 random letters>` and `kluis-checkout-<8 random letters>`, chosen once and
-kept stable so the Dashboard can aggregate per flow.
+Five methods, four permissions. Everything else stays "None", including Charges, Payouts,
+Balance and Refunds — which is the point: a leaked key that can create a checkout session but
+cannot move money or read your balance is a far smaller incident. Create it in Dashboard →
+Developers → API keys → Create restricted key.
+
+Two notes before switching. Stripe Tax runs *inside* the Checkout Session rather than through
+a call we make, so no Tax permission should be required — but verify rather than assume: after
+switching the key, run a checkout and a portal open in the sandbox and watch for a `403`,
+which is exactly how a missing permission announces itself. And store the key as a Vercel
+**sensitive** environment variable (write-only, never echoed back in the UI or logs) — the
+same discipline `LIVE_GAAN.md` § "Waar je een geheim MAAKT" already teaches for the other
+secrets.
+
+### 4.5 · P3 — SDK three majors behind — **done on this branch**
+
+`stripe` 18.5.0 → **22.5.0**, which moves the pinned API version from `2025-08-27.basil` to
+**`2026-07-29.dahlia`**. Our pin-by-SDK policy (no `apiVersion` literal) means the SDK bump
+*is* the API bump, so it was done as its own change with its own gate run.
+
+What was checked, and why the upgrade turned out to be clean:
+
+- **The four majors' breaking changes were read, not assumed.** v22 requires `new Stripe()`
+  (we already did), drops callbacks and per-request host overrides (we use neither). v21 turns
+  `decimal_string` fields into `Stripe.Decimal` — none of the affected fields are ones we read
+  — and drops Node 16 (Vercel is on 20+). v20 and v19 touch only V2/Connect surfaces we do not
+  use. The one v21 change worth naming: it now *throws* when you use the wrong webhook parsing
+  method, and ours (`constructEvent`, synchronous, over a raw string body) is the right one.
+- **`current_period_end` is still only on the subscription ITEM** on dahlia — verified in the
+  new type definitions, not remembered. `subscriptionPeriodEnd()` is unchanged and its tests
+  still pin the failure mode.
+- **The types moved** from a top-level `types/` folder to declarations co-located in
+  `cjs/`+`esm/` (v22's TypeScript overhaul). That changes nothing for importers, but it is why
+  the package looks different on disk.
+- **Signature verification was proven end-to-end offline**, since HMAC signing is local: a
+  correctly signed payload verifies on the new SDK, and a tampered payload, a wrong signing
+  secret and a missing header are each rejected. That is the one path where "compiles" is not
+  good enough — it is the only thing standing between a public endpoint and anyone on the
+  internet granting themselves a paid plan.
+
+The upgrade also unlocks `integration_identifier` (API `2026-03-25.dahlia`+, absent from
+18.5.0), now set on both flows — `plus-checkout-qmxvhtbd` and `kluis-checkout-rfnwzkpj` — so
+the Dashboard can compare a monthly subscription flow against a one-off archive purchase
+instead of averaging them together. **Those two strings must never be edited:** changing one
+does not rename anything, it starts a third series and orphans the history under the old
+label.
 
 ### 4.6 · P3 — Comment pinned the wrong API version — **fixed on this branch**
 
@@ -317,14 +353,46 @@ betaaldienstverlener Stripe; welke betaalmethoden beschikbaar zijn zie je op de 
 — which also stops the clause from going stale every time the Dashboard changes. Whether that
 counts as a significant change requiring notice is a legal judgement, not a technical one.
 
-### 4.8 · Dashboard configuration (no code)
+### 4.8 · P2 — Invoices carry no legal identity — **Dashboard action, values below**
 
-Collected from §3: Smart Retries + de-duplicated failure emails; Customer Portal options;
-invoice template with KVK + btw-id + footer; branding (logo, colors — the hosted checkout and
-portal are the two screens of ours a paying customer sees most); payment methods review when
-4.3 lands; webhook endpoint gains the two `async_payment_*` events. And two account-level
-practices from Stripe's security guidance: passkey/authenticator-app 2FA for Dashboard access
-(not SMS), and rolling any key that ever lands in a log or terminal.
+A btw line (§3.4) makes the invoice arithmetically complete; the identity of who issued it is
+what makes it a factuur. Stripe currently prints whatever the account's business profile
+holds, which on a fresh account is a name and an email address.
+
+This is deliberately **not** done in code. Stripe's account-level invoice template applies to
+*every* invoice — the one-off Bewaarkluis payment and every monthly Plus renewal alike — while
+`invoice_creation.invoice_data` on a Checkout Session reaches only the Bewaarkluis one.
+Setting both is how the two invoice types drift apart, and only the Dashboard covers both.
+Worse, code would print `company.ts`'s deliberate `"(volgt)"` placeholder onto a real invoice
+whenever a variable is unset — the exact real-but-false outcome that module exists to prevent.
+
+The values are the ones the app already publishes on its own legal pages, and they must match
+exactly: a KVK number that differs between the Terms and the invoice is worse than one that
+appears only in the Terms. All of them come from `src/content/legal/company.ts`, which reads
+the `NEXT_PUBLIC_COMPANY_*` variables:
+
+| Dashboard field | Value | Source |
+|---|---|---|
+| Settings → Business → Public business information: legal name | `NEXT_PUBLIC_COMPANY_LEGAL_NAME` | `company.legalName` |
+| … address | `NEXT_PUBLIC_COMPANY_ADDRESS` + `NEXT_PUBLIC_COMPANY_CITY` | `company.address`, `company.city` |
+| Settings → Tax → btw-id shown on invoices | `NEXT_PUBLIC_COMPANY_BTW` | `company.btw` |
+| Settings → Invoice template → custom field | `KVK` = `NEXT_PUBLIC_COMPANY_KVK` | `company.kvk` |
+| Settings → Invoice template → footer | support address, and that amounts are incl. btw | — |
+| Settings → Branding | logo and the app's own colours | — |
+
+If one of those variables is still unset in Vercel, its value reads `(volgt)` in the Terms as
+well, and the honest fix is to set the variable — not to type a different value into Stripe.
+Branding sits on this list for an unglamorous reason: hosted Checkout and the Customer Portal
+are the two screens of "ours" that a paying customer looks at most closely.
+
+### 4.9 · Dashboard configuration (no code)
+
+Collected from §3 and the findings above: Smart Retries + de-duplicated failure emails;
+Customer Portal options; the invoice template and branding of §4.8; the restricted key of
+§4.4; the Tax setup of §3.4; a payment-methods review now that §4.3 has landed; and the two
+`async_payment_*` events on the webhook endpoint. Plus two account-level practices from
+Stripe's security guidance: passkey or authenticator-app 2FA for Dashboard access (not SMS),
+and rolling any key that ever lands in a log or a terminal.
 
 ## 5. Test-mode checklist (manual)
 
@@ -391,14 +459,16 @@ Complements `LIVE_GAAN.md` (which owns the env-var and platform steps — read i
       `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
       `checkout.session.async_payment_failed`, `customer.subscription.created`, `.updated`,
       `.deleted`, `invoice.payment_failed`. Signing secret → `STRIPE_WEBHOOK_SECRET`.
-- [ ] Live key is a **restricted key** (§4.4) stored as a sensitive env var.
+- [ ] Live key is a **restricted key** with exactly the four permissions in §4.4, stored as a
+      Vercel *sensitive* env var. Sandbox-test it first and watch for `403`.
 - [ ] **Payment methods reviewed in Dashboard → Settings → Payment methods.** Since the
       dynamic-methods change, that screen — not the code — decides what customers see, so
       confirm **iDEAL is on** before the first real payment (`LIVE_GAAN.md` §6: card-only
       loses Dutch customers at the last click). If a delayed-notification method
       (SEPA-incasso, bank transfer) is enabled, know that a Bewaarkluis then records only
       after the async verdict arrives, which can be days later.
-- [ ] Branding + invoice template carry the legal identity (KVK, btw-id).
+- [ ] Branding + invoice template carry the legal identity, filled from the table in §4.8 and
+      matching the Terms exactly. No `(volgt)` may survive anywhere.
 - [ ] Dashboard 2FA is passkey or authenticator app, not SMS.
 - [ ] First live € 12,99 subscription made by the owner, then: invoice PDF shows the btw line,
       webhook delivered 200, profile flipped, portal opens, cancel works. Refund the test via

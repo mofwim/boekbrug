@@ -6,7 +6,7 @@
 // docs/BILLING.md, not here.
 //
 // subscriptionPeriodEnd is the reason this file exists. On the API version this
-// SDK ships with (2025-08-27.basil) Stripe MOVED current_period_end off the
+// SDK ships with (2026-07-29.dahlia) Stripe MOVED current_period_end off the
 // subscription and onto its items. Every pre-2026 tutorial still reads the old
 // path, which now yields undefined → we would store NULL → the access decision
 // would read "no paid period" → a customer who cancelled but has three paid

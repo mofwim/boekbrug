@@ -89,6 +89,9 @@ let cached: Stripe | null = null;
  * (apiVersion omitted). Pinning a literal here would silently diverge from the
  * SDK's types on the next upgrade, which is the billing equivalent of the
  * hard-coded-model bug this file's header warns about.
+ *
+ * That policy means an SDK bump IS an API bump — so treat it as its own change
+ * with its own gate run, and re-read subscriptionPeriodEnd() below when you do.
  */
 export function getStripe(): Stripe {
   if (!STRIPE_SECRET_KEY) {
@@ -137,6 +140,20 @@ export async function resolveCustomerId(params: {
 }
 
 // ── Checkout ─────────────────────────────────────────────────────────
+
+// ── Checkout flow labels ─────────────────────────────────────────────
+//
+// Stripe groups sessions by `integration_identifier` in the Dashboard, so the
+// two flows can be compared to each other instead of averaged together — a
+// monthly subscription and a one-off archive purchase have nothing in common
+// but the account they run in.
+//
+// ⚠️ THESE STRINGS MUST NOT CHANGE. Editing one does not rename anything; it
+// starts a THIRD series and orphans the history under the old label. The random
+// suffix is Stripe's convention (it keeps labels distinct across accounts), and
+// it was rolled once, here, on purpose — do not "regenerate" it.
+const FLOW_PLUS = "plus-checkout-qmxvhtbd";
+const FLOW_KLUIS = "kluis-checkout-rfnwzkpj";
 
 /**
  * The Stripe Tax part of a Checkout Session, as a spreadable object.
@@ -187,6 +204,7 @@ export async function createCheckoutSession(params: {
     mode: "subscription",
     customer: params.customerId,
     line_items: [{ price: STRIPE_PRICE_ID_PLUS, quantity: 1 }],
+    integration_identifier: FLOW_PLUS,
     // NO payment_method_types HERE — and that omission is the feature.
     //
     // This used to pin ["ideal", "card"]. iDEAL was the right instinct (the
@@ -295,7 +313,7 @@ type PeriodBearingSubscription = {
  *
  * ⚠️ READ THIS BEFORE "SIMPLIFYING" IT TO `sub.current_period_end`.
  * Every Stripe tutorial written before 2026 reads that field off the
- * subscription. On the API version this SDK ships with (2025-08-27.basil) it
+ * subscription. On the API version this SDK ships with (2026-07-29.dahlia) it
  * DOES NOT EXIST there any more — it lives on each subscription ITEM. Reading
  * the old path yields `undefined`, which would silently store NULL, which the
  * access decision reads as "no paid period", which would cut off paying
@@ -393,6 +411,7 @@ export async function createKluisCheckoutSession(params: {
     mode: "payment",
     customer: params.customerId,
     line_items: [{ price: STRIPE_PRICE_ID_KLUIS_YEAR, quantity: params.years }],
+    integration_identifier: FLOW_KLUIS,
     // Omitted on purpose — dynamic payment methods, exactly as in
     // createCheckoutSession() above; the reasoning is written out there.
     consent_collection: { terms_of_service: "required" },
