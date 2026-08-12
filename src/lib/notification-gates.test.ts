@@ -183,7 +183,9 @@ test("[NO-SILENT-EMPTY] a failed read is never rendered as an empty inbox", () =
 
   const listScreen = code("src/app/dashboard/messages/page.tsx");
   assert.match(listScreen, /loadError/, "the list screen must hold a failure state");
-  const emptyAt = listScreen.indexOf("Nog geen berichten");
+  // [TAAL] Anchored on the KEY, not the Dutch sentence — a gate written against one language
+  // fails the day the app gains a second, and this one did.
+  const emptyAt = listScreen.indexOf("t('ber.leeg')");
   const errorAt = listScreen.indexOf("loadError ?");
   assert.ok(emptyAt > 0 && errorAt > 0 && errorAt < emptyAt,
     "and it must be checked BEFORE the empty state, or the empty state still wins");
