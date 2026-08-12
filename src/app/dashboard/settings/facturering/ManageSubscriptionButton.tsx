@@ -34,7 +34,9 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
         return
       }
 
-      window.location.href = body.url
+      // .assign(), not `.href =`: binding the translator made this component compile under the
+      // React Compiler for the first time, and the compiler refuses a property write on a global.
+      window.location.assign(body.url)
     } catch {
       setError(t('abo.geenVerbinding'))
       setBusy(false)
