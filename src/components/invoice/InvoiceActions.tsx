@@ -8,6 +8,9 @@ import { useState } from 'react'
 import { isInvoiceEditable } from '@/lib/invoice-editable'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
+// [TAAL] A component holds no language of its own — words come from the catalogue.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 // [BOEK-020] UBL export button
 import UblExportButton from '@/components/export/UblExportButton'
 type Props = {
@@ -37,6 +40,7 @@ const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' 
 
 export function InvoiceActions({ invoiceId, invoiceNumber, status, direction, invoiceType }: Props) {
   const router = useRouter()
+  const t = translator(useLocale())
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [loadingDelete, setLoadingDelete] = useState(false)
   const [error, setError] = useState('')
@@ -67,7 +71,7 @@ const canRequestPayment =
     try {
       const res = await fetch(`/api/invoice/${invoiceId}/betaalverzoek`, { method: 'POST' })
       const data = await res.json()
-      if (!res.ok) { setBvError(data.error || 'Betaalverzoek maken mislukt'); setBvLoading(false); return }
+      if (!res.ok) { setBvError(data.error || t('act.bvMislukt')); setBvLoading(false); return }
       setBv(data)
       setBvLoading(false)
       try {
@@ -76,7 +80,7 @@ const canRequestPayment =
         setBvQr(await QR.toDataURL(data.url, { margin: 1, width: 220 }))
       } catch { /* the link below always works without the QR */ }
     } catch {
-      setBvError('Betaalverzoek maken mislukt'); setBvLoading(false)
+      setBvError(t('act.bvMislukt')); setBvLoading(false)
     }
   }
   async function bvCopy(value: string, label: string) {
@@ -94,7 +98,7 @@ const canRequestPayment =
     const data = await res.json()
 
     if (!res.ok) {
-      setError(data.error || 'Verwijderen mislukt')
+      setError(data.error || t('act.verwijderenMislukt'))
       setLoadingDelete(false)
       setShowDeleteConfirm(false)
       return
@@ -116,7 +120,7 @@ const canRequestPayment =
           onClick={() => router.push(`/dashboard/invoice/${invoiceId}/edit`)}
           className="text-sm text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-colors"
         >
-          ✎ Bewerken
+          ✎ {t('act.bewerken')}
         </button>
         )}
         {/* BOEK-002: Verwijderen — alleen voor draft */}
@@ -125,7 +129,7 @@ const canRequestPayment =
             onClick={() => setShowDeleteConfirm(true)}
             className="text-sm text-red-400 hover:text-red-600 px-3 py-1.5 rounded-xl hover:bg-red-50 transition-colors"
           >
-            ✕ Verwijderen
+            ✕ {t('act.verwijderen')}
           </button>
         )}
         {/* [BETAALVERZOEK] Deel een betaallink — alleen voor een verstuurde uitgaande factuur */}
@@ -135,7 +139,7 @@ const canRequestPayment =
             disabled={bvLoading}
             className="text-sm text-[#1a73e8] hover:text-[#1967d2] px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50"
           >
-            {bvLoading ? 'Bezig…' : '💶 Betaalverzoek'}
+            {bvLoading ? t('act.bezig') : `💶 ${t('act.betaalverzoek')}`}
           </button>
         )}
         {/* [BOEK-020] UBL/XML export — single invoice (hides itself for draft/incoming) */}
@@ -154,11 +158,9 @@ const canRequestPayment =
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
             <div className="space-y-1">
-              <h2 className="text-base font-bold text-gray-900">Factuur verwijderen?</h2>
+              <h2 className="text-base font-bold text-gray-900">{t('act.verwijderTitel')}</h2>
               <p className="text-sm text-gray-500">
-                Je staat op het punt factuur{' '}
-                <span className="font-semibold text-gray-800">{invoiceNumber}</span>{' '}
-                permanent te verwijderen. Dit kan niet ongedaan worden gemaakt.
+                {t('act.verwijderUitleg', { number: invoiceNumber })}
               </p>
             </div>
             <div className="flex gap-3">
@@ -167,14 +169,14 @@ const canRequestPayment =
                 disabled={loadingDelete}
                 className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors disabled:opacity-50"
               >
-                {loadingDelete ? 'Verwijderen...' : 'Ja, verwijderen'}
+                {loadingDelete ? t('act.verwijderBezig') : t('act.verwijderJa')}
               </button>
               <button
                 onClick={() => setShowDeleteConfirm(false)}
                 disabled={loadingDelete}
                 className="flex-1 border border-gray-200 text-gray-600 text-sm font-medium py-2.5 rounded-xl hover:bg-gray-50 transition-colors"
               >
-                Annuleren
+                {t('act.annuleren')}
               </button>
             </div>
           </div>
@@ -187,19 +189,16 @@ const canRequestPayment =
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setBv(null)}>
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div>
-              <h2 className="text-base font-bold text-gray-900">Betaalverzoek voor {invoiceNumber}</h2>
+              <h2 className="text-base font-bold text-gray-900">{t('act.bv.titel', { number: invoiceNumber })}</h2>
               <p className="text-sm text-gray-500 mt-1">
-                Deel deze link met je klant. Ze betalen {eur.format(bv.amount)} rechtstreeks vanuit hun eigen bank —
-                met kenmerk <span className="font-semibold text-gray-700">{bv.reference || '—'}</span>. Zodra de
-                betaling in je bankafschrift binnenkomt, herkent BoekBrug haar automatisch bij deze factuur en
-                bevestig je het afletteren met één tik.
+                {t('act.bv.uitleg', { amount: eur.format(bv.amount), reference: bv.reference || '—' })}
               </p>
             </div>
 
             {bvQr && (
               <div className="flex justify-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={bvQr} alt="QR naar betaalpagina" width={180} height={180} className="rounded-xl" />
+                <img src={bvQr} alt={t('act.bv.qrAlt')} width={180} height={180} className="rounded-xl" />
               </div>
             )}
 
@@ -209,16 +208,16 @@ const canRequestPayment =
                 onClick={() => bvCopy(bv.url, 'link')}
                 className="shrink-0 bg-[#1a73e8] hover:bg-[#1967d2] text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
               >
-                {bvCopied === 'link' ? 'Gekopieerd' : 'Kopieer link'}
+                {bvCopied === 'link' ? t('act.bv.gekopieerd') : t('act.bv.kopieer')}
               </button>
             </div>
 
             <p className="text-xs text-gray-400 leading-relaxed">
-              BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN ({bv.iban.replace(/(.{4})/g, '$1 ').trim()}).
+              {t('act.bv.disclaimer', { iban: bv.iban.replace(/(.{4})/g, '$1 ').trim() })}
             </p>
 
             <button onClick={() => setBv(null)} className="w-full border border-gray-200 text-gray-600 text-sm font-medium py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
-              Sluiten
+              {t('act.sluiten')}
             </button>
           </div>
         </div>,

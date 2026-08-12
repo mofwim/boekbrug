@@ -7,6 +7,9 @@ import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { FolderRow } from "../types";
 import { folderColor } from "../helpers";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface FolderCardProps {
   folder: FolderRow;
@@ -26,6 +29,7 @@ export function FolderCard({
   onOpen, onSelect, onContextMenu,
   onDragStart, onDragEnter, onDragLeave, onDrop,
 }: FolderCardProps) {
+  const t = translator(useLocale());
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const isShared = folder.name === "Gedeeld met boekhouder";
@@ -81,7 +85,7 @@ export function FolderCard({
       <div
         onClick={e => { e.stopPropagation(); onSelect(e); }}
         style={{
-          position: "absolute", top: 8, left: 8,
+          position: "absolute", top: 8, insetInlineStart: 8,
           width: 20, height: 20, borderRadius: T.full,
           background: selected ? T.primary : "rgba(255,255,255,0.9)",
           border: `2px solid ${selected ? T.primary : "#dadce0"}`,
@@ -101,9 +105,9 @@ export function FolderCard({
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e, folder); }}
-          aria-label="Meer opties"
+          aria-label={t("bst.meerOpties")}
           style={{
-            position: "absolute", top: 6, right: 6,
+            position: "absolute", top: 6, insetInlineEnd: 6,
             width: 26, height: 26, border: "none",
             background: "rgba(255,255,255,0.92)",
             borderRadius: T.full,
@@ -140,7 +144,7 @@ export function FolderCard({
       )}
       {folder.starred && (
         <Icon name="star" size={14} color={T.star}
-          style={{ position: "absolute", bottom: 8, right: 8 }} />
+          style={{ position: "absolute", bottom: 8, insetInlineEnd: 8 }} />
       )}
     </div>
   );

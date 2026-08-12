@@ -25,6 +25,9 @@ import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
 import { M3, R } from '@/lib/design/tokens'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -66,6 +69,7 @@ export default function InvoiceCorrectionModal({
   /** Each screen has its own snackbar; the editor does not reach for one. */
   onMessage: (text: string) => void
 }) {
+  const t = translator(useLocale())
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
   useCloseOnBack(true, onClose)
   const [amounts, setAmounts] = useState({
@@ -100,7 +104,7 @@ export default function InvoiceCorrectionModal({
     if (credit) body.is_credit_note = true
 
     if (Object.keys(body).length === 0) {
-      onMessage('Er is niets gewijzigd.')
+      onMessage(t('corr.nietsGewijzigd'))
       return
     }
 
@@ -116,7 +120,7 @@ export default function InvoiceCorrectionModal({
         // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
         // named in them ("reverse the payment first", "ask your accountant", "that number already
         // exists") — a generic "try again" would send the owner at a button that cannot work.
-        onMessage(typeof data.error === 'string' ? data.error : 'Corrigeren mislukt — er is niets gewijzigd')
+        onMessage(typeof data.error === 'string' ? data.error : t('corr.mislukt'))
         return
       }
       // Only now does the caller's list follow. Writing it optimistically would show a corrected
@@ -131,9 +135,9 @@ export default function InvoiceCorrectionModal({
       const memory = typeof (data as { supplier_memory?: unknown }).supplier_memory === 'string'
         ? (data as { supplier_memory: string }).supplier_memory
         : null
-      onMessage(memory ?? 'Factuur gecorrigeerd')
+      onMessage(memory ?? t('corr.gecorrigeerd'))
     } catch {
-      onMessage('Corrigeren mislukt — controleer je verbinding')
+      onMessage(t('corr.misluktVerbinding'))
     } finally {
       setSaving(false)
     }
@@ -155,7 +159,7 @@ export default function InvoiceCorrectionModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Factuur corrigeren"
+      aria-label={t('corr.aria')}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 3000 }}
       onClick={() => !saving && onClose()}
     >
@@ -163,9 +167,9 @@ export default function InvoiceCorrectionModal({
         onClick={(e) => e.stopPropagation()}
         style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: 'calc(22px + var(--bottom-nav-h, 0px) + env(safe-area-inset-bottom))', width: '100%', maxWidth: 460, fontFamily: FONT, maxHeight: '88vh', overflowY: 'auto' }}
       >
-        <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Factuur corrigeren</p>
+        <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('corr.titel')}</p>
         <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>
-          Neem over wat er op de factuur staat. Wat je hier verbetert, is wat je boekhouder straks ziet.
+          {t('corr.uitleg')}
         </p>
 
         {/* [READING-MEMORY] What this owner keeps fixing at this supplier. Names a field, never an
@@ -179,21 +183,20 @@ export default function InvoiceCorrectionModal({
 
         {/* The fields that carry no money and still decide where the invoice lands: the number the
             duplicate gate and the bank matcher key on, and the date that picks the BTW quarter. */}
-        {field('Leverancier', vendor, setVendor)}
-        {field('Factuurnummer', number, setNumber)}
-        {field('Factuurdatum', date, setDate, 'date')}
+        {field(t('corr.leverancier'), vendor, setVendor)}
+        {field(t('corr.factuurnummer'), number, setNumber)}
+        {field(t('corr.factuurdatum'), date, setDate, 'date')}
 
         <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
 
         <p style={{ fontSize: 13, color: '#5F6368', margin: '0 0 12px', lineHeight: 1.45 }}>
-          Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief
-          rekent zichzelf uit.
+          {t('corr.bedragUitleg')}
         </p>
 
         {[
-          { key: 'incl' as const, label: 'Totaal (incl. BTW)', apply: setIncl, strong: true },
-          { key: 'btw' as const, label: 'BTW', apply: setBtw, strong: false },
-          { key: 'ex' as const, label: 'Bedrag excl. BTW', apply: setExcl, strong: false },
+          { key: 'incl' as const, label: t('corr.totaalIncl'), apply: setIncl, strong: true },
+          { key: 'btw' as const, label: t('corr.btw'), apply: setBtw, strong: false },
+          { key: 'ex' as const, label: t('corr.exclBtw'), apply: setExcl, strong: false },
         ].map((f) => (
           <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
             <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
@@ -215,18 +218,13 @@ export default function InvoiceCorrectionModal({
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '14px 0 4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={credit} onChange={(e) => setCredit(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: '#0B8043' }} />
             <span style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.45 }}>
-              <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
-              “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden dan
-              als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw wordt
-              afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen — staat er al
-              een, dan blijft die staan.
+              <strong>{t('corr.creditTitel')}</strong>{t('corr.creditUitleg')}
             </span>
           </label>
         )}
 
         <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '12px 0 16px' }}>
-          Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag
-          exclusief mee te tellen, mét zijn teken.
+          {t('corr.statiegeld')}
         </p>
 
         <button
@@ -234,14 +232,14 @@ export default function InvoiceCorrectionModal({
           disabled={saving}
           style={{ width: '100%', padding: '15px', borderRadius: 14, background: saving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 16, cursor: saving ? 'default' : 'pointer', marginBottom: 8, fontFamily: FONT }}
         >
-          {saving ? 'Opslaan…' : 'Correctie opslaan'}
+          {saving ? t('corr.opslaanBezig') : t('corr.opslaan')}
         </button>
         <button
           onClick={onClose}
           disabled={saving}
           style={{ width: '100%', padding: '13px', borderRadius: R.md, background: M3.surfaceVariant, color: '#3c4043', border: 'none', fontWeight: 600, fontSize: 15, cursor: 'pointer', fontFamily: FONT }}
         >
-          Annuleren
+          {t('corr.annuleren')}
         </button>
       </div>
     </div>

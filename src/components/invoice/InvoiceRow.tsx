@@ -16,6 +16,7 @@ import { amsterdamToday } from '@/lib/format-nl'
 // [STATUS] Het woord en de kleur van een status, uit één module — zie de kop daar.
 import { statusChip, statusLabel } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
@@ -144,15 +145,16 @@ export function ReconBadge({
   invoiceId: string
   onReconConfirm?: (invoiceId: string) => void
 }) {
+  const t = translator(useLocale())
   const radius = mode === 'zzp' ? 9999 : 4
   if (recon.linked) {
     return (
-      <span title="Deze betaling staat in je bankafschrift" style={{
+      <span title={t('rij.inAfschriftTip')} style={{
         display: 'inline-flex', alignItems: 'center', gap: 3,
         backgroundColor: '#E6F4EA', color: '#137333',
         borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
       }}>
-        <span aria-hidden>🔗</span> In bankafschrift
+        <span aria-hidden>🔗</span> {t('rij.inAfschrift')}
       </span>
     )
   }
@@ -169,9 +171,7 @@ export function ReconBadge({
         tabIndex={clickable ? 0 : undefined}
         onClick={clickable ? (e) => { e.stopPropagation(); onReconConfirm!(invoiceId) } : undefined}
         onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReconConfirm!(invoiceId) } } : undefined}
-        title={safe
-          ? 'Deze betaling staat in je bankafschrift en hoort bij deze factuur — tik om te bevestigen'
-          : 'Er staat een betaling in je bankafschrift die hierbij zou kunnen horen — controleer het op de Bank-pagina'}
+        title={safe ? t('rij.veiligTip') : t('rij.controleTip')}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 3,
           backgroundColor: safe ? '#E8F0FE' : '#FEF7E0', color: safe ? '#1967D2' : '#B26A00',
@@ -179,7 +179,7 @@ export function ReconBadge({
           cursor: clickable ? 'pointer' : 'default',
         }}
       >
-        <span aria-hidden>🏦</span> {safe ? 'Betaling gevonden' : 'Mogelijke betaling'}
+        <span aria-hidden>🏦</span> {safe ? t('rij.betalingGevonden') : t('rij.mogelijkeBetaling')}
       </span>
     )
   }
@@ -270,6 +270,7 @@ export function InvoiceRowItem({
   recon,
   onReconConfirm,
 }: InvoiceRowProps) {
+  const t = translator(useLocale())
   const displayStatus    = getDisplayStatus(invoice)
   const isAccountantMode = !!onAccountantAction
   const effectiveStatus  = displayStatus === 'overdue' ? 'sent' : displayStatus
@@ -312,7 +313,7 @@ export function InvoiceRowItem({
           </span>
           {invoice.replaced_by_number && (
             <span style={{ fontSize: 11, color: '#5F6368', backgroundColor: '#F1F3F4', borderRadius: 4, padding: '3px 8px', whiteSpace: 'nowrap' }}>
-              Vervangen door {invoice.replaced_by_number}
+              {t('rij.vervangenDoor', { number: invoice.replaced_by_number })}
             </span>
           )}
         </div>
@@ -370,13 +371,13 @@ export function InvoiceRowItem({
             chip on Facturen and Crediteuren — one shared vocabulary. */}
         {isPartiallyPaid(invoice) && (
           <span
-            title={`Deelbetaling: ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.amount_paid ?? 0)} van ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(invoice.total_inc_btw ?? 0))} betaald`}
+            title={t('rij.deelsTip', { paid: new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.amount_paid ?? 0), total: new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(invoice.total_inc_btw ?? 0)) })}
             style={{
               fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
               border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
             }}
           >
-            Deels · {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(openAmount(invoice))} open
+            {t('rij.deelsOpen', { amount: new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(openAmount(invoice)) })}
           </span>
         )}
 

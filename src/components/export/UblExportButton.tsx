@@ -11,6 +11,9 @@
 // Ownership: BOEK-020. Does not modify InvoiceRow / InvoiceActions directly.
 
 import { useState } from 'react'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 type Props = {
   invoiceId: string
@@ -30,6 +33,7 @@ const NON_EXPORTABLE_TYPE = ['offerte', 'pro_forma']
 type State = 'idle' | 'loading' | 'done' | 'error'
 
 export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType, direction }: Props) {
+  const t = translator(useLocale())
   const [state, setState] = useState<State>('idle')
   const [error, setError] = useState('')
 
@@ -48,7 +52,7 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
       const res = await fetch(`/api/export/ubl?invoiceId=${encodeURIComponent(invoiceId)}`)
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        throw new Error(json.error ?? 'UBL exporteren mislukt')
+        throw new Error(json.error ?? t('ublx.mislukt'))
       }
       const blob = await res.blob()
       const safePart = (invoiceNumber ?? 'factuur').replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -56,22 +60,22 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
       setState('done')
       setTimeout(() => setState('idle'), 3000)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Onbekende fout')
+      setError(err instanceof Error ? err.message : t('ublx.onbekend'))
       setState('error')
     }
   }
 
   const label =
-    state === 'loading' ? 'Bezig...'
-    : state === 'done' ? 'Gedownload ✓'
-    : '⬇ UBL exporteren'
+    state === 'loading' ? t('ublx.bezig')
+    : state === 'done' ? t('ublx.klaar')
+    : `⬇ ${t('ublx.knop')}`
 
   return (
     <div className="flex flex-col items-start">
       <button
         onClick={handleExport}
         disabled={state === 'loading'}
-        title="Exporteer als UBL 2.1 (e-factuur) voor je boekhoudprogramma"
+        title={t('ublx.tip')}
         className="text-sm text-[#1967D2] hover:text-[#1967d2] px-3 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
       >
         {label}

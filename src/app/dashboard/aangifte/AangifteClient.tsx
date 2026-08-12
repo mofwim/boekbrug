@@ -13,6 +13,8 @@ import { quarterFromParams } from '@/lib/quarter'
 // filing timestamp as DD-MM-YYYY, pinned to the same zone.
 import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -48,6 +50,7 @@ interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
 interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number }
 
 export default function AangifteClient() {
+  const t = translator(useLocale())
   const sp = useSearchParams()
   // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
   // the last COMPLETED quarter — the same default klaar uses — so the two never disagree.
@@ -133,7 +136,7 @@ export default function AangifteClient() {
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingInlineStart: 6 }}>
-            <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary, fontSize: 18, lineHeight: 1 }}>‹</button>
+            <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title={t('wh.vorigJaar')} style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary, fontSize: 18, lineHeight: 1 }}>‹</button>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, minWidth: 38, textAlign: 'center' }}>{year}</span>
             <button onClick={() => setYear((y) => Math.min(y + 1, curYear))} disabled={year >= curYear} style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, fontSize: 18, lineHeight: 1, opacity: year >= curYear ? 0.5 : 1 }}>›</button>
           </div>
@@ -165,13 +168,13 @@ export default function AangifteClient() {
               </div>
             ) : (
               <div style={{ marginTop: 4 }}>
-                Je hebt <strong>{eur.format(Math.abs(filed.saldo))}</strong> {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'} ingediend.
+                {t('aang.jeHebt')} <strong>{eur.format(Math.abs(filed.saldo))}</strong> {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'} ingediend.
                 Met je huidige gegevens komt daar <strong>{eur.format(Math.abs(filedDelta))}</strong>{' '}
                 {filedDelta > 0 ? 'bij' : 'af'} — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.
                 Wat je daarmee doet (verrekenen of een suppletie) beslis je op de Waarheid-pagina.
                 <div style={{ marginTop: 6 }}>
                   <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
-                    Bekijk het verschil op Waarheid
+                    {t('aang.verschil')}
                   </Link>
                 </div>
               </div>
@@ -238,8 +241,8 @@ export default function AangifteClient() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                   <thead>
                     <tr style={{ background: '#F7F9FB', color: M3.neutral }}>
-                      <th style={th}>Rubriek</th>
-                      <th style={{ ...th, textAlign: 'end', fontFamily: FONT_NUM }}>Omzet</th>
+                      <th style={th}>{t('aang.rubriek')}</th>
+                      <th style={{ ...th, textAlign: 'end', fontFamily: FONT_NUM }}>{t('aang.omzet')}</th>
                       <th style={{ ...th, textAlign: 'end', fontFamily: FONT_NUM }}>BTW</th>
                     </tr>
                   </thead>
@@ -261,7 +264,7 @@ export default function AangifteClient() {
 
             {/* 5a / 5b / 5g */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '4px 18px', marginBottom: 16 }}>
-              <TotRow label="5a · Verschuldigde omzetbelasting" value={eur.format(data.verschuldigd)} />
+              <TotRow label={t('aang.5a')} value={eur.format(data.verschuldigd)} />
               <TotRow label="5b · Voorbelasting" value={`− ${eur.format(data.voorbelasting)}`} />
               <TotRow
                 label={teBetalen ? '5g · Concept te betalen' : '5g · Concept terug te ontvangen'}
@@ -277,7 +280,7 @@ export default function AangifteClient() {
             {icp && (icp.lines.length > 0 || icp.problems.length > 0) && (
               <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '16px 18px', marginBottom: 16 }}>
                 <div style={{ fontSize: 12.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
-                  ICP-opgaaf · aparte aangifte
+                  {t('aang.icp')}
                 </div>
                 <div style={{ fontSize: 13, color: M3.neutral, lineHeight: 1.55, marginBottom: 12 }}>
                   Leveringen aan ondernemers in de EU (rubriek 3b hierboven) moet je óók per BTW-nummer opgeven.
@@ -300,7 +303,7 @@ export default function AangifteClient() {
                 ))}
                 {icp.lines.length > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: 10 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface }}>Totaal · gelijk aan 3b</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface }}>{t('aang.totaal3b')}</span>
                     <span style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>{eur.format(icp.totalExBtw)}</span>
                   </div>
                 )}
@@ -316,7 +319,7 @@ export default function AangifteClient() {
             {/* Honest notes — the trust layer */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '16px 18px' }}>
               <div style={{ fontSize: 12.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>
-                Waar dit op gebaseerd is
+                {t('aang.waarop')}
               </div>
               <ul style={{ margin: 0, paddingInlineStart: 18 }}>
                 {data.notes.map((n, i) => (

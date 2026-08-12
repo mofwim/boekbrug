@@ -38,6 +38,9 @@ import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DOC-GEEN-BLADZIJDE] Welke bestanden een bladzijde hébben, en wat je zegt over de rest.
 import { previewKind, noPageNotice, fileOpenHref, type PreviewKind } from '@/lib/document-preview'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
 export interface DocumentSheetInvoice extends CheckInput {
@@ -68,6 +71,7 @@ export default function InvoiceDocumentSheet({
   /** "Klopt niet?" — hands the owner straight to the correction they just decided they need. */
   onCorrect: (() => void) | null
 }) {
+  const t = translator(useLocale())
   const [doc, setDoc] = useState<DocState>({ phase: 'loading' })
 
   useEffect(() => {
@@ -78,7 +82,7 @@ export default function InvoiceDocumentSheet({
       .then((r) => r.json())
       .then((d: { url?: string; kind?: string; name?: string; error?: string }) => {
         if (cancelled) return
-        if (!d.url) { setDoc({ phase: 'failed', message: d.error || 'Kon het bestand niet openen' }); return }
+        if (!d.url) { setDoc({ phase: 'failed', message: d.error || t('dsh.nietOpenen') }); return }
         // The route sends the kind; previewKind() re-derives it from the name as a fallback, so a
         // still-deployed older route (which only knew image/pdf/other) also gets the new answer.
         const sent = d.kind
@@ -87,7 +91,7 @@ export default function InvoiceDocumentSheet({
           : previewKind(d.name)
         setDoc({ phase: 'ready', url: d.url, kind, name: d.name ?? 'factuur' })
       })
-      .catch(() => { if (!cancelled) setDoc({ phase: 'failed', message: 'Kon het bestand niet openen — controleer je verbinding' }) })
+      .catch(() => { if (!cancelled) setDoc({ phase: 'failed', message: t('dsh.nietOpenenVerbinding') }) })
     return () => { cancelled = true }
   }, [invoice.id])
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
@@ -119,11 +123,11 @@ export default function InvoiceDocumentSheet({
 
   return (
     <div
-      role="dialog" aria-modal="true" aria-label="Factuur bekijken"
+      role="dialog" aria-modal="true" aria-label={t('dsh.aria')}
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 320, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),
@@ -139,14 +143,14 @@ export default function InvoiceDocumentSheet({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px 8px' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {invoice.client_name || 'Onbekende leverancier'}
+              {invoice.client_name || t('dsh.onbekendeLeverancier')}
             </p>
             <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '1px 0 0' }}>
-              {invoice.invoice_number || 'zonder nummer'}
+              {invoice.invoice_number || t('dsh.zonderNummer')}
             </p>
           </div>
           <button
-            onClick={onClose} aria-label="Sluiten"
+            onClick={onClose} aria-label={t('dsh.sluiten')}
             style={{ width: 34, height: 34, border: 'none', background: M3.surfaceVariant, borderRadius: R.full, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5F6368' }}>close</span>
@@ -157,12 +161,12 @@ export default function InvoiceDocumentSheet({
           {/* ── What we read ── the half that makes looking at the paper WORTH something ── */}
           <div style={{ background: M3.surfaceVariant, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
             <p style={{ fontSize: 11.5, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 4px', letterSpacing: 0.3, textTransform: 'uppercase' }}>
-              Wat wij hebben gelezen
+              {t('dsh.watGelezen')}
             </p>
-            {row('Factuurdatum', invoice.invoice_date || '—')}
-            {row('Totaal incl. btw', invoice.total_inc_btw != null ? formatEuroNL(invoice.total_inc_btw) : '—')}
-            {row('Btw', invoice.btw_amount != null ? formatEuroNL(invoice.btw_amount) : '—')}
-            {row('Excl. btw', invoice.total_ex_btw != null ? formatEuroNL(invoice.total_ex_btw) : '—')}
+            {row(t('dsh.factuurdatum'), invoice.invoice_date || '—')}
+            {row(t('dsh.totaalIncl'), invoice.total_inc_btw != null ? formatEuroNL(invoice.total_inc_btw) : '—')}
+            {row(t('dsh.btw'), invoice.btw_amount != null ? formatEuroNL(invoice.btw_amount) : '—')}
+            {row(t('dsh.exclBtw'), invoice.total_ex_btw != null ? formatEuroNL(invoice.total_ex_btw) : '—')}
           </div>
 
           {/* ── What we checked ── the answer to "why should I not look myself?" ── */}
@@ -192,14 +196,14 @@ export default function InvoiceDocumentSheet({
           {/* ── The paper itself ── */}
           <div style={{ borderRadius: R.md, overflow: 'hidden', background: '#F1F3F4', minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {doc.phase === 'loading' && (
-              <p style={{ fontSize: 13, color: M3.onSurfaceVariant, padding: 32 }}>Bestand wordt geladen…</p>
+              <p style={{ fontSize: 13, color: M3.onSurfaceVariant, padding: 32 }}>{t('dsh.laden')}</p>
             )}
             {doc.phase === 'failed' && (
               <p style={{ fontSize: 13, color: M3.error, padding: 32, textAlign: 'center' }}>{doc.message}</p>
             )}
             {doc.phase === 'ready' && doc.kind === 'image' && (
               // A photographed bon. Always renders, everywhere — no frame needed.
-              <img src={doc.url} alt={`Factuur ${invoice.invoice_number ?? ''}`} style={{ width: '100%', height: 'auto', display: 'block' }} />
+              <img src={doc.url} alt={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })} style={{ width: '100%', height: 'auto', display: 'block' }} />
             )}
             {doc.phase === 'ready' && doc.kind === 'structured' && (
               // [DOC-GEEN-BLADZIJDE] No frame. A machine-readable file has no page, and framing one
@@ -215,7 +219,7 @@ export default function InvoiceDocumentSheet({
             {doc.phase === 'ready' && doc.kind !== 'image' && doc.kind !== 'structured' && (
               <iframe
                 src={doc.url}
-                title={`Factuur ${invoice.invoice_number ?? ''}`}
+                title={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })}
                 style={{ width: '100%', height: '58vh', border: 'none', background: '#fff' }}
               />
             )}
@@ -228,7 +232,7 @@ export default function InvoiceDocumentSheet({
                 onClick={() => { onClose(); onCorrect() }}
                 style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
               >
-                Klopt niet — corrigeren
+                {t('dsh.kloptNiet')}
               </button>
             )}
             {doc.phase === 'ready' && (
@@ -239,7 +243,7 @@ export default function InvoiceDocumentSheet({
                 href={fileOpenHref(invoice.id)} target="_blank" rel="noopener noreferrer"
                 style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 13.5, fontWeight: 600, textAlign: 'center', textDecoration: 'none', fontFamily: FONT }}
               >
-                Openen in nieuw tabblad
+                {t('dsh.nieuwTabblad')}
               </a>
             )}
           </div>

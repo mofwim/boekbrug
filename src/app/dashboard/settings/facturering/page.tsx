@@ -24,6 +24,7 @@ import { measureUsage } from '@/lib/fair-use-usage'
 import { limitsPlanFor } from '@/lib/subscription'
 import ManageSubscriptionButton from './ManageSubscriptionButton'
 import { COLUMN } from '@/lib/design/tokens'
+import { serverTranslator } from '@/lib/i18n/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,6 +50,8 @@ export default async function FactureringPage({
 }: {
   searchParams: Promise<{ betaald?: string }>
 }) {
+  // [TAAL] Servercomponent: de vertaler komt uit de request, niet uit een hook.
+  const t = await serverTranslator()
   const params = await searchParams
   const justPaid = params.betaald === '1'
 
@@ -102,7 +105,7 @@ export default async function FactureringPage({
        page rendered in a different typeface on some devices. */
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), sans-serif' }}>
       <p style={{ fontSize: 15, color: '#5f6368', margin: '0 0 24px' }}>
-        Welk plan er voor je geldt, en waar je je btw-facturen vindt.
+        {t('plan.uitleg')}
       </p>
 
       {justPaid && (
@@ -110,7 +113,7 @@ export default async function FactureringPage({
           role="status"
           style={{ background: '#CEEAD6', border: '1px solid #137333', color: '#0d652d', borderRadius: 12, padding: '14px 16px', marginBottom: 20, fontSize: 15, lineHeight: 1.5 }}
         >
-          <strong>Bedankt — je betaling is gelukt.</strong>
+          <strong>{t('plan.betaald')}</strong>
           <br />
           Het kan een paar seconden duren voordat je plan hieronder bijgewerkt is.
           Ververs deze pagina als je het nog niet ziet.
@@ -118,7 +121,7 @@ export default async function FactureringPage({
       )}
 
       <section style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 22 }}>
-        <Row label="Plan" value={planLabel(decision, profile)} />
+        <Row label={t('plan.titel')} value={planLabel(decision, profile)} />
 
         {profile?.current_period_end && decision.plan === 'plus' && (
           <Row
@@ -128,7 +131,7 @@ export default async function FactureringPage({
         )}
 
         {decision.plan !== 'boekhouder' && (
-          <Row label="Prijs van Plus" value={`${PLUS.priceLabel} ${PLUS.period} (${PLUS.btwNote}, ${PLUS.cancelNote})`} />
+          <Row label={t('plan.prijsPlus')} value={`${PLUS.priceLabel} ${PLUS.period} (${PLUS.btwNote}, ${PLUS.cancelNote})`} />
         )}
 
         {decision.plan !== 'boekhouder' && (
@@ -146,12 +149,12 @@ export default async function FactureringPage({
             </>
           ) : (
             <>
-              Je wordt <strong>nooit automatisch afgeschreven</strong> en er is geen proefperiode
+              {t('plan.jeWordt')} <strong>nooit automatisch afgeschreven</strong> en er is geen proefperiode
               die stilzwijgend overgaat in een abonnement. Kom je boven het eerlijk gebruik, dan
               pauzeert alleen de handeling die ons geld kost — inzien, doorzoeken en exporteren
               van je eigen administratie blijven altijd werken.{' '}
               <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>
-                Lees het beleid eerlijk gebruik
+                {t('plan.beleid')}
               </Link>
               .
             </>
@@ -173,7 +176,7 @@ export default async function FactureringPage({
       {decision.plan !== 'boekhouder' && (
         <section style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 22, marginTop: 16 }}>
           <h2 style={{ fontSize: 17, fontWeight: 700, color: '#202124', margin: '0 0 4px' }}>
-            Je gebruik deze maand
+            {t('plan.gebruik')}
           </h2>
           <p style={{ fontSize: 13.5, color: '#5f6368', margin: '0 0 16px', lineHeight: 1.6 }}>
             De maandtellers beginnen op de 1e weer bij nul. Opslag en mailboxen worden gemeten
@@ -222,7 +225,7 @@ export default async function FactureringPage({
           <p style={{ fontSize: 13, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
             Wij waarschuwen vanaf {Math.round(NEAR_LIMIT_RATIO * 100)}% van een grens, en wat
             er dan gebeurt staat er per regel bij.{' '}
-            <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>Het volledige beleid</Link>.
+            <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>{t('plan.beleidVolledig')}</Link>.
           </p>
         </section>
       )}

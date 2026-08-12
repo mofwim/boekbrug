@@ -10,6 +10,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { lastCompletedQuarter } from '@/lib/quarter'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -46,6 +48,7 @@ const DIM_ICON: Record<DimensionKey, string> = {
 }
 
 export default function KlaarClient() {
+  const t = translator(useLocale())
   const init = lastCompletedQuarter()
   const [year, setYear] = useState(init.year)
   // Typed number (not the lib's 1|2|3|4) so the quarter picker's setQuarter(q) accepts it.
@@ -121,12 +124,12 @@ export default function KlaarClient() {
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-          <button onClick={() => setReloadKey((k) => k + 1)} title="Vernieuwen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>Vernieuwen
+          <button onClick={() => setReloadKey((k) => k + 1)} title={t('lijst.vernieuwen')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>{t('lijst.vernieuwen')}
           </button>
         </div>
 
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 14px' }}>Ben ik klaar?</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 14px' }}>{t('klr.titel')}</h1>
 
         {/* Quarter picker */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 18, alignItems: 'center' }}>
@@ -144,14 +147,14 @@ export default function KlaarClient() {
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
-            <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
+            <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title={t('wh.vorigJaar')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>{year}</span>
             {/* Stepping INTO the current year can strand the selection on a quarter that has not
                 started (Q4 2025 → 2026 in January), so the quarter is clamped with the year. */}
-            <button onClick={() => { const next = Math.min(year + 1, curYear); setYear(next); if (next === curYear && quarter > curQuarter) setQuarter(curQuarter) }} disabled={year >= curYear} title="Volgend jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
+            <button onClick={() => { const next = Math.min(year + 1, curYear); setYear(next); if (next === curYear && quarter > curQuarter) setQuarter(curQuarter) }} disabled={year >= curYear} title={t('wh.volgendJaar')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
         </div>
@@ -162,15 +165,15 @@ export default function KlaarClient() {
             "Vernieuwen" link above. Say what it does NOT mean, and offer the way out. */}
         {!loading && (error || !report) && (
           <div style={{ background: M3.errorContainer, borderRadius: 14, padding: '18px 20px', textAlign: 'center', margin: '12px 0' }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>Kon de status niet laden</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>{t('klr.fout.status')}</div>
             <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
-              Dit zegt <strong>niets</strong> over of je klaar bent — we konden het alleen niet controleren.
+              {t('klr.fout.zegtNiets')}
             </div>
             <button
               onClick={() => setReloadKey((k) => k + 1)}
               style={{ marginTop: 12, padding: '9px 18px', borderRadius: 10, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
             >
-              Opnieuw proberen
+              {t('inkoop.opnieuwProberen')}
             </button>
           </div>
         )}
@@ -219,14 +222,14 @@ export default function KlaarClient() {
 
             {/* ── What still needs to happen (missing) ── */}
             {report.missing.length > 0 && (
-              <Section title="Wat moet er nog gebeuren" tone="warning" icon="checklist">
+              <Section title={t('klr.watNog')} tone="warning" icon="checklist">
                 {report.missing.map((m, i) => <ItemRow key={i} item={m} tone="warning" />)}
               </Section>
             )}
 
             {/* ── Eyeball these (risks) ── */}
             {report.risks.length > 0 && (
-              <Section title="Even controleren" tone="error" icon="visibility">
+              <Section title={t('klr.evenControleren')} tone="error" icon="visibility">
                 {report.risks.map((r, i) => <ItemRow key={i} item={r} tone="error" />)}
               </Section>
             )}
@@ -234,14 +237,14 @@ export default function KlaarClient() {
             {report.missing.length === 0 && report.risks.length === 0 && (
               <div style={{ background: M3.successContainer, color: M3.success, borderRadius: 14, padding: '14px 16px', fontSize: 14, fontWeight: 600, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
-                Niets openstaand — alles sluit aan.
+                {t('brug.sluitAan')}
               </div>
             )}
 
             {/* ── The rubric behind the score (never a black box) ── */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '6px 16px', marginBottom: 16 }}>
               <div style={{ fontSize: 11.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', padding: '12px 0 6px', fontWeight: 600 }}>
-                Waar de score op gebaseerd is
+                {t('klr.waarop')}
               </div>
               {/* [DISAMBIGUATE] Each row shows two figures — the colored number is how
                   COMPLETE that part is; the grey chip is how heavily it WEIGHS in the total.
@@ -265,8 +268,8 @@ export default function KlaarClient() {
                 </span>
               </div>
               <Link href={`/dashboard/aangifte?year=${year}&quarter=${quarter}`} style={{ fontSize: 12.5, color: M3.primary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
-                Bekijk de concept-aangifte
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+                {t('klr.conceptAangifte')}
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
               </Link>
             </div>
 
@@ -310,7 +313,7 @@ function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
         {item.fix && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6, fontSize: 12.5, fontWeight: 700, color: M3.primary }}>
             {item.fix.label}
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
           </span>
         )}
       </div>

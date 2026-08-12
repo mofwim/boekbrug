@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isInvoiceEditable, isQuote, editRefusalText } from "./invoice-editable";
+import { isInvoiceEditable, isQuote, editRefusalText, sentEditBlockers } from "./invoice-editable";
 
 const doc = (over: Partial<Parameters<typeof isInvoiceEditable>[0]> = {}) => ({
   status: "draft", invoiceType: "factuur", invoiceNumber: null, ...over,
@@ -77,3 +77,55 @@ test("the refusal names which wall you hit, because the actions differ", () => {
     "a quote that was converted needs a different sentence from an ordinary sent invoice",
   );
 });
+
+// ─── [HERSTEL] Editing a sent invoice: every lock, and the honest null ──────────────────────────
+
+const vrij = (): Parameters<typeof sentEditBlockers>[0] => ({
+  status: 'sent', invoiceType: 'factuur', invoiceNumber: '20260006', direction: 'outgoing',
+  amountPaid: 0, hasBankLink: false, hasCashLink: false, hasCreditnota: false,
+  accountantStatus: null, quarterFiled: false,
+})
+
+test('[HERSTEL] a sent, untouched factuur may be edited — and an overdue one too', () => {
+  assert.deepEqual(sentEditBlockers(vrij()), [])
+  assert.deepEqual(sentEditBlockers({ ...vrij(), status: 'overdue' }), [])
+})
+
+test('[HERSTEL] every attachment locks it, each with its own reason', () => {
+  const cases: Array<[Partial<ReturnType<typeof vrij>>, string]> = [
+    [{ status: 'paid' }, 'paid'],
+    [{ amountPaid: 12.5 }, 'paid'],
+    [{ hasBankLink: true }, 'bank-linked'],
+    [{ hasCashLink: true }, 'cash-linked'],
+    [{ hasCreditnota: true }, 'credited'],
+    [{ accountantStatus: 'verwerkt' }, 'accountant'],
+    [{ quarterFiled: true }, 'quarter-filed'],
+    [{ direction: 'incoming' }, 'incoming'],
+    [{ invoiceType: 'creditnota' }, 'not-invoice'],
+    [{ invoiceNumber: null }, 'not-invoice'],
+    [{ status: 'draft' }, 'not-sent'],
+  ]
+  for (const [over, code] of cases) {
+    const blockers = sentEditBlockers({ ...vrij(), ...over })
+    assert.ok(blockers.some((b) => b.code === code),
+      `${JSON.stringify(over)} should block with "${code}", got ${JSON.stringify(blockers.map((b) => b.code))}`)
+  }
+})
+
+test('[HERSTEL] a fact that could not be established BLOCKS — a hiccup is not permission', () => {
+  for (const gap of ['amountPaid', 'hasBankLink', 'hasCashLink', 'hasCreditnota', 'quarterFiled'] as const) {
+    const blockers = sentEditBlockers({ ...vrij(), [gap]: null })
+    assert.ok(blockers.some((b) => b.code === 'unknown'), `${gap}=null must block`)
+  }
+})
+
+test('[HERSTEL] half a cent of payment is not a payment — display rounding may not lock the door', () => {
+  assert.deepEqual(sentEditBlockers({ ...vrij(), amountPaid: 0.004 }), [])
+})
+
+test('[HERSTEL] the draft rule did not move: a sent factuur is still NOT isInvoiceEditable', () => {
+  // Two different doors on purpose. isInvoiceEditable guards the ORDINARY edit (draft/quote,
+  // member-accessible, no delivery); sentEditBlockers guards the herstel edit (owner-only,
+  // customer notified). A refactor that merges them hands members the herstel door.
+  assert.equal(isInvoiceEditable({ status: 'sent', invoiceType: 'factuur', invoiceNumber: '20260006' }), false)
+})

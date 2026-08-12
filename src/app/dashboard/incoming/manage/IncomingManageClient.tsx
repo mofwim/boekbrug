@@ -90,6 +90,10 @@ import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAY-REASON] One rule for what a refused pay-toggle says, shared with /vandaag and /facturen.
+import { payToggleAnswer, type PayToggleError } from '@/lib/pay-toggle-reason'
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
 // both sides of the app — and the server re-checks it before writing.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
@@ -159,11 +163,12 @@ export function CostAttribution({
   value: string | null
   onChange: (value: VatDeduction) => void
 }) {
+  const t = translator(useLocale())
   const current = DEDUCTION_CHOICES.some(c => c.value === value) ? (value as VatDeduction) : 'mixed'
   return (
     <div style={{ marginBottom: 16, padding: '12px 14px', background: 'white', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}` }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', marginBottom: 8, fontFamily: FONT }}>
-        Waarvoor is deze kost?
+        {t('inkoop.waarvoorKost')}
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {DEDUCTION_CHOICES.map(choice => {
@@ -264,35 +269,18 @@ interface IncomingRow {
 
 // [PAY-REASON] What the owner reads when /api/invoice/pay-toggle refuses.
 //
-// That route answers with a machine CODE in `error` and only sometimes a written `detail`. The
-// existing call site preferred `detail || error`, which was right for the handful of refusals that
-// carry a sentence and wrong for every other one — "invoice_already_paid", "verwerkt",
-// "invoice_not_found" would land on a shop owner's phone as-is. Its own [DEPLOY-SAFE] note says
-// exactly that ("the bare error CODE would reach the owner as gibberish"); it just never covered
-// the codes that have no detail. A bundle makes it worse, because it collects several at once.
+// The rule and the words both moved out of this file. The rule is in pay-toggle-reason.ts, because
+// /vandaag and /facturen ask the same route and each had a different idea of what to show — and
+// /vandaag's idea was the bare machine CODE. The words are in the message catalogue, because this
+// screen is translated: a Dutch Record living here rendered "je boekhouder heeft deze factuur al
+// verwerkt" underneath an Arabic interface, which is precisely the half-finished translation
+// AGENTS.md describes ("a component holds no language of its own").
 //
-// So: a curated sentence when the server wrote one AND the status says it is ours to trust
-// (a 5xx `detail` is a raw Postgres string — never for a phone), then a Dutch line per known code,
-// then a neutral fallback. Never a code, never a database message.
-const PAY_TOGGLE_REASON: Record<string, string> = {
-  verwerkt: 'je boekhouder heeft deze factuur al verwerkt',
-  invoice_already_paid: 'deze factuur staat al als betaald',
-  invoice_not_found: 'deze factuur is niet gevonden',
-  not_paid: 'er staat geen betaling op deze factuur',
-  status_conflict: 'de status is inmiddels veranderd — ververs de pagina',
-  unauthorized: 'je sessie is verlopen — log opnieuw in',
-  invalid_amount: 'het ingevoerde bedrag is niet geldig',
-  // [PAY-DATE-SANE] The route sends its own sentence with this one (and payToggleReason prefers a
-  // <500 detail), so this line is the belt to that braces — never a bare code on a phone.
-  invalid_payment_date: 'de betaaldatum kan niet kloppen — controleer het jaartal',
-  undo_read_failed: 'we konden de gekoppelde betalingen niet lezen — er is niets gewijzigd',
-  undo_failed: 'terugdraaien is niet gelukt — er is niets gewijzigd',
-}
-function payToggleReason(status: number, json: { detail?: string; error?: string } | null): string {
-  if (status < 500 && typeof json?.detail === 'string' && json.detail.trim()) return json.detail.trim()
-  const code = typeof json?.error === 'string' ? json.error : ''
-  return PAY_TOGGLE_REASON[code] ?? 'bijwerken is niet gelukt — ververs de pagina'
-}
+// What did NOT change is the decision this screen already got right, and it is worth restating:
+// a curated sentence when the server wrote one AND the status says it is ours to trust (a 5xx
+// `detail` is a raw Postgres string — never for a phone), then a line per known code, then a
+// neutral fallback. Never a code, never a database message.
+
 
 // [AUTO-ADVANCE] True when the app auto-verified this invoice (clean + confident) instead of
 // the owner tapping confirm. Drives the review badge + filter — the opt-in double-check.
@@ -470,6 +458,12 @@ export default function IncomingManageClient({
 }) {
   const taal = useLocale()
   const t = translator(taal)
+  // [PAY-REASON] The shared rule, rendered in this screen's language. Every call site below is
+  // unchanged — only where the sentence comes from is.
+  const payToggleReason = useCallback((status: number, json: PayToggleError): string => {
+    const answer = payToggleAnswer(status, json)
+    return answer.kind === 'server' ? answer.text : t(answer.key)
+  }, [t])
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
@@ -814,7 +808,7 @@ export default function IncomingManageClient({
     // and then the owner tapped an invoice and got an unchanged list. Saying so is the whole
     // point: they are entitled to know their tap did not land, rather than assume it did.
     if (!invoices.some(i => i.id === focusId)) {
-      showToast('Deze factuur konden we hier niet openen — zoek hem op in de lijst')
+      showToast(t('inkoop.fout.nietOpenen'))
       return
     }
     // Expand + highlight on the next tick (never synchronously in the effect
@@ -1031,10 +1025,10 @@ export default function IncomingManageClient({
         router.refresh()
         return
       }
-      showToast('Opnieuw ingelezen.')
+      showToast(t('inkoop.opnieuwIngelezen'))
       router.refresh()
     } catch {
-      showToast('Opnieuw inlezen is niet gelukt — controleer je verbinding.')
+      showToast(t('inkoop.fout.opnieuwInlezen'))
     } finally {
       setRereadingId(null)
     }
@@ -1050,9 +1044,13 @@ export default function IncomingManageClient({
     if (attachingId) return
     setAttachingId(inv.id)
     try {
-      const body = new FormData()
-      body.append('file', file)
-      const res = await fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
+      // [UPLOAD-PLAFOND] Fitted like every other document path — this one carries the invoice
+      // itself, so a refusal leaves a booked invoice with no document behind it.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const body = new FormData()
+        body.append('file', f)
+        return fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
+      })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // Each refusal says what to DO about it. "Mislukt" on its own is how a dead end starts.
@@ -1066,10 +1064,10 @@ export default function IncomingManageClient({
         )
         return
       }
-      showToast('Origineel toegevoegd. De boekhouder kan de factuur nu controleren.')
+      showToast(t('inkoop.origineelToegevoegd'))
       router.refresh()
     } catch {
-      showToast('Toevoegen is niet gelukt — controleer je verbinding.')
+      showToast(t('inkoop.fout.toevoegen'))
     } finally {
       setAttachingId(null)
     }
@@ -1137,7 +1135,7 @@ export default function IncomingManageClient({
       })
       if (!on) showToast(`${name} staat niet meer op automatische incasso`)
     } catch {
-      showToast('Instellen mislukt — controleer je verbinding')
+      showToast(t('inkoop.fout.instellen'))
     } finally {
       setIncassoBusy(null)
     }
@@ -1173,9 +1171,9 @@ export default function IncomingManageClient({
         invoice_type: data.invoice_type,
       })
       setCreditAsk(null)
-      showToast('Geboekt als creditnota — gaat van je openstaande saldo af')
+      showToast(t('inkoop.geboektCredit'))
     } catch {
-      showToast('Geen verbinding — er is niets gewijzigd')
+      showToast(t('inkoop.fout.offlineNiets'))
     } finally {
       setCreditBusy(false)
     }
@@ -1251,7 +1249,7 @@ export default function IncomingManageClient({
       // The row-level flags come from the stored verdict, so the list has to be re-read to show them.
       router.refresh()
     } catch {
-      showToast('Narekenen is niet gelukt — controleer je verbinding.')
+      showToast(t('inkoop.fout.narekenen'))
     } finally {
       setAuditBusy(false)
     }
@@ -1303,7 +1301,7 @@ export default function IncomingManageClient({
       if (json.byInvoice && !(json.failed ?? []).includes('map')) applyMap(json.byInvoice)
       setMatchResult(json)
     } catch {
-      showToast('Matchen mislukt — probeer het opnieuw')
+      showToast(t('inkoop.fout.matchen'))
     } finally {
       setMatchBusy(false)
     }
@@ -1384,7 +1382,7 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/email/confirm/${dupId}`, { method: 'DELETE' })
       if (res.ok) {
         setInvoices(prev => prev.filter(i => i.id !== dupId))
-        showToast('Dubbele factuur verwijderd')
+        showToast(t('inkoop.dubbeleVerwijderd'))
       } else {
         // [SERVER-REASON] That route refuses with money_settled or bank_linked and a `detail` that
         // names the way out ("draai eerst de betaling terug", "ontkoppel die eerst op de
@@ -1399,7 +1397,7 @@ export default function IncomingManageClient({
         showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
       }
     } catch {
-      showToast('Verwijderen mislukt — probeer opnieuw')
+      showToast(t('lijst.fout.verwijderen'))
     } finally {
       setProcessingId(null)
     }
@@ -1438,12 +1436,12 @@ export default function IncomingManageClient({
       if (payments.length === 0) {
         // amount_paid > 0 without a single link row: a payment recorded before the join table
         // existed. There is nothing to move, and saying so beats an empty sheet.
-        showToast('Van deze betaling is geen boeking gevonden om te verplaatsen')
+        showToast(t('inkoop.fout.geenBoeking'))
         return
       }
       setMoveCtx({ inv, payments })
     } catch {
-      showToast('Geen verbinding — probeer opnieuw')
+      showToast(t('inkoop.fout.offline'))
     } finally {
       setMoveLoadingId(null)
     }
@@ -1481,7 +1479,7 @@ export default function IncomingManageClient({
         `${fmtEur(Number(json.applied ?? 0))} verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}`,
       )
     } catch {
-      showToast('Geen verbinding — er is niets gewijzigd')
+      showToast(t('inkoop.fout.offlineNiets'))
     } finally {
       setProcessingId(null)
     }
@@ -1537,7 +1535,7 @@ export default function IncomingManageClient({
       const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
       showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten bij Inkomend › Genegeerd')
     } catch {
-      showToast('Verwijderen mislukt — probeer opnieuw')
+      showToast(t('lijst.fout.verwijderen'))
     } finally {
       setProcessingId(null)
     }
@@ -1624,7 +1622,7 @@ export default function IncomingManageClient({
       // the UI doesn't claim a cleared state the DB still has.
       patchLocal(inv.id, { payment_prepared_at: inv.payment_prepared_at })
     }
-    showToast('Genoteerd — factuur blijft open als te betalen')
+    showToast(t('inkoop.genoteerd'))
   }
 
   // ── [PAY-SAFE-CONFIRM] Gate Betalen-action through the existing pay flow ──
@@ -1668,7 +1666,7 @@ export default function IncomingManageClient({
       // The request never completed. It may or may not have reached the server, and we cannot
       // know which — so say exactly that instead of guessing, and put the row back as it was.
       if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus === 'paid' ? 'received' : 'paid' })
-      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      showToast(t('lijst.fout.betalingOffline'))
       setProcessingId(null)
       return false
     }
@@ -1770,7 +1768,7 @@ export default function IncomingManageClient({
       .maybeSingle()
 
     if (!link?.accountant_id) {
-      showToast('Geen boekhouder gekoppeld')
+      showToast(t('lijst.boekhouder.geen'))
       setVerwerktCtx(null)
       return
     }
@@ -1785,7 +1783,7 @@ export default function IncomingManageClient({
     })
 
     if (res.ok) setRequestSent(true)
-    else showToast('Versturen mislukt')
+    else showToast(t('lijst.fout.versturen'))
   }
 
   // [BRIDGE-POLISH 3b fix] Open PDF via the signed-URL route — NOT the raw
@@ -1864,8 +1862,8 @@ export default function IncomingManageClient({
                   borderRadius: R.full, background: '#fff', border: `1px solid ${M3.surfaceVariant}`,
                   fontSize: 13, fontWeight: 600, fontFamily: FONT, color: '#3c4043', cursor: 'pointer',
                 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>
-                Meerdere annuleren
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>
+                {t('inkoop.meerdereAnnuleren')}
               </button>
             )}
             {/* [KOP-KLEINER] De Verificatie-snelkoppeling stond hier: een rond inbox-icoontje naar
@@ -2038,7 +2036,7 @@ export default function IncomingManageClient({
             <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
               <button
                 onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false) }}
-                title="Sorteren"
+                title={t('inkoop.sorteren')}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
@@ -2092,7 +2090,7 @@ export default function IncomingManageClient({
                 onClick={() => router.refresh()}
                 style={{ marginTop: 8, padding: '7px 14px', borderRadius: R.full, border: 'none', background: M3.error, color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
               >
-                Opnieuw proberen
+                {t('inkoop.opnieuwProberen')}
               </button>
             </div>
           </div>
@@ -2107,7 +2105,7 @@ export default function IncomingManageClient({
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#7C5800', flexShrink: 0, marginTop: 1 }}>sync_problem</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
-                We konden je automatische incasso&apos;s niet ophalen
+                {t('inkoop.fout.incassoOphalen')}
               </p>
               <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.45 }}>
                 Facturen die je bank zelf afschrijft staan hieronder daarom gewoon als &quot;te betalen&quot;. Betaal ze niet nog een keer.
@@ -2116,7 +2114,7 @@ export default function IncomingManageClient({
                 onClick={() => router.refresh()}
                 style={{ marginTop: 8, padding: '7px 14px', borderRadius: R.full, border: 'none', background: '#7C5800', color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
               >
-                Opnieuw proberen
+                {t('inkoop.opnieuwProberen')}
               </button>
             </div>
           </div>
@@ -2195,17 +2193,17 @@ export default function IncomingManageClient({
         {/* [SEARCH] In-page live filter */}
         {invoices.length > 0 && (
           <div style={{ position: 'relative', marginBottom: 10 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', insetInlineStart: 13, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
-              aria-label="Inkomende facturen zoeken"
+              placeholder={t('ink.zoek')}
+              aria-label={t('ink.zoek.aria')}
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 14, outline: 'none', background: '#fff', color: '#1c1c1e' }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+              <button onClick={() => setSearch('')} aria-label={t('inkoop.wissen')} className="tap-44"
+                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>
         )}
@@ -2277,7 +2275,7 @@ export default function IncomingManageClient({
                   onClick={() => setPeriod('all')}
                   style={{ background: 'none', border: 'none', padding: 0, color: M3.primary, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'underline' }}
                 >
-                  Toon alle periodes
+                  {t('inkoop.allePeriodes')}
                 </button>
               </p>
             )}
@@ -2286,7 +2284,7 @@ export default function IncomingManageClient({
                 regel zorgt dat het TOTAAL niet los daarvan als compleet wordt gelezen. */}
             {loadIncomplete && (showsOpen || showsPaid) && (
               <p style={{ fontSize: 11.5, color: M3.error, fontFamily: FONT, margin: '2px 0 0', lineHeight: 1.4 }}>
-                Dit telt alleen op wat we konden ophalen — er ontbreken facturen.
+                {t('inkoop.fout.onvolledig')}
               </p>
             )}
             {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
@@ -2325,7 +2323,7 @@ export default function IncomingManageClient({
                 onClick={() => setPeriod('all')}
                 style={{ padding: '9px 18px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
               >
-                Toon alle periodes
+                {t('inkoop.allePeriodes')}
               </button>
             </div>
           ) : <EmptyState />
@@ -2538,10 +2536,10 @@ export default function IncomingManageClient({
                                 payment_date: invoices.find(i => i.id === id)?.invoice_date ?? null,
                                 payment_prepared_at: null,
                               })
-                              showToast('Betaling bevestigd ✓')
+                              showToast(t('lijst.betalingBevestigd'))
                             }
                             else if (r === 'navigate') router.push('/dashboard/bank')
-                            else showToast('Bevestigen mislukt — probeer het op de Bank-pagina')
+                            else showToast(t('lijst.fout.bevestigen'))
                           }} />
                         )}
                         {xq && (
@@ -2561,7 +2559,7 @@ export default function IncomingManageClient({
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#E8F0FE', color: '#1A73E8', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_awesome</span>
-                            Automatisch
+                            {t('inkoop.automatisch')}
                           </span>
                         )}
                         {/* [BON-AUTO] Marked PAID by the app, on the strength of the tender line the
@@ -2582,7 +2580,7 @@ export default function IncomingManageClient({
                               style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
-                              Bon · al afgerekend
+                              {t('inkoop.bonAfgerekend')}
                             </span>
                           )
                         })()}
@@ -2594,23 +2592,18 @@ export default function IncomingManageClient({
                           if (!e) return null
                           return (
                             <span
-                              title={
-                                `De bedragen op deze factuur komen uit de e-factuur die de leverancier ` +
-                                `zelf heeft meegestuurd (${e.syntax}). Er is niets van een pagina ` +
-                                `gelezen en niets geïnterpreteerd — dit is exact wat de leverancier ` +
-                                `heeft opgegeven. Deze hoef je niet na te kijken.`
-                              }
+                              title={t('inkoop.eFactuurUitleg', { syntax: e.syntax })}
                               style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>verified</span>
-                              Cijfers van de leverancier
+                              {t('inkoop.cijfersLeverancier')}
                             </span>
                           )
                         })()}
                         {/* [3b-2] accountant Verwerkt — READ-ONLY badge */}
                         {isVerwerkt && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333' }}>
-                            Verwerkt
+                            {t('inkoop.verwerkt')}
                           </span>
                         )}
                         {/* [PAY-SAFE-CONFIRM] prepared, awaiting the owner's confirm.
@@ -2618,7 +2611,7 @@ export default function IncomingManageClient({
                         {isPrepared && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
-                            Voorbereid
+                            {t('inkoop.voorbereid')}
                           </span>
                         )}
                       </div>
@@ -2679,7 +2672,7 @@ export default function IncomingManageClient({
                             title="Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt"
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: '#E6F4EA', color: '#0B8043' }}
                           >
-                            Creditnota
+                            {t('ink.creditnota')}
                           </span>
                         )}
                         {/* [CREDITNOTA-SIGNAL] A suspicion, not a verdict. We do NOT flip the sign:
@@ -2846,7 +2839,7 @@ export default function IncomingManageClient({
                           {processingId === inv.id || checkingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : isPrepared
-                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> Heb je betaald?</>
+                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> {t('inkoop.hebJeBetaald')}</>
                               : 'Heb je betaald?'}
                         </button>
                       )}
@@ -2862,7 +2855,7 @@ export default function IncomingManageClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.successContainer, color: '#137333', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> Betaald</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> {t('lijst.betaald')}</>}
                         </button>
                       )}
                     </div>
@@ -2893,18 +2886,18 @@ export default function IncomingManageClient({
                   {expanded && (
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
-                        <InfoLine label="Leverancier" value={inv.client_name} />
+                        <InfoLine label={t('inkoop.leverancier')} value={inv.client_name} />
                         {/* [DATE-VISIBLE] The full dates live HERE, where there is room for them —
                             the collapsed row keeps only the short factuurdatum. Vervaldatum is shown
                             only when the invoice stated one; a missing due date is left out rather
                             than printed as "—", which would read like a field we failed to fill. */}
-                        <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date, thisYear)} />
-                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date, thisYear)} />}
+                        <InfoLine label={t('inkoop.factuurdatum')} value={fmtDateSmart(inv.invoice_date, thisYear)} />
+                        {inv.due_date && <InfoLine label={t('inkoop.vervaldatum')} value={fmtDateSmart(inv.due_date, thisYear)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
-                        {inv.payment_date && <InfoLine label="Betaaldatum" value={fmtDate(inv.payment_date)} />}
-                        {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
+                        {inv.payment_date && <InfoLine label={t('lijst.betaaldatum')} value={fmtDate(inv.payment_date)} />}
+                        {inv.payment_method && <InfoLine label={t('inkoop.methode')} value={inv.payment_method === 'kas' ? t('lijst.contant') : t('lijst.bank')} />}
                       </div>
 
                       {exemptOwner && (
@@ -2963,7 +2956,7 @@ export default function IncomingManageClient({
                               color: mathProblem || signConflict ? '#7C5800' : '#3c4043',
                             }}
                           >
-                            Bedragen corrigeren
+                            {t('inkoop.bedragenCorrigeren')}
                           </button>
                         )}
                         {/* [REREAD-CONFIRMED] "Opnieuw inlezen" — the other way out, and on most
@@ -3064,7 +3057,7 @@ export default function IncomingManageClient({
                             onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
                             style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
-                            Betalen
+                            {t('inkoop.betalen')}
                           </button>
                         )}
                         {inv.pdf_url && (
@@ -3177,7 +3170,7 @@ export default function IncomingManageClient({
                     onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
                     disabled={processingId === inv.id}
                     aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
-                    title="Verwijderen"
+                    title={t('lijst.verwijderen')}
                     style={{
                       flexShrink: 0, marginTop: 12, width: 36, height: 36, borderRadius: R.full,
                       border: 'none', background: 'transparent', color: '#9AA0A6',
@@ -3228,7 +3221,7 @@ export default function IncomingManageClient({
                 color: undoPlan.eligible.length > 0 && !bundleBusy ? '#7C5800' : '#9AA0A6',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>undo</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>undo</span>
               {bundleBusy ? 'Bezig…' : 'Terugdraaien'}
             </button>
           </div>
@@ -3437,7 +3430,7 @@ export default function IncomingManageClient({
             style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, paddingBottom: sheetPaddingBottom(24), width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
-              Betaling verplaatsen
+              {t('inkoop.betalingVerplaatsen')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 18px' }}>
               Van inkoopfactuur {moveCtx.inv.invoice_number || '—'} naar de factuur waar deze betaling bij hoort.
@@ -3496,7 +3489,7 @@ export default function IncomingManageClient({
               onClick={() => setMoveCtx(null)}
               style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
             >
-              Annuleren
+              {t('lijst.annuleren')}
             </button>
           </div>
         </div>
@@ -3613,8 +3606,8 @@ export default function IncomingManageClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setVerwerktCtx(null)}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>Factuur is verwerkt</h3>
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>{t('lijst.verwerkt')}</h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
               {requestSent
                 ? `Je verzoek voor inkoopfactuur ${verwerktCtx.number} is naar de boekhouder gestuurd.`
@@ -3623,11 +3616,11 @@ export default function IncomingManageClient({
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
               {!requestSent && (
                 <button onClick={requestUnverwerkt} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-                  Stuur verzoek naar boekhouder
+                  {t('lijst.boekhouder.stuur')}
                 </button>
               )}
               <button onClick={() => setVerwerktCtx(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-                Sluiten
+                {t('inkoop.sluiten')}
               </button>
             </div>
           </div>
@@ -3655,10 +3648,10 @@ export default function IncomingManageClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setDupWarn(null)}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.warning }}>warning</span>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Mogelijk al betaald</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('inkoop.mogelijkBetaald')}</h3>
             </div>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
               Je hebt mogelijk al een factuur van dezelfde leverancier voor hetzelfde bedrag betaald:
@@ -3677,23 +3670,23 @@ export default function IncomingManageClient({
                 <button
                   onClick={() => viewOriginal(dupWarn.match.id)}
                   style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                  Bekijk de betaalde factuur
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
+                  {t('inkoop.bekijkBetaalde')}
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>arrow_forward</span>
                 </button>
               )}
               <button
                 onClick={() => archiveDuplicate(dupWarn.ctx.id)}
                 style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-                Deze dubbele verwijderen
+                {t('inkoop.dubbeleVerwijderen')}
               </button>
               {/* The owner can still insist this is a separate, genuinely-due invoice */}
               <button
                 onClick={() => { const c = dupWarn.ctx; setDupWarn(null); setPayCtx(c) }}
                 style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-                Toch markeren als betaald
+                {t('inkoop.tochBetaald')}
               </button>
               <button onClick={() => setDupWarn(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
             </div>
           </div>
@@ -3728,7 +3721,7 @@ export default function IncomingManageClient({
             style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
             onClick={() => !creditBusy && setCreditAsk(null)}
           >
-            <div
+            <div className="sheet-scroll"
               role="dialog"
               aria-modal="true"
               aria-label={settled ? 'Creditnota' : 'Is dit een creditnota?'}
@@ -3838,7 +3831,7 @@ export default function IncomingManageClient({
           exactly the rows where it was being careful. */}
       {incassoResult && (
         <div
-          role="dialog" aria-modal="true" aria-label="Automatische incasso ingesteld"
+          role="dialog" aria-modal="true" aria-label={t('inkoop.incassoIngesteld')}
           onClick={() => setIncassoResult(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.32)', zIndex: 300, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
         >
@@ -3898,7 +3891,7 @@ export default function IncomingManageClient({
 
             {incassoResult.on && incassoResult.booked.length === 0 && incassoResult.held.length === 0 && !incassoResult.warning && (
               <p style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.45 }}>
-                Er stond nog niets open dat al afgeschreven was.
+                {t('inkoop.fout.nietsOpen')}
               </p>
             )}
 
@@ -3906,7 +3899,7 @@ export default function IncomingManageClient({
               onClick={() => setIncassoResult(null)}
               style={{ width: '100%', padding: '12px 16px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
             >
-              Duidelijk
+              {t('inkoop.duidelijk')}
             </button>
           </div>
         </div>
@@ -3982,6 +3975,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   // Absent → no field (a bundle payment stays all-or-nothing).
   openAmount?: number
 }) {
+  const t = translator(useLocale())
   // [TZ] Amsterdam, not UTC — see format-nl.ts. A betaaldatum one day early can land in a
   // kasstelsel quarter that is already filed.
   const [paymentDate, setPaymentDate] = useState(amsterdamToday())
@@ -4001,7 +3995,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   const canPayCash = !entry || entry.valid
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+      <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
         <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: warning ? 16 : 24, lineHeight: 1.5 }}>{body}</p>
 
@@ -4014,7 +4008,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
 
         {paymentChoice ? (
           <>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>{t('lijst.betaaldatum')}</label>
             {/* [PAY-DATE-SANE] min AND max. `max` alone was doing less than it looked like: it
                 marks the field :invalid and nothing here reads validity — the pay buttons read the
                 state directly — and a typed-in year passes through untouched. There was no floor
@@ -4032,7 +4026,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 min={PAYMENT_DATE_FLOOR}
                 max={amsterdamToday()}
                 onChange={setPaymentDate}
-                aria-label="Betaaldatum"
+                aria-label={t('lijst.betaaldatum')}
               />
             </div>
             {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
@@ -4050,7 +4044,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
             {entry && openBalance != null && !noOpenBalance && (
               <>
                 <label htmlFor="ink-betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
-                  Betaald bedrag
+                  {t('lijst.betaaldBedrag')}
                 </label>
                 <input
                   id="ink-betaald-bedrag"
@@ -4083,7 +4077,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 disabled={!!entry && !entry.valid}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
-                Bank
+                {t('lijst.bank')}
               </button>
               {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose.
                   The kasboek can hold exactly one settlement entry per invoice
@@ -4097,7 +4091,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 disabled={!canPayCash}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
-                Contant
+                {t('lijst.contant')}
               </button>
             </div>
             {/* [PAY-NOT-YET] The third honest answer: "no, I have not paid".
@@ -4111,7 +4105,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 {secondaryAction.label}
               </button>
             )}
-            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
           </>
         ) : (
           <>
@@ -4130,7 +4124,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                 {secondaryAction.label}
               </button>
             )}
-            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
           </>
         )}
       </div>
@@ -4152,6 +4146,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
   /** The supplier behind an invoice id, from the list this screen already holds. */
   supplierOf: (invoiceId: string) => string | null
 }) {
+  const t = translator(useLocale())
   const { bookedCount, amountOnlyCount, cash, categorized, pendingTransactions, pendingMatchCount, failed } = result
   const cashTouched = cash.created + cash.updated + cash.deleted
   const bankFailed = failed.includes('bank')
@@ -4222,7 +4217,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
           {result.booked.length > 0 && (
             <div style={{ border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.md, padding: '8px 10px' }}>
               <p style={{ fontSize: 11.5, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 6px', letterSpacing: 0.3, textTransform: 'uppercase' }}>
-                Op betaald gezet
+                {t('inkoop.opBetaald')}
               </p>
               {[...result.booked]
                 .sort((a, b) => (a.tier === 'amount_only' ? 0 : 1) - (b.tier === 'amount_only' ? 0 : 1))
@@ -4302,12 +4297,12 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
         {pendingMatchCount > 0 ? (
           <>
             <button onClick={onOpenBank} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>
-              Bekijk op de Bank-pagina
+              {t('inkoop.bekijkBank')}
             </button>
-            <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+            <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('ink.klaar')}</button>
           </>
         ) : (
-          <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+          <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('ink.klaar')}</button>
         )}
       </div>
     </div>
@@ -4326,11 +4321,12 @@ function ResultLine({ icon, text, tone }: { icon: string; text: string; tone: 'g
 }
 
 function EmptyState() {
+  const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen inkoopfacturen</p>
-      <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Bevestigde inkoopfacturen verschijnen hier</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('inkoop.leeg')}</p>
+      <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>{t('inkoop.leeg.sub')}</p>
     </div>
   )
 }
@@ -4340,10 +4336,11 @@ function EmptyState() {
 // a fact about the owner's books; this is a fact about our read. Kept deliberately close to it in
 // shape so nothing feels broken, and deliberately different in wording so nothing feels settled.
 function LoadFailedState({ onRetry }: { onRetry: () => void }) {
+  const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: M3.error, display: 'block', marginBottom: 12 }}>error</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>We konden je inkoopfacturen niet ophalen</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('inkoop.fout.ophalen')}</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT, lineHeight: 1.5, maxWidth: 380, margin: '0 auto' }}>
         Dit betekent niet dat je niets openstaan hebt — we konden het alleen niet lezen.
         Probeer het zo meteen opnieuw.
@@ -4352,7 +4349,7 @@ function LoadFailedState({ onRetry }: { onRetry: () => void }) {
         onClick={onRetry}
         style={{ marginTop: 16, padding: '10px 20px', borderRadius: R.full, border: 'none', background: M3.primary, color: M3.onPrimary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
       >
-        Opnieuw proberen
+        {t('inkoop.opnieuwProberen')}
       </button>
     </div>
   )
@@ -4375,6 +4372,7 @@ function PreparePaymentSheet({
   onConfirmPaid: () => void
   onCopied: (what: string) => void
 }) {
+  const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
 
@@ -4435,7 +4433,7 @@ function PreparePaymentSheet({
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
-        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>{t('inkoop.betalen')}</p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
           Scan met je bankapp of kopieer de gegevens. Je betaalt in je eigen bank.
         </p>
@@ -4458,9 +4456,9 @@ function PreparePaymentSheet({
 
             {/* Copy rows */}
             <CopyRow label="IBAN" value={ibanDisplay} raw={(inv.vendor_iban ?? '')} onCopy={copy} />
-            <CopyRow label="Bedrag" value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
-            {reference && <CopyRow label="Kenmerk" value={reference} raw={reference} onCopy={copy} />}
-            <CopyRow label="Naam" value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
+            <CopyRow label={t('inkoop.bedrag')} value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+            {reference && <CopyRow label={t('inkoop.kenmerk')} value={reference} raw={reference} onCopy={copy} />}
+            <CopyRow label={t('inkoop.naam')} value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
           </>
         ) : (
           // No valid IBAN → honest fallback, no QR.
@@ -4473,13 +4471,13 @@ function PreparePaymentSheet({
             to the Bank/Contant + date flow; "Nog niet" just closes (stays unpaid).
             Wording = "verstuurd" (sent), not "aangekomen" — SEPA takes time. */}
         <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
-          Heb je de betaling verstuurd?
+          {t('inkoop.betalingVerstuurd')}
         </p>
         <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-          Ja, ik heb betaald
+          {t('inkoop.jaBetaald')}
         </button>
         <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#5f6368', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-          Nog niet
+          {t('inkoop.nogNiet')}
         </button>
       </div>
     </div>
@@ -4504,6 +4502,7 @@ function BundelBetalenSheet({
   onConfirmPaid: () => void
   onCopied: (what: string) => void
 }) {
+  const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
 
@@ -4580,19 +4579,19 @@ function BundelBetalenSheet({
 
         {/* Copy rows */}
         <CopyRow label="IBAN" value={ibanDisplay} raw={built.iban ?? ''} onCopy={copy} />
-        <CopyRow label="Bedrag" value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
-        {reference && <CopyRow label="Kenmerk" value={reference} raw={reference} onCopy={copy} />}
-        <CopyRow label="Naam" value={built.beneficiaryName ?? '—'} raw={built.beneficiaryName ?? ''} onCopy={copy} />
+        <CopyRow label={t('inkoop.bedrag')} value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+        {reference && <CopyRow label={t('inkoop.kenmerk')} value={reference} raw={reference} onCopy={copy} />}
+        <CopyRow label={t('inkoop.naam')} value={built.beneficiaryName ?? '—'} raw={built.beneficiaryName ?? ''} onCopy={copy} />
 
         {/* Same honest confirm as the single sheet: closing the QR ≠ paid. */}
         <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
-          Heb je de betaling verstuurd?
+          {t('inkoop.betalingVerstuurd')}
         </p>
         <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
-          Ja, ik heb betaald
+          {t('inkoop.jaBetaald')}
         </button>
         <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#5f6368', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-          Nog niet
+          {t('inkoop.nogNiet')}
         </button>
       </div>
     </div>

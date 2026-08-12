@@ -1634,3 +1634,60 @@ test("[TAAL] the language switch renders, and names each language in its own scr
   // The promise the card must keep making: the documents do not follow the interface language.
   assert.ok(html.includes("Belastingdienst"), "it says which language the documents stay in");
 });
+
+test("[ANDER-TOTAAL] the document's own total reaches the confirm modal as one tap", async () => {
+  // Against the MODAL, because that is where the number is edited and where the offer lives. The
+  // card shows the warning; this is the screen the owner acts on.
+  //
+  // The invoice this came from: NemaFood B.V. 262697, three scanned pages with no text layer. The
+  // app read € 1.149,56 with € 94,92 BTW — internally consistent, so every arithmetic gate passed —
+  // while the document says € 1.065,14 + € 95,54 = € 1.160,68.
+  const { ConfirmPaidModal } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  const base = {
+    id: "n1", client_name: "NemaFood B.V.", client_email: null, invoice_type: "factuur",
+    total_ex_btw: 1054.64, btw_amount: 94.92, total_inc_btw: 1149.56, amount_paid: 0,
+    invoice_date: "2026-07-28", invoice_number: "262697", source: "upload",
+    pdf_url: null, document_id: null, created_at: "2026-07-28T10:00:00Z",
+    folder_id: null, folder_name: null,
+    field_confidence: {
+      _grounding: {
+        totalIncBtw: "absent", totalExBtw: "absent", btwAmount: "absent", source: "ocr",
+        alternative: { ex: 1065.14, btw: 95.54, inc: 1160.68 },
+      },
+    },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invoice = { ...base, health: classifyImportHealth(base as any) };
+  assert.ok(invoice.health.alternativeTotals, "the verdict must carry it, or the modal has nothing to show");
+
+  const render = (inv: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(ConfirmPaidModal as any, {
+          invoice: inv, onVerify() {}, onPay() {}, onCancel() {},
+        }))),
+  );
+
+  const html = render(invoice);
+  // The owner sees the document's total, and is asked rather than told.
+  assert.match(html, /Staat dit bedrag op je factuur\?/, "the question is on the screen");
+  assert.match(html, /1\.160,68/, "…and names the document's own total");
+  // The warning sentence names all three figures, so the owner can match the totals block by eye.
+  assert.match(html, /1\.065,14/);
+  assert.match(html, /95,54/);
+  // And the number the app read is still shown — the owner is comparing, not being overruled.
+  assert.match(html, /1\.149,56/);
+
+  // An invoice whose total IS corroborated must show none of this. A second figure on a correct
+  // invoice is how a warning stops being read.
+  const clean = { ...base, total_ex_btw: 1065.14, btw_amount: 95.54, total_inc_btw: 1160.68, field_confidence: null };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cleanInvoice = { ...clean, health: classifyImportHealth(clean as any) };
+  const cleanHtml = render(cleanInvoice);
+  assert.doesNotMatch(cleanHtml, /Staat dit bedrag op je factuur\?/, "no offer on an invoice that reads right");
+});

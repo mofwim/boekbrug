@@ -419,7 +419,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
           onClick={() => { if (!bulkBezig) setBulkVraag(false) }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.32)', zIndex: 60, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={(e) => e.stopPropagation()}
             style={{ background: M3.surface, borderRadius: `${R.lg}px ${R.lg}px 0 0`, width: '100%', maxWidth: COLUMN.work, padding: '20px 18px', paddingBottom: sheetPaddingBottom(24), boxShadow: EL1 }}
           >
@@ -464,7 +464,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
             display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
           }}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: M3.surface, borderRadius: `${R.lg}px ${R.lg}px 0 0`,

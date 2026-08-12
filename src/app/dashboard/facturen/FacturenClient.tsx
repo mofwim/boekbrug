@@ -44,6 +44,8 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
+import { payToggleAnswer, isVerwerktConflict } from '@/lib/pay-toggle-reason'
 import type { MessageKey } from '@/lib/i18n/messages'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
@@ -286,7 +288,7 @@ export default function FacturenClient({
         body: JSON.stringify({ invoiceIds: selectedList.map(r => r.id) }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { showToast(data.error || 'Betaalverzoek maken mislukt'); return }
+      if (!res.ok) { showToast(data.error || t('lijst.fout.betaalverzoek')); return }
       setBundle({ url: data.url, amount: data.amount, reference: data.reference, count: data.count, iban: data.iban })
       exitSelectMode()
       try {
@@ -295,7 +297,7 @@ export default function FacturenClient({
         setBundleQr(await QR.toDataURL(data.url, { margin: 1, width: 220 }))
       } catch { /* the link below always works without the QR */ }
     } catch {
-      showToast('Betaalverzoek maken mislukt')
+      showToast(t('lijst.fout.betaalverzoek'))
     } finally {
       setBundleLoading(false)
     }
@@ -540,7 +542,7 @@ export default function FacturenClient({
       // The request never completed. It may or may not have reached the server, and we cannot
       // know which — so say exactly that instead of guessing, and put the row back as it was.
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: ctx.newStatus === 'paid' ? 'sent' : 'paid' })
-      showToast('Geen verbinding — controleer of de betaling is opgeslagen')
+      showToast(t('lijst.fout.betalingOffline'))
       setProcessingId(null)
       return
     }
@@ -548,16 +550,28 @@ export default function FacturenClient({
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
     // payment refused because the kasboek cannot date it per instalment yet) — the bare
     // error CODE would reach the owner as gibberish.
-    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
-    if (error) {
+    //
+    // [PAY-REDEN] …which is what `detail || json.error` did for every refusal that carries no
+    // detail: "invoice_already_paid", "not_payable", "unauthorized" went straight to the toast.
+    // The rule is shared now (pay-toggle-reason.ts), so this screen, /vandaag and /manage answer
+    // the same refusal with the same words, and the half that is not the server's sentence comes
+    // from the catalogue in the owner's language.
+    if (!res.ok) {
+      const answer = payToggleAnswer(res.status, json)
+      const message = answer.kind === 'server' ? answer.text : t(answer.key)
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
-      // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast
-      if (error.message && error.message.includes('verwerkt')) {
+      // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast.
+      //
+      // [PAY-REDEN] Decided from the CODE, not by searching the displayed message for the word
+      // "verwerkt". That search was two bugs waiting: the dialog stops opening the moment the
+      // message is translated — no Arabic sentence contains a Dutch word — and it opens wrongly
+      // for any other refusal whose sentence happens to mention the boekhouder.
+      if (isVerwerktConflict(json)) {
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
       } else {
-        showToast(error.message || 'Bijwerken mislukt')
+        showToast(message)
       }
     } else if (ctx.newStatus === 'paid') {
       // [MANUAL-PARTIAL-PAY] The SERVER decides whether this settled the invoice — the typed
@@ -613,7 +627,7 @@ export default function FacturenClient({
       .maybeSingle()
 
     if (!link?.accountant_id) {
-      showToast('Geen boekhouder gekoppeld')
+      showToast(t('lijst.boekhouder.geen'))
       setVerwerktCtx(null)
       return
     }
@@ -630,7 +644,7 @@ export default function FacturenClient({
     if (res.ok) {
       setRequestSent(true)
     } else {
-      showToast('Versturen mislukt')
+      showToast(t('lijst.fout.versturen'))
     }
   }
 
@@ -658,10 +672,10 @@ export default function FacturenClient({
         showToast(`Herhaalt ${label} — het volgende concept staat klaar op ${fmtDate(json?.schedule?.next_run_date ?? null)}`)
         await loadSchedules()
       } else {
-        showToast(json?.detail || 'Herhalen instellen mislukt')
+        showToast(json?.detail || t('lijst.fout.herhalen'))
       }
     } catch {
-      showToast('Herhalen instellen mislukt')
+      showToast(t('lijst.fout.herhalen'))
     } finally {
       setProcessingId(null)
     }
@@ -672,13 +686,13 @@ export default function FacturenClient({
     try {
       const res = await fetch(`/api/invoice/schedules?id=${encodeURIComponent(scheduleId)}`, { method: 'DELETE' })
       if (res.ok) {
-        showToast('Herhalen gestopt — klaarstaande concepten blijven staan')
+        showToast(t('lijst.herhalen.gestopt'))
         await loadSchedules()
       } else {
         const j = await res.json().catch(() => ({}))
-        showToast(j?.detail || 'Stoppen mislukt')
+        showToast(j?.detail || t('lijst.fout.stoppen'))
       }
-    } catch { showToast('Stoppen mislukt') }
+    } catch { showToast(t('lijst.fout.stoppen')) }
   }
 
   // [HERHAAL] Pause is the button an owner actually reaches for. A customer goes quiet for a
@@ -738,14 +752,14 @@ export default function FacturenClient({
         const res = await fetch(`/api/invoice/${id}`, { method: 'DELETE' })
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
-          showToast(json?.error || 'Verwijderen mislukt — ververs de pagina')
+          showToast(json?.error || t('lijst.fout.verwijderenVervers'))
           await refresh()
           return
         }
         removeOptimistic(id)
-        showToast('Verwijderd')
+        showToast(t('lijst.verwijderd'))
       } catch {
-        showToast('Geen verbinding — verwijderen niet gelukt')
+        showToast(t('lijst.fout.verwijderenOffline'))
       } finally {
         setProcessingId(null)
       }
@@ -760,13 +774,13 @@ export default function FacturenClient({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // The server checked the same rules against fresher data and said no. Show ITS reason.
-        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
         await refresh()
         return
       }
       setArchivedTick(t => t + 1) // the archief list is the undo — keep it current
       if (decision.mode === 'restore') {
-        showToast('Teruggezet')
+        showToast(t('lijst.teruggezet'))
       } else {
         removeOptimistic(id)
         // Consequences the row could not show: a filed BTW quarter that now differs, a bundled
@@ -776,7 +790,7 @@ export default function FacturenClient({
       }
       await refresh()
     } catch {
-      showToast('Verwijderen mislukt — probeer opnieuw')
+      showToast(t('lijst.fout.verwijderen'))
     } finally {
       setProcessingId(null)
     }
@@ -803,7 +817,7 @@ export default function FacturenClient({
         showToast(typeof json?.error === 'string' && json.error ? json.error : 'Versturen lukte niet.')
       }
     } catch {
-      showToast('Versturen lukte niet. Probeer het zo meteen opnieuw.')
+      showToast(t('lijst.fout.versturenStraks'))
     } finally {
       setProcessingId(null)
     }
@@ -817,9 +831,9 @@ export default function FacturenClient({
       .eq('id', invoiceId)
       .single()
 
-    if (!inv) { showToast('Factuur niet gevonden'); return }
-    if (!inv.client_email) { showToast('Klant e-mail ontbreekt'); return }
-    if (!inv.client_name)  { showToast('Klant naam ontbreekt'); return }
+    if (!inv) { showToast(t('lijst.fout.nietGevonden')); return }
+    if (!inv.client_email) { showToast(t('lijst.fout.klantEmail')); return }
+    if (!inv.client_name)  { showToast(t('lijst.fout.klantNaam')); return }
     // [BOEK-029 v2] invoice_number check REMOVED — generated by /api/invoice/send
     // Drafts may have null invoice_number until sent. — May 2026
 
@@ -895,7 +909,7 @@ export default function FacturenClient({
     } catch {
       // [BOEK-RESEND] rollback to original status on network failure too
       updateOptimistic(ctx.id, { status: ctx.prevStatus })
-      showToast('Verzenden mislukt — controleer je verbinding')
+      showToast(t('lijst.fout.verbinding'))
     } finally {
       setProcessingId(null)
     }
@@ -947,7 +961,7 @@ export default function FacturenClient({
                 {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
               </button>
               {/* Refresh */}
-              <button onClick={refresh} aria-label="Vernieuwen" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button onClick={refresh} aria-label={t('lijst.vernieuwen')} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
               </button>
             </div>
@@ -957,19 +971,19 @@ export default function FacturenClient({
               [SMART-FILTER] …and the amount: the server query below also matches
               total_inc_btw, so the placeholder names "bedrag" too. */}
           <div style={{ position: 'relative', marginBottom: 10 }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Zoek op factuurnummer, klant of bedrag…"
-              aria-label="Facturen zoeken"
+              placeholder={t('lijst.zoek')}
+              aria-label={t('lijst.zoek.aria')}
               style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
             />
             {search && (
               <button
                 onClick={() => setSearch('')}
-                aria-label="Zoekopdracht wissen"
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
+                aria-label={t('lijst.zoek.wissen')}
+                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
               </button>
@@ -1039,17 +1053,17 @@ export default function FacturenClient({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, fontFamily: FONT }}>
-                Terugkerende facturen
+                {t('lijst.herhalen')}
               </span>
             </div>
             <div style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.5, marginBottom: 10, fontFamily: FONT }}>
-              De app zet het concept klaar; versturen blijft aan jou.
+              {t('lijst.herhalen.uitleg')}
             </div>
             {scheduleList.map(sc => (
               <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderTop: '1px solid #F1F3F4' }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: sc.active ? M3.onSurface : '#5F6368', fontFamily: FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {sc.source?.client_name ?? 'Onbekende klant'}
+                    {sc.source?.client_name ?? t('lijst.onbekendeKlant')}
                   </div>
                   <div style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT }}>
                     {sc.active
@@ -1067,7 +1081,7 @@ export default function FacturenClient({
                   <button
                     onClick={() => stopRepeat(sc.id)}
                     style={{ fontSize: 12.5, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
-                    Stop
+                    {t('lijst.herhalen.stopKort')}
                   </button>
                 </div>
               </div>
@@ -1087,7 +1101,7 @@ export default function FacturenClient({
             // "searching" state, never a false "Geen facturen" while matches
             // may exist further back.
             <p style={{ textAlign: 'center', color: '#5F6368', fontSize: 14, padding: '48px 16px', fontFamily: FONT }}>
-              Zoeken in oudere facturen…
+              {t('lijst.zoek.ouder')}
             </p>
           ) : <EmptyState />
         ) : (
@@ -1186,9 +1200,9 @@ export default function FacturenClient({
                             // [BANK-RECON-CONFIRM] Book a safe (reference-backed) match in one tap;
                             // an amount-only match ('navigate') opens the bank page to review.
                             const r = await confirmMatch(id)
-                            if (r === 'ok') { showToast('Betaling bevestigd ✓'); refresh() }
+                            if (r === 'ok') { showToast(t('lijst.betalingBevestigd')); refresh() }
                             else if (r === 'navigate') router.push('/dashboard/bank')
-                            else showToast('Bevestigen mislukt — probeer het op de Bank-pagina')
+                            else showToast(t('lijst.fout.bevestigen'))
                           }} />
                         )}
                         {xq && (
@@ -1226,7 +1240,7 @@ export default function FacturenClient({
                             border: '1px solid #DADCE0', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
                           }}
                         >
-                          Gecrediteerd
+                          {t('lijst.gecrediteerd')}
                         </span>
                       )}
 
@@ -1268,7 +1282,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Versturen</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {t('lijst.versturen')}</>}
                         </button>
                       )}
 
@@ -1313,7 +1327,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Omzetten naar factuur</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {t('lijst.omzetten')}</>}
                         </button>
                       )}
 
@@ -1328,7 +1342,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>forward_to_inbox</span> Opnieuw versturen</>}
+                            : <><span className="material-symbols-outlined icon-dir" style={{ fontSize: 14 }}>forward_to_inbox</span> {t('lijst.opnieuwVersturen')}</>}
                         </button>
                       )}
 
@@ -1361,7 +1375,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.successContainer, color: '#137333', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> Betaald</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> {t('lijst.betaald')}</>}
                         </button>
                       )}
 
@@ -1384,8 +1398,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: isPaid ? M3.successContainer : '#FEF7E0', color: isPaid ? '#137333' : '#EA8600' }}>
                           {processingId === inv.id ? '...'
-                            : isPaid ? '✓ Voldaan'
-                            : 'Voldaan!'}
+                            : isPaid ? `✓ ${t('lijst.voldaan')}`
+                            : t('lijst.voldaanActie')}
                         </button>
                       )}
 
@@ -1422,7 +1436,7 @@ export default function FacturenClient({
                             )
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer }}>
-                          Maak factuur aan
+                          {t('lijst.maak')}
                         </button>
                       )}
                     </div>
@@ -1440,7 +1454,7 @@ export default function FacturenClient({
                         onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
                         disabled={processingId === inv.id}
                         aria-label={`Factuur ${inv.invoice_number ?? ''} verwijderen`}
-                        title="Verwijderen"
+                        title={t('lijst.verwijderen')}
                         style={{
                           flexShrink: 0, marginInlineStart: 2, width: 34, height: 34, borderRadius: R.full,
                           border: 'none', background: 'transparent', color: '#9AA0A6',
@@ -1465,7 +1479,7 @@ export default function FacturenClient({
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
-                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDate(inv.due_date)} />}
+                        {inv.due_date && <InfoLine label={t('lijst.vervaldatum')} value={fmtDate(inv.due_date)} />}
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -1511,7 +1525,7 @@ export default function FacturenClient({
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          Openen
+                          {t('lijst.openen')}
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>open_in_new</span>
                         </button>
                       </div>
@@ -1618,7 +1632,7 @@ export default function FacturenClient({
         }}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
-        Nieuwe factuur
+        {t('lijst.nieuw')}
       </button>}
 
       {/* ── [BUNDEL-BETAALVERZOEK] Share modal — one link + QR for the whole set ── */}
@@ -1627,7 +1641,7 @@ export default function FacturenClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setBundle(null)}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
@@ -1663,7 +1677,7 @@ export default function FacturenClient({
 
             <button onClick={() => setBundle(null)}
               style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: `1px solid ${M3.surfaceVariant}`, cursor: 'pointer', fontFamily: FONT }}>
-              Sluiten
+              {t('lijst.sluiten')}
             </button>
           </div>
         </div>
@@ -1748,7 +1762,7 @@ export default function FacturenClient({
           onClick={() => setRepeatCtx(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
@@ -1783,7 +1797,7 @@ export default function FacturenClient({
                   onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
                   style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
                 >
-                  Stoppen met herhalen
+                  {t('lijst.herhalen.stop')}
                 </button>
               </>
             ) : (
@@ -1813,7 +1827,7 @@ export default function FacturenClient({
               onClick={() => setRepeatCtx(null)}
               style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
             >
-              Annuleren
+              {t('lijst.annuleren')}
             </button>
           </div>
         </div>
@@ -1890,12 +1904,12 @@ export default function FacturenClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setVerwerktCtx(null)}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
-              Factuur is verwerkt
+              {t('lijst.verwerkt')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
               {requestSent
@@ -1908,14 +1922,14 @@ export default function FacturenClient({
                   onClick={requestUnverwerkt}
                   style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
                 >
-                  Stuur verzoek naar boekhouder
+                  {t('lijst.boekhouder.stuur')}
                 </button>
               )}
               <button
                 onClick={() => setVerwerktCtx(null)}
                 style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
               >
-                Sluiten
+                {t('lijst.sluiten')}
               </button>
             </div>
           </div>
@@ -1975,6 +1989,8 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // and not a pre-filled value: pre-filling would force a phone user to wipe "€ 1.000,00"
   // before typing, and a formatted string is exactly what a naive parser chokes on.
   const [amountText, setAmountText] = useState('')
+  const taal = useLocale()
+  const t = translator(taal)
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
   // [CASH-INSTALMENT] Cash may now settle PART of an invoice too. It could not before: the
   // kasboek held one settlement entry per invoice, so two cash handovers collapsed into one
@@ -1988,7 +2004,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
       onClick={onCancel}
       style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={e => e.stopPropagation()}
         style={{
           background: '#ffffff',
@@ -2030,7 +2046,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {/* [PAY-DATE-SANE] A floor beside the ceiling, on the same date field the purchase
                 side has. Both only bound the picker — /api/invoice/pay-toggle is what refuses an
                 impossible day, for every caller. */}
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>{t('lijst.betaaldatum')}</label>
             {/* [DATE-NL] See the sibling dialog on /dashboard/incoming/manage — same field, same
                 reason: the browser's locale decides a native date input's segment order, and this
                 one picks the BTW quarter. */}
@@ -2040,7 +2056,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 min={PAYMENT_DATE_FLOOR}
                 max={amsterdamToday()}
                 onChange={setPaymentDate}
-                aria-label="Betaaldatum"
+                aria-label={t('lijst.betaaldatum')}
               />
             </div>
 
@@ -2051,7 +2067,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {entry && openBalance != null && (
               <>
                 <label htmlFor="betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
-                  Betaald bedrag
+                  {t('lijst.betaaldBedrag')}
                 </label>
                 <input
                   id="betaald-bedrag"
@@ -2085,7 +2101,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
-                Bank
+                {t('lijst.bank')}
               </button>
               {/* [CASH-INSTALMENT] Contant accepts a PARTIAL amount now. It used to be refused
                   because the kasboek held one settlement entry per invoice, so two cash handovers
@@ -2099,10 +2115,10 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
-                Contant
+                {t('lijst.contant')}
               </button>
             </div>
-            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
           </>
         ) : (
           <>
@@ -2112,7 +2128,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {alternative && (
               <button onClick={alternative.onClick} style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{alternative.label}</button>
             )}
-            <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+            <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
           </>
         )}
       </div>
@@ -2121,11 +2137,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
 }
 
 function EmptyState() {
+  const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen facturen</p>
-      <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Maak je eerste factuur aan</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('lijst.leeg')}</p>
+      <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>{t('lijst.leeg.eerste')}</p>
     </div>
   )
 }

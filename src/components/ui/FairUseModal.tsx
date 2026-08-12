@@ -45,7 +45,7 @@ export default function FairUseModal({
         padding: 0,
       }}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={e => e.stopPropagation()}
         style={{
           backgroundColor: 'white',

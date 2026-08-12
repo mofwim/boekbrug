@@ -75,6 +75,12 @@ The `[TAAL]` gates in `lifecycle-gates.test.ts` enforce the mechanical half of t
 stays importable, every key used exists, every key declared is rendered, and the translated panel
 carries no Dutch of its own.
 
+**The accountant module (`src/modules/accountant/`) is deliberately Dutch-only.** Its user is the
+boekhouder — a Dutch professional reading Dutch administraties under Dutch law. The owner's
+language setting describes the OWNER, and applying it to the accountant's screens would translate
+an interface for someone who never chose a language. If a non-Dutch accountant ever becomes a real
+audience, that is a product decision first and a translation second.
+
 # More than one session works on this repo
 
 `main` moves while you work: another session merges its own branch, and sometimes it touches the

@@ -39,6 +39,9 @@
  * sent to the model contains no interpolation, because the moment an extracted value can reach it
  * this stops being an independent witness.
  */
+// [ANDER-TOTAAL] One parser for a printed amount, shared with every other surface.
+import { parseAmountNL } from './parse-nl'
+
 export const OCR_AMOUNTS_PROMPT = [
   'Lees dit document en schrijf ALLE bedragen op die je ziet staan.',
   '',
@@ -105,3 +108,29 @@ export function ocrAmountCount(haystack: string | null): number {
 
 /** Below this many transcribed amounts we do not trust the transcription as a search space. */
 export const MIN_OCR_AMOUNTS = 2
+
+/**
+ * The transcribed amounts as NUMBERS.
+ *
+ * [ANDER-TOTAAL] The haystack exists to be searched, and until now that was all it was used for:
+ * "is the total we read printed anywhere on this page?" — yes or no, and then thrown away. When the
+ * answer is no, these same tokens are the only description the app has of what the page ACTUALLY
+ * says, and they are what let it offer the owner a total instead of sending them to find the paper.
+ *
+ * parseAmountNL, not a second parser: a supplier prints 1.160,68 or 1,160.68 or 1160.68 depending
+ * on whose template it is, and that module already decides which separator is the decimal. A local
+ * copy here would be a second answer to a question this app has answered once.
+ */
+export function ocrAmountValues(haystack: string | null | undefined): number[] {
+  if (!haystack) return []
+  const out: number[] = []
+  for (const line of haystack.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    const n = parseAmountNL(t)
+    // parseAmountNL answers 0 for anything it cannot read, and a printed 0,00 is not a number this
+    // is looking for either — no totals block is built out of one.
+    if (Number.isFinite(n) && Math.abs(n) >= 0.005) out.push(Math.abs(n))
+  }
+  return out
+}

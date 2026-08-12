@@ -29,6 +29,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { formatInvoiceNumber } from './invoice-template'
+// [NUMMER-JAAR]/[NUMMER-SLOT] One clock and one counter-key rule, shared with the numbering lock.
+import { amsterdamYear } from './format-nl'
+import { counterYearFor } from './numbering-lock'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 
@@ -123,8 +126,13 @@ export async function generateInvoiceNumber(
   userId: string,
   type: InvoiceNumberType
 ): Promise<string> {
-  // Server year — matches the prior implementation's behavior exactly.
-  const year = new Date().getFullYear()
+  // [NUMMER-JAAR] The OWNER's year, not the server's. `new Date().getFullYear()` stood here and is
+  // UTC: between 23:00 UTC on 31 December and midnight the Netherlands is already in the new year
+  // while the server is not. For that hour this function drew from the CLOSED year's counter and
+  // printed the closed year on the document — so the new year's series started at 2, which is a gap
+  // under Article 35, on an invoice reading 20260123 above a date of 1 January 2027. format-nl.ts
+  // has said this since [TZ]; the numbering line was the last place still asking the server.
+  const year = amsterdamYear()
 
   const format = await resolveFormat(supabase, userId, type)
   if (!format) return '' // see [NUMBER-READ-HONEST] — never number from an unknown scheme
@@ -132,7 +140,9 @@ export async function generateInvoiceNumber(
 
   // {year} in the template => yearly reset (key by the calendar year);
   // {year} absent          => continuous numbering (key by the 0 sentinel).
-  const counterYear = template.includes('{year}') ? year : 0
+  // Shared with the LOCK in /api/invoice/numbering, so the two cannot drift into different answers
+  // about which counter a template draws from.
+  const counterYear = counterYearFor(template, year)
 
   // Atomic allocation — single source of truth, no SELECT-then-compute window.
   const { data, error } = await supabase.rpc('next_invoice_seq', {

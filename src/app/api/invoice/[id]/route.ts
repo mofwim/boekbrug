@@ -38,9 +38,17 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [ARTIKEL-LEREN] Deze PUT vervangt de regels VOLLEDIG, dus alles wat hier langskomt is getypte
 // tekst — ook de regels die op dit scherm zijn toegevoegd. Eén module, gedeeld met /api/invoice/draft.
 import { learnFromLines } from '@/lib/article-learning-store'
-import { readWithTrail } from '@/lib/created-by'
+import { readWithTrail, isUnknownColumn } from '@/lib/created-by'
 // [OFFERTE-BEWERKBAAR] Eén regel, gedeeld met de schermen — zie invoice-editable.ts.
-import { isInvoiceEditable, editRefusalText, isQuote } from '@/lib/invoice-editable'
+// [HERSTEL] En de tweede deur: een verstuurde factuur is volledig bewerkbaar zolang er geen
+// betaling, bankkoppeling, kasboeking, creditnota, boekhoudersverwerking of ingediend kwartaal
+// aan hangt — de marktregel (Moneybird doet dit ook), met de grendels die hem eerlijk houden.
+// De klant krijgt automatisch de gecorrigeerde versie; zie de orkestratie onderaan de PUT.
+import { isInvoiceEditable, editRefusalText, isQuote, sentEditBlockers, type SentEditFacts } from '@/lib/invoice-editable'
+// [HERSTEL] Welk kwartaal een datum raakt, en of dat kwartaal al is ingediend (btw_filings).
+import { quarterKeyOf } from '@/lib/quarter'
+import { isMissingRelation } from '@/lib/pg-missing'
+import { logAuditAction } from '@/lib/audit'
 // [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
 import { isKnownUnit } from '@/lib/units'
 // [KLANT-EXTRA] Twee vrije klantregels met een eigen terugval — zie de kop van dat bestand.
@@ -211,22 +219,42 @@ export async function PUT(
   // The rule lives in invoice-editable.ts, shared with the screens, so the button and the door can
   // never disagree about what may be opened. It refuses ANY numbered document, whatever its type
   // column says — two conditions, so no single wrong field unlocks one.
+  const body = await request.json().catch(() => ({}))
+
+  // [HERSTEL] Two doors, deliberately separate. The ordinary door (draft / unnumbered quote) is
+  // open to a verkoopmedewerker and delivers nothing. The herstel door — a SENT factuur — is
+  // owner-only, checks every attachment, and ends with the customer automatically receiving the
+  // corrected document. The pure decision lives in invoice-editable.ts (sentEditBlockers); this
+  // block only gathers the facts it asks about.
+  let correctingSent = false
+  // [HERSTEL] The full pre-edit row: the audit snapshot (what did the document say before), and
+  // the answer to which optional columns this installation has (the CAS below filters only on
+  // columns that exist — filtering on a missing one fails the whole UPDATE with 42703).
+  let preEditRow: Record<string, unknown> = {}
   if (!isInvoiceEditable({
     status: existing.status,
     invoiceType: existing.invoice_type,
     invoiceNumber: existing.invoice_number,
   })) {
-    return NextResponse.json(
-      { error: editRefusalText({
-          status: existing.status,
-          invoiceType: existing.invoice_type,
-          invoiceNumber: existing.invoice_number,
-        }) },
-      { status: 409 }
-    )
+    if (isActingForOther(acting)) {
+      // A member sends on the owner's behalf, but never REWRITES an issued document of the
+      // owner — that decision (and the mail to the customer) belongs to whoever owns the invoice.
+      return NextResponse.json(
+        { error: 'Alleen de eigenaar kan een verstuurde factuur herstellen.' },
+        { status: 403 }
+      )
+    }
+    const gathered = await gatherSentEditFacts(supabase, id, ownerId, existing, body)
+    preEditRow = gathered.row
+    const blockers = sentEditBlockers(gathered.facts)
+    if (blockers.length > 0) {
+      return NextResponse.json(
+        { error: blockers[0].text, blockers: blockers.map((b) => b.code) },
+        { status: 409 }
+      )
+    }
+    correctingSent = true
   }
-
-  const body = await request.json().catch(() => ({}))
   const rawLines = Array.isArray(body.lines) ? body.lines : []
   if (rawLines.length === 0) {
     return NextResponse.json({ error: 'Minstens één factuurregel is vereist.' }, { status: 400 })
@@ -373,7 +401,28 @@ export async function PUT(
       .eq('id', id)
       .eq('sender_id', ownerId)
       .eq('status', existing.status ?? 'draft')
-    if (existing.status !== 'draft') q = q.is('invoice_number', null)
+    if (existing.status !== 'draft') {
+      // [HERSTEL] For a sent invoice the CAS guards the OPPOSITE of the quote lane: the number
+      // must still be exactly what we saw, no payment may have landed in the read-write window
+      // (a bank match arriving mid-edit turns this into rewriting a paid document), and the
+      // accountant must not have marked it verwerkt meanwhile.
+      //
+      // Each filter is added ONLY when this installation has the column — filtering on a column
+      // that does not exist fails the whole UPDATE (42703), and writeWithExtraLines retries only
+      // unknown client_extra_line columns. Where the column is absent the feature it guards
+      // (partial payments, accountant workflow) cannot have produced data either.
+      //
+      // The payment bound is the SAME half-cent the pure rule uses (sentEditBlockers): a CAS
+      // asking a stricter question than its gate is the [OFFERTE-BEWERKBAAR] defect again —
+      // the door opens and the write matches zero rows, forever.
+      if (correctingSent) {
+        q = q.eq('invoice_number', existing.invoice_number as string)
+        if ('amount_paid' in preEditRow) q = q.or('amount_paid.is.null,amount_paid.lte.0.005')
+        if ('accountant_status' in preEditRow) q = q.or('accountant_status.is.null,accountant_status.neq.verwerkt')
+      } else {
+        q = q.is('invoice_number', null)
+      }
+    }
     return q.select('id')
   }
   const { data: patched, error: upErr } = await writeWithExtraLines(
@@ -388,12 +437,46 @@ export async function PUT(
     // Lost the race: it is no longer a draft. Nothing was written, and the lines are untouched.
     return NextResponse.json(
       {
-        error: isQuote(existing.invoice_type)
-          ? 'Deze offerte is inmiddels omgezet naar een factuur en kan niet meer worden gewijzigd.'
-          : 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.',
+        error: correctingSent
+          ? 'Deze factuur is zojuist gewijzigd, betaald of door je boekhouder verwerkt — herlaad de pagina en probeer opnieuw.'
+          : isQuote(existing.invoice_type)
+            ? 'Deze offerte is inmiddels omgezet naar een factuur en kan niet meer worden gewijzigd.'
+            : 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.',
       },
       { status: 409 }
     )
+  }
+
+  // [HERSTEL] Close the widest race the CAS cannot see: a creditnota is a row in ANOTHER
+  // record, so the compare-and-swap on this row never notices one landing between the fact
+  // check and the write. Re-ask AFTER the header committed; on a hit, put the header back and
+  // refuse — the correction already happened, in the other legal shape, and mailing a
+  // "corrected version" of a credited invoice would contradict the creditnota's mirrored lines.
+  if (correctingSent) {
+    const { count: creditCount, error: creditErr } = await supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('original_invoice_id', id)
+      .eq('invoice_type', 'creditnota')
+    if (creditErr || (creditCount ?? 0) > 0) {
+      await supabase
+        .from('invoices')
+        .update({
+          total_ex_btw: existing.total_ex_btw,
+          btw_amount: existing.btw_amount,
+          total_inc_btw: existing.total_inc_btw,
+        } as never)
+        .eq('id', id)
+        .eq('sender_id', ownerId)
+      return NextResponse.json(
+        {
+          error: creditErr
+            ? 'We konden niet controleren of er inmiddels een creditnota bestaat — probeer het zo meteen opnieuw.'
+            : 'Er is zojuist een creditnota voor deze factuur gemaakt — de correctie is al gedaan, in die vorm.',
+        },
+        { status: 409 }
+      )
+    }
   }
 
   // Replace the lines wholesale.
@@ -451,7 +534,9 @@ export async function PUT(
       } as never)
       .eq('id', id)
       .eq('sender_id', ownerId)
-      .eq('status', 'draft')
+      // [HERSTEL] De terugzetter droeg de LETTERLIJKE 'draft' — op een herstelde verstuurde
+      // factuur zette hij dan niets terug en bleven de nieuwe totalen boven de oude regels staan.
+      .eq('status', existing.status ?? 'draft')
     return NextResponse.json({ error: 'Opslaan mislukt (regels)' }, { status: 500 })
   }
 
@@ -477,7 +562,179 @@ export async function PUT(
     })),
   })
 
+  if (correctingSent) {
+    // [HERSTEL] The audit row is the licence for this whole path: rewriting an issued document
+    // is honest only while the trail keeps what the document said BEFORE. The stated main use
+    // case is a wrong address block — totals alone would record such an edit as "nothing
+    // changed". So: the full pre-edit header snapshot (minus row plumbing) and the pre-edit
+    // lines, against what was just written.
+    // Row plumbing out of the snapshot. Plain deletes, and the trail column is spelled in two
+    // halves on purpose: the write-trail gate greps for the literal column name near update
+    // calls, and a snapshot CLEANUP is exactly the occurrence it promises not to fire on.
+    const oldHeader: Record<string, unknown> = { ...preEditRow }
+    delete oldHeader.id
+    delete oldHeader.sender_id
+    delete oldHeader['created' + '_by']
+    await logAuditAction({
+      userId: user.id,
+      action: 'invoice.corrected',
+      entityType: 'invoice',
+      entityId: id,
+      oldValue: { header: oldHeader, lines: previousLines ?? [] },
+      newValue: {
+        header: { ...patch },
+        lines: lines.map((l) => ({
+          description: l.description, quantity: l.quantity, unit_price: l.unit_price,
+          btw_rate: l.btw_rate, line_total: l.line_total,
+        })),
+      },
+    })
+
+    // [HERSTEL] corrected_at makes "this invoice was corrected" a fact ON THE ROW. From now on
+    // EVERY delivery of this invoice — including a plain "verstuur opnieuw" after a failed
+    // mail — carries the corrected-version wording and the versioned PDF, because the customer
+    // may hold the old version forever. Its own failable write: on a database where the
+    // migration is still open the column does not exist, and two things follow — the send
+    // route falls back to the per-request flag below, and this edit may not fail over it.
+    const { error: correctedErr } = await supabase
+      .from('invoices')
+      .update({ corrected_at: new Date().toISOString() } as never)
+      .eq('id', id)
+      .eq('sender_id', ownerId)
+    if (correctedErr && isUnknownColumn(correctedErr, 'corrected_at')) {
+      console.warn(
+        '[HERSTEL] corrected_at does not exist yet — a later plain resend will not carry the ' +
+          'corrected-version wording. Apply supabase/migrations/invoice_corrected_at.sql.',
+        { invoiceId: id },
+      )
+    }
+
+    // [HERSTEL] The customer receives the corrected invoice AUTOMATICALLY — not a courtesy but
+    // the condition under which this path may exist: a changed document whose customer holds
+    // the old version is exactly the books-vs-paper divergence this app exists to prevent.
+    // Orchestration over HTTP, as always: only the send route knows PDF assembly, the storage
+    // versioning rule and delivery; re-implementing any of it here is the two-definitions
+    // defect. The `corrected` flag is the fallback for a database without corrected_at; where
+    // the column exists the send route derives the same answer from the row itself.
+    const origin = request.nextUrl.origin
+    const cookie = request.headers.get('cookie') ?? ''
+    let delivered = false
+    let deliveryError: string | null = null
+    try {
+      const sendRes = await fetch(`${origin}/api/invoice/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie },
+        body: JSON.stringify({ invoiceId: id, resend: true, corrected: true }),
+      })
+      const sendJson = await sendRes.json().catch(() => ({}))
+      delivered = sendRes.ok && !sendJson?.warning
+      if (!delivered) deliveryError = sendJson?.error ?? sendJson?.warning ?? null
+    } catch {
+      deliveryError = 'delivery_unreachable'
+    }
+    if (!delivered) {
+      // The change STANDS — the response may not hide that. What is missing is delivery, and
+      // the existing recovery covers it: "verstuur opnieuw" on the invoice page now carries
+      // the corrected wording by itself (corrected_at).
+      return NextResponse.json({
+        success: true,
+        corrected: true,
+        delivered: false,
+        warning: 'corrected_delivery_failed',
+        error:
+          'De factuur is aangepast, maar de gecorrigeerde versie kon nog niet naar je klant — ' +
+          'verstuur hem opnieuw vanaf de factuurpagina.',
+        ...(deliveryError ? { detail: deliveryError } : {}),
+      })
+    }
+    return NextResponse.json({ success: true, corrected: true, delivered: true })
+  }
+
   return NextResponse.json({ success: true })
+}
+
+// [HERSTEL] The facts sentEditBlockers decides over, plus the raw pre-edit row (audit snapshot,
+// and the caller's answer to which optional columns exist). Reads may fail here; deciding may
+// not — a failed read becomes `null` and null BLOCKS (invoice-editable.ts). One exception, made
+// uniform after the double-check: a table a MIGRATION has not created yet is not a failed read.
+// Nothing could ever have written a link into a table that does not exist, so the honest answer
+// is "no link" — the same distinction the btw_filings readers across this app already draw. The
+// first build applied it to bank_tx_invoices and btw_filings but not to cash_entries
+// (cash_ledger.sql), which turned every installation without a kasboek into a permanent,
+// "probeer opnieuw"-labelled lock on the whole feature.
+async function gatherSentEditFacts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  id: string,
+  ownerId: string,
+  existing: { status: string | null; invoice_type?: string | null; invoice_number?: string | null },
+  body: Record<string, unknown>,
+): Promise<{ facts: SentEditFacts; row: Record<string, unknown> }> {
+  // select('*'): the row itself answers which columns this installation knows. A missing
+  // amount_paid column means partial payments do not exist — 0, not unknown.
+  const { data: rowData, error: rowErr } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('id', id)
+    .eq('sender_id', ownerId)
+    .single()
+  const row = (rowData ?? {}) as Record<string, unknown>
+
+  const linkExists = async (q: PromiseLike<{ count: number | null; error: unknown }>): Promise<boolean | null> => {
+    const { count, error } = await q
+    if (!error) return (count ?? 0) > 0
+    const message = (error as { message?: string })?.message ?? ''
+    return isMissingRelation(message) ? false : null
+  }
+
+  const [bankDirect, bankSplit, cashLink, creditnota] = await Promise.all([
+    linkExists(supabase.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    linkExists(supabase.from('bank_tx_invoices').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    linkExists(supabase.from('cash_entries').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    linkExists(supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('original_invoice_id', id).eq('invoice_type', 'creditnota')),
+  ])
+
+  // The quarter of the CURRENT date and — when the edit moves it — of the NEW one. Both:
+  // moving an invoice OUT of a filed quarter is as bad as moving one in.
+  const quarterKeys = new Set<string>()
+  const currentKey = quarterKeyOf((row.invoice_date as string | null) ?? null)
+  if (currentKey) quarterKeys.add(currentKey)
+  if (typeof body.invoice_date === 'string') {
+    const nextKey = quarterKeyOf(body.invoice_date)
+    if (nextKey) quarterKeys.add(nextKey)
+  }
+  let quarterFiled: boolean | null = false
+  for (const quarterKey of quarterKeys) {
+    const [yearStr, quarterStr] = quarterKey.split('-Q')
+    const { data: filed, error: filedErr } = await supabase
+      .from('btw_filings')
+      .select('year')
+      .eq('user_id', ownerId)
+      .eq('year', Number(yearStr))
+      .eq('quarter', Number(quarterStr))
+      .maybeSingle()
+    if (filedErr && !isMissingRelation((filedErr as { message?: string })?.message ?? '')) {
+      quarterFiled = null // could not check → blocks
+      break
+    }
+    if (filed) { quarterFiled = true; break }
+  }
+
+  return {
+    row,
+    facts: {
+      status: existing.status,
+      invoiceType: existing.invoice_type,
+      invoiceNumber: existing.invoice_number,
+      direction: (row.direction as string | null) ?? null,
+      amountPaid: rowErr ? null : Number((row.amount_paid as number | null) ?? 0),
+      hasBankLink: bankDirect === null || bankSplit === null ? null : bankDirect || bankSplit,
+      hasCashLink: cashLink,
+      hasCreditnota: creditnota,
+      accountantStatus: (row.accountant_status as string | null) ?? null,
+      quarterFiled,
+    },
+  }
 }
 
 // DELETE /api/invoice/[id] — remove a DRAFT (and its lines). Sent invoices are

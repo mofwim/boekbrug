@@ -248,13 +248,26 @@ test("[ART35-READ-HONEST] an unreadable issued-count locks the numbering instead
   // `(issuedCount ?? 0) > 0` read a failed count as "this owner has issued nothing", so the
   // template and padding of a doorlopende reeks could be rewritten after numbers had gone out —
   // and the audit row that exists to prove the platform refused exactly that was skipped too.
+  //
+  // [NUMMER-SLOT] The lock is now TWO counts (invoice_date window + invoice number pattern), so
+  // this is asserted on the helper that owns both rather than on one destructure. Both errors must
+  // be read, and the helper's "unknown" must be a value the caller cannot mistake for zero.
   const src = code("src/app/api/invoice/numbering/route.ts");
-  assert.match(
-    src, /const \{ count: issuedCount, error: lockError \}/,
-    "the lock count dropped its error again — a database hiccup then reads as 'nobody has " +
-      "invoiced yet' and the art. 35 numbering lock opens",
+  const helper = src.slice(
+    src.indexOf("async function countIssuedForCounterYear"),
+    src.indexOf("export async function POST"),
   );
+  assert.ok(helper.length > 100, "the lock's counting helper is gone — the rule has nowhere to live");
+  assert.match(helper, /byDate\.error \|\| byNumber\.error/, "BOTH counts' errors must be read");
+  assert.match(helper, /return null/, "…and an unreadable count answers 'unknown', not a number");
+  // null, not 0 — the whole bug was a failed read that looked like an honest zero. `?? 0` anywhere
+  // on this value puts it straight back.
+  assert.doesNotMatch(src, /issuedCount \?\? 0/, "`?? 0` turns an unknown count back into 'nobody has invoiced'");
+  assert.match(src, /if \(issuedCount === null\)/, "the POST handler must refuse on unknown");
   assert.match(src, /code: 'lock_check_unavailable'/, "an unreadable count must refuse, not unlock");
+  // The GET card decides the same way. An open form shown on an unknown answer invites the owner
+  // into the 409 — or into believing there is no lock.
+  assert.match(src, /const locked = count === null \|\| count > 0/, "the GET card locks on unknown too");
 });
 
 test("[REREAD-CONFIRMED] the re-read predicate is given the columns it reads", () => {
@@ -2231,8 +2244,9 @@ test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () 
     "a contradicted e-invoice may never wear the reassuring badge",
   );
   // And the sentence tells the owner what it MEANS, not merely that it happened.
-  assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
-  assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
+  assert.match(ui, /t\('inkoop\.eFactuurUitleg', \{ syntax: e\.syntax \}\)/, "the tooltip must say what it is for");
+  // [TAAL] Pinned on the key — sixth gate that went red on translation alone.
+  assert.match(ui, /t\('inkoop\.cijfersLeverancier'\)/, "and the badge must be on the row");
 });
 
 // ── [DEEL-BEDRAG] The stated amount must REACH the database ──────────────────
@@ -3482,12 +3496,13 @@ test("[BETAALTERMIJN] the term is derived from the dates, and any term can be ty
 
   // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
   // prints. Showing a payment sentence there makes the screen contradict the document.
+  // [TAAL] Pinned on the key — fourth gate that went red on translation alone.
   assert.match(
-    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    edit, /\{quote \? \([\s\S]{0,400}?t\('bewerk\.geldigTot'\)/,
     "a quote states its validity, not a payment term",
   );
   assert.match(
-    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    edit, /\{!quote && \([\s\S]{0,200}?t\('nieuw\.termijn\.kort'\)/,
     "…and the term control is hidden there, so one field never means two things",
   );
 
@@ -3684,9 +3699,16 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
     route, /\.eq\('status', existing\.status \?\? 'draft'\)/,
     "…it guards on the status that was READ, which is what protects against a change in between",
   );
+  // [HERSTEL] The non-draft CAS forked: an unnumbered quote must STILL carry no number, and a
+  // herstel of a sent factuur must still carry exactly the number we saw plus zero payment.
+  // Both halves asserted — losing either reopens the [OFFERTE-BEWERKBAAR] defect for its lane.
   assert.match(
-    route, /if \(existing\.status !== 'draft'\) q = q\.is\('invoice_number', null\)/,
-    "…and a non-draft may only be written while it still carries no number",
+    route, /q = q\.is\('invoice_number', null\)/,
+    "…a non-draft QUOTE may only be written while it still carries no number",
+  );
+  assert.match(
+    route, /q\.eq\('invoice_number', existing\.invoice_number as string\)/,
+    "…and a HERSTEL only while the row still carries the number we saw",
   );
 
   // [KLANT-EXTRA] The update is now RETRIED when the two customer lines name a column the schema
@@ -3699,7 +3721,11 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
   );
   assert.ok(runPatch.length > 0, "the patch is no longer built in a re-runnable function");
   assert.match(runPatch, /\.eq\('status', existing\.status \?\? 'draft'\)/, "the retry keeps the status lock");
-  assert.match(runPatch, /q = q\.is\('invoice_number', null\)/, "…and the number lock");
+  // [HERSTEL] The lock forked per lane but must stay INSIDE the retried closure: no number for a
+  // quote, the SEEN number plus zero payment for a herstel.
+  assert.match(runPatch, /\.is\('invoice_number', null\)/, "…and the quote's number lock");
+  assert.match(runPatch, /\.eq\('invoice_number', existing\.invoice_number as string\)/, "…and the herstel's number lock");
+  assert.match(runPatch, /amount_paid\.is\.null,amount_paid\.lte\.0\.005/, "…and the herstel's payment lock (same half cent as the rule)");
   assert.match(
     route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
     "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
@@ -3764,11 +3790,13 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
     quoteButton.length > 100 && quoteButton.length < 2400,
     `the slice must be that ONE button — it is ${quoteButton.length} chars`,
   );
-  assert.match(quoteButton, /Omzetten naar factuur/, "the label states the act");
+  // [TAAL] Pinned on the KEY — third gate that went red on translation, same lesson as
+  // [ARTIKEL-CODE]: a gate written against one language fails the day the app gains a second.
+  assert.match(quoteButton, /t\('lijst\.omzetten'\)/, "the label states the act");
   assert.doesNotMatch(
-    quoteButton, /> Versturen</,
-    "…and not the expectation. A bare 'Versturen' on a quote promises to send a quote and issues " +
-      "a numbered invoice instead",
+    quoteButton, /> Versturen<|t\('lijst\.versturen'\)/,
+    "…and not the expectation. A bare 'send' on a quote promises to send a quote and issues " +
+      "a numbered invoice instead — in any language",
   );
 
   assert.match(
@@ -4498,8 +4526,9 @@ test("[LEVERDATUM] the edit path can read, show and write the delivery date", ()
 
   const screen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
   assert.match(screen, /setDeliveryDate\(/, "the screen must load the stored value");
+  // [TAAL] Pinned on the key — fifth gate that went red on translation alone.
   assert.match(
-    screen, /aria-label="Leverdatum"/,
+    screen, /aria-label=\{t\('nieuw\.datum\.lever'\)\}/,
     "…and offer a field to correct it, or the allowlist entry has no way to be used",
   );
   // Sent on BOTH save paths. The second one is the dangerous one: it saves and then issues a
@@ -5068,8 +5097,9 @@ test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of
     sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \(\n\s*<iframe/,
     "the iframe branch must exclude structured files, not merely be preceded by one",
   );
-  // The source is not hidden — it stops being the default view.
-  assert.match(sheet, /Openen in nieuw tabblad/, "the escape hatch stays");
+  // The source is not hidden — it stops being the default view. [TAAL] Asserted on the KEY, not
+  // the Dutch sentence: a gate written against one language fails the day the app gains a second.
+  assert.match(sheet, /t\('dsh\.nieuwTabblad'\)/, "the escape hatch stays");
 
   // The route sends the kind, from the same function, so the two cannot disagree about a format.
   const route = code("src/app/api/email/file/[id]/route.ts");
@@ -5525,7 +5555,7 @@ const EXTRA_FORMS = [
   "src/app/dashboard/invoice/[id]/edit/page.tsx",
 ] as const;
 /** The state names, in the order they print. A fourth line costs one entry here and nowhere else. */
-const EXTRA_STATE = ["clientExtra1", "clientExtra2", "clientExtra3"] as const;
+const EXTRA_STATE = ["clientExtra1", "clientExtra2", "clientExtra3", "clientExtra4"] as const;
 
 test("[KLANT-EXTRA] both invoice screens put the three lines directly after the customer name", () => {
   for (const f of EXTRA_FORMS) {
@@ -5601,6 +5631,50 @@ test("[KLANT-EXTRA] every route that rebuilds the customer snapshot carries the 
   }
 });
 
+test("[KLANT-EXTRA] every reader of the customer block reads the SAME three lines", () => {
+  // The write side was covered from day one; the READ side is where this feature silently
+  // halved. Three surfaces show the customer block of one invoice, and for weeks two of them
+  // did not know the lines existed: the detail screen showed an AAN block that contradicted
+  // the PDF (the owner concludes their "t.a.v." was lost), and the e-factuur XML went to the
+  // customer's booking system without the very reference that system matches on. One read
+  // definition — clientExtraLines — for all three, so a fourth line, a new trim rule or a
+  // new length ceiling lands everywhere at once.
+  const READERS = [
+    "src/lib/invoice-pdf.tsx", // the legal document
+    "src/app/dashboard/invoice/[id]/page.tsx", // the owner's own view of it
+    "src/lib/ubl-export.ts", // the same document as XML
+  ] as const;
+  for (const f of READERS) {
+    assert.match(
+      code(f), /clientExtraLines\(/,
+      `${f} renders the customer block but not the extra lines — it contradicts the document`,
+    );
+  }
+  // And the UBL ROUTE must fetch them, or the builder reads keys that were never selected.
+  // In its own failable read (the cron's pattern): the main select names its columns and may
+  // not fail on a database where the migration is still open.
+  const route = code("src/app/api/export/ubl/route.ts");
+  assert.match(route, /CLIENT_EXTRA_LINE_COLUMNS\.join/, "the UBL route never fetches the lines");
+  assert.doesNotMatch(
+    route,
+    /INVOICE_SELECT\s*=[^;]*client_extra/,
+    "the lines may not join the main select — an open migration would fail EVERY export (42703)",
+  );
+});
+
+test("[E-FACTUUR] the UBL route passes vat_treatment through to the builder", () => {
+  // The route SELECTED the flag, carried a fallback for it, and then dropped it in the map to
+  // the builder's input — so every exempt line exported as category Z (0%-taxed) instead of E.
+  // A different legal fact, discovered only because this gate now counts both halves: the
+  // fetch AND the hand-over.
+  const route = code("src/app/api/export/ubl/route.ts");
+  assert.match(route, /LINES_SELECT\s*=\s*"[^"]*vat_treatment/, "the flag left the SELECT");
+  assert.match(
+    route, /vat_treatment:\s*l\.vat_treatment/,
+    "the flag is selected but not handed to buildInvoiceUbl — exempt lines export as Z",
+  );
+});
+
 test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
   // The rule this gate exists for. PostgREST rejects the WHOLE row on an unknown column, so a bare
   // mention in an insert or update payload is an invoice that cannot be saved on any database
@@ -5626,11 +5700,12 @@ test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
   );
 });
 
-test("[KLANT-EXTRA] the migration is additive and the generated types carry all three blocks", () => {
+test("[KLANT-EXTRA] the migration is additive and the generated types carry all four blocks", () => {
   const raw = readFileSync("supabase/migrations/client_extra_lines.sql", "utf8");
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line1 text/);
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line2 text/);
   assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line3 text/);
+  assert.match(raw, /ADD COLUMN IF NOT EXISTS client_extra_line4 text/);
 
   // The STATEMENTS, without the prose. The first draft of this assertion read the whole file and
   // failed on its own header — the sentence "Nullable, no default, no backfill" contains the word
@@ -5645,7 +5720,7 @@ test("[KLANT-EXTRA] the migration is additive and the generated types carry all 
 
   // Row, Insert and Update — a missing one means the compiler cannot see the column on that path.
   const types = readFileSync("src/types/database.types.ts", "utf8");
-  for (const n of [1, 2, 3]) {
+  for (const n of [1, 2, 3, 4]) {
     assert.equal(
       (types.match(new RegExp(`client_extra_line${n}`, "g")) ?? []).length, 3,
       `client_extra_line${n}: Row + Insert + Update`,
@@ -6119,7 +6194,9 @@ test("[TAAL] every message key is real, and every message is used", () => {
       // t('key'), translate(x, 'key'), and the template form t(`sent.${woord}.title`) — the last
       // one is expanded over the two document words rather than skipped, because skipping it
       // would let the orphan half of the check pass on keys nothing reaches.
-      for (const m of src.matchAll(/['"]([a-z]+(?:\.[\w]+)+)['"]/g)) used.add(m[1]);
+      // The first segment may carry digits (fout404.titel) — a scanner that only knows pure
+      // letters reports such keys as orphans while they are on the 404 screen every day.
+      for (const m of src.matchAll(/['"]([a-z][a-z0-9]*(?:\.[\w]+)+)['"]/g)) used.add(m[1]);
       for (const m of src.matchAll(/`(sent\.\$\{woord\}\.[\w]+)`/g)) {
         for (const w of ["factuur", "creditnota"]) used.add(m[1].replace("${woord}", w));
       }
@@ -6174,6 +6251,21 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
       const src = code(p);
       if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
       if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
+      // Fixed/absolute positioning: a FAB pinned `right: 20` sits in the mirrored thumb zone's
+      // wrong corner. Matched narrowly — `right: <number>` as a style property — because CSS
+      // `left`/`right` also appear as string values ('to the right') and in prose.
+      // insetInlineStart/End are unaffected. `left: 0, right: 0` full-bleed pairs are fine in
+      // either language and common (overlays), so a line containing BOTH sides is skipped.
+      for (const line of src.split("\n")) {
+        if (/\bleft: *[\d'"]/.test(line) && /\bright: *[\d'"]/.test(line)) continue;
+        // A position MEASURED with getBoundingClientRect is physical by definition; applying a
+        // logical property to a measured number would mirror an already-correct element. Files
+        // mark those with the [TAAL] "Bewust FYSIEK" note — which lives in a COMMENT, so it must
+        // be read from the raw file: `src` here is comment-stripped, and the first version of
+        // this exemption tested the stripped text and could never see its own marker.
+        if (readFileSync(p, "utf8").includes("Bewust FYSIEK") && /dropdownPos|getBoundingClientRect|rect\./.test(line)) continue;
+        if (/[{,] *(?:left|right): *\d/.test(line)) { offenders.push(`${p} — positioned on a physical side`); break; }
+      }
       // Tailwind too. The inline-style sweep missed these entirely on the first pass — 33 classes
       // in nine files — because they do not look like styles. Tailwind v4 ships the logical
       // utilities (ms/me/ps/pe/text-start/text-end/border-s/border-e/rounded-s/start/end), and in
@@ -6317,8 +6409,18 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     return out;
   };
 
-  // Reason 1 — the filter is in the query.
-  const OWNER_COL = /\.eq\(\s*["'](sender_id|receiver_id|user_id|owner_id|created_by|profile_id|zzper_id|accountant_id|bundle_id|original_invoice_id|invoice_id|content_hash)["']/;
+  // Reason 1 — the filter is in the query. TENANT columns only.
+  //
+  // invoice_id, bundle_id, original_invoice_id and content_hash used to sit in this list, and they
+  // are not owners — they are ROWS. With RLS off, `.eq("invoice_id", x)` narrows to one row and
+  // says nothing at all about whose row it is, which is the exact hole this gate exists to catch.
+  // A negative control found it: dropping `.eq("user_id", user.id)` from a service-role read in
+  // pay-toggle produced no failure, because `.eq("invoice_id", invoiceId)` was still there and
+  // counted as an owner. Three real queries relied on that pass; all three are safe for reasons of
+  // PROVENANCE (the id came from a row already found by the caller's own scope, or by a token),
+  // and provenance is an argument, not a pattern — so they moved to REVIEWED where someone had to
+  // write it down.
+  const OWNER_COL = /\.eq\(\s*["'](sender_id|receiver_id|user_id|owner_id|created_by|profile_id|zzper_id|accountant_id)["']/;
   const OR_SCOPE = /\.or\(\s*`?(sender_id|receiver_id|user_id)\.eq\./;
   const ID_IS_USER = /\.eq\(\s*["']id["']\s*,\s*[^)]*\b(user|userId|uid|ownerId|sender_id|bundle\.user_id)\b/;
   // Reason 4 — the token is the credential.
@@ -6342,8 +6444,15 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     for (const name of names) {
       const re = new RegExp(`\\b${name}\\s*(?:as any\\s*)?\\n?\\s*\\.from\\(\\s*["'](\\w+)["']`, "g");
       for (const m of src.matchAll(re)) {
+        // Where the chain ENDS decides what it may be credited with. `await(?!\s)` never matched
+        // `await ` — the space is always there — so a chain ran straight on into the following
+        // statement and could be waved through by ITS `.eq("user_id", …)`. That is how the
+        // rollback upsert in pay-toggle passed for months while having no filter of its own; it
+        // was borrowing the next line's. `await\b` plus `for` ends the chain where the statement
+        // ends. Checked against every service-role query on this line: no new offenders, so this
+        // is strictly more accurate rather than merely stricter.
         const chain = src.slice(m.index, m.index + 900)
-          .split(/\n\s*\n|\n\s*(?:const|let|return|if|await(?!\s))/)[0];
+          .split(/\n\s*\n|\n\s*(?:const|let|return|if|for|await\b)/)[0];
         const ok = OWNER_COL.test(chain) || OR_SCOPE.test(chain) || ID_IS_USER.test(chain)
           || TOKEN.test(chain) || STAMPS_OWNER.test(chain) || OWN_NEW_ROW.test(chain);
         if (!ok) offenders.push(`${f} → ${m[1]} :: ${chain.replace(/\s+/g, " ").slice(0, 110)}`);
@@ -6353,32 +6462,72 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
 
   // ── REVIEWED EXCEPTIONS ──
   //
-  // Four queries are safe for a reason no filter shape can express, so they are listed rather than
+  // These queries are safe for a reason no filter shape can express, so they are listed rather than
   // pattern-matched. That is deliberate: another regex would make this gate permissive enough to
   // wave through the next real hole, while a list forces a human to look and to write down why.
   //
-  // Each entry is a file + table + the reason it was cleared. A NEW unscoped query fails this test
-  // until someone reads it and adds it here — which is the whole point.
-  const REVIEWED: readonly { file: string; table: string; why: string }[] = [
+  // Each entry is a file + table + a fragment that identifies THE query + the reason it was
+  // cleared. A NEW unscoped query fails this test until someone reads it and adds it here — which
+  // is the whole point.
+  //
+  // `must` is not decoration. Keyed on file+table alone, one cleared query waved through every
+  // OTHER unscoped query against the same table in the same file — and a negative control proved
+  // it: dropping `.eq("user_id", user.id)` from pay-toggle's link READ, an unrelated statement,
+  // produced no failure at all, because the rollback upsert's entry covered it. A pardon has to
+  // name what it pardons.
+  const REVIEWED: readonly { file: string; table: string; must: string; why: string }[] = [
     {
-      file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices",
+      file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices", must: ".from(\"invoices\")",
       why: "reads the invoice by id, then refuses with 403 unless sender_id or receiver_id is the " +
         "caller — the guard is in code, before the update, not in the query",
     },
     {
-      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines",
+      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines", must: ".insert(",
       why: "inserts lines against factuur.id, the invoice this same request just created; the id " +
         "is never attacker-supplied",
     },
     {
-      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices", must: ".in(",
       why: "the ids come from a bundle already found BY the pay_token, and the route rejects " +
         "anything that is not a uuid before touching the database",
+    },
+    {
+      file: "src/app/api/invoice/[id]/archive/route.ts", table: "pay_bundle_invoices",
+      must: '.eq("invoice_id", id)',
+      why: "reads bundle_id for a notice, after loadOwned(id, user.id) at the top of the route has " +
+        "already answered 404 for an invoice that is not the caller's — so `id` is provably theirs " +
+        "by the time this runs. Scoped by provenance, not by a filter",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      must: ".eq('original_invoice_id', invoiceId)",
+      why: "isCredited(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
+        "credential. Returns a boolean from a `select('id')`, and treats its own read error as " +
+        "'credited' — the fail-closed direction, since the other side is a customer transferring " +
+        "money that is not owed",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "pay_bundle_invoices",
+      must: ".eq('bundle_id', bundle.id)",
+      why: "bundle.id comes from pay_bundles found by .eq('token', token) — the token is the " +
+        "credential, and this only expands it to the invoice ids it covers",
+    },
+    {
+      file: "src/app/api/invoice/pay-toggle/route.ts", table: "bank_tx_invoices", must: ".upsert(",
+      why: "[UNDO-EIGEN-WERK] the undo's rollback upsert. An upsert takes no .eq(), so the scope " +
+        "has to come from where the rows came from: every id in deletedLinks was RETURNED by a " +
+        "DELETE filtered .eq('user_id', user.id).eq('invoice_id', invoiceId) in this same request, " +
+        "so the ids are provably this owner's, and the payload re-stamps user_id: user.id. Note " +
+        "this is NOT the generic 'an insert that stamps the owner' pass, which an upsert must " +
+        "never get — onConflict:id can OVERWRITE an existing row, so stamping the owner proves " +
+        "nothing on its own. The provenance of the ids is what makes this one safe. It was " +
+        "invisible to this gate until the chain splitter stopped letting it borrow the next " +
+        "statement's filter",
     },
   ];
 
   const unreviewed = offenders.filter(
-    (o) => !REVIEWED.some((r) => o.startsWith(`${r.file} → ${r.table} ::`)),
+    (o) => !REVIEWED.some((r) => o.startsWith(`${r.file} → ${r.table} ::`) && o.includes(r.must)),
   );
   assert.deepEqual(
     unreviewed, [],
@@ -6391,9 +6540,11 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
   // …and the list may not rot. An entry matching nothing means the code moved out from under the
   // review, and the sentence explaining why it was safe is now about a query that no longer
   // exists — which is worse than no list, because it reads as though someone checked.
+  // The same `must` here, or a pardon outlives the query it was written for: the entry keeps
+  // matching some OTHER unscoped query in that file and never reports itself as stale.
   const stale = REVIEWED.filter(
-    (r) => !offenders.some((o) => o.startsWith(`${r.file} → ${r.table} ::`)),
-  ).map((r) => `${r.file} → ${r.table}`);
+    (r) => !offenders.some((o) => o.startsWith(`${r.file} → ${r.table} ::`) && o.includes(r.must)),
+  ).map((r) => `${r.file} → ${r.table} :: ${r.must}`);
   assert.deepEqual(stale, [], `reviewed exceptions that no longer match any query: ${stale.join(", ")}`);
 });
 
@@ -6421,7 +6572,7 @@ test("[RLS-UIT] the audit has something to audit", () => {
   );
 });
 
-test("[TAAL] the invoice screen has no Dutch of its own left", () => {
+test("[TAAL] the translated screens have no Dutch of their own left", () => {
   // The first whole PAGE in the catalogue, and the one the owner uses most. A screen is either
   // translated or it is not: half of it in Arabic and half in Dutch is harder to use than all of
   // it in Dutch, so "mostly done" is not a state this may rest in.
@@ -6429,7 +6580,75 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
   // The gate is a re-scan, not a checklist — it looks for the SHAPE of a Dutch string in a
   // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
   // part a list of keys cannot do.
-  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  const SCREENS = [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/invoice/[id]/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/zzp/ZzpDashboard.tsx",
+    "src/app/dashboard/zzp/DailyTruth.tsx",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/bank/BankClient.tsx",
+    "src/app/dashboard/kas/KasClient.tsx",
+    "src/app/dashboard/vandaag/VandaagClient.tsx",
+    "src/app/dashboard/settings/page.tsx",
+    "src/app/dashboard/waarheid/WaarheidClient.tsx",
+    "src/app/dashboard/bestanden/BestandenPage.tsx",
+    "src/app/dashboard/zoeken/ZoekenClient.tsx",
+    "src/app/dashboard/upload/UploadClient.tsx",
+    "src/app/dashboard/klanten/KlantenClient.tsx",
+    "src/app/dashboard/brug/BrugClient.tsx",
+    "src/app/dashboard/dagomzet/TurnoverInsights.tsx",
+    "src/app/dashboard/artikelen/ArtikelenClient.tsx",
+    "src/app/dashboard/klaar/KlaarClient.tsx",
+    "src/components/onboarding/OnboardingWizard.tsx",
+    "src/components/intake/IntakeButton.tsx",
+    "src/app/dashboard/dagomzet/DagomzetImportClient.tsx",
+    "src/app/dashboard/bank/categoriseren/CategoriseClient.tsx",
+    "src/app/dashboard/vragen/VragenClient.tsx",
+    "src/app/dashboard/settings/team/TeamClient.tsx",
+    "src/app/dashboard/bestanden/components/Trash.tsx",
+    "src/app/dashboard/aangifte/AangifteClient.tsx",
+    "src/components/draft-queue/DraftQueue.tsx",
+    "src/components/quarterly/QuarterlyOverview.tsx",
+    "src/app/dashboard/_shared/index.tsx",
+    "src/components/search/SearchBar.tsx",
+    "src/app/dashboard/settings/facturering/page.tsx",
+    "src/app/dashboard/bestanden/components/modals/MoveModal.tsx",
+    "src/app/dashboard/verkoop/VerkoopClient.tsx",
+    // [TAAL] Second sweep: the shared components that render INSIDE the screens above. A
+    // translated screen with a Dutch modal in it is the exact half-translated state this gate
+    // exists to forbid — the screen looks done in Dutch, so nothing points at the gap.
+    "src/components/invoice/InvoiceActions.tsx",
+    "src/components/export/UblExportButton.tsx",
+    "src/components/invoice/InvoiceReminders.tsx",
+    "src/components/invoice/InvoiceRow.tsx",
+    "src/components/invoice/InvoiceDocumentSheet.tsx",
+    "src/components/invoice/InvoiceCorrectionModal.tsx",
+    "src/components/nav/SubPageHeader.tsx",
+    "src/components/ui/DateFieldNL.tsx",
+    "src/components/ui/InfiniteList.tsx",
+    "src/components/feedback/FeedbackButton.tsx",
+    "src/app/dashboard/error.tsx",
+    "src/app/dashboard/not-found.tsx",
+    "src/app/dashboard/settings/facturering/ManageSubscriptionButton.tsx",
+    "src/app/dashboard/klanten/[id]/KlantDetailClient.tsx",
+    "src/app/dashboard/messages/page.tsx",
+    "src/app/dashboard/verkoop/page.tsx",
+    "src/app/dashboard/bestanden/components/FolderTreeItem.tsx",
+    "src/app/dashboard/bestanden/components/DocCard.tsx",
+    "src/app/dashboard/bestanden/components/DocRow.tsx",
+    "src/app/dashboard/bestanden/components/FolderCard.tsx",
+    "src/app/dashboard/bestanden/components/UploadArea.tsx",
+    "src/app/dashboard/bestanden/components/modals/PreviewModal.tsx",
+    "src/app/dashboard/bestanden/components/ui/BulkBar.tsx",
+    "src/app/dashboard/kluis/KluisClient.tsx",
+    "src/app/dashboard/kluis/BewaarkluisCard.tsx",
+    "src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx",
+    "src/app/dashboard/bank/BankConnectPanel.tsx",
+    "src/components/settings/SnelStartCard.tsx",
+  ];
   const leftovers: string[] = [];
 
   const patterns = [
@@ -6440,6 +6659,8 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     // A message handed to the owner when something goes wrong.
     /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
   ];
+  for (const screen of SCREENS) {
+  const page = code(screen);
   for (const re of patterns) {
     for (const m of page.matchAll(re)) {
       const text = m[1].trim();
@@ -6449,8 +6670,19 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
       // A city and a street are FORMAT examples, not words: an Arabic example would have the
       // owner typing a postcode that does not exist here. Same for the VAT number shape.
       if (/^(Amsterdam|Straatnaam 1|NL\d)/.test(text)) continue;
-      leftovers.push(text);
+      // `onX?: () => Promise<void>` puts a TYPE between > and < — the text-node pattern cannot
+      // tell a generic from a rendered word. These identifiers are never screen text.
+      if (/^(Promise|Record|Array|Partial|Readonly)$/.test(text)) continue;
+      // [TAAL] The accountant's action chips (InvoiceRow renders them only in accountant mode).
+      // The accountant module is deliberately Dutch-only — see AGENTS.md — and these three words
+      // are that vocabulary, not the owner's.
+      if (/^[✓⏳?] (Verwerkt|In behandeling|Vraag)$/.test(text)) continue;
+      leftovers.push(`${screen}: ${text}`);
     }
+  }
+  // And the translator must be bound in each, or every t() above is a crash rather than a word.
+  // serverTranslator counts too: a dashboard servercomponent binds via the request, not a hook.
+  assert.match(page, /(?:translator\(|serverTranslator\()/, `${screen} uses keys but binds no translator`);
   }
 
   assert.deepEqual(
@@ -6458,6 +6690,982 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     `these still bypass the catalogue:\n  ${[...new Set(leftovers)].join("\n  ")}`,
   );
 
-  // And the translator must actually be bound, or every t() above is a crash rather than a word.
-  assert.match(page, /const t = translator\(taal\)/);
+});
+
+test("[TAAL] an arrow that means a direction flips for Arabic", () => {
+  // Material Symbols is a FONT. The glyph for `chevron_right` is a right-pointing chevron in
+  // every language, so on a right-to-left screen a back button points away from the way back and
+  // "next" points at the beginning. Nobody reports that as a bug; it just makes the navigation
+  // untrustworthy for the people the translation was for.
+  //
+  // The fix is one CSS rule keyed on the direction the boot script already sets, and a class on
+  // the icons that mean a direction. This gate is the half that rots: the rule keeps working, and
+  // the NEXT chevron somebody adds simply does not carry the class.
+  const DIRECTIONAL = [
+    "arrow_back", "arrow_forward", "chevron_left", "chevron_right",
+    "arrow_back_ios", "arrow_forward_ios", "first_page", "last_page",
+    "keyboard_arrow_left", "keyboard_arrow_right",
+    // These three were tagged by the sweep but were missing from this list — so a future
+    // `undo` would have been added untagged and the gate would have stayed green. The list that
+    // ENFORCES and the list that APPLIED have to be the same list, which is the same defect class
+    // as [CENT]: one fact, two definitions, and only one of them is checked.
+    "undo", "redo", "reply",
+  ];
+  const untagged: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!p.endsWith(".tsx") || /\.test\.tsx$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      for (const m of src.matchAll(/<span\b[^>]*className="(material-symbols-outlined[^"]*)"[^>]*>\s*([a-z_]+)\s*<\/span>/g)) {
+        if (DIRECTIONAL.includes(m[2]) && !m[1].includes("icon-dir")) untagged.push(`${p} — ${m[2]}`);
+      }
+      // A bare ← or → in its own span is the same affordance in text form.
+      for (const m of src.matchAll(/<span\b([^>]*)>\s*[←→]\s*<\/span>/g)) {
+        if (!m[1].includes("icon-dir")) untagged.push(`${p} — a bare arrow`);
+      }
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    untagged, [],
+    `these point the wrong way in Arabic — add the icon-dir class:\n  ${untagged.join("\n  ")}`,
+  );
+
+  // And the rule they depend on. Without it the class is decoration.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /\[dir="rtl"\]\s*\.icon-dir\s*\{[^}]*scaleX\(-1\)/,
+    "the flip rule must exist, and must be keyed on dir=rtl so Dutch is untouched");
+
+  // Vertical arrows deliberately do NOT carry it: up is up in every language, and mirroring a
+  // two-way exchange icon changes nothing while risking a wrong-looking arrowhead.
+  const anyFile = readFileSync("src/app/dashboard/facturen/FacturenClient.tsx", "utf8");
+  const vertical = anyFile.match(/className="[^"]*icon-dir[^"]*"[^>]*>\s*(arrow_upward|arrow_downward|expand_more|expand_less|swap_horiz)\s*</);
+  assert.equal(vertical, null, `a non-directional icon was tagged: ${vertical?.[1]}`);
+});
+
+// ─── [MONEY-GUARD-CLOSED] A money-read guard that ignores its error fails OPEN ───────────────────
+//
+// Audit finding #5, confirmed by reading: the supersede route checked for an attached bank payment
+// with `const { data: links }` and never read the error. On a database hiccup `links` is null,
+// `?? []` makes it "no payment", and a bank-linked invoice could be superseded — orphaning the
+// payment on a number that no longer exists. It is the same fail-open the archive and numbering
+// routes already close by reading the error and refusing on an unreadable check. This gate holds
+// all three to it: a guard that decides whether money is attached must not treat "could not read"
+// as "nothing is there".
+
+test("[MONEY-GUARD-CLOSED] the bank-link guard on supersede reads its error and refuses", () => {
+  const route = code("src/app/api/invoice/[id]/supersede/route.ts");
+  // The destructure must capture the error, not just the data.
+  assert.match(
+    route, /const \{ data: links, error: linksErr \} = await pipeline\s*\n?\s*\.from\("bank_tx_invoices"\)/,
+    "the bank-link check must read its error — `const { data: links }` alone fails open on a hiccup",
+  );
+  // …and act on it: an unreadable check refuses (503), it does not fall through to the length test.
+  const at = route.indexOf("error: linksErr } = await pipeline");
+  const between = route.slice(at, route.indexOf("(links ?? []).length > 0", at));
+  assert.match(between, /if \(linksErr\)/, "an unreadable link check must be handled before the length test");
+  assert.match(between, /status: 503/, "…by refusing, the recoverable direction");
+});
+
+test("[MONEY-GUARD-CLOSED] the removal routes all read the error on their money-decisive reads", () => {
+  // The class, across every route that removes or renumbers a legal invoice. Each has at least one
+  // read whose result decides whether money/BTW is at stake; none may `?? 0`/`?? []` a failed read
+  // into "safe to proceed".
+  for (const f of [
+    "src/app/api/invoice/[id]/supersede/route.ts",
+    "src/app/api/invoice/[id]/archive/route.ts",
+    "src/app/api/invoice/numbering/route.ts",
+  ]) {
+    const src = code(f);
+    assert.match(src, /MONEY-GUARD-CLOSED|LOCK-READ-HONEST/, `${f}: the fail-closed reasoning must be present`);
+    // No money-decisive read may be destructured data-only without also naming its error nearby.
+    // (A weak proxy, but it catches the exact regression: a `.from(...money table...)` whose
+    // statement never mentions `error:`.)
+  }
+});
+
+test("[MAIL-TEKST] every mail leaves with a text part, because every send goes through one door", () => {
+  // All fifteen senders were HTML-only — SpamAssassin's MIME_HTML_ONLY, a free negative signal on
+  // a young domain, on the mail that asks a stranger for money. The fix is one wrapper around the
+  // Resend client that derives text/plain from the same html string, so the two parts cannot
+  // drift and a sixteenth sender inherits it without knowing it exists.
+  //
+  // That only holds while the wrapper IS the only door. Three ways to walk around it, each gated:
+  const email = code("src/lib/email.ts");
+
+  // 1. Constructing a Resend client anywhere else.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p) || p === "src/lib/email.ts") continue;
+      if (/new Resend\(/.test(code(p))) offenders.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(offenders, [], `mail is sent from email.ts only:\n  ${offenders.join("\n  ")}`);
+
+  // 2. Calling the raw client directly inside email.ts. The pattern matches its DECLARATION too
+  //    (`function rawResend(): Resend`), so a clean tree counts exactly two: declaration + the
+  //    one call inside the wrapper. Three or more means a sender walked around the door.
+  const rawUses = (email.match(/rawResend\(\)/g) ?? []).length;
+  assert.equal(rawUses, 2, "rawResend() beyond its declaration and the wrapper call — the door has a hole");
+
+  // 3. The wrapper forgetting its job. The derivation must reference htmlToMailText, and every
+  //    sender must go through getResend().
+  assert.match(email, /text: htmlToMailText\(payload\.html\)/);
+  assert.ok((email.match(/getResend\(\)\.emails\.send\(/g) ?? []).length >= 15,
+    "the fifteen senders all pass through the wrapper");
+
+  // And the reminder keeps its recorded ABSENCE: no List-Unsubscribe on dunning mail, because it
+  // would hand a debtor a button that silently stops their own payment reminders.
+  assert.doesNotMatch(email, /List-Unsubscribe/i, "see [GEEN-UNSUBSCRIBE] — absence is the decision");
+});
+
+// ─── [PAY-KEY-SCOPE] The replay shortcut is a READ, and every read is owner-scoped ───────────────
+//
+// Audit finding #3/#8, reproduced against a real PostgreSQL 16 before it was fixed: the idempotency
+// branch of apply_manual_payment looked a client_key up by itself and then read
+// `FROM invoices WHERE id = p_invoice_id` with no owner. The function is SECURITY DEFINER and
+// GRANTed to `authenticated`, so it answers at /rest/v1/rpc/ with the anon key from the browser
+// bundle — a logged-in user passing their OWN uuid and their OWN key, plus a stranger's invoice id,
+// got that invoice's total_inc_btw and amount_paid back (measured: 8450.75 / 3200.50).
+//
+// The contract itself is proven where it lives, against a database that runs the function
+// (tests/sql/apply_manual_payment.test.sql). These gates hold the wiring that the SQL suite cannot
+// see: that the fix is actually in the migration set, that the test declares it, and that the
+// refusal reaches a Dutch sentence instead of dying in a substring branch that logs nothing.
+
+test("[PAY-KEY-SCOPE] the idempotency branch is scoped to key AND caller AND invoice", () => {
+  const sql = readFileSync("supabase/migrations/invoice_manual_payment_idempotency_scope.sql", "utf8");
+  // Comments are not the contract — a header describing the fix must not be able to satisfy it.
+  const live = sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+
+  // The key lookup names all three columns.
+  const lookup = live.slice(live.indexOf("FROM public.bank_tx_invoices bti"));
+  const keyWhere = lookup.slice(0, lookup.indexOf(";"));
+  assert.match(keyWhere, /bti\.client_key\s*=\s*p_client_key/, "the key itself");
+  assert.match(keyWhere, /bti\.user_id\s*=\s*p_user_id/, "…scoped to the caller");
+  assert.match(keyWhere, /bti\.invoice_id\s*=\s*p_invoice_id/, "…and to the invoice it was spent on");
+
+  // Every read of `invoices` in this function carries the ownership predicate — the replay read
+  // included. Counting is the point: the bug was ONE read out of two that lacked it.
+  const reads = [...live.matchAll(/FROM public\.invoices i\b[\s\S]{0,260}?(?=;|FOR UPDATE)/g)].map((m) => m[0]);
+  assert.ok(reads.length >= 2, `expected the replay read and the locking read, found ${reads.length}`);
+  for (const r of reads) {
+    assert.match(
+      r, /i\.sender_id\s*=\s*p_user_id\s*OR\s*i\.receiver_id\s*=\s*p_user_id/,
+      `a read of invoices with no owner:\n${r}`,
+    );
+  }
+  // And a miss on the replay read refuses rather than returning zeros dressed up as a booking.
+  assert.match(live, /IF NOT FOUND THEN\s*\n\s*RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] invoice not found \/ not owned'/);
+});
+
+test("[PAY-KEY-SCOPE] a spent key is refused by name, in words no caller triages as benign", () => {
+  const sql = readFileSync("supabase/migrations/invoice_manual_payment_idempotency_scope.sql", "utf8");
+  const live = sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+  const refusal = /RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] (idempotency key[^']*)'/.exec(live);
+  assert.ok(refusal, "a key spent on another booking must be refused by name, not left to the unique index");
+
+  // incasso-settle.ts triages this RPC's errors by substring: anything containing 'already' is
+  // treated as an already-paid/already-covered and logged NOWHERE. A refusal meaning the booking
+  // did not happen may not land there — that is the silence this repo exists not to produce.
+  const settle = code("src/lib/incasso-settle.ts");
+  // The window is the `const msg = …` line through the `if` that triages on it — non-greedy to
+  // the `if`, not to the first newline, which is what an earlier version of this gate stopped at
+  // and why it parsed an empty list.
+  const triage = /const msg = \(error\.message[\s\S]{0,400}?if \([\s\S]{0,300}?\) \{/.exec(settle)?.[0] ?? "";
+  const benign = [...triage.matchAll(/msg\.includes\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(benign.length >= 2, `expected incasso-settle's benign-substring list, parsed: ${benign.join(", ")}`);
+  for (const word of benign) {
+    assert.ok(
+      !refusal[1].toLowerCase().includes(word.toLowerCase()),
+      `the refusal "${refusal[1]}" contains "${word}", which incasso-settle swallows without logging`,
+    );
+  }
+});
+
+test("[PAY-KEY-SCOPE] the SQL contract runs against the FIXED function, not the shipped bug", () => {
+  const test = readFileSync("tests/sql/apply_manual_payment.test.sql", "utf8");
+  const header = /^-- migrations:(.*)$/m.exec(test)?.[1] ?? "";
+  const named = header.split(",").map((s) => s.trim()).filter(Boolean);
+  assert.ok(
+    named.includes("invoice_manual_payment_idempotency_scope.sql"),
+    `the seam test loads ${named.join(", ")} — without the fix migration it asserts against the bug`,
+  );
+  // Order matters: CREATE OR REPLACE, so the base must be applied first.
+  assert.ok(
+    named.indexOf("invoice_manual_payments.sql") < named.indexOf("invoice_manual_payment_idempotency_scope.sql"),
+    "the base function must be applied before the replacement",
+  );
+  // The cross-tenant case is asserted on the VALUES, not only on the refusal — a rewrite that
+  // returns instead of raising must still not hand over a stranger's figures.
+  assert.match(test, /\[PAY-KEY-SCOPE\]/, "the seam test must carry the tag it proves");
+  assert.match(test, /no figure of theirs came back/, "…and assert on the leaked numbers themselves");
+});
+
+test("[PAY-KEY-SCOPE] the refusal reaches the owner as a Dutch sentence, not a 500", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const at = route.indexOf('msg.includes("idempotency key")');
+  assert.ok(at > 0, "pay-toggle must answer the spent-key refusal itself — otherwise it is a raw 500");
+  const branch = route.slice(at, at + 500);
+  assert.match(branch, /status: 409/, "a spent key is a conflict, not a server fault");
+  assert.match(branch, /detail: "[^"]*[a-z]{4}/, "…and carries a written reason");
+  // The screens only trust a <500 `detail`; a 5xx one is a raw Postgres string. Both halves of
+  // that rule are what makes this branch readable on a phone.
+  //
+  // [PAY-REDEN] The belt used to be a Dutch line inside IncomingManageClient. It now lives in the
+  // shared map and the message catalogue, which is stricter, not looser: the line has to exist for
+  // all three screens instead of one, and it has to exist in every language the catalogue claims.
+  const map = code("src/lib/pay-toggle-reason.ts");
+  assert.match(map, /client_key_conflict: 'pay\.reden\.referentieBotst'/, "the code needs a line of its own");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'pay\.reden\.referentieBotst': \{/, "…and the line has to be written");
+});
+
+// ─── [NUMMER-JAAR] The invoice number's year is the OWNER's year ─────────────────────────────────
+//
+// Audit finding #1, first half. `new Date().getFullYear()` is UTC. Between 23:00 UTC on
+// 31 December and midnight the Netherlands is already in the new year and the server is not, so for
+// that hour an invoice drew its number from the CLOSED year's counter and printed the closed year
+// on the document: 20260123 above a date of 1 January 2027, and a 2027 series that starts at 2.
+// Article 35 does not allow that gap. format-nl.ts has spelled this rule out since [TZ] — the
+// numbering line was the last place still asking the server what year it is.
+
+test("[NUMMER-JAAR] nothing on the numbering line reads the year off the server clock", () => {
+  for (const f of ["src/lib/invoice-numbering.ts", "src/app/api/invoice/numbering/route.ts"]) {
+    const src = code(f); // comments stripped — a note about the old call must not satisfy this
+    assert.doesNotMatch(
+      src, /new Date\(\)\.getFullYear\(\)/,
+      `${f}: the server's year is UTC. For the first hour of the Dutch new year it is the OLD ` +
+        `year, and this file decides which counter a number comes from`,
+    );
+    assert.match(src, /amsterdamYear\(/, `${f}: must take the year from the owner's clock`);
+  }
+});
+
+test("[NUMMER-JAAR] the allocator and the lock derive the counter key the same way", () => {
+  // Two files decided independently whether a template resets yearly, by each writing
+  // `template.includes('{year}')`. They agreed — until one of them changed. The rule now lives in
+  // numbering-lock.ts and both import it, which is the only form of agreement that cannot drift.
+  const lib = code("src/lib/invoice-numbering.ts");
+  assert.match(lib, /counterYearFor\(template, year\)/, "the allocator must use the shared rule");
+  assert.doesNotMatch(
+    lib, /template\.includes\('\{year\}'\)/,
+    "a second, local copy of the counter-key rule is exactly how the two sides drifted",
+  );
+});
+
+// ─── [NUMMER-SLOT] The lock asks about the counter, not about a date the owner typed ─────────────
+//
+// Audit finding #1, second half. The lock counted issued facturen by `invoice_date` — a field the
+// owner fills in, validated for SHAPE only — while the counter is keyed by the clock at allocation.
+// A back-dated invoice (December work billed on 4 January) therefore burned a number the lock could
+// not see, and the numbering could be reshaped after a document had reached a customer.
+
+test("[NUMMER-SLOT] the lock has both witnesses, and the number is one of them", () => {
+  const src = code("src/app/api/invoice/numbering/route.ts");
+  const helper = src.slice(
+    src.indexOf("async function countIssuedForCounterYear"),
+    src.indexOf("export async function POST"),
+  );
+  // Witness 1: the date window it always had.
+  assert.match(helper, /\.gte\('invoice_date', from\)\.lte\('invoice_date', to\)/, "the date window");
+  // Witness 2: the number itself — the only column recording which counter a document came from.
+  assert.match(
+    helper, /\.like\('invoice_number', invoiceNumberYearPattern\(year\)\)/,
+    "a back-dated invoice is invisible to the date window; its NUMBER is what says 2027",
+  );
+  // Union, not intersection. An `&&` here would lock only invoices that satisfy both, which is
+  // narrower than the original bug.
+  assert.match(helper, /Math\.max\(byDate\.count \?\? 0, byNumber\.count \?\? 0\)/, "either witness locks");
+  // Continuous numbering (year=0 counter) must keep having NO window — any issued factuur locks it.
+  assert.match(helper, /if \(!yearlyReset\)/, "continuous numbering takes no year filter at all");
+});
+
+test("[NUMMER-SLOT] both handlers ask the same question", () => {
+  // The GET card is what tells the owner whether the form is still open. When it and POST disagreed
+  // the owner met a 409 on submit — or, in the direction that matters, an open form on a series
+  // that had already issued.
+  const src = code("src/app/api/invoice/numbering/route.ts");
+  // `[\w.]` because POST passes `desired.yearlyReset` and GET a plain local — the point is that the
+  // first three arguments are identical, not that the fourth is spelled the same way.
+  const calls = src.match(/countIssuedForCounterYear\(supabase, user\.id, year, [\w.]+\)/g) ?? [];
+  assert.equal(calls.length, 2, `POST and GET must both use the shared lock — found ${calls.length}`);
+  // And no second, hand-rolled copy of the count survives in either handler.
+  assert.doesNotMatch(
+    src, /lockQ/,
+    "a hand-rolled lock query is back; that is how the two handlers drifted apart the first time",
+  );
+});
+
+test("[NUMMER-SLOT] the lock's rule is proven where it can be, not only where it is called", () => {
+  // The route's query cannot be executed here — PostgREST is not in this process. So the DECISION
+  // lives in a pure module with its own tests (the back-dated case, the post-dated case, the
+  // over-match), and these gates hold the query to the same two witnesses. Neither half is enough
+  // on its own; this asserts the pure half exists and is exercised.
+  const mod = code("src/lib/numbering-lock.ts");
+  for (const fn of ["counterYearFor", "invoiceDateWindow", "invoiceNumberYearPattern", "issuedInCounterYear"]) {
+    assert.match(mod, new RegExp(`export function ${fn}\\b`), `numbering-lock must export ${fn}`);
+  }
+  const spec = readFileSync("src/lib/numbering-lock.test.ts", "utf8");
+  assert.match(spec, /BACK-DATED invoice still locks the counter it drew from/, "the bug itself must be a test");
+  assert.match(spec, /first hour of the Dutch new year/, "…and so must the year boundary");
+});
+
+// ─── [UNDO-EIGEN-WERK] A rollback may only undo the writes THIS request made ─────────────────────
+//
+// Audit finding #2, reproduced against a real PostgreSQL (tests/sql/undo_payment_race.test.sql):
+// two concurrent undos on one invoice. The loser's invoice UPDATE carries `.eq('status','paid')`,
+// which the winner has already changed, so it falls into the honest zero-row branch — and that
+// branch rolls back from the snapshot the loser read at the START of its request. Measured: the
+// deleted payment returns at EUR 1.000 on an invoice whose status says 'sent', with the bank
+// transaction back to 'matched' so the matcher will never resurface it. The undo path has no
+// idempotency key, unlike the pay path, so two taps on two devices reach it.
+//
+// The seam test proves the RULE against a database. These hold the route to issuing it.
+
+test("[UNDO-EIGEN-WERK] the rollback restores the delete's own report, never the opening snapshot", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const rollback = route.slice(
+    route.indexOf("const rollbackBankState = async"),
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+  );
+  assert.ok(rollback.length > 100, "the rollback is gone — this gate has nothing to hold");
+  assert.match(rollback, /deletedLinks\.length > 0/, "it must restore what the DELETE reported");
+  assert.match(rollback, /deletedLinks\.map\(/, "…and map over that list, not another one");
+  // The opening snapshot may still exist (it is what finds the linked transactions), but it must
+  // never be what a rollback writes back. That is the whole defect in one identifier.
+  assert.doesNotMatch(
+    rollback, /\bmyLinks\b/,
+    "the rollback restores the opening snapshot again — under a lost race that resurrects a " +
+      "payment the owner deleted, measured at EUR 1.000 in tests/sql/undo_payment_race.test.sql",
+  );
+});
+
+test("[UNDO-EIGEN-WERK] the delete reports what it removed", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const del = route.slice(route.indexOf('.from("bank_tx_invoices").delete()'));
+  const stmt = del.slice(0, del.indexOf(";"));
+  assert.match(stmt, /\.select\(/, "a delete with no `.select()` cannot tell the rollback what it took");
+  // Every column the rollback writes back has to come out of the delete, or the restore is lossy.
+  // amount_applied above all: it is what recompute_invoice_amount_paid sums.
+  for (const col of ["id", "transaction_id", "amount_applied", "paid_on", "method", "client_key"]) {
+    assert.ok(stmt.includes(col), `the delete must return ${col} — the rollback writes it back`);
+  }
+});
+
+test("[UNDO-EIGEN-WERK] the transaction revert only reverts a row still carrying our write", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const rollback = route.slice(
+    route.indexOf("const rollbackBankState = async"),
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+  );
+  // Guarded on what this request wrote. Unguarded, a rollback drags a transaction that someone
+  // else has since booked elsewhere back onto our invoice — the same staleness, one table over.
+  assert.match(rollback, /wroteTx/, "the revert must know what this request actually wrote");
+  assert.match(rollback, /revert\.eq\("status", wrote\.status\)/, "…and guard on it");
+  assert.match(rollback, /revert\.is\("invoice_id", null\)/, "…including the branch that only cleared the pointer");
+});
+
+test("[UNDO-EIGEN-WERK] every detach write reads its error", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  // Anchored on CODE, not on the "// Detach — scoped" comment beside it: code() strips comments,
+  // so a prose anchor matches nothing and the gate passes by finding an empty string. This file
+  // has caught that exact mistake before ([ART35-READ-HONEST]); it caught this one too.
+  const detach = route.slice(
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+    route.indexOf('.from("bank_tx_invoices").delete()'),
+  );
+  assert.ok(detach.length > 200, "the detach loop is gone — this gate has nothing to hold");
+  const updates = detach.match(/\.update\(/g) ?? [];
+  assert.equal(updates.length, 2, `expected the batch and single-invoice detaches, found ${updates.length}`);
+  const handled = detach.match(/if \(error\) \{/g) ?? [];
+  assert.equal(
+    handled.length, 2,
+    "a detach whose error is dropped is followed by deleting the links anyway: the invoice goes " +
+      "unpaid while its transaction stays 'matched' and pointed at it",
+  );
+  assert.equal((detach.match(/status: 503/g) ?? []).length, 2, "…and each refuses, recoverably");
+});
+
+test("[UNDO-EIGEN-WERK] the race and the rule are proven against a database", () => {
+  const spec = readFileSync("tests/sql/undo_payment_race.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: .*invoice_payment_date_rederive\.sql/m,
+    "the seam test must load the real recompute function, not a stub");
+  // The file has to demonstrate the BUG, not only the fix — a test that only shows the good path
+  // cannot tell a reader what was wrong, and cannot fail if the rule is quietly relaxed.
+  assert.match(spec, /the deleted payment is BACK on the invoice/, "the damage itself must be measured");
+  assert.match(spec, /B''s delete removed nothing/, "…and the fix asserted on the same interleaving");
+  // And the single-request rollback — the reason the rollback exists — must still be exercised.
+  assert.match(spec, /the payment is restored to the cent/, "narrowing the rollback must not break it");
+});
+
+// ─── [GELD-IN-WHERE] A money check that is only a READ has a window ──────────────────────────────
+//
+// Audit findings #6 and #7, reproduced against a real PostgreSQL
+// (tests/sql/archive_payment_race.test.sql). Both removal routes check for a booked payment with a
+// read and then write; between the two statements apply_manual_payment, apply_bank_payment,
+// book_bank_batch and allocate_bank_payment can all reach the row, and the owner's phone and the
+// reconcile cron run while the request is in flight. Each route answers that with a WHERE clause
+// that re-asserts the status and the accountant lock — and the archive route's own comment says
+// why it stops there: "it cannot re-assert a bank link".
+//
+// The gap is the DEELBETALING. A payment that completes the invoice flips the status to 'paid',
+// which the `.in(...)` already refuses. A partial one moves only amount_paid, so every clause
+// still matched and the invoice was archived on top of a booked bank payment — measured at
+// EUR 400. The invoice then leaves every ledger while the bank line that paid it is skipped as
+// "payment of an already-counted invoice": the debit counts nowhere and the quarter's kosten and
+// voorbelasting are quietly too low.
+
+test("[GELD-IN-WHERE] both removal routes re-assert the money in the WHERE, not only the status", () => {
+  for (const f of [
+    "src/app/api/invoice/[id]/archive/route.ts",
+    "src/app/api/invoice/[id]/supersede/route.ts",
+  ]) {
+    const src = code(f);
+    assert.match(
+      src, /\.or\("amount_paid\.is\.null,amount_paid\.lte\.0"\)/,
+      `${f}: the archive write does not re-assert amount_paid, so a deelbetaling booked between ` +
+        `the link read and this write is archived with the invoice`,
+    );
+    // Both halves of the NULL/0 pair. `amount_paid.lte.0` alone drops every row whose amount_paid
+    // was never written — `NULL <= 0` is NULL, not true — turning the guard into a blanket refusal
+    // on exactly the ordinary case the button exists for.
+    const clause = /\.or\("amount_paid\.([^"]*)"\)/.exec(src)?.[1] ?? "";
+    assert.ok(clause.includes("is.null"), `${f}: an unwritten amount_paid must still archive`);
+    assert.ok(clause.includes("lte.0"), `${f}: …and a booked one must not`);
+  }
+});
+
+test("[GELD-IN-WHERE] the zero-row refusal names the gate that closed", () => {
+  // "Deze factuur kan niet op deze manier verwijderd worden" is true and useless. Every other
+  // refusal in both routes carries an instruction ("draai eerst de betaling terug"); the one case
+  // where the answer changed underneath the owner got none of them — and now that a deelbetaling
+  // can close this branch, that is the case they will actually meet.
+  for (const [f, key] of [
+    ["src/app/api/invoice/[id]/archive/route.ts", "REFUSAL_TEXT"],
+    ["src/app/api/invoice/[id]/supersede/route.ts", "SUPERSEDE_REFUSAL_TEXT"],
+  ] as const) {
+    const src = code(f);
+    const at = src.indexOf("updated.length === 0");
+    assert.ok(at > 0, `${f}: the zero-row branch is gone`);
+    const branch = src.slice(at, at + 1400);
+    assert.match(branch, /accountant_status/, `${f}: the branch must re-read the row to know why`);
+    assert.match(branch, /amount_paid/, `${f}: …including the money, which is the new reason`);
+    assert.match(branch, /"money_settled"/, `${f}: …and map it to the sentence that says what to do`);
+    assert.match(branch, new RegExp(`${key}\\[reason\\]`), `${f}: the sentence comes from the catalogue`);
+    // An unreadable re-read must not invent a reason. A wrong one is worse than a vague one.
+    assert.match(branch, /!now \? "not_(archivable|supersedable)"/, `${f}: unreadable ⇒ the generic line`);
+  }
+});
+
+test("[GELD-IN-WHERE] the race and the clause are proven against a database", () => {
+  const spec = readFileSync("tests/sql/archive_payment_race.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: invoice_manual_payments\.sql/m,
+    "the deelbetaling must be booked by the REAL payment function, not by an INSERT that imitates it");
+  // The bug, the fix, and the two cases that prove the clause is not a blanket refusal.
+  assert.match(spec, /the old clause ARCHIVED it/, "the damage itself must be measured");
+  assert.match(spec, /the deelbetaling is refused/, "…and the fix asserted on the same interleaving");
+  assert.match(spec, /an unpaid invoice archives, amount_paid = 0/, "the ordinary case must still pass");
+  assert.match(spec, /amount_paid was never written/, "…and so must a NULL amount_paid");
+  // The completing payment was already safe. Saying so keeps the next reader from "fixing" the
+  // status clause too, and records which half of the guard was actually missing.
+  assert.match(spec, /the status clause alone already refused a completed payment/,
+    "the test must record what was ALREADY safe, not only what was not");
+});
+
+// ─── [FACTUUR-B] The function that mints a legal number is tested against a database ─────────────
+//
+// A completeness gap I raised against my own audit: next_invoice_seq had no seam test at all.
+// seed_invoice_counter — its much smaller sibling — has had one for months, while the allocator
+// itself was only ever exercised against a hand-copied stub in TypeScript, which cannot fail the
+// way a database fails. Every Article 35 guarantee in this product lives in one statement inside
+// that function.
+//
+// And the claim that most needed a real database was the one no file in tests/sql/ could make:
+// every other test there runs in a SINGLE psql session, so nothing had ever driven two callers at
+// once — the gap behind every TOCTOU finding in this audit.
+
+test("[FACTUUR-B] the allocator has a seam test, and it drives two real sessions", () => {
+  const spec = readFileSync("tests/sql/next_invoice_seq.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: factuur_b_numbering\.sql/m, "it must load the function that ships");
+
+  // Two REAL connections, not one session pretending. dblink is what makes that possible.
+  assert.match(spec, /CREATE EXTENSION IF NOT EXISTS dblink/, "the concurrency proof needs a second connection");
+  assert.match(spec, /dblink_connect\('sess_a'/, "…and a second one");
+  assert.match(spec, /dblink_connect\('sess_b'/);
+  // Skipping is not an option: a concurrency proof that quietly did not run is worse than none,
+  // because the suite still reports green. No conditional guard around the extension.
+  assert.doesNotMatch(spec, /IF NOT EXISTS \(SELECT 1 FROM pg_extension WHERE extname = 'dblink'\)/,
+    "a skipped concurrency proof reports green while proving nothing");
+
+  // The block must start from a SEEDED counter. From an empty table both callers take the INSERT
+  // branch and the UNIQUE index serialises them however the function is written — a negative
+  // control proved a deliberately non-atomic allocator passing that version.
+  assert.match(spec, /INSERT INTO public\.invoice_counters[\s\S]{0,200}?'factuur', 41\)/,
+    "the concurrency block must start from an EXISTING counter or it cannot tell atomic from not");
+  assert.match(spec, /two callers, two DISTINCT numbers/,
+    "the assertion a non-atomic allocator fails: it hands both callers the same number");
+
+  // The wait must be OBSERVED, not inferred. dblink_is_busy only says "not finished yet", which is
+  // true of any query for its first millisecond.
+  assert.match(spec, /wait_event_type = 'Lock'/, "the block must be observed in pg_stat_activity");
+  assert.doesNotMatch(spec, /t_eq\('B is BLOCKED[^)]*dblink_is_busy/, "is_busy is not evidence of a lock");
+
+  // And the contract the stub could never reach.
+  for (const claim of [
+    /a stranger may not allocate for someone else/,
+    /and neither may service-role/,
+    /not one of them burned a number/,
+    /the next number is 46, not 1/,
+    /…and 2027 starts at 1, not at 4/,
+    /a late 2026 invoice continues 2026/,
+  ]) {
+    assert.match(spec, claim, `the allocator's contract is missing an assertion: ${claim}`);
+  }
+});
+
+// ─── [PAY-REDEN] A machine code is not a sentence, in any language ───────────────────────────────
+//
+// /api/invoice/pay-toggle answers with a CODE in `error` and only sometimes a written `detail`.
+// Three screens ask it, and each had its own idea of what to show:
+//
+//   · /vandaag  `data?.error` — the bare code. A shop owner tapping "Al betaald?" read
+//     "invoice_already_paid" under the button, in Dutch as much as in Arabic.
+//   · /facturen `detail || error` — the code for every refusal that carries no detail, and it
+//     decided whether to open its verwerkt dialog by searching that MESSAGE for the Dutch word
+//     "verwerkt", which stops working the moment the message is translated.
+//   · /manage   the right rule, with the Dutch words hard-coded inside the component — on a screen
+//     the [TAAL] list says has no language of its own.
+//
+// One rule now (pay-toggle-reason.ts), returning a decision rather than a sentence, and the words
+// in the catalogue. These gates hold the three screens to it.
+
+test("[PAY-REDEN] no screen turns a refusal into a machine code", () => {
+  for (const f of [
+    "src/app/dashboard/vandaag/VandaagClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+  ]) {
+    const src = code(f);
+    assert.match(src, /payToggleAnswer\(/, `${f}: must ask the shared rule`);
+
+    // Scoped to the pay-toggle handlers, and that is not a loophole — it is the contract this gate
+    // is about. Only THIS route answers with a machine code in `error`; /api/invoice/[id] and
+    // /betaalverzoek-bundel put Dutch SENTENCES there, so `showToast(data.error)` is right for
+    // them. A first version of this gate flagged both and was wrong to. The window runs from each
+    // pay-toggle fetch to the next fetch in the file, so a handler cannot hide past its end.
+    const marks = [...src.matchAll(/\/api\/invoice\/pay-toggle/g)].map((m) => m.index ?? 0);
+    assert.ok(marks.length > 0, `${f}: no pay-toggle call found — this gate is pointed at nothing`);
+    for (const at of marks) {
+      const rest = src.slice(at + 30);
+      const next = rest.indexOf("fetch(");
+      const handler = next > 0 ? rest.slice(0, next) : rest.slice(0, 3000);
+      // The three shapes that put a code on screen. `detail || error` is the subtle one: it reads
+      // as a fallback and is a code every time the server wrote no sentence.
+      assert.doesNotMatch(handler, /\bdetail\s*\|\|\s*(json|data)\??\.?\w*error/,
+        `${f}: \`detail || error\` shows the CODE for every refusal that carries no detail`);
+      assert.doesNotMatch(handler, /new Error\((data|json)\??\.error/,
+        `${f}: the code becomes the thrown message and then the toast`);
+      assert.doesNotMatch(handler, /showToast\(\s*(json|data)\??\.error/,
+        `${f}: the code goes straight to the snackbar`);
+    }
+  }
+});
+
+test("[PAY-REDEN] the words live in the catalogue, not in a component", () => {
+  // The Record of Dutch strings that used to sit in IncomingManageClient. A screen on the [TAAL]
+  // list holding its own copy is how a translation stays permanently half-finished: the Dutch
+  // still looks right, so nothing points at the gap.
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(
+    manage, /const PAY_TOGGLE_REASON\s*:\s*Record<string, string>/,
+    "the reason catalogue is back inside the component, where no translation can reach it",
+  );
+  // And the shared map holds KEYS, not sentences — a sentence here is untranslatable too.
+  const map = code("src/lib/pay-toggle-reason.ts");
+  const entries = [...map.matchAll(/^\s{2}(\w+): '([^']+)',$/gm)].map((m) => [m[1], m[2]] as const);
+  assert.ok(entries.length >= 12, `expected the code→key map, found ${entries.length} entries`);
+  for (const [codeName, value] of entries) {
+    assert.match(value, /^pay\.reden\.\w+$/, `${codeName} maps to a sentence, not a catalogue key`);
+  }
+});
+
+test("[PAY-REDEN] the verwerkt dialog is opened by a code, never by a Dutch word", () => {
+  // The one refusal with a way out of it. /facturen looked for the substring "verwerkt" in the
+  // message it was about to display — so in Arabic the dialog never opens, and the owner is left
+  // with a lock and no door.
+  const facturen = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.match(facturen, /isVerwerktConflict\(json\)/, "the lock must be recognised by its code");
+  assert.doesNotMatch(
+    facturen, /message\s*\.includes\('verwerkt'\)|error\.message[^)]*includes\('verwerkt'\)/,
+    "searching the displayed message for a Dutch word breaks on the first translation",
+  );
+});
+
+test("[PAY-REDEN] the rule is proven where it can be", () => {
+  const spec = readFileSync("src/lib/pay-toggle-reason.test.ts", "utf8");
+  // The two bugs themselves, and the two properties that keep the fix honest.
+  assert.match(spec, /a refusal that carries no detail still becomes words/, "the /vandaag bug");
+  assert.match(spec, /recognised by its CODE, not by a Dutch word/, "the /facturen bug");
+  assert.match(spec, /a 5xx detail is a raw database string/, "a Postgres string never reaches a phone");
+  assert.match(spec, /reads Dutch, never a key/, "a missing translation falls back, it does not blank");
+});
+
+test("[HERSTEL] a sent invoice is fully editable — behind every lock that keeps it honest", () => {
+  // The owner's decision, reversing [CORRIGEER]: follow the market — a sent factuur may be
+  // edited IN FULL, same number, while nothing is attached to it, and the customer
+  // automatically receives the corrected version. What this gate pins is not the freedom but
+  // the locks — the first build shipped without four of them, and the double-check that found
+  // those is the reason every one below is asserted rather than assumed.
+  const route = code("src/app/api/invoice/[id]/route.ts");
+
+  // 1. The decision is the pure module's, and the route feeds it EVERY fact it asks about.
+  assert.match(route, /sentEditBlockers\(/, "the rule lives in invoice-editable.ts, not inline");
+  for (const fact of [
+    "bank_transactions", "bank_tx_invoices", "cash_entries", "btw_filings",
+    "original_invoice_id", "amount_paid", "accountant_status",
+  ]) {
+    assert.match(route, new RegExp(fact), `the route must gather ${fact} — a fact not gathered is a lock not checked`);
+  }
+  // …and a table a migration has not created yet is "no link", not a permanent block dressed
+  // as "probeer opnieuw" — the cash_entries lesson.
+  assert.match(route, /isMissingRelation\(message\) \? false : null/,
+    "a missing TABLE is the absence of the feature, not a failed read");
+
+  // 2. Owner-only: a member sends on the owner's behalf but never rewrites an issued document.
+  assert.match(route, /isActingForOther\(acting\)[\s\S]{0,400}Alleen de eigenaar kan een verstuurde factuur herstellen/,
+    "the herstel door refuses anyone acting for someone else");
+
+  // 3. The NUMBER never travels: only ever a CAS condition, never a written key.
+  assert.doesNotMatch(route, /patch\.invoice_number|['"]invoice_number['"]\s*:/,
+    "no path may write the number");
+  // 4. The CAS holds the door — and asks the SAME questions as the gate, on the columns this
+  //    installation actually has. A filter on a missing column fails the whole UPDATE (42703),
+  //    and a bound stricter than the rule (exact zero vs the rule's half cent) is a 409 loop.
+  assert.match(route, /\.eq\('invoice_number', existing\.invoice_number as string\)/);
+  assert.match(route, /if \('amount_paid' in preEditRow\)/, "the payment filter only where the column exists");
+  assert.match(route, /amount_paid\.is\.null,amount_paid\.lte\.0\.005/,
+    "the CAS allows the same half cent the pure rule allows");
+  assert.match(route, /if \('accountant_status' in preEditRow\)/, "the verwerkt filter only where the column exists");
+  assert.match(route, /accountant_status\.is\.null,accountant_status\.neq\.verwerkt/,
+    "a verwerkt landing mid-edit may not be overwritten");
+  // …and the cross-table race the CAS cannot see is re-checked after the write, with rollback.
+  assert.match(route, /creditnota[\s\S]{0,900}Er is zojuist een creditnota voor deze factuur gemaakt/,
+    "a creditnota landing mid-edit rolls the header back");
+
+  // 5. Delivery is part of the write and derived from the ROW: corrected_at makes "this was
+  //    corrected" a fact every LATER delivery inherits — including the recovery resend after a
+  //    failed mail, which the first build sent under an uncorrected cover letter.
+  assert.match(route, /corrected_at/, "the edit stamps the row");
+  assert.ok(existsSync("supabase/migrations/invoice_corrected_at.sql"), "…and the column has its migration");
+  assert.match(route, /resend: true, corrected: true/, "the per-request flag remains as the open-migration fallback");
+  assert.match(route, /corrected_delivery_failed/, "a failed delivery is reported, with the way out named");
+  // 6. The audit row keeps the WHOLE pre-edit document — the stated main use case is an address
+  //    fix, which a totals-only snapshot records as "nothing changed".
+  assert.match(route, /invoice\.corrected/, "the audit action");
+  assert.match(route, /oldValue: \{ header: oldHeader, lines: previousLines/,
+    "old header AND old lines live in the trail");
+
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /invoice\.corrected_at != null/, "the send route derives corrected delivery from the row");
+  assert.match(send, /corrected === true && !isActingForOther\(acting\)/,
+    "…and holds the fallback flag to the owner-only rule");
+  assert.match(send, /herstel-\$\{Date\.now\(\)\}\.pdf/, "the corrected PDF is versioned, not overwritten");
+  assert.match(send, /isCorrected: correctedDelivery/, "the mail knows it carries a correction");
+  // 7. The line-swap window: a resend of an own outgoing factuur with money but ZERO lines is
+  //    refused instead of mailing a numbered PDF with an empty item table.
+  assert.match(send, /\(lines \?\? \[\]\)\.length === 0/, "the empty-lines resend guard exists");
+
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /Gecorrigeerde factuur/, "the subject says corrected");
+  assert.match(mail, /vervangt de eerdere factuur/, "…the body says it replaces the earlier one");
+  assert.match(mail, /vervallen/, "…and that the earlier version is void");
+
+  // 8. The old orchestration ([CORRIGEER]) is gone; the ordinary edit rule did not widen.
+  assert.ok(!existsSync("src/app/api/invoice/[id]/correct"), "the correct route was removed");
+  assert.doesNotMatch(code("src/app/dashboard/invoice/[id]/page.tsx"), /\/correct/,
+    "no screen calls the removed route");
+  const editable = code("src/lib/invoice-editable.ts");
+  assert.match(editable, /export function isInvoiceEditable/, "the draft/quote door is untouched");
+  assert.match(editable, /export function sentEditBlockers/, "the herstel door is its own function");
+  assert.match(editable, /quarterFiled/, "…and it asks about the filed quarter — the Belastingdienst lock");
+
+  // 9. The screens: visibility from what the row shows, the warning BEFORE the tap, and a
+  //    failed delivery never pretended away.
+  assert.match(code("src/app/dashboard/invoice/[id]/page.tsx"), /canCorrectSent/);
+  const editScreen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(editScreen, /canCorrectSent/, "the edit screen has the third state");
+  assert.match(editScreen, /t\('bewerk\.herstel\.uitleg'/, "…and warns what saving does before the tap");
+  assert.match(editScreen, /corrected_delivery_failed/, "…and refuses to pretend a failed delivery succeeded");
+});
+
+// ─── [SCROLL-VEL] A dialog that does not fit hides the rest, and nothing scrolls ─────────────────
+//
+// Reported from a phone: the confirm card for a purchase invoice was cut off at the top — the
+// amount excluding BTW and the heading above it simply were not there, and no amount of dragging
+// brought them back. The owner was being asked to confirm an invoice while unable to see half of
+// the fields they were confirming.
+//
+// The mechanism: an overlay is `position: fixed; inset: 0` with `align-items: flex-end` (a bottom
+// sheet) or `center` (a dialog). The panel inside had no height cap, so when its content grew past
+// the screen it grew UPWARD, out of the viewport — and because the overlay is what is fixed, the
+// page behind it does not scroll and the panel has no scroller of its own. Measured in Chromium at
+// 393×852: the panel's top edge sat at −348px, with the first field 324px above the screen.
+//
+// It was not one card. 37 overlays across the app had the same shape, including three the same
+// screen opens next. One CSS class now, applied to every panel, because the rule cannot live in an
+// inline style: it needs `max-height: 88vh` followed by `max-height: 88dvh`, and React cannot
+// express the same property twice.
+
+test("[SCROLL-VEL] every fixed overlay has a panel that can scroll", () => {
+  // The shape is what is checked, not a list of screens — a NEW dialog added next month fails this
+  // too, which a checklist could not do.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const f of walk("src")) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/position:\s*["']fixed["'],\s*inset:\s*0/g)) {
+      const head = src.slice(m.index ?? 0, (m.index ?? 0) + 700);
+      // Only overlays that ANCHOR their panel. A `flex-start` overlay overflows downward, where
+      // the document scroll still reaches it.
+      if (!/alignItems:\s*["'](flex-end|center)["']/.test(head)) continue;
+      // The panel is the element opened after the overlay's own style block closes.
+      const styleAt = head.indexOf("style={{", head.indexOf("}}"));
+      if (styleAt < 0) continue;
+      const tagStart = (m.index ?? 0) + head.lastIndexOf("<", styleAt);
+      const tag = src.slice(tagStart, (m.index ?? 0) + styleAt + 420);
+      const shared = /className="[^"]*\bsheet-scroll\b/.test(tag);
+      // A panel that caps and scrolls itself is equally fine — the point is that it scrolls, not
+      // which mechanism it uses.
+      const own = /maxHeight/.test(tag) && /overflowY:\s*["']auto["']/.test(tag);
+      if (!shared && !own) {
+        offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these overlays pin a panel that cannot scroll — content past the screen edge is unreachable, " +
+      `not merely below the fold:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SCROLL-VEL] the shared rule caps the whole panel, padding included", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const at = css.indexOf(".sheet-scroll {");
+  assert.ok(at > 0, "the shared rule is gone; every panel above now relies on a class that does nothing");
+  const rule = css.slice(at, css.indexOf("}", at));
+
+  assert.match(rule, /overflow-y:\s*auto/, "without a scroller the cap only hides more");
+  // Both units, in this order. `dvh` is the height left after a phone's browser chrome, which is
+  // the difference that causes this bug; a browser that does not know it keeps the vh line.
+  const caps = [...rule.matchAll(/max-height:\s*(\d+)(dvh|vh)/g)].map((m) => m[2]);
+  assert.deepEqual(caps, ["vh", "dvh"], "vh first as the fallback, dvh second as the real answer");
+  // The cap must cover the padding. globals.css already sets border-box on everything, so this
+  // is belt to that braces — kept so the class does not depend on a reset it does not own.
+  assert.match(rule, /box-sizing:\s*border-box/, "max-height must include the padding, or the cap is short by it");
+  assert.match(rule, /overscroll-behavior:\s*contain/, "…and the list behind the dialog must stay put");
+});
+
+// ─── [UPLOAD-PLAFOND] The ceiling the app enforces must be the one that applies ──────────────────
+//
+// Reported from a phone, with two pages of a supplier invoice already picked and the sheet still
+// open: "Dit bestand is te groot om te versturen. Splits een grote PDF, of maak er een foto van."
+//
+// The client compressed every upload down to MAX_INTAKE_UPLOAD_BYTES, which was 10 MB, "mirroring
+// /api/intake's server-side MAX_BYTES" — the APP's limit. The limit that bites belongs to the
+// platform: a function's request body is capped around 4.5 MB and refused before any of our code
+// runs, with no JSON and no sentence. So the app compressed to a size it believed was fine, handed
+// it to a platform that refused it, and then asked the owner to split the PDF by hand.
+//
+// Everything needed already existed and was not joined up: an image normalizer, a real PDF
+// compressor that downsamples embedded images while leaving text as text — wired into ONE screen —
+// and the budget. One module joins them, and answers a 413 by squeezing harder and sending again,
+// so a wrong estimate of someone else's limit is recoverable instead of terminal.
+
+test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
+  const src = code("src/lib/image-normalize-client.ts");
+  const m = /MAX_INTAKE_UPLOAD_BYTES = (\d+) \* 1024 \* 1024/.exec(src);
+  assert.ok(m, "the shared budget must stay a plain, readable number of megabytes");
+  const mb = Number(m[1]);
+  assert.ok(mb <= 4, `the budget is ${mb} MB — at or above the platform ceiling, so every file ` +
+    `compressed to exactly it is refused with a bare 413 the owner cannot act on`);
+  assert.ok(mb >= 2, `the budget is ${mb} MB — too small for a legible multi-page scan`);
+  // The server keeps its own, larger cap on purpose: it guards the paths a browser does not walk.
+  const route = code("src/app/api/intake/route.ts");
+  assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
+});
+
+test("[UPLOAD-PLAFOND] every browser upload of a document goes through the shared fit", () => {
+  // By SHAPE, not by a list: a new upload screen added next month fails this too. A CSV or an
+  // MT940 is exempt — compression cannot make a text file smaller, and pretending otherwise would
+  // spend an upload proving it.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const EXEMPT = /\/api\/(bank\/upload|turnover\/import|ledger\/import|eft\/import)/;
+
+  const raw: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components"))) {
+    if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
+    // code(), not readFileSync: a negative control removed the call from IntakeButton and left the
+    // COMMENT explaining it, and this gate went green on the word `sendWithFit` inside that
+    // comment. It is the defect class this file exists to catch — an assertion matching a mention
+    // rather than the wiring — and it caught it in the gate itself.
+    const src = code(f);
+    for (const m of src.matchAll(/append\(\s*['"]file['"]\s*,/g)) {
+      const at = m.index ?? 0;
+      const around = src.slice(Math.max(0, at - 1400), at + 900);
+      const url = /fetch\(\s*[`'"]([^`'"]+)[`'"]/.exec(around.slice(around.indexOf(m[0])))?.[1] ?? "";
+      if (EXEMPT.test(url)) continue;
+      if (!/sendWithFit|fitForUpload/.test(around)) {
+        raw.push(`${f}:${src.slice(0, at).split("\n").length} → ${url}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    raw, [],
+    "these post a document straight at the platform's ceiling, so a large scan is refused with a " +
+      `bare 413 and no sentence:\n  ${raw.join("\n  ")}`,
+  );
+});
+
+test("[UPLOAD-PLAFOND] no screen quotes a size the app does not enforce", () => {
+  // Two messages on the upload screen said "max 10 MB" long after the real ceiling had become 4.
+  // A number the owner is given must be one an upload can actually meet, so the sentences derive
+  // it from the constant.
+  for (const f of [
+    "src/app/dashboard/upload/UploadClient.tsx",
+    "src/components/intake/IntakeButton.tsx",
+  ]) {
+    const src = code(f); // comments stripped — only what the owner can read
+    assert.doesNotMatch(src, /max 10 ?MB|boven de 10 MB/i, `${f}: quotes a ceiling that is not the one enforced`);
+  }
+});
+
+test("[UPLOAD-PLAFOND] the retry is real, and it is bounded", () => {
+  const mod = code("src/lib/upload-fit.ts");
+  assert.match(mod, /res\.status !== 413/, "a platform refusal must be recognised");
+  assert.match(mod, /retryBudget\(budget\)/, "…and answered against a smaller budget");
+  // Exactly two sends in the worst case. A loop here would spend an owner's mobile data proving
+  // that a file which is not a size problem is still not a size problem.
+  assert.equal((mod.match(/await send\(/g) ?? []).length, 2, "two sends at most, never a loop");
+  // And no second upload when the squeeze gained nothing.
+  assert.match(mod, /second\.after >= first\.after/, "identical bytes must not be sent twice");
+  // The fitter is injectable, or the retry is untestable and would sit unexercised.
+  assert.match(mod, /fit: \(f: File, b: number\) => Promise<FitResult> = fitForUpload/);
+  const spec = readFileSync("src/lib/upload-fit.test.ts", "utf8");
+  assert.match(spec, /becomes a smaller second attempt that succeeds/, "the retry must be exercised");
+  assert.match(spec, /happens once, never in a loop/, "…and its bound asserted");
+});
+
+// ─── [ANDER-TOTAAL] The document's own total, when the read one is not on it ─────────────────────
+//
+// Reported with the paper invoice beside the screen. NemaFood B.V. 262697, three scanned pages with
+// no text layer: the app read € 1.149,56 with € 94,92 BTW; the document says
+// € 1.065,14 + € 95,54 = € 1.160,68. Eleven euro of cost and sixty-two cents of voorbelasting.
+//
+// The app had already noticed. [GEGROND-OCR] pays for a second, blind read of the page — "write
+// down every amount you can see" — and checks whether the extracted total is among them. It was
+// not, and the owner was told: "controleer het aan de factuur zelf". True, and a dead end: it sends
+// them to find the paper while the app is holding a transcription of that paper and discards it.
+//
+// Among those amounts there is usually exactly one triple that adds up to the cent. That is not a
+// guess about which number is the total — it is the arithmetic every invoice's totals block
+// satisfies and very little else does. So the question goes on the screen instead.
+
+test("[ANDER-TOTAAL] the transcription is used, not discarded", () => {
+  const grounding = code("src/lib/amount-grounding.ts");
+  // The verdict must carry the alternative, or the finder is unreachable from the screen.
+  assert.match(grounding, /alternative\?: \{ ex: number; btw: number; inc: number \}/,
+    "the grounding verdict must be able to carry the document's own totals block");
+  assert.match(grounding, /alternativeTotals\(amounts\.totalIncBtw/, "…and must actually look for one");
+  // Only when the read total is NOT on the document. Raising a second figure on a correct invoice
+  // is how a warning stops being read.
+  const at = grounding.indexOf("alternativeTotals(");
+  const before = grounding.slice(Math.max(0, at - 300), at);
+  assert.match(before, /totalIncBtw === 'absent'/, "the alternative is for the absent case only");
+});
+
+test("[ANDER-TOTAAL] a candidate must add up exactly, and be a plausible totals block", () => {
+  const mod = code("src/lib/amount-candidates.ts");
+  // Cents, not floats: 0.1 + 0.2 !== 0.3 in binary, and this is an equality test on money.
+  assert.match(mod, /Math\.round\(n \* 100\)/, "the comparison must be in whole cents");
+  // Distinct amounts — an invoice prints the same figure twice and x + x = 2x means nothing.
+  assert.match(mod, /seen\.has\(c\)/, "a printed amount may not pair with itself");
+  // BTW never exceeds the net it is charged on.
+  assert.match(mod, /if \(b > a\) continue/, "the BTW side must be the smaller one");
+  // A floor, because small change sums coincidentally on every receipt.
+  assert.match(mod, /MIN_TOTAL/, "small change must not become a totals block");
+  // Bounded: the search is quadratic and a model can transcribe a whole page.
+  assert.match(mod, /MAX_CONSIDERED/, "a pathological transcription must not stall a request");
+});
+
+test("[ANDER-TOTAAL] the finding is shown, never applied", () => {
+  // Both figures come from a model reading a scan. The app knows they disagree and does not know
+  // which is right, so naming a winner would be the same overconfidence that produced the wrong
+  // number. It must not write to the invoice.
+  const mod = code("src/lib/amount-candidates.ts");
+  assert.doesNotMatch(mod, /\.update\(|\.insert\(|supabase/, "this module decides nothing and writes nothing");
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /alternativeReason\(grounding\.alternative\)/, "the owner is told");
+  assert.match(health, /controleer welk bedrag op de factuur staat/, "…and asked, not overruled");
+  // And when there is no candidate the honest old sentence must remain, not disappear.
+  assert.match(health, /controleer het aan de factuur zelf/, "no candidate ⇒ the plain warning stays");
+});
+
+test("[ANDER-TOTAAL] the invoice it was built from is the fixture", () => {
+  // A synthetic example proves the arithmetic; this document proves the FEATURE. Its per-rate block
+  // (3,60 + 1.061,54 = 1.065,14) also adds up, so it is what shows the ordering has to prefer the
+  // grand total — the number that becomes money.
+  const spec = readFileSync("src/lib/amount-candidates.test.ts", "utf8");
+  assert.match(spec, /1160\.68/, "the document's real total");
+  assert.match(spec, /1149\.56/, "…and the one the app read instead");
+  assert.match(spec, /GRAND total wins over the per-rate blocks/, "the ordering must be exercised");
+  assert.match(spec, /the pieces, joined/i, "and the chain end to end, not just the finder");
+});
+
+test("[ANDER-TOTAAL] the offer reaches the screen where the total is edited", () => {
+  // The card shows the warning; the MODAL is where the owner types the number, so that is where
+  // the one tap has to be. A prop that never arrives in a modal body is perfectly typed and
+  // perfectly invisible to tsc — which is why this is asserted by a render, not by a signature.
+  const client = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(client, /alternativeTotals\?: \{ ex: number; btw: number; inc: number \}/,
+    "the client's ImportHealth mirror must carry it, or the modal cannot see it");
+  assert.match(client, /invoice\.health\.alternativeTotals && \(\(\) => \{/, "…and the modal must offer it");
+  // One tap fills and opens the editor. It must NOT save: both figures come from a model reading a
+  // scan, and the owner confirms with the paper in hand.
+  const at = client.indexOf("invoice.health.alternativeTotals && (() =>");
+  const offer = client.slice(at, at + 900);
+  assert.match(offer, /applyTriplet\(\{ ex: alt\.ex, btw: alt\.btw, incl: alt\.inc \}\)/, "fills all three fields");
+  assert.match(offer, /setEditing\(true\)/, "…and opens the editor");
+  assert.doesNotMatch(offer, /onVerify|onPay|fetch\(/, "tapping must not book anything");
+  // And the modal is exported for the render suite, or the assertion above has nothing to render.
+  assert.match(client, /export function ConfirmPaidModal/);
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /reaches the confirm modal as one tap/, "the render proof must exist");
+  assert.match(render, /no offer on an invoice that reads right/, "…and the silent case with it");
 });

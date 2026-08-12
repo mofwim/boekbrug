@@ -7,6 +7,9 @@ import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { BestandRow } from "../types";
 import { fileEmoji, formatDate, formatSize } from "../helpers";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface DocRowProps {
   doc: BestandRow;
@@ -24,6 +27,7 @@ interface DocRowProps {
 }
 
 export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, onToggleShare, onOpenLocation, folderLabel }: DocRowProps) {
+  const t = translator(useLocale());
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -88,7 +92,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         {onOpenLocation && (
           <button
             onClick={e => { e.stopPropagation(); onOpenLocation(); }}
-            title={folderLabel ? `Open map: ${folderLabel}` : "Open in Mijn bestanden"}
+            title={folderLabel ? t("bst.openMap", { folder: folderLabel }) : t("bst.openMijn")}
             style={{
               marginTop: 4, display: "inline-flex", alignItems: "center", gap: 5,
               border: "none", background: T.surfaceVariant, borderRadius: T.full,
@@ -98,7 +102,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
           >
             <Icon name="folder_open" size={13} color={T.primary} />
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-              {folderLabel ?? "Mijn bestanden"}
+              {folderLabel ?? t("bst.mijnBestanden")}
             </span>
           </button>
         )}
@@ -109,8 +113,8 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
       {(doc.shared || hovered) && (
         <button
           onClick={e => { e.stopPropagation(); onToggleShare(doc.id, !!doc.shared); }}
-          title={doc.shared ? "Gedeeld met boekhouder — tik om te stoppen" : "Delen met boekhouder"}
-          aria-label={doc.shared ? "Niet meer delen" : "Delen met boekhouder"}
+          title={doc.shared ? t("bst.gedeeldStop") : t("bst.delen")}
+          aria-label={doc.shared ? t("bst.nietDelen") : t("bst.delen")}
           style={{
             width: 26, height: 26, border: "none", flexShrink: 0,
             background: doc.shared ? T.primaryContainer : "transparent",
@@ -129,7 +133,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e); }}
-          aria-label="Meer opties"
+          aria-label={t("bst.meerOpties")}
           style={{
             width: 30, height: 30, border: "none", background: "none",
             cursor: "pointer", display: "flex", alignItems: "center",

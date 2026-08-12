@@ -1,4 +1,4 @@
--- migrations: invoice_manual_payments.sql
+-- migrations: invoice_manual_payments.sql, invoice_manual_payment_idempotency_scope.sql
 -- =====================================================================
 -- [SEAM] apply_manual_payment, against a real PostgreSQL.
 -- Run: npm run test:sql   (see scripts/sql-seam-test.sh)
@@ -142,6 +142,89 @@ BEGIN
     (SELECT count(*) FROM public.bank_tx_invoices), 1);
   PERFORM public.t_eq('so amount_paid did not double',
     (SELECT amount_paid FROM public.invoices WHERE id = inv), 300);
+END $$;
+
+\echo ''
+\echo '— [PAY-KEY-SCOPE] an idempotency key does not open a stranger''s invoice —'
+DO $$
+DECLARE attacker uuid := 'aaaaaaaa-0000-0000-0000-000000000001';
+        victim   uuid := 'bbbbbbbb-0000-0000-0000-000000000002';
+        inv_a    uuid := 'aaaaaaaa-1111-1111-1111-111111111111';
+        inv_a2   uuid := 'aaaaaaaa-4444-4444-4444-444444444444';
+        inv_v    uuid := 'bbbbbbbb-2222-2222-2222-222222222222';
+        k        uuid := 'cccccccc-3333-3333-3333-333333333333';
+        r        record;
+        caught   boolean;
+        -- Plain scalars, not the record: a call that RAISES leaves a record unassigned, and
+        -- reading one is itself an error. These stay NULL, which is what "nothing came back" is.
+        leak_total numeric;
+        leak_paid  numeric;
+BEGIN
+  -- The threat model is the one the caller guard below was written for: SECURITY DEFINER, GRANT
+  -- authenticated, PostgREST at /rest/v1/rpc/ with the anon key that ships in the browser bundle.
+  -- The attacker here is a perfectly ordinary logged-in user acting AS THEMSELVES — p_user_id is
+  -- their own uuid, so the caller guard is satisfied and never enters into it. The only thing
+  -- between them and another tenant's figures is the predicate on the read.
+  TRUNCATE public.bank_tx_invoices, public.bank_transactions, public.invoices;
+  INSERT INTO public.invoices (id, receiver_id, status, invoice_type, total_inc_btw, amount_paid)
+  VALUES (inv_a,  attacker, 'received', 'factuur', 100, 0),
+         (inv_a2, attacker, 'received', 'factuur', 200, 0),
+         (inv_v,  victim,   'received', 'factuur', 8450.75, 3200.50);
+  EXECUTE format($x$ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
+                     AS $b$ SELECT %L::uuid $b$ $x$, attacker);
+
+  -- An ordinary booking on their own invoice, with a key they generated themselves.
+  PERFORM public.apply_manual_payment(attacker, inv_a, 10, DATE '2026-08-07', 'bank', NULL, k);
+
+  -- The same key, pointed at a stranger's invoice. Before [PAY-KEY-SCOPE] this returned
+  -- total=8450.75, amount_paid=3200.50, duplicate=true — reproduced against a real PostgreSQL.
+  caught := false;
+  BEGIN
+    SELECT a.total, a.amount_paid INTO leak_total, leak_paid
+    FROM public.apply_manual_payment(
+      attacker, inv_v, 10, DATE '2026-08-07', 'bank', ARRAY['received'], k) a;
+  EXCEPTION WHEN sqlstate '55000' THEN caught := true; END;
+  PERFORM public.t_is('a key from my own booking does not read someone else''s invoice',
+    caught::text, 'true');
+  -- Belt and braces: whatever the branch does, the stranger's numbers must not be in the answer.
+  -- Asserted on the values, not on the refusal — a future rewrite could return instead of raise,
+  -- and this line would still be the thing that matters.
+  PERFORM public.t_is('and no figure of theirs came back',
+    (coalesce(leak_total, 0) = 8450.75 OR coalesce(leak_paid, 0) = 3200.50)::text, 'false');
+  PERFORM public.t_eq('nor was anything written on their invoice',
+    (SELECT count(*) FROM public.bank_tx_invoices WHERE invoice_id = inv_v), 0);
+  PERFORM public.t_eq('nor did their balance move',
+    (SELECT amount_paid FROM public.invoices WHERE id = inv_v), 3200.50);
+
+  -- The same key on ANOTHER of the attacker's own invoices is not a replay either — that key is
+  -- already spent on other money. It is refused by name rather than falling through to a bare
+  -- 23505 from the partial unique index, which is what the caller would otherwise have to read.
+  caught := false;
+  BEGIN PERFORM public.apply_manual_payment(attacker, inv_a2, 10, DATE '2026-08-07', 'bank', NULL, k);
+  EXCEPTION WHEN sqlstate '55000' THEN caught := true; END;
+  PERFORM public.t_is('a key already spent on another booking is refused', caught::text, 'true');
+  PERFORM public.t_eq('and the second invoice stayed untouched',
+    (SELECT amount_paid FROM public.invoices WHERE id = inv_a2), 0);
+
+  -- A genuine replay — same key, same caller, same invoice — still costs nothing and still answers.
+  SELECT * INTO r FROM public.apply_manual_payment(attacker, inv_a, 10, DATE '2026-08-07', 'bank', NULL, k);
+  PERFORM public.t_is('the real replay still reports itself as one', r.duplicate::text, 'true');
+  PERFORM public.t_eq('…with the booking that exists', r.applied, 10);
+  PERFORM public.t_eq('…and the invoice''s own total', r.total, 100);
+  PERFORM public.t_eq('and still nothing was written twice',
+    (SELECT count(*) FROM public.bank_tx_invoices), 1);
+
+  -- A replay whose invoice the caller no longer owns is a question, not a duplicate. Seeded
+  -- directly because no code path produces it — ownership can change under a stored key, and the
+  -- honest answer is a refusal, not zeros dressed up as a booking.
+  UPDATE public.invoices SET receiver_id = victim WHERE id = inv_a;
+  caught := false;
+  BEGIN PERFORM public.apply_manual_payment(attacker, inv_a, 10, DATE '2026-08-07', 'bank', NULL, k);
+  EXCEPTION WHEN sqlstate '55000' THEN caught := true; END;
+  PERFORM public.t_is('a replay on an invoice that is no longer mine is refused', caught::text, 'true');
+
+  EXECUTE $x$ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
+              AS 'SELECT NULL::uuid' $x$;
 END $$;
 
 \echo ''

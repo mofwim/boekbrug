@@ -5,6 +5,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { FONT, M3, R } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 interface Lid {
   id: string
@@ -26,6 +28,7 @@ const datum = (s: string) => {
 }
 
 export default function TeamClient() {
+  const t = translator(useLocale())
   const [leden, setLeden] = useState<Lid[]>([])
   const [open, setOpen] = useState<Uitnodiging[]>([])
   const [email, setEmail] = useState('')
@@ -116,7 +119,7 @@ export default function TeamClient() {
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px 48px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>Team</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>{t('team.titel')}</h1>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.6 }}>
           Iemand die je hier toevoegt kan verkoopfacturen maken en versturen die uitgaan op
           jouw naam en BTW-nummer, met jouw doorlopende factuurnummers. Hij ziet <strong>alleen
@@ -135,7 +138,7 @@ export default function TeamClient() {
              werken. De eigenaar kan hier zelf iets aan doen, dus staat er wat hij moet doen. */
           <div style={{ ...kaart, borderColor: M3.warning, background: M3.warnContainer }}>
             <p style={{ fontSize: 14.5, color: M3.onSurface, margin: 0, lineHeight: 1.6 }}>
-              <strong>De teamfunctie staat nog niet aan.</strong> De databasemigratie
+              <strong>{t('team.nietAan')}</strong> De databasemigratie
               <code style={{ fontSize: 13 }}> company_members_sales_role.sql </code>
               moet nog worden toegepast. Zolang dat niet is gebeurd kun je niemand uitnodigen —
               en verandert er verder niets: je facturen, je bank en je aangifte werken gewoon door.
@@ -146,7 +149,7 @@ export default function TeamClient() {
         {beschikbaar !== false && (
         <form onSubmit={nodigUit} style={kaart}>
           <label htmlFor="team-email" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: M3.onSurfaceVariant, marginBottom: 8 }}>
-            E-mailadres van de medewerker
+            {t('team.email')}
           </label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
@@ -185,7 +188,7 @@ export default function TeamClient() {
             {open.length > 0 && (
               <div style={kaart}>
                 <h2 style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, margin: '0 0 12px' }}>
-                  Nog niet geaccepteerd
+                  {t('team.nietGeaccepteerd')}
                 </h2>
                 {open.map((u) => (
                   <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0' }}>
@@ -197,7 +200,7 @@ export default function TeamClient() {
                       onClick={() => trekIn({ inviteId: u.id })}
                       style={{ background: 'none', border: `1px solid ${M3.outlineVariant}`, color: M3.neutral, padding: '7px 14px', borderRadius: 999, fontSize: 13, cursor: 'pointer', fontFamily: FONT, flexShrink: 0 }}
                     >
-                      Intrekken
+                      {t('team.intrekken')}
                     </button>
                   </div>
                 ))}
@@ -206,11 +209,11 @@ export default function TeamClient() {
 
             <div style={kaart}>
               <h2 style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, margin: '0 0 12px' }}>
-                Mag facturen maken
+                {t('team.magFactureren')}
               </h2>
               {leden.filter((l) => !l.ingetrokken).length === 0 ? (
                 <p style={{ fontSize: 14, color: M3.neutral, margin: 0, lineHeight: 1.6 }}>
-                  Niemand. Alleen jij maakt facturen voor je bedrijf.
+                  {t('team.niemand')}
                 </p>
               ) : (
                 leden.filter((l) => !l.ingetrokken).map((l) => (
@@ -225,7 +228,7 @@ export default function TeamClient() {
                       onClick={() => trekIn({ memberRowId: l.id })}
                       style={{ background: 'none', border: `1px solid ${M3.error}`, color: M3.error, padding: '7px 14px', borderRadius: 999, fontSize: 13, cursor: 'pointer', fontFamily: FONT, flexShrink: 0 }}
                     >
-                      Intrekken
+                      {t('team.intrekken')}
                     </button>
                   </div>
                 ))
@@ -234,7 +237,7 @@ export default function TeamClient() {
 
             {leden.some((l) => l.ingetrokken) && (
               <div style={kaart}>
-                <h2 style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>Eerder</h2>
+                <h2 style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>{t('team.eerder')}</h2>
                 {/* Ingetrokken leden blijven staan, en dat is geen slordigheid: de facturen die
                     zij maakten bestaan nog en moeten toewijsbaar blijven aan een mens. */}
                 <p style={{ fontSize: 12.5, color: M3.mutedText, margin: '0 0 10px', lineHeight: 1.6 }}>

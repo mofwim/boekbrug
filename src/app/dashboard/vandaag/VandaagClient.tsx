@@ -38,6 +38,10 @@ import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3 } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+// [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /facturen and /manage.
+import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -137,6 +141,7 @@ const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
+  const t = translator(useLocale())
   const router = useRouter();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
@@ -207,18 +212,27 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Afboeken is niet gelukt.");
+      if (!res.ok) {
+        // [PAY-REDEN] This used to be `throw new Error(data?.error || …)` — the machine CODE. A
+        // shop owner tapping "Al betaald?" read "invoice_already_paid" under the button, in every
+        // language including Dutch, for every refusal this route can make. One shared rule now
+        // decides (pay-toggle-reason.ts): the server's own sentence when it wrote one and the
+        // status says we may trust it, otherwise a line from the catalogue in the owner's
+        // language. Never a code.
+        const answer = payToggleAnswer(res.status, data);
+        setPayError((e) => ({ ...e, [id]: answer.kind === "server" ? answer.text : t(answer.key) }));
+        return;
+      }
       setPaidIds((prev) => new Set(prev).add(id));
       setPayingId(null);
-    } catch (err) {
-      setPayError((e) => ({
-        ...e,
-        [id]: err instanceof Error ? err.message : "Er ging iets mis.",
-      }));
+    } catch {
+      // The request never completed — it may or may not have reached the server, and we cannot
+      // know which. The catalogue's neutral line says exactly that much and nothing more.
+      setPayError((e) => ({ ...e, [id]: t(PAY_TOGGLE_FALLBACK_KEY) }));
     } finally {
       setPayBusy(null);
     }
-  }, []);
+  }, [t]);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");
@@ -280,7 +294,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           the in-body h1 was removed. The one-line subtitle stays. */}
       <header style={{ marginBottom: 24 }}>
         <p style={{ fontSize: 15, color: M3.onSurfaceVariant, margin: 0 }}>
-          Dit heeft vandaag je aandacht nodig.
+          {t('vandaag.aandacht')}
         </p>
       </header>
 
@@ -304,10 +318,10 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
               {toVerifyCount === 1 ? "1 factuur wacht op verificatie" : `${toVerifyCount} facturen wachten op verificatie`}
             </span>
             <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
-              Controleer ze zodat de kosten en BTW-aftrek in je boeken komen.
+              {t('vandaag.controleerKosten')}
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
         </button>
       )}
 
@@ -330,27 +344,27 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
               {datelessPayableCount === 1 ? "1 factuur zonder vervaldatum" : `${datelessPayableCount} facturen zonder vervaldatum`}
             </span>
             <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
-              Deze staan op geen betaallijst — controleer of betaal ze.
+              {t('vandaag.geenBetaallijst')}
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
         </button>
       )}
 
       {/* [SEARCH] In-page live filter — widens beyond today's window while searching */}
       {!loadFailed && canSearch && (
         <div style={{ position: "relative", marginBottom: 16 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: "absolute", insetInlineStart: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Zoek op klant, factuurnummer of bedrag…"
-            aria-label="Facturen zoeken"
+            placeholder={t('lijst.zoek')}
+            aria-label={t('lijst.zoek.aria')}
             style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
           />
           {search && (
-            <button onClick={() => setSearch("")} aria-label="Wissen" className="tap-44"
-              style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
+            <button onClick={() => setSearch("")} aria-label={t('inkoop.wissen')} className="tap-44"
+              style={{ position: "absolute", insetInlineEnd: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>
       )}
@@ -362,7 +376,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         <div style={{ position: "relative", marginBottom: 16 }}>
           <button
             onClick={() => setShowSortMenu((p) => !p)}
-            title="Sorteren"
+            title={t('inkoop.sorteren')}
             style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, width: "100%", padding: "10px 14px", background: "#F1F3F4", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: "inherit" }}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
@@ -402,9 +416,9 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           </p>
         ) : (
           <>
-            <ListSection title="Te betalen" subtitle="Facturen die jij moet betalen"
+            <ListSection title={t('vandaag.teBetalen')} subtitle={t('vandaag.jijBetalen')}
               invoices={displayPayable} onOpen={open} onConfirmPaid={confirmPaid} onDismiss={dismiss} payingId={payingId} payBusyId={payBusy} paidIds={paidIds} payError={payError} onPayNow={payNow} onOpenFullPay={openFullPayDialog} />
-            <ListSection title="Herinner je klant" subtitle="Verstuurde facturen die nog niet betaald zijn"
+            <ListSection title={t('vandaag.herinner')} subtitle={t('vandaag.onbetaald')}
               invoices={displayRemind} onOpen={open} onConfirmPaid={null} onDismiss={dismiss} />
           </>
         )
@@ -413,8 +427,8 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
       ) : nothingToDo ? null : (
         <>
           <ListSection
-            title="Te betalen"
-            subtitle="Facturen die jij moet betalen"
+            title={t('vandaag.teBetalen')}
+            subtitle={t('vandaag.jijBetalen')}
             invoices={visiblePayable}
             onOpen={open}
             onConfirmPaid={confirmPaid}
@@ -427,8 +441,8 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             onDismiss={dismiss}
           />
           <ListSection
-            title="Herinner je klant"
-            subtitle="Verstuurde facturen die nog niet betaald zijn"
+            title={t('vandaag.herinner')}
+            subtitle={t('vandaag.onbetaald')}
             invoices={visibleRemind}
             onOpen={open}
             onConfirmPaid={null}
@@ -587,6 +601,7 @@ function InvoiceCard({
   onPayNow?: (id: string, paymentMethod: "bank" | "kas") => void;
   onOpenFullPay?: (id: string) => void;
 }) {
+  const t = translator(useLocale())
   const due = invoice.due_date as string;
   const accent = accentOf(due);
   const isIncoming = invoice.direction === "incoming";
@@ -707,8 +722,8 @@ function InvoiceCard({
         <button
           type="button"
           onClick={() => onDismiss(invoice.id)}
-          aria-label="Verbergen voor vandaag"
-          title="Verbergen voor vandaag"
+          aria-label={t('vandaag.verbergenVandaag')}
+          title={t('vandaag.verbergenVandaag')}
           style={{
             flexShrink: 0,
             display: "flex",
@@ -727,7 +742,7 @@ function InvoiceCard({
             whiteSpace: "nowrap",
           }}
         >
-          Verbergen
+          {t('vandaag.verbergen')}
         </button>
       </div>
 
@@ -769,7 +784,7 @@ function InvoiceCard({
               cursor: "pointer",
             }}
           >
-            Al betaald?
+            {t('vandaag.alBetaald')}
           </button>
         )}
       </div>
@@ -797,19 +812,19 @@ function InvoiceCard({
             {openstaand !== null ? (
               isPartial ? (
                 <>
-                  Betaald met — vandaag, het <strong>restant</strong> van{" "}
+                  {t('vandaag.betaaldRestant')}{" "}
                   <strong>{formatEuroNL(openstaand)}</strong>:
                 </>
               ) : (
                 <>
-                  Betaald met — vandaag, het hele bedrag van{" "}
+                  {t('vandaag.betaaldHeel')}{" "}
                   <strong>{formatEuroNL(openstaand)}</strong>:
                 </>
               )
             ) : (
               // Geen bedrag op de factuur: dan noemen we er ook geen. Liever een kale zin dan een
               // verzonnen getal onder een knop die geld afboekt.
-              <>Betaald met — vandaag, wat er nog openstaat:</>
+              <>{t('vandaag.betaaldOpen')}</>
             )}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -847,7 +862,7 @@ function InvoiceCard({
                 cursor: "pointer",
               }}
             >
-              Deelbetaling of andere datum
+              {t('vandaag.deelbetaling')}
             </button>
           </div>
           {payErrorText && (
@@ -874,6 +889,7 @@ function InvoiceCard({
 // the calm "✓ niets" checkmark: on an error we do not KNOW there is nothing to do,
 // so we must not claim it. Honest wording + a retry, never false reassurance.
 function LoadError({ onRetry }: { onRetry: () => void }) {
+  const t = translator(useLocale())
   return (
     <div
       style={{
@@ -893,11 +909,10 @@ function LoadError({ onRetry }: { onRetry: () => void }) {
           marginBottom: 4,
         }}
       >
-        We konden je taken niet laden
+        {t('vandaag.fout.taken')}
       </div>
       <div style={{ fontSize: 14, color: M3.onSurfaceVariant, marginBottom: 16 }}>
-        Er ging iets mis bij het ophalen. Dit betekent <strong>niet</strong> dat je
-        niets hoeft te doen — probeer het opnieuw.
+        {t('vandaag.fout.ophalen')}
       </div>
       <button
         onClick={onRetry}
@@ -912,7 +927,7 @@ function LoadError({ onRetry }: { onRetry: () => void }) {
           cursor: "pointer",
         }}
       >
-        Opnieuw proberen
+        {t('inkoop.opnieuwProberen')}
       </button>
     </div>
   );
@@ -921,6 +936,7 @@ function LoadError({ onRetry }: { onRetry: () => void }) {
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyAllClear() {
+  const t = translator(useLocale())
   return (
     <div
       style={{
@@ -940,10 +956,10 @@ function EmptyAllClear() {
           marginBottom: 4,
         }}
       >
-        Niets dat nu je aandacht nodig heeft
+        {t('vandaag.nietsNodig')}
       </div>
       <div style={{ fontSize: 14, color: M3.onSurfaceVariant }}>
-        Geen facturen die binnen 3 dagen vervallen of te laat zijn.
+        {t('vandaag.geenVervallen')}
       </div>
     </div>
   );

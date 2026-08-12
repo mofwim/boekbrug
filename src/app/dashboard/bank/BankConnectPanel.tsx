@@ -20,6 +20,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { M3, R, EL1 } from '@/lib/design/tokens'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator, type Translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -77,10 +80,10 @@ function fmtDate(iso: string | null): string {
   return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-function fmtDateTime(iso: string | null): string {
-  if (!iso) return 'nog niet'
+function fmtDateTime(iso: string | null, t: Translator): string {
+  if (!iso) return t('bkc.nogNiet')
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return 'nog niet'
+  if (Number.isNaN(d.getTime())) return t('bkc.nogNiet')
   return d.toLocaleString('nl-NL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
@@ -90,32 +93,33 @@ function fmtDateTime(iso: string | null): string {
  * Exported and pure so the wording is testable without a browser: "verloopt over 0 dagen" is the
  * kind of sentence that only looks wrong once a real person reads it on the day it matters.
  */
-export function expiryNotice(days: number | null): { text: string; tone: 'quiet' | 'warn' | 'dead' } | null {
+export function expiryNotice(days: number | null, t: Translator = translator('nl')): { text: string; tone: 'quiet' | 'warn' | 'dead' } | null {
   if (days === null) return null
-  if (days < 0) return { text: 'De toestemming is verlopen — koppel opnieuw om transacties te blijven ontvangen.', tone: 'dead' }
-  if (days === 0) return { text: 'De toestemming verloopt vandaag — koppel opnieuw.', tone: 'warn' }
-  if (days === 1) return { text: 'De toestemming verloopt morgen — koppel opnieuw.', tone: 'warn' }
-  if (days <= 10) return { text: `De toestemming verloopt over ${days} dagen — koppel opnieuw.`, tone: 'warn' }
-  return { text: `Toestemming geldig tot en met ${days} dagen vanaf nu.`, tone: 'quiet' }
+  if (days < 0) return { text: t('bkc.verlopen'), tone: 'dead' }
+  if (days === 0) return { text: t('bkc.verlooptVandaag'), tone: 'warn' }
+  if (days === 1) return { text: t('bkc.verlooptMorgen'), tone: 'warn' }
+  if (days <= 10) return { text: t('bkc.verlooptOver', { days }), tone: 'warn' }
+  return { text: t('bkc.geldigDagen', { days }), tone: 'quiet' }
 }
 
 /** The status line under a connected bank. */
-export function statusLabel(c: BankConnectionView): string {
+export function statusLabel(c: BankConnectionView, t: Translator = translator('nl')): string {
   switch (c.status) {
     case 'linked':
-      return `Laatst opgehaald: ${fmtDateTime(c.lastSyncedAt)}`
+      return t('bkc.laatstOpgehaald', { time: fmtDateTime(c.lastSyncedAt, t) })
     case 'pending':
-      return 'Nog niet afgerond bij je bank.'
+      return t('bkc.pending')
     case 'expired':
-      return 'De toestemming is verlopen.'
+      return t('bkc.expired')
     case 'error':
-      return c.lastError ?? 'Er ging iets mis bij het ophalen.'
+      return c.lastError ?? t('bkc.error')
     case 'revoked':
-      return 'Losgekoppeld.'
+      return t('bkc.revoked')
   }
 }
 
 export default function BankConnectPanel({ initialState = null, onImported, onMessage }: Props) {
+  const t = translator(useLocale())
   const [state, setState] = useState<BankConnectState | null>(initialState)
   const [institutions, setInstitutions] = useState<Institution[] | null>(null)
   const [picking, setPicking] = useState(false)
@@ -148,7 +152,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       if (json.error) onMessage?.(String(json.error))
     } catch {
       setInstitutions([])
-      onMessage?.('De banklijst kon niet geladen worden.')
+      onMessage?.(t('bkc.banklijstFout'))
     }
   }, [institutions, onMessage])
 
@@ -162,14 +166,14 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       })
       const json = await res.json()
       if (!res.ok || !json.link) {
-        onMessage?.(json?.error ?? 'Koppelen mislukt.')
+        onMessage?.(json?.error ?? t('bkc.koppelenMislukt'))
         setBusy(null)
         return
       }
       // The owner leaves for his own bank. Everything after this happens in the callback route.
       window.location.href = json.link as string
     } catch {
-      onMessage?.('Koppelen mislukt.')
+      onMessage?.(t('bkc.koppelenMislukt'))
       setBusy(null)
     }
   }, [onMessage])
@@ -184,7 +188,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       })
       const json = await res.json()
       if (!res.ok) {
-        onMessage?.(json?.error ?? 'Ophalen mislukt.')
+        onMessage?.(json?.error ?? t('bkc.ophalenMislukt'))
         return
       }
       const inserted = Number(json.inserted ?? 0)
@@ -194,17 +198,19 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       if (warnings.length > 0) {
         // Never silently short a transaction — the same rule the upload path follows.
         onMessage?.(
-          `${inserted} nieuwe transacties. Let op: ${warnings.length} regel${warnings.length === 1 ? '' : 's'} kon${warnings.length === 1 ? '' : 'den'} niet gelezen worden.`,
+          warnings.length === 1
+            ? t('bkc.metWaarschuwingenEen', { inserted })
+            : t('bkc.metWaarschuwingen', { inserted, warnings: warnings.length }),
         )
       } else if (tooSoon) {
-        onMessage?.('Je bank staat een beperkt aantal opvragingen per dag toe. Morgen halen we automatisch de rest op.')
+        onMessage?.(t('bkc.teSnel'))
       } else {
-        onMessage?.(inserted > 0 ? `${inserted} nieuwe transacties opgehaald.` : 'Geen nieuwe transacties bij je bank.')
+        onMessage?.(inserted > 0 ? t('bkc.opgehaald', { inserted }) : t('bkc.geenNieuwe'))
       }
       if (inserted > 0) onImported?.(inserted)
       await loadStatus()
     } catch {
-      onMessage?.('Ophalen mislukt.')
+      onMessage?.(t('bkc.ophalenMislukt'))
     } finally {
       setBusy(null)
     }
@@ -219,13 +225,13 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
         body: JSON.stringify({ connectionId }),
       })
       if (!res.ok) {
-        onMessage?.('Ontkoppelen mislukt.')
+        onMessage?.(t('bkc.ontkoppelenMislukt'))
         return
       }
-      onMessage?.('Bank ontkoppeld. Je transacties blijven bewaard.')
+      onMessage?.(t('bkc.ontkoppeld'))
       await loadStatus()
     } catch {
-      onMessage?.('Ontkoppelen mislukt.')
+      onMessage?.(t('bkc.ontkoppelenMislukt'))
     } finally {
       setBusy(null)
     }
@@ -252,38 +258,37 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
           <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>account_balance</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: M3.onSurface }}>
-              Koppel je bank
+              {t('bkc.koppelKop')}
             </span>
             <span style={{ display: 'block', fontSize: 12, color: M3.onSurfaceVariant, marginTop: 2 }}>
-              Dan komen je transacties automatisch binnen en hoef je geen afschrift meer te uploaden.
+              {t('bkc.koppelSub')}
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>chevron_right</span>
         </button>
       )}
 
       {picking && (
         <div style={{ padding: '14px 16px', borderRadius: R.lg, background: M3.surface, boxShadow: EL1, marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <strong style={{ fontSize: 14, color: M3.onSurface }}>Kies je bank</strong>
+            <strong style={{ fontSize: 14, color: M3.onSurface }}>{t('bkc.kiesBank')}</strong>
             <button
               type="button"
               onClick={() => setPicking(false)}
               style={{ background: 'none', border: 'none', color: M3.primary, fontSize: 13, cursor: 'pointer', fontFamily: FONT }}
             >
-              Annuleren
+              {t('bkc.annuleren')}
             </button>
           </div>
           <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '0 0 10px', lineHeight: 1.5 }}>
-            Je logt straks in bij je eigen bank. BoekBrug krijgt alleen leesrechten op je
-            transacties — nooit de mogelijkheid om geld over te maken.
+            {t('bkc.leesrechten')}
           </p>
           {institutions === null && (
-            <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: 0 }}>Banken laden…</p>
+            <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: 0 }}>{t('bkc.bankenLaden')}</p>
           )}
           {institutions?.length === 0 && (
             <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: 0 }}>
-              Er zijn nu geen banken beschikbaar. Upload je afschrift zoals je gewend bent.
+              {t('bkc.geenBanken')}
             </p>
           )}
           {institutions && institutions.length > 0 && (
@@ -314,7 +319,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       )}
 
       {connections.map((c) => {
-        const notice = expiryNotice(c.daysUntilExpiry)
+        const notice = expiryNotice(c.daysUntilExpiry, t)
         const dead = c.status === 'expired' || (c.daysUntilExpiry !== null && c.daysUntilExpiry < 0)
         return (
           <div
@@ -333,7 +338,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                   {c.institutionName}
                 </span>
                 <span style={{ display: 'block', fontSize: 12, color: M3.onSurfaceVariant, marginTop: 1 }}>
-                  {statusLabel(c)}
+                  {statusLabel(c, t)}
                 </span>
               </span>
             </div>
@@ -342,9 +347,9 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
               <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {c.accounts.map((a) => (
                   <li key={a.id} style={{ fontSize: 12.5, color: M3.onSurfaceVariant }}>
-                    {a.iban ?? 'Rekening'}
+                    {a.iban ?? t('bkc.rekening')}
                     {a.ownerName ? ` · ${a.ownerName}` : ''}
-                    {a.lastSyncedThrough ? ` · bijgewerkt t/m ${fmtDate(a.lastSyncedThrough)}` : ''}
+                    {a.lastSyncedThrough ? t('bkc.bijgewerktTm', { date: fmtDate(a.lastSyncedThrough) }) : ''}
                   </li>
                 ))}
               </ul>
@@ -360,7 +365,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                 }}
               >
                 {notice.tone === 'quiet'
-                  ? `Toestemming geldig tot ${fmtDate(c.accessValidUntil)}.`
+                  ? t('bkc.geldigTot', { date: fmtDate(c.accessValidUntil) })
                   : notice.text}
               </div>
             )}
@@ -375,14 +380,14 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                     color: M3.onPrimary, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT,
                   }}
                 >
-                  Opnieuw koppelen
+                  {t('bkc.opnieuwKoppelen')}
                 </button>
               ) : (
                 <button
                   type="button"
                   disabled={busy === c.id || !c.canSyncNow}
                   onClick={() => void sync(c.id)}
-                  title={c.canSyncNow ? undefined : 'Je bank staat een beperkt aantal opvragingen per dag toe.'}
+                  title={c.canSyncNow ? undefined : t('bkc.dagLimiet')}
                   style={{
                     padding: '8px 14px', borderRadius: R.full, border: `1px solid ${M3.primary}`,
                     background: 'transparent', color: M3.primary, fontSize: 13, fontWeight: 600,
@@ -390,7 +395,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                     opacity: busy === c.id || !c.canSyncNow ? 0.5 : 1, fontFamily: FONT,
                   }}
                 >
-                  {busy === c.id ? 'Bezig…' : 'Ververs'}
+                  {busy === c.id ? t('bkc.bezig') : t('bkc.ververs')}
                 </button>
               )}
               <button
@@ -402,7 +407,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                   color: M3.onSurfaceVariant, fontSize: 13, cursor: 'pointer', fontFamily: FONT,
                 }}
               >
-                Ontkoppelen
+                {t('bkc.ontkoppelen')}
               </button>
             </div>
 
@@ -411,9 +416,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
                 bank-fed transactions — better to say it here, before the quarter closes. */}
             {c.status === 'linked' && (
               <p style={{ fontSize: 11.5, color: M3.onSurfaceVariant, margin: '10px 0 0', lineHeight: 1.5 }}>
-                Je transacties komen nu automatisch binnen. Het originele bankafschrift zelf krijgen
-                we niet van je bank — upload dat per kwartaal alsnog, dan is het pakket voor je
-                boekhouder compleet.
+                {t('bkc.afschriftNodig')}
               </p>
             )}
           </div>

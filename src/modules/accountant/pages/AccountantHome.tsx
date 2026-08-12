@@ -280,7 +280,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Aangifte &amp; status</span>
             <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>BTW-deadline, klaar-status en herinneren per klant</span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
         </button>
 
         {/* ── [WERKVOORRAAD] Wat er op JOU ligt ──────────────────────────────
@@ -388,7 +388,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               >
                 <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[t.type] ?? '•'}</span>
                 <span style={{ flex: 1, fontSize: 13, color: '#202124' }}>{t.description}</span>
-                <span style={{ color: '#1A73E8', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>→</span>
+                <span className="icon-dir" style={{ color: '#1A73E8', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>→</span>
               </button>
             ))}
           </div>
@@ -413,7 +413,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
 
           {clients.length > 0 && (
             <div style={{ padding: '10px 16px', borderBottom: '1px solid #E0E0E0', position: 'relative' }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 27, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', insetInlineStart: 27, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
               <input
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
@@ -422,7 +422,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
               />
               {clientSearch && (
-                <button onClick={() => setClientSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setClientSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -489,7 +489,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                   </div>
 
                   {/* Arrow */}
-                  <span style={{ fontSize: 13, color: '#1A73E8', fontWeight: 600, flexShrink: 0 }}>→</span>
+                  <span className="icon-dir" style={{ fontSize: 13, color: '#1A73E8', fontWeight: 600, flexShrink: 0 }}>→</span>
                 </button>
               ))}
             </div>
@@ -538,7 +538,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               </p>
               <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{lastClientName}</p>
             </div>
-            <span style={{ fontSize: 16, color: '#1A73E8' }}>→</span>
+            <span className="icon-dir" style={{ fontSize: 16, color: '#1A73E8' }}>→</span>
           </button>
         )}
 

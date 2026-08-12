@@ -1,4 +1,4 @@
--- migrations: invoice_move_payment.sql
+-- migrations: invoice_move_payment.sql, invoice_move_payment_creditnota_guard.sql
 -- =====================================================================
 -- [MOVE-PAYMENT] move_invoice_payment, against a real PostgreSQL.
 -- Run: npm run test:sql   (see scripts/sql-seam-test.sh)
@@ -87,12 +87,13 @@ END $$;
 
 -- ═══ 3. THE REFUSALS — money must not go where the owner never sent it ═══════════════════════════
 TRUNCATE public.invoices, public.bank_transactions, public.bank_tx_invoices;
-INSERT INTO public.invoices (id, sender_id, direction, status, total_inc_btw, amount_paid) VALUES
-  ('50000000-0000-0000-0000-000000000002', :'U', 'outgoing', 'sent', 100, 0),      -- source, owned by U
-  ('70000000-0000-0000-0000-000000000003', :'X', 'outgoing', 'sent', 999, 0),      -- target owned by STRANGER X
-  ('70000000-0000-0000-0000-000000000004', :'U', 'incoming', 'received', 100, 0),  -- target, WRONG direction
-  ('70000000-0000-0000-0000-000000000005', :'U', 'outgoing', 'draft', 100, 0),     -- target, not payable
-  ('70000000-0000-0000-0000-000000000006', :'U', 'outgoing', 'sent', 100, 80);     -- target PAYABLE but only 20 open
+INSERT INTO public.invoices (id, sender_id, direction, invoice_type, status, total_inc_btw, amount_paid) VALUES
+  ('50000000-0000-0000-0000-000000000002', :'U', 'outgoing', 'factuur', 'sent', 100, 0),      -- source, owned by U
+  ('70000000-0000-0000-0000-000000000003', :'X', 'outgoing', 'factuur', 'sent', 999, 0),      -- target owned by STRANGER X
+  ('70000000-0000-0000-0000-000000000004', :'U', 'incoming', 'factuur', 'received', 100, 0),  -- target, WRONG direction
+  ('70000000-0000-0000-0000-000000000005', :'U', 'outgoing', 'factuur', 'draft', 100, 0),     -- target, not payable
+  ('70000000-0000-0000-0000-000000000006', :'U', 'outgoing', 'factuur', 'sent', 100, 80),      -- target PAYABLE but only 20 open
+  ('70000000-0000-0000-0000-00000000000c', :'U', 'outgoing', 'creditnota', 'sent', -100, 0);     -- a CREDITNOTA (money owed BACK), must never receive a payment
 INSERT INTO public.bank_transactions (id, user_id, amount, date, status) VALUES
   ('ba000000-0000-0000-0000-000000000002', :'U', 100, '2026-06-15', 'matched');
 INSERT INTO public.bank_tx_invoices (id, user_id, transaction_id, invoice_id, amount_applied, paid_on, method, created_at) VALUES
@@ -122,6 +123,7 @@ SELECT _expect_refused('70000000-0000-0000-0000-000000000003', 'target owned by 
 SELECT _expect_refused('70000000-0000-0000-0000-000000000004', 'direction mismatch');
 SELECT _expect_refused('70000000-0000-0000-0000-000000000005', 'target not payable (draft)');
 SELECT _expect_refused('70000000-0000-0000-0000-000000000006', 'payable target with only 20 open, 100 does not fit');
+SELECT _expect_refused('70000000-0000-0000-0000-00000000000c', 'target is a creditnota — a refund is not settled by receiving money');
 SELECT _expect_refused('50000000-0000-0000-0000-000000000002', 'same invoice');
 
 -- a DIFFERENT logged-in user may not move U's payment, even naming U as p_user_id

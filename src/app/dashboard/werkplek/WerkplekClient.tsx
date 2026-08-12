@@ -58,7 +58,7 @@ export default function WerkplekClient() {
                 <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{item.label}</p>
                 <p style={{ fontSize: 13, color: '#5F6368' }}>{item.sub}</p>
               </div>
-              <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
             </button>
           ))}
         </div>

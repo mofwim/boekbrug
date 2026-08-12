@@ -223,3 +223,61 @@ test("[E-FACTUUR] a deployment without the vat_treatment column behaves exactly 
   );
   assert.match(xml, /<cbc:ID>Z<\/cbc:ID>/);
 });
+
+// ─── [KLANT-EXTRA] The three free lines under the customer's name, in the XML too ──────────────
+//
+// The PDF prints them directly under the name; a customer that requires "t.a.v." or a
+// purchase-order reference on the paper requires it on the e-factuur just the same — their
+// system books the invoice against exactly that reference. EN 16931 gives a buyer address two
+// slots beyond the street: BT-51 (AdditionalStreetName) and BT-163 (one cac:AddressLine). Line 1
+// takes BT-51; lines 2 and 3 share BT-163. And UBL 2.1 fixes the ORDER inside PostalAddress —
+// AddressLine before Country — so that is asserted, not assumed: on the wrong spot the file is
+// not schema-valid and bounces at the access point.
+
+test("[KLANT-EXTRA] the extra lines land in the buyer address, in schema order", () => {
+  const { xml } = buildInvoiceUbl(
+    header({
+      client_extra_line1: "t.a.v. Floor van Berkel",
+      client_extra_line2: "Projectnummer 10400 jongerenwerk",
+      client_extra_line3: "Summervibes Festival Tilburg noord",
+      client_extra_line4: "Kostenplaats 88",
+    }),
+    [line()],
+    supplier,
+  );
+  const buyer = /<cac:AccountingCustomerParty>([\s\S]*?)<\/cac:AccountingCustomerParty>/.exec(xml)?.[1] ?? "";
+  assert.ok(buyer, "no buyer block found — the extraction broke, not the export");
+  assert.match(buyer, /<cbc:AdditionalStreetName>t\.a\.v\. Floor van Berkel<\/cbc:AdditionalStreetName>/);
+  // Lines 2..4 share BT-163 (EN 16931 allows ONE cac:AddressLine) — joined, nothing dropped.
+  assert.match(
+    buyer,
+    /<cac:AddressLine>\s*<cbc:Line>Projectnummer 10400 jongerenwerk, Summervibes Festival Tilburg noord, Kostenplaats 88<\/cbc:Line>\s*<\/cac:AddressLine>/,
+  );
+  // Order inside PostalAddress: StreetName → AdditionalStreetName → CityName → PostalZone →
+  // AddressLine → Country. Wrong order = schema-invalid = refused file.
+  const order = ["<cbc:StreetName>", "<cbc:AdditionalStreetName>", "<cbc:CityName>", "<cbc:PostalZone>", "<cac:AddressLine>", "<cac:Country>"]
+    .map((tag) => buyer.indexOf(tag));
+  assert.ok(order.every((i) => i >= 0), `an element is missing from the buyer address: ${order.join(", ")}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "PostalAddress elements are out of schema order");
+  // The SUPPLIER's address gains nothing — these are the customer's lines.
+  const sup = /<cac:AccountingSupplierParty>([\s\S]*?)<\/cac:AccountingSupplierParty>/.exec(xml)?.[1] ?? "";
+  assert.doesNotMatch(sup, /AdditionalStreetName|AddressLine/);
+});
+
+test("[KLANT-EXTRA] only line 2 filled still exports, and empty lines add no elements", () => {
+  // Same collapse rule as the PDF: what is empty leaves no gap and no empty XML element.
+  const { xml } = buildInvoiceUbl(
+    header({ client_extra_line2: "Kostenplaats 88" }),
+    [line()],
+    supplier,
+  );
+  const buyer = /<cac:AccountingCustomerParty>([\s\S]*?)<\/cac:AccountingCustomerParty>/.exec(xml)?.[1] ?? "";
+  // The first NON-EMPTY line takes BT-51 — the pair collapses exactly as it does on the page.
+  assert.match(buyer, /<cbc:AdditionalStreetName>Kostenplaats 88<\/cbc:AdditionalStreetName>/);
+  assert.doesNotMatch(buyer, /<cac:AddressLine>/);
+
+  // And a header without the fields at all (a database where the migration is still open)
+  // produces the document it always produced.
+  const before = buildInvoiceUbl(header(), [line()], supplier).xml;
+  assert.doesNotMatch(before, /AdditionalStreetName|<cac:AddressLine>/);
+});

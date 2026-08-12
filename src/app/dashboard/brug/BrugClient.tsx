@@ -18,6 +18,8 @@ import { useDialog } from '@/components/ui/Dialog'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, R, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -115,6 +117,7 @@ function hasHidden(nodes: TreeNode[]): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function BrugClient({ nodes, role, clientSummaries, docStatus, readFailed }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[]; docStatus: DocStatusMap; readFailed?: string[] }) {
+  const t = translator(useLocale())
   const [cwd, setCwd] = useState<string[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
@@ -253,11 +256,11 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       actions: (
         <button
           onClick={() => router.refresh()}
-          title="Vernieuwen"
+          title={t('lijst.vernieuwen')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-          Vernieuwen
+          {t('lijst.vernieuwen')}
         </button>
       ),
     },
@@ -295,14 +298,13 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
             We konden {readFailed.join(' en ')} niet laden
           </div>
           <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
-            Wat je hieronder ziet is daarom <strong>niet</strong> compleet — een lege map betekent
-            hier niet dat er niets is. Probeer het opnieuw.
+            {t('brug.fout.nietCompleet')}
           </div>
           <button
             onClick={() => router.refresh()}
             style={{ marginTop: 10, padding: '8px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
           >
-            Opnieuw proberen
+            {t('inkoop.opnieuwProberen')}
           </button>
         </div>
       )}
@@ -324,7 +326,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
               </select>
-              <span className="material-symbols-outlined" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
+              <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineEnd: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
             </div>
             {/* [PAKKET-STAY] Fetched, not navigated to. This was a plain <a href>, and the route
                 answers every refusal with JSON — so a 403/500 replaced the hub with a page of raw
@@ -375,10 +377,10 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                 <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 8 }}>
                   <button
                     onClick={() => setSelectedYear(y => Math.max(2000, y - 1))}
-                    title="Vorig jaar"
+                    title={t('wh.vorigJaar')}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
                   </button>
                   <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>
                     {selectedYear}
@@ -386,10 +388,10 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <button
                     onClick={() => setSelectedYear(y => Math.min(y + 1, curYear))}
                     disabled={selectedYear >= curYear}
-                    title="Volgend jaar"
+                    title={t('wh.volgendJaar')}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: selectedYear >= curYear ? 'default' : 'pointer', color: selectedYear >= curYear ? M3.outline : M3.primary, opacity: selectedYear >= curYear ? 0.4 : 1 }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
                   </button>
                 </div>
               </div>
@@ -421,7 +423,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           ) : (
             <div style={{ textAlign: 'center', padding: '40px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#C4C7C5', display: 'block', marginBottom: 8 }}>groups</span>
-              <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>Kies een klant om te beginnen</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>{t('brug.kiesKlant')}</p>
               <p style={{ fontSize: 12.5, color: M3.outline, margin: '4px 0 0' }}>{clientSummaries.length} klanten gekoppeld</p>
             </div>
           )}
@@ -437,11 +439,11 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           onClick={() => setCwd([])}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: cwd.length === 0 ? M3.onSurface : M3.primary, fontWeight: cwd.length === 0 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
         >
-          Alles
+          {t('brug.alles')}
         </button>
         {cwd.map((seg, i) => (
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
             <button
               onClick={() => setCwd(cwd.slice(0, i + 1))}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === cwd.length - 1 ? M3.onSurface : M3.primary, fontWeight: i === cwd.length - 1 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
@@ -461,23 +463,23 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
             {showHidden ? 'visibility' : 'visibility_off'}
           </span>
-          Toon archief
+          {t('brug.archief')}
         </button>
       )}
 
       {/* [SMART-FILTER] Zoek binnen deze klant/map — plat over alle submappen. */}
       {nodes.length > 0 && (
         <div style={{ position: 'relative', marginBottom: 12 }}>
-          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Zoek op factuurnummer, leverancier of bedrag…"
-            aria-label="Documenten zoeken"
+            placeholder={t('brug.zoek')}
+            aria-label={t('brug.zoek.aria')}
             style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: R.lg, border: `1px solid ${M3.outline}`, fontSize: 14.5, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
           />
           {search && (
-            <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            <button onClick={() => setSearch('')} aria-label={t('inkoop.wissen')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>
       )}
@@ -503,7 +505,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           {isEmpty && (
             <div style={{ textAlign: 'center', padding: '56px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>folder_open</span>
-              <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>Niets hier</p>
+              <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>{t('brug.leeg')}</p>
             </div>
           )}
 
@@ -519,7 +521,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
                   <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
                   <span style={{ fontSize: 12, color: M3.outline, fontWeight: 600 }}>{f.count}</span>
-                  <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
                 </button>
               ))}
             </div>
@@ -543,6 +545,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
 
 // ─── File / invoice row ────────────────────────────────────────────────────────
 function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: TreeNode; isClient: boolean; docStatus: DocStatusMap; override?: string; onStatusSet: (status: string) => void }) {
+  const t = translator(useLocale())
   const dialog = useDialog()
   const icon = node.source === 'invoice' ? 'receipt_long' : 'description'
 
@@ -674,8 +677,8 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
             ? `/dashboard/bestanden?folder=${node.folderId}&focus=${node.docId}`
             : `/dashboard/bestanden?focus=${node.docId}`
         }
-        title="Open in Mijn bestanden"
-        aria-label="Open in Mijn bestanden"
+        title={t('brug.openBestanden')}
+        aria-label={t('brug.openBestanden')}
         onClick={e => e.stopPropagation()}
         style={{
           flexShrink: 0, width: 40, height: 40, borderRadius: R.full,
@@ -772,6 +775,7 @@ const READINESS_STATUS: Record<ReadinessStatus, { emoji: string; title: string; 
 }
 
 function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
+  const t = translator(useLocale())
   const [data, setData] = useState<ReadinessResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -798,12 +802,12 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
   }, [clientId, year, quarter])
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: '40px 20px', color: M3.outline, fontFamily: FONT, fontSize: 14 }}>Overzicht laden…</div>
+    return <div style={{ textAlign: 'center', padding: '40px 20px', color: M3.outline, fontFamily: FONT, fontSize: 14 }}>{t('brug.overzichtLaden')}</div>
   }
   if (error || !data) {
     return (
       <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
-        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Overzicht kon niet geladen worden</p>
+        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>{t('brug.fout.overzicht')}</p>
       </div>
     )
   }
@@ -846,7 +850,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
       {rep.missing.length === 0 && rep.risks.length === 0 && (
         <div style={{ background: '#CEEAD6', color: '#137333', borderRadius: R.lg, padding: '12px 16px', marginBottom: 12, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
-          Niets openstaand — alles sluit aan.
+          {t('brug.sluitAan')}
         </div>
       )}
 
@@ -872,6 +876,7 @@ interface QuarterResult { omzet: number; kosten: number; resultaat: number; cash
 interface ConceptBtw { verschuldigd: number; voorbelasting: number; saldo: number }
 
 function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
+  const t = translator(useLocale())
   const [pnl, setPnl] = useState<QuarterResult | null>(null)
   const [concept, setConcept] = useState<ConceptBtw | null>(null)
   const [loading, setLoading] = useState(true)
@@ -910,14 +915,14 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 20px', color: M3.outline, fontFamily: FONT, fontSize: 14 }}>
-        Cijfers laden…
+        {t('brug.cijfersLaden')}
       </div>
     )
   }
   if (error || !pnl || !concept) {
     return (
       <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
-        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Cijfers konden niet geladen worden</p>
+        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>{t('brug.fout.cijfers')}</p>
       </div>
     )
   }

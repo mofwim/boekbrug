@@ -27,6 +27,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 // [KLANT-EXTRA] Zelfde bovengrens als het document en de schrijfroute — zie de kop daarvan.
 import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 type InvoiceLine = {
   description: string
@@ -43,6 +45,7 @@ type InvoiceLine = {
 
 export default function InvoiceEditPage() {
   const router = useRouter()
+  const t = translator(useLocale())
   const params = useParams()
   const invoiceId = params.id as string
   const supabase = createClient()
@@ -55,6 +58,8 @@ export default function InvoiceEditPage() {
 
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
+  // [HERSTEL] A sent invoice, fully editable while nothing is attached to it.
+  const [canCorrectSent, setCanCorrectSent] = useState(false)
   // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
   // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
   // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
@@ -87,6 +92,7 @@ export default function InvoiceEditPage() {
   const [clientExtra1, setClientExtra1] = useState('')
   const [clientExtra2, setClientExtra2] = useState('')
   const [clientExtra3, setClientExtra3] = useState('')
+  const [clientExtra4, setClientExtra4] = useState('')
 
   // التواريخ
   const [invoiceDate, setInvoiceDate] = useState('')
@@ -138,6 +144,17 @@ export default function InvoiceEditPage() {
       setInvoiceNumber(invoice.invoice_number)
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
+      // [HERSTEL] May this SENT invoice be edited here? The screen decides from what it can
+      // see; the PUT route checks everything (bank, kas, creditnota, verwerkt, filed quarter)
+      // and refuses with the reason. Saving automatically delivers the corrected version to the
+      // customer — the banner above the buttons says so before the tap.
+      setCanCorrectSent(
+        (invoice.status === 'sent' || invoice.status === 'overdue') &&
+        (invoice.invoice_type || 'factuur') === 'factuur' &&
+        !!invoice.invoice_number &&
+        invoice.direction !== 'incoming' &&
+        !(((invoice as { amount_paid?: number | null }).amount_paid ?? 0) > 0)
+      )
       setInvoiceType(invoice.invoice_type || 'factuur')
       // [KORTING] Wat er staat, zoals het is opgeslagen. Zonder deze twee regels opende het scherm
       // met een leeg kortingsveld boven een verlaagd totaal, en de eerste "Wijzigingen opslaan"
@@ -155,6 +172,7 @@ export default function InvoiceEditPage() {
       setClientExtra1(invoice.client_extra_line1 || '')
       setClientExtra2(invoice.client_extra_line2 || '')
       setClientExtra3(invoice.client_extra_line3 || '')
+      setClientExtra4((invoice as { client_extra_line4?: string | null }).client_extra_line4 || '')
       setInvoiceDate(invoice.invoice_date || '')
       setDueDate(invoice.due_date || '')
       // [LEVERDATUM] Terugvallen op de factuurdatum, precies zoals /api/invoice/draft hem zet.
@@ -240,11 +258,11 @@ export default function InvoiceEditPage() {
   // ── Opslaan — PUT ─────────────────────────────────────────────────────────
   async function handleSave() {
     if (!clientName || !clientEmail || !invoiceDate || !dueDate) {
-      setError('Vul alle verplichte velden in (*)')
+      setError(t('bewerk.vulVerplicht'))
       return
     }
     if (lines.some(l => !l.description || l.unit_price <= 0)) {
-      setError('Vul alle factuurregels correct in')
+      setError(t('bewerk.vulRegels'))
       return
     }
 
@@ -264,6 +282,7 @@ export default function InvoiceEditPage() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -286,6 +305,15 @@ export default function InvoiceEditPage() {
       return
     }
 
+    // [HERSTEL] The change stands, but the corrected version did not reach the customer — that
+    // may not pass silently, since the customer still holds the old version. The route says
+    // what to do next.
+    if (data.warning === 'corrected_delivery_failed') {
+      setError(data.error || t('bewerk.herstel.nietBezorgd'))
+      setSaving(false)
+      return
+    }
+
     // [BOEK-031] replace ipv push — voorkomt back loop naar edit pagina — May 2026
     router.replace(`/dashboard/invoice/${invoiceId}`)
   }
@@ -293,11 +321,11 @@ export default function InvoiceEditPage() {
   // [BOEK-031] Send invoice — saves first, then triggers /api/invoice/send — May 2026
   async function handleSendInvoice() {
     if (!clientName || !clientEmail || !invoiceDate || !dueDate) {
-      setError('Vul alle verplichte velden in (*)')
+      setError(t('bewerk.vulVerplicht'))
       return
     }
     if (lines.some(l => !l.description || l.unit_price <= 0)) {
-      setError('Vul alle factuurregels correct in')
+      setError(t('bewerk.vulRegels'))
       return
     }
 
@@ -318,6 +346,7 @@ export default function InvoiceEditPage() {
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
+        client_extra_line4: clientExtra4,
         invoice_date: invoiceDate,
         due_date: dueDate,
         // [LEVERDATUM] Alleen op een factuur. Een offerte levert niets en een creditnota erft de
@@ -382,7 +411,7 @@ export default function InvoiceEditPage() {
         {profile && (
           <div className="bg-white rounded-2xl p-5 shadow-sm">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-              Jouw gegevens
+              {t('bewerk.jouwGegevens')}
             </p>
             <div className="grid grid-cols-2 gap-1 text-sm">
               <p className="font-medium text-gray-900 col-span-2">{profile.company_name || profile.full_name}</p>
@@ -401,11 +430,11 @@ export default function InvoiceEditPage() {
 
         {/* Klantgegevens */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Klantgegevens</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('bewerk.klantgegevens')}</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
-                Bedrijfsnaam <span className="text-red-400">*</span>
+                {t('nieuw.klant.bedrijf')} <span className="text-red-400">*</span>
               </label>
               <input
                 type="text" value={clientName}
@@ -419,7 +448,7 @@ export default function InvoiceEditPage() {
                 blijft in een raster dat verder uit halve kolommen bestaat. */}
             <div className="col-span-2 grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 1</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra1')}</label>
                 <input
                   type="text" value={clientExtra1} maxLength={MAX_EXTRA_LINE_LENGTH}
                   onChange={e => setClientExtra1(e.target.value)}
@@ -428,21 +457,30 @@ export default function InvoiceEditPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 2</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra2')}</label>
                 <input
                   type="text" value={clientExtra2} maxLength={MAX_EXTRA_LINE_LENGTH}
                   onChange={e => setClientExtra2(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                  placeholder="Afdeling Inkoop of PO-2026-114"
+                  placeholder={t('nieuw.klant.extraHint')}
                 />
               </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Extra regel 3</label>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra3')}</label>
                 <input
                   type="text" value={clientExtra3} maxLength={MAX_EXTRA_LINE_LENGTH}
                   onChange={e => setClientExtra3(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                  placeholder="Kostenplaats of contractnummer"
+                  placeholder={t('nieuw.betaalkenmerk.hint')}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.extra4')}</label>
+                <input
+                  type="text" value={clientExtra4} maxLength={MAX_EXTRA_LINE_LENGTH}
+                  onChange={e => setClientExtra4(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder={t('nieuw.klant.extraHint')}
                 />
               </div>
               <p className="col-span-2 text-xs text-gray-500 -mt-1">
@@ -462,7 +500,7 @@ export default function InvoiceEditPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Adres</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.adres')}</label>
               <input
                 type="text" value={clientAddress}
                 onChange={e => setClientAddress(e.target.value)}
@@ -472,7 +510,7 @@ export default function InvoiceEditPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Postcode</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.postcode')}</label>
                 <input
                   type="text" value={clientPostal}
                   onChange={e => setClientPostal(e.target.value)}
@@ -481,7 +519,7 @@ export default function InvoiceEditPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Stad</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.stad')}</label>
                 <input
                   type="text" value={clientCity}
                   onChange={e => setClientCity(e.target.value)}
@@ -491,7 +529,7 @@ export default function InvoiceEditPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">BTW-nummer klant</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.klant.btw')}</label>
               <input
                 type="text" value={clientBtw}
                 onChange={e => setClientBtw(e.target.value)}
@@ -504,15 +542,15 @@ export default function InvoiceEditPage() {
 
         {/* Datums */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Datums</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">{t('nieuw.datums')}</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
-                Factuurdatum <span className="text-red-400">*</span>
+                {t('nieuw.datum.factuur')} <span className="text-red-400">*</span>
               </label>
               {/* [DATE-NL] The browser's locale decides a native date input's segment order, and
                   this date picks the quarter this sale is declared in. */}
-              <DateFieldNL value={invoiceDate} onChange={setInvoiceDate} aria-label="Factuurdatum" />
+              <DateFieldNL value={invoiceDate} onChange={setInvoiceDate} aria-label={t('nieuw.datum.factuur')} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -528,8 +566,8 @@ export default function InvoiceEditPage() {
               een verkeerde leverdatum alleen te herstellen door het concept weg te gooien. */}
           {invoiceType === 'factuur' && (
             <div className="mt-3">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Leverdatum</label>
-              <DateFieldNL value={deliveryDate} onChange={setDeliveryDate} aria-label="Leverdatum" />
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.datum.lever')}</label>
+              <DateFieldNL value={deliveryDate} onChange={setDeliveryDate} aria-label={t('nieuw.datum.lever')} />
               <p className="text-[11px] text-gray-500 mt-1">
                 De datum waarop de levering of dienst is verricht. Vaak dezelfde als de factuurdatum,
                 maar niet altijd — en hij is wettelijk verplicht op de factuur.
@@ -546,7 +584,7 @@ export default function InvoiceEditPage() {
               gaat zeggen dan het scherm. */}
           {!quote && (
             <div className="flex items-center gap-2 flex-wrap mt-3">
-              <span className="text-xs text-gray-500">Betalingstermijn:</span>
+              <span className="text-xs text-gray-500">{t('nieuw.termijn.kort')}</span>
               {COMMON_PAYMENT_TERMS.map(days => {
                 const active = invoiceDate !== '' && termFromDates(invoiceDate, dueDate) === days
                 return (
@@ -574,7 +612,7 @@ export default function InvoiceEditPage() {
                     if (days != null && invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, days))
                   }}
                   className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
-                  aria-label="Betalingstermijn in dagen"
+                  aria-label={t('nieuw.termijn')}
                 />
               </label>
               {/* [BETAALTERMIJN-LANG] Zelfde woord als op het aanmaakscherm, en op dit scherm des
@@ -591,14 +629,14 @@ export default function InvoiceEditPage() {
 
         {/* Factuurregels */}
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Factuurregels</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('nieuw.regels.factuur')}</p>
 
           {/* [PRIJS-MODUS] Dezelfde keuze als op het aanmaakscherm, boven de kolomkoppen — want hij
               bepaalt wat de kolom "Prijs" betekent. De koppen hieronder zeggen het daarna zelf, zodat
               niemand een all-in bedrag voor een ex-btw prijs aanziet (of andersom). */}
           <div className="flex items-center gap-3 flex-wrap bg-gray-50 rounded-xl px-3 py-2">
-            <span className="text-xs font-medium text-gray-500">Prijzen invoeren</span>
-            <div role="group" aria-label="Prijzen invoeren inclusief of exclusief btw" className="flex gap-1 bg-gray-200 rounded-full p-0.5">
+            <span className="text-xs font-medium text-gray-500">{t('nieuw.prijsmodus')}</span>
+            <div role="group" aria-label={t('nieuw.prijsmodus.aria')} className="flex gap-1 bg-gray-200 rounded-full p-0.5">
               {(['excl', 'incl'] as PriceMode[]).map(m => (
                 <button
                   key={m}
@@ -617,8 +655,8 @@ export default function InvoiceEditPage() {
           </div>
 
           <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-400 px-1">
-            <div className="col-span-5">Omschrijving</div>
-            <div className="col-span-2">Aantal</div>
+            <div className="col-span-5">{t('nieuw.regel.omschrijving')}</div>
+            <div className="col-span-2">{t('nieuw.regel.aantal')}</div>
             <div className="col-span-2">{priceMode === 'incl' ? 'Prijs incl. (€)' : 'Prijs excl. (€)'}</div>
             <div className="col-span-2">BTW</div>
             <div className="col-span-1"></div>
@@ -631,7 +669,7 @@ export default function InvoiceEditPage() {
                   type="text" value={line.description}
                   onChange={e => updateLine(index, 'description', e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                  placeholder="Omschrijving dienst"
+                  placeholder={t('bewerk.omschrijvingDienst')}
                 />
               </div>
               <div className="col-span-2">
@@ -692,7 +730,7 @@ export default function InvoiceEditPage() {
             correctie. Zelfde regels als het aanmaakscherm; de server valideert opnieuw. */}
         {invoiceType !== 'creditnota' && (
           <div className="bg-white rounded-2xl p-5 shadow-sm flex items-center gap-3 flex-wrap">
-            <span className="text-sm font-medium text-gray-900">Korting</span>
+            <span className="text-sm font-medium text-gray-900">{t('nieuw.korting')}</span>
             <div className="inline-flex rounded-full border border-gray-200 overflow-hidden">
               {(['percent', 'amount'] as const).map(t => (
                 <button
@@ -713,7 +751,7 @@ export default function InvoiceEditPage() {
               placeholder={discountType === 'percent' ? 'bijv. 10' : 'bijv. 50,00'}
               value={discountValue}
               onChange={e => setDiscountValue(e.target.value)}
-              aria-label={discountType === 'percent' ? 'Kortingspercentage' : 'Kortingsbedrag'}
+              aria-label={discountType === 'percent' ? t('nieuw.korting.percentage') : t('nieuw.korting.bedrag')}
               className="w-28 border border-gray-200 rounded-lg px-2.5 py-2 text-sm"
             />
             {discountValue.trim() !== '' && !korting && (
@@ -728,7 +766,7 @@ export default function InvoiceEditPage() {
         <div className="bg-white rounded-2xl p-5 shadow-sm">
           <div className="space-y-2 text-sm max-w-xs ms-auto">
             <div className="flex justify-between text-gray-500">
-              <span>Subtotaal excl. BTW</span>
+              <span>{t('nieuw.totaal.subtotaal')}</span>
               <span>€{subtotalEx.toFixed(2)}</span>
             </div>
             {kortingTotalen.discount_ex_btw > 0 && (
@@ -738,7 +776,7 @@ export default function InvoiceEditPage() {
                   <span>−€{kortingTotalen.discount_ex_btw.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
-                  <span>Na korting excl. BTW</span>
+                  <span>{t('nieuw.totaal.naKorting')}</span>
                   <span>€{totalEx.toFixed(2)}</span>
                 </div>
               </>
@@ -748,7 +786,7 @@ export default function InvoiceEditPage() {
               <span>€{btwAmount.toFixed(2)}</span>
             </div>
             <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t border-gray-100">
-              <span>Totaal incl. BTW</span>
+              <span>{t('nieuw.totaal.incl')}</span>
               <span>€{totalInc.toFixed(2)}</span>
             </div>
           </div>
@@ -758,7 +796,7 @@ export default function InvoiceEditPage() {
         {profile?.iban && (
           <div className="bg-white rounded-2xl p-5 shadow-sm">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-              Betalingsinformatie
+              {t('nieuw.betaalinfo')}
             </p>
             {/* [BETAALTERMIJN] De zin komt uit de DATA, niet uit een literal. Hier stond
                 "binnen 30 dagen" als vaste tekst: wie een vervaldatum van veertien dagen had
@@ -771,7 +809,7 @@ export default function InvoiceEditPage() {
               // Een offerte KENT geen betaaltermijn: haar due_date is "Geldig tot" — dat is wat de
               // PDF ervan drukt. Hier een betaalzin tonen zou het document tegenspreken.
               <p className="text-sm text-gray-600">
-                {dueDate ? <>Deze offerte is geldig tot <span className="font-medium text-gray-900">{formatDateNL(dueDate)}</span>. </> : null}
+                {dueDate ? <>{t('bewerk.geldigTot')} <span className="font-medium text-gray-900">{formatDateNL(dueDate)}</span>. </> : null}
                 Bij akkoord betaal je op{' '}
                 <span className="font-medium text-gray-900">{profile.iban}</span>
               </p>
@@ -811,11 +849,26 @@ export default function InvoiceEditPage() {
                 {sending ? 'Verzenden...' : quote ? '✉ Omzetten naar factuur en versturen' : '✉ Verstuur factuur'}
               </button>
             </>
+          ) : canCorrectSent ? (
+            // [HERSTEL] A sent invoice, fully editable — the market rule, with the locks in
+            // the PUT route. One button, and the banner says beforehand what saving does: the
+            // customer automatically receives the corrected version, the number never changes.
+            <div className="w-full space-y-3">
+              <p className="text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-4 py-3 leading-relaxed">
+                {t('bewerk.herstel.uitleg', { number: invoiceNumber ?? '' })}
+              </p>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="bg-amber-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+              >
+                {saving ? t('bewerk.herstel.bezig') : `✉ ${t('bewerk.herstel.knop')}`}
+              </button>
+            </div>
           ) : (
-            // [ART-35] A verstuurde/uitgegeven factuur is wettelijk vastgelegd en kan NIET
-            // meer worden gewijzigd — de server-PUT weigert elke niet-draft met 409. Toon
-            // dat eerlijk in plaats van een "Wijzigingen opslaan"-knop die altijd faalt; een
-            // correctie loopt via een creditnota (op de factuurpagina).
+            // [ART-35] Betaald, gecrediteerd of ingediend: dan is het document van meer partijen
+            // dan de ondernemer alleen, en loopt een correctie via een creditnota — de PUT-route
+            // weigert met de precieze reden.
             <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
               Deze factuur is verstuurd en wettelijk vastgelegd — wijzigen kan niet meer.
               Maak een <strong>creditnota</strong> aan om te corrigeren.
@@ -826,7 +879,7 @@ export default function InvoiceEditPage() {
             href={parentHref}
             className="border border-gray-200 text-gray-600 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 no-underline inline-block"
           >
-            Annuleren
+            {t('nieuw.actie.annuleren')}
           </Link>
         </div>
 
@@ -836,10 +889,10 @@ export default function InvoiceEditPage() {
       {showSendModal && (
         <div onClick={() => setShowSendModal(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-          <div onClick={e => e.stopPropagation()}
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
-              Versturen naar {clientName}?
+              {t('bewerk.versturenNaar', { name: clientName })}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
               {quote
@@ -862,11 +915,11 @@ export default function InvoiceEditPage() {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
                 style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
-                Annuleren
+                {t('nieuw.actie.annuleren')}
               </button>
               <button onClick={() => { setShowSendModal(false); handleSendInvoice() }}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-                Versturen
+                {t('lijst.versturen')}
               </button>
             </div>
           </div>

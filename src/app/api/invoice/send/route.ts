@@ -148,7 +148,10 @@ export async function POST(request: NextRequest) {
 
     // ── 3. Parse body ──────────────────────────────────────────
     // (Gelezen bij stap 1 — zie [MANDAAT] daar: de eigenaar hangt ervan af.)
-    const { invoiceId, convertOnly = false, resend = false } = body
+    // [HERSTEL] corrected=true is the FALLBACK signal from the edit route for a database where
+    // invoice_corrected_at.sql is still open. Where the column exists, the row itself says
+    // whether this delivery is a corrected one — see the derivation under the status check.
+    const { invoiceId, convertOnly = false, resend = false, corrected = false } = body
     // convertOnly=true: "Maak factuur aan" flow — convert pro_forma to factuur
     // resend=true: [FACTUUR-A] re-deliver PDF+e-mail for an already-sent
     //   invoice — number/status untouched
@@ -216,6 +219,23 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    // [HERSTEL] Is this delivery a CORRECTED one — wording "vervangt de eerdere versie" and a
+    // versioned PDF beside the original? Derived from the ROW where possible: once an invoice
+    // has been corrected (corrected_at set by the edit route), EVERY later delivery is a
+    // corrected delivery, because the customer may hold the old version forever. That includes
+    // the recovery path — a plain "verstuur opnieuw" after a failed correction mail — which the
+    // double-check caught delivering the corrected content under an uncorrected cover letter.
+    //
+    // The request flag remains ONLY as the fallback for a database where the migration is still
+    // open, and is then held to the same rules the edit route enforces: owner only (a member
+    // must not be able to mail "de eerdere versie is vervallen" about the owner's document),
+    // resend only, factuur only, and never on a paid invoice.
+    const correctedDelivery =
+      Boolean(resend) &&
+      invoice.invoice_type === 'factuur' &&
+      (invoice.corrected_at != null ||
+        (corrected === true && !isActingForOther(acting) && ['sent', 'overdue'].includes(invoice.status)))
     // [TRUST-NUMBER] A conversion keeps the row's own status (see step 9), and the branch above
     // skips the draft check for convertOnly — so a DRAFT pro forma would come out of here with a
     // number from the doorlopende reeks while still sitting in the one status the owner may edit
@@ -278,6 +298,25 @@ export async function POST(request: NextRequest) {
           code: 'lines_unavailable',
         },
         { status: 503 },
+      )
+    }
+
+    // [HERSTEL] A resend renders the PDF from the lines as they stand RIGHT NOW — and the edit
+    // route swaps lines with a non-transactional delete-then-insert. In that window an issued,
+    // outgoing factuur with a real total briefly has ZERO lines, and [LINES-READ-HONEST] above
+    // deliberately lets an empty list through (an imported incoming invoice can legitimately be
+    // header-only). An OWN outgoing factuur that carries money cannot: it was created from
+    // lines. Refuse the delivery instead of mailing a numbered PDF with an empty item table.
+    if (
+      resend &&
+      invoice.direction !== 'incoming' &&
+      invoice.invoice_type === 'factuur' &&
+      Math.abs(Number(invoice.total_inc_btw ?? 0)) > 0.005 &&
+      (lines ?? []).length === 0
+    ) {
+      return NextResponse.json(
+        { error: 'De factuurregels zijn tijdelijk niet leesbaar — probeer het zo meteen opnieuw.' },
+        { status: 409 }
       )
     }
     let computedTotals: { total_ex_btw: number; btw_amount: number; total_inc_btw: number } | null = null
@@ -647,7 +686,15 @@ export async function POST(request: NextRequest) {
     try {
       // [ACTING-FOR] Onder de map van de EIGENAAR — daar staan al zijn facturen, en de
       // storage-policies zijn per gebruikersmap geschreven.
-      const pdfPath = `${ownerId}/facturen/${finalNumber}.pdf`
+      //
+      // [HERSTEL] Een herstelde factuur krijgt een NIEUW object naast het origineel — nooit
+      // eroverheen. `{nummer}.pdf` blijft voor altijd de eerst uitgegeven versie (er is bewust
+      // geen UPDATE-policy op storage, zie [PDF-IMMUTABLE] hieronder); de gecorrigeerde versie
+      // komt er gedateerd naast en pdf_url gaat mee, zodat de PDF-knop toont wat de klant nu
+      // heeft en de kluis bewaart wat hij eerst had.
+      const pdfPath = correctedDelivery
+        ? `${ownerId}/facturen/${finalNumber}.herstel-${Date.now()}.pdf`
+        : `${ownerId}/facturen/${finalNumber}.pdf`
       // [PDF-IMMUTABLE] upsert:false, and that is not a downgrade — it is what this write can
       // actually do, and what it should do.
       //
@@ -696,6 +743,8 @@ export async function POST(request: NextRequest) {
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
         isCreditnota: finalType === 'creditnota',
+        // [HERSTEL] The mail says this is the corrected version replacing the earlier one.
+        isCorrected: correctedDelivery,
         // [ANTWOORD-ADRES] Het adres waarmee de ondernemer zich heeft aangemeld (profiles.email
         // wordt bij registratie uit auth.users gevuld). Zonder dit komt een antwoord van de klant
         // bij noreply@ terecht.

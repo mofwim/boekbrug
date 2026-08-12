@@ -34,6 +34,8 @@ import { M3 } from '@/lib/design/tokens'
 import { readHandoff, hasSenderContent, toOnboardingCompany } from "@/lib/factuur-handoff";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -90,6 +92,7 @@ export function OnboardingWizard({
   roleWasSet = false,
   initialCompany,
 }: OnboardingWizardProps) {
+  const t = translator(useLocale())
   const firstName = userName.split(" ")[0] || "daar";
   // [BOEK-015] fix: DB default is 0 — clamp to 1 so Step 1 always renders
   const safeStep = Math.max(1, initialStep) as StepId;
@@ -706,9 +709,9 @@ export function OnboardingWizard({
             <p style={{ margin: 0, fontSize: "13.5px", color: "#B3261E", textAlign: "center" }}>{saveError}</p>
           )}
           {isDone ? (
-            <Btn onClick={finish} loading={finishing}>Ga naar mijn dashboard →</Btn>
+            <Btn onClick={finish} loading={finishing}>{t('onb.naarDashboard')} →</Btn>
           ) : (
-            !hideNextButton && <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>Volgende</Btn>
+            !hideNextButton && <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>{t('onb.volgende')}</Btn>
           )}
           {showSkip && (
             <button
@@ -716,7 +719,7 @@ export function OnboardingWizard({
               onClick={handleSkip}
               style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#5f6368", background: "none", border: "none", cursor: "pointer" }}
             >
-              Sla over
+              {t('onb.slaOver')}
             </button>
           )}
 
@@ -728,7 +731,7 @@ export function OnboardingWizard({
               disabled={resetting || saving}
               style={{ width: "100%", padding: "8px", fontSize: "13px", color: "#dadce0", background: "none", border: "none", cursor: "pointer" }}
             >
-              Opnieuw beginnen
+              {t('onb.opnieuw')}
             </button>
           )}
         </div>
@@ -745,15 +748,15 @@ export function OnboardingWizard({
           display: "flex", alignItems: "flex-end", justifyContent: "center",
           zIndex: 1000, paddingBottom: "env(safe-area-inset-bottom)",
         }}>
-          <div style={{
+          <div className="sheet-scroll" style={{
             background: "#fff", borderRadius: "20px 20px 0 0",
             padding: "24px 20px 32px", width: "100%", maxWidth: "480px",
           }}>
             <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 700, color: "#202124", textAlign: "center" }}>
-              Opnieuw beginnen?
+              {t('onb.opnieuwVraag')}
             </h3>
             <p style={{ margin: "0 0 24px", fontSize: "15px", color: "#5f6368", textAlign: "center" }}>
-              Je ingevoerde gegevens worden gewist. Gmail blijft gekoppeld.
+              {t('onb.opnieuwUitleg')}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <button
@@ -779,7 +782,7 @@ export function OnboardingWizard({
                   border: "none", cursor: "pointer",
                 }}
               >
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
             </div>
           </div>
@@ -903,6 +906,7 @@ function ChoiceCard({ active, onClick, icon, title, desc }: {
 // ── Steps ─────────────────────────────────────────────────
 
 function StepWelcome({ firstName }: { firstName: string }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <span style={{ fontSize: "52px" }}>👋</span>
@@ -911,7 +915,7 @@ function StepWelcome({ firstName }: { firstName: string }) {
           Welkom bij BoekBrug, {firstName}!
         </h1>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          Laten we je account in 3 minuten instellen.
+          {t('onb.drieMinuten')}
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -927,15 +931,16 @@ function StepWelcome({ firstName }: { firstName: string }) {
 }
 
 function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Wie ben jij?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>We passen BoekBrug aan op jouw situatie.</p>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.wie')}</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>{t('onb.aanpassen')}</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title="Ik ben ZZP'er" desc="Ik stuur en ontvang facturen" />
-        <ChoiceCard active={role === "accountant"} onClick={() => setRole("accountant")} icon="📊" title="Ik ben boekhouder" desc="Ik beheer facturen voor klanten" />
+        <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title={t('onb.zzp')} desc="Ik stuur en ontvang facturen" />
+        <ChoiceCard active={role === "accountant"} onClick={() => setRole("accountant")} icon="📊" title={t('onb.boekhouder')} desc="Ik beheer facturen voor klanten" />
       </div>
     </div>
   );
@@ -944,6 +949,7 @@ function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void })
 function StepInvoiceStart({ value, onChange, error }: {
   value: string; onChange: (v: string) => void; error?: string;
 }) {
+  const t = translator(useLocale())
   const year = new Date().getFullYear();
   const trimmed = value.trim();
   const preview = trimmed ? previewInvoiceStart(trimmed, year) : null;
@@ -951,7 +957,7 @@ function StepInvoiceStart({ value, onChange, error }: {
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
-          Met welk factuurnummer wil je beginnen?
+          {t('onb.nummer')}
         </h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           Kom je van een ander programma? Vul je volgende factuurnummer in —
@@ -961,7 +967,7 @@ function StepInvoiceStart({ value, onChange, error }: {
 
       <Input
         id="ob-factuurnummer"
-        label="Je volgende factuurnummer"
+        label={t('onb.volgendNummer')}
         placeholder="bijv. 045-2026"
         value={value}
         onChange={onChange}
@@ -971,7 +977,7 @@ function StepInvoiceStart({ value, onChange, error }: {
       {/* live confirmation — the "understanding loop" */}
       {!trimmed && (
         <div style={{ fontSize: "14px", color: "#5f6368" }}>
-          Laat leeg om bij <strong>{year}0001</strong> te beginnen.
+          {t('onb.laatLeeg')} <strong>{year}0001</strong> te beginnen.
         </div>
       )}
       {trimmed && preview && preview.ok && (
@@ -1002,10 +1008,11 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
   btwError: string; setBtwError: (e: string) => void;
   ibanError: string; setIbanError: (e: string) => void;
 }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Jouw bedrijf</h2>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.jouwBedrijf')}</h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
       </div>
       {/* [FUNNEL-OVERDRACHT] Stil voorvullen zonder het te zeggen voelt als een systeem dat meer
@@ -1024,23 +1031,23 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
         </div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <Input id="ob-bedrijfsnaam" autoComplete="organization" label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
+        <Input id="ob-bedrijfsnaam" autoComplete="organization" label={t('onb.bedrijfsnaam')} placeholder="Mohammad BV" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input id="ob-kvk" label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
+        <Input id="ob-kvk" label={t('onb.kvk')} placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
-        <Input id="ob-btw" label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number} error={btwError}
+        <Input id="ob-btw" label={t('onb.btw')} placeholder="NL123456789B01" value={company.btw_number} error={btwError}
           onChange={(v) => { setCompany((p) => ({ ...p, btw_number: v })); setBtwError(""); }} />
-        <Input id="ob-iban" label="Wat is je IBAN? (voor betaalverzoeken)" placeholder="NL91ABNA0417164300" value={company.iban} error={ibanError}
+        <Input id="ob-iban" label={t('onb.iban')} placeholder="NL91ABNA0417164300" value={company.iban} error={ibanError}
           onChange={(v) => { setCompany((p) => ({ ...p, iban: v })); setIbanError(""); }} />
-        <Input id="ob-adres" autoComplete="street-address" label="Wat is je adres? (nodig om facturen te versturen)" placeholder="Straat 1, 1234 AB Stad" value={company.address}
+        <Input id="ob-adres" autoComplete="street-address" label={t('onb.adres')} placeholder="Straat 1, 1234 AB Stad" value={company.address}
           onChange={(v) => setCompany((p) => ({ ...p, address: v }))} />
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
           no reason reads as "broken" to a first-time user. */}
       {!company.company_name.trim() && (
         <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
-          Vul je bedrijfsnaam in om verder te gaan.
+          {t('onb.naamVerplicht')}
         </p>
       )}
     </div>
@@ -1051,23 +1058,24 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
   company: CompanyData; setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
   kvkError: string; setKvkError: (e: string) => void;
 }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Jouw kantoor</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is nodig — de rest kun je later aanpassen.</p>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.jouwKantoor')}</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>{t('onb.alleenNaam')}</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <Input id="ob-kantoornaam" autoComplete="organization" label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
+        <Input id="ob-kantoornaam" autoComplete="organization" label={t('onb.kantoornaam')} placeholder="Bakker Boekhouders" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input id="ob-kantoor-kvk" label="KVK-nummer van je kantoor (optioneel)" placeholder="12345678" value={company.kvk_number}
+        <Input id="ob-kantoor-kvk" label={t('onb.kvkKantoor')} placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out (name is required). */}
       {!company.company_name.trim() && (
         <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
-          Vul de naam van je kantoor in om verder te gaan.
+          {t('onb.kantoorVerplicht')}
         </p>
       )}
     </div>
@@ -1075,6 +1083,7 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
 }
 
 function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext: () => void }) {
+  const t = translator(useLocale())
   // [BOEK-011] Fix 3: loading state while waiting for OAuth callback
   const [loading, setLoading] = useState(false);
 
@@ -1099,10 +1108,10 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         <span style={{ fontSize: "52px" }}>✅</span>
         <div>
           <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
-            Gmail succesvol gekoppeld!
+            {t('onb.gmailGelukt')}
           </h2>
           <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#5f6368" }}>
-            We importeren je facturen automatisch op de achtergrond.
+            {t('onb.importerenAchtergrond')}
           </p>
         </div>
         {/* [BOEK-015] fix: explicit button — auto-advance may not fire if step wasn't set */}
@@ -1115,9 +1124,9 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
             color: "#fff", border: "none", cursor: "pointer",
           }}
         >
-          Volgende →
+          {t('onb.volgende')} →
         </button>
-        <p style={{ fontSize: "14px", color: "#5f6368" }}>Of wacht even, je gaat automatisch verder…</p>
+        <p style={{ fontSize: "14px", color: "#5f6368" }}>{t('onb.autoVerder')}</p>
       </div>
     );
   }
@@ -1125,9 +1134,9 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Wil je je Gmail koppelen?</h2>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.gmail')}</h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          We importeren automatisch je facturen. Jij hoeft niets te doen.
+          {t('onb.importerenNiks')}
         </p>
       </div>
 
@@ -1139,7 +1148,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         }}>
           <span style={{ fontSize: "20px" }}>⏳</span>
           <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>
-            Gmail openen…
+            {t('onb.gmailOpen')}
           </p>
         </div>
       ) : (
@@ -1156,15 +1165,15 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         >
           <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
           <div>
-            <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>Ja, koppel mijn Gmail</p>
-            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#5f6368" }}>We importeren automatisch je facturen.</p>
+            <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>{t('onb.gmailJa')}</p>
+            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#5f6368" }}>{t('onb.importeren')}</p>
             <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#5f6368" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
           </div>
         </button>
       )}
 
       <p style={{ textAlign: "center", fontSize: "14px", color: "#5f6368" }}>
-        Tik op &ldquo;Sla over&rdquo; om dit later in te stellen
+        {t('onb.slaOverLater')}
       </p>
     </div>
   );
@@ -1173,10 +1182,11 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
 function StepAccountant({ accountantEmail, setAccountantEmail, error }: {
   accountantEmail: string; setAccountantEmail: (v: string) => void; error?: string;
 }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Heb je een boekhouder?</h2>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.hebBoekhouder')}</h2>
         {/* [BELOFTE] Dit is de afloop van de hele belofte: hier wordt "staat klaar voor je
             boekhouder" iets echts. Daarom staat het resultaat er, niet de handeling.
 
@@ -1194,7 +1204,7 @@ function StepAccountant({ accountantEmail, setAccountantEmail, error }: {
           voor hem is BoekBrug altijd gratis.
         </p>
       </div>
-      <Input id="ob-boekhouder" label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"
+      <Input id="ob-boekhouder" label={t('onb.boekhouderEmail')} placeholder="jan@boekhouder.nl"
         value={accountantEmail} inputMode="email" autoComplete="email" error={error}
         onChange={setAccountantEmail} />
     </div>
@@ -1204,15 +1214,16 @@ function StepAccountant({ accountantEmail, setAccountantEmail, error }: {
 function StepInviteClient({ clientEmail, setClientEmail, error }: {
   clientEmail: string; setClientEmail: (v: string) => void; error?: string;
 }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Voeg je eerste klant toe</h2>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.eersteKlant')}</h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          Je klant ontvangt een e-mail om zijn account aan te maken.
+          {t('onb.klantMail')}
         </p>
       </div>
-      <Input id="ob-klant" label="E-mailadres klant" placeholder="klant@bedrijf.nl"
+      <Input id="ob-klant" label={t('onb.klantEmail')} placeholder="klant@bedrijf.nl"
         value={clientEmail} inputMode="email" autoComplete="email" error={error}
         onChange={setClientEmail} />
     </div>
@@ -1220,6 +1231,7 @@ function StepInviteClient({ clientEmail, setClientEmail, error }: {
 }
 
 function StepDone({ firstName, role, missingSendFields }: { firstName: string; role: Role; missingSendFields: string[] }) {
+  const t = translator(useLocale())
   // [TRUST-ONBOARDING] Be HONEST about readiness. The invoice-send route legally
   // requires bedrijfsnaam + BTW + KvK + adres; if any is still blank we must NOT
   // celebrate "klaar voor gebruik" and then hard-block the owner at their first
@@ -1242,7 +1254,7 @@ function StepDone({ firstName, role, missingSendFields }: { firstName: string; r
       </div>
       {needsMore ? (
         <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "start", width: "100%", lineHeight: 1.5 }}>
-          Vul nog je <strong>{missingSendFields.join(", ")}</strong> in bij <strong>Instellingen</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
+          {t('onb.vulNog')} <strong>{missingSendFields.join(", ")}</strong> in bij <strong>{t('onb.instellingen')}</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
         </div>
       ) : (
         <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "start", width: "100%" }}>

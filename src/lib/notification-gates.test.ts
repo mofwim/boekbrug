@@ -183,7 +183,9 @@ test("[NO-SILENT-EMPTY] a failed read is never rendered as an empty inbox", () =
 
   const listScreen = code("src/app/dashboard/messages/page.tsx");
   assert.match(listScreen, /loadError/, "the list screen must hold a failure state");
-  const emptyAt = listScreen.indexOf("Nog geen berichten");
+  // [TAAL] Anchored on the KEY, not the Dutch sentence — a gate written against one language
+  // fails the day the app gains a second, and this one did.
+  const emptyAt = listScreen.indexOf("t('ber.leeg')");
   const errorAt = listScreen.indexOf("loadError ?");
   assert.ok(emptyAt > 0 && errorAt > 0 && errorAt < emptyAt,
     "and it must be checked BEFORE the empty state, or the empty state still wins");
@@ -216,8 +218,9 @@ test("[NO-SILENT-EMPTY] both homes prove the bell was cleared before showing it 
 test("[NO-SILENT-EMPTY] the bell can say it could not read, instead of 'Geen meldingen'", () => {
   const shared = code("src/app/dashboard/_shared/index.tsx");
   assert.match(shared, /loadError/, "the bell takes a failure state");
+  // [TAAL] Op de sleutel gepind — zevende poort die alleen door de vertaling rood werd.
   const errorAt = shared.indexOf("loadError ?");
-  const emptyAt = shared.indexOf("Geen meldingen");
+  const emptyAt = shared.indexOf("t('kop.geenMeldingen')");
   assert.ok(errorAt > 0 && emptyAt > 0 && errorAt < emptyAt,
     "and checks it before falling back to the empty sentence");
 

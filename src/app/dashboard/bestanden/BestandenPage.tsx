@@ -8,6 +8,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { useHomePath } from "@/lib/navigation-hooks";
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from "@/lib/upload-fit";
 
 import { T } from "./tokens";
 import { BestandRow, FolderRow, FolderNode, SearchResult, ViewMode } from "./types";
@@ -33,6 +35,8 @@ import { MoveModal } from "./components/modals/MoveModal";
 import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // [BESTANDEN-SMART] Virtual, cross-folder listings — the Drive/OneDrive left-nav.
 // These replace the folder view with a flat file list filtered by a virtual axis.
@@ -70,6 +74,7 @@ function Breadcrumb({ folders, currentFolderId, onNavigate }: {
   currentFolderId: string | null;
   onNavigate: (id: string | null) => void;
 }) {
+  const t = translator(useLocale())
   const buildPath = (id: string | null): FolderRow[] => {
     if (!id) return [];
     const f = folders.find(x => x.id === id);
@@ -88,7 +93,7 @@ function Breadcrumb({ folders, currentFolderId, onNavigate }: {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 2, overflow: "hidden" }}>
       <button onClick={() => onNavigate(null)} style={btn(currentFolderId === null)}>
-        Mijn bestanden
+        {t('best.mijn')}
       </button>
       {path.map(f => (
         <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
@@ -111,6 +116,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
   onDelete: (id: string) => void;
   onDrop: (e: DragEvent<HTMLDivElement>, targetFolderId: string) => void;
 }) {
+  const t = translator(useLocale())
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -140,7 +146,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         }}
       >
         <button onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
-          aria-label="Uitklappen"
+          aria-label={t('best.uitklappen')}
           style={{ width: 20, height: 20, border: "none", background: "none", cursor: node.children.length ? "pointer" : "default", opacity: node.children.length ? 0.6 : 0, display: "flex", alignItems: "center", justifyContent: "center", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
           <Icon name="expand_more" size={16} />
         </button>
@@ -159,7 +165,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
 
         {isShared && (
           <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 5px", background: T.primaryContainer, color: T.primary, borderRadius: T.full, flexShrink: 0 }}>
-            Gedeeld
+            {t('best.gedeeld')}
           </span>
         )}
 
@@ -167,12 +173,12 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         {!isSystem && hovered && (
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
-              aria-label="Naam wijzigen"
+              aria-label={t('best.naamWijzigen')}
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="edit" size={13} color={T.outline} />
             </button>
             <button onClick={e => { e.stopPropagation(); onDelete(node.id); }}
-              aria-label="Verwijderen"
+              aria-label={t('lijst.verwijderen')}
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="delete" size={13} color={T.error} />
             </button>
@@ -206,6 +212,7 @@ const newMenuItemStyle: React.CSSProperties = {
 };
 
 export function BestandenPage({ role }: BestandenPageProps = {}) {
+  const t = translator(useLocale())
   const dialog = useDialog();
   const toast = useToast();
   // [BOEK-033] Normalise to navigation.ts Role union — only 'accountant' is special;
@@ -1086,7 +1093,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <Icon name={clipboardDisplay.op === "cut" ? "content_cut" : "content_copy"} size={16} color="white" />
           {clipboardDisplay.count} item{clipboardDisplay.count > 1 ? "s" : ""} {clipboardDisplay.op === "cut" ? "geknipt" : "gekopieerd"} — Ctrl+V om te plakken
           <button onClick={() => { clipboardRef.current = null; setClipboardDisplay(null); }}
-            aria-label="Sluiten"
+            aria-label={t('lijst.sluiten')}
             style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0 }}>
             <Icon name="close" size={14} color="rgba(255,255,255,0.7)" />
           </button>
@@ -1136,19 +1143,19 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             onMouseLeave={e => (e.currentTarget.style.background = "none")}
           >
             <Icon name="arrow_back" size={18} color={T.outline} />
-            <span className="hidden sm:inline">Terug</span>
+            <span className="hidden sm:inline">{t('best.terug')}</span>
           </button>
 
           {/* Sidebar toggle mobile */}
           <button onClick={() => setSidebarOpen(v => !v)} className="flex lg:hidden"
-            aria-label="Mappen tonen"
+            aria-label={t('best.mappenTonen')}
             style={{ width: 36, height: 36, border: "none", background: "none", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: T.full, flexShrink: 0 }}>
             <Icon name="folder_open" size={22} color={T.warning} />
           </button>
 
           {/* Search */}
           <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
-            <Icon name="search" size={18} color={T.outline} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <Icon name="search" size={18} color={T.outline} style={{ position: "absolute", insetInlineStart: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Zoeken..."
               style={{
@@ -1161,8 +1168,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               onBlur={e => (e.currentTarget.style.boxShadow = "none")}
             />
             {search && (
-              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen" style={{
-                position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+              <button onClick={() => setSearch("")} aria-label={t('lijst.zoek.wissen')} style={{
+                position: "absolute", insetInlineEnd: 8, top: "50%", transform: "translateY(-50%)",
                 width: 18, height: 18, border: "none", background: T.outline,
                 borderRadius: T.full, display: "flex", alignItems: "center",
                 justifyContent: "center", cursor: "pointer",
@@ -1180,7 +1187,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 setSortMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
                 setShowSortMenu(v => !v);
               }}
-              title="Sorteren"
+              title={t('inkoop.sorteren')}
               style={{
                 display: "flex", alignItems: "center", gap: 4,
                 height: 38, padding: "0 10px", background: "#F1F3F4",
@@ -1267,12 +1274,17 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 fabUploadingRef.current = true;
                 try {
                 for (const file of Array.from(files)) {
-                  const now = new Date(); const fd = new FormData();
-                  fd.append("file", file);
-                  fd.append("year", String(now.getFullYear()));
-                  fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
-                  if (currentFolderId) fd.append("folder_id", currentFolderId);
-                  const r = await fetch("/api/files", { method: "POST", body: fd });
+                  const now = new Date();
+                  // [UPLOAD-PLAFOND] The floating "+" on Mijn bestanden — the same route as
+                  // UploadArea, and it had the same platform ceiling with no fit in front of it.
+                  const { response: r } = await sendWithFit(file, (f) => {
+                    const fd = new FormData();
+                    fd.append("file", f);
+                    fd.append("year", String(now.getFullYear()));
+                    fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
+                    if (currentFolderId) fd.append("folder_id", currentFolderId);
+                    return fetch("/api/files", { method: "POST", body: fd });
+                  });
                   const j = await r.json() as { id?: string };
                   if (j.id) {
                     // [BRUG-FILES-SHARED] Did the owner upload INTO the shared folder?
@@ -1347,7 +1359,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               }}
             >
               <Icon name="add" size={18} color={T.onPrimary} />
-              <span className="hidden sm:inline">Nieuw</span>
+              <span className="hidden sm:inline">{t('best.nieuw')}</span>
             </button>
 
             {/* [BOEK-033] FINAL FIX — position:fixed bypasses ALL overflow:hidden parents */}
@@ -1370,13 +1382,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                   >
-                    <Icon name="create_new_folder" size={18} color={T.outline} /> Nieuwe map
+                    <Icon name="create_new_folder" size={18} color={T.outline} /> {t('best.nieuweMap')}
                   </button>
                   <button onClick={openFilePicker} style={newMenuItemStyle}
                     onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                   >
-                    <Icon name="upload" size={18} color={T.outline} /> Bestand uploaden
+                    <Icon name="upload" size={18} color={T.outline} /> {t('best.uploaden')}
                   </button>
                 </div>
                 )}
@@ -1452,7 +1464,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   transition: "background 0.1s",
                 }}>
                   <Icon name="home" size={18} color={rootActive ? T.primary : T.outline} />
-                  Mijn bestanden
+                  {t('best.mijn')}
                 </button>
               );
             })()}
@@ -1551,7 +1563,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   outline: dragOverFolder === "__trash__" ? `2px dashed ${T.error}` : "none",
                 }}>
                   <Icon name="delete" size={18} color={showTrash || dragOverFolder === "__trash__" ? T.error : T.outline} />
-                  Prullenbak
+                  {t('best.prullenbak')}
                 </button>
               </div>
             </div>
@@ -1649,7 +1661,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     <div style={{ width: 80, height: 80, borderRadius: T.xl, background: T.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                       <Icon name={SMART_VIEWS[smartView].icon} size={40} color={T.primary} />
                     </div>
-                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>Nog niets hier</p>
+                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>{t('best.nogNiets')}</p>
                     <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{SMART_VIEWS[smartView].empty}</p>
                   </div>
                 ) : viewMode === "grid" ? (
@@ -1705,7 +1717,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 ) : !(searchResults?.length) && folderResults.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 24px" }}>
                     <Icon name="search_off" size={48} color={T.outline} style={{ display: "block", margin: "0 auto 12px" }} />
-                    <p style={{ fontSize: 14, color: T.outline }}>Niets gevonden</p>
+                    <p style={{ fontSize: 14, color: T.outline }}>{t('best.nietsGevonden')}</p>
                   </div>
                 ) : (
                   <>
@@ -1781,8 +1793,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     <div style={{ width: 80, height: 80, borderRadius: T.xl, background: T.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                       <Icon name="folder_open" size={40} color={T.primary} />
                     </div>
-                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>Deze map is leeg</p>
-                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>Upload een bestand of maak een nieuwe map aan</p>
+                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>{t('best.leeg')}</p>
+                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{t('best.uploadOfMap')}</p>
                   </div>
                 ) : (
                   <div style={{ marginTop: 24 }}>
@@ -1791,7 +1803,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     {(subFolders.length > 0 || newFolderInline) && (
                       <div style={{ marginBottom: 28 }}>
                         <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 12px" }}>
-                          Mappen
+                          {t('best.mappen')}
                         </p>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
                           {subFolders.map(folder => (
@@ -1917,12 +1929,12 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {/* ── FAB upload ── */}
       <button
         onClick={() => fileInputRef.current?.click()}
-        title="Bestand uploaden (of sleep een bestand hierheen)"
+        title={t('best.uploadenSleep')}
         style={{
           // [SAFE-AREA] Matches every other FAB in the app (ZzpDashboard,
           // WerkplekClient, KlantenClient). A flat `24` put it on top of the
           // home indicator once viewportFit:cover was enabled in app/layout.tsx.
-          position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", right: 24, zIndex: 40,
+          position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", insetInlineEnd: 24, zIndex: 40,
           width: 56, height: 56, borderRadius: T.full,
           background: T.primary, border: "none", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",

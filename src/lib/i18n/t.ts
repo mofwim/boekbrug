@@ -61,8 +61,21 @@ export function translate(locale: unknown, key: MessageKey, params?: Params): st
 
 export type Translator = (key: MessageKey, params?: Params) => string
 
+// One translator per language, cached. Not an optimisation: components put `t` in useCallback
+// and useEffect dependency arrays, and a translator that is a NEW function every render either
+// re-fires those hooks every render or — if the linter's advice is ignored and `t` is left out —
+// keeps rendering the OLD language in the closure after the owner switches. A stable identity
+// per locale makes both problems structurally impossible: `t` only changes when the language
+// actually changes, which is exactly when the hooks should re-run.
+const cache = new Map<Locale, Translator>()
+
 /** A translator bound to one language, for a component that renders many strings. */
 export function translator(locale: unknown): Translator {
   const l: Locale = resolveLocale(locale)
-  return (key, params) => translate(l, key, params)
+  let t = cache.get(l)
+  if (!t) {
+    t = (key, params) => translate(l, key, params)
+    cache.set(l, t)
+  }
+  return t
 }

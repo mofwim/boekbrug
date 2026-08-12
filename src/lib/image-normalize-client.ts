@@ -30,9 +30,31 @@ export function isPng(b: Uint8Array): boolean {
   );
 }
 
-/** The intake upload cap, mirroring /api/intake's server-side MAX_BYTES (10 MB). Shared so
- *  every upload surface enforces the SAME number and re-encodes images to fit under it. */
-export const MAX_INTAKE_UPLOAD_BYTES = 10 * 1024 * 1024;
+/**
+ * The intake upload cap: the largest request body the PLATFORM will carry.
+ *
+ * [UPLOAD-PLAFOND] This was 10 MB, "mirroring /api/intake's server-side MAX_BYTES" — the app's own
+ * limit. But the app's limit is not the one that bites. A Vercel function's request body is capped
+ * by the platform at roughly 4.5 MB, and that rejection happens BEFORE any of our code runs: no
+ * JSON, no server sentence, just a bare 413. So every surface here was compressing files down to a
+ * size it believed was fine, handing them to a platform that refused them, and then telling the
+ * owner to go and split the PDF themselves. Reported from a phone, on a three-page supplier
+ * invoice, with the two pages already picked and the sheet still open.
+ *
+ * 4 MB, not 4.5: a multipart body carries boundaries, field names and headers on top of the file,
+ * and a proxy may add its own. Half a megabyte of headroom costs nothing — an invoice that needs
+ * the last 500 KB to be legible does not exist — and buys the difference between "it uploaded" and
+ * a refusal the owner cannot act on.
+ *
+ * The number is a best estimate of somebody else's limit, and it is deliberately NOT the only
+ * defence: upload-fit.ts retries a 413 with a harder squeeze, so if this value is ever wrong in
+ * the wrong direction the app recovers by measurement instead of by assumption.
+ *
+ * The server keeps its own 10 MB MAX_BYTES. That is not dead code — it guards the paths a browser
+ * does not walk (the e-mail intake, a future direct-to-storage upload), where the platform limit
+ * does not apply.
+ */
+export const MAX_INTAKE_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 // A full-resolution phone photo (12–48 MP) drawn onto a canvas can EXCEED the mobile
 // canvas area limit (iOS Safari ≈ 16.7 MP); over that, the browser does not always

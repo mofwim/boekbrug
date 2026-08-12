@@ -752,3 +752,52 @@ input::placeholder, textarea::placeholder {
     padding: 9px 10px;
   }
 }
+
+/* [TAAL] Een pijl die "terug" of "verder" betekent, wijst in het Arabisch de andere kant op.
+ *
+ * Material Symbols kantelt niet mee: het is een LETTERTYPE, en de glyph voor `chevron_right` is
+ * een naar rechts wijzende chevron in elke taal. Op een rechts-naar-links scherm betekent dat een
+ * terugknop met een pijl die van de terugweg af wijst, en een "volgende" die naar het begin
+ * wijst. Niemand meldt dat als bug; het maakt de navigatie alleen onbetrouwbaar.
+ *
+ * Wat NIET meekantelt, en dat is een keuze: verticale pijlen (omhoog is omhoog in elke taal) en
+ * tweerichtingspictogrammen zoals swap_horiz — die spiegelen verandert niets aan de betekenis en
+ * kan wél tegen hun eigen pijlpunten in gaan. Zie de lijst in het script dat `icon-dir` zet, en
+ * de [TAAL]-poort die controleert dat elk richtingsicoon hem heeft.
+ */
+[dir="rtl"] .icon-dir {
+  transform: scaleX(-1);
+}
+
+/* [SCROLL-VEL] Een dialoog die niet past, verbergt de rest — en niets scrollt.
+ *
+ * Een overlay is `position: fixed; inset: 0` met `align-items: flex-end` (bottom sheet) of
+ * `center` (dialoog). Het paneel daarbinnen had geen hoogtegrens. Wordt de inhoud hoger dan het
+ * scherm, dan groeit het paneel de BOVENkant uit — en omdat de overlay vaststaat, scrollt er
+ * niets: alles boven de vouw is onbereikbaar. Gemeld op de bevestigingskaart van een
+ * inkoopfactuur, waar het bedrag exclusief en de kop erboven wegvielen en de eigenaar dus een
+ * factuur moest bevestigen zonder de helft van de velden te kunnen zien.
+ *
+ * Twee keer max-height is geen fout: `dvh` is de zichtbare hoogte NA de browserbalken van een
+ * telefoon, en dat is precies het verschil dat dit probleem maakt. Een browser die `dvh` niet
+ * kent, negeert die tweede regel en houdt `vh` — een grens die iets te hoog kan uitvallen, maar
+ * die nog altijd scrollt. Inline styles kunnen dit paar niet uitdrukken; vandaar een klasse.
+ *
+ * `overscroll-behavior: contain` houdt de pagina eronder stil zodra het paneel op zijn eind is —
+ * anders scrolt de lijst achter de dialoog mee en staat de kaart bij het sluiten ergens anders.
+ */
+.sheet-scroll {
+  /* De grens geldt voor het HELE paneel, padding inbegrepen. Zonder deze regel begrenst
+   * max-height alleen de inhoud en komt de padding er bovenop — en juist de bevestigingskaart uit
+   * de melding heeft een forse `padding-bottom` om de onderbalk vrij te houden. Gemeten in
+   * Chromium op 393×852: 862px paneel in een scherm van 852px, de bovenkant tien pixels
+   * afgesneden. Bijna goed, en dus precies het soort dat ongemerkt meegaat.
+   *
+   * Op een telefoon verandert border-box verder niets (het paneel is daar toch schermbreed);
+   * op een tablet of desktop wordt het 40px smaller — wat `max-width: 430px` altijd al vroeg. */
+  box-sizing: border-box;
+  max-height: 88vh;
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

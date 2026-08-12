@@ -23,6 +23,9 @@
 // saved rather than a quarter later on an aangifte.
 
 import { useId, useRef, useState } from 'react'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 import { M3, R, FONT } from '@/lib/design/tokens'
 import {
   DUTCH_DATE_PLACEHOLDER,
@@ -57,6 +60,7 @@ export default function DateFieldNL({
   id,
   ...rest
 }: DateFieldNLProps) {
+  const t = translator(useLocale())
   // The typed text is its own state: while someone is halfway through "21-01-20" there is no ISO
   // to hold it in, and pushing an empty value up on every keystroke would clear the parent's date
   // the moment they started editing it.
@@ -121,7 +125,7 @@ export default function DateFieldNL({
             hidden rather than removed, because showPicker() only works on a real one. */}
         <button
           type="button"
-          aria-label="Kies een datum"
+          aria-label={t('datum.kies')}
           disabled={disabled}
           onClick={() => {
             const el = pickerRef.current

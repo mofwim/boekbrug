@@ -22,7 +22,10 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [UPLOAD-PLAFOND] Fitting an image OR a PDF to the upload budget, and surviving a platform 413,
+// is one shared decision now — see upload-fit.ts. This file used to normalize the image itself and
+// refuse everything else.
+import { sendWithFit } from '@/lib/upload-fit'
 // [UPLOAD-ERRORS] Eén vertaler van HTTP-status → wat de eigenaar leest, gedeeld met
 // /dashboard/upload. Puur en getest; zonder dit las een 402 of 413 hier als "Toevoegen mislukt".
 import { describeUploadFailure } from '@/lib/upload-failure'
@@ -38,6 +41,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // beleid en Instellingen, zodat de drie nooit andere getallen noemen.
 import { fairUseNotice, type FairUseNotice } from '@/lib/fair-use-notice'
 import FairUseModal from '@/components/ui/FairUseModal'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -50,6 +55,7 @@ export default function IntakeButton({
   variant?: Variant
   onDone?: (result: IntakeResult) => void
 }) {
+  const t = translator(useLocale())
   const router = useRouter()
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -125,7 +131,7 @@ export default function IntakeButton({
       const res = await fetch(`/api/email/confirm/${invoiceId}`, { method: 'PATCH' })
       if (res.ok) {
         setDupModal(null)
-        showToast('Teruggezet — staat weer in je controlewachtrij ✓')
+        showToast(t('int.teruggezet'))
         setTimeout(() => router.push('/dashboard/incoming'), 600)
       } else {
         // [UI-HONESTY] 409 = hij staat niet (meer) in Genegeerd. Nooit een succes tonen dat er niet was.
@@ -133,7 +139,7 @@ export default function IntakeButton({
         showToast(data.error || 'Terugzetten mislukt — ververs de pagina')
       }
     } catch {
-      showToast('Terugzetten mislukt — controleer je verbinding')
+      showToast(t('int.fout.terugzetten'))
     } finally {
       setRestoring(false)
     }
@@ -147,7 +153,7 @@ export default function IntakeButton({
     const imgs = Array.from(fl).filter(
       (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name),
     )
-    if (imgs.length === 0) { showToast('Kies foto’s van de pagina’s'); return }
+    if (imgs.length === 0) { showToast(t('int.kiesFotos')); return }
     // [MP-PURE-UPDATER] Decide BEFORE updating state. showToast used to fire from inside the
     // setMpPages updater — a reducer must be pure, and React may run it twice (StrictMode /
     // concurrent rendering), which showed the cap warning twice for one pick.
@@ -207,35 +213,39 @@ export default function IntakeButton({
     // fotograferen, weinig genoeg om een mobiele verbinding niet dicht te trekken — vier grote
     // foto's tegelijk over 4G maken élke upload trager in plaats van sneller.
     if (inFlight >= MAX_PARALLEL_INTAKE) {
-      showToast('Even wachten — er worden er al drie verwerkt.')
+      showToast(t('int.drieBezig'))
       return 'error'
     }
     setInFlight((n) => n + 1)
     batchRef.current.started += 1
     setOpen(false)
     try {
-      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
-      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
-      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
-      // [SIZE-GUARD] The server refuses anything over the same shared cap. Say so HERE, before
-      // pushing megabytes over a mobile link only to be rejected — and say WHY, which the
-      // generic failure toast could not. Images were already shrunk above, so in practice this
-      // is a very large PDF; naming that is what makes the message actionable.
-      // /dashboard/upload has enforced this from the start; this surface never did.
-      if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
-        showToast(`Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`)
-        return 'error'
+      // [UPLOAD-PLAFOND] One call that makes the file fit, whatever it is: an image is re-encoded
+      // (and an unreadable HEIC rescued), a PDF has its embedded images downsampled while its text
+      // stays text. This surface used to normalize the image and then REFUSE a large PDF with
+      // "Splits een grote PDF of maak een foto" — an instruction the owner cannot carry out on a
+      // phone, for a document the app was already able to shrink on another screen.
+      //
+      // sendWithFit also answers a platform 413 by squeezing harder and sending once more. The
+      // budget is our estimate of somebody else's limit; the retry is what makes a wrong estimate
+      // recoverable instead of terminal.
+      const { response: res, sent: uploadFile, retried } = await sendWithFit(file, (f) => {
+        const fd = new FormData()
+        fd.append('file', f)
+        // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
+        if (force) fd.append('force', 'true')
+        // [INTAKE-SOURCE] Where this file actually came from. Every intake used to be recorded as
+        // 'camera', so a PDF picked from Files — or a combined multi-page scan — claimed to be a
+        // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
+        // CHECK constraint; the server validates and falls back to 'camera'.
+        fd.append('source', source)
+        return fetch('/api/intake', { method: 'POST', body: fd })
+      })
+      if (retried) {
+        console.warn('[UPLOAD-PLAFOND] the platform refused the first attempt for size — sent a smaller one', {
+          name: file.name, first: file.size, sent: uploadFile.size,
+        })
       }
-      const fd = new FormData()
-      fd.append('file', uploadFile)
-      // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
-      if (force) fd.append('force', 'true')
-      // [INTAKE-SOURCE] Where this file actually came from. Every intake used to be recorded as
-      // 'camera', so a PDF picked from Files — or a combined multi-page scan — claimed to be a
-      // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
-      // CHECK constraint; the server validates and falls back to 'camera'.
-      fd.append('source', source)
-      const res = await fetch('/api/intake', { method: 'POST', body: fd })
       // [JSON-GUARD] A non-JSON error body (a platform 413, a proxy 502, an HTML error page)
       // made res.json() THROW, which fell through to the generic catch below and replaced the
       // real reason with "probeer opnieuw". Degrade to an empty object instead, exactly as
@@ -400,7 +410,7 @@ export default function IntakeButton({
       }
       return 'ok'
     } catch {
-      showToast('Toevoegen mislukt — probeer opnieuw')
+      showToast(t('int.fout.toevoegen'))
       return 'error'
     } finally {
       // [INTAKE-QUEUE] De teller zakt hier, en NIET eerder: pas als hij nul is, is de reeks klaar
@@ -426,7 +436,7 @@ export default function IntakeButton({
       <button
         onClick={() => setOpen(true)}
         disabled={inFlight >= MAX_PARALLEL_INTAKE}
-        aria-label="Toevoegen"
+        aria-label={t('ink.toevoegen')}
         style={{
           position: 'fixed',
           bottom: 'calc(88px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
@@ -460,7 +470,7 @@ export default function IntakeButton({
         <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
           {busy ? 'hourglass_empty' : 'add_a_photo'}
         </span>
-        Toevoegen
+        {t('ink.toevoegen')}
       </button>
     ) : (
       // 'card' — matches the Dashboard ActionCard look
@@ -481,7 +491,7 @@ export default function IntakeButton({
           </span>
         </div>
         <div style={{ flex: 1 }}>
-          <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>Bon of factuur toevoegen</p>
+          <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{t('int.toevoegen')}</p>
           {/* [INTAKE-QUEUE] Tijdens het verwerken blijft de knop BRUIKBAAR — dat is het hele punt.
               De regel zegt daarom wat er loopt in plaats van dat je moet wachten. */}
           <p style={{ fontSize: 13, color: '#5F6368' }}>
@@ -490,7 +500,7 @@ export default function IntakeButton({
               : 'Maak een foto of upload — AI sorteert het'}
           </p>
         </div>
-        <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+        <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
       </button>
     )
 
@@ -543,12 +553,12 @@ export default function IntakeButton({
           onClick={() => { if (!combining && mpPages.length === 0) { setOpen(false); closeMultiPage() } }}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: M3.surface, borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT }}>
+          <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: M3.surface, borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT }}>
             <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
 
             {!mpMode ? (
               <>
-                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>Toevoegen</p>
+                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>{t('ink.toevoegen')}</p>
                 <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
                   Maak een foto of kies een bestand. De AI herkent en sorteert het automatisch.
                 </p>
@@ -559,8 +569,8 @@ export default function IntakeButton({
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 28 }}>photo_camera</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
-                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Foto maken</p>
-                    <p style={{ fontSize: 13, opacity: 0.9 }}>Bon of factuur fotograferen</p>
+                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{t('int.fotoMaken')}</p>
+                    <p style={{ fontSize: 13, opacity: 0.9 }}>{t('int.fotograferen')}</p>
                   </div>
                 </button>
 
@@ -570,8 +580,8 @@ export default function IntakeButton({
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 28 }}>upload_file</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
-                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Bestand uploaden</p>
-                    <p style={{ fontSize: 13, opacity: 0.85 }}>PDF, afbeelding of bankafschrift</p>
+                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{t('int.bestand')}</p>
+                    <p style={{ fontSize: 13, opacity: 0.85 }}>{t('int.pdfBeeld')}</p>
                   </div>
                 </button>
 
@@ -582,8 +592,8 @@ export default function IntakeButton({
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>description</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
-                    <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>Factuur met meerdere pagina&apos;s</p>
-                    <p style={{ fontSize: 12.5, color: '#5F6368' }}>Meerdere pagina&apos;s → samen één factuur</p>
+                    <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>{t('ink.meerderePaginas')}</p>
+                    <p style={{ fontSize: 12.5, color: '#5F6368' }}>{t('int.paginasSamen')}</p>
                   </div>
                 </button>
 
@@ -592,13 +602,13 @@ export default function IntakeButton({
                 </p>
 
                 <button onClick={() => { setOpen(false); closeMultiPage() }} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-                  Annuleren
+                  {t('lijst.annuleren')}
                 </button>
               </>
             ) : (
               // [MULTI-PAGE] Collector — like a scanner's "add page": snap/pick each page, then combine.
               <>
-                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>Eén factuur, meerdere pagina&apos;s</p>
+                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>{t('ink.eenFactuurMeerPaginas')}</p>
                 <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
                   Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één factuur.
                 </p>
@@ -609,7 +619,7 @@ export default function IntakeButton({
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#F1F3F4', borderRadius: 10 }}>
                         <span style={{ fontSize: 12.5, fontWeight: 700, color: M3.primary, minWidth: 62 }}>Pagina {i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                        <button onClick={() => setMpPages((prev) => prev.filter((_, j) => j !== i))} disabled={combining} aria-label="Verwijder pagina"
+                        <button onClick={() => setMpPages((prev) => prev.filter((_, j) => j !== i))} disabled={combining} aria-label={t('ink.verwijderPagina')}
                           style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: combining ? 'default' : 'pointer', lineHeight: 1 }}>×</button>
                       </div>
                     ))}
@@ -636,7 +646,7 @@ export default function IntakeButton({
 
                 <button onClick={closeMultiPage} disabled={combining}
                   style={{ width: '100%', padding: '13px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: combining ? 'default' : 'pointer', fontFamily: FONT, marginTop: 8 }}>
-                  Terug
+                  {t('int.terug')}
                 </button>
               </>
             )}
@@ -653,7 +663,7 @@ export default function IntakeButton({
           onClick={() => setDupModal(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 24, padding: '28px 24px', width: '100%', maxWidth: 380, boxShadow: '0 12px 40px rgba(0,0,0,0.24)', fontFamily: FONT, textAlign: 'center' }}>
+          <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 24, padding: '28px 24px', width: '100%', maxWidth: 380, boxShadow: '0 12px 40px rgba(0,0,0,0.24)', fontFamily: FONT, textAlign: 'center' }}>
             <div style={{ width: 56, height: 56, borderRadius: R.full, background: '#FEE8C4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#7C5800' }}>content_copy</span>
             </div>
@@ -672,7 +682,7 @@ export default function IntakeButton({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: restoring ? 'default' : 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10, opacity: restoring ? 0.6 : 1 }}
               >
                 {restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
-                {!restoring && <span className="material-symbols-outlined" style={{ fontSize: 18 }}>undo</span>}
+                {!restoring && <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>}
               </button>
             )}
 
@@ -681,8 +691,8 @@ export default function IntakeButton({
                 onClick={() => { const id = dupModal.originalId; setDupModal(null); router.push(`/dashboard/incoming/manage?focus=${id}`) }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10 }}
               >
-                Bekijk de bestaande factuur
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
+                {t('int.bestaande')}
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>arrow_forward</span>
               </button>
             )}
             {/* [INTAKE-FORCE] A semantic match can be a false positive (two distinct
@@ -693,14 +703,14 @@ export default function IntakeButton({
                 onClick={() => { const f = dupModal.file!; const src = dupModal.source ?? 'camera'; setDupModal(null); handleFile(f, true, src) }}
                 style={{ width: '100%', background: 'transparent', color: '#7C5800', borderRadius: R.full, padding: '13px', border: '1px solid #E0C48A', cursor: 'pointer', fontFamily: FONT, fontSize: 14.5, fontWeight: 600, marginBottom: 10 }}
               >
-                Toch toevoegen — dit is een andere factuur
+                {t('int.tochAndere')}
               </button>
             )}
             <button
               onClick={() => setDupModal(null)}
               style={{ width: '100%', background: 'transparent', color: M3.primary, borderRadius: R.full, padding: '12px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600 }}
             >
-              Begrepen
+              {t('bank.begrepen')}
             </button>
           </div>
         </div>
@@ -723,7 +733,7 @@ export default function IntakeButton({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="Wat is er toegevoegd"
+            aria-label={t('int.watToegevoegd')}
             onClick={(e) => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: sheetPaddingBottom(22), width: '100%', maxWidth: 460, maxHeight: '80vh', overflowY: 'auto' }}
           >
@@ -745,7 +755,7 @@ export default function IntakeButton({
               onClick={() => setBatchSummary(null)}
               style={{ width: '100%', marginTop: 16, padding: '14px', borderRadius: 14, background: M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
             >
-              Klaar
+              {t('ink.klaar')}
             </button>
           </div>
         </div>
@@ -756,7 +766,7 @@ export default function IntakeButton({
           onClick={() => setDestModal(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 400 }}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
@@ -819,7 +829,7 @@ export default function IntakeButton({
                     }}
                     style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#1a73e8', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
                   >
-                    Bekijk in bestanden →
+                    {t('ink.bekijkBestanden')} →
                   </button>
                 )}
               </div>
@@ -833,7 +843,7 @@ export default function IntakeButton({
                 fontWeight: 700, fontSize: 16, cursor: 'pointer', fontFamily: FONT,
               }}
             >
-              Klaar
+              {t('ink.klaar')}
             </button>
           </div>
         </div>

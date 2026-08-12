@@ -37,6 +37,12 @@ export type AuditAction =
   | 'invoice.updated'
   | 'invoice.deleted'
   | 'invoice.duplicated'              // ← v2: matches historical data
+  // [HERSTEL] A SENT invoice was edited in place (same number) — allowed only while nothing is
+  // attached to it (no payment, bank/kas link, creditnota, verwerkt-lock or filed quarter), and
+  // the customer automatically receives the corrected document. This row is the trail that makes
+  // rewriting an issued document honest: the FULL pre-edit header and lines live in old_value,
+  // what replaced them in new_value — totals alone would record an address fix as "no change".
+  | 'invoice.corrected'
   | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
   // [OFFERTE-VERSTUREN] De offerte is als OFFERTE naar de klant gemaild — geen nummer, geen

@@ -12,6 +12,8 @@ import { folderColor } from "../../helpers";
 import { foldText } from "@/lib/search";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // [SMART-FILTER] Vanaf dit aantal mappen wordt scrollen vervelend en tonen we
 // het zoekveld. Daaronder is de lijst in één oogopslag te overzien.
@@ -25,6 +27,7 @@ interface MoveModalProps {
 }
 
 export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProps) {
+  const t = translator(useLocale())
   const [selected, setSelected] = useState<string | null | "__none__">("__none__");
   const [query, setQuery] = useState("");
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
@@ -111,9 +114,9 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
           borderBottom: `1px solid ${T.surfaceVariant}`,
         }}>
           <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: 0 }}>
-            Verplaatsen naar
+            {t('mv.naar')}
           </p>
-          <button onClick={onClose} aria-label="Sluiten" style={{
+          <button onClick={onClose} aria-label={t('lijst.sluiten')} style={{
             width: 32, height: 32, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer",
@@ -129,8 +132,8 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              aria-label="Mappen zoeken"
-              placeholder="Zoek een map…"
+              aria-label={t('mv.zoekAria')}
+              placeholder={t('mv.zoek')}
               style={{
                 width: "100%", boxSizing: "border-box",
                 padding: "8px 14px",
@@ -152,12 +155,12 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
             onMouseLeave={e => { if (selected !== "__none__") e.currentTarget.style.background = "none"; }}
           >
             <Icon name="home" size={20} color={selected === "__none__" ? T.primary : T.outline} />
-            Hoofdmap
+            {t('mv.hoofdmap')}
           </button>
 
           {showFilter && q && visible.length === 0 && (
             <p style={{ fontSize: 13, color: T.outline, margin: "10px 16px" }}>
-              Geen mappen gevonden.
+              {t('mv.geen')}
             </p>
           )}
 
@@ -190,7 +193,7 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
             onMouseEnter={e => (e.currentTarget.style.background = T.primaryContainer)}
             onMouseLeave={e => (e.currentTarget.style.background = "none")}
           >
-            Annuleren
+            {t('lijst.annuleren')}
           </button>
           <button
             onClick={() => onMove(selected === "__none__" ? null : selected as string)}
@@ -201,7 +204,7 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
               color: T.onPrimary, cursor: "pointer",
             }}
           >
-            Hier verplaatsen
+            {t('mv.hier')}
           </button>
         </div>
       </div>

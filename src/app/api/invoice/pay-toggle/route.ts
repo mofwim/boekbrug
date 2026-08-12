@@ -38,6 +38,23 @@ export const maxDuration = 60;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * One payment link on an invoice, with everything a restore needs.
+ *
+ * [UNDO-EIGEN-WERK] Named because the undo now reads this shape twice — once as the opening
+ * snapshot, and once as what the DELETE reports it actually removed. The rollback restores the
+ * second. Two inline copies of the same shape is how they would drift into restoring different
+ * columns, and `amount_applied` is the one recompute_invoice_amount_paid sums.
+ */
+type LinkRow = {
+  id: string;
+  transaction_id: string | null;
+  amount_applied: number | null;
+  paid_on: string | null;
+  method: string | null;
+  client_key: string | null;
+};
+
+/**
  * [CASH-RETRY] Reconcile the kasboek, and if the pass reported it bailed, ask exactly once more.
  *
  * One retry, not a loop: the failure this covers is a transient read (a chunked invoice fetch that
@@ -209,6 +226,20 @@ export async function POST(req: NextRequest) {
           { status: 409 }
         );
       }
+      // [PAY-KEY-SCOPE] The idempotency key the browser sent is spent on a DIFFERENT booking —
+      // another invoice, or another user. It is not a replay of this payment, so the RPC refuses
+      // rather than reporting someone else's figures back as a duplicate. Reachable from an
+      // ordinary retry that reused its key, so it gets its own answer: a 409 with a sentence the
+      // owner can act on, not a 500 carrying a PL/pgSQL string.
+      if (msg.includes("idempotency key")) {
+        return NextResponse.json(
+          {
+            error: "client_key_conflict",
+            detail: "Deze betaling is met dezelfde referentie al op een andere factuur vastgelegd. Ververs de pagina en probeer het opnieuw.",
+          },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: "pay_failed", detail: error.message }, { status: 500 });
     }
     const row = Array.isArray(applyRows)
@@ -339,10 +370,7 @@ export async function POST(req: NextRequest) {
     .eq("user_id", user.id)
     .eq("invoice_id", invoiceId);
   if (myLinksErr) return readFailed("bank_tx_invoices", myLinksErr.message);
-  const myLinks = (myLinkRowsRaw ?? []) as {
-    id: string; transaction_id: string | null; amount_applied: number | null;
-    paid_on: string | null; method: string | null; client_key: string | null;
-  }[];
+  const myLinks = (myLinkRowsRaw ?? []) as LinkRow[];
 
   const { data: directTx, error: directTxErr } = await pipeline
     .from("bank_transactions").select("id").eq("user_id", user.id).eq("invoice_id", invoiceId).eq("status", "matched");
@@ -371,17 +399,41 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // [UNDO-SCOPED] Restore the captured bank state — called when a write below fails, so the
-  // detach never survives a failed undo. Best-effort (service role). Defined BEFORE the first
-  // destructive write, because from here on every step needs a way back.
+  // [UNDO-EIGEN-WERK] A rollback may only undo the writes THIS request actually made.
+  //
+  // The rollback used to restore from `myLinks` and `txPrev` — the snapshot taken at the START of
+  // the request. Under two concurrent undos on the same invoice that resurrects a payment the owner
+  // deliberately removed, through the branch that exists precisely FOR a lost race:
+  //
+  //   A snapshots [L1]; B snapshots [L1].
+  //   A detaches, deletes L1, recomputes, flips the invoice paid → received. Done, correct.
+  //   B detaches (already detached), deletes (0 rows — L1 is gone), recomputes (0), and then its
+  //   invoice UPDATE carries `.eq('status','paid')`, which now matches nothing.
+  //   B falls into the honest-zero-row branch, calls this rollback, and upserts L1 back FROM ITS
+  //   OWN STALE SNAPSHOT — with the bank transaction restored to 'matched' pointing at the invoice.
+  //
+  // The invoice ends 'received' with amount_paid standing on a link the owner deleted, and the
+  // transaction is 'matched' again so the matcher will never resurface it. Two taps on two devices
+  // is enough; the undo path has no idempotency key, unlike the pay path.
+  //
+  // So the rollback restores `deletedLinks` — what the DELETE reported it actually removed — and
+  // reverts only transactions this request actually wrote. B deleted nothing, so B restores
+  // nothing. The other direction still works: an undo that really did delete the links and then
+  // failed on the invoice write puts them back, which is what this rollback is for.
+  //
+  // These are filled in by the writes below, which is why they are `let`/mutable here: the rollback
+  // has to be DEFINED before the first destructive write, but it must READ what those writes did.
+  let deletedLinks: LinkRow[] = [];
+  const wroteTx = new Map<string, { status: string | null; invoiceIdCleared: boolean }>();
+
   const rollbackBankState = async () => {
     try {
-      if (myLinks.length > 0) {
+      if (deletedLinks.length > 0) {
         // Restore by PRIMARY KEY — see the snapshot comment: a manual row's NULL
         // transaction_id makes the (transaction_id, invoice_id) target useless, and a
         // failed undo would then duplicate instalments instead of restoring them.
         await pipeline.from("bank_tx_invoices").upsert(
-          myLinks.map((l) => ({
+          deletedLinks.map((l) => ({
             id: l.id, user_id: user.id, transaction_id: l.transaction_id,
             invoice_id: invoiceId, amount_applied: l.amount_applied,
             paid_on: l.paid_on, method: l.method, client_key: l.client_key,
@@ -389,10 +441,18 @@ export async function POST(req: NextRequest) {
           { onConflict: "id" }
         );
       }
-      for (const [txId, prev] of txPrev) {
-        await pipeline.from("bank_transactions")
+      for (const [txId, wrote] of wroteTx) {
+        const prev = txPrev.get(txId);
+        if (!prev) continue;
+        // Only revert a row that is STILL carrying what we wrote. If someone else has moved it
+        // since, ours is no longer the last word and putting our snapshot back would overwrite
+        // their work with a value that was already stale when we read it.
+        let revert = pipeline.from("bank_transactions")
           .update({ status: prev.status, invoice_id: prev.invoice_id })
           .eq("id", txId).eq("user_id", user.id);
+        if (wrote.status !== null) revert = revert.eq("status", wrote.status);
+        if (wrote.invoiceIdCleared) revert = revert.is("invoice_id", null);
+        await revert;
       }
       // [PARTIAL-PAY-INVARIANT] Best-effort is right HERE — this is the rollback of an operation
       // that already failed, and there is nothing left to refuse to. But the error is read and
@@ -409,22 +469,57 @@ export async function POST(req: NextRequest) {
 
   // Detach — scoped. Batch tx (hasOthers): keep it 'matched' for the siblings, only drop a
   // direct pointer at US. Single-invoice tx: full detach back to 'pending'.
+  //
+  // [UNDO-EIGEN-WERK] Each write records what it actually set, so the rollback can revert exactly
+  // that and nothing else. And each write's error is READ: it used to be dropped, so a failed
+  // detach was followed by deleting the links anyway — the invoice went unpaid while its
+  // transaction stayed 'matched' and pointed at it, which is defect [15] in this file's own header
+  // arriving through a different door. Nothing has been deleted yet at this point, so refusing is
+  // still free.
   for (const [txId, prev] of txPrev) {
     if (prev.hasOthers) {
       if (prev.invoice_id === invoiceId) {
-        await pipeline.from("bank_transactions").update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
+        const { error } = await pipeline.from("bank_transactions")
+          .update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
+        if (error) {
+          await rollbackBankState();
+          console.error("[UNDO-EIGEN-WERK] batch detach failed — nothing deleted yet", { invoiceId, txId, userId: user.id, message: error.message });
+          return NextResponse.json(
+            { error: "undo_failed", detail: "De betaling kon niet worden losgekoppeld. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+            { status: 503 }
+          );
+        }
+        // status untouched on this branch, so the revert is guarded on the cleared pointer alone.
+        wroteTx.set(txId, { status: null, invoiceIdCleared: true });
       }
     } else {
-      await pipeline.from("bank_transactions")
+      const { error } = await pipeline.from("bank_transactions")
         .update({ status: "pending", invoice_id: null })
         .eq("id", txId).eq("user_id", user.id);
+      if (error) {
+        await rollbackBankState();
+        console.error("[UNDO-EIGEN-WERK] detach failed — nothing deleted yet", { invoiceId, txId, userId: user.id, message: error.message });
+        return NextResponse.json(
+          { error: "undo_failed", detail: "De betaling kon niet worden losgekoppeld. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+          { status: 503 }
+        );
+      }
+      wroteTx.set(txId, { status: "pending", invoiceIdCleared: true });
     }
   }
   // Remove ONLY this invoice's join rows (never the whole tx's set).
   // [UNDO-READ-CLOSED] The delete's own error was dropped too. If it fails, the transactions
   // above are already detached while their links survive — so put the bank state back and say so,
   // rather than continuing to mark the invoice unpaid on top of payments that still exist.
-  const { error: delErr } = await pipeline.from("bank_tx_invoices").delete().eq("user_id", user.id).eq("invoice_id", invoiceId);
+  //
+  // [UNDO-EIGEN-WERK] `.select()` so the delete REPORTS what it removed. That list — not the
+  // snapshot read at the top of the request — is what a rollback may put back. A concurrent undo
+  // that lost the race deletes nothing here and therefore restores nothing.
+  const { data: deletedRaw, error: delErr } = await pipeline
+    .from("bank_tx_invoices").delete()
+    .eq("user_id", user.id).eq("invoice_id", invoiceId)
+    .select("id, transaction_id, amount_applied, paid_on, method, client_key");
+  deletedLinks = (deletedRaw ?? []) as LinkRow[];
   if (delErr) {
     await rollbackBankState();
     console.error("[UNDO-READ-CLOSED] link delete failed — bank state restored", { invoiceId, userId: user.id, message: delErr.message });
