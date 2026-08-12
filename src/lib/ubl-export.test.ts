@@ -434,3 +434,38 @@ test("[UBL-CREDIT] a creditnota line with no quantity still multiplies out", () 
   assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</, "1 x 100 = 100 — the arithmetic R120 checks");
   assert.doesNotMatch(xml, /<cbc:BaseQuantity/, "…so no per-line price form is needed");
 });
+
+test("[UBL-CREDIT] a creditnota with no lines is exportable, like the factuur it corrects", () => {
+  // [CREDIT-SIGN] effectiveLines synthesized a summary line only when `ex > 0`, and a creditnota's
+  // ex total is negative. So crediting an invoice that has no lines — the case that function exists
+  // for — produced NO_LINES and buildInvoiceUbl threw: the e-factuur could not be made at all,
+  // while the identical document as a factuur exported fine.
+  const { xml, warnings } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-20260007", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [],
+    supplier,
+  );
+  assert.equal((xml.match(/<cac:InvoiceLine>/g) ?? []).length, 1, "BR-16: a document needs at least one line");
+  assert.match(xml, /<cbc:InvoiceTypeCode>381<\/cbc:InvoiceTypeCode>/);
+  // The synthesized line follows the STORED convention (-1 x 100), so the flip produces the form
+  // UBL wants. A synthesized `quantity: 1` would come out of the flip as -1 against +100, and
+  // PEPPOL-EN16931-R120 recomputes exactly that product.
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>1</, "one of it, positive, after the flip");
+  assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</);
+  assert.match(xml, /<cbc:LineExtensionAmount[^>]*>100\.00</);
+  assert.match(xml, /<cbc:TaxInclusiveAmount[^>]*>121\.00</, "and the customer is credited 121,00");
+  assert.doesNotMatch(xml, /<cbc:BaseQuantity/, "1 x 100 = 100 needs no per-line price form");
+  assert.ok(
+    warnings.some((w) => /No invoice_lines/.test(w)),
+    "the owner's file is honest about being built from the header",
+  );
+});
+
+test("[UBL-CREDIT] a factuur without lines is synthesized exactly as it always was", () => {
+  // The narrow half: the change to that guard must be invisible to the case it already served.
+  const { xml } = buildInvoiceUbl(header({ total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121 }), [], supplier);
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>1</);
+  assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</);
+  assert.match(xml, /<cbc:LineExtensionAmount[^>]*>100\.00</);
+  assert.match(xml, /Factuurbedrag/);
+});

@@ -7957,3 +7957,21 @@ test("[MIN-REGEL] a reading may not turn a credit line into a charge", () => {
   assert.match(mod, /return \{ quantity: -quantity, unit_price: -unitPrice \}/,
     "…and the minus is moved out of the price, where BR-27 forbids it");
 });
+
+test("[CREDIT-SIGN] a creditnota without lines can still be sent as an e-factuur", () => {
+  // effectiveLines synthesizes a summary line for an invoice that has none — a scanned or legacy
+  // one — and did so only when `ex > 0`. A creditnota's ex total is negative, so crediting such an
+  // invoice produced NO_LINES and the export THREW. The same document as a factuur exported fine,
+  // and the creditnota route copies the lines of the invoice it corrects: no lines in, none out.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /if \(Number\.isFinite\(ex\) && ex !== 0\) \{/,
+    "a usable total is a non-zero one, in either direction");
+  // And the synthesized line must follow the STORED convention, or the creditnota flip turns its
+  // quantity into -1 against a positive amount and PEPPOL-EN16931-R120 refuses the file.
+  assert.match(ubl, /quantity: ex < 0 \? -1 : 1/, "stored negative, flipped positive for the file");
+  assert.match(ubl, /unit_price: Math\.abs\(ex\)/, "…with the price a magnitude, as BR-27 requires");
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /a creditnota with no lines is exportable/, "proven by a document");
+  assert.match(spec, /a factuur without lines is synthesized exactly as it always was/,
+    "…and the case that already worked must be untouched");
+});

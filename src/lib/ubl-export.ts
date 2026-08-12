@@ -276,10 +276,25 @@ function supplierName(s: UblSupplier): string | null {
  * Resolve the lines to use for the UBL.
  * If the invoice has real line items, use them. If it has none (e.g. a scanned /
  * imported invoice where only header totals were extracted) but it does have a
- * positive ex-BTW total, synthesize ONE summary line from the header totals so
+ * usable ex-BTW total, synthesize ONE summary line from the header totals so
  * the invoice is still exportable. Amounts stay faithful to the stored totals;
  * any rounding gap is surfaced as a warning by buildInvoiceUbl().
  * Returns [] only when there is neither line detail nor a usable total.
+ *
+ * [CREDIT-SIGN] `ex > 0` and not `ex !== 0`, for as long as this function existed — and a
+ * creditnota's ex total is NEGATIVE. So a creditnota of an invoice that has no lines got no
+ * synthesized line either, validateUblInputs answered NO_LINES, and buildInvoiceUbl threw: the
+ * e-factuur could not be produced at all. The very same document as a factuur exported fine.
+ *
+ * It is reachable with ordinary data: invoices without lines are why this function exists (the
+ * warning above says so), and the creditnota route copies the lines of the invoice it corrects —
+ * no lines in, no lines out.
+ *
+ * The synthesized line follows the STORED convention rather than the printed one: a creditnota is
+ * stored negative ([CREDIT-SIGN]), so its summary line is -1 x |ex|. buildInvoiceUbl flips that
+ * back to +1 x |ex| for the file, which is what UBL wants and what PEPPOL-EN16931-R120 checks. A
+ * synthesized `quantity: 1` would come out of that flip as -1 against a positive amount, and the
+ * access point would refuse the file for a different reason than before.
  */
 export function effectiveLines(
   header: UblInvoiceHeader,
@@ -287,14 +302,15 @@ export function effectiveLines(
 ): UblInvoiceLine[] {
   if (lines && lines.length > 0) return lines;
   const ex = Number(header.total_ex_btw ?? 0);
-  if (ex > 0) {
+  if (Number.isFinite(ex) && ex !== 0) {
     const btw = Number(header.btw_amount ?? 0);
+    // Both signs divide out to the same rate: -21 / -100 is 21%, as it should be.
     const rate = Math.round((btw / ex) * 100);
     return [
       {
         description: "Factuurbedrag",
-        quantity: 1,
-        unit_price: ex,
+        quantity: ex < 0 ? -1 : 1,
+        unit_price: Math.abs(ex),
         btw_rate: rate,
         line_total: ex,
       },
