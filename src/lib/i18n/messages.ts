@@ -1792,6 +1792,87 @@ export const MESSAGES = {
   'bst.previewNiet': { nl: 'Preview niet beschikbaar', ar: 'المعاينة غير متاحة', en: 'Preview not available' },
   'bst.geselecteerd': { nl: '{count} geselecteerd', ar: '{count} محدَّد', en: '{count} selected' },
   'bst.selectieWissen': { nl: 'Selectie wissen', ar: 'إلغاء التحديد', en: 'Clear selection' },
+
+  // ─── [PAY-REDEN] Waarom afboeken of terugdraaien niet lukte ─────────────────────────────────
+  //
+  // One line per code /api/invoice/pay-toggle can refuse with. Three screens ask that route and
+  // each used to answer differently — /vandaag showed the bare code, so a shop owner read
+  // "invoice_already_paid" on their phone, in Dutch as well as in Arabic. The mapping lives in
+  // pay-toggle-reason.ts; these are the words.
+  //
+  // Each line is a REASON, not an apology: it says what happened and, where the owner can do
+  // something, what. "Ververs de pagina" is an instruction; "er ging iets mis" is not, and is used
+  // only where nothing better is true.
+  'pay.reden.verwerkt': {
+    nl: 'Je boekhouder heeft deze factuur al verwerkt',
+    ar: 'محاسبك عالج هذه الفاتورة بالفعل',
+    en: 'Your accountant has already processed this invoice',
+  },
+  'pay.reden.alBetaald': {
+    nl: 'Deze factuur staat al als betaald',
+    ar: 'هذه الفاتورة مُسجَّلة كمدفوعة بالفعل',
+    en: 'This invoice is already marked as paid',
+  },
+  'pay.reden.nietGevonden': {
+    nl: 'Deze factuur is niet gevonden',
+    ar: 'لم يتم العثور على هذه الفاتورة',
+    en: 'This invoice was not found',
+  },
+  'pay.reden.nietBetaald': {
+    nl: 'Er staat geen betaling op deze factuur',
+    ar: 'لا توجد دفعة مسجَّلة على هذه الفاتورة',
+    en: 'There is no payment on this invoice',
+  },
+  'pay.reden.nietAfboekbaar': {
+    nl: 'Deze factuur kan nu niet als betaald worden gemarkeerd',
+    ar: 'لا يمكن تسجيل هذه الفاتورة كمدفوعة الآن',
+    en: 'This invoice cannot be marked as paid right now',
+  },
+  'pay.reden.statusVeranderd': {
+    nl: 'De status is inmiddels veranderd — ververs de pagina',
+    ar: 'تغيَّرت الحالة في هذه الأثناء — حدِّث الصفحة',
+    en: 'The status has changed in the meantime — refresh the page',
+  },
+  'pay.reden.sessieVerlopen': {
+    nl: 'Je sessie is verlopen — log opnieuw in',
+    ar: 'انتهت جلستك — سجّل الدخول من جديد',
+    en: 'Your session has expired — log in again',
+  },
+  'pay.reden.bedragOngeldig': {
+    nl: 'Het ingevoerde bedrag is niet geldig',
+    ar: 'المبلغ المُدخَل غير صالح',
+    en: 'The amount entered is not valid',
+  },
+  'pay.reden.datumOngeldig': {
+    nl: 'De betaaldatum kan niet kloppen — controleer het jaartal',
+    ar: 'تاريخ الدفع لا يمكن أن يكون صحيحاً — تحقّق من السنة',
+    en: 'The payment date cannot be right — check the year',
+  },
+  'pay.reden.deelKasOnmogelijk': {
+    nl: 'Een deelbetaling kan op dit moment alleen via bank worden genoteerd',
+    ar: 'الدفعة الجزئية يمكن تسجيلها حالياً عبر البنك فقط',
+    en: 'A partial payment can only be recorded by bank at the moment',
+  },
+  'pay.reden.referentieBotst': {
+    nl: 'Deze betaling is met dezelfde referentie al op een andere factuur vastgelegd — ververs de pagina',
+    ar: 'هذه الدفعة سُجِّلت بالمرجع نفسه على فاتورة أخرى — حدِّث الصفحة',
+    en: 'This payment was already recorded under the same reference on another invoice — refresh the page',
+  },
+  'pay.reden.leesFout': {
+    nl: 'We konden de gekoppelde betalingen niet lezen — er is niets gewijzigd',
+    ar: 'تعذّرت قراءة الدفعات المرتبطة — لم يتغيّر شيء',
+    en: 'We could not read the linked payments — nothing was changed',
+  },
+  'pay.reden.terugdraaienMislukt': {
+    nl: 'Terugdraaien is niet gelukt — er is niets gewijzigd',
+    ar: 'لم ينجح التراجع — لم يتغيّر شيء',
+    en: 'Undoing did not succeed — nothing was changed',
+  },
+  'pay.reden.algemeen': {
+    nl: 'Bijwerken is niet gelukt — ververs de pagina',
+    ar: 'لم ينجح التحديث — حدِّث الصفحة',
+    en: 'Updating did not succeed — refresh the page',
+  },
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

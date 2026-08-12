@@ -40,6 +40,8 @@ import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
 import { M3 } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /facturen and /manage.
+import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -210,18 +212,27 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Afboeken is niet gelukt.");
+      if (!res.ok) {
+        // [PAY-REDEN] This used to be `throw new Error(data?.error || …)` — the machine CODE. A
+        // shop owner tapping "Al betaald?" read "invoice_already_paid" under the button, in every
+        // language including Dutch, for every refusal this route can make. One shared rule now
+        // decides (pay-toggle-reason.ts): the server's own sentence when it wrote one and the
+        // status says we may trust it, otherwise a line from the catalogue in the owner's
+        // language. Never a code.
+        const answer = payToggleAnswer(res.status, data);
+        setPayError((e) => ({ ...e, [id]: answer.kind === "server" ? answer.text : t(answer.key) }));
+        return;
+      }
       setPaidIds((prev) => new Set(prev).add(id));
       setPayingId(null);
-    } catch (err) {
-      setPayError((e) => ({
-        ...e,
-        [id]: err instanceof Error ? err.message : "Er ging iets mis.",
-      }));
+    } catch {
+      // The request never completed — it may or may not have reached the server, and we cannot
+      // know which. The catalogue's neutral line says exactly that much and nothing more.
+      setPayError((e) => ({ ...e, [id]: t(PAY_TOGGLE_FALLBACK_KEY) }));
     } finally {
       setPayBusy(null);
     }
-  }, []);
+  }, [t]);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");

@@ -6905,10 +6905,16 @@ test("[PAY-KEY-SCOPE] the refusal reaches the owner as a Dutch sentence, not a 5
   const branch = route.slice(at, at + 500);
   assert.match(branch, /status: 409/, "a spent key is a conflict, not a server fault");
   assert.match(branch, /detail: "[^"]*[a-z]{4}/, "…and carries a written reason");
-  // The manage screen only trusts a <500 `detail`; a 5xx detail is a raw Postgres string. Both
-  // halves of that rule are what makes this branch readable on a phone.
-  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
-  assert.match(manage, /client_key_conflict:\s*'[^']+'/, "and the code has a Dutch line of its own as the belt");
+  // The screens only trust a <500 `detail`; a 5xx one is a raw Postgres string. Both halves of
+  // that rule are what makes this branch readable on a phone.
+  //
+  // [PAY-REDEN] The belt used to be a Dutch line inside IncomingManageClient. It now lives in the
+  // shared map and the message catalogue, which is stricter, not looser: the line has to exist for
+  // all three screens instead of one, and it has to exist in every language the catalogue claims.
+  const map = code("src/lib/pay-toggle-reason.ts");
+  assert.match(map, /client_key_conflict: 'pay\.reden\.referentieBotst'/, "the code needs a line of its own");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'pay\.reden\.referentieBotst': \{/, "…and the line has to be written");
 });
 
 // ─── [NUMMER-JAAR] The invoice number's year is the OWNER's year ─────────────────────────────────
@@ -7212,6 +7218,93 @@ test("[FACTUUR-B] the allocator has a seam test, and it drives two real sessions
   ]) {
     assert.match(spec, claim, `the allocator's contract is missing an assertion: ${claim}`);
   }
+});
+
+// ─── [PAY-REDEN] A machine code is not a sentence, in any language ───────────────────────────────
+//
+// /api/invoice/pay-toggle answers with a CODE in `error` and only sometimes a written `detail`.
+// Three screens ask it, and each had its own idea of what to show:
+//
+//   · /vandaag  `data?.error` — the bare code. A shop owner tapping "Al betaald?" read
+//     "invoice_already_paid" under the button, in Dutch as much as in Arabic.
+//   · /facturen `detail || error` — the code for every refusal that carries no detail, and it
+//     decided whether to open its verwerkt dialog by searching that MESSAGE for the Dutch word
+//     "verwerkt", which stops working the moment the message is translated.
+//   · /manage   the right rule, with the Dutch words hard-coded inside the component — on a screen
+//     the [TAAL] list says has no language of its own.
+//
+// One rule now (pay-toggle-reason.ts), returning a decision rather than a sentence, and the words
+// in the catalogue. These gates hold the three screens to it.
+
+test("[PAY-REDEN] no screen turns a refusal into a machine code", () => {
+  for (const f of [
+    "src/app/dashboard/vandaag/VandaagClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+  ]) {
+    const src = code(f);
+    assert.match(src, /payToggleAnswer\(/, `${f}: must ask the shared rule`);
+
+    // Scoped to the pay-toggle handlers, and that is not a loophole — it is the contract this gate
+    // is about. Only THIS route answers with a machine code in `error`; /api/invoice/[id] and
+    // /betaalverzoek-bundel put Dutch SENTENCES there, so `showToast(data.error)` is right for
+    // them. A first version of this gate flagged both and was wrong to. The window runs from each
+    // pay-toggle fetch to the next fetch in the file, so a handler cannot hide past its end.
+    const marks = [...src.matchAll(/\/api\/invoice\/pay-toggle/g)].map((m) => m.index ?? 0);
+    assert.ok(marks.length > 0, `${f}: no pay-toggle call found — this gate is pointed at nothing`);
+    for (const at of marks) {
+      const rest = src.slice(at + 30);
+      const next = rest.indexOf("fetch(");
+      const handler = next > 0 ? rest.slice(0, next) : rest.slice(0, 3000);
+      // The three shapes that put a code on screen. `detail || error` is the subtle one: it reads
+      // as a fallback and is a code every time the server wrote no sentence.
+      assert.doesNotMatch(handler, /\bdetail\s*\|\|\s*(json|data)\??\.?\w*error/,
+        `${f}: \`detail || error\` shows the CODE for every refusal that carries no detail`);
+      assert.doesNotMatch(handler, /new Error\((data|json)\??\.error/,
+        `${f}: the code becomes the thrown message and then the toast`);
+      assert.doesNotMatch(handler, /showToast\(\s*(json|data)\??\.error/,
+        `${f}: the code goes straight to the snackbar`);
+    }
+  }
+});
+
+test("[PAY-REDEN] the words live in the catalogue, not in a component", () => {
+  // The Record of Dutch strings that used to sit in IncomingManageClient. A screen on the [TAAL]
+  // list holding its own copy is how a translation stays permanently half-finished: the Dutch
+  // still looks right, so nothing points at the gap.
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(
+    manage, /const PAY_TOGGLE_REASON\s*:\s*Record<string, string>/,
+    "the reason catalogue is back inside the component, where no translation can reach it",
+  );
+  // And the shared map holds KEYS, not sentences — a sentence here is untranslatable too.
+  const map = code("src/lib/pay-toggle-reason.ts");
+  const entries = [...map.matchAll(/^\s{2}(\w+): '([^']+)',$/gm)].map((m) => [m[1], m[2]] as const);
+  assert.ok(entries.length >= 12, `expected the code→key map, found ${entries.length} entries`);
+  for (const [codeName, value] of entries) {
+    assert.match(value, /^pay\.reden\.\w+$/, `${codeName} maps to a sentence, not a catalogue key`);
+  }
+});
+
+test("[PAY-REDEN] the verwerkt dialog is opened by a code, never by a Dutch word", () => {
+  // The one refusal with a way out of it. /facturen looked for the substring "verwerkt" in the
+  // message it was about to display — so in Arabic the dialog never opens, and the owner is left
+  // with a lock and no door.
+  const facturen = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.match(facturen, /isVerwerktConflict\(json\)/, "the lock must be recognised by its code");
+  assert.doesNotMatch(
+    facturen, /message\s*\.includes\('verwerkt'\)|error\.message[^)]*includes\('verwerkt'\)/,
+    "searching the displayed message for a Dutch word breaks on the first translation",
+  );
+});
+
+test("[PAY-REDEN] the rule is proven where it can be", () => {
+  const spec = readFileSync("src/lib/pay-toggle-reason.test.ts", "utf8");
+  // The two bugs themselves, and the two properties that keep the fix honest.
+  assert.match(spec, /a refusal that carries no detail still becomes words/, "the /vandaag bug");
+  assert.match(spec, /recognised by its CODE, not by a Dutch word/, "the /facturen bug");
+  assert.match(spec, /a 5xx detail is a raw database string/, "a Postgres string never reaches a phone");
+  assert.match(spec, /reads Dutch, never a key/, "a missing translation falls back, it does not blank");
 });
 
 test("[CORRIGEER] correcting a sent invoice is a pair of documents, never an edit", () => {

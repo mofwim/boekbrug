@@ -90,6 +90,8 @@ import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAY-REASON] One rule for what a refused pay-toggle says, shared with /vandaag and /facturen.
+import { payToggleAnswer, type PayToggleError } from '@/lib/pay-toggle-reason'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
 // both sides of the app — and the server re-checks it before writing.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
@@ -265,37 +267,18 @@ interface IncomingRow {
 
 // [PAY-REASON] What the owner reads when /api/invoice/pay-toggle refuses.
 //
-// That route answers with a machine CODE in `error` and only sometimes a written `detail`. The
-// existing call site preferred `detail || error`, which was right for the handful of refusals that
-// carry a sentence and wrong for every other one — "invoice_already_paid", "verwerkt",
-// "invoice_not_found" would land on a shop owner's phone as-is. Its own [DEPLOY-SAFE] note says
-// exactly that ("the bare error CODE would reach the owner as gibberish"); it just never covered
-// the codes that have no detail. A bundle makes it worse, because it collects several at once.
+// The rule and the words both moved out of this file. The rule is in pay-toggle-reason.ts, because
+// /vandaag and /facturen ask the same route and each had a different idea of what to show — and
+// /vandaag's idea was the bare machine CODE. The words are in the message catalogue, because this
+// screen is translated: a Dutch Record living here rendered "je boekhouder heeft deze factuur al
+// verwerkt" underneath an Arabic interface, which is precisely the half-finished translation
+// AGENTS.md describes ("a component holds no language of its own").
 //
-// So: a curated sentence when the server wrote one AND the status says it is ours to trust
-// (a 5xx `detail` is a raw Postgres string — never for a phone), then a Dutch line per known code,
-// then a neutral fallback. Never a code, never a database message.
-const PAY_TOGGLE_REASON: Record<string, string> = {
-  verwerkt: 'je boekhouder heeft deze factuur al verwerkt',
-  invoice_already_paid: 'deze factuur staat al als betaald',
-  invoice_not_found: 'deze factuur is niet gevonden',
-  not_paid: 'er staat geen betaling op deze factuur',
-  status_conflict: 'de status is inmiddels veranderd — ververs de pagina',
-  unauthorized: 'je sessie is verlopen — log opnieuw in',
-  invalid_amount: 'het ingevoerde bedrag is niet geldig',
-  // [PAY-DATE-SANE] The route sends its own sentence with this one (and payToggleReason prefers a
-  // <500 detail), so this line is the belt to that braces — never a bare code on a phone.
-  invalid_payment_date: 'de betaaldatum kan niet kloppen — controleer het jaartal',
-  // [PAY-KEY-SCOPE] Same belt-and-braces: the route sends a sentence with this one too.
-  client_key_conflict: 'deze betaling is al met dezelfde referentie vastgelegd — ververs de pagina',
-  undo_read_failed: 'we konden de gekoppelde betalingen niet lezen — er is niets gewijzigd',
-  undo_failed: 'terugdraaien is niet gelukt — er is niets gewijzigd',
-}
-function payToggleReason(status: number, json: { detail?: string; error?: string } | null): string {
-  if (status < 500 && typeof json?.detail === 'string' && json.detail.trim()) return json.detail.trim()
-  const code = typeof json?.error === 'string' ? json.error : ''
-  return PAY_TOGGLE_REASON[code] ?? 'bijwerken is niet gelukt — ververs de pagina'
-}
+// What did NOT change is the decision this screen already got right, and it is worth restating:
+// a curated sentence when the server wrote one AND the status says it is ours to trust (a 5xx
+// `detail` is a raw Postgres string — never for a phone), then a line per known code, then a
+// neutral fallback. Never a code, never a database message.
+
 
 // [AUTO-ADVANCE] True when the app auto-verified this invoice (clean + confident) instead of
 // the owner tapping confirm. Drives the review badge + filter — the opt-in double-check.
@@ -473,6 +456,12 @@ export default function IncomingManageClient({
 }) {
   const taal = useLocale()
   const t = translator(taal)
+  // [PAY-REASON] The shared rule, rendered in this screen's language. Every call site below is
+  // unchanged — only where the sentence comes from is.
+  const payToggleReason = useCallback((status: number, json: PayToggleError): string => {
+    const answer = payToggleAnswer(status, json)
+    return answer.kind === 'server' ? answer.text : t(answer.key)
+  }, [t])
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
