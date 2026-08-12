@@ -6618,3 +6618,42 @@ test("[MONEY-GUARD-CLOSED] the removal routes all read the error on their money-
     // statement never mentions `error:`.)
   }
 });
+
+test("[MAIL-TEKST] every mail leaves with a text part, because every send goes through one door", () => {
+  // All fifteen senders were HTML-only — SpamAssassin's MIME_HTML_ONLY, a free negative signal on
+  // a young domain, on the mail that asks a stranger for money. The fix is one wrapper around the
+  // Resend client that derives text/plain from the same html string, so the two parts cannot
+  // drift and a sixteenth sender inherits it without knowing it exists.
+  //
+  // That only holds while the wrapper IS the only door. Three ways to walk around it, each gated:
+  const email = code("src/lib/email.ts");
+
+  // 1. Constructing a Resend client anywhere else.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p) || p === "src/lib/email.ts") continue;
+      if (/new Resend\(/.test(code(p))) offenders.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(offenders, [], `mail is sent from email.ts only:\n  ${offenders.join("\n  ")}`);
+
+  // 2. Calling the raw client directly inside email.ts. The pattern matches its DECLARATION too
+  //    (`function rawResend(): Resend`), so a clean tree counts exactly two: declaration + the
+  //    one call inside the wrapper. Three or more means a sender walked around the door.
+  const rawUses = (email.match(/rawResend\(\)/g) ?? []).length;
+  assert.equal(rawUses, 2, "rawResend() beyond its declaration and the wrapper call — the door has a hole");
+
+  // 3. The wrapper forgetting its job. The derivation must reference htmlToMailText, and every
+  //    sender must go through getResend().
+  assert.match(email, /text: htmlToMailText\(payload\.html\)/);
+  assert.ok((email.match(/getResend\(\)\.emails\.send\(/g) ?? []).length >= 15,
+    "the fifteen senders all pass through the wrapper");
+
+  // And the reminder keeps its recorded ABSENCE: no List-Unsubscribe on dunning mail, because it
+  // would hand a debtor a button that silently stops their own payment reminders.
+  assert.doesNotMatch(email, /List-Unsubscribe/i, "see [GEEN-UNSUBSCRIBE] — absence is the decision");
+});
