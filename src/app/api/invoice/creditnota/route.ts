@@ -47,6 +47,8 @@ import { reportHandledFailure } from '@/lib/report-handled'
 // [KLANT-EXTRA] De twee vrije klantregels reizen mee naar het nieuwe document — in een
 // aparte, mislukbare schrijfbeurt. Zie de kop van dat bestand.
 import { copyExtraLinesOnto } from '@/lib/client-extra-lines-write'
+// [CREDIT-SIGN] The per-line mirror: which fields flip, which travel, which are hardened.
+import { creditLinesFor } from '@/lib/creditnota-lines'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -269,30 +271,14 @@ export async function POST(request: NextRequest) {
       .eq('invoice_id', original_invoice_id)
 
     if (originalLines && originalLines.length > 0) {
+      // [CREDIT-SIGN] The mirror lives in creditnota-lines.ts, with every rule it applies and the
+      // reason for it: which fields flip (the quantity and the line total, never the price — that
+      // is BR-27 and [MIN-REGEL]), which travel (the unit, so "-2 uur" does not become "-2 stuks",
+      // and the exemption flag, whose absence puts the correction in a different rubriek than the
+      // invoice it undoes), and which are hardened. It sat here as an object literal inside a
+      // .map(), where none of it could be checked without a database.
       await supabase.from('invoice_lines').insert(
-        // [UNIT] A credit note corrects the SAME delivery, so it carries the same unit:
-        // "-2 uur", not "-2 stuks".
-        originalLines.map((line) => ({
-          invoice_id: creditnota.id,
-          description: `[Creditnota] ${line.description}${reason ? ` — ${reason}` : ''}`,
-          quantity: -(line.quantity || 0), // negatief aantal
-          unit_price: line.unit_price,
-          btw_rate: line.btw_rate,
-          line_total: -(line.line_total || 0),
-          ...(line.unit !== undefined ? { unit: line.unit ?? null } : {}),
-          // [VRIJGESTELD-KOPIE] En de vrijstellingsvlag reist mee, om precies dezelfde reden als
-          // de eenheid — maar met een duurder gevolg als hij dat niet doet.
-          //
-          // Zonder haar wordt een gekopieerde vrijgestelde regel geclassificeerd als BELASTE omzet
-          // tegen 0%. Bij een creditnota betekent dat dat de correctie het origineel niet opheft:
-          // het origineel blijft +EUR 1.000 vrijgestelde omzet en de creditnota landt als -EUR 1.000
-          // in de 0%/verlegd-rubriek. Twee rubrieken tegelijk fout, en 5a/5b blijven kloppen — dus
-          // geen enkel scherm laat het zien.
-          //
-          // Dezelfde harding als overal waar deze vlag wordt geschreven: alleen de letterlijke
-          // waarde 'exempt' telt. Een onbekende waarde wordt NULL, nooit een vrijstelling.
-          ...(line.vat_treatment !== undefined ? { vat_treatment: line.vat_treatment === 'exempt' ? 'exempt' : null } : {}),
-        })),
+        creditLinesFor(originalLines, creditnota.id, reason) as never,
       )
     }
 

@@ -2690,8 +2690,20 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
 //
 // This is a CLASS test on purpose. Fixing four sites does not stop the fifth.
 test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_treatment", () => {
+  // [CREDIT-SIGN] The creditnota route is not in this list any more: its per-line mirror moved to
+  // creditnota-lines.ts, where the rule is the same and can finally be tested without a database.
+  // The gate follows it there rather than being relaxed — the route must reach the module, and the
+  // module must harden exactly as the inline copies do.
+  const credit = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(credit, /creditLinesFor\(originalLines, creditnota\.id, reason\)/,
+    "the creditnota route must build its lines with the shared mirror");
+  assert.match(
+    code("src/lib/creditnota-lines.ts"),
+    /vat_treatment === 'exempt' \? 'exempt' : null/,
+    "…and that mirror must harden vat_treatment like every other writer",
+  );
+
   const copiers = [
-    "src/app/api/invoice/creditnota/route.ts",
     "src/app/api/cron/recurring/route.ts",
     "src/app/api/invoice/[id]/duplicate/route.ts",
     "src/app/api/invoice/[id]/route.ts",
@@ -7876,4 +7888,47 @@ test("[MIN-REGEL] the two invoice forms allow and refuse the same things", () =>
   // And the screen renders at all — the gate that the other five cannot give.
   const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
   assert.match(render, /src\/app\/dashboard\/invoice\/\[id\]\/edit\/page/, "the edit screen must be on the render line");
+});
+
+// ─── [LEVENSLOOP] One invoice, every station ────────────────────────────────────────────────────
+//
+// Every station in this app is tested where it lives and each is right on its own. The defects
+// that keep being found are BETWEEN two of them, where neither side can see: the e-factuur that
+// stated a cent less BTW than the PDF, the price column that printed EUR 0,83 beside a line total
+// of EUR 123,85, the creditnota that credited a returned crate twice. invoice-lifecycle.test.ts
+// carries ONE document — fractional prices, two rates and a credit line — through the totals, the
+// PDF, the e-factuur, the creditnota and that creditnota's own PDF and e-factuur, and asks each
+// station for the same figures.
+
+test("[LEVENSLOOP] the end-to-end check covers every station, with hand-worked figures", () => {
+  const spec = readFileSync("src/lib/invoice-lifecycle.test.ts", "utf8");
+  // Each station must actually be called. A lifecycle test that quietly stopped rendering the PDF
+  // would still pass, and would still be named the same thing.
+  for (const station of ["computeInvoiceTotals", "renderInvoicePdf", "buildInvoiceUbl", "creditLinesFor"]) {
+    assert.match(spec, new RegExp(`\\b${station}\\(`), `${station} must be exercised end to end`);
+  }
+  // The figures are worked out from the lines by hand. A test that asked the code for the answer
+  // would agree with any answer it gave.
+  assert.match(spec, /const EX = 376\.31/, "the excl total");
+  assert.match(spec, /const BTW = 43\.24/, "the btw, per rate and then added");
+  assert.match(spec, /const INC = 419\.55/, "and the amount due");
+  // The two properties that make it a lifecycle test rather than six unit tests.
+  assert.match(spec, /invoice and creditnota cancel to zero at every station/,
+    "the correction must leave nothing behind, or a rubriek keeps a remainder forever");
+  assert.match(spec, /-3, unit_price: 23\.95/, "…and a credit line must be on the document");
+});
+
+test("[LEVENSLOOP] the creditnota flip is a negation, not a magnitude", () => {
+  // The defect the lifecycle test found within minutes of existing: Math.abs() per line turned the
+  // un-returned line the wrong way, and the file credited the customer 143,70 too much against a
+  // header that said otherwise. Only the PRICE is a magnitude — that one is BR-27.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /quantity: l\.quantity == null \? 1 : -Number\(l\.quantity\)/,
+    "the quantity is negated, with the ?? 1 default kept — negating THAT emits -1 against a positive line");
+  assert.match(ubl, /line_total: -Number\(l\.line_total \?\? 0\)/, "and so is the amount");
+  assert.match(ubl, /unit_price: Math\.abs\(Number\(l\.unit_price \?\? 0\)\)/,
+    "the price stays a magnitude — a negative cbc:PriceAmount is refused by the access point");
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /a creditnota is FLIPPED, not made absolute/, "covered where the exporter lives too");
+  assert.match(spec, /a creditnota line with no quantity still multiplies out/, "including the default");
 });

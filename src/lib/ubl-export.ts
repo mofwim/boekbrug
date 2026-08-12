@@ -416,17 +416,40 @@ export function buildInvoiceUbl(
   if (lines.length === 0 && effLinesRaw.length > 0) {
     warnings.push("No invoice_lines — synthesized a single summary line from header totals.");
   }
-  // [UBL-CREDIT] A creditnota (UBL type 381) must carry POSITIVE amounts; the
-  // stored line/header values are negative, so normalize every amount to its
-  // magnitude. All downstream totals/tax groups derive from effLines, so this
-  // single normalization makes the whole document positive and consistent.
+  // [UBL-CREDIT] A creditnota (UBL type 381) carries POSITIVE amounts: UBL conveys the direction
+  // with the type code, and this app stores a creditnota negative ([CREDIT-SIGN]). So the document
+  // is flipped once here, and every total and tax group below derives from the result.
+  //
+  // [MIN-REGEL] FLIPPED, not made absolute — and that distinction is worth EUR 143,70 on the
+  // invoice this was found with.
+  //
+  // Math.abs() is the same thing as a negation only while every line has the same sign. A
+  // creditnota of an invoice that contained a RETURN does not: crediting the whole invoice
+  // un-returns that line, so it sits in the creditnota as a positive amount among negative ones
+  // (see creditnota-lines.ts). Math.abs() then turned that line the wrong way and the file credited
+  // the customer for it a second time:
+  //
+  //     stored creditnota   -123,85  -174,31  -150,00  +71,85   =  -376,31
+  //     Math.abs()           123,85   174,31   150,00   71,85   =   520,01   what was sent
+  //     negation             123,85   174,31   150,00  -71,85   =   376,31   what the header says
+  //
+  // Nothing caught it: the XML was internally consistent per line, the PDF was right, and the
+  // header/line mismatch only reaches a server log. It predates the credit-line feature — an
+  // invoice with a statiegeld or emballage line has always produced one.
+  //
+  // The unit PRICE stays a magnitude, because a price is one: BR-27 forbids a negative
+  // cbc:PriceAmount, and the sign belongs in the quantity (negative-line.ts).
   const isCredit = header.invoice_type === "creditnota";
   const effLines = isCredit
     ? effLinesRaw.map((l) => ({
         ...l,
-        quantity: Math.abs(Number(l.quantity ?? 1)),
+        // A line with NO quantity means "one of this thing", and on a credit note that is 1 — the
+        // value the absolute used to produce. Negating the default instead would emit -1 against a
+        // positive line amount, and (-1 ÷ 1) x price is not that amount: PEPPOL-EN16931-R120 then
+        // refuses the file. The `?? 1` was doing real work; only the sign of the REAL values moves.
+        quantity: l.quantity == null ? 1 : -Number(l.quantity),
         unit_price: Math.abs(Number(l.unit_price ?? 0)),
-        line_total: Math.abs(Number(l.line_total ?? 0)),
+        line_total: -Number(l.line_total ?? 0),
       }))
     : effLinesRaw;
 

@@ -7,10 +7,15 @@
 // that sign to know the money runs the other way. UBL says the opposite: a credit note carries
 // POSITIVE amounts, and the direction is conveyed by InvoiceTypeCode 381 (UNCL 1001).
 //
-// So buildInvoiceUbl flips every amount to its magnitude for a creditnota, and only for one. That
-// is exactly the kind of line a later refactor removes as "redundant abs()", and the result would
-// be an outbound legal document with negative amounts under a credit-note code — booked wrong in
-// the customer's accounting system, by us, with nothing on our side ever showing it.
+// So buildInvoiceUbl flips the sign of every amount for a creditnota, and only for one. That is
+// exactly the kind of line a later refactor removes as redundant, and the result would be an
+// outbound legal document with negative amounts under a credit-note code — booked wrong in the
+// customer's accounting system, by us, with nothing on our side ever showing it.
+//
+// [MIN-REGEL] It NEGATES; it does not take the magnitude. Those are the same thing only while every
+// line runs the same way, and a creditnota of an invoice that contained a return does not — see the
+// FLIPPED-not-absolute test below, which is a defect this file did not catch for as long as it has
+// existed. The unit PRICE is the one field that IS a magnitude, because BR-27 says so.
 //
 // ubl-unit.test.ts covers unit codes. The type code and the sign were covered by nothing.
 
@@ -91,6 +96,41 @@ test("[UBL-CREDIT] the flipped document still adds up", () => {
     warnings.filter((w) => /differs from line sum/.test(w)), [],
     `a correctly stored creditnota produced a false mismatch warning: ${warnings.join(" | ")}`,
   );
+});
+
+test("[UBL-CREDIT] a creditnota is FLIPPED, not made absolute", () => {
+  // [MIN-REGEL] The two are the same thing only while every line has the same sign, and a
+  // creditnota of an invoice that contained a return does not: crediting the whole invoice
+  // un-returns that line, so it sits among the negative ones as a POSITIVE amount
+  // (creditnota-lines.ts). Math.abs() turned it the wrong way and the file credited it twice.
+  //
+  //   stored   -100,00  -50,00  +20,00  = -130,00
+  //   abs()     100,00   50,00   20,00  =  170,00   what was sent
+  //   negation  100,00   50,00  -20,00  =  130,00   what the header says
+  //
+  // Pre-dates the credit-line feature: a statiegeld or emballage line does exactly this.
+  const { xml, warnings } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-20260005", total_ex_btw: -130, btw_amount: -27.3, total_inc_btw: -157.3 }),
+    [
+      line({ description: "Levering", quantity: -2, unit_price: 50, line_total: -100 }),
+      line({ description: "Uren", quantity: -1, unit_price: 50, line_total: -50 }),
+      line({ description: "Statiegeld retour, teruggedraaid", quantity: 1, unit_price: 20, line_total: 20 }),
+    ],
+    supplier,
+  );
+  const lineAmounts = [...xml.matchAll(/<cbc:LineExtensionAmount[^>]*>(-?[\d.]+)</g)].map((m) => Number(m[1]));
+  assert.equal(
+    Math.round(lineAmounts.filter((n) => n !== 130).reduce((a, b) => a + b, 0) * 100) / 100, 130,
+    `the lines must add up to what the header says, not to 170: ${lineAmounts.join(", ")}`,
+  );
+  assert.match(xml, /<cbc:TaxInclusiveAmount[^>]*>157\.30</, "and the customer is credited 157,30");
+  assert.deepEqual(
+    warnings.filter((w) => /differs from line sum/.test(w)), [],
+    `the flip must reconcile with the header: ${warnings.join(" | ")}`,
+  );
+  // The price of that line stays positive — BR-27 does not care which document it is on.
+  const prices = [...xml.matchAll(/<cbc:PriceAmount[^>]*>(-?[\d.]+)</g)].map((m) => Number(m[1]));
+  assert.ok(prices.every((p) => p >= 0), `BR-27: ${prices.join(", ")}`);
 });
 
 test("[UBL-CREDIT] the sign rule applies to the creditnota and to nothing else", () => {
@@ -377,4 +417,20 @@ test("[KLANT-EXTRA] only line 2 filled still exports, and empty lines add no ele
   // produces the document it always produced.
   const before = buildInvoiceUbl(header(), [line()], supplier).xml;
   assert.doesNotMatch(before, /AdditionalStreetName|<cac:AddressLine>/);
+});
+
+test("[UBL-CREDIT] a creditnota line with no quantity still multiplies out", () => {
+  // The `?? 1` in the flip is not decoration. A line without a quantity means "one of this thing";
+  // negating that default would emit -1 against a positive line amount, and PEPPOL-EN16931-R120
+  // recomputes quantity x price and refuses the file. Old rows have a null quantity — the column
+  // has always been nullable — so this is a live shape, not a hypothetical one.
+  const { xml } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-20260006", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ description: "Factuurbedrag", quantity: null as unknown as number, unit_price: 100, line_total: -100 })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>1</, "one of it, not minus one of it");
+  assert.match(xml, /<cbc:LineExtensionAmount[^>]*>100\.00</, "and the amount is the credited one");
+  assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</, "1 x 100 = 100 — the arithmetic R120 checks");
+  assert.doesNotMatch(xml, /<cbc:BaseQuantity/, "…so no per-line price form is needed");
 });
