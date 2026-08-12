@@ -188,6 +188,15 @@ export const MESSAGES = {
   'nieuw.fout.versturen': { nl: 'Verzenden mislukt — de factuur is opgeslagen als concept', ar: 'فشل الإرسال — حُفظت الفاتورة كمسودة', en: 'Sending failed — the invoice was saved as a draft' },
   'nieuw.fout.omzetten': { nl: 'Omzetten mislukt', ar: 'فشل التحويل', en: 'Conversion failed' },
   'nieuw.fout.catalogus': { nl: 'Opslaan in de catalogus lukte niet.', ar: 'تعذّر الحفظ في الكتالوج.', en: 'Could not save it to the catalogue.' },
+  // [MIN-REGEL] A credit line inside an invoice is ordinary — a return the supplier settles on the
+  // next invoice. Once the credits outweigh the deliveries the document gives money back, and that
+  // is a creditnota: its own number series and the other side of the aangifte. "Creditnota" stays
+  // Dutch in every language — it is the word on the button the owner has to press next.
+  'nieuw.fout.creditnota': {
+    nl: 'De creditregels zijn samen meer waard dan wat je levert, dus dit is een creditnota en geen factuur. Maak er een creditnota van, of vul de regels aan tot het totaal niet meer negatief is.',
+    ar: 'قيمة الأسطر الدائنة معًا أكبر من قيمة ما تسلّمه، فهذا إشعار دائن (creditnota) وليس فاتورة. حوّله إلى إشعار دائن، أو أكمِل الأسطر حتى لا يبقى المجموع بالسالب.',
+    en: 'The credit lines together are worth more than what you deliver, so this is a creditnota and not an invoice. Make it a creditnota, or add lines until the total is no longer negative.',
+  },
 
   'nieuw.banner.vanOfferte': { nl: 'Factuur op basis van offerte', ar: 'فاتورة مبنيّة على عرض سعر', en: 'Invoice based on a quote' },
   'nieuw.banner.vervangend': { nl: 'Vervangende factuur', ar: 'فاتورة بديلة', en: 'Replacement invoice' },

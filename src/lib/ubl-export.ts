@@ -276,10 +276,25 @@ function supplierName(s: UblSupplier): string | null {
  * Resolve the lines to use for the UBL.
  * If the invoice has real line items, use them. If it has none (e.g. a scanned /
  * imported invoice where only header totals were extracted) but it does have a
- * positive ex-BTW total, synthesize ONE summary line from the header totals so
+ * usable ex-BTW total, synthesize ONE summary line from the header totals so
  * the invoice is still exportable. Amounts stay faithful to the stored totals;
  * any rounding gap is surfaced as a warning by buildInvoiceUbl().
  * Returns [] only when there is neither line detail nor a usable total.
+ *
+ * [CREDIT-SIGN] `ex > 0` and not `ex !== 0`, for as long as this function existed — and a
+ * creditnota's ex total is NEGATIVE. So a creditnota of an invoice that has no lines got no
+ * synthesized line either, validateUblInputs answered NO_LINES, and buildInvoiceUbl threw: the
+ * e-factuur could not be produced at all. The very same document as a factuur exported fine.
+ *
+ * It is reachable with ordinary data: invoices without lines are why this function exists (the
+ * warning above says so), and the creditnota route copies the lines of the invoice it corrects —
+ * no lines in, no lines out.
+ *
+ * The synthesized line follows the STORED convention rather than the printed one: a creditnota is
+ * stored negative ([CREDIT-SIGN]), so its summary line is -1 x |ex|. buildInvoiceUbl flips that
+ * back to +1 x |ex| for the file, which is what UBL wants and what PEPPOL-EN16931-R120 checks. A
+ * synthesized `quantity: 1` would come out of that flip as -1 against a positive amount, and the
+ * access point would refuse the file for a different reason than before.
  */
 export function effectiveLines(
   header: UblInvoiceHeader,
@@ -287,14 +302,15 @@ export function effectiveLines(
 ): UblInvoiceLine[] {
   if (lines && lines.length > 0) return lines;
   const ex = Number(header.total_ex_btw ?? 0);
-  if (ex > 0) {
+  if (Number.isFinite(ex) && ex !== 0) {
     const btw = Number(header.btw_amount ?? 0);
+    // Both signs divide out to the same rate: -21 / -100 is 21%, as it should be.
     const rate = Math.round((btw / ex) * 100);
     return [
       {
         description: "Factuurbedrag",
-        quantity: 1,
-        unit_price: ex,
+        quantity: ex < 0 ? -1 : 1,
+        unit_price: Math.abs(ex),
         btw_rate: rate,
         line_total: ex,
       },
@@ -416,17 +432,40 @@ export function buildInvoiceUbl(
   if (lines.length === 0 && effLinesRaw.length > 0) {
     warnings.push("No invoice_lines — synthesized a single summary line from header totals.");
   }
-  // [UBL-CREDIT] A creditnota (UBL type 381) must carry POSITIVE amounts; the
-  // stored line/header values are negative, so normalize every amount to its
-  // magnitude. All downstream totals/tax groups derive from effLines, so this
-  // single normalization makes the whole document positive and consistent.
+  // [UBL-CREDIT] A creditnota (UBL type 381) carries POSITIVE amounts: UBL conveys the direction
+  // with the type code, and this app stores a creditnota negative ([CREDIT-SIGN]). So the document
+  // is flipped once here, and every total and tax group below derives from the result.
+  //
+  // [MIN-REGEL] FLIPPED, not made absolute — and that distinction is worth EUR 143,70 on the
+  // invoice this was found with.
+  //
+  // Math.abs() is the same thing as a negation only while every line has the same sign. A
+  // creditnota of an invoice that contained a RETURN does not: crediting the whole invoice
+  // un-returns that line, so it sits in the creditnota as a positive amount among negative ones
+  // (see creditnota-lines.ts). Math.abs() then turned that line the wrong way and the file credited
+  // the customer for it a second time:
+  //
+  //     stored creditnota   -123,85  -174,31  -150,00  +71,85   =  -376,31
+  //     Math.abs()           123,85   174,31   150,00   71,85   =   520,01   what was sent
+  //     negation             123,85   174,31   150,00  -71,85   =   376,31   what the header says
+  //
+  // Nothing caught it: the XML was internally consistent per line, the PDF was right, and the
+  // header/line mismatch only reaches a server log. It predates the credit-line feature — an
+  // invoice with a statiegeld or emballage line has always produced one.
+  //
+  // The unit PRICE stays a magnitude, because a price is one: BR-27 forbids a negative
+  // cbc:PriceAmount, and the sign belongs in the quantity (negative-line.ts).
   const isCredit = header.invoice_type === "creditnota";
   const effLines = isCredit
     ? effLinesRaw.map((l) => ({
         ...l,
-        quantity: Math.abs(Number(l.quantity ?? 1)),
+        // A line with NO quantity means "one of this thing", and on a credit note that is 1 — the
+        // value the absolute used to produce. Negating the default instead would emit -1 against a
+        // positive line amount, and (-1 ÷ 1) x price is not that amount: PEPPOL-EN16931-R120 then
+        // refuses the file. The `?? 1` was doing real work; only the sign of the REAL values moves.
+        quantity: l.quantity == null ? 1 : -Number(l.quantity),
         unit_price: Math.abs(Number(l.unit_price ?? 0)),
-        line_total: Math.abs(Number(l.line_total ?? 0)),
+        line_total: -Number(l.line_total ?? 0),
       }))
     : effLinesRaw;
 
@@ -613,7 +652,34 @@ export function buildInvoiceUbl(
     // Peppol BIS Billing 3.0 eist een code uit UN/ECE Rec 20 rev. 11; toUnitCode() is de enige
     // plek waar die keuze wordt gemaakt, en valt terug op C62 zodra hij het niet zeker weet.
     // Daardoor verandert geen enkele bestaande factuur van betekenis.
-    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Number(l.quantity ?? 1)));
+    //
+    // [MIN-REGEL] The minus of a credit line lives in the QUANTITY, and in nothing else.
+    //
+    // A supplier who settles a return on the next invoice writes one negative line among the
+    // ordinary ones (ATAPACK 26304787: −3 × € 23,95 = −71,85). EN 16931 rule BR-27 says the item
+    // net price shall not be negative, and an access point REFUSES a file that breaks it. So the
+    // same line can be stored two ways, and only one of them can be delivered:
+    //
+    //     quantity −3, price 23.95    → −71,85   deliverable
+    //     quantity 3, price −23.95    → −71,85   refused by BR-27
+    //
+    // Both look identical on the PDF, which is what makes the second one dangerous: the invoice
+    // is right on paper and never arrives electronically. This app's line editor now refuses a
+    // negative price outright (negative-line.ts), but rows already in the database were typed
+    // before that — a "Statiegeld retour" line at 1 × € −3,86 is exactly this shape — and an
+    // imported line carries whatever the source put in it.
+    //
+    // So the sign is moved here, once, for both fields: whatever the row says, the document says
+    // −3 × 23,95. The arithmetic the validator checks (PEPPOL-EN16931-R120: line amount =
+    // quantity × price ÷ base quantity) gives back the same signed line total either way, so
+    // LineExtensionAmount keeps its minus and the totals are untouched. A line whose price was
+    // already positive is emitted byte-for-byte as before.
+    const storedQuantity = Number(l.quantity ?? 1);
+    const storedPrice = round2(Number(l.unit_price ?? 0));
+    const priceCarriedTheMinus = storedPrice < 0;
+    const aantal = priceCarriedTheMinus ? -storedQuantity : storedQuantity;
+    const stuksprijs = Math.abs(storedPrice);
+    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
     const item = line.ele(NS.cac, "Item");
     const desc = l.description?.trim() || "Artikel";
@@ -648,15 +714,23 @@ export function buildInvoiceUbl(
     // De gewone factuur verandert niet. Is de stuksprijs al een rond bedrag — verreweg de meeste
     // regels — dan klopt de vermenigvuldiging en blijft er precies staan wat er stond, zonder
     // BaseQuantity. Alleen de regel die anders zou liegen, krijgt de andere vorm.
-    const aantal = Number(l.quantity ?? 1);
-    const stuksprijs = round2(Number(l.unit_price ?? 0));
+    //
+    // [MIN-REGEL] The fallback branch carries the same rule, and it did not get it for free.
+    //
+    // The exact branch above reproduces the sign by itself: −3 × 23,95 = −71,85, so the price
+    // stays 23,95 and only the quantity is negative. This one wrote `PriceAmount = ex`, and on a
+    // credit line `ex` is a negative amount — a BR-27 violation on precisely the lines that need
+    // this form (a fractional price on a return). Both fields are therefore expressed as
+    // magnitudes: the sign is already in InvoicedQuantity, and (quantity ÷ BaseQuantity) × price
+    // hands the signed line total back. PEPPOL-EN16931-R121 also requires BaseQuantity itself to
+    // be a positive number, which is the same abs().
     const price = line.ele(NS.cac, "Price");
     if (round2(aantal * stuksprijs) === ex) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
-      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(ex));
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(ex)));
       // Zelfde eenheidscode als InvoicedQuantity — anders vergelijkt de validator appels met peren.
-      price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
+      price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Math.abs(aantal)));
     }
   });
 

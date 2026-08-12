@@ -95,6 +95,9 @@ import { verifyDocument } from './document-verify';
 // reader, one line before the receiver-identity backstop erases the evidence — see there.
 import { looksLikeOwnDocument, ownDocumentNotice } from './own-document';
 import { round2 } from './invoice-totals';
+// [MIN-REGEL] What a reading means by a quantity and a price — a negative quantity is a credit
+// line, not an unreadable one, and the minus may never sit in the price. See read-line.ts.
+import { readQuantity, signInQuantity } from './read-line';
 import { OCR_AMOUNTS_PROMPT, OCR_AMOUNTS_SYSTEM, parseOcrAmounts, ocrAmountCount, MIN_OCR_AMOUNTS } from './ocr-amounts';
 
 /**
@@ -2702,8 +2705,16 @@ Return JSON only.`;
 
     parsed.lines = parsed.lines.map((line) => ({
       description: typeof line.description === 'string' ? line.description : '',
-      quantity: typeof line.quantity === 'number' && line.quantity > 0 ? line.quantity : 1,
-      unit_price: typeof line.unit_price === 'number' ? line.unit_price : 0,
+      // [MIN-REGEL] `quantity > 0 ? quantity : 1` rejected two different things with one test: a
+      // quantity that cannot be read (right — one of the thing) and a NEGATIVE one, which is a
+      // credit line and is exactly what an owner asking for "drie kratten retour" means. The same
+      // guard in the free invoice tool turned -3 x EUR 23,95 into 1 x EUR 23,95. signInQuantity
+      // also moves a minus out of the price, where an e-factuur may not carry it (BR-27).
+      // A price this model did not give stays 0 — that is this caller's policy, not read-line's.
+      ...signInQuantity(
+        readQuantity(line.quantity),
+        typeof line.unit_price === 'number' && Number.isFinite(line.unit_price) ? line.unit_price : 0,
+      ),
       // Enforce btw_rate per line — default to 21
       btw_rate: ([0, 9, 21] as const).includes(line.btw_rate as 0 | 9 | 21)
         ? (line.btw_rate as 0 | 9 | 21)

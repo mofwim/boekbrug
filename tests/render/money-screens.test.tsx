@@ -506,7 +506,18 @@ test("[READING-MEMORY] the supplier memory reaches the open card", async () => {
  * render gate cannot do. The two screens above take their data as props and are therefore tested
  * properly; these are covered against "it does not even start".
  */
-const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<string, unknown> }> = [
+const SELF_LOADING_SCREENS: Array<{
+  name: string;
+  path: string;
+  props: Record<string, unknown>;
+  /**
+   * [MIN-REGEL] How much markup counts as "it rendered". 200 for every screen whose first render
+   * is a real shell; lower only where the first render is honestly one line, and then with the
+   * text it must contain, so the entry cannot pass on emptiness. See the edit screen below.
+   */
+  minChars?: number;
+  mustContain?: string;
+}> = [
   { name: "facturen (verkoopfacturen)", path: "../../src/app/dashboard/facturen/FacturenClient", props: { profile: { id: "u1" } } },
   { name: "bank", path: "../../src/app/dashboard/bank/BankClient", props: {} },
   { name: "kas", path: "../../src/app/dashboard/kas/KasClient", props: {} },
@@ -525,6 +536,22 @@ const SELF_LOADING_SCREENS: Array<{ name: string; path: string; props: Record<st
   // component without ever calling it. It renders in full here (~13k of markup, rate select
   // included), so a throw anywhere in the form body is caught.
   { name: "invoice form (nieuwe factuur)", path: "../../src/app/dashboard/invoice/new/page", props: {} },
+  // [MIN-REGEL] The OTHER invoice form. The builder above was on this list and the edit screen was
+  // not, which is the shape of the defect that put it here: a rule was added to one of the two and
+  // the other kept refusing what the first had just started allowing. Same useParams mock as the
+  // invoice detail entry.
+  //
+  // Its first render is `if (loading) return <p>Laden...</p>` — 120 characters, so the shared
+  // threshold would fail it while the component body ran perfectly. What this entry proves is
+  // exactly that: the body executes without throwing, up to the loading return. It says nothing
+  // about the form below it, which needs an invoice this gate cannot fetch. Stated, not implied.
+  {
+    name: "invoice form (factuur bewerken)",
+    path: "../../src/app/dashboard/invoice/[id]/edit/page",
+    props: {},
+    minChars: 60,
+    mustContain: "Laden",
+  },
 ];
 
 // [BETALINGSVERSCHIL] dashboard/zzp/DailyTruth is deliberately NOT on the list above, for exactly
@@ -576,7 +603,14 @@ for (const screen of SELF_LOADING_SCREENS) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           React.createElement(mod.default as any, screen.props))),
     );
-    assert.ok(html.length > 200, `${screen.name} rendered something`);
+    assert.ok(html.length > (screen.minChars ?? 200), `${screen.name} rendered something`);
+    // A lowered threshold must come with the words that justify it, or it lowers to nothing.
+    if (screen.mustContain) {
+      assert.ok(
+        html.includes(screen.mustContain),
+        `${screen.name} rendered ${html.length} characters without "${screen.mustContain}" in them`,
+      );
+    }
   });
 }
 

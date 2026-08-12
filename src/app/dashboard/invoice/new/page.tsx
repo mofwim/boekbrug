@@ -12,6 +12,9 @@ import {
   type FactuurHandoff,
 } from '@/lib/factuur-handoff'
 import { createClient } from '@/lib/supabase'
+// [MIN-REGEL] Where the minus sign may live on a line, and when a document stops being a factuur
+// — see negative-line.ts.
+import { lineSignFault, staysAFactuur } from '@/lib/negative-line'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 // [BOEK-031] Navigation Strategy — May 2026
@@ -173,12 +176,24 @@ const TYPE_CONFIG: Record<InvoiceType, {
 // ─── [DS] LineInput — number input for Factuurregels ─────────────────────────
 // Fixes: no leading zero, comma/dot both work, step=1, Enter→next input
 function LineInput({
-  label, value, onChange, min = 0, focusColor, hasError = false,
+  label, value, onChange, min = 0, allowNegative = false, focusColor, hasError = false,
 }: {
   label: string
   value: number
   onChange: (v: number) => void
   min?: number
+  /**
+   * [MIN-REGEL] May this field go below zero?
+   *
+   * Only the QUANTITY may, and only because a wholesaler settles a return on the next invoice as
+   * a line with a negative aantal (ATAPACK 26304787: −3 × € 23,95). The price may never — Peppol
+   * BR-27 rejects a negative cbc:PriceAmount, so such an invoice would look right on the PDF and
+   * never reach the customer electronically. See negative-line.ts.
+   *
+   * The character filter below already accepted a minus; `Math.max(min, parsed)` then threw it
+   * away, which is why typing −3 silently became 0,01.
+   */
+  allowNegative?: boolean
   focusColor: string
   hasError?: boolean
 }) {
@@ -203,14 +218,21 @@ function LineInput({
     if (!/^-?\d*\.?\d*$/.test(v)) return
     setRaw(v)
     const parsed = parseFloat(v)
-    if (!isNaN(parsed)) onChange(Math.max(min, parsed))
+    // [MIN-REGEL] The floor only applies to a field that may not go negative. A credit line is
+    // rejected by the form's own check when it reaches zero, which is where that judgement belongs.
+    if (!isNaN(parsed)) onChange(allowNegative ? parsed : Math.max(min, parsed))
   }
 
   function handleBlur() {
     setFocused(false)
     // [BOEK-031] clean up on blur — remove leading zeros — May 2026
     const parsed = parseFloat(raw)
-    if (isNaN(parsed) || parsed < min) {
+    // [MIN-REGEL] An empty or unreadable field still falls back; a NEGATIVE one is kept, because
+    // on a credit line that is the value the owner meant.
+    if (isNaN(parsed)) {
+      setRaw(allowNegative ? '' : (min === 0 ? '' : String(min)))
+      onChange(allowNegative ? 0 : min)
+    } else if (!allowNegative && parsed < min) {
       setRaw(min === 0 ? '' : String(min))
       onChange(min)
     } else {
@@ -1115,13 +1137,25 @@ function NewInvoicePageContent() {
       return
     }
 
+    // [MIN-REGEL] A negative aantal is a CREDIT line — a return settled on this invoice instead of
+    // on a separate creditnota, exactly as a wholesaler writes it. Zero is still a mistake, and the
+    // price may still not go below zero (Peppol BR-27). negative-line.ts owns both rules.
     const lineErrs = lines.map(l => ({
       description: !l.description.trim(),
       unit_price: l.unit_price <= 0,
-      quantity: l.quantity <= 0,
+      quantity: lineSignFault(l) === 'quantity_zero',
     }))
     const hasLineError = lineErrs.some(l => l.description || l.unit_price || l.quantity)
     if (hasLineError) hasAnyError = true
+
+    // [MIN-REGEL] Credits inside an invoice are fine while it still asks for money. Once they
+    // exceed the deliveries the document gives money back, and that is a creditnota: its own number
+    // series (Art. 35 Wet OB) and the other side of the aangifte. Refused here, by name, because
+    // nothing downstream would notice — the totals simply go negative and everything else agrees.
+    if (!hasAnyError && !staysAFactuur(lines)) {
+      setError(t('nieuw.fout.creditnota'))
+      return
+    }
 
     if (hasAnyError) {
       setFieldErrors({ ...errs, lines: lineErrs })
@@ -1759,7 +1793,7 @@ function NewInvoicePageContent() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                     {/* [BOEK-031] LineInput: no leading zero, comma=dot, step=1, Enter→next — May 2026 */}
-                    <LineInput label={t('nieuw.regel.aantal')} value={line.quantity} min={0.01} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
+                    <LineInput label={t('nieuw.regel.aantal')} value={line.quantity} min={0.01} allowNegative focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
                     {/* [PRIJS-MODUS] Het veld toont — en accepteert — de prijs in de gekozen stand.
                         De regel bewaart altijd ex-btw; priceFieldValue/priceFieldToStored zijn de
                         enige twee plekken waar dat verschil bestaat. */}
