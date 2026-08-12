@@ -5,6 +5,8 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
@@ -288,7 +290,7 @@ export default function FacturenClient({
         body: JSON.stringify({ invoiceIds: selectedList.map(r => r.id) }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { showToast(data.error || t('lijst.fout.betaalverzoek')); return }
+      if (!res.ok) { showToast(failureText(res.status, data, t('lijst.fout.betaalverzoek'))); return }
       setBundle({ url: data.url, amount: data.amount, reference: data.reference, count: data.count, iban: data.iban })
       exitSelectMode()
       try {
@@ -752,7 +754,7 @@ export default function FacturenClient({
         const res = await fetch(`/api/invoice/${id}`, { method: 'DELETE' })
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
-          showToast(json?.error || t('lijst.fout.verwijderenVervers'))
+          showToast(failureText(res.status, json, t('lijst.fout.verwijderenVervers')))
           await refresh()
           return
         }

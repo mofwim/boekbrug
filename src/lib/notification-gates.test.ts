@@ -165,10 +165,18 @@ test("[SERVER-ZEGT-WAAROM] the chat shows the server's refusal, not its own gues
   // repeating something that can never work.
   const src = code("src/app/dashboard/messages/[id]/page.tsx");
   const sendFn = src.slice(src.indexOf("async function handleSend"), src.indexOf("function handleKeyDown"));
+  // [SERVER-ZIN] The rule is unchanged; the shape is. `setError(data.error || 'Verzenden mislukt')`
+  // preferred the server's sentence AND would have printed a machine code the day this route grew
+  // one. failureText keeps the first half and closes the second: a sentence passes through
+  // untouched, a snake_case code is replaced by the screen's own line.
   assert.match(
     sendFn,
-    /setError\(\s*data\??\.?\.?error/,
+    /setError\(failureText\(res\.status, data,/,
     "the failure branch must prefer the server's own sentence over the generic retry line",
+  );
+  assert.doesNotMatch(
+    sendFn, /setError\(\s*data\??\.?error\s*\|\|/,
+    "…and must not put whatever the route sent on screen unchecked",
   );
 });
 

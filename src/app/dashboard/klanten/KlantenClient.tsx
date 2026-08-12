@@ -5,6 +5,8 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
@@ -157,7 +159,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     })
     if (!res.ok) {
       const json = await res.json().catch(() => ({}))
-      setError(json?.error || 'Opslaan mislukt'); setSaving(false); return
+      setError(failureText(res.status, json, 'Opslaan mislukt')); setSaving(false); return
     }
     showToast(editingId ? 'Klant bijgewerkt' : 'Klant toegevoegd')
 
