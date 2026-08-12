@@ -209,6 +209,20 @@ export async function POST(req: NextRequest) {
           { status: 409 }
         );
       }
+      // [PAY-KEY-SCOPE] The idempotency key the browser sent is spent on a DIFFERENT booking —
+      // another invoice, or another user. It is not a replay of this payment, so the RPC refuses
+      // rather than reporting someone else's figures back as a duplicate. Reachable from an
+      // ordinary retry that reused its key, so it gets its own answer: a 409 with a sentence the
+      // owner can act on, not a 500 carrying a PL/pgSQL string.
+      if (msg.includes("idempotency key")) {
+        return NextResponse.json(
+          {
+            error: "client_key_conflict",
+            detail: "Deze betaling is met dezelfde referentie al op een andere factuur vastgelegd. Ververs de pagina en probeer het opnieuw.",
+          },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: "pay_failed", detail: error.message }, { status: 500 });
     }
     const row = Array.isArray(applyRows)

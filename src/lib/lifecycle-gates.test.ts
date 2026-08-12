@@ -6502,3 +6502,99 @@ test("[MONEY-GUARD-CLOSED] the removal routes all read the error on their money-
     // statement never mentions `error:`.)
   }
 });
+
+// ─── [PAY-KEY-SCOPE] The replay shortcut is a READ, and every read is owner-scoped ───────────────
+//
+// Audit finding #3/#8, reproduced against a real PostgreSQL 16 before it was fixed: the idempotency
+// branch of apply_manual_payment looked a client_key up by itself and then read
+// `FROM invoices WHERE id = p_invoice_id` with no owner. The function is SECURITY DEFINER and
+// GRANTed to `authenticated`, so it answers at /rest/v1/rpc/ with the anon key from the browser
+// bundle — a logged-in user passing their OWN uuid and their OWN key, plus a stranger's invoice id,
+// got that invoice's total_inc_btw and amount_paid back (measured: 8450.75 / 3200.50).
+//
+// The contract itself is proven where it lives, against a database that runs the function
+// (tests/sql/apply_manual_payment.test.sql). These gates hold the wiring that the SQL suite cannot
+// see: that the fix is actually in the migration set, that the test declares it, and that the
+// refusal reaches a Dutch sentence instead of dying in a substring branch that logs nothing.
+
+test("[PAY-KEY-SCOPE] the idempotency branch is scoped to key AND caller AND invoice", () => {
+  const sql = readFileSync("supabase/migrations/invoice_manual_payment_idempotency_scope.sql", "utf8");
+  // Comments are not the contract — a header describing the fix must not be able to satisfy it.
+  const live = sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+
+  // The key lookup names all three columns.
+  const lookup = live.slice(live.indexOf("FROM public.bank_tx_invoices bti"));
+  const keyWhere = lookup.slice(0, lookup.indexOf(";"));
+  assert.match(keyWhere, /bti\.client_key\s*=\s*p_client_key/, "the key itself");
+  assert.match(keyWhere, /bti\.user_id\s*=\s*p_user_id/, "…scoped to the caller");
+  assert.match(keyWhere, /bti\.invoice_id\s*=\s*p_invoice_id/, "…and to the invoice it was spent on");
+
+  // Every read of `invoices` in this function carries the ownership predicate — the replay read
+  // included. Counting is the point: the bug was ONE read out of two that lacked it.
+  const reads = [...live.matchAll(/FROM public\.invoices i\b[\s\S]{0,260}?(?=;|FOR UPDATE)/g)].map((m) => m[0]);
+  assert.ok(reads.length >= 2, `expected the replay read and the locking read, found ${reads.length}`);
+  for (const r of reads) {
+    assert.match(
+      r, /i\.sender_id\s*=\s*p_user_id\s*OR\s*i\.receiver_id\s*=\s*p_user_id/,
+      `a read of invoices with no owner:\n${r}`,
+    );
+  }
+  // And a miss on the replay read refuses rather than returning zeros dressed up as a booking.
+  assert.match(live, /IF NOT FOUND THEN\s*\n\s*RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] invoice not found \/ not owned'/);
+});
+
+test("[PAY-KEY-SCOPE] a spent key is refused by name, in words no caller triages as benign", () => {
+  const sql = readFileSync("supabase/migrations/invoice_manual_payment_idempotency_scope.sql", "utf8");
+  const live = sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+  const refusal = /RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] (idempotency key[^']*)'/.exec(live);
+  assert.ok(refusal, "a key spent on another booking must be refused by name, not left to the unique index");
+
+  // incasso-settle.ts triages this RPC's errors by substring: anything containing 'already' is
+  // treated as an already-paid/already-covered and logged NOWHERE. A refusal meaning the booking
+  // did not happen may not land there — that is the silence this repo exists not to produce.
+  const settle = code("src/lib/incasso-settle.ts");
+  // The window is the `const msg = …` line through the `if` that triages on it — non-greedy to
+  // the `if`, not to the first newline, which is what an earlier version of this gate stopped at
+  // and why it parsed an empty list.
+  const triage = /const msg = \(error\.message[\s\S]{0,400}?if \([\s\S]{0,300}?\) \{/.exec(settle)?.[0] ?? "";
+  const benign = [...triage.matchAll(/msg\.includes\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(benign.length >= 2, `expected incasso-settle's benign-substring list, parsed: ${benign.join(", ")}`);
+  for (const word of benign) {
+    assert.ok(
+      !refusal[1].toLowerCase().includes(word.toLowerCase()),
+      `the refusal "${refusal[1]}" contains "${word}", which incasso-settle swallows without logging`,
+    );
+  }
+});
+
+test("[PAY-KEY-SCOPE] the SQL contract runs against the FIXED function, not the shipped bug", () => {
+  const test = readFileSync("tests/sql/apply_manual_payment.test.sql", "utf8");
+  const header = /^-- migrations:(.*)$/m.exec(test)?.[1] ?? "";
+  const named = header.split(",").map((s) => s.trim()).filter(Boolean);
+  assert.ok(
+    named.includes("invoice_manual_payment_idempotency_scope.sql"),
+    `the seam test loads ${named.join(", ")} — without the fix migration it asserts against the bug`,
+  );
+  // Order matters: CREATE OR REPLACE, so the base must be applied first.
+  assert.ok(
+    named.indexOf("invoice_manual_payments.sql") < named.indexOf("invoice_manual_payment_idempotency_scope.sql"),
+    "the base function must be applied before the replacement",
+  );
+  // The cross-tenant case is asserted on the VALUES, not only on the refusal — a rewrite that
+  // returns instead of raising must still not hand over a stranger's figures.
+  assert.match(test, /\[PAY-KEY-SCOPE\]/, "the seam test must carry the tag it proves");
+  assert.match(test, /no figure of theirs came back/, "…and assert on the leaked numbers themselves");
+});
+
+test("[PAY-KEY-SCOPE] the refusal reaches the owner as a Dutch sentence, not a 500", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const at = route.indexOf('msg.includes("idempotency key")');
+  assert.ok(at > 0, "pay-toggle must answer the spent-key refusal itself — otherwise it is a raw 500");
+  const branch = route.slice(at, at + 500);
+  assert.match(branch, /status: 409/, "a spent key is a conflict, not a server fault");
+  assert.match(branch, /detail: "[^"]*[a-z]{4}/, "…and carries a written reason");
+  // The manage screen only trusts a <500 `detail`; a 5xx detail is a raw Postgres string. Both
+  // halves of that rule are what makes this branch readable on a phone.
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /client_key_conflict:\s*'[^']+'/, "and the code has a Dutch line of its own as the belt");
+});

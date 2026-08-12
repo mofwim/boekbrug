@@ -285,6 +285,8 @@ const PAY_TOGGLE_REASON: Record<string, string> = {
   // [PAY-DATE-SANE] The route sends its own sentence with this one (and payToggleReason prefers a
   // <500 detail), so this line is the belt to that braces — never a bare code on a phone.
   invalid_payment_date: 'de betaaldatum kan niet kloppen — controleer het jaartal',
+  // [PAY-KEY-SCOPE] Same belt-and-braces: the route sends a sentence with this one too.
+  client_key_conflict: 'deze betaling is al met dezelfde referentie vastgelegd — ververs de pagina',
   undo_read_failed: 'we konden de gekoppelde betalingen niet lezen — er is niets gewijzigd',
   undo_failed: 'terugdraaien is niet gelukt — er is niets gewijzigd',
 }
