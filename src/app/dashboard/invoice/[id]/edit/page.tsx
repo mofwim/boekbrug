@@ -839,7 +839,7 @@ export default function InvoiceEditPage() {
       {showSendModal && (
         <div onClick={() => setShowSendModal(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-          <div onClick={e => e.stopPropagation()}
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
               {t('bewerk.versturenNaar', { name: clientName })}

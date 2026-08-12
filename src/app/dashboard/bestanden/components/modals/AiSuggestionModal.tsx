@@ -31,7 +31,7 @@ export function AiSuggestionModal({
       display: "flex", alignItems: "flex-end",
       background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)",
     }}>
-      <div style={{
+      <div className="sheet-scroll" style={{
         width: "100%", maxWidth: 480, margin: "0 auto",
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,

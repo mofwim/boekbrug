@@ -1994,7 +1994,7 @@ function NewInvoicePageContent() {
       {/* [FACTUUR-A] Send confirmation — centered modal (house convention) */}
       {showSendConfirm && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 420, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="sheet-scroll" style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 420, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('nieuw.bevestig.titel')}</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
               {t('nieuw.bevestig.uitleg')}
@@ -2030,7 +2030,7 @@ function NewInvoicePageContent() {
       {/* [DS] Offerte → Factuur convert dialog */}
       {showConvertDialog && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', paddingBottom: sheetPaddingBottom(24), backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="sheet-scroll" style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('nieuw.omzetten')}</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
               Controleer de gegevens voor het aanmaken van de factuur. Een nieuw factuurnummer wordt automatisch toegewezen. De offerte wordt gearchiveerd.

@@ -788,7 +788,7 @@ export default function InvoiceDetailPage() {
       {showSendModal && invoice && (
         <div onClick={() => setShowSendModal(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-          <div onClick={e => e.stopPropagation()}
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
               Versturen naar {invoice.client_name}?
@@ -831,7 +831,7 @@ export default function InvoiceDetailPage() {
       {showCreditDialog && invoice && (
         <div onClick={() => !creatingCredit && setShowCreditDialog(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-          <div onClick={e => e.stopPropagation()}
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
               Creditnota maken voor {invoice.invoice_number || 'deze factuur'}?
@@ -887,7 +887,7 @@ export default function InvoiceDetailPage() {
       {showCorrectDialog && invoice && (
         <div onClick={() => !correcting && setShowCorrectDialog(false)}
           style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <div onClick={e => e.stopPropagation()}
+          <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 440, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 10px' }}>{t('detail.corrigeer.titel')}</h2>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: '0 0 16px' }}>

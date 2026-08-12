@@ -1100,7 +1100,7 @@ function ConfirmPaidModal({
       }}
       onClick={onCancel}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "#fff", borderRadius: "20px 20px 0 0",
@@ -1721,7 +1721,7 @@ function ConfirmDialog({
       }}
       onClick={onCancel}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "#fff", borderRadius: 18, padding: "24px 20px",
@@ -4325,7 +4325,7 @@ export default function IncomingInvoicesClient({
       {/* [INTAKE-VERIFY-BULK] Running overlay */}
       {bulkRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
+          <div className="sheet-scroll" style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
             {t('ink.verifierenBezig')}
           </div>
         </div>
@@ -4337,7 +4337,7 @@ export default function IncomingInvoicesClient({
           twintig merkbaar duurt en een stil scherm dan als vastgelopen leest. */}
       {bulkIgnoreRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
+          <div className="sheet-scroll" style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
             {t('ink.negeren.bezig')}
             <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
               {bulkIgnoreDone}/{selected.size}
@@ -4351,7 +4351,7 @@ export default function IncomingInvoicesClient({
           a 409. */}
       {reimportAllRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
+          <div className="sheet-scroll" style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
             {t('ink.opnieuwBezig')}
             <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
               {reimportAllDone}/{needsAttentionCount}
@@ -4366,7 +4366,7 @@ export default function IncomingInvoicesClient({
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000 }}
           onClick={() => setBulkConfirmOpen(false)}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",

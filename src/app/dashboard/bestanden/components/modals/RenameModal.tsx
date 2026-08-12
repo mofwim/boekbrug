@@ -56,7 +56,7 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
       background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)",
       padding: 16,
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{
         background: T.surface, borderRadius: T.xl,
         boxShadow: T.elev3, padding: 24, width: "100%", maxWidth: 400,
         fontFamily: "'Roboto',sans-serif",

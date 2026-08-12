@@ -311,7 +311,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
           }}
           onClick={() => !unlinkLoading && setUnlinkTarget(null)}
         >
-          <div
+          <div className="sheet-scroll"
             style={{
               backgroundColor: '#FFFFFF', borderRadius: 12,
               padding: 24, maxWidth: 400, width: '100%',

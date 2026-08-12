@@ -53,7 +53,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
       display: "flex", alignItems: "flex-end",
       background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{
         width: "100%", maxWidth: 560, margin: "0 auto",
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,

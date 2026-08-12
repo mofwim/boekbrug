@@ -123,7 +123,7 @@ export default function InvoiceDocumentSheet({
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 320, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),

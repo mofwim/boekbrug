@@ -806,7 +806,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
           position: "fixed", inset: 0, zIndex: 2147483000,
           background: "white", display: "flex", flexDirection: "column",
         }}>
-          <div style={{
+          <div className="sheet-scroll" style={{
             paddingTop: "env(safe-area-inset-top, 0px)",
             borderBottom: "1px solid #f1f3f4",
           }}>
