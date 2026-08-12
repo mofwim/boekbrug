@@ -11,6 +11,9 @@ import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
 import { round2 } from '@/lib/invoice-totals'
+// [MIN-REGEL] When a set of lines stops describing a factuur — the same module the builder and the
+// PUT route ask, so this screen cannot form its own opinion. See negative-line.ts.
+import { staysAFactuur } from '@/lib/negative-line'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -257,14 +260,32 @@ export default function InvoiceEditPage() {
   const btwAmount = kortingTotalen.btw_amount
   const totalInc = kortingTotalen.total_inc_btw
 
+  /**
+   * [MIN-REGEL] What is wrong with these lines, in the owner's language — null when nothing is.
+   *
+   * Two buttons save this screen (opslaan and versturen) and each asked the same question in its
+   * own copy of the code. A third question added to one of them only is how the two drift apart,
+   * and the one that drifts is always the one nobody clicked while testing.
+   */
+  function lineProblem(): string | null {
+    if (lines.some(l => !l.description || l.unit_price <= 0)) return t('bewerk.vulRegels')
+    // A creditnota is negative by design ([CREDIT-SIGN]). A FACTUUR whose credits outweigh its
+    // deliveries is a creditnota that was not made as one: the number comes out of the doorlopende
+    // reeks for a document that gives money back, and the btw lands on the wrong side of the
+    // aangifte. Same rule and same module as the door — see negative-line.ts.
+    if (invoiceType !== 'creditnota' && !staysAFactuur(lines)) return t('nieuw.fout.creditnota')
+    return null
+  }
+
   // ── Opslaan — PUT ─────────────────────────────────────────────────────────
   async function handleSave() {
     if (!clientName || !clientEmail || !invoiceDate || !dueDate) {
       setError(t('bewerk.vulVerplicht'))
       return
     }
-    if (lines.some(l => !l.description || l.unit_price <= 0)) {
-      setError(t('bewerk.vulRegels'))
+    const lineFault = lineProblem()
+    if (lineFault) {
+      setError(lineFault)
       return
     }
 
@@ -328,8 +349,9 @@ export default function InvoiceEditPage() {
       setError(t('bewerk.vulVerplicht'))
       return
     }
-    if (lines.some(l => !l.description || l.unit_price <= 0)) {
-      setError(t('bewerk.vulRegels'))
+    const lineFault = lineProblem()
+    if (lineFault) {
+      setError(lineFault)
       return
     }
 
@@ -678,7 +700,14 @@ export default function InvoiceEditPage() {
               </div>
               <div className="col-span-2">
                 <input
-                  type="number" value={line.quantity} min="1"
+                  /* [MIN-REGEL] No min, and step="any". A credit line for a return is a NEGATIVE
+                     aantal — a wholesaler settles it on the next invoice (ATAPACK 26304787:
+                     −3 x EUR 23,95) — and this field refused it while the builder next door
+                     allowed it, so an invoice could be made there and not edited here. min="1"
+                     also refused half an hour of work, and the whole-unit spinner made 0,5 invalid
+                     to the browser. What may be typed is decided in negative-line.ts, not by the
+                     widget. */
+                  type="number" value={line.quantity} step="any"
                   onChange={e => updateLine(index, 'quantity', parseFloat(e.target.value) || 0)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                 />
