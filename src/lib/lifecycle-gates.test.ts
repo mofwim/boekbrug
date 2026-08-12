@@ -7904,7 +7904,7 @@ test("[LEVENSLOOP] the end-to-end check covers every station, with hand-worked f
   const spec = readFileSync("src/lib/invoice-lifecycle.test.ts", "utf8");
   // Each station must actually be called. A lifecycle test that quietly stopped rendering the PDF
   // would still pass, and would still be named the same thing.
-  for (const station of ["computeInvoiceTotals", "renderInvoicePdf", "buildInvoiceUbl", "creditLinesFor"]) {
+  for (const station of ["computeInvoiceTotals", "renderInvoicePdf", "buildInvoiceUbl", "creditLinesFor", "rateSharesFromLines", "buildAangifte"]) {
     assert.match(spec, new RegExp(`\\b${station}\\(`), `${station} must be exercised end to end`);
   }
   // The figures are worked out from the lines by hand. A test that asked the code for the answer
@@ -7916,6 +7916,9 @@ test("[LEVENSLOOP] the end-to-end check covers every station, with hand-worked f
   assert.match(spec, /invoice and creditnota cancel to zero at every station/,
     "the correction must leave nothing behind, or a rubriek keeps a remainder forever");
   assert.match(spec, /-3, unit_price: 23\.95/, "…and a credit line must be on the document");
+  // The last station is the only one whose reader is neither the owner nor the customer.
+  assert.match(spec, /verschuldigd, 43/, "5a must be the same btw the other stations named");
+  assert.match(spec, /verschuldigd, -43/, "…and the creditnota must take exactly that back down");
 });
 
 test("[LEVENSLOOP] the creditnota flip is a negation, not a magnitude", () => {

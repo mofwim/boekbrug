@@ -15,8 +15,13 @@
 //
 // So this file takes ONE invoice — the hardest ordinary one it could be given — and carries it
 // through the whole life it has in this product: the totals the server computes, the PDF the
-// customer keeps, the e-factuur the access point delivers, the creditnota that takes it back, and
-// that creditnota's own PDF and e-factuur. Every station is asked for the same figures.
+// customer keeps, the e-factuur the access point delivers, the rubrieken of the aangifte, the
+// creditnota that takes it back, and that creditnota's own PDF, e-factuur and rubrieken. Every
+// station is asked for the same figures.
+//
+// It earned its keep on the first run: the exporter was crediting a returned crate twice, because
+// it took the MAGNITUDE of every line of a creditnota rather than flipping its sign. See the note
+// at the creditnota flip in ubl-export.ts.
 //
 // THE INVOICE, and why each line is on it:
 //
@@ -42,6 +47,8 @@ import { buildInvoiceUbl, type UblInvoiceHeader, type UblInvoiceLine, type UblSu
 import { creditLinesFor } from "./creditnota-lines";
 import { renderInvoicePdf } from "./invoice-pdf-server";
 import { invoiceNetEx, staysAFactuur } from "./negative-line";
+import { rateSharesFromLines } from "./btw-rate-split";
+import { buildAangifte } from "./aangifte";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let getDocument: any;
@@ -276,6 +283,53 @@ test("[LEVENSLOOP] the creditnota's e-factuur is type 381 with POSITIVE amounts"
   // BR-27 still: no price may be negative, in either document.
   const prices = [...xml.matchAll(/<cbc:PriceAmount[^>]*>(-?[\d.]+)</g)].map((m) => Number(m[1]));
   assert.ok(prices.every((p) => p >= 0), `BR-27: ${prices.join(", ")}`);
+});
+
+// ── Station 5: the form the Belastingdienst reads ───────────────────────────────────────────────
+
+test("[LEVENSLOOP] both rates reach their own rubriek, with the return already off the 21%", () => {
+  // The last station, and the only one whose reader is not the owner or the customer. A credit
+  // line has to be netted INSIDE its rate before the split, or the 21% rubriek declares 150,00 of
+  // turnover that was partly given back — and 1a and 5a would both be too high while the invoice,
+  // the PDF and the e-factuur all still say 419,55.
+  const shares = rateSharesFromLines(LINES, EX, BTW);
+  assert.ok(shares, "a two-rate invoice must produce buckets, or the whole invoice blends to one rate");
+  assert.deepEqual(
+    [...shares!].sort((a, b) => a.rate - b.rate),
+    [{ rate: 9, ex: 298.16, btw: 26.83 }, { rate: 21, ex: 78.15, btw: 16.41 }],
+    "150,00 minus the 71,85 return is what was supplied at 21%",
+  );
+
+  const concept = buildAangifte(
+    { salesByRate: shares!.map((s) => ({ rate: s.rate, omzet: s.ex, btw: s.btw })), btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    { turnoverDays: 90, quarterDays: 90, incomingInvoiceCount: 0, outgoingInvoiceCount: 1, hasEuPurchase: false },
+    "Q3 2026",
+  );
+  const row = (c: string) => concept.rows.find((r) => r.code === c)!;
+  assert.equal(row("1a").omzet, 78, "21% turnover, in whole euros as the form wants");
+  assert.equal(row("1a").btw, 16);
+  assert.equal(row("1b").omzet, 298, "9% turnover");
+  assert.equal(row("1b").btw, 27);
+  assert.equal(concept.verschuldigd, 43, "5a — and 43 is the btw every other station named");
+});
+
+test("[LEVENSLOOP] the creditnota takes the same rubrieken back down", () => {
+  const shares = rateSharesFromLines(CREDIT_LINES, -EX, -BTW);
+  assert.ok(shares, "the mirror must split by rate too");
+  assert.deepEqual(
+    [...shares!].sort((a, b) => a.rate - b.rate),
+    [{ rate: 9, ex: -298.16, btw: -26.83 }, { rate: 21, ex: -78.15, btw: -16.41 }],
+    "each rate comes off where it went on",
+  );
+  const concept = buildAangifte(
+    { salesByRate: shares!.map((s) => ({ rate: s.rate, omzet: s.ex, btw: s.btw })), btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    { turnoverDays: 90, quarterDays: 90, incomingInvoiceCount: 0, outgoingInvoiceCount: 1, hasEuPurchase: false },
+    "Q3 2026",
+  );
+  assert.equal(concept.verschuldigd, -43, "5a runs the other way by exactly the same amount");
+  // Rounding to whole euros is symmetric, or the pair would leave a euro standing in a rubriek.
+  assert.equal(concept.rows.find((r) => r.code === "1a")!.btw, -16);
+  assert.equal(concept.rows.find((r) => r.code === "1b")!.btw, -27);
 });
 
 // ── The whole line, in one assertion ────────────────────────────────────────────────────────────
