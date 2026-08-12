@@ -13,6 +13,8 @@ import { escapeHtml } from './escape-html'
 // Alleen deze drie (factuur, herinnering, offerte) gaan naar een derde; de overige twaalf schrijven
 // aan de ondernemer zelf, zijn boekhouder of een genodigde, en daar is BoekBrug de juiste afzender.
 import { customerMailFrom } from './mail-from'
+// [MAIL-TEKST] De teksthelft van elke mail — zie de kop van mail-text.ts.
+import { htmlToMailText } from './mail-text'
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -20,9 +22,32 @@ import { customerMailFrom } from './mail-from'
 // top-level `new Resend()` failed the whole production build / Vercel deploy over a
 // key that's only needed at REQUEST time. The env var is present when a handler runs.
 let _resend: Resend | null = null
-function getResend(): Resend {
+function rawResend(): Resend {
   if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
   return _resend
+}
+
+// [MAIL-TEKST] Every send goes through this wrapper, and the wrapper adds the text/plain part
+// that none of the fifteen senders had. HTML-only mail is one of the oldest spam heuristics
+// (SpamAssassin's MIME_HTML_ONLY), and this product's sending domain is young — the invoice mail
+// asking a stranger for money is exactly the message that cannot afford the free negative signal.
+//
+// The text is DERIVED from the same html string the call passes, at the one chokepoint, so the
+// two parts cannot drift and a sender added next month inherits the fix without knowing it
+// exists. A sender that provides its own `text` keeps it.
+type ResendSendPayload = Parameters<Resend["emails"]["send"]>[0]
+function getResend(): { emails: { send: (p: ResendSendPayload) => ReturnType<Resend["emails"]["send"]> } } {
+  return {
+    emails: {
+      send: (payload) => {
+        const withText =
+          "html" in payload && typeof payload.html === "string" && !("text" in payload && payload.text)
+            ? { ...payload, text: htmlToMailText(payload.html) }
+            : payload
+        return rawResend().emails.send(withText as ResendSendPayload)
+      },
+    },
+  }
 }
 
 // [TRUST-DELIVERY] Resend does NOT throw on an API rejection — it resolves with { error }. A sender
@@ -563,6 +588,11 @@ export async function sendInvoiceReminder({
   const contactRegel = antwoordAdres
     ? `<p style="color: #555;">Vragen over deze factuur? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
     : ''
+  // [GEEN-UNSUBSCRIBE] Deliberately NO List-Unsubscribe header on a payment reminder, and the
+  // absence is a decision worth recording: Gmail's one-click-unsubscribe requirement targets
+  // PROMOTIONAL bulk mail, and a dunning message about an existing debt is transactional. Adding
+  // the header would hand every debtor a button that silently stops their own payment reminders —
+  // the owner would keep believing the app chases their money while the debtor has opted out.
   const __sendResult = await getResend().emails.send({
     from: customerMailFrom(zzperName),
     to: toEmail,

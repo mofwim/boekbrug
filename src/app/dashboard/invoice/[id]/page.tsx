@@ -94,6 +94,11 @@ export default function InvoiceDetailPage() {
   // exists. `!creatingCredit` is the SAME condition the backdrop click checks.
   const [creditReason, setCreditReason] = useState('')
   const [creatingCredit, setCreatingCredit] = useState(false)
+  // [CORRIGEER] De samengestelde actie: creditnota + nieuw concept met dezelfde regels. Zie de
+  // kop van /api/invoice/[id]/correct — dit scherm orkestreert niets zelf, het vraagt en toont.
+  const [showCorrectDialog, setShowCorrectDialog] = useState(false)
+  const [correcting, setCorrecting] = useState(false)
+  const [correctError, setCorrectError] = useState<string | null>(null)
   const [creditError, setCreditError] = useState<string | null>(null)
 
   // [BOEK-031] Send flow state — May 2026
@@ -648,10 +653,17 @@ export default function InvoiceDetailPage() {
                   <strong>{t('detail.foutIn')}</strong> {t('detail.nooitVerwijderen')}
                 </p>
               </div>
-              <button
-                onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
-                style={{ flexShrink: 0, marginInlineStart: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
-              >↩ Creditnota</button>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0, marginInlineStart: 12 }}>
+                {/* [CORRIGEER] Verkeerde gegevens, regels goed: de wettelijke vorm van "bewerken". */}
+                <button
+                  onClick={() => { setCorrectError(null); setShowCorrectDialog(true) }}
+                  style={{ backgroundColor: 'white', color: '#EA8600', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: '1px solid #F9AB00', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >✎ {t('detail.corrigeer')}</button>
+                <button
+                  onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
+                  style={{ backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
+                >↩ Creditnota</button>
+              </div>
             </div>
           )}
 
@@ -856,6 +868,59 @@ export default function InvoiceDetailPage() {
                 disabled={creatingCredit}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit ? 'default' : 'pointer', opacity: creatingCredit ? 0.6 : 1 }}>
                 {creatingCredit ? 'Bezig…' : '↩ Creditnota maken'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [CORRIGEER] Eén tik maakt TWEE documenten — dus de dialoog zegt precies wat er straks
+          bestaat, vóór de tik. Bij succes gaat het scherm naar het nieuwe concept, waar de
+          gegevens gewoon bewerkbaar zijn en de regels al ingevuld staan. */}
+      {showCorrectDialog && invoice && (
+        <div onClick={() => !correcting && setShowCorrectDialog(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 440, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 10px' }}>{t('detail.corrigeer.titel')}</h2>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: '0 0 16px' }}>
+              {t('detail.corrigeer.uitleg', { number: invoice.invoice_number ?? '' })}
+            </p>
+            {correctError && (
+              <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+                {correctError}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={() => setShowCorrectDialog(false)}
+                disabled={correcting}
+                style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: correcting ? 'default' : 'pointer' }}>
+                {t('nieuw.actie.annuleren')}
+              </button>
+              <button
+                onClick={async () => {
+                  setCorrecting(true); setCorrectError(null)
+                  try {
+                    const res = await fetch(`/api/invoice/${invoiceId}/correct`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({}),
+                    })
+                    const data = await res.json().catch(() => ({}))
+                    if (!res.ok || !data?.draft_id) {
+                      setCorrectError(data?.error || t('detail.onbekendeFout'))
+                      setCorrecting(false)
+                      return
+                    }
+                    router.push(`/dashboard/invoice/${data.draft_id}/edit`)
+                  } catch {
+                    setCorrectError(t('detail.onbekendeFout'))
+                    setCorrecting(false)
+                  }
+                }}
+                disabled={correcting}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA8600', color: 'white', fontSize: 14, fontWeight: 600, cursor: correcting ? 'default' : 'pointer', opacity: correcting ? 0.6 : 1 }}>
+                {correcting ? t('detail.corrigeer.bezig') : `✎ ${t('detail.corrigeer.ja')}`}
               </button>
             </div>
           </div>

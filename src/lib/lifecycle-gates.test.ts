@@ -6691,6 +6691,45 @@ test("[MONEY-GUARD-CLOSED] the removal routes all read the error on their money-
   }
 });
 
+test("[MAIL-TEKST] every mail leaves with a text part, because every send goes through one door", () => {
+  // All fifteen senders were HTML-only — SpamAssassin's MIME_HTML_ONLY, a free negative signal on
+  // a young domain, on the mail that asks a stranger for money. The fix is one wrapper around the
+  // Resend client that derives text/plain from the same html string, so the two parts cannot
+  // drift and a sixteenth sender inherits it without knowing it exists.
+  //
+  // That only holds while the wrapper IS the only door. Three ways to walk around it, each gated:
+  const email = code("src/lib/email.ts");
+
+  // 1. Constructing a Resend client anywhere else.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p) || p === "src/lib/email.ts") continue;
+      if (/new Resend\(/.test(code(p))) offenders.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(offenders, [], `mail is sent from email.ts only:\n  ${offenders.join("\n  ")}`);
+
+  // 2. Calling the raw client directly inside email.ts. The pattern matches its DECLARATION too
+  //    (`function rawResend(): Resend`), so a clean tree counts exactly two: declaration + the
+  //    one call inside the wrapper. Three or more means a sender walked around the door.
+  const rawUses = (email.match(/rawResend\(\)/g) ?? []).length;
+  assert.equal(rawUses, 2, "rawResend() beyond its declaration and the wrapper call — the door has a hole");
+
+  // 3. The wrapper forgetting its job. The derivation must reference htmlToMailText, and every
+  //    sender must go through getResend().
+  assert.match(email, /text: htmlToMailText\(payload\.html\)/);
+  assert.ok((email.match(/getResend\(\)\.emails\.send\(/g) ?? []).length >= 15,
+    "the fifteen senders all pass through the wrapper");
+
+  // And the reminder keeps its recorded ABSENCE: no List-Unsubscribe on dunning mail, because it
+  // would hand a debtor a button that silently stops their own payment reminders.
+  assert.doesNotMatch(email, /List-Unsubscribe/i, "see [GEEN-UNSUBSCRIBE] — absence is the decision");
+});
+
 // ─── [PAY-KEY-SCOPE] The replay shortcut is a READ, and every read is owner-scoped ───────────────
 //
 // Audit finding #3/#8, reproduced against a real PostgreSQL 16 before it was fixed: the idempotency
@@ -7181,4 +7220,37 @@ test("[PAY-REDEN] the rule is proven where it can be", () => {
   assert.match(spec, /recognised by its CODE, not by a Dutch word/, "the /facturen bug");
   assert.match(spec, /a 5xx detail is a raw database string/, "a Postgres string never reaches a phone");
   assert.match(spec, /reads Dutch, never a key/, "a missing translation falls back, it does not blank");
+});
+
+test("[CORRIGEER] correcting a sent invoice is a pair of documents, never an edit", () => {
+  // The owner asked for the honest thing: the details are wrong on a sent invoice, the lines are
+  // fine, let me edit the details. The one form that request may never take is an UPDATE — the
+  // number is from a gapless forward-only series (Art. 35 Wet OB) and the customer already holds
+  // the document; an in-place edit makes the administration disagree with the paper it mailed.
+  //
+  // So the feature is an orchestration of the two legal halves that already existed, and this
+  // gate pins that it STAYS one: creditnota first (the half with legal weight), duplicate second,
+  // and no invoice UPDATE anywhere in the route.
+  const route = code("src/app/api/invoice/[id]/correct/route.ts");
+  assert.match(route, /\/api\/invoice\/creditnota/, "the cancel half");
+  assert.match(route, /\/duplicate`/, "…and the prefilled-draft half");
+  assert.ok(
+    route.indexOf("/api/invoice/creditnota") < route.indexOf("/duplicate`"),
+    "creditnota FIRST: if it fails nothing happened; the reverse order can mint a correcting " +
+      "draft while the wrong invoice stays live in the books",
+  );
+  assert.doesNotMatch(route, /\.update\(|\.upsert\(/,
+    "the route corrects by creating documents, never by touching the sent one");
+
+  // The editability rule itself is untouched: a numbered document stays closed to editing. The
+  // correction flow exists precisely so this line never needs a "unless…" added to it.
+  const editable = code("src/lib/invoice-editable.ts");
+  assert.match(editable, /invoiceNumber/, "the number is still what locks a document");
+
+  // And the screen offers the flow where the owner looks for it — beside the creditnota button,
+  // going to the new DRAFT's edit screen on success, where editing is legitimately allowed.
+  const page = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(page, /t\('detail\.corrigeer'\)/, "the button is on the sent invoice");
+  assert.match(page, /router\.push\(`\/dashboard\/invoice\/\$\{data\.draft_id\}\/edit`\)/,
+    "success lands the owner in the draft, prefilled, editable");
 });
