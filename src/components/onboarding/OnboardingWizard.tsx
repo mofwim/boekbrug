@@ -748,7 +748,7 @@ export function OnboardingWizard({
           display: "flex", alignItems: "flex-end", justifyContent: "center",
           zIndex: 1000, paddingBottom: "env(safe-area-inset-bottom)",
         }}>
-          <div style={{
+          <div className="sheet-scroll" style={{
             background: "#fff", borderRadius: "20px 20px 0 0",
             padding: "24px 20px 32px", width: "100%", maxWidth: "480px",
           }}>

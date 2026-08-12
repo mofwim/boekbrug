@@ -146,7 +146,7 @@ export default function FeedbackButton() {
       }}
       onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
-      <div style={{
+      <div className="sheet-scroll" style={{
         background: '#fff', width: '100%', maxWidth: 520, borderRadius: '16px 16px 0 0',
         padding: 16,
         // [FEEDBACK-SEND] Reserve the bottom bar, not only the device's safe area.

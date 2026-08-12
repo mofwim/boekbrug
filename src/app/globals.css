@@ -768,3 +768,36 @@ input::placeholder, textarea::placeholder {
 [dir="rtl"] .icon-dir {
   transform: scaleX(-1);
 }
+
+/* [SCROLL-VEL] Een dialoog die niet past, verbergt de rest — en niets scrollt.
+ *
+ * Een overlay is `position: fixed; inset: 0` met `align-items: flex-end` (bottom sheet) of
+ * `center` (dialoog). Het paneel daarbinnen had geen hoogtegrens. Wordt de inhoud hoger dan het
+ * scherm, dan groeit het paneel de BOVENkant uit — en omdat de overlay vaststaat, scrollt er
+ * niets: alles boven de vouw is onbereikbaar. Gemeld op de bevestigingskaart van een
+ * inkoopfactuur, waar het bedrag exclusief en de kop erboven wegvielen en de eigenaar dus een
+ * factuur moest bevestigen zonder de helft van de velden te kunnen zien.
+ *
+ * Twee keer max-height is geen fout: `dvh` is de zichtbare hoogte NA de browserbalken van een
+ * telefoon, en dat is precies het verschil dat dit probleem maakt. Een browser die `dvh` niet
+ * kent, negeert die tweede regel en houdt `vh` — een grens die iets te hoog kan uitvallen, maar
+ * die nog altijd scrollt. Inline styles kunnen dit paar niet uitdrukken; vandaar een klasse.
+ *
+ * `overscroll-behavior: contain` houdt de pagina eronder stil zodra het paneel op zijn eind is —
+ * anders scrolt de lijst achter de dialoog mee en staat de kaart bij het sluiten ergens anders.
+ */
+.sheet-scroll {
+  /* De grens geldt voor het HELE paneel, padding inbegrepen. Zonder deze regel begrenst
+   * max-height alleen de inhoud en komt de padding er bovenop — en juist de bevestigingskaart uit
+   * de melding heeft een forse `padding-bottom` om de onderbalk vrij te houden. Gemeten in
+   * Chromium op 393×852: 862px paneel in een scherm van 852px, de bovenkant tien pixels
+   * afgesneden. Bijna goed, en dus precies het soort dat ongemerkt meegaat.
+   *
+   * Op een telefoon verandert border-box verder niets (het paneel is daar toch schermbreed);
+   * op een tablet of desktop wordt het 40px smaller — wat `max-width: 430px` altijd al vroeg. */
+  box-sizing: border-box;
+  max-height: 88vh;
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

@@ -7406,3 +7406,80 @@ test("[HERSTEL] a sent invoice is fully editable — behind every lock that keep
   assert.match(editScreen, /t\('bewerk\.herstel\.uitleg'/, "…and warns what saving does before the tap");
   assert.match(editScreen, /corrected_delivery_failed/, "…and refuses to pretend a failed delivery succeeded");
 });
+
+// ─── [SCROLL-VEL] A dialog that does not fit hides the rest, and nothing scrolls ─────────────────
+//
+// Reported from a phone: the confirm card for a purchase invoice was cut off at the top — the
+// amount excluding BTW and the heading above it simply were not there, and no amount of dragging
+// brought them back. The owner was being asked to confirm an invoice while unable to see half of
+// the fields they were confirming.
+//
+// The mechanism: an overlay is `position: fixed; inset: 0` with `align-items: flex-end` (a bottom
+// sheet) or `center` (a dialog). The panel inside had no height cap, so when its content grew past
+// the screen it grew UPWARD, out of the viewport — and because the overlay is what is fixed, the
+// page behind it does not scroll and the panel has no scroller of its own. Measured in Chromium at
+// 393×852: the panel's top edge sat at −348px, with the first field 324px above the screen.
+//
+// It was not one card. 37 overlays across the app had the same shape, including three the same
+// screen opens next. One CSS class now, applied to every panel, because the rule cannot live in an
+// inline style: it needs `max-height: 88vh` followed by `max-height: 88dvh`, and React cannot
+// express the same property twice.
+
+test("[SCROLL-VEL] every fixed overlay has a panel that can scroll", () => {
+  // The shape is what is checked, not a list of screens — a NEW dialog added next month fails this
+  // too, which a checklist could not do.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const f of walk("src")) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/position:\s*["']fixed["'],\s*inset:\s*0/g)) {
+      const head = src.slice(m.index ?? 0, (m.index ?? 0) + 700);
+      // Only overlays that ANCHOR their panel. A `flex-start` overlay overflows downward, where
+      // the document scroll still reaches it.
+      if (!/alignItems:\s*["'](flex-end|center)["']/.test(head)) continue;
+      // The panel is the element opened after the overlay's own style block closes.
+      const styleAt = head.indexOf("style={{", head.indexOf("}}"));
+      if (styleAt < 0) continue;
+      const tagStart = (m.index ?? 0) + head.lastIndexOf("<", styleAt);
+      const tag = src.slice(tagStart, (m.index ?? 0) + styleAt + 420);
+      const shared = /className="[^"]*\bsheet-scroll\b/.test(tag);
+      // A panel that caps and scrolls itself is equally fine — the point is that it scrolls, not
+      // which mechanism it uses.
+      const own = /maxHeight/.test(tag) && /overflowY:\s*["']auto["']/.test(tag);
+      if (!shared && !own) {
+        offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these overlays pin a panel that cannot scroll — content past the screen edge is unreachable, " +
+      `not merely below the fold:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SCROLL-VEL] the shared rule caps the whole panel, padding included", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const at = css.indexOf(".sheet-scroll {");
+  assert.ok(at > 0, "the shared rule is gone; every panel above now relies on a class that does nothing");
+  const rule = css.slice(at, css.indexOf("}", at));
+
+  assert.match(rule, /overflow-y:\s*auto/, "without a scroller the cap only hides more");
+  // Both units, in this order. `dvh` is the height left after a phone's browser chrome, which is
+  // the difference that causes this bug; a browser that does not know it keeps the vh line.
+  const caps = [...rule.matchAll(/max-height:\s*(\d+)(dvh|vh)/g)].map((m) => m[2]);
+  assert.deepEqual(caps, ["vh", "dvh"], "vh first as the fallback, dvh second as the real answer");
+  // The cap must cover the padding. globals.css already sets border-box on everything, so this
+  // is belt to that braces — kept so the class does not depend on a reset it does not own.
+  assert.match(rule, /box-sizing:\s*border-box/, "max-height must include the padding, or the cap is short by it");
+  assert.match(rule, /overscroll-behavior:\s*contain/, "…and the list behind the dialog must stay put");
+});

@@ -1641,7 +1641,7 @@ export default function FacturenClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setBundle(null)}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
@@ -1762,7 +1762,7 @@ export default function FacturenClient({
           onClick={() => setRepeatCtx(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
@@ -1904,7 +1904,7 @@ export default function FacturenClient({
           style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={() => setVerwerktCtx(null)}
         >
-          <div
+          <div className="sheet-scroll"
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
@@ -2004,7 +2004,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
       onClick={onCancel}
       style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
-      <div
+      <div className="sheet-scroll"
         onClick={e => e.stopPropagation()}
         style={{
           background: '#ffffff',
