@@ -113,3 +113,26 @@ export function amsterdamToday(now: Date = new Date()): string {
     day: '2-digit',
   }).format(now)
 }
+
+/**
+ * The owner's calendar YEAR in Europe/Amsterdam.
+ *
+ * [NUMMER-JAAR] The paragraph above names this exact failure — "an invoice created just after
+ * midnight on 1 January gets dated 31 December … on a document that already carries a number from
+ * the doorlopende reeks" — and the numbering line was the one place still asking `new Date()`
+ * directly. Between 23:00 UTC on 31 December and midnight UTC the server's year is the OLD one
+ * while the owner is already in the NEW one, so for that hour:
+ *
+ *   · next_invoice_seq draws from LAST year's counter, which was supposed to be closed, and the
+ *     new year's series starts at 2 instead of 1 — a gap Article 35 does not allow;
+ *   · formatInvoiceNumber prints that old year, so an invoice dated 1 January 2027 goes out
+ *     numbered 20260123.
+ *
+ * One hour a year, on the busiest possible boundary. Derived from amsterdamToday() rather than
+ * from a second Intl call so there is only ever one clock to be wrong.
+ *
+ * `now` is injectable so this is testable without touching the system clock.
+ */
+export function amsterdamYear(now: Date = new Date()): number {
+  return Number(amsterdamToday(now).slice(0, 4))
+}

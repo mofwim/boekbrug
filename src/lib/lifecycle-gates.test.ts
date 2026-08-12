@@ -248,13 +248,26 @@ test("[ART35-READ-HONEST] an unreadable issued-count locks the numbering instead
   // `(issuedCount ?? 0) > 0` read a failed count as "this owner has issued nothing", so the
   // template and padding of a doorlopende reeks could be rewritten after numbers had gone out —
   // and the audit row that exists to prove the platform refused exactly that was skipped too.
+  //
+  // [NUMMER-SLOT] The lock is now TWO counts (invoice_date window + invoice number pattern), so
+  // this is asserted on the helper that owns both rather than on one destructure. Both errors must
+  // be read, and the helper's "unknown" must be a value the caller cannot mistake for zero.
   const src = code("src/app/api/invoice/numbering/route.ts");
-  assert.match(
-    src, /const \{ count: issuedCount, error: lockError \}/,
-    "the lock count dropped its error again — a database hiccup then reads as 'nobody has " +
-      "invoiced yet' and the art. 35 numbering lock opens",
+  const helper = src.slice(
+    src.indexOf("async function countIssuedForCounterYear"),
+    src.indexOf("export async function POST"),
   );
+  assert.ok(helper.length > 100, "the lock's counting helper is gone — the rule has nowhere to live");
+  assert.match(helper, /byDate\.error \|\| byNumber\.error/, "BOTH counts' errors must be read");
+  assert.match(helper, /return null/, "…and an unreadable count answers 'unknown', not a number");
+  // null, not 0 — the whole bug was a failed read that looked like an honest zero. `?? 0` anywhere
+  // on this value puts it straight back.
+  assert.doesNotMatch(src, /issuedCount \?\? 0/, "`?? 0` turns an unknown count back into 'nobody has invoiced'");
+  assert.match(src, /if \(issuedCount === null\)/, "the POST handler must refuse on unknown");
   assert.match(src, /code: 'lock_check_unavailable'/, "an unreadable count must refuse, not unlock");
+  // The GET card decides the same way. An open form shown on an unknown answer invites the owner
+  // into the 409 — or into believing there is no lock.
+  assert.match(src, /const locked = count === null \|\| count > 0/, "the GET card locks on unknown too");
 });
 
 test("[REREAD-CONFIRMED] the re-read predicate is given the columns it reads", () => {
@@ -6713,4 +6726,94 @@ test("[PAY-KEY-SCOPE] the refusal reaches the owner as a Dutch sentence, not a 5
   // halves of that rule are what makes this branch readable on a phone.
   const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   assert.match(manage, /client_key_conflict:\s*'[^']+'/, "and the code has a Dutch line of its own as the belt");
+});
+
+// ─── [NUMMER-JAAR] The invoice number's year is the OWNER's year ─────────────────────────────────
+//
+// Audit finding #1, first half. `new Date().getFullYear()` is UTC. Between 23:00 UTC on
+// 31 December and midnight the Netherlands is already in the new year and the server is not, so for
+// that hour an invoice drew its number from the CLOSED year's counter and printed the closed year
+// on the document: 20260123 above a date of 1 January 2027, and a 2027 series that starts at 2.
+// Article 35 does not allow that gap. format-nl.ts has spelled this rule out since [TZ] — the
+// numbering line was the last place still asking the server what year it is.
+
+test("[NUMMER-JAAR] nothing on the numbering line reads the year off the server clock", () => {
+  for (const f of ["src/lib/invoice-numbering.ts", "src/app/api/invoice/numbering/route.ts"]) {
+    const src = code(f); // comments stripped — a note about the old call must not satisfy this
+    assert.doesNotMatch(
+      src, /new Date\(\)\.getFullYear\(\)/,
+      `${f}: the server's year is UTC. For the first hour of the Dutch new year it is the OLD ` +
+        `year, and this file decides which counter a number comes from`,
+    );
+    assert.match(src, /amsterdamYear\(/, `${f}: must take the year from the owner's clock`);
+  }
+});
+
+test("[NUMMER-JAAR] the allocator and the lock derive the counter key the same way", () => {
+  // Two files decided independently whether a template resets yearly, by each writing
+  // `template.includes('{year}')`. They agreed — until one of them changed. The rule now lives in
+  // numbering-lock.ts and both import it, which is the only form of agreement that cannot drift.
+  const lib = code("src/lib/invoice-numbering.ts");
+  assert.match(lib, /counterYearFor\(template, year\)/, "the allocator must use the shared rule");
+  assert.doesNotMatch(
+    lib, /template\.includes\('\{year\}'\)/,
+    "a second, local copy of the counter-key rule is exactly how the two sides drifted",
+  );
+});
+
+// ─── [NUMMER-SLOT] The lock asks about the counter, not about a date the owner typed ─────────────
+//
+// Audit finding #1, second half. The lock counted issued facturen by `invoice_date` — a field the
+// owner fills in, validated for SHAPE only — while the counter is keyed by the clock at allocation.
+// A back-dated invoice (December work billed on 4 January) therefore burned a number the lock could
+// not see, and the numbering could be reshaped after a document had reached a customer.
+
+test("[NUMMER-SLOT] the lock has both witnesses, and the number is one of them", () => {
+  const src = code("src/app/api/invoice/numbering/route.ts");
+  const helper = src.slice(
+    src.indexOf("async function countIssuedForCounterYear"),
+    src.indexOf("export async function POST"),
+  );
+  // Witness 1: the date window it always had.
+  assert.match(helper, /\.gte\('invoice_date', from\)\.lte\('invoice_date', to\)/, "the date window");
+  // Witness 2: the number itself — the only column recording which counter a document came from.
+  assert.match(
+    helper, /\.like\('invoice_number', invoiceNumberYearPattern\(year\)\)/,
+    "a back-dated invoice is invisible to the date window; its NUMBER is what says 2027",
+  );
+  // Union, not intersection. An `&&` here would lock only invoices that satisfy both, which is
+  // narrower than the original bug.
+  assert.match(helper, /Math\.max\(byDate\.count \?\? 0, byNumber\.count \?\? 0\)/, "either witness locks");
+  // Continuous numbering (year=0 counter) must keep having NO window — any issued factuur locks it.
+  assert.match(helper, /if \(!yearlyReset\)/, "continuous numbering takes no year filter at all");
+});
+
+test("[NUMMER-SLOT] both handlers ask the same question", () => {
+  // The GET card is what tells the owner whether the form is still open. When it and POST disagreed
+  // the owner met a 409 on submit — or, in the direction that matters, an open form on a series
+  // that had already issued.
+  const src = code("src/app/api/invoice/numbering/route.ts");
+  // `[\w.]` because POST passes `desired.yearlyReset` and GET a plain local — the point is that the
+  // first three arguments are identical, not that the fourth is spelled the same way.
+  const calls = src.match(/countIssuedForCounterYear\(supabase, user\.id, year, [\w.]+\)/g) ?? [];
+  assert.equal(calls.length, 2, `POST and GET must both use the shared lock — found ${calls.length}`);
+  // And no second, hand-rolled copy of the count survives in either handler.
+  assert.doesNotMatch(
+    src, /lockQ/,
+    "a hand-rolled lock query is back; that is how the two handlers drifted apart the first time",
+  );
+});
+
+test("[NUMMER-SLOT] the lock's rule is proven where it can be, not only where it is called", () => {
+  // The route's query cannot be executed here — PostgREST is not in this process. So the DECISION
+  // lives in a pure module with its own tests (the back-dated case, the post-dated case, the
+  // over-match), and these gates hold the query to the same two witnesses. Neither half is enough
+  // on its own; this asserts the pure half exists and is exercised.
+  const mod = code("src/lib/numbering-lock.ts");
+  for (const fn of ["counterYearFor", "invoiceDateWindow", "invoiceNumberYearPattern", "issuedInCounterYear"]) {
+    assert.match(mod, new RegExp(`export function ${fn}\\b`), `numbering-lock must export ${fn}`);
+  }
+  const spec = readFileSync("src/lib/numbering-lock.test.ts", "utf8");
+  assert.match(spec, /BACK-DATED invoice still locks the counter it drew from/, "the bug itself must be a test");
+  assert.match(spec, /first hour of the Dutch new year/, "…and so must the year boundary");
 });
