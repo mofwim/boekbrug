@@ -170,8 +170,14 @@ test("[INTAKE-QUEUE] a refused duplicate is never summarised as 'added'", () => 
   // The one way a batch could lose something quietly: a photo rejected as a duplicate, listed in
   // the summary as if it had been filed. The owner would count three and have two.
   const src = intakeCode();
-  assert.match(src, /noteLanded\(file\.name, 'dubbel — niet toegevoegd'\)/, "a byte-hash duplicate must say it was not added");
-  assert.match(src, /noteLanded\(file\.name, 'mogelijk dubbel — jouw keuze'\)/, "a semantic duplicate must say the choice is the owner's");
+  // [TAAL] The sentences live in the catalogue now; the gate follows them there — the key must
+  // be the one whose Dutch says the file was NOT added, and the wording check moves to the
+  // catalogue so a retranslation cannot quietly soften it.
+  assert.match(src, /noteLanded\(file\.name, t\('int\.landed\.dubbel'\)\)/, "a byte-hash duplicate must say it was not added");
+  assert.match(src, /noteLanded\(file\.name, t\('int\.landed\.mogelijkDubbel'\)\)/, "a semantic duplicate must say the choice is the owner's");
+  const catalogue = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(catalogue, /'int\.landed\.dubbel':[\s\S]{0,40}nl: 'dubbel — niet toegevoegd'/, "the Dutch must keep saying 'niet toegevoegd'");
+  assert.match(catalogue, /'int\.landed\.mogelijkDubbel':[\s\S]{0,40}nl: 'mogelijk dubbel — jouw keuze'/, "the Dutch must keep saying the choice is the owner's");
 });
 
 // ─── [LIST-PAINT] Crediteuren skips the painting, never the rows ──────────────

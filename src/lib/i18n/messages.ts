@@ -2974,10 +2974,12 @@ export const MESSAGES = {
     ar: 'المجلد الموصى به',
     en: 'Recommended folder',
   },
+  // Singular form, only ever rendered when the count IS one — so the number is inlined in
+  // every language and no placeholder is needed (Arabic says the word, not the digit).
   'best.aantalBestandEen': {
-    nl: '{n} bestand',
+    nl: '1 bestand',
     ar: 'ملف واحد',
-    en: '{n} file',
+    en: '1 file',
   },
   'best.aantalBestanden': {
     nl: '{n} bestanden',
@@ -3130,9 +3132,9 @@ export const MESSAGES = {
     en: '{n} items cut — Ctrl+V to paste',
   },
   'best.geknipt1': {
-    nl: '{n} item geknipt — Ctrl+V om te plakken',
+    nl: '1 item geknipt — Ctrl+V om te plakken',
     ar: 'قُصّ عنصر واحد — Ctrl+V للصق',
-    en: '{n} item cut — Ctrl+V to paste',
+    en: '1 item cut — Ctrl+V to paste',
   },
   'best.gekopieerd': {
     nl: '{n} items gekopieerd — Ctrl+V om te plakken',
@@ -3140,9 +3142,9 @@ export const MESSAGES = {
     en: '{n} items copied — Ctrl+V to paste',
   },
   'best.gekopieerd1': {
-    nl: '{n} item gekopieerd — Ctrl+V om te plakken',
+    nl: '1 item gekopieerd — Ctrl+V om te plakken',
     ar: 'نُسخ عنصر واحد — Ctrl+V للصق',
-    en: '{n} item copied — Ctrl+V to paste',
+    en: '1 item copied — Ctrl+V to paste',
   },
   'best.grootte': {
     nl: 'Grootte',
@@ -3590,9 +3592,9 @@ export const MESSAGES = {
     en: 'No documents found for “{query}”',
   },
   'brug.zoek.resultaat': {
-    nl: '{count} resultaat in alle mappen',
+    nl: '1 resultaat in alle mappen',
     ar: 'نتيجة واحدة في كل المجلدات',
-    en: '{count} result in all folders',
+    en: '1 result in all folders',
   },
   'brug.zoek.resultaten': {
     nl: '{count} resultaten in alle mappen',
@@ -3965,9 +3967,9 @@ export const MESSAGES = {
     en: 'Delete {date}',
   },
   'dzi.aandachtspuntEen': {
-    nl: '{n} aandachtspunt',
+    nl: '1 aandachtspunt',
     ar: 'نقطة واحدة تحتاج انتباهاً',
-    en: '{n} point of attention',
+    en: '1 point of attention',
   },
   'dzi.aandachtspunten': {
     nl: '{n} aandachtspunten',
@@ -4060,9 +4062,9 @@ export const MESSAGES = {
     en: '✓ {n} days of bank ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarBankEen': {
-    nl: '✓ {n} dag Bank-grootboek opgeslagen als controle (telt niet mee als omzet).',
+    nl: '✓ 1 dag Bank-grootboek opgeslagen als controle (telt niet mee als omzet).',
     ar: '✓ حُفظ يوم واحد من دفتر أستاذ البنك كفحص (لا يُحتسب كإيراد).',
-    en: '✓ {n} day of bank ledger saved as a check (does not count as turnover).',
+    en: '✓ 1 day of bank ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarGrootboek': {
     nl: '✓ {n} dagen Grootboek opgeslagen als controle (telt niet mee als omzet).',
@@ -4070,9 +4072,9 @@ export const MESSAGES = {
     en: '✓ {n} days of ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarGrootboekEen': {
-    nl: '✓ {n} dag Grootboek opgeslagen als controle (telt niet mee als omzet).',
+    nl: '✓ 1 dag Grootboek opgeslagen als controle (telt niet mee als omzet).',
     ar: '✓ حُفظ يوم واحد من دفتر الأستاذ كفحص (لا يُحتسب كإيراد).',
-    en: '✓ {n} day of ledger saved as a check (does not count as turnover).',
+    en: '✓ 1 day of ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarKas': {
     nl: '✓ {n} dagen Kas-grootboek (contant) opgeslagen als controle (telt niet mee als omzet).',
@@ -4080,9 +4082,9 @@ export const MESSAGES = {
     en: '✓ {n} days of cash ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarKasEen': {
-    nl: '✓ {n} dag Kas-grootboek (contant) opgeslagen als controle (telt niet mee als omzet).',
+    nl: '✓ 1 dag Kas-grootboek (contant) opgeslagen als controle (telt niet mee als omzet).',
     ar: '✓ حُفظ يوم واحد من دفتر أستاذ الصندوق (نقداً) كفحص (لا يُحتسب كإيراد).',
-    en: '✓ {n} day of cash ledger saved as a check (does not count as turnover).',
+    en: '✓ 1 day of cash ledger saved as a check (does not count as turnover).',
   },
   'dzi.klaarOmzet': {
     nl: '✓ {n} dagen dagomzet opgeslagen.',
@@ -4090,9 +4092,9 @@ export const MESSAGES = {
     en: '✓ {n} days of daily turnover saved.',
   },
   'dzi.klaarOmzetEen': {
-    nl: '✓ {n} dag dagomzet opgeslagen.',
+    nl: '✓ 1 dag dagomzet opgeslagen.',
     ar: '✓ حُفظ يوم واحد من إيراد اليوم.',
-    en: '✓ {n} day of daily turnover saved.',
+    en: '✓ 1 day of daily turnover saved.',
   },
   'dzi.klaarPin': {
     nl: '✓ {n} dagen PIN-grootboek (kaartbetalingen) opgeslagen als controle (telt niet mee als omzet).',
@@ -4100,9 +4102,9 @@ export const MESSAGES = {
     en: '✓ {n} days of PIN ledger (card payments) saved as a check (does not count as turnover).',
   },
   'dzi.klaarPinEen': {
-    nl: '✓ {n} dag PIN-grootboek (kaartbetalingen) opgeslagen als controle (telt niet mee als omzet).',
+    nl: '✓ 1 dag PIN-grootboek (kaartbetalingen) opgeslagen als controle (telt niet mee als omzet).',
     ar: '✓ حُفظ يوم واحد من دفتر أستاذ PIN (مدفوعات البطاقة) كفحص (لا يُحتسب كإيراد).',
-    en: '✓ {n} day of PIN ledger (card payments) saved as a check (does not count as turnover).',
+    en: '✓ 1 day of PIN ledger (card payments) saved as a check (does not count as turnover).',
   },
   'dzi.konGrootboekNietLezen': {
     nl: 'Kon het grootboek niet lezen',
