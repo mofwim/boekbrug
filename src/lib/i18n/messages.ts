@@ -194,7 +194,7 @@ export const MESSAGES = {
   // Dutch in every language — it is the word on the button the owner has to press next.
   'nieuw.fout.creditnota': {
     nl: 'De creditregels zijn samen meer waard dan wat je levert, dus dit is een creditnota en geen factuur. Maak er een creditnota van, of vul de regels aan tot het totaal niet meer negatief is.',
-    ar: 'قيمة أسطر الائتمان (الناقصة) معًا أكبر من قيمة ما تسلّمه، فهذه إذًا creditnota وليست factuur. حوّلها إلى creditnota، أو أكمِل الأسطر حتى لا يبقى المجموع بالسالب.',
+    ar: 'قيمة الأسطر الدائنة معًا أكبر من قيمة ما تسلّمه، فهذا إشعار دائن (creditnota) وليس فاتورة. حوّله إلى إشعار دائن، أو أكمِل الأسطر حتى لا يبقى المجموع بالسالب.',
     en: 'The credit lines together are worth more than what you deliver, so this is a creditnota and not an invoice. Make it a creditnota, or add lines until the total is no longer negative.',
   },
 
