@@ -36,6 +36,7 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { describeUploadFailure } from '@/lib/upload-failure'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
@@ -120,17 +121,18 @@ interface IntakeResponse {
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
-// Destination → how the owner reads it (label + emoji + colour).
-const DEST: Record<string, { label: string; icon: string; color: string }> = {
-  invoice:  { label: 'Factuur',       icon: '🧾', color: M3.primary },
-  receipt:  { label: 'Bon',           icon: '🧾', color: M3.primary },
-  bank:     { label: 'Bankafschrift', icon: '🏦', color: '#0B8043' },
-  turnover: { label: 'Kassa-omzet',   icon: '🛒', color: '#0B8043' },
-  ledger:   { label: 'Controle-check', icon: '🔗', color: '#7B1FA2' },
-  document: { label: 'Bestand',       icon: '📁', color: M3.neutral },
+// Destination → how the owner reads it (label key + emoji + colour). Labels are message
+// keys, rendered through t() so the component itself holds no language.
+const DEST: Record<string, { label: MessageKey; icon: string; color: string }> = {
+  invoice:  { label: 'up.dest.factuur', icon: '🧾', color: M3.primary },
+  receipt:  { label: 'up.dest.bon',     icon: '🧾', color: M3.primary },
+  bank:     { label: 'up.dest.bank',    icon: '🏦', color: '#0B8043' },
+  turnover: { label: 'up.dest.kassaOmzet', icon: '🛒', color: '#0B8043' },
+  ledger:   { label: 'up.dest.controleCheck', icon: '🔗', color: '#7B1FA2' },
+  document: { label: 'up.dest.bestand', icon: '📁', color: M3.neutral },
   // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt (dat zou de losse
   // facturen dubbel tellen) maar gebruikt als volledigheidscontrole: welke factuur mis ik?
-  statement: { label: 'Overzicht gecontroleerd', icon: '🔎', color: M3.warn },
+  statement: { label: 'up.dest.overzicht', icon: '🔎', color: M3.warn },
 }
 
 let idc = 0
@@ -209,14 +211,14 @@ export default function UploadClient() {
       // block only renders WITH a summary — so the button used to go quiet and the
       // owner was left believing nothing needed booking. Say what happened instead.
       if (!res.ok || !data?.summary) {
-        setReproc({ busy: false, done: true, error: data?.error || 'Boeken is niet gelukt — probeer het zo opnieuw.' })
+        setReproc({ busy: false, done: true, error: data?.error || t('up.fout.boekenOpnieuw') })
         return
       }
       setReproc({ busy: false, done: true, summary: data.summary, results: data.results })
     } catch {
-      setReproc({ busy: false, done: true, error: 'Boeken is niet gelukt — controleer je verbinding en probeer het opnieuw.' })
+      setReproc({ busy: false, done: true, error: t('up.fout.boekenVerbinding') })
     }
-  }, [])
+  }, [t])
 
   const patch = useCallback((id: string, changes: Partial<Item>) => {
     setItems((prev) => prev.map((f) => (f.id === id ? { ...f, ...changes } : f)))
@@ -254,8 +256,8 @@ export default function UploadClient() {
               status: 'error',
               tooBig: isPdf,
               message: isPdf
-                ? `Bestand te groot (${mb(uploadFile.size)} MB) — max ${mb(MAX_INTAKE_UPLOAD_BYTES)} MB. Verkleinen lukte niet ver genoeg.`
-                : `Bestand te groot (${mb(uploadFile.size)} MB) — max ${mb(MAX_INTAKE_UPLOAD_BYTES)} MB. Maak er een foto van of splits het document.`,
+                ? t('up.teGrootVerkleinen', { size: mb(uploadFile.size), max: mb(MAX_INTAKE_UPLOAD_BYTES) })
+                : t('up.teGrootSplits', { size: mb(uploadFile.size), max: mb(MAX_INTAKE_UPLOAD_BYTES) }),
             })
             continue
           }
@@ -275,7 +277,7 @@ export default function UploadClient() {
             })
           } else if (res.status === 409 && data?.duplicate) {
             patch(item.id, {
-              status: 'duplicate', message: data.error || 'Al toegevoegd', canForce: !!data.canForce,
+              status: 'duplicate', message: data.error || t('up.alToegevoegd'), canForce: !!data.canForce,
               // [DUP-ARCHIVED] alleen gezet als de bestaande factuur écht in Genegeerd staat
               archived: data.archived ?? undefined,
             })
@@ -286,7 +288,7 @@ export default function UploadClient() {
             patch(item.id, { status: 'error', ...describeUploadFailure(res.status, data?.error) })
           }
         } catch {
-          patch(item.id, { status: 'error', message: 'Lezen mislukt — probeer dit bestand opnieuw.' })
+          patch(item.id, { status: 'error', message: t('up.fout.lezen') })
         }
         // Gentle spacing between AI reads — smooths bursts so fewer files trip an error.
         await new Promise((r) => setTimeout(r, 250))
@@ -294,7 +296,7 @@ export default function UploadClient() {
     } finally {
       running.current = false
     }
-  }, [patch])
+  }, [patch, t])
 
   const addFiles = useCallback((files: FileList | File[] | null) => {
     const arr = files ? Array.from(files) : []
@@ -316,15 +318,15 @@ export default function UploadClient() {
   const addMpPages = useCallback((fl: FileList | null) => {
     if (!fl || fl.length === 0) return
     const imgs = Array.from(fl).filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name))
-    if (imgs.length === 0) { setMpError('Kies foto’s van de pagina’s.'); return }
+    if (imgs.length === 0) { setMpError(t('up.kiesFotos')); return }
     // [MP-PURE-UPDATER] Never set state from inside a state updater: a reducer must be pure, and
     // React may run it twice (StrictMode / concurrent rendering), which fired the cap warning
     // twice for one pick. Compute the capped list first, then write both pieces of state once.
     const merged = [...mpPages, ...imgs]
     const capped = merged.length > MAX_PAGES
     setMpPages(capped ? merged.slice(0, MAX_PAGES) : merged)
-    setMpError(capped ? `Maximaal ${MAX_PAGES} pagina’s per factuur.` : null)
-  }, [mpPages])
+    setMpError(capped ? t('up.maxPaginas', { n: MAX_PAGES }) : null)
+  }, [mpPages, t])
 
   const removeMpPage = useCallback((idx: number) => {
     setMpPages((prev) => prev.filter((_, i) => i !== idx))
@@ -344,19 +346,19 @@ export default function UploadClient() {
       // owner knows which photo to redo; keep the other pages in the tray for a quick retry.
       // combineImagesToPdf names either the failing page ("Pagina 2 kon niet…") or why the set
       // cannot fit one upload ("Deze 20 pagina's passen samen niet…") — both are actionable.
-      setMpError(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe.')
+      setMpError(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : t('up.combinerenMislukt'))
     } finally {
       setCombining(false)
     }
-  }, [mpPages, combining, addFiles])
+  }, [mpPages, combining, addFiles, t])
 
   // Re-try a file that failed (a transient AI error or a rate-limit that has since cleared).
   const retry = useCallback((item: Item) => {
     const again: Item = { ...item, status: 'queued', ...RESET_ON_RETRY }
-    patch(item.id, { status: 'queued', ...RESET_ON_RETRY, message: 'Opnieuw in wachtrij…' })
+    patch(item.id, { status: 'queued', ...RESET_ON_RETRY, message: t('up.opnieuwWachtrij') })
     pending.current.push(again)
     void kick()
-  }, [kick, patch])
+  }, [kick, patch, t])
 
   // [QUEUE-PURITY] De wachtrij wordt hier gevuld BUITEN de state-updater. Dit stond vroeger binnen
   // setItems(prev => …), en dat is precies de plek waar het niet mag: React mag zo'n updater meer dan
@@ -375,9 +377,9 @@ export default function UploadClient() {
     // Dezelfde lijst voor de rijen die "in wachtrij" gaan heten als voor de rijen die er echt in
     // liggen — anders kan de melding op het scherm en de inhoud van de wachtrij uit elkaar lopen.
     const queued = new Set(failed.map((f) => f.id))
-    setItems((prev) => prev.map((i) => (queued.has(i.id) ? { ...i, status: 'queued' as Status, ...RESET_ON_RETRY, message: 'Opnieuw in wachtrij…' } : i)))
+    setItems((prev) => prev.map((i) => (queued.has(i.id) ? { ...i, status: 'queued' as Status, ...RESET_ON_RETRY, message: t('up.opnieuwWachtrij') } : i)))
     void kick()
-  }, [items, kick])
+  }, [items, kick, t])
 
   // [SIZE-SHRINK] "Verklein en probeer opnieuw" — de PDF gaat door de compressor en de kleinere
   // versie gaat als nieuwe poging de wachtrij in.
@@ -387,7 +389,7 @@ export default function UploadClient() {
   // aanloopt hoort er ook nooit een byte van te downloaden. Eén gewone import bovenaan zou dat
   // stilletjes ongedaan maken — precies wat /factuur-maken 1,4 MB kostte.
   const shrinkAndRetry = useCallback(async (item: Item) => {
-    patch(item.id, { shrinking: true, message: 'Bezig met verkleinen…' })
+    patch(item.id, { shrinking: true, message: t('up.bezigVerkleinen') })
     try {
       const { compressToFit } = await import('@/lib/tools/pdfcompress')
       const { file, fits, before, after } = await compressToFit(item.file, MAX_INTAKE_UPLOAD_BYTES)
@@ -400,7 +402,7 @@ export default function UploadClient() {
           tooBig: false,
           // [UPLOAD-PLAFOND] Het plafond komt uit de gedeelde constante. Deze zin noemde 10 MB
           // toen de echte grens al 4 MB was — een getal waar geen enkele upload aan kón voldoen.
-          message: `Verkleinen hielp niet genoeg: ${(before / 1024 / 1024).toFixed(1)} MB → ${(after / 1024 / 1024).toFixed(1)} MB, nog steeds boven de ${(MAX_INTAKE_UPLOAD_BYTES / 1024 / 1024).toFixed(1)} MB. Splits het document in delen.`,
+          message: t('up.verkleinenNietGenoeg', { before: (before / 1024 / 1024).toFixed(1), after: (after / 1024 / 1024).toFixed(1), max: (MAX_INTAKE_UPLOAD_BYTES / 1024 / 1024).toFixed(1) }),
         })
         return
       }
@@ -413,13 +415,13 @@ export default function UploadClient() {
       patch(item.id, {
         shrinking: false,
         tooBig: false,
-        message: `Verkleind van ${(before / 1024 / 1024).toFixed(1)} MB naar ${(after / 1024 / 1024).toFixed(1)} MB — de kleinere versie staat hieronder.`,
+        message: t('up.verkleind', { before: (before / 1024 / 1024).toFixed(1), after: (after / 1024 / 1024).toFixed(1) }),
       })
       void kick()
     } catch {
-      patch(item.id, { shrinking: false, message: 'Verkleinen lukte niet. Splits het document in delen.' })
+      patch(item.id, { shrinking: false, message: t('up.verkleinenLukteNiet') })
     }
-  }, [patch, kick])
+  }, [patch, kick, t])
 
   // "Toch toevoegen" — re-submit an uncertain semantic duplicate with force=true as a NEW attempt.
   const forceAdd = useCallback((item: Item) => {
@@ -441,10 +443,10 @@ export default function UploadClient() {
     patch(item.id, {
       canForce: false,
       archived: undefined,
-      message: 'Je hebt dit toch toegevoegd — de uitkomst staat op de nieuwe regel hieronder.',
+      message: t('up.tochToegevoegdRegel'),
     })
     void kick()
-  }, [kick, patch])
+  }, [kick, patch, t])
 
   // [DUP-ARCHIVED] "Terugzetten" — de upload werd geweigerd omdat deze factuur al bestaat, maar
   // in Genegeerd. Opnieuw uploaden lost dat niet op (en kan bij identieke bytes ook niet); de
@@ -459,17 +461,17 @@ export default function UploadClient() {
         // Klaar: de knop verdwijnt (archived weg) en de regel vertelt wat er nu geldt.
         patch(item.id, {
           status: 'done', destination: 'invoice', restoring: false, archived: undefined, canForce: false,
-          message: 'Teruggezet — de factuur staat weer in je controlewachtrij op Inkomend.',
+          message: t('up.teruggezet'),
         })
       } else {
         // [UI-HONESTY] Een 409 betekent dat hij niet (meer) in Genegeerd staat. Nooit "gelukt" zeggen.
         const data = await res.json().catch(() => ({}))
-        patch(item.id, { restoring: false, message: data.error || 'Terugzetten mislukt — ververs de pagina en probeer het opnieuw.' })
+        patch(item.id, { restoring: false, message: data.error || t('up.fout.terugzettenVervers') })
       }
     } catch {
-      patch(item.id, { restoring: false, message: 'Terugzetten mislukt — controleer je verbinding en probeer het opnieuw.' })
+      patch(item.id, { restoring: false, message: t('up.fout.terugzettenVerbinding') })
     }
-  }, [patch])
+  }, [patch, t])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragActive(false)
@@ -507,8 +509,7 @@ export default function UploadClient() {
             the in-body h1 was removed. The descriptive subtitle stays. */}
         <div style={{ margin: '16px 0 8px' }}>
           <p style={{ fontSize: 13.5, color: M3.neutral, marginTop: 4, lineHeight: 1.5 }}>
-            {t('up.alles')} <strong>meerdere bestanden tegelijk</strong>;
-            de app leest en sorteert elk bestand automatisch naar de juiste plek.
+            {t('up.alles')} <strong>{t('up.allesMeerdere')}</strong>{t('up.allesRest')}
           </p>
         </div>
 
@@ -528,7 +529,7 @@ export default function UploadClient() {
             {t('up.sleep')}
           </p>
           <p style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 16 }}>
-            of kies ze hieronder — PDF, foto’s, bankafschriften (MT940/CAMT) én kassa-/grootboek-bestanden (Excel)
+            {t('up.kiesHieronder')}
           </p>
 
           <input ref={fileRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }}
@@ -539,15 +540,15 @@ export default function UploadClient() {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => fileRef.current?.click()}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 12, border: 'none', cursor: 'pointer', background: M3.primary, color: M3.onPrimary, fontFamily: FONT, fontSize: 14.5, fontWeight: 600 }}>
-              📎 Bestanden kiezen
+              📎 {t('up.bestandenKiezen')}
             </button>
             <button onClick={() => cameraRef.current?.click()}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 12, border: 'none', cursor: 'pointer', background: M3.primaryContainer, color: '#041E49', fontFamily: FONT, fontSize: 14.5, fontWeight: 600 }}>
-              📷 Foto’s maken
+              📷 {t('up.fotosMaken')}
             </button>
           </div>
           <p style={{ fontSize: 11.5, color: '#8e8e93', margin: '14px 4px 0', lineHeight: 1.45 }}>
-            Je kunt meerdere foto’s of bestanden in één keer selecteren. Eén PDF = één factuur.
+            {t('up.selecteerUitleg')}
           </p>
         </div>
 
@@ -558,12 +559,11 @@ export default function UploadClient() {
             <>
               <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('up.meerderePaginas')}</p>
               <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
-                {t('up.paginasSamen')} <strong>één factuur</strong> —
-                anders wordt elke foto een aparte factuur.
+                {t('up.paginasSamen')} <strong>{t('up.eenFactuurStrong')}</strong> {t('up.andersAparte')}
               </p>
               <button onClick={() => { setMpMode(true); setMpError(null) }}
                 style={{ background: M3.primaryContainer, color: '#041E49', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
-                📄 Pagina’s samenvoegen
+                📄 {t('up.paginasSamenvoegen')}
               </button>
             </>
           ) : (
@@ -576,7 +576,7 @@ export default function UploadClient() {
                 </button>
               </div>
               <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
-                Voeg de pagina’s in volgorde toe. We maken er één PDF van en lezen die als <strong>één factuur</strong>.
+                {t('up.volgordeUitleg')} <strong>{t('up.eenFactuurStrong')}</strong>.
               </p>
 
               <input ref={mpFileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
@@ -587,11 +587,11 @@ export default function UploadClient() {
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button onClick={() => mpFileRef.current?.click()}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, cursor: 'pointer', background: M3.surface, color: M3.onSurface, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>
-                  📎 Foto’s kiezen
+                  📎 {t('up.fotosKiezen')}
                 </button>
                 <button onClick={() => mpCameraRef.current?.click()}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, cursor: 'pointer', background: M3.surface, color: M3.onSurface, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>
-                  📷 Pagina fotograferen
+                  📷 {t('up.paginaFotograferen')}
                 </button>
               </div>
 
@@ -601,7 +601,7 @@ export default function UploadClient() {
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: M3.onSurface }}>
                       <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, background: M3.primaryContainer, color: '#041E49', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
                       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                      <button onClick={() => removeMpPage(i)} aria-label={`Pagina ${i + 1} verwijderen`}
+                      <button onClick={() => removeMpPage(i)} aria-label={t('up.paginaVerwijderen', { n: i + 1 })}
                         style={{ flexShrink: 0, background: 'transparent', border: 'none', color: M3.error, fontSize: 16, lineHeight: 1, cursor: 'pointer', fontFamily: FONT }}>×</button>
                     </div>
                   ))}
@@ -612,7 +612,7 @@ export default function UploadClient() {
 
               <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
                 style={{ marginTop: 12, width: '100%', background: combining || mpPages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff', border: 'none', borderRadius: 12, padding: '12px 18px', fontSize: 14, fontWeight: 700, cursor: combining || mpPages.length === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
-                {combining ? 'Bezig met samenvoegen…' : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? '' : '’s'} → één factuur` : 'Voeg eerst pagina’s toe'}
+                {combining ? t('up.bezigSamenvoegen') : mpPages.length > 0 ? (mpPages.length === 1 ? t('up.combineerEen') : t('up.combineer', { n: mpPages.length })) : t('up.voegEerstToe')}
               </button>
             </>
           )}
@@ -622,12 +622,11 @@ export default function UploadClient() {
         <div style={{ marginTop: 14, background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: 14 }}>
           <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('up.eerder')}</p>
           <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
-            Kassa-, grootboek- en dagomzet-bestanden die al in je bestanden staan maar nog niet geboekt zijn,
-            worden hiermee alsnog verwerkt — zonder opnieuw te uploaden. Veilig om te herhalen (corrigeert, telt nooit dubbel).
+            {t('up.reproc.uitleg')}
           </p>
           <button onClick={runReprocess} disabled={reproc.busy}
             style={{ background: reproc.busy ? '#70757a' : '#0B8043', color: '#fff', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: reproc.busy ? 'default' : 'pointer', fontFamily: FONT }}>
-            {reproc.busy ? '🔄 Bezig met boeken…' : '🔄 Boek mijn opgeslagen bestanden'}
+            {reproc.busy ? `🔄 ${t('up.reproc.bezig')}` : `🔄 ${t('up.reproc.boek')}`}
           </button>
 
           {reproc.done && reproc.error && (
@@ -638,10 +637,12 @@ export default function UploadClient() {
             <div style={{ marginTop: 12 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: '0 0 6px' }}>
                 {reproc.summary.booked > 0
-                  ? `✓ ${reproc.summary.booked} bestand(en) geboekt — ${reproc.summary.turnoverDays} dag(en) kassa-omzet${reproc.summary.ledgerDays ? `, ${reproc.summary.ledgerDays} dag(en) controle-check` : ''}.`
-                  : 'Geen nieuwe kassa-/grootboek-bestanden gevonden om te boeken.'}
-                {reproc.summary.review > 0 && <span style={{ color: M3.warn }}> · {reproc.summary.review} nakijken in Dagomzet</span>}
-                {reproc.summary.failed > 0 && <span style={{ color: M3.error }}> · {reproc.summary.failed} mislukt</span>}
+                  ? (reproc.summary.ledgerDays
+                    ? t('up.reproc.geboektLedger', { booked: reproc.summary.booked, days: reproc.summary.turnoverDays, ledgerDays: reproc.summary.ledgerDays })
+                    : t('up.reproc.geboekt', { booked: reproc.summary.booked, days: reproc.summary.turnoverDays }))
+                  : t('up.reproc.geenNieuwe')}
+                {reproc.summary.review > 0 && <span style={{ color: M3.warn }}> · {t('up.reproc.nakijken', { n: reproc.summary.review })}</span>}
+                {reproc.summary.failed > 0 && <span style={{ color: M3.error }}> · {t('up.nMislukt', { n: reproc.summary.failed })}</span>}
               </p>
               {(reproc.results ?? []).filter((r) => r.status !== 'skip').slice(0, 40).map((r, i) => (
                 <p key={i} style={{ fontSize: 12, margin: '2px 0', color: r.status === 'booked' ? M3.success : r.status === 'review' ? M3.warn : r.status === 'error' ? M3.error : M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -650,7 +651,7 @@ export default function UploadClient() {
               ))}
               {reproc.summary.booked > 0 && (
                 <Link href="/dashboard/dagomzet" style={{ display: 'inline-block', marginTop: 8, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '7px 14px' }}>
-                  Naar Dagomzet →
+                  {t('up.naarDagomzet')} →
                 </Link>
               )}
             </div>
@@ -662,8 +663,8 @@ export default function UploadClient() {
           <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, color: M3.neutral }}>
               {busyCount > 0
-                ? `Bezig met verwerken… ${items.length - busyCount}/${items.length} klaar`
-                : `Klaar — ${items.length} bestand(en) verwerkt`}
+                ? t('up.bezigVerwerken', { done: items.length - busyCount, total: items.length })
+                : t('up.klaarVerwerkt', { n: items.length })}
             </span>
             {/* [BLOB-CLEANUP] De lijst opruimen zonder de pagina te verlaten. Naast het schoonvegen
                 van het scherm is dit de enige plek waar het geheugen van de vorige batch tussentijds
@@ -697,7 +698,7 @@ export default function UploadClient() {
                 : M3.outlineVariant
               const isImg = it.file.type.startsWith('image/')
               // The at-a-glance summary of WHAT the file is (so you don't open each one).
-              const extracted = [it.vendor, it.total != null ? eur.format(it.total) : null, it.number ? `nr. ${it.number}` : null]
+              const extracted = [it.vendor, it.total != null ? eur.format(it.total) : null, it.number ? t('up.nr', { n: it.number }) : null]
                 .filter(Boolean).join('  ·  ')
               return (
                 <div key={it.id} style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderInlineStart: `4px solid ${border}`, borderRadius: 12, padding: '10px 12px' }}>
@@ -722,9 +723,9 @@ export default function UploadClient() {
                         <p style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{extracted}</p>
                       )}
                       <p style={{ fontSize: 12, color: it.status === 'error' ? (it.rateLimited || it.fairUse ? M3.warn : M3.error) : it.status === 'duplicate' || it.couldNotRead || it.multiInvoice ? M3.warn : M3.neutral, margin: '2px 0 0', lineHeight: 1.4 }}>
-                        {it.status === 'queued' ? (it.message || 'In wachtrij…')
-                          : it.status === 'busy' ? 'Bezig met lezen…'
-                          : it.message || (d ? d.label : 'Klaar')}
+                        {it.status === 'queued' ? (it.message || t('up.inWachtrij'))
+                          : it.status === 'busy' ? t('up.bezigLezen')
+                          : it.message || (d ? t(d.label) : t('up.klaar'))}
                       </p>
                       {/* [UPLOAD-VERIFY] Open the file itself to check it — without leaving the page. */}
                       {it.preview && (it.status === 'done' || it.status === 'error' || it.status === 'duplicate') && (
@@ -744,7 +745,7 @@ export default function UploadClient() {
                       // [AUTO-ADVANCE-HONESTY] The badge names the OUTCOME, not just the type:
                       // "Factuur" on a row the app already booked reads as "still to do".
                       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: it.multiInvoice ? '#7C5800' : it.autoVerified ? '#0B5A28' : d.color, background: it.multiInvoice ? '#FEE8C4' : it.autoVerified ? '#E6F4EA' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
-                        {it.multiInvoice ? `${it.multiInvoice} facturen` : it.autoVerified ? 'Automatisch geboekt' : d.label}
+                        {it.multiInvoice ? t('up.nFacturen', { n: it.multiInvoice }) : it.autoVerified ? t('up.autoGeboekt') : t(d.label)}
                       </span>
                     ) : null}
                   </div>
@@ -756,7 +757,7 @@ export default function UploadClient() {
                     {it.status === 'error' && !it.noRetry && (
                       <button onClick={() => retry(it)}
                         style={{ marginTop: 8, background: 'transparent', color: M3.primary, border: `1px solid ${M3.primaryContainer}`, borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-                        ↻ Opnieuw proberen
+                        ↻ {t('inkoop.opnieuwProberen')}
                       </button>
                     )}
                     {/* Bij fair use is de uitweg geen herhaling maar een keuze — en die staat op
@@ -781,7 +782,7 @@ export default function UploadClient() {
                     {it.status === 'error' && it.tooBig && (
                       <button onClick={() => void shrinkAndRetry(it)} disabled={it.shrinking}
                         style={{ marginTop: 8, background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: it.shrinking ? 'default' : 'pointer', opacity: it.shrinking ? 0.6 : 1, fontFamily: FONT }}>
-                        {it.shrinking ? 'Bezig met verkleinen…' : 'Verklein en probeer opnieuw'}
+                        {it.shrinking ? t('up.bezigVerkleinen') : t('up.verkleinProbeer')}
                       </button>
                     )}
                     {/* [DUP-ARCHIVED] De bestaande factuur staat in Genegeerd → terugzetten is de
@@ -789,7 +790,7 @@ export default function UploadClient() {
                     {it.status === 'duplicate' && it.archived && (
                       <button onClick={() => restoreIgnored(it)} disabled={it.restoring}
                         style={{ marginTop: 8, background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: it.restoring ? 'default' : 'pointer', fontFamily: FONT, opacity: it.restoring ? 0.6 : 1 }}>
-                        {it.restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
+                        {it.restoring ? t('act.bezig') : t('up.terugzettenGenegeerd')}
                       </button>
                     )}
                     {it.status === 'duplicate' && it.canForce && (
@@ -812,30 +813,28 @@ export default function UploadClient() {
                 — niet gelezen, dubbel, of mislukt — dan is de batch wél af maar niet schoon, en dan
                 hoort er geen ✓ boven te staan dat de eigenaar laat ophouden met kijken. */}
             <p style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
-              {unread.length + dups.length + errs.length === 0 ? 'Klaar ✓' : 'Klaar — met aandachtspunten'}
+              {unread.length + dups.length + errs.length === 0 ? t('up.klaarVink') : t('up.klaarAandacht')}
             </p>
             <p style={{ fontSize: 13, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-              {autoBooked > 0 && <><strong style={{ color: M3.success }}>{autoBooked} automatisch geboekt</strong> · </>}
-              {toVerify > 0 && <>{toVerify} factuur/bon te controleren · </>}
-              {countBy('bank') > 0 && <>{countBy('bank')} bankafschrift · </>}
-              {countBy('turnover') > 0 && <>{countBy('turnover')} kassa-omzet · </>}
-              {countBy('ledger') > 0 && <>{countBy('ledger')} controle-check · </>}
-              {countBy('document') > 0 && <>{countBy('document')} bestand · </>}
-              {countBy('statement') > 0 && <>{countBy('statement')} rekeningoverzicht · </>}
+              {autoBooked > 0 && <><strong style={{ color: M3.success }}>{t('up.nAutoGeboekt', { n: autoBooked })}</strong> · </>}
+              {toVerify > 0 && <>{t('up.nTeControleren', { n: toVerify })} · </>}
+              {countBy('bank') > 0 && <>{t('up.nBankafschrift', { n: countBy('bank') })} · </>}
+              {countBy('turnover') > 0 && <>{t('up.nKassaOmzet', { n: countBy('turnover') })} · </>}
+              {countBy('ledger') > 0 && <>{t('up.nControleCheck', { n: countBy('ledger') })} · </>}
+              {countBy('document') > 0 && <>{t('up.nBestand', { n: countBy('document') })} · </>}
+              {countBy('statement') > 0 && <>{t('up.nRekeningoverzicht', { n: countBy('statement') })} · </>}
               {/* Eigen post, want dit is een getal waar de eigenaar nog iets mee moet en dat
                   vroeger onzichtbaar opging in "X bestand". */}
-              {unread.length > 0 && <span style={{ color: M3.warn }}>{unread.length} niet gelezen · </span>}
-              {multiFiles > 0 && <span style={{ color: M3.warn }}>{multiFiles} bestand(en) met meerdere facturen · </span>}
-              {dups.length > 0 && <>{dups.length} dubbel · </>}
-              {errs.length > 0 && <span style={{ color: M3.error }}>{errs.length} mislukt</span>}
+              {unread.length > 0 && <span style={{ color: M3.warn }}>{t('up.nNietGelezen', { n: unread.length })} · </span>}
+              {multiFiles > 0 && <span style={{ color: M3.warn }}>{t('up.nMeerdereFacturen', { n: multiFiles })} · </span>}
+              {dups.length > 0 && <>{t('up.nDubbel', { n: dups.length })} · </>}
+              {errs.length > 0 && <span style={{ color: M3.error }}>{t('up.nMislukt', { n: errs.length })}</span>}
             </p>
             {/* [UNREAD-HONESTY] Wat "niet gelezen" betekent en wat eraan te doen is — één keer,
                 zoals het blok hieronder dat voor "automatisch geboekt" doet. */}
             {unread.length > 0 && (
               <p style={{ fontSize: 12.5, color: '#8A5A00', background: '#FEF7E0', border: '1px solid #F3D99B', borderRadius: 10, padding: '10px 12px', margin: '0 0 12px', lineHeight: 1.5 }}>
-                {unread.length === 1 ? 'Eén bestand staat' : `${unread.length} bestanden staan`} veilig in je bestanden, maar
-                {unread.length === 1 ? ' kon' : ' konden'} niet automatisch gelezen worden — er is dus niets van geboekt.
-                Was het een factuur of bon? Maak er dan een scherpere foto van, of controleer het zelf in Bestanden.
+                {unread.length === 1 ? t('up.unreadEen') : t('up.unreadMeer', { n: unread.length })}
               </p>
             )}
             {/* [UPLOAD-ERRORS] De knop telt alleen wat een herkansing kan halen. Stond hier eerst
@@ -845,10 +844,10 @@ export default function UploadClient() {
               <div style={{ marginBottom: 12 }}>
                 <button onClick={retryAllFailed}
                   style={{ background: M3.error, color: '#fff', border: 'none', borderRadius: 999, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
-                  ↻ Alle {retryable} mislukte opnieuw proberen
+                  ↻ {t('up.alleOpnieuw', { n: retryable })}
                 </button>
                 <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 2px 0', lineHeight: 1.45 }}>
-                  Mislukt komt meestal door de limiet van 240 documenten per uur of een tijdelijke leesfout — opnieuw proberen lost het vaak op.
+                  {t('up.misluktUitleg')}
                 </p>
               </div>
             )}
@@ -856,15 +855,13 @@ export default function UploadClient() {
                 a purchase invoice, nothing paid, and checkable on Inkoopfacturen. */}
             {autoBooked > 0 && (
               <p style={{ fontSize: 12.5, color: '#0B5A28', background: '#E6F4EA', border: '1px solid #B7E1C4', borderRadius: 10, padding: '10px 12px', margin: '0 0 12px', lineHeight: 1.5 }}>
-                {autoBooked === 1 ? 'Eén factuur was' : `${autoBooked} facturen waren`} zeker genoeg om zelf te controleren
-                en {autoBooked === 1 ? 'is' : 'zijn'} meteen geboekt als inkoopfactuur — klaar voor je boekhouder.
-                Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.
+                {autoBooked === 1 ? t('up.autoGeboektEen') : t('up.autoGeboektMeer', { n: autoBooked })}
               </p>
             )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {autoBooked > 0 && (
                 <Link href="/dashboard/incoming/manage?filter=auto" style={{ fontSize: 13, fontWeight: 600, color: '#0B5A28', textDecoration: 'none', background: '#E6F4EA', borderRadius: 999, padding: '8px 14px' }}>
-                  Naar Inkoopfacturen →
+                  {t('up.naarInkoop')} →
                 </Link>
               )}
               {toVerify > 0 && (
@@ -874,12 +871,12 @@ export default function UploadClient() {
               )}
               {countBy('bank') > 0 && (
                 <Link href="/dashboard/bank" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
-                  Naar Bank →
+                  {t('up.naarBank')} →
                 </Link>
               )}
               {countBy('turnover') > 0 && (
                 <Link href="/dashboard/dagomzet" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
-                  Naar Dagomzet →
+                  {t('up.naarDagomzet')} →
                 </Link>
               )}
               {/* [UNREAD-HONESTY] Ook de niet-gelezen bestanden staan in Bestanden. Nu unread uit
@@ -887,7 +884,7 @@ export default function UploadClient() {
                   anders zónder weg erheen eindigen — precies de batch die er een nodig heeft. */}
               {(countBy('document') > 0 || unread.length > 0 || countBy('statement') > 0) && (
                 <Link href="/dashboard/bestanden" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
-                  Naar Bestanden →
+                  {t('up.naarBestanden')} →
                 </Link>
               )}
             </div>

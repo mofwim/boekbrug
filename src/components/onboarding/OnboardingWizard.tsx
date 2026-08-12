@@ -302,8 +302,8 @@ export function OnboardingWizard({
         // wizard bleef staan heeft geen sessie meer, en moet weten dat hij opnieuw moet inloggen.
         setSaveError(
           res.status === 401
-            ? "Je sessie is verlopen — log opnieuw in om je aanmelding af te ronden."
-            : "Afronden mislukt — controleer je verbinding en probeer het opnieuw."
+            ? t('onb.sessieVerlopenAfronden')
+            : t('onb.afrondenMislukt')
         );
         setFinishing(false);
         return; // stay on page — user can retry
@@ -312,7 +312,7 @@ export function OnboardingWizard({
       window.location.href = "/dashboard";
     } catch (err) {
       console.error("[BOEK-015] finish error:", err);
-      setSaveError("Afronden mislukt — controleer je verbinding en probeer het opnieuw.");
+      setSaveError(t('onb.afrondenMislukt'));
       setFinishing(false);
     }
   }
@@ -369,7 +369,7 @@ export function OnboardingWizard({
             body: JSON.stringify({ invoice_start: invoiceStart.trim() }),
           });
           if (!res.ok) {
-            setNumberingError("Kon de nummering niet opslaan — probeer opnieuw of sla over.");
+            setNumberingError(t('onb.nummeringMislukt'));
             return;
           }
         }
@@ -393,7 +393,7 @@ export function OnboardingWizard({
         const boekhouder = accountantEmail.trim();
         if (boekhouder) {
           if (!EMAIL_REGEX.test(boekhouder)) {
-            setInviteError("Dit e-mailadres klopt niet — controleer het of laat het leeg.");
+            setInviteError(t('onb.emailKloptNiet'));
             setSaving(false);
             return;
           }
@@ -405,8 +405,8 @@ export function OnboardingWizard({
           if (!res.ok) {
             setInviteError(
               res.status === 429
-                ? "Te veel uitnodigingen achter elkaar — wacht even, of sla deze stap over."
-                : "De uitnodiging kon niet verstuurd worden. Probeer het opnieuw of sla over."
+                ? t('onb.teVeelUitnodigingen')
+                : t('onb.uitnodigingMislukt')
             );
             setSaving(false);
             return;
@@ -452,7 +452,7 @@ export function OnboardingWizard({
         const klant = clientEmail.trim();
         if (klant) {
           if (!EMAIL_REGEX.test(klant)) {
-            setInviteError("Dit e-mailadres klopt niet — controleer het of laat het leeg.");
+            setInviteError(t('onb.emailKloptNiet'));
             setSaving(false);
             return;
           }
@@ -464,8 +464,8 @@ export function OnboardingWizard({
           if (!res.ok) {
             setInviteError(
               res.status === 429
-                ? "Te veel uitnodigingen achter elkaar — wacht even, of sla deze stap over."
-                : "De uitnodiging kon niet verstuurd worden. Probeer het opnieuw of sla over."
+                ? t('onb.teVeelUitnodigingen')
+                : t('onb.uitnodigingMislukt')
             );
             setSaving(false);
             return;
@@ -483,7 +483,7 @@ export function OnboardingWizard({
       setSaving(false); // only reset on actual error
       // [TRUST-ONBOARDING] Tell the user the step did NOT save (they stay put, data
       // intact) instead of silently swallowing it and appearing to advance.
-      setSaveError("Opslaan mislukt — controleer je verbinding en probeer opnieuw.");
+      setSaveError(t('onb.opslaanMislukt'));
     }
     // Note: no finally — finish() navigates away, component unmounts naturally
   }
@@ -522,7 +522,7 @@ export function OnboardingWizard({
     } catch (err) {
       console.error("[STIL-STRANDEN] handleSkip error:", err);
       setSaving(false);
-      setSaveError("Overslaan mislukt — controleer je verbinding en probeer opnieuw.");
+      setSaveError(t('onb.overslaanMislukt'));
     }
   }
 
@@ -539,15 +539,15 @@ export function OnboardingWizard({
       if (!res.ok) {
         setSaveError(
           res.status === 401
-            ? "Je sessie is verlopen — log opnieuw in om opnieuw te beginnen."
-            : "Opnieuw beginnen is niet gelukt. Je gegevens staan er nog; probeer het zo opnieuw."
+            ? t('onb.sessieVerlopenReset')
+            : t('onb.resetMislukt')
         );
         setResetting(false);
         setShowResetConfirm(false);
         return;
       }
     } catch {
-      setSaveError("Opnieuw beginnen is niet gelukt — controleer je verbinding.");
+      setSaveError(t('onb.resetVerbinding'));
       setResetting(false);
       setShowResetConfirm(false);
       return;
@@ -681,10 +681,10 @@ export function OnboardingWizard({
               firstName={firstName}
               role="zzp"
               missingSendFields={[
-                !company.company_name.trim() && "bedrijfsnaam",
-                !company.btw_number.trim() && "BTW-nummer",
-                !company.kvk_number.trim() && "KvK-nummer",
-                !company.address.trim() && "adres",
+                !company.company_name.trim() && t('onb.veldBedrijfsnaam'),
+                !company.btw_number.trim() && t('onb.veldBtw'),
+                !company.kvk_number.trim() && t('onb.veldKvk'),
+                !company.address.trim() && t('onb.veldAdres'),
               ].filter(Boolean) as string[]}
             />
           )}
@@ -919,10 +919,10 @@ function StepWelcome({ firstName }: { firstName: string }) {
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        {["Alle facturen op één plek", "AI leest je documenten automatisch", "Nooit meer een factuur kwijt"].map((t) => (
-          <div key={t} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        {[t('onb.puntAlles'), t('onb.puntAI'), t('onb.puntKwijt')].map((punt) => (
+          <div key={punt} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <span style={{ color: M3.success, fontSize: "16px" }}>✓</span>
-            <span style={{ fontSize: "15px", color: "#5f6368" }}>{t}</span>
+            <span style={{ fontSize: "15px", color: "#5f6368" }}>{punt}</span>
           </div>
         ))}
       </div>
@@ -939,8 +939,8 @@ function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void })
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>{t('onb.aanpassen')}</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title={t('onb.zzp')} desc="Ik stuur en ontvang facturen" />
-        <ChoiceCard active={role === "accountant"} onClick={() => setRole("accountant")} icon="📊" title={t('onb.boekhouder')} desc="Ik beheer facturen voor klanten" />
+        <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title={t('onb.zzp')} desc={t('onb.zzpDesc')} />
+        <ChoiceCard active={role === "accountant"} onClick={() => setRole("accountant")} icon="📊" title={t('onb.boekhouder')} desc={t('onb.boekhouderDesc')} />
       </div>
     </div>
   );
@@ -960,8 +960,7 @@ function StepInvoiceStart({ value, onChange, error }: {
           {t('onb.nummer')}
         </h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          Kom je van een ander programma? Vul je volgende factuurnummer in —
-          wij gaan verder waar jij gebleven bent.
+          {t('onb.anderProgramma')}
         </p>
       </div>
 
@@ -977,7 +976,7 @@ function StepInvoiceStart({ value, onChange, error }: {
       {/* live confirmation — the "understanding loop" */}
       {!trimmed && (
         <div style={{ fontSize: "14px", color: "#5f6368" }}>
-          {t('onb.laatLeeg')} <strong>{year}0001</strong> te beginnen.
+          {t('onb.laatLeeg', { number: `${year}0001` })}
         </div>
       )}
       {trimmed && preview && preview.ok && (
@@ -985,8 +984,8 @@ function StepInvoiceStart({ value, onChange, error }: {
           background: "#e9f9ef", border: "1px solid #34a853", borderRadius: "14px",
           padding: "14px 16px", fontSize: "15px", color: "#202124",
         }}>
-          <div>✓ Je eerste factuur wordt: <strong>{preview.first}</strong></div>
-          <div style={{ marginTop: "4px", color: "#5f6368" }}>De volgende: {preview.next}</div>
+          <div>✓ {t('onb.eersteWordt')} <strong>{preview.first}</strong></div>
+          <div style={{ marginTop: "4px", color: "#5f6368" }}>{t('onb.volgendeNummer', { number: preview.next })}</div>
         </div>
       )}
       {trimmed && preview && !preview.ok && preview.reason !== "empty" && (
@@ -1013,7 +1012,7 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>{t('onb.jouwBedrijf')}</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>{t('onb.alleenNaamUitleg')}</p>
       </div>
       {/* [FUNNEL-OVERDRACHT] Stil voorvullen zonder het te zeggen voelt als een systeem dat meer
           van je weet dan je dacht. Eén zin maakt er herkenning van — en noemt meteen dat het uit
@@ -1026,8 +1025,7 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
             borderRadius: 10, padding: "10px 12px", fontSize: 14, lineHeight: 1.5,
           }}
         >
-          We hebben dit overgenomen uit de factuur die je net maakte. Controleer het even en pas
-          aan wat niet klopt.
+          {t('onb.overgenomenUitFactuur')}
         </div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -1200,8 +1198,7 @@ function StepAccountant({ accountantEmail, setAccountantEmail, error }: {
           je concepten blijven van jou alleen.
         </p>
         <p style={{ margin: "10px 0 0", fontSize: "14.5px", color: "#5f6368", lineHeight: 1.55 }}>
-          Nog geen boekhouder? Sla dit gerust over. Je kunt hem later in één klik koppelen, en
-          voor hem is BoekBrug altijd gratis.
+          {t('onb.nogGeenBoekhouder')}
         </p>
       </div>
       <Input id="ob-boekhouder" label={t('onb.boekhouderEmail')} placeholder="jan@boekhouder.nl"
@@ -1242,19 +1239,19 @@ function StepDone({ firstName, role, missingSendFields }: { firstName: string; r
       <span style={{ fontSize: "60px" }}>{needsMore ? "👍" : "🎉"}</span>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
-          {needsMore ? `Bijna klaar, ${firstName}!` : `Je bent klaar, ${firstName}!`}
+          {needsMore ? t('onb.bijnaKlaar', { name: firstName }) : t('onb.jeBentKlaar', { name: firstName })}
         </h2>
         <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#5f6368" }}>
           {role === "accountant"
-            ? "Nodig klanten uit en beheer alles op één plek."
+            ? t('onb.klaarAccountant')
             : needsMore
-              ? "Je kunt meteen aan de slag. Eén ding nog voordat je facturen kunt versturen:"
-              : "BoekBrug is ingericht en klaar voor gebruik."}
+              ? t('onb.klaarNogEen')
+              : t('onb.klaarIngericht')}
         </p>
       </div>
       {needsMore ? (
         <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "start", width: "100%", lineHeight: 1.5 }}>
-          {t('onb.vulNog')} <strong>{missingSendFields.join(", ")}</strong> in bij <strong>{t('onb.instellingen')}</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
+          {t('onb.vulNog', { fields: missingSendFields.join(', ') })}
         </div>
       ) : (
         <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "start", width: "100%" }}>

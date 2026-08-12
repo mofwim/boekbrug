@@ -379,7 +379,8 @@ test("[INCASSO-CONFIRM] the switch sits after the sentence, and IS the whole con
   // card, and that gate renders the collapsed list — an assertion there would match nothing and
   // pass forever, which is the shape of half the defects in this file.
   const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
-  const label = src.indexOf("schrijft automatisch af");
+  // [TAAL] Anchored on the key, not the Dutch sentence.
+  const label = src.indexOf("t('ink.schrijftAf'");
   const toggle = src.indexOf('role="switch"');
   assert.ok(label > 0 && toggle > 0, "both the label and the switch must still be there");
   assert.ok(label < toggle, "the switch renders after its label, not in front of it");
@@ -799,7 +800,8 @@ test("[KAS-AUTO-BOOK] the flag the booking leaves behind can be answered both wa
   // The button must live INSIDE the amount-only warning: a "Klopt, gecontroleerd" anywhere else
   // answers a question nobody asked.
   const warn = client.indexOf("amount_only");
-  const btn = client.indexOf("Klopt, gecontroleerd");
+  // [TAAL] Anchored on the key, not the Dutch label.
+  const btn = client.indexOf("t('bank.kloptGecontroleerd')");
   assert.ok(warn > 0 && btn > warn, "the confirm sits inside the flag it answers");
   const route = code("src/app/api/bank/match-checked/route.ts");
   assert.match(route, /auto_match_reason: null/, "which is what clearing it means");
@@ -1300,7 +1302,8 @@ test("[NAREKENEN] the audit is reachable, and looks like what it is", () => {
 
   // Not a primary button. It changes nothing, and a control that looks like an action is read as
   // one that fixes things — on a screen where nothing here fixes anything.
-  const btn = src.slice(src.indexOf("runBooksAudit()"), src.indexOf("Reken mijn boeken na"));
+  // [TAAL] The end anchor is the key of the button label.
+  const btn = src.slice(src.indexOf("runBooksAudit()"), src.indexOf("t('ink.rekenBoekenNa')"));
   assert.doesNotMatch(
     btn, /background: M3\.primary/,
     "the audit button is styled as a primary action — it only reports, and looking like it acts " +
@@ -2668,7 +2671,7 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
   assert.match(api, /\.is\('invoice_id', null\)/, "only files still waiting are offered");
   const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
   assert.match(ui, /\/api\/documents\/\$\{docId\}\/read-as-invoice/, "the panel must call it");
-  assert.match(ui, /Lees opnieuw/, "and offer it in words");
+  assert.match(ui, /t\('ink\.reread\.knop'\)/, "and offer it in words"); // [TAAL] key, not sentence
   // The answer is always a sentence. A silent button on the one panel whose purpose is honesty
   // about what went missing would be the wrong thing twice over.
   assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
@@ -2995,14 +2998,21 @@ test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually hon
   // situations now have their own answers, and the backfill keeps only the one it can serve.
   assert.match(
     ui,
-    /Die bijlage halen wij niet nog een keer op/,
+    /t\('ink\.email\.echteFactuur'\)/, // [TAAL] the sentence lives in the catalogue now
     "the panel must say plainly that a listed attachment will not be fetched again — that is the " +
       "fact the old advice contradicted",
   );
   assert.match(
     ui,
-    /niet<\/em> tussen staat\? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen/,
+    /t\('ink\.email\.misFactuur'\)\} \{t\('ink\.email\.nietTussen'\)/, // [TAAL] catalogued now
     "…and keep the backfill only for the case it can serve: an invoice that is NOT in this list",
+  );
+  // The sentence moved into the catalogue, so the wording check follows it there. The word
+  // "niet" IS the advice — a key split once dropped it and told the owner the exact opposite.
+  assert.match(
+    code("src/lib/i18n/messages.ts"),
+    /'ink\.email\.misFactuur':[^\n]*niet tussen staat\?/,
+    "the catalogue sentence must keep 'niet': the backfill only serves invoices NOT in the list",
   );
 
   // The date, because "open de e-mail" is advice an owner can only follow if they can find it.
@@ -3282,7 +3292,7 @@ test("[LINKS-WRITE-HONEST] a lost payment link is logged, returned, and said out
     "the bank screen must handle the warning",
   );
   assert.match(
-    ui, /niet volledig vastgelegd/,
+    ui, /t\('bank\.betaaldNietVastgelegd'/, // [TAAL] key, not sentence
     "…and tell the owner in Dutch, with something to do about it — telling them 'Bevestigd ✓' and " +
       "letting them walk into the loop is the worse of the two failures",
   );
@@ -3428,13 +3438,13 @@ test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered do
   // its confirm promised to send "de factuur" — while sending a quote CONVERTS it into a numbered
   // invoice (send route, isConversion). One tap, irreversible, and the word offerte never appeared.
   assert.match(edit, /setInvoiceType\(invoice\.invoice_type/, "the screen must load the type");
-  assert.match(edit, /quote \? 'Offerte bewerken'/, "…and title itself honestly");
+  assert.match(edit, /quote \? t\('bewerk\.titel\.offerte'\)/, "…and title itself honestly"); // [TAAL]
   assert.match(
-    edit, /hiermee wordt deze offerte een OFFICIËLE FACTUUR/,
+    edit, /t\('bewerk\.omzetWaarschuwing'\)/, // [TAAL] key, not sentence
     "…and the confirm must say that sending a quote issues an invoice number, before it happens",
   );
   assert.match(
-    edit, /quote \? '✉ Omzetten naar factuur en versturen'/,
+    edit, /quote \? `✉ \$\{t\('bewerk\.omzettenVersturen'\)\}`/,
     "…and the button must be labelled with what it does",
   );
 });
@@ -3800,7 +3810,7 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
   );
 
   assert.match(
-    list, /wordt omgezet naar een officiële factuur met een nieuw factuurnummer/,
+    list, /t\('lijst\.send\.proForma'/, // [TAAL] key, not sentence
     "the confirm must still say what happens, in full",
   );
 });
@@ -3935,7 +3945,7 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
   );
   assert.match(list, /send-offerte/, "…and calls the quote door, not the send route");
   assert.match(
-    list, /Offerte versturen/,
+    list, /t\('lijst\.offerte\.versturen'\)/, // [TAAL] key, not label
     "…labelled as what it is — which only became an honest label once the button existed",
   );
 });
@@ -6654,16 +6664,46 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
   const patterns = [
     // A text node: >Some Dutch words<
     /> *([A-ZÉ][^<>{}\n]{3,70}?) *</g,
+    // [TAAL-BLIND] A text node that starts on its OWN line. The pattern above requires the text
+    // on the same line as the `>`, and prettier-formatted JSX rarely does that — which is how a
+    // paragraph of Dutch sat untranslated inside screens this gate called clean. Found by the
+    // owner, on the screen, in Arabic: the worst reviewer to leave it to.
+    />\s*\n\s+([A-ZÉ][^<>{}]{3,150}?)\s*\n\s*[<{]/g,
+    // [TAAL-BLIND] A string inside a JSX expression — {saving ? 'Opslaan…' : 'Wijzigingen
+    // opslaan'} — is rendered text as much as a text node is. Second blind spot, same discovery.
+    /'([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''—-]+){1,12}[.?…]?)'/g,
+    // [TAAL-BLIND] The same string double-quoted. Half the screens quote the other way, and the
+    // wizard's every error message sat in one of these while this gate called the file clean.
+    /"([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''""—;:()-]+){1,16}[.?!…:]?)"/g,
+    // [TAAL-BLIND] A template literal that talks — `Bijna klaar, ${firstName}!` — is a sentence
+    // with a hole in it, which is exactly what a catalogue key with a {param} is for.
+    /`([A-ZÉ][a-zéë]+[^`]{2,120})`/g,
+    // [TAAL-BLIND] A lowercase fragment between tags is a SPLIT sentence — the halves around a
+    // <strong> — and a split cannot survive a language with another word order.
+    /> *([a-zéë]+(?: [a-zéë]+){1,6}[.,]?) *</g,
     // An attribute a user reads.
-    /(?:label|placeholder|title|aria-label)="([^"]{3,70})"/g,
+    /(?:label|placeholder|title|aria-label|desc)="([^"]{3,70})"/g,
     // A message handed to the owner when something goes wrong.
     /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
   ];
   for (const screen of SCREENS) {
   const page = code(screen);
+  // [TAAL-DB] Dutch that is DATA, not screen text — a notification title stored in the
+  // database, message content for the boekhouder. Marked on its own line in the RAW source
+  // (code() strips comments, so the marker must be read before stripping), and the exemption
+  // covers only the quoted strings on marked lines: nothing unmarked slips through with them.
+  const raw = readFileSync(screen, "utf8");
+  const dbExempt = new Set<string>();
+  for (const line of raw.split("\n")) {
+    if (!line.includes("[TAAL-DB]")) continue;
+    for (const q of line.matchAll(/'([^']{3,90})'/g)) dbExempt.add(q[1].trim());
+    for (const q of line.matchAll(/"([^"]{3,90})"/g)) dbExempt.add(q[1].trim());
+    for (const q of line.matchAll(/`([^`]{3,120})`/g)) dbExempt.add(q[1].trim());
+  }
   for (const re of patterns) {
     for (const m of page.matchAll(re)) {
       const text = m[1].trim();
+      if (dbExempt.has(text)) continue;
       // Two Dutch-looking words, or one capitalised Dutch word on its own.
       if (!/[a-zé] [a-zé]|^[A-Z][a-zé]{3,}$/.test(text)) continue;
       if (text.includes("/") || text.includes("http")) continue;

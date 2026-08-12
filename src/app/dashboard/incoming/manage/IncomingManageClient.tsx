@@ -132,17 +132,19 @@ const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
 // (vat-exemption.ts), and renaming them would be a migration, not a rename.
 type VatDeduction = 'direct_taxed' | 'direct_exempt' | 'mixed'
 
-const DEDUCTION_CHOICES: ReadonlyArray<{ value: VatDeduction; label: string; hint: string }> = [
-  { value: 'direct_taxed',  label: 'Belast werk',   hint: 'Alleen voor je BTW-belaste werk — de BTW is volledig aftrekbaar.' },
-  { value: 'mixed',         label: 'Allebei',       hint: 'Dient je belaste én je vrijgestelde werk (huur, energie, boekhouder) — de BTW wordt naar verhouding afgetrokken.' },
-  { value: 'direct_exempt', label: 'Vrijgesteld werk', hint: 'Alleen voor je vrijgestelde werk — hierop bestaat geen recht op aftrek.' },
-]
+// [TAAL] Keys, not sentences: this screen renders in the owner's language, so the copy lives in
+// the message catalogue and these constants only name it.
+const DEDUCTION_CHOICES = [
+  { value: 'direct_taxed',  labelKey: 'ink.kost.belast',      hintKey: 'ink.kost.belast.hint' },
+  { value: 'mixed',         labelKey: 'ink.kost.allebei',     hintKey: 'ink.kost.allebei.hint' },
+  { value: 'direct_exempt', labelKey: 'ink.kost.vrijgesteld', hintKey: 'ink.kost.vrijgesteld.hint' },
+] as const
 
-const DEDUCTION_TOAST: Record<VatDeduction, string> = {
-  direct_taxed:  'Toegewezen aan belast werk — BTW volledig aftrekbaar ✓',
-  mixed:         'Toegewezen aan allebei — BTW naar verhouding ✓',
-  direct_exempt: 'Toegewezen aan vrijgesteld werk — geen aftrek ✓',
-}
+const DEDUCTION_TOAST = {
+  direct_taxed:  'ink.kost.toast.belast',
+  mixed:         'ink.kost.toast.allebei',
+  direct_exempt: 'ink.kost.toast.vrijgesteld',
+} as const
 
 /**
  * [VRIJGESTELD] "What does this cost serve?" — the control that decides how much of a purchase's
@@ -167,6 +169,7 @@ export function CostAttribution({
 }) {
   const t = translator(useLocale())
   const current = DEDUCTION_CHOICES.some(c => c.value === value) ? (value as VatDeduction) : 'mixed'
+  const currentChoice = DEDUCTION_CHOICES.find(c => c.value === current) ?? DEDUCTION_CHOICES[1]
   return (
     <div style={{ marginBottom: 16, padding: '12px 14px', background: 'white', borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}` }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', marginBottom: 8, fontFamily: FONT }}>
@@ -179,7 +182,7 @@ export function CostAttribution({
             <button
               key={choice.value}
               onClick={() => onChange(choice.value)}
-              title={choice.hint}
+              title={t(choice.hintKey)}
               style={{
                 padding: '7px 13px', borderRadius: R.full, cursor: 'pointer',
                 fontSize: 13, fontWeight: 600, fontFamily: FONT,
@@ -188,13 +191,13 @@ export function CostAttribution({
                 color: active ? M3.onPrimary : '#3c4043',
               }}
             >
-              {choice.label}
+              {t(choice.labelKey)}
             </button>
           )
         })}
       </div>
       <div style={{ fontSize: 11.5, color: '#5F6368', marginTop: 8, lineHeight: 1.45, fontFamily: FONT }}>
-        {DEDUCTION_CHOICES.find(c => c.value === current)?.hint}
+        {t(currentChoice.hintKey)}
       </div>
     </div>
   )
@@ -321,7 +324,8 @@ function autoPaidBasis(inv: IncomingRow): { method: string; date: string; eviden
   if (!ap || typeof ap !== 'object') return null
   const o = ap as Record<string, unknown>
   return {
-    method: o.method === 'kas' ? 'contant' : 'met de pas',
+    // [TAAL] The method CODE, not the printed word — the tooltip translates it at render time.
+    method: o.method === 'kas' ? ('kas' as const) : ('pas' as const),
     date: typeof o.date === 'string' ? o.date : '',
     evidence: typeof o.evidence === 'string' ? o.evidence.trim() : '',
   }
@@ -391,12 +395,20 @@ interface MatchRunResult {
 // document" now links to. Counted ⟺ shown: the board counts VERIFIED invoices with no stored PDF,
 // and this tab holds exactly those, so clearing the tab clears the item.
 type FilterTab = 'all' | 'received' | 'paid' | 'auto' | 'geen-document'
-const FILTERS: { id: FilterTab; label: string }[] = [
-  { id: 'all',      label: 'Alle'                  },
-  { id: 'received', label: 'Te betalen'            },
-  { id: 'paid',     label: statusLabel('paid')   },
-  { id: 'auto',     label: 'Automatisch verwerkt'  },
-  { id: 'geen-document', label: 'Zonder origineel'  },
+// [TAAL] 'paid' takes its word from invoice-status (one source for the status vocabulary); the
+// other tabs name their catalogue key here and the component renders it in the owner's language.
+const FILTER_LABEL_KEYS = {
+  all: 'ink.filter.alle',
+  received: 'ink.filter.teBetalen',
+  auto: 'ink.filter.automatisch',
+  'geen-document': 'ink.filter.zonderOrigineel',
+} as const
+const FILTERS: { id: FilterTab }[] = [
+  { id: 'all' },
+  { id: 'received' },
+  { id: 'paid' },
+  { id: 'auto' },
+  { id: 'geen-document' },
 ]
 
 // [ORIGINEEL] Which rows a tab holds. Extracted because the SAME expression was written twice
@@ -674,18 +686,18 @@ export default function IncomingManageClient({
           failed.push({ number: label, reason: payToggleReason(res.status, json) })
         }
       } catch {
-        failed.push({ number: label, reason: 'geen verbinding' })
+        failed.push({ number: label, reason: t('ink.geenVerbinding') })
       }
     }
     setBundleBusy(false)
     if (failed.length === 0) {
-      showToast(okCount === 1 ? 'Betaling teruggedraaid ✓' : `${okCount} betalingen teruggedraaid ✓`)
+      showToast(okCount === 1 ? t('ink.betalingTeruggedraaid') : t('ink.betalingenTeruggedraaid', { n: okCount }))
       return
     }
     const byReason = new Map<string, string[]>()
     for (const f of failed) byReason.set(f.reason, [...(byReason.get(f.reason) ?? []), f.number])
     const parts = [...byReason.entries()].map(([reason, nums]) => `${nums.join(', ')}: ${reason}`)
-    showToast(`${okCount} teruggedraaid ✓ — niet gelukt · ${parts.join(' · ')}`)
+    showToast(t('ink.terugNietGelukt', { n: okCount, reasons: parts.join(' · ') }))
   }
 
   // ── [BUNDEL-BETALING] "Ja, ik heb betaald" for the whole set: one Bank/Contant
@@ -733,17 +745,18 @@ export default function IncomingManageClient({
           failed.push({ number: label, reason })
         }
       } catch {
-        failed.push({ number: label, reason: 'geen verbinding' })
+        failed.push({ number: label, reason: t('ink.geenVerbinding') })
       }
     }
     if (okCount > 0) {
       // One summary notification for the batch (service role via API; non-blocking).
+      // [TAAL] The payload stays Dutch: it is stored server-side as data, not rendered copy.
       try {
         await fetch('/api/notifications/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            title: 'Inkoopfacturen betaald',
-            body: `${okCount} inkoopfacturen zijn gemarkeerd als betaald.`,
+            title: 'Inkoopfacturen betaald', // [TAAL-DB] stored notification content — Dutch by design
+            body: `${okCount} inkoopfacturen zijn gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
             type: 'payment',
           }),
         })
@@ -756,12 +769,12 @@ export default function IncomingManageClient({
     // One line per distinct reason, so "niet gelukt" finally says WHY. Grouped rather than listed
     // per invoice: a batch that trips the same lock five times should read as one problem.
     if (failed.length === 0) {
-      showToast(`${okCount} inkoopfacturen betaald ✓`)
+      showToast(t('ink.bundelBetaald', { n: okCount }))
     } else {
       const byReason = new Map<string, string[]>()
       for (const f of failed) byReason.set(f.reason, [...(byReason.get(f.reason) ?? []), f.number])
       const parts = [...byReason.entries()].map(([reason, nums]) => `${nums.join(', ')}: ${reason}`)
-      showToast(`${okCount} betaald ✓ — niet gelukt · ${parts.join(' · ')}`)
+      showToast(t('ink.bundelNietGelukt', { n: okCount, reasons: parts.join(' · ') }))
     }
     setBundleBusy(false)
     // The lock has a way out and this screen owns the dialog for it — open it once, for the first
@@ -1018,11 +1031,11 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/email/reimport/${inv.id}`, { method: 'POST' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(failureText(res.status, json, 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.'))
+        showToast(failureText(res.status, json, t('ink.opnieuwInlezenMislukt')))
         return
       }
       if (json?.returnedToQueue) {
-        showToast('Opnieuw ingelezen. De factuur staat nu in de controlewachtrij — bevestig daar de nieuwe bedragen.')
+        showToast(t('ink.terugNaarWachtrij'))
         // It genuinely left this list, so the list has to be re-fetched rather than patched.
         router.refresh()
         return
@@ -1058,11 +1071,11 @@ export default function IncomingManageClient({
         // Each refusal says what to DO about it. "Mislukt" on its own is how a dead end starts.
         const err = String(json?.error ?? '')
         showToast(
-          err === 'heeft_al_een_origineel' ? 'Deze factuur heeft al een origineel — ververs de pagina.'
-          : err === 'bestandstype_niet_ondersteund' ? 'Dit bestandstype kan niet: stuur een PDF of een foto (JPG, PNG).'
-          : err === 'bestand_te_groot' ? 'Het bestand is te groot (maximaal 20 MB).'
-          : err === 'not_found' ? 'Deze factuur bestaat niet meer.'
-          : 'Toevoegen is niet gelukt — probeer het nog een keer.',
+          err === 'heeft_al_een_origineel' ? t('ink.origineel.alAanwezig')
+          : err === 'bestandstype_niet_ondersteund' ? t('ink.origineel.bestandstype')
+          : err === 'bestand_te_groot' ? t('ink.origineel.teGroot')
+          : err === 'not_found' ? t('ink.origineel.bestaatNiet')
+          : t('ink.origineel.mislukt'),
         )
         return
       }
@@ -1118,7 +1131,7 @@ export default function IncomingManageClient({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.ok) {
-        showToast(typeof data.error === 'string' ? data.error : 'Instellen mislukt — er is niets gewijzigd')
+        showToast(typeof data.error === 'string' ? data.error : t('ink.instellenMislukt'))
         return
       }
       setIncassoSet(prev => {
@@ -1135,7 +1148,7 @@ export default function IncomingManageClient({
         held: Array.isArray(data.held) ? data.held : [],
         warning: typeof data.warning === 'string' ? data.warning : undefined,
       })
-      if (!on) showToast(`${name} staat niet meer op automatische incasso`)
+      if (!on) showToast(t('ink.incassoUit', { name }))
     } catch {
       showToast(t('inkoop.fout.instellen'))
     } finally {
@@ -1161,7 +1174,7 @@ export default function IncomingManageClient({
         // [UI-HONESTY] The route's refusals are states with a way out named in them ("draai eerst
         // de betaling terug", "je boekhouder heeft deze factuur al verwerkt"). A generic retry
         // message would send the owner at a button that cannot work.
-        showToast(typeof data.error === 'string' ? data.error : 'Omboeken mislukt — er is niets gewijzigd')
+        showToast(typeof data.error === 'string' ? data.error : t('ink.omboekenMislukt'))
         return
       }
       // From the SERVER's answer, never optimistically: this row's sign is what the payment screens,
@@ -1204,10 +1217,13 @@ export default function IncomingManageClient({
   const paidCount     = invoices.filter(i => i.status === 'paid').length
   const listedCount   = invoices.length
   const hiddenCount   = totalCount != null ? Math.max(0, totalCount - listedCount) : 0
-  const nFacturen = (n: number) => `${n} ${n === 1 ? 'factuur' : 'facturen'}`
+  const nFacturen = (n: number) => (n === 1 ? t('ink.nFactuur') : t('ink.nFacturen', { n }))
   // Per-tab counts, so choosing a filter already tells you how much is behind it.
   const tabCount = (id: FilterTab) =>
     id === 'all' ? listedCount : id === 'received' ? receivedCount : id === 'paid' ? paidCount : autoCount
+  // [TAAL] The tab's word in the owner's language — 'paid' from the shared status vocabulary.
+  const filterLabel = (id: FilterTab): string =>
+    id === 'paid' ? statusLabel('paid', taal) : t(FILTER_LABEL_KEYS[id])
 
 
   // Local optimistic patch (no hook — this surface owns its list)
@@ -1235,8 +1251,8 @@ export default function IncomingManageClient({
         // screen whose purpose is to say whether the books are right.
         showToast(
           json?.error === 'lookup_failed'
-            ? 'Narekenen is niet gelukt — wij konden je facturen nu niet lezen. Probeer het zo nog eens.'
-            : 'Narekenen is niet gelukt. Probeer het zo nog eens.',
+            ? t('ink.narekenenLezenMislukt')
+            : t('ink.narekenenMislukt'),
         )
         return
       }
@@ -1277,9 +1293,9 @@ export default function IncomingManageClient({
         // Kept short on purpose — the toast is a single non-wrapping line. A 429 costs the owner
         // nothing: the run is idempotent and the hourly cron does the same work anyway.
         showToast(
-          res.status === 429 ? 'Te vaak gematcht — probeer het straks opnieuw'
-          : res.status === 401 ? 'Sessie verlopen — log opnieuw in'
-          : 'Matchen mislukt — probeer het opnieuw'
+          res.status === 429 ? t('ink.teVaakGematcht')
+          : res.status === 401 ? t('ink.sessieVerlopen')
+          : t('inkoop.fout.matchen')
         )
         return
       }
@@ -1396,7 +1412,7 @@ export default function IncomingManageClient({
         // route `error` is a CODE, and at its 500 it is a raw Postgres message; neither belongs on
         // an owner's phone. No detail → our own Dutch sentence.
         const json = await res.json().catch(() => ({} as { detail?: string }))
-        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
       }
     } catch {
       showToast(t('lijst.fout.verwijderen'))
@@ -1431,7 +1447,7 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/invoice/payment/move?invoiceId=${encodeURIComponent(inv.id)}`)
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(json?.detail || 'Betalingen ophalen mislukt — probeer opnieuw')
+        showToast(json?.detail || t('ink.betalingenOphalenMislukt'))
         return
       }
       const payments = (json?.payments ?? []) as MovePayment[]
@@ -1461,7 +1477,7 @@ export default function IncomingManageClient({
       if (!res.ok) {
         // The move is atomic — a refusal means nothing changed, and the server's sentence says
         // which reason it was. Never our guess: it re-decided on fresher data than we hold.
-        showToast(json?.detail || 'Verplaatsen mislukt — er is niets gewijzigd')
+        showToast(json?.detail || t('ink.verplaatsenMislukt'))
         return
       }
       // Both invoices changed. Patch what the server actually reported rather than assuming:
@@ -1478,7 +1494,9 @@ export default function IncomingManageClient({
         status: json.target_status ?? 'received',
       })
       showToast(
-        `${fmtEur(Number(json.applied ?? 0))} verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}`,
+        target.invoice_number
+          ? t('ink.verplaatstNaarFactuur', { amount: fmtEur(Number(json.applied ?? 0)), number: target.invoice_number })
+          : t('ink.verplaatstNaarGekozen', { amount: fmtEur(Number(json.applied ?? 0)) }),
       )
     } catch {
       showToast(t('inkoop.fout.offlineNiets'))
@@ -1530,12 +1548,12 @@ export default function IncomingManageClient({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // The server asked the same questions of fresher data. Show ITS answer, not ours.
-        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
         return
       }
       setInvoices(prev => prev.filter(i => i.id !== id))
       const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
-      showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten bij Inkomend › Genegeerd')
+      showToast(notices.length > 0 ? notices[0] : t('ink.verwijderdGenegeerd'))
     } catch {
       showToast(t('lijst.fout.verwijderen'))
     } finally {
@@ -1575,12 +1593,12 @@ export default function IncomingManageClient({
       // generic retry: the column exists only after the migration.
       showToast(
         /vat_deduction/.test(error.message)
-          ? 'Toewijzen kan nog niet — de BTW-vrijstellingsmigratie staat nog niet op de database'
-          : 'Toewijzen mislukt — er is niets gewijzigd',
+          ? t('ink.toewijzenMigratie')
+          : t('ink.toewijzenMislukt'),
       )
       return
     }
-    showToast(DEDUCTION_TOAST[value])
+    showToast(t(DEDUCTION_TOAST[value]))
   }
 
   async function markPrepared(inv: IncomingRow) {
@@ -1690,7 +1708,7 @@ export default function IncomingManageClient({
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
       } else {
-        showToast(error.message || 'Bijwerken mislukt')
+        showToast(error.message || t('ink.bijwerkenMislukt'))
       }
     } else if (ctx.newStatus === 'paid') {
       const patch = {
@@ -1705,7 +1723,10 @@ export default function IncomingManageClient({
           amount_paid: (json as { amountPaid?: number }).amountPaid ?? null,
           payment_date: patch.payment_date,
         })
-        showToast(`${fmtEur((json as { applied?: number }).applied ?? 0)} genoteerd · nog ${fmtEur((json as { remaining?: number }).remaining ?? 0)} open`)
+        showToast(t('ink.deelGenoteerd', {
+          applied: fmtEur((json as { applied?: number }).applied ?? 0),
+          remaining: fmtEur((json as { remaining?: number }).remaining ?? 0),
+        }))
       } else {
       // reflect the new payment fields locally
       patchLocal(ctx.id, {
@@ -1715,18 +1736,19 @@ export default function IncomingManageClient({
         payment_prepared_at: null,
       })
       // Notify the user — confirmation (service role via API; non-blocking)
+      // [TAAL] The payload stays Dutch: it is stored server-side as data, not rendered copy.
       try {
         await fetch('/api/notifications/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            title: 'Inkoopfactuur betaald',
-            body: `Inkoopfactuur ${ctx.number} is gemarkeerd als betaald.`,
+            title: 'Inkoopfactuur betaald', // [TAAL-DB] stored notification content — Dutch by design
+            body: `Inkoopfactuur ${ctx.number} is gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
             type: 'payment',
           }),
         })
       } catch { /* non-blocking — payment already succeeded */ }
-      showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
+      showToast(t('ink.factuurBetaald', { number: ctx.number }))
       }
     } else {
       // [PARTIAL-PAY] amount_paid must go with it. The server clears every recorded instalment
@@ -1735,7 +1757,7 @@ export default function IncomingManageClient({
       // "Deels betaald · € X open" for money nobody paid, and the pay dialog then caps the
       // owner at that invented remainder instead of the full total.
       patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null, amount_paid: 0 })
-      showToast(`Betaling ongedaan gemaakt`)
+      showToast(t('ink.betalingOngedaan'))
       // [REMOVAL-ALTERNATIVE] Opened from the remove dialog → hand back to it, now that the money
       // is off and decideRemoval will actually allow the removal. Only on a SUCCEEDED undo: this
       // sits inside the `!error` branch, so a refusal leaves both the payment and the invoice
@@ -1775,12 +1797,14 @@ export default function IncomingManageClient({
       return
     }
 
+    // [TAAL] The request itself stays Dutch: it is read by the boekhouder, not by the owner's
+    // language setting (the accountant surface is deliberately Dutch-only).
     const res = await fetch('/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         receiver_id: link.accountant_id,
-        content: `Verzoek: maak de verwerking van inkoopfactuur ${verwerktCtx.number} ongedaan, zodat ik de betaalstatus kan aanpassen.`,
+        content: `Verzoek: maak de verwerking van inkoopfactuur ${verwerktCtx.number} ongedaan, zodat ik de betaalstatus kan aanpassen.`, // [TAAL-DB] message to the boekhouder — Dutch by design
       }),
     })
 
@@ -1851,7 +1875,7 @@ export default function IncomingManageClient({
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
                 {selectMode ? 'close' : 'checklist'}
               </span>
-              {selectMode ? 'Klaar' : 'Meerdere betalen'}
+              {selectMode ? t('ink.klaar') : t('ink.meerdereBetalen')}
             </button>
             {/* [BULK-UNDO] The reverse, and it needs to be its own entry point rather than a second
                 action inside one selection: the two modes select DIFFERENT rows (open vs settled),
@@ -1891,7 +1915,7 @@ export default function IncomingManageClient({
             onClick={runReconciliation}
             disabled={matchBusy}
             className="inko-match"
-            title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
+            title={t('ink.matchenUitleg')}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '8px 16px',
@@ -1912,7 +1936,7 @@ export default function IncomingManageClient({
             >
               {matchBusy ? 'refresh' : 'link'}
             </span>
-            {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
+            {matchBusy ? t('ink.bezigMatchen') : t('ink.matchenMetBank')}
           </button>
 
           {/* ── [NAREKENEN] "Reken mijn boeken na" ─────────────────────────────────
@@ -1931,7 +1955,7 @@ export default function IncomingManageClient({
             onClick={() => void runBooksAudit()}
             disabled={auditBusy}
             className="inko-audit"
-            title="Leest je facturen terug uit de documenten zelf en zegt of de bedragen er zo op staan. Verandert niets."
+            title={t('ink.narekenenUitleg')}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '8px 16px',
@@ -1948,7 +1972,7 @@ export default function IncomingManageClient({
             >
               {auditBusy ? 'refresh' : 'rule'}
             </span>
-            {auditBusy ? 'Bezig met narekenen…' : 'Reken mijn boeken na'}
+            {auditBusy ? t('ink.bezigNarekenen') : t('ink.rekenBoekenNa')}
           </button>
           </div>
         </div>
@@ -1966,7 +1990,7 @@ export default function IncomingManageClient({
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }}>date_range</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {INVOICE_PERIODS.find(p => p.id === period)?.label ?? 'Alle periodes'}
+                  {INVOICE_PERIODS.find(p => p.id === period)?.label ?? t('ink.allePeriodes')}
                   {periodWindow.label ? ` · ${periodWindow.label}` : ''}
                 </span>
               </span>
@@ -2008,7 +2032,7 @@ export default function IncomingManageClient({
                 {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
                     screen even with the menu closed and the list scrolled away. */}
                 <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'} · {tabCount(filter)}
+                  {filterLabel(filter)} · {tabCount(filter)}
                 </span>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
                   {showFilterMenu ? 'expand_less' : 'expand_more'}
@@ -2022,7 +2046,7 @@ export default function IncomingManageClient({
                       onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
-                      <span>{f.label}</span>
+                      <span>{filterLabel(f.id)}</span>
                       {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
                           sees the split without having to pick each tab to find out. */}
                       <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: FONT_NUM, color: filter === f.id ? M3.onPrimaryContainer : '#5F6368', background: filter === f.id ? 'rgba(255,255,255,0.6)' : M3.surfaceVariant, borderRadius: R.full, padding: '1px 8px', flexShrink: 0 }}>
@@ -2044,7 +2068,7 @@ export default function IncomingManageClient({
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>swap_vert</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {SORTS.find(s => s.id === sortBy)?.label ?? 'Sorteren'}
+                    {SORTS.find(s => s.id === sortBy)?.label ?? t('inkoop.sorteren')}
                   </span>
                 </span>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>
@@ -2083,10 +2107,11 @@ export default function IncomingManageClient({
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: '#B3261E', margin: 0, lineHeight: 1.4 }}>
-                We konden je {readFailed.join(' en ')} niet ophalen
+                {/* [TAAL] `readFailed` holds the server's own Dutch source names — data, shown as-is. */}
+                {t('ink.bronnenNietOpgehaald', { sources: readFailed.join(' en ') })}
               </p>
               <p style={{ fontSize: 12.5, color: '#8C1D18', margin: '3px 0 0', lineHeight: 1.45 }}>
-                Deze lijst is daardoor niet compleet — ga er niet van uit dat wat je hier ziet alles is.
+                {t('ink.lijstNietCompleet')}
               </p>
               <button
                 onClick={() => router.refresh()}
@@ -2110,7 +2135,7 @@ export default function IncomingManageClient({
                 {t('inkoop.fout.incassoOphalen')}
               </p>
               <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.45 }}>
-                Facturen die je bank zelf afschrijft staan hieronder daarom gewoon als &quot;te betalen&quot;. Betaal ze niet nog een keer.
+                {t('ink.incassoWaarschuwing')}
               </p>
               <button
                 onClick={() => router.refresh()}
@@ -2134,16 +2159,18 @@ export default function IncomingManageClient({
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', flexShrink: 0, marginTop: 1 }}>fact_check</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 700, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
-                  {scan.total === 1 ? '1 geboekte factuur klopt niet' : `${scan.total} geboekte facturen kloppen niet`}
+                  {scan.total === 1 ? t('ink.scan.kloptNietEen') : t('ink.scan.kloppenNiet', { n: scan.total })}
                 </p>
                 <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
                   {/* [SCAN-WHOLE-BOOK] Which set was counted, in the sentence itself. Without this
                       the same number means two different things depending on a read the owner
                       cannot see the outcome of. */}
                   {scanIsWholeBook
-                    ? `Gecontroleerd: al je ${scan.scanned} bevestigde inkoopfacturen.`
-                    : `Gecontroleerd: de ${scan.scanned} ${scan.scanned === 1 ? 'factuur' : 'facturen'} op dit scherm — je oudere betaalde facturen konden we nu niet nakijken.`}
-                  {' '}Deze tellen nu mee in je openstaande saldo en in de btw die je terugvraagt.
+                    ? t('ink.scan.heelBoek', { n: scan.scanned })
+                    : scan.scanned === 1
+                      ? t('ink.scan.alleenLijstEen')
+                      : t('ink.scan.alleenLijst', { n: scan.scanned })}
+                  {' '}{t('ink.scan.teltMee')}
                 </p>
                 {/* Findings that are not on this screen (already paid, past the 200 most recent).
                     Named rather than quietly dropped: the worklist button below can only show rows
@@ -2151,8 +2178,8 @@ export default function IncomingManageClient({
                 {findingsOutsideList > 0 && (
                   <p style={{ fontSize: 12.5, color: '#7C5800', margin: '3px 0 0', lineHeight: 1.5 }}>
                     {findingsOutsideList === 1
-                      ? 'Eén ervan staat niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek hem op factuurnummer of leverancier.'
-                      : `${findingsOutsideList} ervan staan niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek ze op factuurnummer of leverancier.`}
+                      ? t('ink.scan.buitenLijstEen')
+                      : t('ink.scan.buitenLijst', { n: findingsOutsideList })}
                   </p>
                 )}
                 {/* Per quarter, newest first. The filed marker is the part that changes what the
@@ -2163,11 +2190,11 @@ export default function IncomingManageClient({
                     const n = q.signConflict + q.creditSuspect + q.arithmetic
                     return (
                       <p key={q.quarter ?? 'geen'} style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.5 }}>
-                        <strong>{q.quarter ? quarterLabelOf(q.quarter) : 'Zonder factuurdatum'}</strong>
-                        {' · '}{n} {n === 1 ? 'factuur' : 'facturen'}
+                        <strong>{q.quarter ? quarterLabelOf(q.quarter) : t('ink.zonderFactuurdatum')}</strong>
+                        {' · '}{n === 1 ? t('ink.nFactuur') : t('ink.nFacturen', { n })}
                         {' · '}{fmtEur(q.amount)}
-                        {filed === true && <span style={{ fontWeight: 700 }}> · aangifte al ingediend — dit wordt een correctie</span>}
-                        {filed === null && <span> · we konden niet nagaan of dit kwartaal al is ingediend</span>}
+                        {filed === true && <span style={{ fontWeight: 700 }}> · {t('ink.aangifteIngediend')}</span>}
+                        {filed === null && <span> · {t('ink.kwartaalOnbekend')}</span>}
                       </p>
                     )
                   })}
@@ -2176,7 +2203,7 @@ export default function IncomingManageClient({
                   onClick={() => setOnlyFlagged(v => !v)}
                   style={{ marginTop: 10, padding: '7px 14px', borderRadius: R.full, border: 'none', background: onlyFlagged ? '#7C5800' : '#fff', color: onlyFlagged ? '#fff' : '#7C5800', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}
                 >
-                  {onlyFlagged ? 'Toon alle facturen' : 'Toon alleen deze'}
+                  {onlyFlagged ? t('ink.toonAlle') : t('ink.toonAlleenDeze')}
                 </button>
               </div>
             </div>
@@ -2189,7 +2216,7 @@ export default function IncomingManageClient({
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginBottom: 10, padding: '10px 14px', borderRadius: R.md, border: '1px solid #D2E3FC', background: '#E8F0FE', color: '#1A73E8', cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, textAlign: 'start' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>auto_awesome</span>
-            {autoCount === 1 ? '1 factuur is automatisch verwerkt — bekijk' : `${autoCount} facturen zijn automatisch verwerkt — bekijk`}
+            {autoCount === 1 ? t('ink.autoNudgeEen') : t('ink.autoNudge', { n: autoCount })}
           </button>
         )}
         {/* [SEARCH] In-page live filter */}
@@ -2225,15 +2252,15 @@ export default function IncomingManageClient({
           <div aria-live="polite" style={{ marginBottom: 10, padding: '0 2px' }}>
             <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
               {rawS
-                ? `${nFacturen(displayed.length)} gevonden`
+                ? t('ink.gevonden', { facturen: nFacturen(displayed.length) })
                 // [PERIODE] Met een periode aan gaat ALLES op deze regel over die periode. De
                 // "12 facturen · 5 te betalen · 7 betaald"-samenvatting hieronder telt de hele
                 // lijst, en die naast een bedrag zetten dat over juni gaat, is twee waarheden.
                 : period !== 'all'
-                  ? `${nFacturen(displayed.length)} in ${periodWindow.label}`
+                  ? t('ink.inPeriode', { facturen: nFacturen(displayed.length), period: periodWindow.label ?? '' })
                   : filter === 'all'
-                    ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
-                    : `${displayed.length} van ${nFacturen(listedCount)}`}
+                    ? t('ink.telling', { facturen: nFacturen(listedCount), open: receivedCount, paid: paidCount })
+                    : t('ink.vanTelling', { shown: displayed.length, facturen: nFacturen(listedCount) })}
             </p>
             {/* [OPEN-TOTAL] Het bedrag onder de aantallen: wat er van deze rijen nog te betalen is,
                 wat er al betaald is, en — zodra die twee allebei bestaan — het totaal. Groter en
@@ -2246,12 +2273,12 @@ export default function IncomingManageClient({
               <p style={{ fontSize: 14, fontFamily: FONT, margin: '4px 0 0', fontWeight: 700, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '0 10px' }}>
                 {showsOpen && (
                   <span style={{ color: '#7C5800' }}>
-                    {fmtEur(openSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>nog te betalen</span>
+                    {fmtEur(openSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>{t('ink.nogTeBetalen')}</span>
                   </span>
                 )}
                 {showsPaid && (
                   <span style={{ color: '#137333' }}>
-                    {fmtEur(paidSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>betaald</span>
+                    {fmtEur(paidSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>{t('ink.betaaldLabel')}</span>
                   </span>
                 )}
                 {/* Het totaal staat erbij zodra het IETS toevoegt: als er alleen openstaande rijen
@@ -2261,7 +2288,7 @@ export default function IncomingManageClient({
                     (settledAmountSigned in partial-payment.ts bewaakt precies die identiteit). */}
                 {showsOpen && showsPaid && (
                   <span style={{ color: M3.onSurface }}>
-                    {fmtEur(totalSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>totaal</span>
+                    {fmtEur(totalSumDisplayed)} <span style={{ fontWeight: 600, fontSize: 12.5 }}>{t('ink.totaalLabel')}</span>
                   </span>
                 )}
               </p>
@@ -2271,8 +2298,7 @@ export default function IncomingManageClient({
                 lijst staat: de knop zet je terug op "Alle periodes", waar ze wél staan. */}
             {datelessHidden > 0 && (
               <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
-                {datelessHidden === 1 ? '1 factuur heeft' : `${datelessHidden} facturen hebben`} geen factuurdatum en
-                {datelessHidden === 1 ? ' valt' : ' vallen'} buiten deze periode.{' '}
+                {datelessHidden === 1 ? t('ink.geenDatumEen') : t('ink.geenDatum', { n: datelessHidden })}{' '}
                 <button
                   onClick={() => setPeriod('all')}
                   style={{ background: 'none', border: 'none', padding: 0, color: M3.primary, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'underline' }}
@@ -2296,7 +2322,7 @@ export default function IncomingManageClient({
                 we do not know then. The banner at the top of the page has already said so. */}
             {hiddenCount > 0 && !loadIncomplete && period === 'all' && (
               <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
-                Je hebt er {totalCount} in totaal. Deze lijst toont de {receivedCount} openstaande en de {paidCount} meest recente betaalde.
+                {t('ink.totaalDisclosure', { total: totalCount ?? 0, open: receivedCount, paid: paidCount })}
               </p>
             )}
           </div>
@@ -2304,7 +2330,7 @@ export default function IncomingManageClient({
 
         {displayed.length === 0 ? (
           rawS ? (
-            <p style={{ textAlign: 'center', color: '#8e8e93', fontSize: 14, padding: '40px 16px' }}>Geen facturen gevonden voor &ldquo;{rawS}&rdquo;.</p>
+            <p style={{ textAlign: 'center', color: '#8e8e93', fontSize: 14, padding: '40px 16px' }}>{t('ink.geenGevondenVoor', { query: rawS })}</p>
           ) : loadIncomplete ? (
             // [NO-SILENT-EMPTY] "Geen inkoopfacturen" is a claim about the owner's books. With a
             // failed read we have no basis for it, and on this screen the claim is the dangerous
@@ -2316,10 +2342,10 @@ export default function IncomingManageClient({
             <div style={{ textAlign: 'center', padding: '48px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>date_range</span>
               <p style={{ fontSize: 15.5, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>
-                Geen inkoopfacturen in {periodWindow.label}
+                {t('ink.geenInPeriode', { period: periodWindow.label ?? '' })}
               </p>
               <p style={{ fontSize: 13.5, color: '#5F6368', fontFamily: FONT, marginBottom: 14 }}>
-                Je hebt er {nFacturen(listedCount)} in andere periodes.
+                {t('ink.anderePeriodes', { facturen: nFacturen(listedCount) })}
               </p>
               <button
                 onClick={() => setPeriod('all')}
@@ -2546,18 +2572,18 @@ export default function IncomingManageClient({
                         )}
                         {xq && (
                           <span
-                            title={`Voor de btw telt deze factuur mee in ${xq.bookedQuarterLabel} (factuurdatum). De betaling kwam binnen in ${xq.paidQuarterLabel}.`}
+                            title={t('ink.xqUitleg', { booked: xq.bookedQuarterLabel, paid: xq.paidQuarterLabel })}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
-                            Betaald in {xq.paidQuarterLabel}
+                            {t('ink.betaaldIn', { quarter: xq.paidQuarterLabel })}
                           </span>
                         )}
                         {/* [AUTO-ADVANCE] booked automatically (clean + confident) — a review cue,
                             not an alarm. The owner can open the invoice and undo if it's wrong. */}
                         {isAutoVerified(inv) && (
                           <span
-                            title="Deze factuur was duidelijk leesbaar en is automatisch geverifieerd. Controleer indien je twijfelt."
+                            title={t('ink.autoVerifiedUitleg')}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#E8F0FE', color: '#1A73E8', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_awesome</span>
@@ -2573,12 +2599,15 @@ export default function IncomingManageClient({
                           if (!basis) return null
                           return (
                             <span
-                              title={
-                                `Deze bon is automatisch als betaald geboekt (${basis.method}` +
-                                `${basis.date ? `, ${basis.date}` : ''}). ` +
-                                `${basis.evidence ? `Op de bon staat "${basis.evidence}". ` : 'De bon vermeldt de betaalwijze zelf. '}` +
-                                'Klopt het niet? Zet de betaling hieronder terug — er verandert niets aan de factuur zelf.'
-                              }
+                              title={(() => {
+                                const methodWord = basis.method === 'kas' ? t('ink.methodeContant') : t('ink.methodePas')
+                                const details = basis.date ? `${methodWord}, ${basis.date}` : methodWord
+                                return (
+                                  `${t('ink.bonAutoGeboekt', { details })} ` +
+                                  `${basis.evidence ? t('ink.bonAutoStaat', { evidence: basis.evidence }) : t('ink.bonAutoVermeldt')} ` +
+                                  t('ink.bonAutoKlopt')
+                                )
+                              })()}
                               style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
@@ -2639,9 +2668,9 @@ export default function IncomingManageClient({
                             made — and "geen vervaldatum" reads as a gap in the reading rather than
                             as a document that has none by nature. */}
                         {!payable ? null : inv.due_date ? (
-                          <span style={{ whiteSpace: 'nowrap' }}>· uiterlijk {fmtDateSmart(inv.due_date, thisYear)}</span>
+                          <span style={{ whiteSpace: 'nowrap' }}>· {t('ink.uiterlijk', { date: fmtDateSmart(inv.due_date, thisYear) })}</span>
                         ) : (
-                          <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
+                          <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· {t('ink.geenVervaldatum')}</span>
                         )}
                         {/* [BETAALDATUM] WANNEER hij betaald is. De kaart zei "Betaald" en noemde
                             alleen de factuurdatum en de vervaldatum — twee datums die er allebei
@@ -2660,10 +2689,14 @@ export default function IncomingManageClient({
                             zonder datum), dan zeggen we niets in plaats van een datum te verzinnen. */}
                         {isPaid && inv.payment_date && (
                           <span
-                            title={`Betaald op ${fmtDateSmart(inv.payment_date, thisYear)}${inv.payment_method === 'kas' ? ' — contant' : inv.payment_method === 'bank' ? ' — via de bank' : ''}`}
+                            title={
+                              inv.payment_method === 'kas' ? t('ink.betaaldOpContant', { date: fmtDateSmart(inv.payment_date, thisYear) })
+                              : inv.payment_method === 'bank' ? t('ink.betaaldOpBank', { date: fmtDateSmart(inv.payment_date, thisYear) })
+                              : t('ink.betaaldOpTitel', { date: fmtDateSmart(inv.payment_date, thisYear) })
+                            }
                             style={{ whiteSpace: 'nowrap', color: '#0B8043' }}
                           >
-                            · betaald {fmtDateSmart(inv.payment_date, thisYear)}
+                            · {t('ink.betaaldOp', { date: fmtDateSmart(inv.payment_date, thisYear) })}
                           </span>
                         )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
@@ -2671,7 +2704,7 @@ export default function IncomingManageClient({
                             that is too little for a document that works the other way. */}
                         {isCreditnota && (
                           <span
-                            title="Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt"
+                            title={t('ink.creditnotaUitleg')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: '#E6F4EA', color: '#0B8043' }}
                           >
                             {t('ink.creditnota')}
@@ -2692,10 +2725,10 @@ export default function IncomingManageClient({
                         {signConflict && (
                           <button
                             onClick={e => { e.stopPropagation(); setCreditAsk({ inv, stance, proceed: null }) }}
-                            title="Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in 'nog te betalen' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken."
+                            title={t('ink.creditPositiefUitleg')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.errorContainer, color: M3.error, border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
-                            ⚠ Creditnota staat positief
+                            ⚠ {t('ink.creditPositief')}
                           </button>
                         )}
                         {creditSignal.suspected && (
@@ -2704,7 +2737,7 @@ export default function IncomingManageClient({
                             title={creditnotaSignalText(creditSignal) ?? ''}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.warningContainer, color: '#7C5800', border: 'none', cursor: 'pointer', fontFamily: FONT }}
                           >
-                            ⚠ Lijkt een creditnota
+                            ⚠ {t('ink.lijktCreditnota')}
                           </button>
                         )}
                         {/* [ARITHMETIC-VISIBLE] The breakdown does not add up. The full reason —
@@ -2716,7 +2749,7 @@ export default function IncomingManageClient({
                             title={health.reasons.join(' · ')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
                           >
-                            ⚠ Bedragen kloppen niet
+                            ⚠ {t('ink.bedragenKloppenNiet')}
                           </span>
                         )}
                         {/* [AUTO-INCASSO] The bank takes this one. It stands where "te laat" would
@@ -2725,7 +2758,7 @@ export default function IncomingManageClient({
                             incasso is the one invoice on the screen that needs nothing. */}
                         {incasso && (
                           <span
-                            title={inv.due_date ? `Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)} — automatische incasso` : 'Automatische incasso'}
+                            title={inv.due_date ? t('ink.vervalIncasso', { date: fmtDateSmart(inv.due_date, thisYear) }) : t('ink.autoIncasso')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.surfaceVariant, color: '#5F6368', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sync_alt</span>
@@ -2736,10 +2769,13 @@ export default function IncomingManageClient({
                             cannot be late. */}
                         {daysLate !== null && (
                           <span
-                            title={`Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)} — ${daysLate} ${daysLate === 1 ? 'dag' : 'dagen'} te laat`}
+                            title={t('ink.vervalTeLaat', {
+                              date: fmtDateSmart(inv.due_date, thisYear),
+                              late: daysLate === 1 ? t('ink.teLaatEen') : t('ink.teLaat', { n: daysLate }),
+                            })}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
                           >
-                            {daysLate} {daysLate === 1 ? 'dag' : 'dagen'} te laat
+                            {daysLate === 1 ? t('ink.teLaatEen') : t('ink.teLaat', { n: daysLate })}
                           </span>
                         )}
                         {/* Still to come — the same spot, calm by default. Only the last week
@@ -2747,14 +2783,19 @@ export default function IncomingManageClient({
                             instead of every open bill shouting at once. */}
                         {daysLeft !== null && (
                           <span
-                            title={`Vervaldatum ${fmtDateSmart(inv.due_date, thisYear)}${daysLeft === 0 ? ' — vandaag te betalen' : ` — nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}`}
+                            title={daysLeft === 0
+                              ? t('ink.vervalVandaag', { date: fmtDateSmart(inv.due_date, thisYear) })
+                              : t('ink.vervalNog', {
+                                  date: fmtDateSmart(inv.due_date, thisYear),
+                                  left: daysLeft === 1 ? t('ink.nogEenDag') : t('ink.nogDagen', { n: daysLeft }),
+                                })}
                             style={{
                               whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px',
                               background: daysLeft <= 7 ? M3.warningContainer : M3.surfaceVariant,
                               color:      daysLeft <= 7 ? '#7C5800'           : '#5F6368',
                             }}
                           >
-                            {daysLeft === 0 ? 'vandaag' : `nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}
+                            {daysLeft === 0 ? t('ink.vandaag') : daysLeft === 1 ? t('ink.nogEenDag') : t('ink.nogDagen', { n: daysLeft })}
                           </span>
                         )}
                       </div>
@@ -2797,14 +2838,14 @@ export default function IncomingManageClient({
                               if (processingId === inv.id || checkingId === inv.id) return
                               requestPay(inv)
                             }}
-                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald — tik om de rest te noteren`}
+                            title={t('ink.deelbetalingUitleg', { paid: paid.toFixed(2), total: tot.toFixed(2) })}
                             style={{
                               fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
                               border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
                               cursor: 'pointer', fontFamily: FONT,
                             }}
                           >
-                            Deels betaald · € {remaining.toFixed(2)} open
+                            {t('ink.deelsBetaaldOpen', { remaining: remaining.toFixed(2) })}
                           </button>
                         )
                       })()}
@@ -2842,7 +2883,7 @@ export default function IncomingManageClient({
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : isPrepared
                               ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> {t('inkoop.hebJeBetaald')}</>
-                              : 'Heb je betaald?'}
+                              : t('inkoop.hebJeBetaald')}
                         </button>
                       )}
 
@@ -2895,9 +2936,9 @@ export default function IncomingManageClient({
                             than printed as "—", which would read like a field we failed to fill. */}
                         <InfoLine label={t('inkoop.factuurdatum')} value={fmtDateSmart(inv.invoice_date, thisYear)} />
                         {inv.due_date && <InfoLine label={t('inkoop.vervaldatum')} value={fmtDateSmart(inv.due_date, thisYear)} />}
-                        <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
-                        <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
+                        <InfoLine label={t('ink.exclBtw')} value={fmtEur(totalExBtw)} mono />
+                        <InfoLine label={((r) => r == null ? t('ink.btw') : t('ink.btwPct', { rate: r }))(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={t('ink.inclBtw')} value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.payment_date && <InfoLine label={t('lijst.betaaldatum')} value={fmtDate(inv.payment_date)} />}
                         {inv.payment_method && <InfoLine label={t('inkoop.methode')} value={inv.payment_method === 'kas' ? t('lijst.contant') : t('lijst.bank')} />}
                       </div>
@@ -2924,9 +2965,7 @@ export default function IncomingManageClient({
                           So the honest line is what to expect, not a button to press. */}
                       {!payable && !isPaid && (
                         <p style={{ fontSize: 12, color: '#0B57D0', background: '#E3F0FD', borderRadius: R.md, padding: '10px 12px', margin: '0 0 8px', lineHeight: 1.45 }}>
-                          Dit is geld dat jóu toekomt — je hoeft niets te betalen. Krijg je het
-                          teruggestort, dan herkennen we dat in je bankafschrift. Verrekent je
-                          leverancier het met een volgende factuur, dan gaat het daar vanzelf vanaf.
+                          {t('ink.creditKomtToe')}
                         </p>
                       )}
 
@@ -2983,7 +3022,7 @@ export default function IncomingManageClient({
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                               {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
                             </span>
-                            {rereadingId === inv.id ? 'Bezig met opnieuw inlezen…' : 'Opnieuw inlezen'}
+                            {rereadingId === inv.id ? t('ink.opnieuwBezig') : t('ink.opnieuwInlezenKnop')}
                           </button>
                         )}
                         {/* [ORIGINEEL] "Origineel toevoegen" — the answer the client never had.
@@ -3023,7 +3062,7 @@ export default function IncomingManageClient({
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                               {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
                             </span>
-                            {attachingId === inv.id ? 'Bezig met toevoegen…' : 'Origineel toevoegen'}
+                            {attachingId === inv.id ? t('ink.bezigToevoegen') : t('ink.origineelToevoegen')}
                           </label>
                         )}
                         {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
@@ -3042,7 +3081,7 @@ export default function IncomingManageClient({
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                               {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
                             </span>
-                            {moveLoadingId === inv.id ? 'Bezig…' : 'Betaling verplaatsen'}
+                            {moveLoadingId === inv.id ? t('ink.bezig') : t('inkoop.betalingVerplaatsen')}
                           </button>
                         )}
                         {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
@@ -3069,7 +3108,7 @@ export default function IncomingManageClient({
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                               picture_as_pdf
                             </span>
-                            Bekijk PDF
+                            {t('ink.bekijkPdf')}
                           </button>
                         )}
                       </div>
@@ -3099,12 +3138,12 @@ export default function IncomingManageClient({
                               sentence that asks you to think about it. */}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface }}>
-                              {inv.client_name} schrijft automatisch af
+                              {t('ink.schrijftAf', { name: inv.client_name ?? '' })}
                             </div>
                             <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 2, lineHeight: 1.45 }}>
                               {isIncassoRow(inv)
-                                ? 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.'
-                                : 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.'}
+                                ? t('ink.incassoAanUitlegKort')
+                                : t('ink.incassoZetAan')}
                             </div>
                           </div>
                           {/* A drawn switch rather than an icon glyph: the icon was 26px of ink with
@@ -3115,7 +3154,7 @@ export default function IncomingManageClient({
                           <button
                             role="switch"
                             aria-checked={isIncassoRow(inv)}
-                            aria-label={`${inv.client_name ?? 'Deze leverancier'} schrijft automatisch af`}
+                            aria-label={t('ink.schrijftAf', { name: inv.client_name ?? t('ink.dezeLeverancier') })}
                             onClick={e => { e.stopPropagation(); setIncassoAsk({ inv, on: !isIncassoRow(inv) }) }}
                             disabled={incassoBusy === inv.id}
                             style={{
@@ -3171,7 +3210,7 @@ export default function IncomingManageClient({
                   <button
                     onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
                     disabled={processingId === inv.id}
-                    aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
+                    aria-label={t('ink.verwijderFactuur', { number: inv.invoice_number ?? '' })}
                     title={t('lijst.verwijderen')}
                     style={{
                       flexShrink: 0, marginTop: 12, width: 36, height: 36, borderRadius: R.full,
@@ -3205,12 +3244,12 @@ export default function IncomingManageClient({
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
-                {undoPlan.eligible.length} geselecteerd · {fmtEur(undoPlan.total)}
+                {t('ink.geselecteerd', { n: undoPlan.eligible.length, amount: fmtEur(undoPlan.total) })}
               </p>
               <p style={{ fontSize: 11.5, color: '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {undoPlan.eligible.length === 0
-                  ? 'Kies betaalde facturen om terug te draaien'
-                  : 'Deze facturen komen terug op "Te betalen"'}
+                  ? t('ink.kiesBetaalde')
+                  : t('ink.komenTerug')}
               </p>
             </div>
             <button
@@ -3224,7 +3263,7 @@ export default function IncomingManageClient({
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
               <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>undo</span>
-              {bundleBusy ? 'Bezig…' : 'Terugdraaien'}
+              {bundleBusy ? t('ink.bezig') : t('ink.terugdraaien')}
             </button>
           </div>
         </div>
@@ -3242,14 +3281,14 @@ export default function IncomingManageClient({
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
-                {selectedRows.length} geselecteerd · {fmtEur(round2(openSum))}
+                {t('ink.geselecteerd', { n: selectedRows.length, amount: fmtEur(round2(openSum)) })}
               </p>
               <p style={{ fontSize: 11.5, color: bundleBuilt && !bundleBuilt.ok ? M3.error : '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {selectedRows.length < 2
-                  ? 'Kies minimaal 2 open inkoopfacturen'
+                  ? t('ink.kiesMinimaal')
                   : bundleBuilt && !bundleBuilt.ok
                     ? bundleBuilt.error
-                    : `Eén betaling aan ${bundleBuilt?.beneficiaryName ?? 'deze leverancier'}`}
+                    : t('ink.eenBetalingAan', { name: bundleBuilt?.beneficiaryName ?? t('ink.dezeLeverancierKlein') })}
               </p>
             </div>
             <button
@@ -3263,7 +3302,7 @@ export default function IncomingManageClient({
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
-              {bundleBusy ? 'Bezig…' : 'Betalen'}
+              {bundleBusy ? t('ink.bezig') : t('inkoop.betalen')}
             </button>
           </div>
         </div>
@@ -3286,7 +3325,7 @@ export default function IncomingManageClient({
             setBundleCtx(null)
             setBundlePayRows(rows)
           }}
-          onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+          onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
         />
       )}
 
@@ -3297,15 +3336,15 @@ export default function IncomingManageClient({
           owner is saying yes to a number rather than to an open tap. ── */}
       {photoAsk !== null && (
         <BottomSheet
-          title={photoAsk === 1 ? '1 foto ook narekenen?' : `${photoAsk} foto's ook narekenen?`}
+          title={photoAsk === 1 ? t('ink.fotoNarekenenEen') : t('ink.fotoNarekenen', { n: photoAsk })}
           body={[
-            'Deze facturen zijn een foto of scan, dus er is geen tekst om in te zoeken. Wij kunnen ze wél opnieuw laten uitlezen en het bedrag daarmee vergelijken.',
-            'Dat is een tweede lezing van de afbeelding — iets zekerder dan niets, en niet hetzelfde als de letterlijke tekstcontrole hierboven.',
+            t('ink.fotoUitlegScan'),
+            t('ink.fotoUitlegTweede'),
             photoAsk > 40
-              ? `Per keer rekenen we er maximaal 40 na. Er blijven er dan ${photoAsk - 40} over voor een volgende ronde.`
-              : 'Er verandert niets aan je facturen — wij rekenen alleen na.',
+              ? t('ink.fotoMax', { n: photoAsk - 40 })
+              : t('ink.fotoNietsVerandert'),
           ].join('\n\n')}
-          confirmLabel="Ja, lees de foto's terug"
+          confirmLabel={t('ink.fotoJa')}
           confirmBg={M3.primary}
           onConfirm={() => { setPhotoAsk(null); setAuditReport(null); void runBooksAudit(true) }}
           onCancel={() => setPhotoAsk(null)}
@@ -3331,18 +3370,19 @@ export default function IncomingManageClient({
         const extra: string[] = []
         if (auditReport.withoutDocument > 0) {
           extra.push(
-            `${auditReport.withoutDocument === 1 ? '1 factuur heeft' : `${auditReport.withoutDocument} facturen hebben`} ` +
-            'geen origineel document, dus daar viel niets naast te leggen. Voeg het origineel toe via de factuur zelf.',
+            auditReport.withoutDocument === 1
+              ? t('ink.geenOrigineelEen')
+              : t('ink.geenOrigineel', { n: auditReport.withoutDocument }),
           )
         }
         if (auditReport.truncated > 0) {
-          extra.push(`Er stonden er nog ${auditReport.truncated} in de rij. Draai het nog een keer om die ook na te rekenen.`)
+          extra.push(t('ink.nogInRij', { n: auditReport.truncated }))
         }
         return (
           <BottomSheet
             title={auditTitle(summary)}
             body={[...auditLines(summary, auditReport.photosChecked ?? 0), ...extra].join('\n\n')}
-            confirmLabel="Sluiten"
+            confirmLabel={t('inkoop.sluiten')}
             confirmBg={M3.surfaceVariant}
             onConfirm={() => setAuditReport(null)}
             onCancel={() => setAuditReport(null)}
@@ -3357,7 +3397,7 @@ export default function IncomingManageClient({
           decides the real set and reports it afterwards in the existing result sheet.
           Turning it OFF is the milder direction and says so: nothing already booked is undone. ── */}
       {incassoAsk && (() => {
-        const name = (incassoAsk.inv.client_name ?? 'deze leverancier').trim()
+        const name = (incassoAsk.inv.client_name ?? t('ink.dezeLeverancierKlein')).trim()
         const key = supplierNameKey(name)
         const openFromSupplier = invoices.filter(
           (i) => i.status === 'received' && supplierNameKey((i.client_name ?? '').trim()) === key,
@@ -3366,21 +3406,21 @@ export default function IncomingManageClient({
         return (
           <BottomSheet
             title={incassoAsk.on
-              ? `${name} zelf laten afschrijven?`
-              : `Automatische incasso uitzetten voor ${name}?`}
+              ? t('ink.incassoAanVraag', { name })
+              : t('ink.incassoUitVraag', { name })}
             body={incassoAsk.on
               ? [
-                  'Facturen van deze leverancier krijgen geen betaalknop meer — je zou anders betalen wat de bank al heeft afgeschreven.',
+                  t('ink.incassoGeenKnop'),
                   openFromSupplier.length > 0
-                    ? `Wat de bank al heeft geïncasseerd zetten we meteen op betaald. Nu staan er ${openFromSupplier.length} facturen van ${name} open, samen ${fmtEur(round2(openSumHere))} — daarvan gaat op betaald wat we in je bankafschrift terugvinden.`
-                    : 'Wat de bank al heeft geïncasseerd zetten we meteen op betaald.',
-                  'Je krijgt daarna een overzicht van precies welke facturen zijn verwerkt en welke niet.',
+                    ? t('ink.incassoMeteenBetaaldOpen', { n: openFromSupplier.length, name, amount: fmtEur(round2(openSumHere)) })
+                    : t('ink.incassoMeteenBetaald'),
+                  t('ink.incassoOverzicht'),
                 ].join('\n\n')
               : [
-                  `Facturen van ${name} krijgen weer een betaalknop.`,
-                  'Wat al op betaald staat, blijft staan — dit draait niets terug.',
+                  t('ink.incassoWeerKnop', { name }),
+                  t('ink.incassoBlijftStaan'),
                 ].join('\n\n')}
-            confirmLabel={incassoAsk.on ? 'Ja, zet aan' : 'Ja, zet uit'}
+            confirmLabel={incassoAsk.on ? t('ink.jaZetAan') : t('ink.jaZetUit')}
             confirmBg={incassoAsk.on ? M3.primary : M3.surfaceVariant}
             onConfirm={() => { const a = incassoAsk; setIncassoAsk(null); void toggleIncasso(a.inv, a.on) }}
             onCancel={() => setIncassoAsk(null)}
@@ -3397,7 +3437,7 @@ export default function IncomingManageClient({
         <BottomSheet
           title={bulkUndoTitle(bulkUndoPlan)}
           body={bulkUndoWarnings(bulkUndoPlan).join('\n\n')}
-          confirmLabel="Ja, draai terug"
+          confirmLabel={t('ink.jaDraaiTerug')}
           confirmBg={M3.warningContainer}
           onConfirm={() => executeBulkUndo(bulkUndoPlan)}
           onCancel={() => setBulkUndoPlan(null)}
@@ -3407,9 +3447,9 @@ export default function IncomingManageClient({
       {/* ── [BUNDEL-BETALING] One Bank/Contant + date answer for the whole set ── */}
       {bundlePayRows && (
         <BottomSheet
-          title={`${bundlePayRows.length} inkoopfacturen markeren als betaald?`}
-          body={`De geselecteerde inkoopfacturen van ${bundlePayRows[0]?.client_name ?? 'deze leverancier'} worden allemaal als betaald gemarkeerd.`}
-          confirmLabel="Ja, markeer als betaald"
+          title={t('ink.bundelMarkeren', { n: bundlePayRows.length })}
+          body={t('ink.bundelMarkerenUitleg', { name: bundlePayRows[0]?.client_name ?? t('ink.dezeLeverancierKlein') })}
+          confirmLabel={t('ink.jaMarkeerBetaald')}
           confirmBg={M3.success}
           onConfirm={() => { /* paymentChoice handles it */ }}
           onCancel={() => setBundlePayRows(null)}
@@ -3435,8 +3475,7 @@ export default function IncomingManageClient({
               {t('inkoop.betalingVerplaatsen')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 18px' }}>
-              Van inkoopfactuur {moveCtx.inv.invoice_number || '—'} naar de factuur waar deze betaling bij hoort.
-              Het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.
+              {t('ink.verplaatsUitleg', { number: moveCtx.inv.invoice_number || '—' })}
             </p>
 
             {moveCtx.payments.map(p => (
@@ -3444,29 +3483,27 @@ export default function IncomingManageClient({
                 <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
                   {fmtEur(p.amount_applied)}
                   {p.paid_on ? ` · ${fmtDate(p.paid_on)}` : ''}
-                  {p.method === 'kas' ? ' · Contant' : p.transaction_id ? ' · Bank' : ''}
+                  {p.method === 'kas' ? ` · ${t('lijst.contant')}` : p.transaction_id ? ` · ${t('lijst.bank')}` : ''}
                 </div>
 
                 {/* A pre-[PARTIAL-PAY] link carries no amount. Moving it would mean guessing how
                     much travels, and guessing is the one thing this must never do. */}
                 {!p.movable ? (
                   <p style={{ fontSize: 13, color: '#9a5b00', background: '#fff4e5', border: '1px solid #ffd9a8', borderRadius: R.md, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
-                    Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Draai hem terug
-                    en boek hem opnieuw op de juiste factuur.
+                    {t('ink.geenBedragVastgelegd')}
                   </p>
                 ) : p.targets.length === 0 ? (
                   <p style={{ fontSize: 13, color: '#5F6368', background: '#F8F9FA', borderRadius: R.md, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
-                    Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling
-                    ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {fmtEur(p.amount_applied)} op
-                    open staat.
+                    {t('ink.geenPassendeFactuur', { amount: fmtEur(p.amount_applied) })}
                   </p>
                 ) : (
-                  p.targets.map(t => {
-                    const open = Math.max(0, Math.abs(Number(t.total_inc_btw ?? 0)) - Math.max(0, Number(t.amount_paid ?? 0)))
+                  // [TAAL] `target`, not `t`: the old callback name shadowed the translator.
+                  p.targets.map(target => {
+                    const open = Math.max(0, Math.abs(Number(target.total_inc_btw ?? 0)) - Math.max(0, Number(target.amount_paid ?? 0)))
                     return (
                       <button
-                        key={t.id}
-                        onClick={() => executeMovePayment(p.id, t, moveCtx.inv)}
+                        key={target.id}
+                        onClick={() => executeMovePayment(p.id, target, moveCtx.inv)}
                         style={{
                           width: '100%', textAlign: 'start', marginBottom: 8, padding: '12px 14px',
                           borderRadius: R.md, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
@@ -3474,11 +3511,11 @@ export default function IncomingManageClient({
                         }}
                       >
                         <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
-                          {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
+                          {target.invoice_number || t('ink.geenNummer')} · {target.client_name || '—'}
                         </div>
                         <div style={{ fontSize: 12.5, color: '#5F6368', marginTop: 2 }}>
-                          {t.invoice_date ? `${fmtDateSmart(t.invoice_date, thisYear)} · ` : ''}
-                          {fmtEur(t.total_inc_btw ?? null)} · nog {fmtEur(open)} open
+                          {target.invoice_date ? `${fmtDateSmart(target.invoice_date, thisYear)} · ` : ''}
+                          {fmtEur(target.total_inc_btw ?? null)} · {t('ink.nogOpen', { amount: fmtEur(open) })}
                         </div>
                       </button>
                     )
@@ -3542,10 +3579,10 @@ export default function IncomingManageClient({
       {/* ── Pay dialog (Bank/Contant + date on mark-paid; single confirm on undo) ── */}
       {payCtx && (
         <BottomSheet
-          title={payCtx.newStatus === 'paid' ? 'Inkoopfactuur markeren als betaald?' : 'Betaling ongedaan maken?'}
+          title={payCtx.newStatus === 'paid' ? t('ink.markeerBetaaldVraag') : t('ink.ongedaanVraag')}
           body={
             payCtx.newStatus === 'paid'
-              ? `Inkoopfactuur ${payCtx.number} wordt als betaald gemarkeerd.`
+              ? t('ink.wordtBetaaldGemarkeerd', { number: payCtx.number })
               // [UNDO-HONEST] An undo is all-or-nothing and it ERASES what was recorded, so the
               // sheet has to say which of the two it is about to do. On a fully paid invoice the
               // old sentence was right. On a PARTLY paid one it was wrong twice over: the invoice
@@ -3560,14 +3597,14 @@ export default function IncomingManageClient({
                   const partly = inv?.status !== 'paid' && paid > 0.005
                   const whereItGoes =
                     inv?.payment_method === 'kas'
-                      ? ' De kasboekregel voor deze betaling vervalt daarmee ook.'
-                      : ' Stond er een bankregel tegenover, dan komt die terug bij "Te bevestigen" op de Bank-pagina.'
+                      ? ` ${t('ink.kasregelVervalt')}`
+                      : ` ${t('ink.bankregelTerug')}`
                   return partly
-                    ? `De genoteerde deelbetaling van ${fmtEur(paid)} op inkoopfactuur ${payCtx.number} wordt gewist. De factuur blijft openstaan, voor het volle bedrag.${whereItGoes}`
-                    : `Inkoopfactuur ${payCtx.number} wordt teruggeplaatst naar 'Te betalen' en elke genoteerde betaling erop wordt gewist.${whereItGoes}`
+                    ? `${t('ink.deelbetalingGewist', { amount: fmtEur(paid), number: payCtx.number })}${whereItGoes}`
+                    : `${t('ink.teruggeplaatst', { number: payCtx.number })}${whereItGoes}`
                 })()
           }
-          confirmLabel={payCtx.newStatus === 'paid' ? 'Ja, markeer als betaald' : 'Ongedaan maken'}
+          confirmLabel={payCtx.newStatus === 'paid' ? t('ink.jaMarkeerBetaald') : t('ink.ongedaanMaken')}
           confirmBg={payCtx.newStatus === 'paid' ? M3.success : M3.warning}
           onConfirm={() => executePay(payCtx)}
           onCancel={() => setPayCtx(null)}
@@ -3590,7 +3627,7 @@ export default function IncomingManageClient({
           secondaryAction={
             payCtx.newStatus === 'paid'
               ? {
-                  label: 'Nee, nog niet betaald',
+                  label: t('ink.neeNogNiet'),
                   onClick: () => {
                     const inv = invoices.find(i => i.id === payCtx.id)
                     setPayCtx(null)
@@ -3612,8 +3649,8 @@ export default function IncomingManageClient({
             <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>{t('lijst.verwerkt')}</h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
               {requestSent
-                ? `Je verzoek voor inkoopfactuur ${verwerktCtx.number} is naar de boekhouder gestuurd.`
-                : `De boekhouder heeft inkoopfactuur ${verwerktCtx.number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je de betaalstatus wijzigt.`}
+                ? t('ink.verzoekGestuurd', { number: verwerktCtx.number })
+                : t('ink.boekhouderVerwerkt', { number: verwerktCtx.number })}
             </p>
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
               {!requestSent && (
@@ -3640,7 +3677,7 @@ export default function IncomingManageClient({
             setPrepareCtx(null)
             if (inv) requestPay(inv)
           }}
-          onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+          onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
         />
       )}
 
@@ -3656,14 +3693,14 @@ export default function IncomingManageClient({
               <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('inkoop.mogelijkBetaald')}</h3>
             </div>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
-              Je hebt mogelijk al een factuur van dezelfde leverancier voor hetzelfde bedrag betaald:
+              {t('ink.mogelijkBetaaldUitleg')}
             </p>
             <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#202124' }}>
               <div style={{ fontWeight: 600 }}>{dupWarn.match.client_name ?? '—'}</div>
               <div style={{ color: '#5F6368', marginTop: 2 }}>
-                {dupWarn.match.invoice_number ? `Factuur ${dupWarn.match.invoice_number} · ` : ''}
+                {dupWarn.match.invoice_number ? `${t('ink.factuurNr', { number: dupWarn.match.invoice_number })} · ` : ''}
                 {fmtEur(dupWarn.match.total_inc_btw)}
-                {dupWarn.match.payment_date ? ` · betaald ${fmtDate(dupWarn.match.payment_date)}` : ''}
+                {dupWarn.match.payment_date ? ` · ${t('ink.betaaldOp', { date: fmtDate(dupWarn.match.payment_date) })}` : ''}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
@@ -3713,11 +3750,11 @@ export default function IncomingManageClient({
         // The owner tapped a pay button, so answer the question they actually have.
         const settled = stance === 'credit'
         const uitleg = settled
-          ? 'Dit is een creditnota: geld dat jóu toekomt. Je hoeft hem niet te betalen — hij staat met een minbedrag in de boeken en gaat vanzelf van je openstaande saldo af.'
+          ? t('ink.creditUitlegGeboekt')
           : stance === 'conflict'
-            ? 'Deze factuur staat als creditnota geboekt, maar met een POSITIEF bedrag. Daardoor telt hij mee in "nog te betalen" terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken.'
+            ? t('ink.creditUitlegConflict')
             : creditnotaSignalText(signal) ??
-              'Deze factuur lijkt een creditnota — geld dat jou toekomt in plaats van geld dat je moet betalen.'
+              t('ink.creditUitlegLijkt')
         return (
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
@@ -3726,7 +3763,7 @@ export default function IncomingManageClient({
             <div className="sheet-scroll"
               role="dialog"
               aria-modal="true"
-              aria-label={settled ? 'Creditnota' : 'Is dit een creditnota?'}
+              aria-label={settled ? t('ink.creditnota') : t('ink.creditVraag')}
               onClick={e => e.stopPropagation()}
               style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
             >
@@ -3735,7 +3772,7 @@ export default function IncomingManageClient({
                   {settled ? 'check_circle' : 'warning'}
                 </span>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>
-                  {settled ? 'Dit is een creditnota' : 'Is dit een creditnota?'}
+                  {settled ? t('ink.isCreditnota') : t('ink.creditVraag')}
                 </h3>
               </div>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.55, margin: '0 0 12px' }}>{uitleg}</p>
@@ -3748,10 +3785,7 @@ export default function IncomingManageClient({
               {!settled && (
                 // Says exactly what the tap does, because it moves money on three screens at once.
                 <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.5, margin: '0 0 16px' }}>
-                  Kies je “ja”, dan worden de bedragen als minbedrag opgeslagen: hij gaat van je
-                  openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Kijk op
-                  de factuur — staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag
-                  onderaan, dan is het er een.
+                  {t('ink.creditKiesJa')}
                 </p>
               )}
               <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
@@ -3760,7 +3794,7 @@ export default function IncomingManageClient({
                     onClick={() => bookAsCreditnota(inv)}
                     disabled={creditBusy}
                     style={{ width: '100%', padding: '12px', borderRadius: R.full, background: creditBusy ? '#9AA0A6' : M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
-                    {creditBusy ? 'Bezig…' : 'Ja, boek als creditnota'}
+                    {creditBusy ? t('ink.bezig') : t('ink.jaBoekCredit')}
                   </button>
                 )}
                 {/* The way on. Present only when a tap was actually held here — opened from the
@@ -3771,14 +3805,14 @@ export default function IncomingManageClient({
                     onClick={() => { setCreditAsk(null); proceed() }}
                     disabled={creditBusy}
                     style={{ width: '100%', padding: '12px', borderRadius: R.full, background: settled ? M3.surfaceVariant : 'transparent', color: settled ? '#3c4043' : M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
-                    {settled ? 'Toch afhandelen' : 'Nee, gewone factuur — doorgaan'}
+                    {settled ? t('ink.tochAfhandelen') : t('ink.neeGewoneFactuur')}
                   </button>
                 )}
                 <button
                   onClick={() => setCreditAsk(null)}
                   disabled={creditBusy}
                   style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 600, border: 'none', cursor: creditBusy ? 'default' : 'pointer', fontFamily: FONT }}>
-                  {proceed ? 'Annuleren' : 'Sluiten'}
+                  {proceed ? t('lijst.annuleren') : t('inkoop.sluiten')}
                 </button>
               </div>
             </div>
@@ -3847,13 +3881,13 @@ export default function IncomingManageClient({
           >
             <p style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>
               {incassoResult.on
-                ? `${incassoResult.supplier} schrijft voortaan zelf af`
-                : `${incassoResult.supplier} staat niet meer op automatische incasso`}
+                ? t('ink.schrijftVoortaanAf', { name: incassoResult.supplier })
+                : t('ink.incassoUit', { name: incassoResult.supplier })}
             </p>
             <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.5 }}>
               {incassoResult.on
-                ? 'Je krijgt geen betaalknop meer bij deze leverancier. Nieuwe facturen zetten we na de vervaldatum vanzelf op betaald.'
-                : 'Facturen van deze leverancier krijgen weer een betaalknop. Wat al op betaald staat, blijft staan.'}
+                ? t('ink.incassoResultAan')
+                : t('ink.incassoResultUit')}
             </p>
 
             {incassoResult.warning && (
@@ -3865,15 +3899,15 @@ export default function IncomingManageClient({
             {incassoResult.booked.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: '0 0 6px' }}>
-                  {incassoResult.booked.length === 1 ? '1 factuur' : `${incassoResult.booked.length} facturen`} op betaald gezet
+                  {incassoResult.booked.length === 1 ? t('ink.opBetaaldGezetEen') : t('ink.opBetaaldGezetN', { n: incassoResult.booked.length })}
                 </p>
                 {incassoResult.booked.map((b, i) => (
                   <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
-                    {b.invoiceNumber ?? 'zonder nummer'} · {formatEuroNL(b.amount)} · afgeschreven {fmtDateSmart(b.paidOn, thisYear)}
+                    {b.invoiceNumber ?? t('ink.zonderNummer')} · {formatEuroNL(b.amount)} · {t('ink.afgeschrevenOp', { date: fmtDateSmart(b.paidOn, thisYear) })}
                   </p>
                 ))}
                 <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '6px 0 0', lineHeight: 1.45 }}>
-                  Klopt er eentje niet? Open hem en tik op &quot;Betaald&quot; om hem terug te zetten.
+                  {t('ink.kloptEentjeNiet')}
                 </p>
               </div>
             )}
@@ -3881,11 +3915,11 @@ export default function IncomingManageClient({
             {incassoResult.held.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: '0 0 6px' }}>
-                  {incassoResult.held.length === 1 ? '1 factuur' : `${incassoResult.held.length} facturen`} met opzet niet aangeraakt
+                  {incassoResult.held.length === 1 ? t('ink.nietAangeraaktEen') : t('ink.nietAangeraakt', { n: incassoResult.held.length })}
                 </p>
                 {incassoResult.held.map((h, i) => (
                   <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
-                    {h.invoiceNumber ?? 'zonder nummer'} — {h.reason}
+                    {h.invoiceNumber ?? t('ink.zonderNummer')} — {h.reason}
                   </p>
                 ))}
               </div>
@@ -4038,8 +4072,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
               <div style={{ background: '#FCE8E6', borderRadius: 12, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
                 <p style={{ fontSize: 12.5, color: '#B3261E', lineHeight: 1.5, margin: 0 }}>
-                  Op deze factuur staat geen bedrag, dus er valt niets af te boeken. Vul eerst het
-                  factuurbedrag in — dan kun je hem als betaald markeren.
+                  {t('ink.geenBedragOpFactuur')}
                 </p>
               </div>
             )}
@@ -4065,10 +4098,10 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                   {entry.error
                     ? entry.error
                     : amountText.trim() === ''
-                      ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
+                      ? t('ink.leegLaten', { amount: fmtEur(openBalance) })
                       : entry.settlesFully
-                        ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} — kies hieronder hoe je dit deel betaalde`}
+                        ? t('ink.volledigBetaald')
+                        : t('ink.nogOpenstaandKies', { amount: fmtEur(entry.remainingAfter) })}
                 </p>
               </>
             )}
@@ -4153,6 +4186,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
   const cashTouched = cash.created + cash.updated + cash.deleted
   const bankFailed = failed.includes('bank')
   const kasFailed  = failed.includes('kas')
+  const nFact = (n: number) => (n === 1 ? t('ink.nFactuur') : t('ink.nFacturen', { n }))
   // [RECON-MAP-HONEST] The map pass builds the post-run state (which invoices are now in the
   // statement, how many transactions are still open). When it throws, the route still answers
   // 200 with byInvoice {} and pendingTransactions 0 — which reads here as "Geen open
@@ -4160,15 +4194,14 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
   // other pass, so a partial run can never read as a clean one.
   const mapFailed  = failed.includes('map')
   const changedNothing = bookedCount === 0 && cashTouched === 0 && categorized === 0
-  const nFact = (n: number) => (n === 1 ? '1 factuur' : `${n} facturen`)
 
   const title = bookedCount > 0
-    ? `${nFact(bookedCount)} gekoppeld`
+    ? t('ink.gekoppeld', { facturen: nFact(bookedCount) })
     : changedNothing
       // [RECON-MAP-HONEST] "Niets om te matchen" is a claim about the data; with a failed map
       // pass we do not have the data to make it.
-      ? (mapFailed ? 'Deels bijgewerkt' : pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
-      : 'Bijgewerkt'
+      ? (mapFailed ? t('ink.deelsBijgewerkt') : pendingTransactions === 0 ? t('ink.nietsTeMatchen') : t('ink.nietsNieuws'))
+      : t('ink.bijgewerkt')
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -4186,14 +4219,14 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             tone={bankFailed || mapFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
             text={
               bankFailed
-                ? 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.'
+                ? t('ink.bankMatchMislukt')
                 : bookedCount > 0
-                  ? `${nFact(bookedCount)} herkend in je bankafschrift en op betaald gezet.`
+                  ? t('ink.herkendBetaald', { facturen: nFact(bookedCount) })
                   : mapFailed
-                    ? 'De stand kon niet worden opgehaald — we weten niet of er nog open banktransacties zijn.'
+                    ? t('ink.standNietOpgehaald')
                     : pendingTransactions === 0
-                      ? 'Geen open banktransacties om tegen te matchen.'
-                      : 'Geen nieuwe betalingen herkend in je bankafschrift.'
+                      ? t('ink.geenOpenTransacties')
+                      : t('ink.geenNieuweBetalingen')
             }
           />
           {/* Booked on amount + name only — real bookings, but the ones worth checking. */}
@@ -4201,7 +4234,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             <ResultLine
               icon="error"
               tone="warn"
-              text={`${amountOnlyCount === 1 ? '1 koppeling is' : `${amountOnlyCount} koppelingen zijn`} alleen op bedrag herkend (geen factuurnummer in de omschrijving) — controleer die even.`}
+              text={amountOnlyCount === 1 ? t('ink.alleenBedragEen') : t('ink.alleenBedragN', { n: amountOnlyCount })}
             />
           )}
           {/* ── [MATCH-NAMED] WHICH invoices, not how many ────────────────────────────────────
@@ -4228,14 +4261,14 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
                   return (
                     <div key={b.invoiceId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '4px 0', alignItems: 'baseline' }}>
                       <span style={{ minWidth: 0, fontSize: 12.5, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {supplier ?? 'Onbekende leverancier'}
+                        {supplier ?? t('ink.onbekendeLeverancier')}
                         <span style={{ color: M3.onSurfaceVariant }}>
                           {b.invoiceNumber ? ` · ${b.invoiceNumber}` : ''}
                           {b.paymentDate ? ` · ${formatDateNL(b.paymentDate)}` : ''}
                         </span>
                         {b.tier === 'amount_only' && (
                           <span style={{ display: 'block', fontSize: 11.5, color: '#7C5800', lineHeight: 1.35 }}>
-                            alleen op bedrag en naam herkend — controleer deze
+                            {t('ink.alleenBedragNaam')}
                           </span>
                         )}
                       </span>
@@ -4253,13 +4286,13 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             tone={kasFailed ? 'error' : cashTouched > 0 ? 'good' : 'neutral'}
             text={
               kasFailed
-                ? 'Het kasboek kon niet worden bijgewerkt — probeer het straks opnieuw.'
+                ? t('ink.kasMislukt')
                 : cashTouched === 0
-                  ? 'Kasboek was al in balans met je contant betaalde facturen.'
+                  ? t('ink.kasInBalans')
                   : [
-                      cash.created > 0 ? `${cash.created} kasboeking toegevoegd` : null,
-                      cash.updated > 0 ? `${cash.updated} bijgewerkt` : null,
-                      cash.deleted > 0 ? `${cash.deleted} teruggedraaid` : null,
+                      cash.created > 0 ? t('ink.kasToegevoegd', { n: cash.created }) : null,
+                      cash.updated > 0 ? t('ink.kasBijgewerkt', { n: cash.updated }) : null,
+                      cash.deleted > 0 ? t('ink.kasTeruggedraaid', { n: cash.deleted }) : null,
                     ].filter(Boolean).join(' · ')
             }
           />
@@ -4268,7 +4301,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             <ResultLine
               icon="label"
               tone="neutral"
-              text={`${categorized} banktransactie(s) automatisch gecategoriseerd — controleer ze op de Bank-pagina.`}
+              text={t('ink.gecategoriseerd', { n: categorized })}
             />
           )}
           {/* 4) What the engine deliberately did NOT decide. */}
@@ -4276,7 +4309,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             <ResultLine
               icon="help"
               tone="warn"
-              text={`${pendingMatchCount === 1 ? '1 betaling is' : `${pendingMatchCount} betalingen zijn`} gevonden maar te onzeker om zelf te boeken — die bevestig je zelf.`}
+              text={pendingMatchCount === 1 ? t('ink.onzekerEen') : t('ink.onzekerN', { n: pendingMatchCount })}
             />
           )}
           {/* Nothing to work with at all → say what to do about it. */}
@@ -4287,12 +4320,12 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
             <ResultLine
               icon="upload_file"
               tone="neutral"
-              text="Upload een bankafschrift op de Bank-pagina, dan kan de matching zijn werk doen."
+              text={t('ink.uploadAfschrift')}
             />
           )}
           {/* A pass we could not run at all — never let a partial run read as a clean one. */}
           {failed.includes('categorize') && (
-            <ResultLine icon="error" tone="error" text="Automatisch categoriseren is niet gelukt — de rest is wel bijgewerkt." />
+            <ResultLine icon="error" tone="error" text={t('ink.categoriserenMislukt')} />
           )}
         </div>
 
@@ -4344,8 +4377,7 @@ function LoadFailedState({ onRetry }: { onRetry: () => void }) {
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: M3.error, display: 'block', marginBottom: 12 }}>error</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('inkoop.fout.ophalen')}</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT, lineHeight: 1.5, maxWidth: 380, margin: '0 auto' }}>
-        Dit betekent niet dat je niets openstaan hebt — we konden het alleen niet lezen.
-        Probeer het zo meteen opnieuw.
+        {t('ink.betekentNietLeeg')}
       </p>
       <button
         onClick={onRetry}
@@ -4405,7 +4437,7 @@ function PreparePaymentSheet({
         reference,
       })
       if (!built.ok || !built.payload) {
-        if (!cancelled) setQrError(built.error ?? 'Geen QR mogelijk')
+        if (!cancelled) setQrError(built.error ?? t('ink.geenQr'))
         return
       }
       try {
@@ -4414,7 +4446,7 @@ function PreparePaymentSheet({
         const url = await QR.toDataURL(built.payload, { margin: 1, width: 240 })
         if (!cancelled) setQrDataUrl(url)
       } catch {
-        if (!cancelled) setQrError('QR kon niet worden gegenereerd')
+        if (!cancelled) setQrError(t('ink.qrMislukt'))
       }
     }
     gen()
@@ -4437,7 +4469,7 @@ function PreparePaymentSheet({
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>{t('inkoop.betalen')}</p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
-          Scan met je bankapp of kopieer de gegevens. Je betaalt in je eigen bank.
+          {t('ink.scanBankapp')}
         </p>
 
         {ibanOk ? (
@@ -4446,7 +4478,7 @@ function PreparePaymentSheet({
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
               {qrDataUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrDataUrl} alt="Betaal-QR" width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
+                <img src={qrDataUrl} alt={t('ink.betaalQr')} width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
               ) : qrError ? (
                 <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
               ) : (
@@ -4465,7 +4497,7 @@ function PreparePaymentSheet({
         ) : (
           // No valid IBAN → honest fallback, no QR.
           <div style={{ background: M3.warningContainer, borderRadius: R.md, padding: '14px 16px', marginBottom: 20, fontSize: 13, color: '#7C5800', lineHeight: 1.5 }}>
-            Geen geldig IBAN gevonden op deze factuur. Open de PDF om het rekeningnummer te bekijken en betaal handmatig in je bankapp.
+            {t('ink.geenIban')}
           </div>
         )}
 
@@ -4515,14 +4547,14 @@ function BundelBetalenSheet({
   useEffect(() => {
     let cancelled = false
     async function gen() {
-      if (!built.epcPayload) { setQrError(built.error ?? 'Geen QR mogelijk'); return }
+      if (!built.epcPayload) { setQrError(built.error ?? t('ink.geenQr')); return }
       try {
         // Dynamic import keeps qrcode out of the main bundle until needed.
         const QR = await import('qrcode')
         const url = await QR.toDataURL(built.epcPayload, { margin: 1, width: 240 })
         if (!cancelled) setQrDataUrl(url)
       } catch {
-        if (!cancelled) setQrError('QR kon niet worden gegenereerd')
+        if (!cancelled) setQrError(t('ink.qrMislukt'))
       }
     }
     gen()
@@ -4544,11 +4576,10 @@ function BundelBetalenSheet({
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', paddingBottom: sheetPaddingBottom(32), width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>
-          {rows.length} facturen betalen
+          {t('ink.facturenBetalen', { n: rows.length })}
         </p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
-          Eén overboeking van {fmtEur(amount)} aan {built.beneficiaryName ?? '—'}.
-          Scan met je bankapp of kopieer de gegevens — je betaalt in je eigen bank.
+          {t('ink.eenOverboeking', { amount: fmtEur(amount), name: built.beneficiaryName ?? '—' })}
         </p>
 
         {/* The invoices this ONE transfer settles */}
@@ -4569,7 +4600,7 @@ function BundelBetalenSheet({
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
           {qrDataUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={qrDataUrl} alt="Betaal-QR" width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
+            <img src={qrDataUrl} alt={t('ink.betaalQr')} width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
           ) : qrError ? (
             <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
           ) : (
@@ -4606,6 +4637,7 @@ function CopyRow({ label, value, raw, onCopy }: {
   raw: string
   onCopy: (value: string, label: string) => void
 }) {
+  const t = translator(useLocale())
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: '#F8F9FA', borderRadius: R.md, marginBottom: 8 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -4614,7 +4646,7 @@ function CopyRow({ label, value, raw, onCopy }: {
       </div>
       <button
         onClick={() => onCopy(raw, label)}
-        aria-label={`Kopieer ${label}`}
+        aria-label={t('ink.kopieerLabel', { label })}
         style={{ background: M3.primaryContainer, border: 'none', borderRadius: R.full, width: 36, height: 36, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.primary }}>content_copy</span>
       </button>

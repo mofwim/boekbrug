@@ -52,7 +52,7 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
           color: '#fff', background: '#1A73E8', borderRadius: 10, textDecoration: 'none',
         }}
       >
-        Neem een abonnement
+        {t('abo.neem')}
       </a>
     )
   }
@@ -73,7 +73,7 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
         {busy ? t('abo.bezig') : t('abo.beheer')}
       </button>
       <p style={{ fontSize: 13, color: '#5f6368', margin: '8px 0 0', lineHeight: 1.5 }}>
-        Betaalgegevens wijzigen, btw-facturen downloaden of opzeggen.
+        {t('abo.beheerUitleg')}
       </p>
       {error && (
         <p role="alert" style={{ color: '#B3261E', fontSize: 14, margin: '8px 0 0' }}>{error}</p>

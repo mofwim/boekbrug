@@ -10,6 +10,7 @@ import { folderColor } from "../helpers";
 // [TAAL] A component holds no language of its own.
 import { useLocale } from "@/lib/i18n/use-locale";
 import { translator } from "@/lib/i18n/t";
+import { SHARED_FOLDER_NAME } from "@/lib/bestanden-shared";
 
 interface FolderTreeItemProps {
   node: FolderNode;
@@ -25,7 +26,7 @@ export function FolderTreeItem({ node, depth, activeFolderId, onSelect, onRename
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const isActive = activeFolderId === node.id;
-  const isShared = node.name === "Gedeeld met boekhouder";
+  const isShared = node.name === SHARED_FOLDER_NAME;
 
   return (
     <div>
@@ -67,7 +68,7 @@ export function FolderTreeItem({ node, depth, activeFolderId, onSelect, onRename
 
         {isShared && (
           <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", background: T.primaryContainer, color: T.primary, borderRadius: T.full, flexShrink: 0 }}>
-            Gedeeld
+            {t("best.gedeeld")}
           </span>
         )}
 

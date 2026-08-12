@@ -200,9 +200,7 @@ export default function CategoriseClient() {
             bar; the in-body h1 that repeated it was removed. Subtitle stays. */}
         <header style={{ margin: '16px 0 16px' }}>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
-            {mode === 'todo'
-              ? 'Geef elke banktransactie een plek. We onthouden je keuze per bedrijf.'
-              : 'Controleer wat we al hebben ingevuld en wijzig een verkeerde categorie.'}
+            {mode === 'todo' ? t('cat.introTodo') : t('cat.introReview')}
           </p>
         </header>
 
@@ -210,7 +208,7 @@ export default function CategoriseClient() {
             fout ingevulde categorie (die geld uit je W&V kan verbergen) altijd te
             corrigeren is. */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-          {([['todo', 'Te doen'], ['review', 'Ingevuld wijzigen']] as [Mode, string][]).map(([m, label]) => (
+          {([['todo', t('cat.tabTodo')], ['review', t('cat.tabReview')]] as [Mode, string][]).map(([m, label]) => (
             <button
               key={m}
               onClick={() => switchMode(m)}
@@ -252,8 +250,8 @@ export default function CategoriseClient() {
               <>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
                   <div style={{ fontSize: 14, color: M3.neutral }}>
-                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> {totalRemaining === 1 ? 'transactie' : 'transacties'} te doen
-                    {hasMore && <span> · we tonen de eerste {items.length}</span>}
+                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> {totalRemaining === 1 ? t('cat.teDoenEen') : t('cat.teDoen')}
+                    {hasMore && <span> · {t('cat.eersteGetoond', { count: items.length })}</span>}
                   </div>
                   {confidentAvailable > 0 && (
                     <button
@@ -265,14 +263,13 @@ export default function CategoriseClient() {
                         fontSize: 13.5, fontWeight: 600, cursor: bulkBusy ? 'default' : 'pointer', fontFamily: FONT,
                       }}
                     >
-                      {bulkBusy ? 'Bezig…' : `${confidentAvailable} zekere invullen`}
+                      {bulkBusy ? t('cat.bezig') : t('cat.zekereInvullen', { count: confidentAvailable })}
                     </button>
                   )}
                 </div>
                 {confidentAvailable > 0 && (
                   <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
-                    We vullen alleen transacties in die we zeker weten (onthouden of duidelijk herkend, zoals
-                    belasting, overboekingen en bankkosten). De rest laten we aan jou — we verzinnen niets.
+                    {t('cat.zekereUitleg')}
                   </p>
                 )}
               </>
@@ -281,13 +278,13 @@ export default function CategoriseClient() {
             {mode === 'review' && (
               <>
                 <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
-                  Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
+                  {t('cat.reviewUitleg')}
                 </p>
                 {/* [HONEST-TRUNCATION] A >200 review page must say so — never let a
                     search that misses the loaded page read as "niets gevonden". */}
                 {hasMore && (
                   <div style={{ fontSize: 13, color: M3.neutral, margin: '0 0 14px' }}>
-                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> ingevulde transacties · we tonen de eerste {items.length}
+                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> {t('cat.ingevuld')} · {t('cat.eersteGetoond', { count: items.length })}
                   </div>
                 )}
               </>
@@ -310,8 +307,8 @@ export default function CategoriseClient() {
 
             {rawC && displayItems.length === 0 ? (
               <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: '22px 18px', textAlign: 'center' }}>
-                <div style={{ fontSize: 14, color: M3.neutral }}>Geen transacties gevonden voor &ldquo;{rawC}&rdquo;{hasMore ? ` in de eerste ${items.length}` : ''}.</div>
-                {hasMore && <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 4 }}>Er staan er nog {totalRemaining - items.length} in de wachtrij die nog niet geladen zijn.</div>}
+                <div style={{ fontSize: 14, color: M3.neutral }}>{hasMore ? t('cat.zoekLeegEerste', { query: rawC, count: items.length }) : t('cat.zoekLeeg', { query: rawC })}</div>
+                {hasMore && <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 4 }}>{t('cat.wachtrij', { count: totalRemaining - items.length })}</div>}
               </div>
             ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -320,17 +317,17 @@ export default function CategoriseClient() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {it.counterpart_name?.trim() || it.description?.trim() || 'Onbekende transactie'}
+                      {it.counterpart_name?.trim() || it.description?.trim() || t('cat.onbekend')}
                     </div>
                     <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>
                       {formatDate(it.date)}
                       {mode === 'review'
-                        ? (it.confirmed ? ' · door jou bevestigd' : ' · automatisch ingevuld')
+                        ? ` · ${it.confirmed ? t('cat.doorJou') : t('cat.automatisch')}`
                         : it.suggested_source === 'memory'
-                          ? ' · onthouden'
+                          ? ` · ${t('cat.onthouden')}`
                           : it.suggested_source === 'similar'
-                            ? (it.suggested_similar_to ? ` · lijkt op ${prettyKey(it.suggested_similar_to)}` : ' · lijkt op eerdere')
-                            : it.suggested_confident ? ' · herkend' : ' · voorstel'}
+                            ? ` · ${it.suggested_similar_to ? t('cat.lijktOp', { name: prettyKey(it.suggested_similar_to) }) : t('cat.lijktOpEerdere')}`
+                            : ` · ${it.suggested_confident ? t('cat.herkend') : t('cat.voorstel')}`}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>
@@ -369,7 +366,7 @@ export default function CategoriseClient() {
                     fontSize: 15, fontWeight: 600, cursor: busy === it.id ? 'default' : 'pointer', fontFamily: FONT,
                   }}
                 >
-                  {busy === it.id ? 'Bezig…' : 'Bevestigen'}
+                  {busy === it.id ? t('cat.bezig') : t('cat.bevestigen')}
                 </button>
               </div>
             ))}
@@ -381,7 +378,7 @@ export default function CategoriseClient() {
             {items.length === 0 && totalRemaining > 0 && (
               <div style={{ background: M3.warnContainer, borderRadius: 16, padding: '18px 20px', textAlign: 'center' }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: '#7A4F00' }}>
-                  Nog {totalRemaining} {totalRemaining === 1 ? 'transactie' : 'transacties'} te doen
+                  {totalRemaining === 1 ? t('cat.nogTeDoenEen') : t('cat.nogTeDoen', { count: totalRemaining })}
                 </div>
                 <div style={{ fontSize: 13.5, color: '#7A4F00', marginTop: 4 }}>
                    {t('cat.vernieuw')}
