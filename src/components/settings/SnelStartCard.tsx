@@ -11,6 +11,9 @@
 // key): een knop die per definitie niet kan werken is erger dan geen knop.
 
 import { useCallback, useEffect, useState } from "react";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator, type Translator } from "@/lib/i18n/t";
 
 interface Grootboek {
   id: string;
@@ -60,20 +63,21 @@ async function fetchStatus(): Promise<Status | null> {
   }
 }
 
-async function fetchGrootboeken(): Promise<
+async function fetchGrootboeken(t: Translator): Promise<
   { ok: true; grootboeken: Grootboek[] } | { ok: false; error: string }
 > {
   try {
     const res = await fetch("/api/snelstart/grootboeken");
     const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error ?? "Grootboeken ophalen mislukt" };
+    if (!res.ok) return { ok: false, error: data.error ?? t("ss.grootboekenMislukt") };
     return { ok: true, grootboeken: data.grootboeken ?? [] };
   } catch {
-    return { ok: false, error: "Grootboeken ophalen mislukt" };
+    return { ok: false, error: t("ss.grootboekenMislukt") };
   }
 }
 
 export function SnelStartCard() {
+  const t = translator(useLocale());
   const [status, setStatus] = useState<Status | null>(null);
   const [clientKey, setClientKey] = useState("");
   const [label, setLabel] = useState("");
@@ -98,10 +102,10 @@ export function SnelStartCard() {
   }, []);
 
   const loadGrootboeken = useCallback(async () => {
-    const result = await fetchGrootboeken();
+    const result = await fetchGrootboeken(t);
     if (result.ok) setGrootboeken(result.grootboeken);
     else setError(result.error);
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     // Eén ophaalronde bij het openen van de pagina. Staat de koppeling er al maar zijn de
@@ -116,7 +120,7 @@ export function SnelStartCard() {
       setVerkoop(data.verkoopGrootboekId ?? "");
 
       if (!data.connected || data.grootboekenIngesteld) return;
-      const result = await fetchGrootboeken();
+      const result = await fetchGrootboeken(t);
       if (!alive) return;
       if (result.ok) setGrootboeken(result.grootboeken);
     })();
@@ -139,12 +143,12 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Koppelen mislukt");
+        setError(data.error ?? t("ss.koppelenMislukt"));
         return;
       }
       setClientKey("");
       setGrootboeken(data.grootboeken ?? []);
-      setNotice("SnelStart is gekoppeld. Kies nu op welke rekeningen geboekt moet worden.");
+      setNotice(t("ss.gekoppeldKies"));
       await loadStatus();
     } finally {
       setBusy(null);
@@ -163,10 +167,10 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Opslaan mislukt");
+        setError(data.error ?? t("ss.opslaanMislukt"));
         return;
       }
-      setNotice("Rekeningen opgeslagen.");
+      setNotice(t("ss.rekeningenOpgeslagen"));
       await loadStatus();
     } finally {
       setBusy(null);
@@ -191,19 +195,19 @@ export function SnelStartCard() {
       if (!res.ok || !data.ok) {
         // De server kent redenen die permanent zijn ("je boekhouder heeft deze al verwerkt") — dan
         // is "probeer opnieuw" een leugen. Zeg wat hij zegt.
-        setError(typeof data.error === "string" ? data.error : "Akkoord opslaan mislukt");
+        setError(typeof data.error === "string" ? data.error : t("ss.akkoordMislukt"));
         return;
       }
       setNotice(
         Array.isArray(data.acknowledged) && data.acknowledged.length > 0
-          ? "Akkoord vastgelegd — deze factuur gaat mee met de volgende keer doorsturen."
-          : (data.message ?? "Er stond geen voorbehoud meer open."),
+          ? t("ss.akkoordVast")
+          : (data.message ?? t("ss.geenVoorbehoud")),
       );
       // Uit de SERVER opnieuw laden, nooit lokaal wegstrepen: de rij verdwijnt pas als de poort
       // hem werkelijk doorlaat, anders belooft het scherm iets wat de push niet doet.
       await loadStatus();
     } catch {
-      setError("Geen verbinding — er is niets vastgelegd.");
+      setError(t("ss.geenVerbindingAkkoord"));
     } finally {
       setAckBusy(null);
     }
@@ -222,16 +226,16 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Doorsturen mislukt");
+        setError(data.error ?? t("ss.doorsturenMislukt"));
         await loadStatus();
         return;
       }
       setResults(data.results ?? []);
-      const rest = data.remaining > 0 ? ` Nog ${data.remaining} te gaan.` : "";
+      const rest = data.remaining > 0 ? t("ss.nogTeGaan", { count: data.remaining }) : "";
       setNotice(
         data.failed > 0
-          ? `${data.pushed} geboekt, ${data.failed} niet gelukt.${rest}`
-          : `${data.pushed} ${data.pushed === 1 ? "factuur" : "facturen"} geboekt in SnelStart.${rest}`,
+          ? t("ss.deelsGelukt", { pushed: data.pushed, failed: data.failed }) + rest
+          : (data.pushed === 1 ? t("ss.geboektEen") : t("ss.geboekt", { count: data.pushed })) + rest,
       );
       await loadStatus();
     } finally {
@@ -247,7 +251,7 @@ export function SnelStartCard() {
       await fetch("/api/snelstart/disconnect", { method: "POST" });
       setResults(null);
       setGrootboeken([]);
-      setNotice("De koppeling met SnelStart is verbroken.");
+      setNotice(t("ss.ontkoppeld"));
       await loadStatus();
     } finally {
       setBusy(null);
@@ -262,15 +266,12 @@ export function SnelStartCard() {
     <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
       <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">SnelStart</p>
       <p className="text-sm text-gray-500">
-        Stuur je gecontroleerde facturen en bonnen rechtstreeks als inkoop- en
-        verkoopboeking naar je SnelStart-administratie. Alleen facturen die je hebt
-        gecontroleerd gaan mee, en elke factuur gaat maar één keer.
+        {t('ss.uitleg')}
       </p>
 
       {status.status === "needs_reauth" && (
         <p className="text-sm text-amber-600">
-          SnelStart accepteert je maatwerksleutel niet meer. Maak in SnelStart een nieuwe
-          sleutel aan en plak die hieronder.
+          {t('ss.sleutelOud')}
         </p>
       )}
 
@@ -278,31 +279,30 @@ export function SnelStartCard() {
         <div className="space-y-3">
           <div>
             <label className="block text-sm text-gray-600 mb-1" htmlFor="snelstart-key">
-              Maatwerksleutel
+              {t('ss.sleutel')}
             </label>
             <input
               id="snelstart-key"
               type="password"
               value={clientKey}
               onChange={(e) => setClientKey(e.target.value)}
-              placeholder="Plak hier je sleutel uit SnelStart"
+              placeholder={t('ss.sleutelHint')}
               autoComplete="off"
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"
             />
             <span className="block text-xs text-gray-400 mt-1">
-              In SnelStart: Onderhoud → Maatwerk → maak een koppelsleutel aan. De sleutel
-              geldt voor één administratie en wordt versleuteld bewaard.
+              {t('ss.sleutelWaar')}
             </span>
           </div>
           <div>
             <label className="block text-sm text-gray-600 mb-1" htmlFor="snelstart-label">
-              Naam van de administratie (optioneel)
+              {t('ss.adminNaam')}
             </label>
             <input
               id="snelstart-label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Bijv. Bakkerij 2026"
+              placeholder={t('ss.adminNaamHint')}
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"
             />
           </div>
@@ -311,16 +311,16 @@ export function SnelStartCard() {
             disabled={busy !== null || clientKey.trim().length < 20}
             className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
-            {busy === "connect" ? "Controleren…" : "Koppelen met SnelStart"}
+            {busy === "connect" ? t("ss.controleren") : t("ss.koppelen")}
           </button>
         </div>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <span className="text-green-600">
-              ✓ Gekoppeld{status.administrationLabel ? ` — ${status.administrationLabel}` : ""}
+              {t('ss.gekoppeld')}{status.administrationLabel ? ` — ${status.administrationLabel}` : ""}
             </span>
-            <span className="text-gray-500">{status.counts.doorgestuurd} doorgestuurd</span>
+            <span className="text-gray-500">{t("ss.doorgestuurd", { count: status.counts.doorgestuurd })}</span>
             {/* [SNELSTART-EERLIJK] Verstuurd, maar zonder bevestiging van SnelStart. Dit hoort
                 NIET bij "doorgestuurd" (dat zou beweren dat het geboekt is) en niet bij "mislukt"
                 (dat zou beweren dat het niet geboekt is). Het is de enige eerlijke derde categorie,
@@ -328,15 +328,15 @@ export function SnelStartCard() {
                 een push, die bij het herladen verdwijnt. */}
             {(status.counts.onbekend ?? 0) > 0 && (
               <span className="text-amber-700">
-                {status.counts.onbekend} zonder bevestiging — controleer in SnelStart
+                {t('ss.zonderBevestiging', { count: status.counts.onbekend ?? 0 })}
               </span>
             )}
             {status.counts.mislukt > 0 && (
-              <span className="text-amber-600">{status.counts.mislukt} mislukt</span>
+              <span className="text-amber-600">{t("ss.mislukt", { count: status.counts.mislukt })}</span>
             )}
             {(status.counts.tegengehouden ?? 0) > 0 && (
               <span className="text-amber-700">
-                {status.counts.tegengehouden} wacht op je akkoord
+                {t('ss.wachtAkkoord', { count: status.counts.tegengehouden ?? 0 })}
               </span>
             )}
           </div>
@@ -356,12 +356,10 @@ export function SnelStartCard() {
           {(status.held?.length ?? 0) > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-900">
-                Wacht op je akkoord
+                {t('ss.wachtKop')}
               </p>
               <p className="mt-1 text-xs leading-relaxed text-amber-800">
-                Deze facturen zouden een boeking worden, maar er staat nog een voorbehoud op. Kijk
-                op het papier en stuur ze door als het klopt — daarna kan je boekhouder ze niet meer
-                terugdraaien, dus dit is het moment.
+                {t('ss.wachtUitleg')}
               </p>
               <ul className="mt-3 space-y-2">
                 {status.held!.map((h) => (
@@ -385,7 +383,7 @@ export function SnelStartCard() {
                       disabled={ackBusy !== null}
                       className="mt-2 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                     >
-                      {ackBusy === h.id ? "Bezig…" : "Ik weet het, stuur toch door"}
+                      {ackBusy === h.id ? t("ss.akkoordBezig") : t("ss.akkoordKnop")}
                     </button>
                   </li>
                 ))}
@@ -395,14 +393,14 @@ export function SnelStartCard() {
 
           {!status.grootboekenIngesteld && (
             <p className="text-sm text-amber-600">
-              Kies eerst de rekeningen waarop geboekt moet worden.
+              {t('ss.kiesEerst')}
             </p>
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-sm text-gray-600 mb-1" htmlFor="snelstart-inkoop">
-                Inkoop boeken op
+                {t('ss.inkoopOp')}
               </label>
               <select
                 id="snelstart-inkoop"
@@ -411,7 +409,7 @@ export function SnelStartCard() {
                 onFocus={() => grootboeken.length === 0 && void loadGrootboeken()}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"
               >
-                <option value="">Kies een rekening…</option>
+                <option value="">{t("ss.kiesRekening")}</option>
                 {grootboeken.map((g) => (
                   <option key={g.id} value={g.id}>
                     {grootboekLabel(g)}
@@ -421,7 +419,7 @@ export function SnelStartCard() {
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1" htmlFor="snelstart-verkoop">
-                Verkoop boeken op
+                {t('ss.verkoopOp')}
               </label>
               <select
                 id="snelstart-verkoop"
@@ -430,7 +428,7 @@ export function SnelStartCard() {
                 onFocus={() => grootboeken.length === 0 && void loadGrootboeken()}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"
               >
-                <option value="">Kies een rekening…</option>
+                <option value="">{t("ss.kiesRekening")}</option>
                 {grootboeken.map((g) => (
                   <option key={g.id} value={g.id}>
                     {grootboekLabel(g)}
@@ -446,7 +444,7 @@ export function SnelStartCard() {
               disabled={busy !== null || !inkoop || !verkoop}
               className="border border-gray-300 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
             >
-              {busy === "save" ? "Opslaan…" : "Rekeningen opslaan"}
+              {busy === "save" ? t("ss.opslaanBezig") : t("ss.rekeningenOpslaan")}
             </button>
             <button
               onClick={push}
@@ -454,23 +452,23 @@ export function SnelStartCard() {
               className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
             >
               {busy === "push"
-                ? "Bezig met boeken…"
+                ? t("ss.boekenBezig")
                 : status.counts.klaar === 0
-                  ? "Niets te versturen"
-                  : `Stuur ${status.counts.klaar} ${status.counts.klaar === 1 ? "factuur" : "facturen"} door`}
+                  ? t("ss.nietsTeVersturen")
+                  : status.counts.klaar === 1 ? t("ss.stuurDoorEen") : t("ss.stuurDoor", { count: status.counts.klaar })}
             </button>
             <button
               onClick={disconnect}
               disabled={busy !== null}
               className="text-sm text-gray-400 hover:text-gray-600 disabled:opacity-50"
             >
-              Ontkoppelen
+              {t('ss.ontkoppelen')}
             </button>
           </div>
 
           {status.lastPushAt && (
             <p className="text-xs text-gray-400">
-              Laatst doorgestuurd op {new Date(status.lastPushAt).toLocaleString("nl-NL")}.
+              {t('ss.laatstDoorgestuurd', { time: new Date(status.lastPushAt).toLocaleString("nl-NL") })}
             </p>
           )}
         </div>
@@ -487,7 +485,7 @@ export function SnelStartCard() {
             .filter((r) => r.status === "failed")
             .map((r) => (
               <li key={r.invoiceId}>
-                <span className="font-medium">{r.invoiceNumber ?? "Zonder nummer"}</span> — {r.error}
+                <span className="font-medium">{r.invoiceNumber ?? t("ss.zonderNummer")}</span> — {r.error}
               </li>
             ))}
         </ul>

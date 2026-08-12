@@ -10,10 +10,14 @@ import { Spinner } from "../ui/Spinner";
 import { BestandRow } from "../../types";
 import { fileEmoji, formatSize, formatDate } from "../../helpers";
 import { getSignedUrl } from "../../signedUrl";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () => void }) {
+  const t = translator(useLocale());
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const canPreview = doc.file_type.startsWith("image/") || doc.file_type === "application/pdf";
@@ -79,7 +83,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
               {formatSize(doc.file_size)} · {formatDate(doc.created_at)}
             </p>
           </div>
-          <button onClick={onClose} aria-label="Sluiten" style={{
+          <button onClick={onClose} aria-label={t("bst.sluiten")} style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer", flexShrink: 0,
@@ -98,7 +102,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
            !canPreview || !url ? (
             <div style={{ textAlign: "center", padding: 32 }}>
               <div style={{ fontSize: 56, marginBottom: 12 }}>{fileEmoji(doc.file_type)}</div>
-              <p style={{ fontSize: 14, color: T.outline, marginBottom: 16 }}>Preview niet beschikbaar</p>
+              <p style={{ fontSize: 14, color: T.outline, marginBottom: 16 }}>{t("bst.previewNiet")}</p>
               {url && (
                 <a href={url} download={doc.file_name} style={{ ...btnBase, background: T.primary, color: T.onPrimary, flex: "none" }}>
                   <Icon name="download" size={18} color={T.onPrimary} /> Downloaden

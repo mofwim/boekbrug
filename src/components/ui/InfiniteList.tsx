@@ -6,6 +6,9 @@
 "use client";
 
 import { useEffect, useRef, ReactNode } from "react";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface InfiniteListProps {
   /** The list items to render */
@@ -40,6 +43,7 @@ export function InfiniteList({
   refreshing,
   className = "",
 }: InfiniteListProps) {
+  const t = translator(useLocale());
   const sentinelRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -155,7 +159,7 @@ export function InfiniteList({
             <path d="M23 4v6h-6M1 20v-6h6" />
             <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
           </svg>
-          <span className="sr-only">Vernieuwen…</span>
+          <span className="sr-only">{t('oneind.vernieuwen')}</span>
         </div>
       )}
 
@@ -164,7 +168,7 @@ export function InfiniteList({
         {isEmpty && !loading ? (
           emptyState ?? (
             <div className="bb-empty-state">
-              <span>Geen facturen gevonden</span>
+              <span>{t('oneind.leeg')}</span>
             </div>
           )
         ) : (
@@ -178,16 +182,16 @@ export function InfiniteList({
             <button
               onClick={onLoadMore}
               className="bb-retry-btn"
-              aria-label="Opnieuw proberen"
+              aria-label={t('oneind.opnieuwAria')}
             >
-              Opnieuw
+              {t('oneind.opnieuw')}
             </button>
           </div>
         )}
 
         {/* Loading skeleton rows */}
         {loading && (
-          <div aria-busy="true" aria-label="Laden…">
+          <div aria-busy="true" aria-label={t('oneind.laden')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="bb-skeleton-row">
                 <div className="bb-skeleton bb-skeleton-title" />
@@ -199,7 +203,7 @@ export function InfiniteList({
 
         {/* End-of-list message */}
         {!hasMore && !loading && !isEmpty && (
-          <p className="bb-end-label">Alle facturen geladen</p>
+          <p className="bb-end-label">{t('oneind.alles')}</p>
         )}
 
         {/* Intersection sentinel — invisible, triggers loadMore */}

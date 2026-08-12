@@ -58,6 +58,8 @@ export default function InvoiceEditPage() {
 
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
+  // [HERSTEL] A sent invoice, fully editable while nothing is attached to it.
+  const [canCorrectSent, setCanCorrectSent] = useState(false)
   // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
   // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
   // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
@@ -141,6 +143,17 @@ export default function InvoiceEditPage() {
       setInvoiceNumber(invoice.invoice_number)
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
+      // [HERSTEL] May this SENT invoice be edited here? The screen decides from what it can
+      // see; the PUT route checks everything (bank, kas, creditnota, verwerkt, filed quarter)
+      // and refuses with the reason. Saving automatically delivers the corrected version to the
+      // customer — the banner above the buttons says so before the tap.
+      setCanCorrectSent(
+        (invoice.status === 'sent' || invoice.status === 'overdue') &&
+        (invoice.invoice_type || 'factuur') === 'factuur' &&
+        !!invoice.invoice_number &&
+        invoice.direction !== 'incoming' &&
+        !(((invoice as { amount_paid?: number | null }).amount_paid ?? 0) > 0)
+      )
       setInvoiceType(invoice.invoice_type || 'factuur')
       // [KORTING] Wat er staat, zoals het is opgeslagen. Zonder deze twee regels opende het scherm
       // met een leeg kortingsveld boven een verlaagd totaal, en de eerste "Wijzigingen opslaan"
@@ -285,6 +298,15 @@ export default function InvoiceEditPage() {
 
     if (!res.ok) {
       setError(data.error || 'Opslaan mislukt')
+      setSaving(false)
+      return
+    }
+
+    // [HERSTEL] The change stands, but the corrected version did not reach the customer — that
+    // may not pass silently, since the customer still holds the old version. The route says
+    // what to do next.
+    if (data.warning === 'corrected_delivery_failed') {
+      setError(data.error || t('bewerk.herstel.nietBezorgd'))
       setSaving(false)
       return
     }
@@ -814,11 +836,26 @@ export default function InvoiceEditPage() {
                 {sending ? 'Verzenden...' : quote ? '✉ Omzetten naar factuur en versturen' : '✉ Verstuur factuur'}
               </button>
             </>
+          ) : canCorrectSent ? (
+            // [HERSTEL] A sent invoice, fully editable — the market rule, with the locks in
+            // the PUT route. One button, and the banner says beforehand what saving does: the
+            // customer automatically receives the corrected version, the number never changes.
+            <div className="w-full space-y-3">
+              <p className="text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-4 py-3 leading-relaxed">
+                {t('bewerk.herstel.uitleg', { number: invoiceNumber ?? '' })}
+              </p>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="bg-amber-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+              >
+                {saving ? t('bewerk.herstel.bezig') : `✉ ${t('bewerk.herstel.knop')}`}
+              </button>
+            </div>
           ) : (
-            // [ART-35] A verstuurde/uitgegeven factuur is wettelijk vastgelegd en kan NIET
-            // meer worden gewijzigd — de server-PUT weigert elke niet-draft met 409. Toon
-            // dat eerlijk in plaats van een "Wijzigingen opslaan"-knop die altijd faalt; een
-            // correctie loopt via een creditnota (op de factuurpagina).
+            // [ART-35] Betaald, gecrediteerd of ingediend: dan is het document van meer partijen
+            // dan de ondernemer alleen, en loopt een correctie via een creditnota — de PUT-route
+            // weigert met de precieze reden.
             <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
               Deze factuur is verstuurd en wettelijk vastgelegd — wijzigen kan niet meer.
               Maak een <strong>creditnota</strong> aan om te corrigeren.

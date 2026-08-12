@@ -14,6 +14,9 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { formatDateNL } from '@/lib/format-nl'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 type Reminder = {
   id: string
@@ -33,6 +36,7 @@ export function InvoiceReminders({
   status?: string | null
   remindersPaused?: boolean
 }) {
+  const t = translator(useLocale())
   const supabase = createClient()
   const [history, setHistory] = useState<Reminder[]>([])
   const [paused, setPaused] = useState(!!remindersPaused)
@@ -85,11 +89,9 @@ export function InvoiceReminders({
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: '#202124' }}>Betalingsherinneringen</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: '#202124' }}>{t('herin.titel')}</div>
           <div style={{ fontSize: 13, color: '#5F6368', marginTop: 2 }}>
-            {paused
-              ? 'Automatische herinneringen zijn gepauzeerd voor deze factuur.'
-              : 'Deze factuur volgt je herinneringsschema (zie Instellingen).'}
+            {paused ? t('herin.gepauzeerd') : t('herin.actief')}
           </div>
         </div>
         <button
@@ -110,21 +112,21 @@ export function InvoiceReminders({
             whiteSpace: 'nowrap',
           }}
         >
-          {paused ? 'Hervatten' : 'Pauzeren'}
+          {paused ? t('herin.hervatten') : t('herin.pauzeren')}
         </button>
       </div>
 
       {history.length > 0 && (
         <div style={{ marginTop: 14, borderTop: '1px solid #F1F3F4', paddingTop: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-            Verstuurd
+            {t('herin.verstuurd')}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {history.map((r) => (
               <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#202124' }}>
                 <span>
-                  Herinnering na {r.day_offset} {r.day_offset === 1 ? 'dag' : 'dagen'}
-                  {r.status === 'failed' && <span style={{ color: '#B3261E' }}> — mislukt</span>}
+                  {r.day_offset === 1 ? t('herin.naDag') : t('herin.naDagen', { days: r.day_offset })}
+                  {r.status === 'failed' && <span style={{ color: '#B3261E' }}>{t('herin.mislukt')}</span>}
                 </span>
                 <span style={{ color: '#5F6368' }}>{formatDateNL(r.sent_at)}</span>
               </div>

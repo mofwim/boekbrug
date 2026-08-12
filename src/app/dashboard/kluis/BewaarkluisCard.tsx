@@ -14,6 +14,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 type Offerte = {
   leeg: boolean
@@ -35,6 +38,7 @@ type Offerte = {
 const eur = (n: number) => `€ ${Number.isInteger(n) ? n : n.toFixed(2).replace('.', ',')}`
 
 export default function BewaarkluisCard() {
+  const t = translator(useLocale())
   const [offerte, setOfferte] = useState<Offerte | null>(null)
   const [laden, setLaden] = useState(true)
   const [bezig, setBezig] = useState(false)
@@ -60,14 +64,14 @@ export default function BewaarkluisCard() {
       const res = await fetch('/api/kluis/offerte', { method: 'POST' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok || !body?.url) {
-        setFout(body?.error || 'Er ging iets mis. Probeer het opnieuw.')
+        setFout(body?.error || t('kluis.cardFout'))
         setBezig(false)
         return
       }
       // Volledige navigatie: Stripe Checkout is een andere origin.
       window.location.href = body.url
     } catch {
-      setFout('Geen verbinding. Controleer je internet en probeer opnieuw.')
+      setFout(t('kluis.cardGeenVerbinding'))
       setBezig(false)
     }
   }, [])
@@ -86,21 +90,17 @@ export default function BewaarkluisCard() {
       }}
     >
       <h2 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
-        Als je ooit stopt
+        {t('kluis.cardKop')}
       </h2>
 
       <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-        Je bewaarplicht loopt door als je onderneming stopt — en ook als je stopt met BoekBrug.
-        Zeg je op, dan bewaren wij je administratie eerst nog <strong>{offerte.gratisMaanden} maanden
-        kosteloos</strong>, en exporteren blijft die hele tijd werken. Wij verwijderen nooit iets
-        zonder je minstens 30 dagen vooraf te mailen.
+        {t('kluis.cardUitleg', { maanden: offerte.gratisMaanden })}
       </p>
 
       {offerte.alGeregeld ? (
         <div style={{ background: '#CEEAD6', border: '1px solid #137333', color: '#0d652d', borderRadius: 12, padding: '14px 16px', fontSize: 14.5, lineHeight: 1.6 }}>
-          <strong>Je Bewaarkluis is geregeld.</strong> Wij bewaren je administratie tot en met{' '}
-          <strong>{offerte.keepThroughYear}</strong>. Je hoeft verder niets te doen — en
-          exporteren blijft die hele tijd gewoon werken.
+          <strong>{t('kluis.cardGeregeldKop')}</strong>
+          {t('kluis.cardGeregeldRest', { year: offerte.keepThroughYear ?? '' })}
         </div>
       ) : offerte.leeg ? (
         <p style={{ fontSize: 13.5, color: M3.neutral, margin: 0, lineHeight: 1.6 }}>
@@ -108,26 +108,22 @@ export default function BewaarkluisCard() {
         </p>
       ) : offerte.years === 0 ? (
         <p style={{ fontSize: 13.5, color: M3.neutral, margin: 0, lineHeight: 1.6 }}>
-          Je bewaarplicht voor deze administratie is verstreken (t/m {offerte.keepThroughYear}).
-          Je hoeft hier niets voor te betalen.
+          {t('kluis.cardVerstreken', { year: offerte.keepThroughYear ?? '' })}
         </p>
       ) : (
         <>
           <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-            Wil je dat je stukken daarna online blijven staan — geordend, doorzoekbaar en per jaar
-            te exporteren — dan is daar de <strong>Bewaarkluis</strong> voor. Je jongste boekjaar is{' '}
-            {offerte.lastFiscalYear}, dus je moet nog tot en met <strong>{offerte.keepThroughYear}</strong>{' '}
-            kunnen leveren.
+            {t('kluis.cardAanbod', { jaar: offerte.lastFiscalYear ?? '', tot: offerte.keepThroughYear ?? '' })}
           </p>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-            <Stat label="Resterende bewaarjaren" value={String(offerte.years)} />
+            <Stat label={t('kluis.cardStatJaren')} value={String(offerte.years)} />
             <Stat
-              label="Eenmalig vooruit"
+              label={t('kluis.cardStatVooruit')}
               value={eur(offerte.prepayTotalEur ?? 0)}
-              sub={`in plaats van ${eur(offerte.annualTotalEur ?? 0)} per jaar`}
+              sub={t('kluis.cardStatVooruitSub', { bedrag: eur(offerte.annualTotalEur ?? 0) })}
             />
-            <Stat label="Je archief weegt" value={offerte.archiefOmvang ?? '—'} sub={`${offerte.documentCount ?? 0} stukken`} />
+            <Stat label={t('kluis.cardStatArchief')} value={offerte.archiefOmvang ?? '—'} sub={t('kluis.cardStatStukken', { count: offerte.documentCount ?? 0 })} />
           </div>
 
           <button
@@ -146,16 +142,13 @@ export default function BewaarkluisCard() {
               opacity: bezig ? 0.7 : 1,
             }}
           >
-            {bezig ? 'Bezig…' : `Bewaarkluis regelen — ${eur(offerte.prepayTotalEur ?? 0)} eenmalig`}
+            {bezig ? t('kluis.bezig') : t('kluis.cardKnop', { bedrag: eur(offerte.prepayTotalEur ?? 0) })}
           </button>
 
           {fout && <div style={{ marginTop: 10, fontSize: 13, color: M3.error }}>{fout}</div>}
 
           <p style={{ fontSize: 12.5, color: M3.neutral, margin: '12px 0 0', lineHeight: 1.6 }}>
-            Wij nemen je bewaarplicht niet over — die blijft van jou. Bewaar daarom altijd ook je
-            eigen kopie: wij zijn je tweede exemplaar, nooit je enige. Stoppen wij ooit zelf, dan
-            hoor je dat 90 dagen van tevoren, krijg je je volledige archief toegestuurd en betalen
-            wij het niet-verbruikte deel terug.
+            {t('kluis.cardVoetnoot')}
           </p>
         </>
       )}

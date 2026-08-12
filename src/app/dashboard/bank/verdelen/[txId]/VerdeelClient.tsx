@@ -25,6 +25,9 @@ import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { resolvePaymentPlan, type PlanInvoice } from '@/lib/payment-plan'
 import { formatEuroNL, formatDateNL } from '@/lib/format-nl'
 import { round2 } from '@/lib/invoice-totals'
+// [TAAL] The screen speaks the owner's language.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 export interface VerdeelTransactie {
   id: string
@@ -51,6 +54,7 @@ interface Props {
 }
 
 export default function VerdeelClient({ transactie, facturen }: Props) {
+  const t = translator(useLocale())
   const router = useRouter()
   // invoiceId → wat de eigenaar heeft ingetypt. Afwezig = niet gekozen.
   const [bedragen, setBedragen] = useState<Record<string, string>>({})
@@ -125,14 +129,16 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
         body: JSON.stringify({ transactionId: transactie.id, lines: regels }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'De verdeling is niet geboekt.')
+      if (!res.ok) throw new Error(data?.error || t('verd.nietGeboekt'))
       setKlaar(
         data.remainderNote ??
-          `${data.applied?.length ?? regels.length} ${(data.applied?.length ?? regels.length) === 1 ? 'factuur' : 'facturen'} afgeboekt.`,
+          ((data.applied?.length ?? regels.length) === 1
+            ? t('verd.afgeboektEen')
+            : t('verd.afgeboekt', { count: data.applied?.length ?? regels.length })),
       )
       setTimeout(() => router.push('/dashboard/bank'), 1400)
     } catch (e) {
-      setFout(e instanceof Error ? e.message : 'Er ging iets mis.')
+      setFout(e instanceof Error ? e.message : t('verd.misgegaan'))
     } finally {
       setBezig(false)
     }
@@ -142,15 +148,14 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Betaling verdelen
+          {t('verd.titel')}
         </h1>
         <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: R.lg, boxShadow: EL1, padding: 20 }}>
           <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
-            Deze betaling van {formatEuroNL(geld)} is al helemaal verdeeld over facturen.
+            {t('verd.alVerdeeld', { amount: formatEuroNL(geld) })}
           </p>
           <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
-            Er valt hier niets meer toe te wijzen. Klopt de verdeling niet, ontkoppel dan eerst een
-            factuur op de bankpagina — dan komt dat bedrag hier weer vrij.
+            {t('verd.alVerdeeldUitleg')}
           </p>
           <a
             href="/dashboard/bank"
@@ -159,7 +164,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
               background: M3.primary, color: M3.onPrimary, textDecoration: 'none', fontSize: 15, fontWeight: 500,
             }}
           >
-            Terug naar de bank
+            {t('verd.terugBank')}
           </a>
         </div>
       </main>
@@ -180,10 +185,10 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
   return (
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 4px' }}>
-        Betaling verdelen
+        {t('verd.titel')}
       </h1>
       <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5 }}>
-        {isUit ? 'Geld dat wegging' : 'Geld dat binnenkwam'} — kies welke facturen hiermee betaald zijn.
+        {isUit ? t('verd.uitGeld') : t('verd.inGeld')}
       </p>
 
       {/* ── De betaling zelf ─────────────────────────────────────────── */}
@@ -191,10 +196,10 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 15.5, fontWeight: 500, color: M3.onSurface }}>
-              {transactie.counterpartName || 'Onbekende tegenpartij'}
+              {transactie.counterpartName || t('verd.onbekendeTegenpartij')}
             </p>
             <p style={{ margin: '2px 0 0', fontSize: 12.5, color: M3.onSurfaceVariant }}>
-              {formatDateNL(transactie.date)} · {transactie.description || 'geen omschrijving'}
+              {formatDateNL(transactie.date)} · {transactie.description || t('verd.geenOmschrijving')}
             </p>
           </div>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: M3.onSurface, flexShrink: 0 }}>
@@ -213,7 +218,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
             alignItems: 'baseline',
           }}
         >
-          <span style={{ fontSize: 14, color: M3.onSurfaceVariant }}>Nog te verdelen</span>
+          <span style={{ fontSize: 14, color: M3.onSurfaceVariant }}>{t('verd.nogTeVerdelen')}</span>
           <span
             style={{
               fontSize: 20,
@@ -226,7 +231,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
         </div>
         {transactie.alreadyAllocated > 0.005 && (
           <p style={{ margin: '6px 0 0', fontSize: 12.5, color: M3.mutedText }}>
-            {formatEuroNL(transactie.alreadyAllocated)} van deze betaling was al gekoppeld.
+            {t('verd.alGekoppeld', { amount: formatEuroNL(transactie.alreadyAllocated) })}
           </p>
         )}
       </section>
@@ -257,8 +262,8 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
       <input
         value={zoek}
         onChange={(e) => setZoek(e.target.value)}
-        placeholder="Zoek op leverancier of factuurnummer…"
-        aria-label="Facturen zoeken"
+        placeholder={t('verd.zoek')}
+        aria-label={t('verd.zoekAria')}
         style={{
           width: '100%',
           padding: '10px 12px',
@@ -273,8 +278,8 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
       {zichtbaar.length === 0 ? (
         <p style={{ ...kaart, color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
           {facturen.length === 0
-            ? `Er staat geen enkele ${isUit ? 'inkoopfactuur' : 'verkoopfactuur'} open. Staat de factuur er nog niet in, voeg hem dan eerst toe — deze betaling blijft zolang gewoon staan.`
-            : 'Geen factuur die daaraan voldoet.'}
+            ? (isUit ? t('verd.geenInkoop') : t('verd.geenVerkoop'))
+            : t('verd.geenMatch')}
         </p>
       ) : (
         zichtbaar.map((f) => {
@@ -287,21 +292,21 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                   type="checkbox"
                   checked={gekozen}
                   onChange={() => zetHeleBedrag(f)}
-                  aria-label={`${f.partyName ?? 'factuur'} kiezen`}
+                  aria-label={t('verd.kiezenAria', { name: f.partyName ?? t('verd.factuurWoord') })}
                   style={{ width: 20, height: 20, marginTop: 2, flexShrink: 0, cursor: 'pointer' }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ margin: 0, fontSize: 14.5, color: M3.onSurface, fontWeight: 500 }}>
-                    {f.partyName || 'Onbekend'}
+                    {f.partyName || t('verd.onbekendeTegenpartij')}
                     {isCredit && (
                       <span style={{ color: M3.success, fontWeight: 600, marginInlineStart: 8, fontSize: 12.5 }}>
-                        creditnota — gaat eraf
+                        {t('verd.credit')}
                       </span>
                     )}
                   </p>
                   <p style={{ margin: '2px 0 0', fontSize: 12.5, color: M3.onSurfaceVariant }}>
-                    {f.invoiceNumber || 'zonder nummer'} · {formatDateNL(f.invoiceDate)} · nog open{' '}
-                    {formatEuroNL(f.open)}
+                    {f.invoiceNumber || t('verd.zonderNummer')} · {formatDateNL(f.invoiceDate)} ·{' '}
+                    {t('verd.nogOpen', { amount: formatEuroNL(f.open) })}
                   </p>
                 </div>
 
@@ -314,7 +319,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                       value={bedragen[f.id]}
                       onChange={(e) => setBedragen((b) => ({ ...b, [f.id]: e.target.value }))}
                       inputMode="decimal"
-                      aria-label={`Bedrag voor ${f.partyName ?? 'deze factuur'}`}
+                      aria-label={t('verd.bedragAria', { name: f.partyName ?? t('verd.factuurWoord') })}
                       style={{
                         width: 110,
                         padding: '8px 10px',
@@ -327,7 +332,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
                     />
                     {Number(bedragen[f.id].replace(',', '.')) < f.open - 0.005 && (
                       <p style={{ margin: '4px 0 0', fontSize: 11.5, color: M3.mutedText }}>
-                        blijft {formatEuroNL(f.open - (Number(bedragen[f.id].replace(',', '.')) || 0))} open
+                        {t('verd.blijftOpen', { amount: formatEuroNL(f.open - (Number(bedragen[f.id].replace(',', '.')) || 0)) })}
                       </p>
                     )}
                   </div>
@@ -364,7 +369,7 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
             cursor: plan.ok && !bezig && !klaar ? 'pointer' : 'default',
           }}
         >
-          {bezig ? 'Bezig…' : klaar ? 'Geboekt' : `Boek ${regels.length || 0} ${regels.length === 1 ? 'factuur' : 'facturen'}`}
+          {bezig ? t('verd.bezig') : klaar ? t('verd.geboekt') : regels.length === 1 ? t('verd.boekEen') : t('verd.boek', { count: regels.length || 0 })}
         </button>
         <a
           href="/dashboard/bank"
@@ -377,13 +382,12 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
             textDecoration: 'none',
           }}
         >
-          Terug
+          {t('nav.terug')}
         </a>
       </div>
 
       <p style={{ fontSize: 12.5, color: M3.mutedText, lineHeight: 1.6, margin: '16px 0 0' }}>
-        Een factuur die maar deels betaald is, blijft voor de rest openstaan — er wordt niets
-        weggeschreven. Wat er van de betaling overblijft blijft ook staan; ontkoppelen kan altijd.
+        {t('verd.voetnoot')}
       </p>
     </main>
   )

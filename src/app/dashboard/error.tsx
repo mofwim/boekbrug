@@ -5,6 +5,9 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+// [TAAL] Even the crash screen speaks the owner's language.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 export default function DashboardError({
   error,
@@ -14,6 +17,7 @@ export default function DashboardError({
   reset: () => void
 }) {
   const router = useRouter()
+  const t = translator(useLocale())
 
   useEffect(() => {
     console.error('Dashboard error:', error)
@@ -26,9 +30,9 @@ export default function DashboardError({
         <p className="text-5xl font-bold text-gray-200">!</p>
 
         <div className="space-y-1">
-          <h1 className="text-lg font-bold text-gray-900">Er is iets misgegaan</h1>
+          <h1 className="text-lg font-bold text-gray-900">{t('fout.titel')}</h1>
           <p className="text-sm text-gray-400">
-            De pagina kon niet worden geladen. Probeer het opnieuw.
+            {t('fout.uitleg')}
           </p>
         </div>
 
@@ -37,13 +41,13 @@ export default function DashboardError({
             onClick={reset}
             className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
           >
-            Opnieuw proberen
+            {t('fout.opnieuw')}
           </button>
           <button
             onClick={() => router.push('/dashboard')}
             className="border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
           >
-            Naar dashboard
+            {t('fout.naarDashboard')}
           </button>
         </div>
 

@@ -7,6 +7,9 @@ import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { FolderRow } from "../types";
 import { folderColor } from "../helpers";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface FolderCardProps {
   folder: FolderRow;
@@ -26,6 +29,7 @@ export function FolderCard({
   onOpen, onSelect, onContextMenu,
   onDragStart, onDragEnter, onDragLeave, onDrop,
 }: FolderCardProps) {
+  const t = translator(useLocale());
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const isShared = folder.name === "Gedeeld met boekhouder";
@@ -101,7 +105,7 @@ export function FolderCard({
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e, folder); }}
-          aria-label="Meer opties"
+          aria-label={t("bst.meerOpties")}
           style={{
             position: "absolute", top: 6, insetInlineEnd: 6,
             width: 26, height: 26, border: "none",
