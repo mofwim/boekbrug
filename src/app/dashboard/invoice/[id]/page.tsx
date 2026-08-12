@@ -36,6 +36,8 @@ const PDFDownloadLink = dynamic(
 // dezelfde prijs tonen — en een prijs die vermenigvuldigd het regeltotaal oplevert.
 import { formatUnitPriceNL } from '@/lib/unit-price-display'
 import { statusChip } from '@/lib/invoice-status'
+// [KLANT-EXTRA] Dezelfde leesdefinitie als de PDF: wat het document draagt, laat dit scherm zien.
+import { clientExtraLines } from '@/lib/client-extra-lines'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 
@@ -406,6 +408,11 @@ export default function InvoiceDetailPage() {
     name: invoice?.client_name || '—',
     lines: [
       invoice?.client_name || '—',
+      // [KLANT-EXTRA] De vrije klantregels, direct onder de naam — precies waar de PDF ze
+      // drukt. Zonder ze toont dit scherm een AAN-blok dat het document tegenspreekt, en de
+      // eigenaar concludeert dat zijn "t.a.v."-regel verloren is gegaan terwijl hij op de
+      // factuur gewoon staat.
+      ...clientExtraLines(invoice ?? undefined),
       invoice?.client_address,
       [invoice?.client_postal_code, invoice?.client_city].filter(Boolean).join(' '),
       invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number.toUpperCase()}` : null,

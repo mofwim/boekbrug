@@ -31,6 +31,10 @@ import {
 } from "@/lib/ubl-export";
 // [UNIT] Herkent "die kolom ken ik niet" (42703/PGRST204) — zie de terugval bij de regels.
 import { isUnknownColumn } from "@/lib/created-by";
+// [KLANT-EXTRA] De drie vrije klantregels, in een EIGEN mislukbare leesbeurt — de hoofdselect
+// noemt zijn kolommen expliciet, en die mag niet falen op een database waar de migratie nog
+// open staat. Zelfde vorm als de terugkerende-facturen-cron.
+import { CLIENT_EXTRA_LINE_COLUMNS } from "@/lib/client-extra-lines";
 
 // [BOEK-020] Single-line SELECT literals — avoids GenericStringError (see BOEK-014)
 const INVOICE_SELECT =
@@ -202,6 +206,25 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // ── [KLANT-EXTRA] De drie vrije klantregels, apart en mislukbaar gelezen ──
+  // Op een database waar client_extra_lines.sql nog open staat faalt DEZE select (42703) en
+  // niet de export: de e-factuur is dan wat hij altijd was, zonder de regels. Zodra de
+  // kolommen bestaan reizen ze mee naar het adresblok van de koper — dezelfde regels die de
+  // PDF al drukt, want twee documenten over dezelfde factuur mogen niet verschillend
+  // geadresseerd zijn.
+  const { data: extraRow, error: extraErr } = await supabase
+    .from("invoices")
+    .select(CLIENT_EXTRA_LINE_COLUMNS.join(", "))
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (extraErr && CLIENT_EXTRA_LINE_COLUMNS.some((c) => isUnknownColumn(extraErr, c))) {
+    console.warn(
+      "[KLANT-EXTRA] de klantregels ontbreken op deze e-factuur — pas " +
+        "supabase/migrations/client_extra_lines.sql toe",
+      { invoiceId },
+    );
+  }
+
   // ── Map DB rows → pure generator inputs ──
   const header: UblInvoiceHeader = {
     invoice_number: inv.invoice_number,
@@ -216,6 +239,7 @@ export async function GET(req: NextRequest) {
     client_postal_code: inv.client_postal_code,
     client_city: inv.client_city,
     client_btw_number: inv.client_btw_number,
+    ...((extraRow ?? {}) as Record<string, string | null>),
   };
 
   const lines: UblInvoiceLine[] = ((lineRows ?? []) as unknown as Array<{
@@ -225,6 +249,7 @@ export async function GET(req: NextRequest) {
     btw_rate: number | null;
     line_total: number | null;
     unit?: string | null;
+    vat_treatment?: string | null;
   }>).map((l) => ({
     description: l.description,
     quantity: l.quantity,
@@ -234,6 +259,12 @@ export async function GET(req: NextRequest) {
     // [UNIT] Ontbreekt de kolom (migratie invoice_line_unit.sql nog niet toegepast), dan is
     // dit undefined en valt de export terug op C62 — precies het gedrag van vóór deze regel.
     unit: l.unit ?? null,
+    // [E-FACTUUR] De vrijstellingsvlag werd hier WEL geselecteerd maar NIET doorgegeven — de
+    // generator kreeg hem nooit, dus een vrijgestelde regel exporteerde als categorie Z
+    // (0%-belast) in plaats van E. Dat is een ander juridisch feit, en precies het feit dat
+    // de ontvanger anders moet boeken. Zelfde terugvalvorm als `unit`: kolom onbekend →
+    // undefined → het gedrag van vóór de vlag.
+    ...(l.vat_treatment !== undefined ? { vat_treatment: l.vat_treatment } : {}),
   }));
 
   const supplier: UblSupplier = profileRow as unknown as UblSupplier;

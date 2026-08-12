@@ -29,6 +29,9 @@ import { RE_REVERSE_CHARGE } from "./regime-flags";
 import { isReverseChargedInvoice } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 import { round2 } from "./invoice-totals";
+// [KLANT-EXTRA] Dezelfde drie vrije klantregels als op de PDF — één leesdefinitie voor beide
+// documenten, zodat de e-factuur nooit een andere geadresseerde draagt dan het papier.
+import { clientExtraLines } from "./client-extra-lines";
 
 // ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
 
@@ -65,6 +68,17 @@ export interface UblInvoiceHeader {
    */
   discount_type?: string | null;
   discount_value?: number | null;
+  /**
+   * [KLANT-EXTRA] The three free lines under the customer's name ("t.a.v. …", a project or
+   * purchase-order reference). Optional: a caller reading a database where
+   * client_extra_lines.sql is still open simply has no keys here, and the XML is what it
+   * always was. When present they are REQUIRED in the XML too — a receiving system books an
+   * invoice against exactly the reference these lines carry, so an e-factuur without them is
+   * refused by the same desk that refuses the paper without them.
+   */
+  client_extra_line1?: string | null;
+  client_extra_line2?: string | null;
+  client_extra_line3?: string | null;
 }
 
 /** Invoice line, from `invoice_lines`. `line_total` is treated as EX BTW. */
@@ -506,9 +520,20 @@ export function buildInvoiceUbl(
     .ele(NS.cbc, "Name")
     .txt(header.client_name?.trim() || "Onbekend");
   const cusAddr = cusParty.ele(NS.cac, "PostalAddress");
+  // [KLANT-EXTRA] The owner's free lines under the customer's name, on the SAME document this
+  // XML claims to be. EN 16931 gives a buyer address exactly two slots beyond the street:
+  // BT-51 (AdditionalStreetName) and BT-163 (one cac:AddressLine) — so line 1 takes BT-51 and
+  // lines 2+3 share BT-163, joined. Order is not free in UBL 2.1: AdditionalStreetName sits
+  // right after StreetName, AddressLine after PostalZone and BEFORE Country — on the wrong
+  // spot the file is not schema-valid and never reaches the desk these lines exist for.
+  const extraRegels = clientExtraLines(header);
   if (header.client_address?.trim()) cusAddr.ele(NS.cbc, "StreetName").txt(header.client_address.trim());
+  if (extraRegels[0]) cusAddr.ele(NS.cbc, "AdditionalStreetName").txt(extraRegels[0]);
   if (header.client_city?.trim()) cusAddr.ele(NS.cbc, "CityName").txt(header.client_city.trim());
   if (header.client_postal_code?.trim()) cusAddr.ele(NS.cbc, "PostalZone").txt(header.client_postal_code.trim());
+  if (extraRegels.length > 1) {
+    cusAddr.ele(NS.cac, "AddressLine").ele(NS.cbc, "Line").txt(extraRegels.slice(1).join(", "));
+  }
   cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt("NL");
   if (header.client_btw_number?.trim()) {
     const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");

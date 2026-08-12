@@ -5619,6 +5619,50 @@ test("[KLANT-EXTRA] every route that rebuilds the customer snapshot carries the 
   }
 });
 
+test("[KLANT-EXTRA] every reader of the customer block reads the SAME three lines", () => {
+  // The write side was covered from day one; the READ side is where this feature silently
+  // halved. Three surfaces show the customer block of one invoice, and for weeks two of them
+  // did not know the lines existed: the detail screen showed an AAN block that contradicted
+  // the PDF (the owner concludes their "t.a.v." was lost), and the e-factuur XML went to the
+  // customer's booking system without the very reference that system matches on. One read
+  // definition — clientExtraLines — for all three, so a fourth line, a new trim rule or a
+  // new length ceiling lands everywhere at once.
+  const READERS = [
+    "src/lib/invoice-pdf.tsx", // the legal document
+    "src/app/dashboard/invoice/[id]/page.tsx", // the owner's own view of it
+    "src/lib/ubl-export.ts", // the same document as XML
+  ] as const;
+  for (const f of READERS) {
+    assert.match(
+      code(f), /clientExtraLines\(/,
+      `${f} renders the customer block but not the extra lines — it contradicts the document`,
+    );
+  }
+  // And the UBL ROUTE must fetch them, or the builder reads keys that were never selected.
+  // In its own failable read (the cron's pattern): the main select names its columns and may
+  // not fail on a database where the migration is still open.
+  const route = code("src/app/api/export/ubl/route.ts");
+  assert.match(route, /CLIENT_EXTRA_LINE_COLUMNS\.join/, "the UBL route never fetches the lines");
+  assert.doesNotMatch(
+    route,
+    /INVOICE_SELECT\s*=[^;]*client_extra/,
+    "the lines may not join the main select — an open migration would fail EVERY export (42703)",
+  );
+});
+
+test("[E-FACTUUR] the UBL route passes vat_treatment through to the builder", () => {
+  // The route SELECTED the flag, carried a fallback for it, and then dropped it in the map to
+  // the builder's input — so every exempt line exported as category Z (0%-taxed) instead of E.
+  // A different legal fact, discovered only because this gate now counts both halves: the
+  // fetch AND the hand-over.
+  const route = code("src/app/api/export/ubl/route.ts");
+  assert.match(route, /LINES_SELECT\s*=\s*"[^"]*vat_treatment/, "the flag left the SELECT");
+  assert.match(
+    route, /vat_treatment:\s*l\.vat_treatment/,
+    "the flag is selected but not handed to buildInvoiceUbl — exempt lines export as Z",
+  );
+});
+
 test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {
   // The rule this gate exists for. PostgREST rejects the WHOLE row on an unknown column, so a bare
   // mention in an insert or update payload is an invoice that cannot be saved on any database
