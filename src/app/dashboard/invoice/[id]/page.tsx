@@ -379,12 +379,12 @@ export default function InvoiceDetailPage() {
     !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&
     !linkedCreditnota
 
-  // [HERSTEL] Een verstuurde factuur is volledig bewerkbaar zolang er niets aan hangt — de
-  // marktregel, met de grendels uit invoice-editable.ts. Dit scherm toont de knop alleen voor de
-  // gevallen die het zelf kan zien (betaald, gecrediteerd, inkomend); de PUT-route controleert
-  // ALLES (bankkoppeling, kas, verwerkt, ingediend kwartaal) en weigert met de reden erbij.
-  // Opslaan stuurt de klant automatisch de gecorrigeerde versie — dat zegt het bewerkscherm.
-  const canHerstel =
+  // [HERSTEL] A sent invoice is fully editable while nothing is attached to it — the market
+  // rule, with the locks in invoice-editable.ts. This screen shows the button only for what it
+  // can see itself (paid, credited, incoming); the PUT route checks EVERYTHING (bank link, kas,
+  // verwerkt, filed quarter) and refuses with the reason. Saving automatically delivers the
+  // corrected version to the customer — the edit screen says so.
+  const canCorrectSent =
     invoice &&
     isOwner &&
     invoice.invoice_type === 'factuur' &&
@@ -670,10 +670,10 @@ export default function InvoiceDetailPage() {
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 8, flexShrink: 0, marginInlineStart: 12 }}>
-                {/* [HERSTEL] Bewerken opent het gewone bewerkscherm; opslaan bezorgt de klant
-                    automatisch de gecorrigeerde versie. Alleen zolang er niets aan de factuur
-                    hangt — anders blijft alleen de creditnota-knop ernaast over. */}
-                {canHerstel && (
+                {/* [HERSTEL] Bewerken opens the ordinary edit screen; saving automatically
+                    delivers the corrected version to the customer. Only while nothing is
+                    attached to the invoice — otherwise only the creditnota button remains. */}
+                {canCorrectSent && (
                   <button
                     onClick={() => router.push(`/dashboard/invoice/${invoiceId}/edit`)}
                     style={{ backgroundColor: 'white', color: '#EA8600', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: '1px solid #F9AB00', cursor: 'pointer', whiteSpace: 'nowrap' }}

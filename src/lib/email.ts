@@ -212,7 +212,7 @@ export async function sendInvoiceToClient({
   pdfBuffer,
   isCreditnota = false,
   senderEmail,
-  isHerstel = false,
+  isCorrected = false,
 }: {
   toEmail: string
   clientName: string
@@ -232,7 +232,7 @@ export async function sendInvoiceToClient({
    * customer holds two PDFs with one number and picks one at random — the exact divergence the
    * herstel path exists to prevent.
    */
-  isHerstel?: boolean
+  isCorrected?: boolean
   /**
    * [ANTWOORD-ADRES] Het e-mailadres van de ondernemer, uit zijn profiel — dat is het adres waarmee
    * hij zich bij BoekBrug heeft aangemeld.
@@ -282,15 +282,15 @@ export async function sendInvoiceToClient({
     to: toEmail,
     // [ANTWOORD-ADRES] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
     ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
-    subject: isHerstel
+    subject: isCorrected
       ? `Gecorrigeerde factuur ${invoiceNumber} van ${zzperName}`
       : `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #202124;">${isHerstel ? 'Gecorrigeerde factuur ontvangen' : isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
+        <h2 style="color: #202124;">${isCorrected ? 'Gecorrigeerde factuur ontvangen' : isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
         <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
         <p style="color: #555;">${
-          isHerstel
+          isCorrected
             ? `Je hebt een <strong>gecorrigeerde factuur</strong> ontvangen van <strong>${escapeHtml(zzperName)}</strong>. Deze versie vervangt de eerdere factuur met hetzelfde nummer ${escapeHtml(invoiceNumber)} — de eerdere versie is daarmee vervallen. Gebruik alleen deze.`
             : `Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${escapeHtml(zzperName)}</strong>.`
         }</p>

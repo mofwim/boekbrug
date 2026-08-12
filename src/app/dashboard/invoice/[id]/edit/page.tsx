@@ -58,8 +58,8 @@ export default function InvoiceEditPage() {
 
   // [BOEK-031] Send flow state — May 2026
   const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
-  // [HERSTEL] Verstuurde factuur, volledig bewerkbaar zolang er niets aan hangt.
-  const [kanHerstellen, setKanHerstellen] = useState(false)
+  // [HERSTEL] A sent invoice, fully editable while nothing is attached to it.
+  const [canCorrectSent, setCanCorrectSent] = useState(false)
   // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
   // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
   // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
@@ -143,11 +143,11 @@ export default function InvoiceEditPage() {
       setInvoiceNumber(invoice.invoice_number)
       // [BOEK-031] Track current status for button visibility — May 2026
       setInvoiceStatus(invoice.status || 'draft')
-      // [HERSTEL] Mag deze VERSTUURDE factuur hier bewerkt worden? Het scherm toont de knop voor
-      // wat het zelf kan zien; de PUT-route controleert alles (bank, kas, creditnota, verwerkt,
-      // ingediend kwartaal) en weigert met de reden erbij. Opslaan bezorgt de klant automatisch
-      // de gecorrigeerde versie — de banner boven de knoppen zegt dat vooraf.
-      setKanHerstellen(
+      // [HERSTEL] May this SENT invoice be edited here? The screen decides from what it can
+      // see; the PUT route checks everything (bank, kas, creditnota, verwerkt, filed quarter)
+      // and refuses with the reason. Saving automatically delivers the corrected version to the
+      // customer — the banner above the buttons says so before the tap.
+      setCanCorrectSent(
         (invoice.status === 'sent' || invoice.status === 'overdue') &&
         (invoice.invoice_type || 'factuur') === 'factuur' &&
         !!invoice.invoice_number &&
@@ -302,9 +302,10 @@ export default function InvoiceEditPage() {
       return
     }
 
-    // [HERSTEL] De wijziging staat, maar de gecorrigeerde versie bereikte de klant niet — dat
-    // mag niet stil passeren, want de klant houdt dan de oude versie. De route zegt wat te doen.
-    if (data.warning === 'herstel_delivery_failed') {
+    // [HERSTEL] The change stands, but the corrected version did not reach the customer — that
+    // may not pass silently, since the customer still holds the old version. The route says
+    // what to do next.
+    if (data.warning === 'corrected_delivery_failed') {
       setError(data.error || t('bewerk.herstel.nietBezorgd'))
       setSaving(false)
       return
@@ -835,10 +836,10 @@ export default function InvoiceEditPage() {
                 {sending ? 'Verzenden...' : quote ? '✉ Omzetten naar factuur en versturen' : '✉ Verstuur factuur'}
               </button>
             </>
-          ) : kanHerstellen ? (
-            // [HERSTEL] Een verstuurde factuur, volledig bewerkbaar — de marktregel, met de
-            // grendels in de PUT-route. Eén knop, en de banner zegt vooraf wat opslaan doet:
-            // de klant krijgt automatisch de gecorrigeerde versie, het nummer verandert nooit.
+          ) : canCorrectSent ? (
+            // [HERSTEL] A sent invoice, fully editable — the market rule, with the locks in
+            // the PUT route. One button, and the banner says beforehand what saving does: the
+            // customer automatically receives the corrected version, the number never changes.
             <div className="w-full space-y-3">
               <p className="text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-4 py-3 leading-relaxed">
                 {t('bewerk.herstel.uitleg', { number: invoiceNumber ?? '' })}
