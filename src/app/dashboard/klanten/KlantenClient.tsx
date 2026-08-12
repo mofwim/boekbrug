@@ -16,6 +16,8 @@ import type { ProfileRow } from '@/types/rows'
 import { foldText } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -37,6 +39,7 @@ function avatarColor(name: string) {
 }
 
 export default function KlantenClient({ profile }: { profile: ProfileRow }) {
+  const t = translator(useLocale())
   const router   = useRouter()
   const supabase = createClient()
 
@@ -63,14 +66,34 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const [saving, setSaving]         = useState(false)
   const [error, setError]           = useState<string | null>(null)
 
-  useEffect(() => { loadClients() }, [])
-
+  // [TAAL] The effect moved BELOW the declaration it calls. It sat above it for months without
+  // complaint — a function declaration hoists, so it worked — but the React compiler refuses the
+  // order now that this component compiles (adding the translator binding un-bailed it), and the
+  // compiler is right: an effect reading a binding declared later cannot be updated correctly if
+  // that binding ever becomes reactive.
+  // `loading` begint als true, dus de mount hoeft hem niet nogmaals te zetten — en de compiler
+  // weigert een synchrone setState in een effect terecht. De ene her-lader (na opslaan, r. 150)
+  // zet de spinner zelf, vóór de aanroep.
   async function loadClients() {
-    setLoading(true)
     const { data } = await supabase.from('clients').select('*').eq('user_id', profile.id).order('name')
     setClients(data ?? [])
     setLoading(false)
   }
+
+  useEffect(() => {
+    // Zelfde vorm als settings/page.tsx: de async functie IN het effect, met elke setState pas
+    // ná een await. De compiler keurt een aanroep van een buiten het effect gedeclareerde functie
+    // conservatief af (hij kan er niet in kijken); deze vorm bewijst wat hij wil weten.
+    let alive = true
+    ;(async () => {
+      const { data } = await supabase.from('clients').select('*').eq('user_id', profile.id).order('name')
+      if (!alive) return
+      setClients(data ?? [])
+      setLoading(false)
+    })()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // [SEARCH] Accent-insensitive filter across the full customer record — not just
   // name/email (KVK, BTW, IBAN, city, address are all findable now).
@@ -110,7 +133,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   }, [focusId, loading, clients])
 
   async function handleSave() {
-    if (!form.name.trim()) { setError('Naam is verplicht'); return }
+    if (!form.name.trim()) { setError(t('kl.naamVerplicht')); return }
     setSaving(true); setError(null)
 
     // [ACTING-FOR] Beide schrijfacties lopen nu via de server.
@@ -139,6 +162,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     showToast(editingId ? 'Klant bijgewerkt' : 'Klant toegevoegd')
 
     setForm(EMPTY); setShowForm(false); setEditingId(null)
+    setLoading(true)
     await loadClients()
     setSaving(false)
   }
@@ -174,7 +198,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     if (!ok) return
     await supabase.from('clients').delete().eq('id', id)
     setClients(prev => prev.filter(c => c.id !== id))
-    showToast('Klant verwijderd')
+    showToast(t('kl.verwijderd'))
   }
 
 
@@ -213,25 +237,25 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
               onClick={() => { setShowForm(p => !p); setError(null) }}
               style={{ background: M3.primaryContainer, color: M3.onPrimaryContainer, border: 'none', borderRadius: R.full, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span>
-              Nieuw
+              {t('best.nieuw')}
             </button>
           </div>
 
           {/* Material You search bar */}
           <div style={{ position: 'relative' }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
             <input
               value={search} onChange={e => setSearch(e.target.value)}
-              aria-label="Klanten zoeken"
-              placeholder="Zoek op naam, e-mail, KVK, IBAN..."
+              aria-label={t('kl.zoek.aria')}
+              placeholder={t('kl.zoek')}
               style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: search ? '10px 40px 10px 40px' : '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
             />
             {/* [SMART-FILTER] Wissen-knop — alleen zichtbaar zodra er iets getypt is. */}
             {search && (
               <button
                 onClick={() => setSearch('')}
-                aria-label="Zoekopdracht wissen"
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
+                aria-label={t('lijst.zoek.wissen')}
+                style={{ position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
               </button>
             )}
@@ -264,7 +288,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <button onClick={() => { setShowForm(false); setForm(EMPTY); setEditingId(null) }}
                 style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-                Annuleren
+                {t('lijst.annuleren')}
               </button>
               <button onClick={handleSave} disabled={saving}
                 style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: saving ? M3.surfaceVariant : M3.primary, color: saving ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
@@ -311,7 +335,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
                     </div>
-                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
                   </div>
 
                   {/* Inline expand */}
@@ -321,30 +345,30 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                         {client.kvk_number  && <InfoLine label="KVK"  value={client.kvk_number} />}
                         {client.btw_number  && <InfoLine label="BTW"  value={client.btw_number} />}
                         {client.iban        && <InfoLine label="IBAN" value={client.iban} />}
-                        {client.address     && <InfoLine label="Adres" value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
+                        {client.address     && <InfoLine label={t('inst.adres')} value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [KLANTEN] Open the mini-CRM detail: history, notes, totals. */}
                         <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/klanten/${client.id}`) }}
                           style={{ fontSize: 13, color: M3.onSurface, background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person</span>
-                          Bekijk
+                          {t('kl.bekijk')}
                         </button>
                         <button onClick={e => { e.stopPropagation(); handleDelete(client.id) }}
                           style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                          Verwijderen
+                          {t('lijst.verwijderen')}
                         </button>
                         {/* [BOEK-029] Edit button */}
                         <button onClick={e => { e.stopPropagation(); handleEdit(client) }}
                           style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
-                          Bewerken
+                          {t('ink.bewerken')}
                         </button>
                         <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/new?client_id=${client.id}&client_name=${encodeURIComponent(client.name)}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
-                          Factuur
+                          {t('kl.factuur')}
                         </button>
                       </div>
                     </div>
@@ -376,7 +400,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         }}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
-        Nieuwe factuur
+        {t('lijst.nieuw')}
       </button>
       <style>{`
         @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }

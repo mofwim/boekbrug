@@ -40,7 +40,7 @@ export default function GlobalSearchLauncher() {
   // bottom-right on facturen/klanten/werkplek — a bottom-right search FAB overlapped them.
   return (
     <div style={{
-      position: "fixed", left: 20, zIndex: 150,
+      position: "fixed", insetInlineStart: 20, zIndex: 150,
       // [MOBILE-FAB] Boven de BottomNav via de gedeelde --bottom-nav-h (0px op
       // desktop, 64px op mobiel). Op de vaste `bottom: 20` stond deze knop op een
       // telefoon ACHTER die balk — alleen een streepje blauw stak uit de linkerrand,

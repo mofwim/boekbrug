@@ -258,7 +258,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
               Dan komen je transacties automatisch binnen en hoef je geen afschrift meer te uploaden.
             </span>
           </span>
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>chevron_right</span>
         </button>
       )}
 

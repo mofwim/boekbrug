@@ -111,7 +111,7 @@ export default function FeedbackButton() {
         onClick={() => setOpen(true)}
         aria-label="Er ging iets mis — stuur ons een bericht"
         style={{
-          position: 'fixed', right: 16,
+          position: 'fixed', insetInlineEnd: 16,
           // [FEEDBACK] Boven de BottomNav én boven de paginaknop. De vaste 88px botste
           // op mobiel exact met de upload-/plus-FAB: die staat op
           // 24px + var(--bottom-nav-h) = 24 + 64 = 88px, ook rechts — twee knoppen op

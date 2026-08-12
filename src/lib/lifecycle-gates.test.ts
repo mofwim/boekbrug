@@ -2231,8 +2231,9 @@ test("[E-FACTUUR-ZICHTBAAR] the screen says which rows never need checking", () 
     "a contradicted e-invoice may never wear the reassuring badge",
   );
   // And the sentence tells the owner what it MEANS, not merely that it happened.
-  assert.match(ui, /Deze hoef je niet na te kijken/, "the tooltip must say what it is for");
-  assert.match(ui, /Cijfers van de leverancier/, "and the badge must be on the row");
+  assert.match(ui, /t\('inkoop\.eFactuurUitleg', \{ syntax: e\.syntax \}\)/, "the tooltip must say what it is for");
+  // [TAAL] Pinned on the key — sixth gate that went red on translation alone.
+  assert.match(ui, /t\('inkoop\.cijfersLeverancier'\)/, "and the badge must be on the row");
 });
 
 // ── [DEEL-BEDRAG] The stated amount must REACH the database ──────────────────
@@ -3482,12 +3483,13 @@ test("[BETAALTERMIJN] the term is derived from the dates, and any term can be ty
 
   // An offerte has no payment term at all: its due_date is "Geldig tot", which is what the PDF
   // prints. Showing a payment sentence there makes the screen contradict the document.
+  // [TAAL] Pinned on the key — fourth gate that went red on translation alone.
   assert.match(
-    edit, /\{quote \? \([\s\S]{0,400}?Deze offerte is geldig tot/,
+    edit, /\{quote \? \([\s\S]{0,400}?t\('bewerk\.geldigTot'\)/,
     "a quote states its validity, not a payment term",
   );
   assert.match(
-    edit, /\{!quote && \([\s\S]{0,200}?Betalingstermijn:/,
+    edit, /\{!quote && \([\s\S]{0,200}?t\('nieuw\.termijn\.kort'\)/,
     "…and the term control is hidden there, so one field never means two things",
   );
 
@@ -3764,11 +3766,13 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
     quoteButton.length > 100 && quoteButton.length < 2400,
     `the slice must be that ONE button — it is ${quoteButton.length} chars`,
   );
-  assert.match(quoteButton, /Omzetten naar factuur/, "the label states the act");
+  // [TAAL] Pinned on the KEY — third gate that went red on translation, same lesson as
+  // [ARTIKEL-CODE]: a gate written against one language fails the day the app gains a second.
+  assert.match(quoteButton, /t\('lijst\.omzetten'\)/, "the label states the act");
   assert.doesNotMatch(
-    quoteButton, /> Versturen</,
-    "…and not the expectation. A bare 'Versturen' on a quote promises to send a quote and issues " +
-      "a numbered invoice instead",
+    quoteButton, /> Versturen<|t\('lijst\.versturen'\)/,
+    "…and not the expectation. A bare 'send' on a quote promises to send a quote and issues " +
+      "a numbered invoice instead — in any language",
   );
 
   assert.match(
@@ -4498,8 +4502,9 @@ test("[LEVERDATUM] the edit path can read, show and write the delivery date", ()
 
   const screen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
   assert.match(screen, /setDeliveryDate\(/, "the screen must load the stored value");
+  // [TAAL] Pinned on the key — fifth gate that went red on translation alone.
   assert.match(
-    screen, /aria-label="Leverdatum"/,
+    screen, /aria-label=\{t\('nieuw\.datum\.lever'\)\}/,
     "…and offer a field to correct it, or the allowlist entry has no way to be used",
   );
   // Sent on BOTH save paths. The second one is the dangerous one: it saves and then issues a
@@ -6174,6 +6179,21 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
       const src = code(p);
       if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
       if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
+      // Fixed/absolute positioning: a FAB pinned `right: 20` sits in the mirrored thumb zone's
+      // wrong corner. Matched narrowly — `right: <number>` as a style property — because CSS
+      // `left`/`right` also appear as string values ('to the right') and in prose.
+      // insetInlineStart/End are unaffected. `left: 0, right: 0` full-bleed pairs are fine in
+      // either language and common (overlays), so a line containing BOTH sides is skipped.
+      for (const line of src.split("\n")) {
+        if (/\bleft: *[\d'"]/.test(line) && /\bright: *[\d'"]/.test(line)) continue;
+        // A position MEASURED with getBoundingClientRect is physical by definition; applying a
+        // logical property to a measured number would mirror an already-correct element. Files
+        // mark those with the [TAAL] "Bewust FYSIEK" note — which lives in a COMMENT, so it must
+        // be read from the raw file: `src` here is comment-stripped, and the first version of
+        // this exemption tested the stripped text and could never see its own marker.
+        if (readFileSync(p, "utf8").includes("Bewust FYSIEK") && /dropdownPos|getBoundingClientRect|rect\./.test(line)) continue;
+        if (/[{,] *(?:left|right): *\d/.test(line)) { offenders.push(`${p} — positioned on a physical side`); break; }
+      }
       // Tailwind too. The inline-style sweep missed these entirely on the first pass — 33 classes
       // in nine files — because they do not look like styles. Tailwind v4 ships the logical
       // utilities (ms/me/ps/pe/text-start/text-end/border-s/border-e/rounded-s/start/end), and in
@@ -6421,7 +6441,7 @@ test("[RLS-UIT] the audit has something to audit", () => {
   );
 });
 
-test("[TAAL] the invoice screen has no Dutch of its own left", () => {
+test("[TAAL] the translated screens have no Dutch of their own left", () => {
   // The first whole PAGE in the catalogue, and the one the owner uses most. A screen is either
   // translated or it is not: half of it in Arabic and half in Dutch is harder to use than all of
   // it in Dutch, so "mostly done" is not a state this may rest in.
@@ -6429,7 +6449,44 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
   // The gate is a re-scan, not a checklist — it looks for the SHAPE of a Dutch string in a
   // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
   // part a list of keys cannot do.
-  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  const SCREENS = [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/invoice/[id]/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/zzp/ZzpDashboard.tsx",
+    "src/app/dashboard/zzp/DailyTruth.tsx",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/bank/BankClient.tsx",
+    "src/app/dashboard/kas/KasClient.tsx",
+    "src/app/dashboard/vandaag/VandaagClient.tsx",
+    "src/app/dashboard/settings/page.tsx",
+    "src/app/dashboard/waarheid/WaarheidClient.tsx",
+    "src/app/dashboard/bestanden/BestandenPage.tsx",
+    "src/app/dashboard/zoeken/ZoekenClient.tsx",
+    "src/app/dashboard/upload/UploadClient.tsx",
+    "src/app/dashboard/klanten/KlantenClient.tsx",
+    "src/app/dashboard/brug/BrugClient.tsx",
+    "src/app/dashboard/dagomzet/TurnoverInsights.tsx",
+    "src/app/dashboard/artikelen/ArtikelenClient.tsx",
+    "src/app/dashboard/klaar/KlaarClient.tsx",
+    "src/components/onboarding/OnboardingWizard.tsx",
+    "src/components/intake/IntakeButton.tsx",
+    "src/app/dashboard/dagomzet/DagomzetImportClient.tsx",
+    "src/app/dashboard/bank/categoriseren/CategoriseClient.tsx",
+    "src/app/dashboard/vragen/VragenClient.tsx",
+    "src/app/dashboard/settings/team/TeamClient.tsx",
+    "src/app/dashboard/bestanden/components/Trash.tsx",
+    "src/app/dashboard/aangifte/AangifteClient.tsx",
+    "src/components/draft-queue/DraftQueue.tsx",
+    "src/components/quarterly/QuarterlyOverview.tsx",
+    "src/app/dashboard/_shared/index.tsx",
+    "src/components/search/SearchBar.tsx",
+    "src/app/dashboard/settings/facturering/page.tsx",
+    "src/app/dashboard/bestanden/components/modals/MoveModal.tsx",
+    "src/app/dashboard/verkoop/VerkoopClient.tsx",
+  ];
   const leftovers: string[] = [];
 
   const patterns = [
@@ -6440,6 +6497,8 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     // A message handed to the owner when something goes wrong.
     /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
   ];
+  for (const screen of SCREENS) {
+  const page = code(screen);
   for (const re of patterns) {
     for (const m of page.matchAll(re)) {
       const text = m[1].trim();
@@ -6449,8 +6508,12 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
       // A city and a street are FORMAT examples, not words: an Arabic example would have the
       // owner typing a postcode that does not exist here. Same for the VAT number shape.
       if (/^(Amsterdam|Straatnaam 1|NL\d)/.test(text)) continue;
-      leftovers.push(text);
+      leftovers.push(`${screen}: ${text}`);
     }
+  }
+  // And the translator must be bound in each, or every t() above is a crash rather than a word.
+  // serverTranslator counts too: a dashboard servercomponent binds via the request, not a hook.
+  assert.match(page, /(?:translator\(|serverTranslator\()/, `${screen} uses keys but binds no translator`);
   }
 
   assert.deepEqual(
@@ -6458,8 +6521,61 @@ test("[TAAL] the invoice screen has no Dutch of its own left", () => {
     `these still bypass the catalogue:\n  ${[...new Set(leftovers)].join("\n  ")}`,
   );
 
-  // And the translator must actually be bound, or every t() above is a crash rather than a word.
-  assert.match(page, /const t = translator\(taal\)/);
+});
+
+test("[TAAL] an arrow that means a direction flips for Arabic", () => {
+  // Material Symbols is a FONT. The glyph for `chevron_right` is a right-pointing chevron in
+  // every language, so on a right-to-left screen a back button points away from the way back and
+  // "next" points at the beginning. Nobody reports that as a bug; it just makes the navigation
+  // untrustworthy for the people the translation was for.
+  //
+  // The fix is one CSS rule keyed on the direction the boot script already sets, and a class on
+  // the icons that mean a direction. This gate is the half that rots: the rule keeps working, and
+  // the NEXT chevron somebody adds simply does not carry the class.
+  const DIRECTIONAL = [
+    "arrow_back", "arrow_forward", "chevron_left", "chevron_right",
+    "arrow_back_ios", "arrow_forward_ios", "first_page", "last_page",
+    "keyboard_arrow_left", "keyboard_arrow_right",
+    // These three were tagged by the sweep but were missing from this list — so a future
+    // `undo` would have been added untagged and the gate would have stayed green. The list that
+    // ENFORCES and the list that APPLIED have to be the same list, which is the same defect class
+    // as [CENT]: one fact, two definitions, and only one of them is checked.
+    "undo", "redo", "reply",
+  ];
+  const untagged: string[] = [];
+
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!p.endsWith(".tsx") || /\.test\.tsx$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      for (const m of src.matchAll(/<span\b[^>]*className="(material-symbols-outlined[^"]*)"[^>]*>\s*([a-z_]+)\s*<\/span>/g)) {
+        if (DIRECTIONAL.includes(m[2]) && !m[1].includes("icon-dir")) untagged.push(`${p} — ${m[2]}`);
+      }
+      // A bare ← or → in its own span is the same affordance in text form.
+      for (const m of src.matchAll(/<span\b([^>]*)>\s*[←→]\s*<\/span>/g)) {
+        if (!m[1].includes("icon-dir")) untagged.push(`${p} — a bare arrow`);
+      }
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(
+    untagged, [],
+    `these point the wrong way in Arabic — add the icon-dir class:\n  ${untagged.join("\n  ")}`,
+  );
+
+  // And the rule they depend on. Without it the class is decoration.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /\[dir="rtl"\]\s*\.icon-dir\s*\{[^}]*scaleX\(-1\)/,
+    "the flip rule must exist, and must be keyed on dir=rtl so Dutch is untouched");
+
+  // Vertical arrows deliberately do NOT carry it: up is up in every language, and mirroring a
+  // two-way exchange icon changes nothing while risking a wrong-looking arrowhead.
+  const anyFile = readFileSync("src/app/dashboard/facturen/FacturenClient.tsx", "utf8");
+  const vertical = anyFile.match(/className="[^"]*icon-dir[^"]*"[^>]*>\s*(arrow_upward|arrow_downward|expand_more|expand_less|swap_horiz)\s*</);
+  assert.equal(vertical, null, `a non-directional icon was tagged: ${vertical?.[1]}`);
 });
 
 // ─── [MONEY-GUARD-CLOSED] A money-read guard that ignores its error fails OPEN ───────────────────

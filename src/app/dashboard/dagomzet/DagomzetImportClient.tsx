@@ -14,6 +14,8 @@ import TurnoverInsights from './TurnoverInsights'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -40,6 +42,7 @@ const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 
 export default function DagomzetImportClient() {
+  const t = translator(useLocale())
   const [fileName, setFileName] = useState<string | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,7 +69,7 @@ export default function DagomzetImportClient() {
       if (!res.ok) { setFileName(null); setError(json.detail ?? json.error ?? 'Kon het bestand niet lezen'); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
-      setError('Er ging iets mis bij het lezen van het bestand')
+      setError(t('dzi.fout.bestand'))
     } finally { setBusy(false) }
   }
 
@@ -79,7 +82,7 @@ export default function DagomzetImportClient() {
       if (!res.ok || !json.ok) { setError(json.detail ?? json.error ?? 'Kon het grootboek niet lezen'); return }
       setLedgerPreview({ kind: json.kind, accountNr: json.accountNr ?? null, title: json.title ?? null, rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
-      setError('Er ging iets mis bij het lezen van het grootboek')
+      setError(t('dzi.fout.grootboek'))
     }
   }
 
@@ -96,7 +99,7 @@ export default function DagomzetImportClient() {
       setDone({ committed: json.committed ?? ledgerPreview.rows.length, ledger: ledgerPreview.kind })
       setLedgerPreview(null); setFileName(null)
     } catch {
-      setError('Opslaan mislukt')
+      setError(t('dzi.fout.opslaan'))
     } finally { setBusy(false) }
   }
 
@@ -114,7 +117,7 @@ export default function DagomzetImportClient() {
       setDone({ committed: json.committed ?? preview.rows.length })
       setPreview(null); setFileName(null); setRefreshTick((t) => t + 1)
     } catch {
-      setError('Opslaan mislukt')
+      setError(t('dzi.fout.opslaan'))
     } finally { setBusy(false) }
   }
 
@@ -137,7 +140,7 @@ export default function DagomzetImportClient() {
             the in-body h1 was removed. The descriptive intro stays. */}
         <p style={{ fontSize: 14, color: M3.neutral, margin: '16px 0 20px', lineHeight: 1.5 }}>
           Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —
-          er wordt niets opgeslagen tot je op <b>Goedkeuren</b> klikt. Upload je een grootboek-overzicht
+          er wordt niets opgeslagen tot je op <b>{t('dzi.goedkeuren')}</b> klikt. Upload je een grootboek-overzicht
           (OVERZICHT/KASBOEK van de boekhouder), dan wordt dat automatisch herkend en als <b>controle</b>
           op je kassa bewaard — niet als omzet.
         </p>
@@ -210,7 +213,7 @@ export default function DagomzetImportClient() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: FONT_NUM }}>
                   <thead>
                     <tr style={{ color: M3.neutral, textAlign: 'end' }}>
-                      <th style={thL}>Datum</th><th style={thR}>Ontvangen</th><th style={thR}>Uitgaven</th>
+                      <th style={thL}>{t('kas.datum')}</th><th style={thR}>{t('kas.ontvangen')}</th><th style={thR}>{t('dzi.uitgaven')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -236,7 +239,7 @@ export default function DagomzetImportClient() {
               <button onClick={reject} disabled={busy}
                 style={{ background: 'transparent', color: M3.neutral, border: `1px solid ${M3.outlineVariant}`,
                   borderRadius: 10, padding: '12px 18px', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-                Afwijzen
+                {t('dzi.afwijzen')}
               </button>
             </div>
           </div>
@@ -250,13 +253,13 @@ export default function DagomzetImportClient() {
                 Gelezen uit {fileName}
               </div>
               {preview.count === 0 ? (
-                <div style={{ fontSize: 14, color: M3.warning }}>Geen dagen met omzet gevonden in dit bestand.</div>
+                <div style={{ fontSize: 14, color: M3.warning }}>{t('dzi.geenDagen')}</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <Stat label="Dagen" value={String(preview.count)} sub={dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : undefined} />
-                  <Stat label="Totale omzet (incl.)" value={eur.format(totalTurnover)} sub={`netto ${eur.format(netOmzet)}`} />
+                  <Stat label={t('dzi.dagen')} value={String(preview.count)} sub={dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : undefined} />
+                  <Stat label={t('dzi.totaleOmzet')} value={eur.format(totalTurnover)} sub={`netto ${eur.format(netOmzet)}`} />
                   <Stat label="BTW gedetecteerd" value={eur.format(btw9 + btw21)} sub={`9%: ${eur.format(btw9)} · 21%: ${eur.format(btw21)}`} />
-                  <Stat label="Betaalwijzen" value={`PIN ${eur.format(pin)}`} sub={`contant ${eur.format(cash)}`} />
+                  <Stat label={t('dz.betaalwijzen')} value={`PIN ${eur.format(pin)}`} sub={`contant ${eur.format(cash)}`} />
                 </div>
               )}
             </div>
@@ -281,9 +284,9 @@ export default function DagomzetImportClient() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: FONT_NUM }}>
                   <thead>
                     <tr style={{ color: M3.neutral, textAlign: 'end' }}>
-                      <th style={thL}>Datum</th><th style={thR}>Omzet incl.</th>
+                      <th style={thL}>{t('kas.datum')}</th><th style={thR}>{t('dzi.omzetIncl')}</th>
                       <th style={thR}>BTW 9%</th><th style={thR}>BTW 21%</th>
-                      <th style={thR}>PIN</th><th style={thR}>Contant</th>
+                      <th style={thR}>PIN</th><th style={thR}>{t('lijst.contant')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -313,7 +316,7 @@ export default function DagomzetImportClient() {
               <button onClick={reject} disabled={busy}
                 style={{ background: 'transparent', color: M3.neutral, border: `1px solid ${M3.outlineVariant}`,
                   borderRadius: 10, padding: '12px 18px', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-                Afwijzen
+                {t('dzi.afwijzen')}
               </button>
             </div>
           </div>

@@ -63,7 +63,7 @@ export function BackLink({
         ...style,
       }}
     >
-      <span aria-hidden>←</span>
+      <span className="icon-dir" aria-hidden>←</span>
       {label}
     </Link>
   )

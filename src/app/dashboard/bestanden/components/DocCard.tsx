@@ -80,7 +80,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
       <div
         onClick={e => { e.stopPropagation(); onSelect(e); }}
         style={{
-          position: "absolute", top: 8, left: 8, zIndex: 2,
+          position: "absolute", top: 8, insetInlineStart: 8, zIndex: 2,
           width: 20, height: 20, borderRadius: T.full,
           background: selected ? T.primary : "rgba(255,255,255,0.92)",
           border: `2px solid ${selected ? T.primary : "#dadce0"}`,
@@ -121,7 +121,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
             onClick={e => { e.stopPropagation(); onContextMenu(e); }}
             aria-label="Meer opties"
             style={{
-              position: "absolute", top: 6, right: 6,
+              position: "absolute", top: 6, insetInlineEnd: 6,
               width: 26, height: 26, border: "none",
               background: "rgba(255,255,255,0.92)", borderRadius: T.full,
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -135,7 +135,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {/* AI badge */}
         {doc.ai_processed && !hovered && (
           <div style={{
-            position: "absolute", top: 6, right: 6,
+            position: "absolute", top: 6, insetInlineEnd: 6,
             width: 20, height: 20, borderRadius: T.sm,
             background: T.successContainer,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -147,7 +147,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {/* Star badge */}
         {doc.starred && (
           <Icon name="star" size={14} color={T.star}
-            style={{ position: "absolute", bottom: 6, right: 6 }} />
+            style={{ position: "absolute", bottom: 6, insetInlineEnd: 6 }} />
         )}
 
         {/* [BRUG-FILES-SHARED] Share badge — one click toggles sharing. Solid when
@@ -158,7 +158,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
             title={doc.shared ? "Gedeeld met boekhouder — tik om te stoppen" : "Delen met boekhouder"}
             aria-label={doc.shared ? "Niet meer delen" : "Delen met boekhouder"}
             style={{
-              position: "absolute", bottom: 6, left: 6,
+              position: "absolute", bottom: 6, insetInlineStart: 6,
               width: 24, height: 24, border: "none",
               background: doc.shared ? T.primary : "rgba(255,255,255,0.92)",
               borderRadius: T.full, cursor: "pointer",

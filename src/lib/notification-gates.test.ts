@@ -216,8 +216,9 @@ test("[NO-SILENT-EMPTY] both homes prove the bell was cleared before showing it 
 test("[NO-SILENT-EMPTY] the bell can say it could not read, instead of 'Geen meldingen'", () => {
   const shared = code("src/app/dashboard/_shared/index.tsx");
   assert.match(shared, /loadError/, "the bell takes a failure state");
+  // [TAAL] Op de sleutel gepind — zevende poort die alleen door de vertaling rood werd.
   const errorAt = shared.indexOf("loadError ?");
-  const emptyAt = shared.indexOf("Geen meldingen");
+  const emptyAt = shared.indexOf("t('kop.geenMeldingen')");
   assert.ok(errorAt > 0 && emptyAt > 0 && errorAt < emptyAt,
     "and checks it before falling back to the empty sentence");
 

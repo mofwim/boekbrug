@@ -91,13 +91,15 @@ import { reconcileBtw } from '@/lib/btw-reconcile'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
-function friendlySkipReason(reason: string): string {
+function friendlySkipReason(reason: string, t: ReturnType<typeof translator>): string {
   const r = (reason || "").toLowerCase();
-  if (r === "could_not_read") return "kon niet gelezen worden — staat in je bestanden";
-  if (r === "not_invoice") return "leek geen factuur";
-  if (r.startsWith("portal_link") || r.includes("geen bijlage")) return "e-mail zonder leesbare bijlage";
-  // An AI-written Dutch reason is already human — show it, capped.
+  if (r === "could_not_read") return t('ink.reden.onleesbaar');
+  if (r === "not_invoice") return t('ink.reden.geenFactuur');
+  if (r.startsWith("portal_link") || r.includes("geen bijlage")) return t('ink.reden.geenBijlage');
+  // An AI-written Dutch reason is stored TEXT, not a catalogue entry — shown as it is, capped.
   return reason.length > 80 ? `${reason.slice(0, 77)}…` : reason;
 }
 
@@ -257,6 +259,7 @@ function formatSignedAmount(amount: number): string {
 // ── Email connect card ────────────────────────────────────────────────────────
 
 function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
+  const t = translator(useLocale())
   const dialog = useDialog();
   // [INSTANT] router.refresh() re-runs this route's server component and
   // streams fresh props in; window.location.reload() threw away the whole
@@ -585,14 +588,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               cursor: "pointer",
             }}
           >
-            Beheer
+            {t('ink.beheer')}
           </button>
         </div>
 
         {needsReauth && (
           <div style={{ background: "#FCE8E6", border: "1px solid #F5B5AE", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: "#B3261E", marginBottom: 6 }}>
-              Automatisch inlezen is gestopt
+              {t('ink.email.gestopt')}
             </div>
             <div style={{ fontSize: 13, color: "#8C1D18", marginBottom: 10, lineHeight: 1.45 }}>
               Je {providerName}-koppeling is verlopen. Er komen geen nieuwe facturen meer binnen totdat je opnieuw verbindt.
@@ -640,7 +643,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 cursor: syncing ? "default" : "pointer", padding: 0,
               }}
             >
-              Mis je een factuur? Oudere e-mails opnieuw ophalen…
+              {t('ink.email.ouderOphalen')}
             </button>
           ) : (
             <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
@@ -654,7 +657,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   max={amsterdamToday()}
                   onChange={setBackfillDate}
                   disabled={syncing}
-                  aria-label="Ophalen vanaf"
+                  aria-label={t('ink.ophalenVanaf')}
                   style={{
                     border: "1px solid #dadce0", borderRadius: 8, padding: "8px 10px",
                     fontSize: 14, fontFamily: "inherit",
@@ -681,7 +684,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                     fontSize: 13, cursor: syncing ? "default" : "pointer", padding: "8px 4px",
                   }}
                 >
-                  Annuleer
+                  {t('ink.annuleer')}
                 </button>
               </div>
             </div>
@@ -699,17 +702,17 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 fontSize: 12.5, cursor: "pointer", padding: 0,
               }}
             >
-              Bekijk wat is overgeslagen bij het importeren
+              {t('ink.overgeslagenBekijk')}
             </button>
           ) : (
             <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>Overgeslagen bij import</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>{t('ink.overgeslagen')}</span>
                 <button
                   onClick={() => setSkippedOpen(false)}
                   style={{ background: "transparent", border: "none", color: "#5f6368", fontSize: 13, cursor: "pointer" }}
                 >
-                  Sluit
+                  {t('ink.sluit')}
                 </button>
               </div>
               {skippedLoading ? (
@@ -772,7 +775,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   )}
                   {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
                     <div style={{ fontSize: 12.5, color: "#5f6368" }}>
-                      Niets overgeslagen — alles wat binnenkwam is verwerkt.
+                      {t('ink.nietsOvergeslagen')}
                     </div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -789,7 +792,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                             )}
                           </span>
                           <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {friendlySkipReason(s.reason)}
+                            {friendlySkipReason(s.reason, t)}
                           </span>
                         </div>
                       ))}
@@ -819,7 +822,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
                     Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op. Open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.
                     <br />
-                    Mis je een factuur die hier <em>niet</em> tussen staat? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven.
+                    {t('ink.email.misFactuur')} <em>niet</em> tussen staat? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven.
                   </div>
                 </>
               )}
@@ -841,7 +844,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0,
             }}
           >
-            E-mailverbinding verwijderen
+            {t('ink.email.verwijderen')}
           </button>
         </div>
         </div>
@@ -860,7 +863,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     >
       <div style={{ fontSize: 44, marginBottom: 12 }}>📬</div>
       <div style={{ fontWeight: 700, fontSize: 17, color: "#202124", marginBottom: 8 }}>
-        Verbind je e-mail
+        {t('ink.email.verbind')}
       </div>
       <div
         style={{
@@ -868,7 +871,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           maxWidth: 280, margin: "0 auto 24px",
         }}
       >
-        Facturen komen automatisch binnen — je hoeft niets meer door te sturen.
+        {t('ink.email.automatisch')}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {(["gmail", "outlook"] as const).map((provider) => (
@@ -924,6 +927,7 @@ function ConfirmPaidModal({
   // [QUEUE-EDIT-UX] open with edit fields active (card "Bewerken" entry point)
   startEditing?: boolean;
 }) {
+  const t = translator(useLocale())
   // [DATE-GATE-FEEDBACK] This modal had no snackbar of its own — see nudgeForDate below.
   const showToast = useToast();
   const [exBtw, setExBtw] = useState(invoice.total_ex_btw || 0);
@@ -1108,10 +1112,10 @@ function ConfirmPaidModal({
         {!payStep ? (
           <>
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
-              Factuur bevestigen
+              {t('ink.factuurBevestigen')}
             </div>
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
-              Controleer de bedragen. AI heeft ze automatisch uitgelezen.
+              {t('ink.controleerBedragen')}
             </div>
 
             {/* [IMPORT-MONITOR] Part 3 — surface the arithmetic WHY in the modal.
@@ -1208,7 +1212,7 @@ function ConfirmPaidModal({
             >
               {/* Excl BTW */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <span style={{ fontSize: 14, color: "#5f6368" }}>Bedrag excl. BTW</span>
+                <span style={{ fontSize: 14, color: "#5f6368" }}>{t('ink.bedragExcl')}</span>
                 {editing ? (
                   <input
                     type="number"
@@ -1264,7 +1268,7 @@ function ConfirmPaidModal({
                   clearly on the invoice. Copy it over and the ex amount follows by itself, with
                   nothing left to subtract. */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#202124" }}>Totaal</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#202124" }}>{t('ink.totaal')}</span>
                 {editing ? (
                   <input
                     type="number"
@@ -1272,7 +1276,7 @@ function ConfirmPaidModal({
                     step="0.01"
                     value={totalIncBtw}
                     onChange={(e) => applyTriplet(setIncl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
-                    aria-label="Totaalbedrag inclusief BTW — zoals het onderaan de factuur staat"
+                    aria-label={t('ink.totaalUitleg')}
                     style={{
                       width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
                       borderRadius: 10, border: "1.5px solid #1a73e8",
@@ -1306,7 +1310,7 @@ function ConfirmPaidModal({
                     style={{ marginTop: 2, width: 16, height: 16, accentColor: "#0B8043" }}
                   />
                   <span style={{ fontSize: 12, color: "#3c4043", lineHeight: 1.4 }}>
-                    <strong>Dit is een creditnota</strong> — geld dat jou toekomt. Vink dit aan als er
+                    <strong>{t('ink.isCreditnota')}</strong> — geld dat jou toekomt. Vink dit aan als er
                     “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
                     dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
                     wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
@@ -1370,7 +1374,7 @@ function ConfirmPaidModal({
 
               {/* Invoice number */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: numberFlag ? 6 : 12, gap: 10 }}>
-                <span style={{ fontSize: 14, color: "#5f6368", flexShrink: 0 }}>Factuurnummer</span>
+                <span style={{ fontSize: 14, color: "#5f6368", flexShrink: 0 }}>{t('ink.factuurnummer')}</span>
                 {editing ? (
                   <input
                     type="text"
@@ -1432,7 +1436,7 @@ function ConfirmPaidModal({
               </div>
               {dateMissing && (
                 <div style={{ fontSize: 12.5, color: M3.error, textAlign: "end", marginTop: 6 }}>
-                  Factuurdatum ontbreekt — verplicht om te bevestigen.
+                  {t('ink.datumOntbreekt')}
                 </div>
               )}
             </div>
@@ -1465,7 +1469,7 @@ function ConfirmPaidModal({
                   color: "#1b5e20", fontSize: 13, fontWeight: 600,
                 }}>
                   <span style={{ fontSize: 16 }}>🧾</span>
-                  Kassabon — waarschijnlijk al betaald. Controleer en bevestig.
+                  {t('ink.kassabon')}
                 </div>
 
                 {/* PRIMARY — mark as paid (suggested for a bon) */}
@@ -1479,7 +1483,7 @@ function ConfirmPaidModal({
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
                   }}
                 >
-                  Markeer als betaald
+                  {t('ink.markeerBetaald')}
                 </button>
 
                 {/* SECONDARY — verify as unpaid (if the bon is actually not paid) */}
@@ -1525,7 +1529,7 @@ function ConfirmPaidModal({
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
                   }}
                 >
-                  Markeer als betaald
+                  {t('ink.markeerBetaald')}
                 </button>
               </>
             )}
@@ -1540,14 +1544,14 @@ function ConfirmPaidModal({
                 fontWeight: 600, fontSize: 15, cursor: "pointer",
               }}
             >
-              Annuleren
+              {t('ink.annuleren')}
             </button>
           </>
         ) : (
           /* [BRIDGE-B] Payment-method step — mirrors the outgoing "mark paid" dialog */
           <>
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
-              Hoe is deze factuur betaald?
+              {t('ink.hoeBetaald')}
             </div>
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
               De factuur wordt als betaald gemarkeerd en doorgestuurd naar je boekhouder.
@@ -1556,7 +1560,7 @@ function ConfirmPaidModal({
             {/* [BRIDGE-QUARTER] Real payment date — the day the money actually
                 moved. Defaults to today; the user corrects it if they paid earlier. */}
             <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#202124", marginBottom: 6 }}>
-              Betaaldatum
+              {t('ink.betaaldatum')}
             </label>
             <input
               type="text"
@@ -1580,7 +1584,7 @@ function ConfirmPaidModal({
             {/* [BRIDGE-QUARTER] Confirmation amount — UI only for now (not stored).
                 Explicit defer per brief §2: helps the user sanity-check, no DB write. */}
             <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#202124", marginBottom: 6 }}>
-              Betaald bedrag <span style={{ color: "#5f6368", fontWeight: 400 }}>(optioneel)</span>
+              {t('ink.betaaldBedrag')} <span style={{ color: "#5f6368", fontWeight: 400 }}>(optioneel)</span>
             </label>
             <input
               type="number"
@@ -1644,7 +1648,7 @@ function ConfirmPaidModal({
                     }}>
                       <span style={{ fontSize: 14, lineHeight: 1.2 }}>🧾</span>
                       <span>
-                        De bon vermeldt <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? "contant" : "bankpas")}</strong>
+                        {t('ink.bonVermeldt')} <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? "contant" : "bankpas")}</strong>
                         {fc?._intake_paid_card4 ? ` (pas ••••${fc._intake_paid_card4})` : ""} —
                         {uitPapier === "kas"
                           ? " dit is contant betaald en gaat naar je kasboek."
@@ -1707,6 +1711,7 @@ function ConfirmDialog({
   choiceValue?: string | null;
   onChoice?: (value: string | null) => void;
 }) {
+  const t = translator(useLocale())
   return (
     <div
       style={{
@@ -1781,7 +1786,7 @@ function ConfirmDialog({
             fontWeight: 600, fontSize: 15, cursor: "pointer",
           }}
         >
-          Annuleren
+          {t('ink.annuleren')}
         </button>
       </div>
     </div>
@@ -1832,6 +1837,7 @@ export function InvoiceCard({
   // [READING-MEMORY] One sentence, or nothing. Never a number — see reading-memory.ts.
   readingHint?: string | null;
 }) {
+  const t = translator(useLocale())
   const dialog = useDialog();
   const toast = useToast();
   const router = useRouter();
@@ -2155,7 +2161,7 @@ export function InvoiceCard({
                 }}
               >
                 <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
-                  Creditnota
+                  {t('ink.creditnota')}
                 </span>
               </div>
             )}
@@ -2211,7 +2217,7 @@ export function InvoiceCard({
                 >
                   <span style={{ fontSize: 11 }}>🏦</span>
                   <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 700 }}>
-                    Ander rekeningnummer
+                    {t('ink.anderRekening')}
                   </span>
                 </div>
               ) : invoice.health.level === "needs-review" ? (
@@ -2223,7 +2229,7 @@ export function InvoiceCard({
                 >
                   <span style={{ fontSize: 11 }}>⚠️</span>
                   <span style={{ fontSize: 12, color: "#9a5b00", fontWeight: 600 }}>
-                    Aandacht nodig
+                    {t('ink.aandacht')}
                   </span>
                 </div>
               ) : (
@@ -2234,7 +2240,7 @@ export function InvoiceCard({
                 >
                   <span style={{ fontSize: 11, color: M3.success }}>✓</span>
                   <span style={{ fontSize: 12, color: "#5f6368" }}>
-                    Klaar om te bevestigen
+                    {t('ink.klaarBevestigen')}
                   </span>
                 </div>
               )
@@ -2309,7 +2315,7 @@ export function InvoiceCard({
               <span style={{ fontSize: 15, lineHeight: 1.3 }}>🧠</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#274690", marginBottom: 4 }}>
-                  Wat je hier vaker corrigeert
+                  {t('ink.vakerCorrigeert')}
                 </div>
                 <div style={{ fontSize: 12.5, color: "#274690", lineHeight: 1.5 }}>{readingHint}</div>
               </div>
@@ -2336,7 +2342,7 @@ export function InvoiceCard({
                 <span style={{ fontSize: 15, lineHeight: 1.3 }}>💡</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#9a5b00", marginBottom: 4 }}>
-                    Even controleren
+                    {t('ink.evenControleren')}
                   </div>
                   <div style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
                     {/* Capitalize the first reason; join the rest naturally. */}
@@ -2402,7 +2408,7 @@ export function InvoiceCard({
                         display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "underline",
                       }}
                     >
-                      Nee, andere factuur
+                      {t('ink.neeAndere')}
                     </button>
                   )}
                 </div>
@@ -2465,17 +2471,17 @@ export function InvoiceCard({
                   color: "#9a5b00", fontWeight: 600, fontSize: 12.5, textDecoration: "underline",
                 }}
               >
-                Nee, andere factuur
+                {t('ink.neeAndere')}
               </button>
             </div>
           )}
 
           {/* Detail rows */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-            <DetailRow label="Factuurnummer" value={invoice.invoice_number || "—"} />
-            <DetailRow label="Afzender" value={invoice.client_email || "—"} />
+            <DetailRow label={t('ink.factuurnummer')} value={invoice.invoice_number || "—"} />
+            <DetailRow label={t('ink.afzender')} value={invoice.client_email || "—"} />
             <DetailRow
-              label="Bedrag excl. BTW"
+              label={t('ink.bedragExcl')}
               value={formatSignedAmount(invoice.total_ex_btw)}
             />
             <DetailRow
@@ -2483,12 +2489,12 @@ export function InvoiceCard({
               value={formatSignedAmount(invoice.btw_amount)}
             />
             <DetailRow
-              label="Totaal"
+              label={t('ink.totaal')}
               value={formatSignedAmount(invoice.total_inc_btw)}
               bold
             />
             <DetailRow
-              label="Bron"
+              label={t('ink.bron')}
               value={invoice.source === "email" ? "E-mail" : "Upload"}
             />
           </div>
@@ -2506,7 +2512,7 @@ export function InvoiceCard({
               }}
             >
               <span style={{ fontSize: 16 }}>📄</span>
-              Bekijk factuur en controles
+              {t('ink.bekijkControles')}
             </button>
           )}
 
@@ -2592,7 +2598,7 @@ export function InvoiceCard({
                   fontWeight: 600, fontSize: 14, cursor: "pointer",
                 }}
               >
-                Negeer
+                {t('ink.negeer')}
               </button>
               {/* [QUEUE-EDIT-UX] Direct edit entry — same verify modal, edit
                   fields already open. Saves the Verifiëren→Gegevens-aanpassen
@@ -2605,7 +2611,7 @@ export function InvoiceCard({
                   fontWeight: 600, fontSize: 14, cursor: "pointer",
                 }}
               >
-                Bewerken
+                {t('ink.bewerken')}
               </button>
               <button
                 onClick={onConfirmPaid}
@@ -2627,7 +2633,7 @@ export function InvoiceCard({
                 color: "#1a73e8", fontWeight: 600, fontSize: 14, cursor: "pointer",
               }}
             >
-              Terugzetten naar wachtrij
+              {t('ink.terugzetten')}
             </button>
           )}
         </div>
@@ -2688,6 +2694,7 @@ const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string;
 };
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
+  const t = translator(useLocale())
   const toast = useToast();
   const router = useRouter();
   const [uploading, setUploading] = useState(false);
@@ -2932,7 +2939,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
         }}
       >
-        Toevoegen
+        {t('ink.toevoegen')}
       </div>
 
       {/* [SMART-INTAKE-B] Camera button — fast path for the cashier (10 sec) */}
@@ -3038,12 +3045,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           }}
         >
           <span style={{ fontSize: 17 }}>📄</span>
-          Factuur met meerdere pagina&apos;s
+          {t('ink.meerderePaginas')}
         </button>
       ) : (
         <div style={{ marginTop: 10, padding: 14, borderRadius: 16, border: "1.5px solid #007aff", background: "#f5faff" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1c1e", marginBottom: 4 }}>
-            Eén factuur, meerdere pagina&apos;s
+            {t('ink.eenFactuurMeerPaginas')}
           </div>
           <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 12, lineHeight: 1.4 }}>
             Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één
@@ -3057,7 +3064,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>Pagina {i + 1}</span>
                   <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <button onClick={() => removeMpPage(i)} aria-label="Verwijder pagina"
+                  <button onClick={() => removeMpPage(i)} aria-label={t('ink.verwijderPagina')}
                     disabled={combining}
                     style={{ border: "none", background: "transparent", color: "#70757a", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
                 </div>
@@ -3081,7 +3088,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={cancelMultiPage} disabled={combining}
               style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
-              Annuleer
+              {t('ink.annuleer')}
             </button>
             <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
               style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
@@ -3145,7 +3152,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           onClick={() => openInBestanden(r.link!)}
                           style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
                         >
-                          Bekijk in bestanden →
+                          {t('ink.bekijkBestanden')} →
                         </button>
                       )}
                       {/* [INTAKE-FOCUS] Invoice/receipt landed in THIS queue,
@@ -3157,7 +3164,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           onClick={() => goToInvoice(r.invoiceId!)}
                           style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
                         >
-                          Naar controle →
+                          {t('ink.naarControle')} →
                         </button>
                       )}
                       {/* [AUTO-ADVANCE-HONESTY] Already booked → the link goes where the invoice
@@ -3184,7 +3191,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                 fontWeight: 700, fontSize: 16, cursor: "pointer",
               }}
             >
-              Klaar
+              {t('ink.klaar')}
             </button>
           </div>
         </div>
@@ -3204,6 +3211,7 @@ export default function IncomingInvoicesClient({
   // missing prop must render the queue exactly as it rendered before this existed.
   readingHints = {},
 }: Props) {
+  const t = translator(useLocale())
   const dialog = useDialog();
   const toast = useToast();
   const router = useRouter();
@@ -3954,7 +3962,7 @@ export default function IncomingInvoicesClient({
             about flow. Never says "done" while items still wait to be sent. */}
         {pending.length === 0 ? (
           <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
-            Alles verwerkt
+            {t('ink.allesVerwerkt')}
           </p>
         ) : needsAttentionCount > 0 ? (
           <p style={{ fontSize: 14, color: "#EA8600", margin: "4px 0 0", fontWeight: 600 }}>
@@ -3970,7 +3978,7 @@ export default function IncomingInvoicesClient({
         ) : (
           <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
             <span style={{ color: M3.success, fontWeight: 600 }}>
-              Niets om te corrigeren
+              {t('ink.nietsCorrigeren')}
             </span>{" "}
             · {readyToConfirmCount}{" "}
             {readyToConfirmCount === 1 ? "factuur klaar" : "facturen klaar"} om te
@@ -4018,17 +4026,17 @@ export default function IncomingInvoicesClient({
         {/* [SEARCH] In-page live filter (this page only) */}
         {(list.length > 0 || rawQ) && (
           <div style={{ position: "relative", marginBottom: 14 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", insetInlineStart: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
-              aria-label="Inkomende facturen zoeken"
+              placeholder={t('ink.zoek')}
+              aria-label={t('ink.zoek.aria')}
               style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
             />
             {search && (
-              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
-                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
+              <button onClick={() => setSearch("")} aria-label={t('ink.zoek.wissen')}
+                style={{ position: "absolute", insetInlineEnd: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
             )}
           </div>
         )}
@@ -4053,7 +4061,7 @@ export default function IncomingInvoicesClient({
                   padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
                 }}
               >
-                Selecteer
+                {t('ink.selecteer')}
               </button>
             ) : (
               <>
@@ -4075,7 +4083,7 @@ export default function IncomingInvoicesClient({
                     padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
                   }}
                 >
-                  Annuleer
+                  {t('ink.annuleer')}
                 </button>
               </>
             ))}
@@ -4089,7 +4097,7 @@ export default function IncomingInvoicesClient({
                 type="button"
                 onClick={handleReimportAllNeedsAttention}
                 disabled={reimportAllRunning}
-                aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
+                aria-label={t('ink.opnieuwInlezen')}
                 style={{
                   background: "#fef7e0", border: "none", color: "#B06000",
                   fontWeight: 600, fontSize: 14,
@@ -4115,7 +4123,7 @@ export default function IncomingInvoicesClient({
                 textDecoration: "none", whiteSpace: "nowrap", padding: "8px 0",
               }}
             >
-              Bevestigde inkoopfacturen ›
+              {t('ink.bevestigd')} ›
             </Link>
         </div>
 
@@ -4136,7 +4144,7 @@ export default function IncomingInvoicesClient({
               </div>
               <button
                 onClick={() => setMissingDismissed(true)}
-                aria-label="Melding sluiten"
+                aria-label={t('ink.meldingSluiten')}
                 style={{
                   background: "transparent", border: "none", color: "#174ea6",
                   fontSize: 16, lineHeight: 1, cursor: "pointer", padding: 0,
@@ -4164,7 +4172,7 @@ export default function IncomingInvoicesClient({
             background: "#f8f9fa", border: "1px solid #e8eaed",
           }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3c4043", marginBottom: 8 }}>
-              Afzenders die je overslaat
+              {t('ink.afzendersOverslaan')}
             </div>
             <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 10, lineHeight: 1.45 }}>
               Bijlagen van deze adressen worden niet geïmporteerd. De e-mails zelf blijven gewoon in
@@ -4186,7 +4194,7 @@ export default function IncomingInvoicesClient({
                       fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", padding: 0,
                     }}
                   >
-                    Opheffen
+                    {t('ink.opheffen')}
                   </button>
                 </div>
               ))}
@@ -4222,7 +4230,7 @@ export default function IncomingInvoicesClient({
         ) : rawQ ? (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
             <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
-            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>Geen facturen gevonden</div>
+            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>{t('ink.leeg')}</div>
             <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.</div>
           </div>
         ) : (
@@ -4318,7 +4326,7 @@ export default function IncomingInvoicesClient({
       {bulkRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
-            Bezig met verifiëren…
+            {t('ink.verifierenBezig')}
           </div>
         </div>
       )}
@@ -4330,7 +4338,7 @@ export default function IncomingInvoicesClient({
       {bulkIgnoreRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
-            Bezig met negeren…
+            {t('ink.negeren.bezig')}
             <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
               {bulkIgnoreDone}/{selected.size}
             </div>
@@ -4344,7 +4352,7 @@ export default function IncomingInvoicesClient({
       {reimportAllRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
-            Bezig met opnieuw inlezen…
+            {t('ink.opnieuwBezig')}
             <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
               {reimportAllDone}/{needsAttentionCount}
             </div>
@@ -4390,7 +4398,7 @@ export default function IncomingInvoicesClient({
                 fontWeight: 600, fontSize: 15, cursor: "pointer",
               }}
             >
-              Annuleren
+              {t('ink.annuleren')}
             </button>
           </div>
         </div>
@@ -4401,7 +4409,7 @@ export default function IncomingInvoicesClient({
           een vakje dat je per ongeluk meeneemt terwijl je iets anders aan het doen was. */}
       {ruleOfferFor && (
         <ConfirmDialog
-          title="Altijd overslaan?"
+          title={t('ink.negeren.altijd')}
           message={`Je negeerde dit als “geen factuur”. Wil je bijlagen van ${ruleOfferFor.client_email} voortaan overslaan? De e-mails blijven in je mailbox, en je kunt de regel bij Genegeerd weer opheffen.`}
           confirmLabel="Ja, altijd overslaan"
           confirmColor="#1a73e8"
@@ -4435,7 +4443,7 @@ export default function IncomingInvoicesClient({
       {/* Ignore confirmation */}
       {ignoreFor && (
         <ConfirmDialog
-          title="Factuur negeren?"
+          title={t('ink.negeren.titel')}
           message="De factuur wordt verplaatst naar Genegeerd. Je kunt hem later terugzetten."
           confirmLabel="Ja, negeer"
           confirmColor="#ea4335"

@@ -402,7 +402,7 @@ export default function KwartaalPage() {
         >
           <span className="text-xl">📂</span>
           <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
-          <span style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
+          <span className="icon-dir" style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
         </button>
 
         {/* [COHERENCE-CLOSING] Download the closing package HERE — the exact place the
@@ -471,7 +471,7 @@ export default function KwartaalPage() {
 
           {sorted.length > 0 && (
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', position: 'relative' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 28, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', insetInlineStart: 28, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -480,7 +480,7 @@ export default function KwartaalPage() {
                 style={{ width: '100%', boxSizing: 'border-box', padding: '9px 34px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 14, outline: 'none', color: '#202124', fontFamily: "'Roboto', sans-serif" }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}

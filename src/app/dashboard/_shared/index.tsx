@@ -14,6 +14,7 @@ import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
 import { statusLabel } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
 import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
@@ -89,6 +90,7 @@ export type InvoiceTableProps = ZzpInvoiceTableProps | AccountantInvoiceTablePro
 // ── InvoiceTable ──────────────────────────────────────────────────────────────
 
 export function InvoiceTable(props: InvoiceTableProps) {
+  const t = translator(useLocale())
   const {
     invoices, loading, hasMore, refreshing,
     statusFilter, onFilterChange,
@@ -125,7 +127,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
           <button
             onClick={onRefresh}
             disabled={refreshing}
-            title="Vernieuwen"
+            title={t('lijst.vernieuwen')}
             style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
             className="hover:text-gray-500 transition-colors disabled:opacity-40"
           >
@@ -235,6 +237,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
 // [INTEGRATION] Instellingen → /dashboard/settings — May 2026
 
 function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: () => void }) {
+  const t = translator(useLocale())
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
   const router = useRouter()
@@ -254,7 +257,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(p => !p)}
-        aria-label="Profielmenu"
+        aria-label={t('kop.profielmenu')}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'none', border: 'none', cursor: 'pointer',
@@ -273,7 +276,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
 
       {open && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+          position: 'absolute', top: 'calc(100% + 6px)', insetInlineEnd: 0,
           backgroundColor: '#fff', border: '1px solid #E0E0E0',
           borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           minWidth: 180, zIndex: 100, overflow: 'hidden',
@@ -302,7 +305,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginInlineEnd: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
-            Instellingen
+            {t('kop.instellingen')}
           </button>
 
           {/* Uitloggen */}
@@ -317,7 +320,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#FFF0EE')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            Uitloggen
+            {t('kop.uitloggen')}
           </button>
         </div>
       )}
@@ -339,6 +342,7 @@ function NotificationsBell({
   // "Geen meldingen" — de enige zin die dit paneel nooit mag zeggen als het het niet weet.
   loadError?: string | null
 }) {
+  const t = translator(useLocale())
   const router = useRouter()
   const bellRef = useRef<HTMLDivElement>(null)
   const [readOverride, setReadOverride] = React.useState<Record<string, boolean>>({})
@@ -367,7 +371,7 @@ function NotificationsBell({
     <div ref={bellRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={onToggle}
-        aria-label="Meldingen"
+        aria-label={t('kop.meldingen')}
         style={{
           position: 'relative', background: 'none', border: 'none',
           cursor: 'pointer', padding: 8, borderRadius: 8,
@@ -389,7 +393,7 @@ function NotificationsBell({
           const effectiveUnread = notifications.filter(n => !(readOverride[n.id] ?? n.read)).length
           return effectiveUnread > 0 ? (
             <span style={{
-              position: 'absolute', top: 4, right: 4,
+              position: 'absolute', top: 4, insetInlineEnd: 4,
               backgroundColor: M3.error, color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',
@@ -404,13 +408,13 @@ function NotificationsBell({
 
       {showNotifications && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+          position: 'absolute', top: 'calc(100% + 8px)', insetInlineEnd: 0,
           backgroundColor: '#fff', border: '1px solid #E0E0E0',
           borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
           width: 320, zIndex: 200, overflow: 'hidden',
         }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Meldingen</p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('kop.meldingen')}</p>
             {/* [BRIDGE-NOTIF] explicit mark-all-read — user stays in control, no auto-clear on open */}
             {onMarkAllRead && notifications.some(n => !(readOverride[n.id] ?? n.read)) && (
               <button
@@ -431,7 +435,7 @@ function NotificationsBell({
                 onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
                 onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
               >
-                Alles gelezen
+                {t('kop.allesGelezen')}
               </button>
             )}
           </div>
@@ -441,7 +445,7 @@ function NotificationsBell({
             </p>
           ) : notifications.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '32px 16px', margin: 0 }}>
-              Geen meldingen
+              {t('kop.geenMeldingen')}
             </p>
           ) : (
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
@@ -605,6 +609,7 @@ export function DashboardHeader({
   onMarkAllRead,
   notificationsError,
 }: DashboardHeaderProps) {
+  const t = translator(useLocale())
   // [INTEGRATION] Logo Universal — role-aware href — May 2026
   const isAccountant = profile?.role === 'accountant'
   const logoHref = isAccountant ? '/dashboard/accountant' : '/dashboard'
@@ -690,7 +695,7 @@ export function DashboardHeader({
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={onMessagesClick}
-            aria-label="Berichten"
+            aria-label={t('kop.berichten')}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: 8, borderRadius: 8,
@@ -706,7 +711,7 @@ export function DashboardHeader({
           </button>
           {unreadMessages > 0 && (
             <span style={{
-              position: 'absolute', top: 4, right: 4,
+              position: 'absolute', top: 4, insetInlineEnd: 4,
               backgroundColor: '#1A73E8', color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',
