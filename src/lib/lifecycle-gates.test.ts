@@ -7128,3 +7128,36 @@ test("[FACTUUR-B] the allocator has a seam test, and it drives two real sessions
     assert.match(spec, claim, `the allocator's contract is missing an assertion: ${claim}`);
   }
 });
+
+test("[CORRIGEER] correcting a sent invoice is a pair of documents, never an edit", () => {
+  // The owner asked for the honest thing: the details are wrong on a sent invoice, the lines are
+  // fine, let me edit the details. The one form that request may never take is an UPDATE — the
+  // number is from a gapless forward-only series (Art. 35 Wet OB) and the customer already holds
+  // the document; an in-place edit makes the administration disagree with the paper it mailed.
+  //
+  // So the feature is an orchestration of the two legal halves that already existed, and this
+  // gate pins that it STAYS one: creditnota first (the half with legal weight), duplicate second,
+  // and no invoice UPDATE anywhere in the route.
+  const route = code("src/app/api/invoice/[id]/correct/route.ts");
+  assert.match(route, /\/api\/invoice\/creditnota/, "the cancel half");
+  assert.match(route, /\/duplicate`/, "…and the prefilled-draft half");
+  assert.ok(
+    route.indexOf("/api/invoice/creditnota") < route.indexOf("/duplicate`"),
+    "creditnota FIRST: if it fails nothing happened; the reverse order can mint a correcting " +
+      "draft while the wrong invoice stays live in the books",
+  );
+  assert.doesNotMatch(route, /\.update\(|\.upsert\(/,
+    "the route corrects by creating documents, never by touching the sent one");
+
+  // The editability rule itself is untouched: a numbered document stays closed to editing. The
+  // correction flow exists precisely so this line never needs a "unless…" added to it.
+  const editable = code("src/lib/invoice-editable.ts");
+  assert.match(editable, /invoiceNumber/, "the number is still what locks a document");
+
+  // And the screen offers the flow where the owner looks for it — beside the creditnota button,
+  // going to the new DRAFT's edit screen on success, where editing is legitimately allowed.
+  const page = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(page, /t\('detail\.corrigeer'\)/, "the button is on the sent invoice");
+  assert.match(page, /router\.push\(`\/dashboard\/invoice\/\$\{data\.draft_id\}\/edit`\)/,
+    "success lands the owner in the draft, prefilled, editable");
+});
