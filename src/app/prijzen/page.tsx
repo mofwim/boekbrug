@@ -308,8 +308,8 @@ export default async function PrijzenPage({
             </Faq>
 
             <Faq q="Hoe kan ik betalen?">
-              Met iDEAL of creditcard. De betaling loopt via Stripe — je kaartgegevens komen nooit
-              bij BoekBrug binnen.
+              Met iDEAL, creditcard en de andere methoden die je op de betaalpagina ziet staan.
+              De betaling loopt via Stripe — je kaartgegevens komen nooit bij BoekBrug binnen.
             </Faq>
 
             <Faq q="Wat als ik helemaal stop met BoekBrug?">

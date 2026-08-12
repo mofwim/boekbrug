@@ -273,6 +273,9 @@ kort na de 5e van januari/april/juli/oktober.
   maand** (terugkerend) en de Bewaarkluis **€ 19 per bewaarjaar** (eenmalig). De checkout dwingt
   acceptatie van die voorwaarden af, dus een verschil is precies het gat waar de klant gelijk in
   krijgt. En zet **iDEAL** aan: kaart-alleen verliest Nederlandse klanten bij de laatste klik.
+  Dat gebeurt sinds de overstap op dynamische betaalmethoden in **Dashboard → Settings →
+  Payment methods** en niet meer in de code — dat scherm bepaalt nu wat de klant ziet, dus
+  controleer het vóór de eerste echte betaling (docs/BILLING.md §4.3).
 - **`xlsx` naar 0.20.3** — *bijgewerkt 30 juli.* Nog steeds niet via npm te doen: de reparatie
   staat alleen op `cdn.sheetjs.com`. Wat er sindsdien bij is gekomen, is dat de containment nu
   bewaakt wordt in plaats van beloofd: een test loopt de broncode af en faalt zodra één bestand

@@ -187,10 +187,26 @@ export async function createCheckoutSession(params: {
     mode: "subscription",
     customer: params.customerId,
     line_items: [{ price: STRIPE_PRICE_ID_PLUS, quantity: 1 }],
-    // NL market: iDEAL is how the Dutch actually pay. Offering card only would
-    // lose real customers at the last click. SEPA direct debit follows later —
-    // it needs a mandate flow we deliberately keep out of v1.
-    payment_method_types: ["ideal", "card"],
+    // NO payment_method_types HERE — and that omission is the feature.
+    //
+    // This used to pin ["ideal", "card"]. iDEAL was the right instinct (the
+    // Dutch pay with it, and card-only loses customers at the last click), but
+    // pinning the list also froze it: Apple Pay, Google Pay and Link could only
+    // be added by a deploy, and Stripe cannot re-rank per customer. Omitting the
+    // parameter turns on dynamic payment methods — Stripe picks and orders the
+    // eligible methods per customer, from Dashboard -> Settings -> Payment
+    // methods, which is where that choice belongs. iDEAL keeps its place for
+    // Dutch customers; it is simply enabled there rather than compiled in.
+    //
+    // To exclude a method, use excluded_payment_method_types or a payment method
+    // configuration — never this parameter (Stripe's own guidance; the sole
+    // exception is Terminal, which BoekBrug does not use).
+    //
+    // Load-bearing consequence: the Dashboard can now enable a
+    // delayed-notification method (SEPA direct debit, bank transfer) with no
+    // deploy, and those complete a Checkout Session BEFORE the money confirms.
+    // The webhook already refuses to act on an unpaid session and waits for the
+    // async verdict (kluisSessionAction). Do not remove that guard.
     // Legally required in NL: the customer must be able to reach the terms
     // before paying, and we must be able to prove they accepted them.
     consent_collection: { terms_of_service: "required" },
@@ -377,7 +393,8 @@ export async function createKluisCheckoutSession(params: {
     mode: "payment",
     customer: params.customerId,
     line_items: [{ price: STRIPE_PRICE_ID_KLUIS_YEAR, quantity: params.years }],
-    payment_method_types: ["ideal", "card"],
+    // Omitted on purpose — dynamic payment methods, exactly as in
+    // createCheckoutSession() above; the reasoning is written out there.
     consent_collection: { terms_of_service: "required" },
     billing_address_collection: "required",
     tax_id_collection: { enabled: true },

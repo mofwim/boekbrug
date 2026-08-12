@@ -159,7 +159,7 @@ export default function EnPricingPage() {
               Yes. Every payment automatically produces a VAT invoice in your name that you can download yourself. If you have a VAT number, you add it at checkout.
             </Faq>
             <Faq q="How can I pay?">
-              With iDEAL or credit card. Payment runs via Stripe — your card details never reach BoekBrug.
+              With iDEAL, credit card and the other methods shown on the payment page. Payment runs via Stripe — your card details never reach BoekBrug.
             </Faq>
             <Faq q="What if I stop with BoekBrug entirely?">
               You export everything (that always keeps working, also on the free plan). After that we keep your administration free for another {KLUIS_GRACE_MONTHS} months. Want it to stay longer because your retention obligation continues? That is what the Retention Vault is for. We never delete anything without at least 30 days&apos; notice by email.

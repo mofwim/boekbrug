@@ -93,23 +93,23 @@ BoekBrug specifically.
 
 Already carried by hosted Checkout. Two decisions remain:
 
-**Payment methods.** Both checkout calls currently hardcode
-`payment_method_types: ["ideal", "card"]`. Stripe's current guidance is strong on this point:
-*never* pass `payment_method_types` (the sole exception is Terminal). Omitting it enables
-**dynamic payment methods**: Stripe picks and ranks eligible methods per customer from
-Dashboard settings, which adds e.g. Apple Pay / Google Pay and Link for Dutch customers without
-a deploy — methods that measurably lift conversion and that we currently lock out. iDEAL keeps
-its place for Dutch customers; ranking is by relevance, and method availability moves to
-Dashboard → Settings → Payment methods, where it belongs.
+**Payment methods — done on this branch.** Both checkout calls used to hardcode
+`payment_method_types: ["ideal", "card"]`. Stripe's guidance is strong on this point: *never*
+pass `payment_method_types` (the sole exception is Terminal). Omitting it enables **dynamic
+payment methods**: Stripe picks and ranks eligible methods per customer from Dashboard
+settings, so Apple Pay, Google Pay and Link can be offered without a deploy. iDEAL keeps its
+place for Dutch customers — enabled in Dashboard → Settings → Payment methods, where that
+choice belongs.
 
-Two consequences to handle before flipping it (see §4.2 — the webhook side is already done on
-this branch):
+Two consequences, both handled:
 
 1. Delayed-notification methods (SEPA-incasso, bank transfer) complete Checkout *before* the
-   money is confirmed. The webhook must not record a Bewaarkluis until `payment_status` is
-   `paid` — handled now by `kluisSessionAction()` and the two `async_payment_*` events.
-2. If there are methods we genuinely never want, the tool is a payment method configuration or
-   `excluded_payment_method_types` — still not `payment_method_types`.
+   money is confirmed. The webhook does not record a Bewaarkluis until `payment_status` is
+   `paid` — `kluisSessionAction()` plus the two `async_payment_*` events (§4.2). This guard is
+   now load-bearing: it is the only thing standing between a Dashboard toggle and a recorded
+   seven-year obligation for money that never arrived.
+2. To exclude a method, use a payment method configuration or
+   `excluded_payment_method_types` — still never `payment_method_types`.
 
 **Recurring collection for Plus.** First payment by iDEAL in subscription mode sets up SEPA
 direct debit for renewals automatically — that is Stripe's mechanism, not something we build.
@@ -247,13 +247,27 @@ in `.env.example` and `LIVE_GAAN.md` — **add them to the webhook endpoint in t
 Dashboard** when touching it next; until then they simply do not arrive, and today's methods
 never emit them.
 
-### 4.3 · P2 — Hardcoded `payment_method_types: ["ideal", "card"]`
+### 4.3 · P2 — Hardcoded `payment_method_types: ["ideal", "card"]` — **fixed on this branch**
 
-§3.1. Stripe's guidance: omit the parameter everywhere except Terminal; manage methods in the
-Dashboard. Was a reasonable v1 choice, is now the thing standing between Dutch customers and
-Apple Pay. Prerequisite 4.2 is done, so this is a two-line deletion plus a Dashboard review of
-enabled methods — do it deliberately, not in passing, since it changes what customers see at
-the payment step.
+§3.1. Both sessions now omit the parameter, which is what turns on dynamic payment methods:
+Stripe picks and ranks the eligible methods per customer from Dashboard → Settings → Payment
+methods. iDEAL was the right instinct and keeps its place for Dutch customers — it is now
+enabled there rather than compiled in, and Apple Pay, Google Pay and Link can join without a
+deploy.
+
+Two things travel with this change:
+
+- **The Dashboard now decides what customers see.** Review the enabled methods there before
+  the next real payment; that screen is the one that used to be these two lines of code. To
+  exclude a method, use `excluded_payment_method_types` or a payment method configuration —
+  never `payment_method_types` again.
+- **The FAQ copy was a promise about the list.** All four pricing pages said "iDEAL or credit
+  card" exhaustively, which goes stale the moment the Dashboard adds a method. They now name
+  iDEAL and point at the payment page for the rest.
+
+The delayed-notification hazard this unlocks (a Dashboard-enabled SEPA-incasso completing a
+session before the money confirms) is already handled by 4.2's guard. That guard is now
+load-bearing rather than precautionary — the comment in `billing.ts` says so.
 
 ### 4.4 · P2 — Secret key could be a restricted key
 
@@ -287,7 +301,23 @@ kept stable so the Dashboard can aggregate per flow.
 correct — on basil, `current_period_end` exists only on the subscription item (checked in the
 SDK's types) — but a comment that pins a fact should pin the right one.
 
-### 4.7 · Dashboard configuration (no code)
+### 4.7 · P3 — The terms enumerate payment methods, and the list is already wrong
+
+`algemene-voorwaarden.ts` §5.3 says: *"Betaling van Plus verloopt via een betaaldienstverlener
+(iDEAL of SEPA-incasso)"*. Card payments have been accepted since v1 and are not in that list,
+so the terms were already narrower than the integration **before** the dynamic-methods change;
+that change widens the gap rather than creating it. Nobody is harmed by paying with a method
+the terms forgot to name, but this is exactly the shape of discrepancy `plan.ts` warns about in
+its own header — ambiguity in your own standard terms is construed against you.
+
+Deliberately **not** fixed here: those terms are binding text with a version number and a
+30-day change-notification clause (§2.3), and rewriting them is the owner's call, not a
+side effect of a payments change. The minimal fix is to stop enumerating — e.g. *"via onze
+betaaldienstverlener Stripe; welke betaalmethoden beschikbaar zijn zie je op de betaalpagina"*
+— which also stops the clause from going stale every time the Dashboard changes. Whether that
+counts as a significant change requiring notice is a legal judgement, not a technical one.
+
+### 4.8 · Dashboard configuration (no code)
 
 Collected from §3: Smart Retries + de-duplicated failure emails; Customer Portal options;
 invoice template with KVK + btw-id + footer; branding (logo, colors — the hosted checkout and
@@ -362,8 +392,12 @@ Complements `LIVE_GAAN.md` (which owns the env-var and platform steps — read i
       `checkout.session.async_payment_failed`, `customer.subscription.created`, `.updated`,
       `.deleted`, `invoice.payment_failed`. Signing secret → `STRIPE_WEBHOOK_SECRET`.
 - [ ] Live key is a **restricted key** (§4.4) stored as a sensitive env var.
-- [ ] Payment methods reviewed in Dashboard (iDEAL on — `LIVE_GAAN.md` §6: card-only loses
-      Dutch customers at the last click).
+- [ ] **Payment methods reviewed in Dashboard → Settings → Payment methods.** Since the
+      dynamic-methods change, that screen — not the code — decides what customers see, so
+      confirm **iDEAL is on** before the first real payment (`LIVE_GAAN.md` §6: card-only
+      loses Dutch customers at the last click). If a delayed-notification method
+      (SEPA-incasso, bank transfer) is enabled, know that a Bewaarkluis then records only
+      after the async verdict arrives, which can be days later.
 - [ ] Branding + invoice template carry the legal identity (KVK, btw-id).
 - [ ] Dashboard 2FA is passkey or authenticator app, not SMS.
 - [ ] First live € 12,99 subscription made by the owner, then: invoice PDF shows the btw line,

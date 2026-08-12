@@ -156,7 +156,7 @@ export default function TrPricingPage() {
               Evet. Her ödeme, kendiniz indirebileceğiniz adınıza bir KDV faturası oluşturur. KDV numaranız varsa, ödeme sırasında onu eklersiniz.
             </Faq>
             <Faq q="Nasıl ödeyebilirim?">
-              iDEAL veya kredi kartıyla. Ödeme Stripe üzerinden yapılır — kart bilgileriniz asla BoekBrug&apos;a ulaşmaz.
+              iDEAL, kredi kartı ve ödeme sayfasında gördüğünüz diğer yöntemlerle. Ödeme Stripe üzerinden yapılır — kart bilgileriniz asla BoekBrug&apos;a ulaşmaz.
             </Faq>
             <Faq q="BoekBrug&apos;u tamamen bırakırsam ne olur?">
               Her şeyi dışa aktarırsınız (bu her zaman çalışır, ücretsiz planda da). Sonrasında idarenizi {KLUIS_GRACE_MONTHS} ay daha ücretsiz saklarız. Saklama yükümlülüğünüz devam ettiği için daha uzun kalmasını mı istiyorsunuz? Saklama Kasası bunun içindir. Hiçbir şeyi en az 30 gün önceden e-postayla haber vermeden asla silmeyiz.
