@@ -32,6 +32,10 @@ import Stripe from "stripe";
 
 const STRIPE_SECRET_KEY = (process.env.STRIPE_SECRET_KEY || "").trim();
 const STRIPE_WEBHOOK_SECRET = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+// Stripe Tax on both checkout flows. Raw value; automaticTaxParams() decides,
+// and only the exact string "true" turns it on (the RETENTION_PURGE_ENABLED
+// convention: a deliberate human switch, not a truthiness accident).
+const STRIPE_AUTOMATIC_TAX = (process.env.STRIPE_AUTOMATIC_TAX || "").trim();
 // Twee prijzen, want wij verkopen twee dingen:
 //   • Plus — het maandabonnement voor wie structureel boven het eerlijk gebruik uitkomt;
 //   • Bewaarkluis — het archief dat DOORLOOPT nadat iemand is gestopt (de fiscale
@@ -135,6 +139,34 @@ export async function resolveCustomerId(params: {
 // ── Checkout ─────────────────────────────────────────────────────────
 
 /**
+ * The Stripe Tax part of a Checkout Session, as a spreadable object.
+ *
+ * Behind an env switch (STRIPE_AUTOMATIC_TAX=true) and NOT unconditional,
+ * because turning it on has a hard prerequisite in the Stripe account itself,
+ * per environment (sandbox and live each have their own Tax settings and
+ * registrations):
+ *
+ *   1. Without a head office address (Dashboard → Tax → Settings), Stripe
+ *      REJECTS every session that asks for automatic tax — the checkout button
+ *      would be broken for every customer. Missing configuration has to read
+ *      as "feature off", never as a broken button; that rule is this module's
+ *      oldest (see isBillingConfigured).
+ *   2. With the address set but NO active NL registration (Dashboard → Tax →
+ *      Locations), Stripe silently calculates € 0 tax — no error, charged
+ *      amount unchanged (prices are btw-inclusive), and the invoice still
+ *      misses the btw line this feature exists to add. Flip the switch only
+ *      after BOTH dashboard steps; the order is spelled out in
+ *      docs/BILLING.md §3.4.
+ *
+ * Pure — the truth table lives in billing.test.ts.
+ */
+export function automaticTaxParams(
+  flagValue: string | null | undefined
+): { automatic_tax?: { enabled: boolean } } {
+  return (flagValue || "").trim() === "true" ? { automatic_tax: { enabled: true } } : {};
+}
+
+/**
  * A hosted Checkout session for BoekBrug Plus.
  *
  * Hosted (not embedded Elements) on purpose: Stripe then owns the card form,
@@ -168,6 +200,11 @@ export async function createCheckoutSession(params: {
     // Business customers can put their BTW number on the invoice.
     tax_id_collection: { enabled: true },
     customer_update: { address: "auto", name: "auto" },
+    // Stripe Tax, behind its env switch (see automaticTaxParams). In
+    // subscription mode this carries over to the created subscription, so the
+    // renewal invoices get their btw line too — the address saved by
+    // customer_update above is what those renewals are taxed against.
+    ...automaticTaxParams(STRIPE_AUTOMATIC_TAX),
     // The webhook reads this to find the profile without trusting any URL.
     subscription_data: { metadata: { profile_id: params.profileId } },
     metadata: { profile_id: params.profileId },
@@ -344,6 +381,13 @@ export async function createKluisCheckoutSession(params: {
     consent_collection: { terms_of_service: "required" },
     billing_address_collection: "required",
     tax_id_collection: { enabled: true },
+    // Same shape as the Plus session, and load-bearing for tax: with
+    // automatic_tax on, "auto" makes Stripe tax the address entered at THIS
+    // checkout instead of a stale saved one, and saves it on the customer —
+    // which is also the address later Plus renewal invoices are taxed against.
+    customer_update: { address: "auto", name: "auto" },
+    // Stripe Tax, behind its env switch (see automaticTaxParams).
+    ...automaticTaxParams(STRIPE_AUTOMATIC_TAX),
     // Stripe stuurt bij een eenmalige betaling geen factuur tenzij je erom vraagt. Voor een
     // zakelijke klant die btw terugvraagt is die factuur het halve product.
     invoice_creation: { enabled: true },

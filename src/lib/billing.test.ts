@@ -13,7 +13,12 @@
 // weeks left gets locked out immediately. That failure is completely invisible
 // until it hits a real, paying, already-annoyed customer, so it is pinned here.
 
-import { subscriptionPeriodEnd, epochToIso, kluisSessionAction } from "./billing";
+import {
+  subscriptionPeriodEnd,
+  epochToIso,
+  kluisSessionAction,
+  automaticTaxParams,
+} from "./billing";
 
 let passed = 0;
 let failed = 0;
@@ -128,6 +133,34 @@ check(
 check(
   "an unknown future status fails toward wait, never toward record",
   kluisSessionAction("checkout.session.completed", "processing") === "wait"
+);
+
+console.log("\n[BILLING] automaticTaxParams — a deliberate switch, not a truthiness accident");
+
+// Turning Stripe Tax on requires dashboard work FIRST (head office address,
+// NL registration — docs/BILLING.md §3.4), so only the exact word "true" may
+// enable it. Anything else must yield an empty object, which spreads into the
+// session params as nothing at all — today's behavior, unchanged.
+
+const ON = JSON.stringify({ automatic_tax: { enabled: true } });
+const OFF = JSON.stringify({});
+
+check('"true" → automatic tax on', JSON.stringify(automaticTaxParams("true")) === ON);
+check(
+  "surrounding whitespace is forgiven — still on",
+  JSON.stringify(automaticTaxParams("  true  ")) === ON
+);
+check(
+  "unset (undefined/null) → off, spreads to nothing",
+  JSON.stringify(automaticTaxParams(undefined)) === OFF &&
+    JSON.stringify(automaticTaxParams(null)) === OFF
+);
+check('empty string → off', JSON.stringify(automaticTaxParams("")) === OFF);
+check('"false" → off', JSON.stringify(automaticTaxParams("false")) === OFF);
+check(
+  'not "1", not "TRUE" — only the deliberate lowercase word switches money behavior',
+  JSON.stringify(automaticTaxParams("1")) === OFF &&
+    JSON.stringify(automaticTaxParams("TRUE")) === OFF
 );
 
 console.log(`\n[BILLING] ${passed} passed, ${failed} failed\n`);

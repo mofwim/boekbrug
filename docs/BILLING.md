@@ -161,10 +161,20 @@ cannot be booked is the kind of detail our users are professionally equipped to 
 Prices are btw-inclusive by policy (`PLUS.btwNote: "incl. btw"`), so fixing this changes what
 the invoice *says*, never what the customer *pays*. Two ways to do it:
 
-**Path A — Stripe Tax (recommended, and what the product request asked for).**
+**Path A — Stripe Tax (recommended, and what the product request asked for). Chosen by the
+owner on 12 Aug 2026; the code side is implemented on this branch.**
 
-Setup order matters; step 3 without step 2 silently collects nothing (Stripe's single most
-common Tax mistake — no error is raised):
+The code enables tax on both checkout flows behind one switch: set
+`STRIPE_AUTOMATIC_TAX=true` (exactly that word) and `automaticTaxParams()` in `billing.ts`
+spreads `automatic_tax: { enabled: true }` into both sessions; any other value spreads
+nothing and today's behavior is unchanged. It is a switch and not unconditional because
+enabling automatic tax while the account's Tax settings are still `pending` makes Stripe
+reject *every* checkout session — the button would be broken for every customer, and missing
+configuration must read as "feature off", never as a broken button.
+
+Setup order matters; the switch comes LAST, and steps 1–3 are per environment (sandbox and
+live each have their own Tax settings and registrations). Step 4 without step 2 silently
+collects nothing (Stripe's single most common Tax mistake — no error is raised):
 
 1. **Head office address** — Dashboard → Tax → Settings. Tax settings `status` must be
    `active`, not `pending`, before anything calculates.
@@ -176,12 +186,18 @@ common Tax mistake — no error is raised):
    code from Stripe's canonical tax-code list, and confirm suitability for the Bewaarkluis,
    which is closer to a data-archiving service). On both Prices set
    `tax_behavior: 'inclusive'` so € 12,99 and € 19 stay the amounts charged.
-4. **Enable in code** — `automatic_tax: { enabled: true }` on both `checkout.sessions.create`
-   calls in `billing.ts`. In subscription mode this carries through to the subscription and its
-   renewal invoices. `tax_id_collection` is already on, which is the other half: with a valid
-   EU VAT ID a cross-border B2B sale becomes a reverse charge instead of wrongly-charged btw.
-5. **Registrations are per environment** — sandbox registrations do not exist in live mode and
-   vice versa. Add the live registration before the first real payment (see §6).
+4. **Flip the switch** — `STRIPE_AUTOMATIC_TAX=true` in that environment. In subscription
+   mode the session setting carries through to the subscription and its renewal invoices.
+   `tax_id_collection` is already on, which is the other half: with a valid EU VAT ID a
+   cross-border B2B sale becomes a reverse charge instead of wrongly-charged btw.
+
+Two footnotes to the implementation. The Bewaarkluis session now also passes
+`customer_update: { address: 'auto', name: 'auto' }` (the Plus session always did): with
+automatic tax on, `auto` makes Stripe tax the address entered at *this* checkout instead of a
+stale saved one, and the saved address is what later renewal invoices are taxed against. And
+subscriptions that already existed before the switch keep invoicing without a btw line —
+automatic tax is per subscription, not per account. Update those few by hand in the Dashboard
+(subscription → automatic tax) or accept it for the early subscribers.
 
 What this buys beyond the btw line: correct handling of the occasional non-NL customer (EU B2C
 charges their local rate where registered, EU B2B reverse-charges against a validated VAT ID),
@@ -204,10 +220,14 @@ right for BoekBrug's own sales is, as always, the accountant's call, not this do
 
 What the audit against Stripe's current guidance found, most important first.
 
-### 4.1 · P1 — Stripe invoices carry no btw specification
+### 4.1 · P1 — Stripe invoices carry no btw specification — **code side fixed on this branch**
 
-§3.4 above. The one gap that touches what customers receive today. Decide Path A or B; both
-end with a btw line on every invoice and neither changes any charged amount.
+§3.4 above. The one gap that touches what customers receive today. The owner chose Path A
+(Stripe Tax); both checkout flows now request automatic tax behind
+`STRIPE_AUTOMATIC_TAX=true`. What remains is Dashboard work in §3.4's order — head office
+address, NL registration, tax codes and inclusive tax behavior on the products and prices —
+and then the switch, per environment. No charged amount changes; only the invoice gains its
+btw line.
 
 ### 4.2 · P1 — Bewaarkluis recording trusted `checkout.session.completed` unconditionally — **fixed on this branch**
 
@@ -314,6 +334,15 @@ Trigger extra events with `stripe trigger invoice.payment_failed`.
       `…async_payment_failed` (add `product=bewaarkluis` metadata via a fixture) and check:
       unpaid completion logs "waiting", succeeded records once, failed records nothing and
       logs the error line.
+- [ ] **Tax, off** — with `STRIPE_AUTOMATIC_TAX` unset, both checkouts behave exactly as
+      before this branch: session created, no tax lines. (The switch must never be able to
+      break a checkout by merely existing unset.)
+- [ ] **Tax, on** — sandbox: head office address + NL registration + tax codes +
+      `tax_behavior: inclusive` per §3.4, then `STRIPE_AUTOMATIC_TAX=true`: Checkout shows
+      "inclusief btw", the total stays € 12,99 / € 19 × years, and the invoice afterwards
+      carries the 21% btw breakdown. Then check the diagnosis path once: with the
+      registration *removed* (sandbox only!), the same purchase completes at the same price
+      but with zero tax — the silent failure §3.4 warns about, worth having seen once.
 - [ ] **Unconfigured degrade** — unset the Stripe vars: checkout and portal answer 503 with
       the Dutch message, `/prijzen` still renders, nothing else in the app cares.
 
@@ -323,9 +352,11 @@ Complements `LIVE_GAAN.md` (which owns the env-var and platform steps — read i
 
 - [ ] Live products + prices created, amounts **identical to the terms**: € 12,99/month Plus,
       € 19/bewaarjaar Kluis, both incl. btw (`LIVE_GAAN.md` §6 already insists).
-- [ ] Tax path chosen (§3.4) and configured **in live mode** — head office + NL registration
-      *before* the first live payment if Path A; the 21% inclusive rate if Path B. Sandbox tax
-      config does not carry over.
+- [ ] Stripe Tax configured **in live mode**, in §3.4's order: head office address, NL
+      registration, tax codes, `tax_behavior: inclusive` — and only then
+      `STRIPE_AUTOMATIC_TAX=true` in the production environment. Sandbox tax config does not
+      carry over, and the switch before the registration means silent € 0 btw on real
+      invoices.
 - [ ] Live webhook endpoint `https://boekbrug.nl/api/billing/webhook` with events:
       `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
       `checkout.session.async_payment_failed`, `customer.subscription.created`, `.updated`,

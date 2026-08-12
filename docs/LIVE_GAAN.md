@@ -231,6 +231,12 @@ kort na de 5e van januari/april/juli/oktober.
   De twee `async_payment_*`-events zijn de late uitslag van betaalmethoden die de sessie
   eerst afronden en het geld daarna bevestigen (SEPA-incasso, overboeking) — iDEAL en kaart
   sturen ze nooit, maar de webhook verwerkt ze al (docs/BILLING.md §4.2).
+- **Stripe → Tax**, in live mode en in deze volgorde: hoofdkantooradres (Dashboard → Tax →
+  Settings), dan de Nederlandse btw-registratie (→ Locations), dan op beide producten een
+  tax code en op beide prijzen `tax_behavior: inclusive` — en pas daarná
+  `STRIPE_AUTOMATIC_TAX=true` in de omgeving. Sandbox-registraties tellen niet in live.
+  Zonder deze schakelaar toont de Stripe-factuur GEEN btw-regel, en dat is voor een
+  zakelijke klant geen geldige btw-factuur. Volgorde en valkuilen: docs/BILLING.md §3.4.
 
 ---
 
