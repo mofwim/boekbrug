@@ -40,7 +40,15 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { learnFromLines } from '@/lib/article-learning-store'
 import { readWithTrail } from '@/lib/created-by'
 // [OFFERTE-BEWERKBAAR] Eén regel, gedeeld met de schermen — zie invoice-editable.ts.
-import { isInvoiceEditable, editRefusalText, isQuote } from '@/lib/invoice-editable'
+// [HERSTEL] En de tweede deur: een verstuurde factuur is volledig bewerkbaar zolang er geen
+// betaling, bankkoppeling, kasboeking, creditnota, boekhoudersverwerking of ingediend kwartaal
+// aan hangt — de marktregel (Moneybird doet dit ook), met de grendels die hem eerlijk houden.
+// De klant krijgt automatisch de gecorrigeerde versie; zie de orkestratie onderaan de PUT.
+import { isInvoiceEditable, editRefusalText, isQuote, sentEditBlockers, type SentEditFacts } from '@/lib/invoice-editable'
+// [HERSTEL] Welk kwartaal een datum raakt, en of dat kwartaal al is ingediend (btw_filings).
+import { quarterKeyOf } from '@/lib/quarter'
+import { isMissingRelation } from '@/lib/pg-missing'
+import { logAuditAction } from '@/lib/audit'
 // [UNIT] Alleen bekende eenheden komen de database in — zie de normalisatie hieronder.
 import { isKnownUnit } from '@/lib/units'
 // [KLANT-EXTRA] Twee vrije klantregels met een eigen terugval — zie de kop van dat bestand.
@@ -211,22 +219,37 @@ export async function PUT(
   // The rule lives in invoice-editable.ts, shared with the screens, so the button and the door can
   // never disagree about what may be opened. It refuses ANY numbered document, whatever its type
   // column says — two conditions, so no single wrong field unlocks one.
+  const body = await request.json().catch(() => ({}))
+
+  // [HERSTEL] Two doors, deliberately separate. The ordinary door (draft / unnumbered quote) is
+  // open to a verkoopmedewerker and delivers nothing. The herstel door — a SENT factuur — is
+  // owner-only, checks every attachment, and ends with the customer automatically receiving the
+  // corrected document. The pure decision lives in invoice-editable.ts (sentEditBlockers); this
+  // block only gathers the facts it asks about.
+  let herstel = false
   if (!isInvoiceEditable({
     status: existing.status,
     invoiceType: existing.invoice_type,
     invoiceNumber: existing.invoice_number,
   })) {
-    return NextResponse.json(
-      { error: editRefusalText({
-          status: existing.status,
-          invoiceType: existing.invoice_type,
-          invoiceNumber: existing.invoice_number,
-        }) },
-      { status: 409 }
-    )
+    if (isActingForOther(acting)) {
+      // Een medewerker verstuurt namens de eigenaar, maar HERSCHRIJFT geen uitgegeven document
+      // van de eigenaar — dat besluit (en de mail aan de klant) is van wie de factuur is.
+      return NextResponse.json(
+        { error: 'Alleen de eigenaar kan een verstuurde factuur herstellen.' },
+        { status: 403 }
+      )
+    }
+    const facts = await gatherSentEditFacts(supabase, id, ownerId, existing, body)
+    const blockers = sentEditBlockers(facts)
+    if (blockers.length > 0) {
+      return NextResponse.json(
+        { error: blockers[0].text, blockers: blockers.map((b) => b.code) },
+        { status: 409 }
+      )
+    }
+    herstel = true
   }
-
-  const body = await request.json().catch(() => ({}))
   const rawLines = Array.isArray(body.lines) ? body.lines : []
   if (rawLines.length === 0) {
     return NextResponse.json({ error: 'Minstens één factuurregel is vereist.' }, { status: 400 })
@@ -373,7 +396,16 @@ export async function PUT(
       .eq('id', id)
       .eq('sender_id', ownerId)
       .eq('status', existing.status ?? 'draft')
-    if (existing.status !== 'draft') q = q.is('invoice_number', null)
+    if (existing.status !== 'draft') {
+      // [HERSTEL] Voor een verstuurde factuur bewaakt de CAS het OMGEKEERDE van de offerte-tak:
+      // het nummer moet er nog precies zo staan, en er mag in het venster tussen lezen en
+      // schrijven geen betaling zijn geland — een bankmatch die net binnenkwam maakt van deze
+      // bewerking het herschrijven van een betaald document, en dat is de grens van dit hele pad.
+      q = herstel
+        ? q.eq('invoice_number', existing.invoice_number as string)
+             .or('amount_paid.is.null,amount_paid.eq.0')
+        : q.is('invoice_number', null)
+    }
     return q.select('id')
   }
   const { data: patched, error: upErr } = await writeWithExtraLines(
@@ -388,9 +420,11 @@ export async function PUT(
     // Lost the race: it is no longer a draft. Nothing was written, and the lines are untouched.
     return NextResponse.json(
       {
-        error: isQuote(existing.invoice_type)
-          ? 'Deze offerte is inmiddels omgezet naar een factuur en kan niet meer worden gewijzigd.'
-          : 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.',
+        error: herstel
+          ? 'Deze factuur is zojuist gewijzigd of betaald — herlaad de pagina en probeer opnieuw.'
+          : isQuote(existing.invoice_type)
+            ? 'Deze offerte is inmiddels omgezet naar een factuur en kan niet meer worden gewijzigd.'
+            : 'Deze factuur is inmiddels verzonden en kan niet meer worden gewijzigd.',
       },
       { status: 409 }
     )
@@ -451,7 +485,9 @@ export async function PUT(
       } as never)
       .eq('id', id)
       .eq('sender_id', ownerId)
-      .eq('status', 'draft')
+      // [HERSTEL] De terugzetter droeg de LETTERLIJKE 'draft' — op een herstelde verstuurde
+      // factuur zette hij dan niets terug en bleven de nieuwe totalen boven de oude regels staan.
+      .eq('status', existing.status ?? 'draft')
     return NextResponse.json({ error: 'Opslaan mislukt (regels)' }, { status: 500 })
   }
 
@@ -477,7 +513,137 @@ export async function PUT(
     })),
   })
 
+  if (herstel) {
+    // [HERSTEL] Vastleggen wat er veranderde — een uitgegeven document is herschreven, en de
+    // enige reden dat dat eerlijk kan is dat het spoor het oude beeld bewaart.
+    await logAuditAction({
+      userId: user.id,
+      action: 'invoice.hersteld',
+      entityType: 'invoice',
+      entityId: id,
+      oldValue: {
+        total_ex_btw: existing.total_ex_btw,
+        btw_amount: existing.btw_amount,
+        total_inc_btw: existing.total_inc_btw,
+      },
+      newValue: { total_ex_btw, btw_amount, total_inc_btw },
+    })
+
+    // [HERSTEL] De klant krijgt de gecorrigeerde factuur AUTOMATISCH — dit is geen beleefdheid
+    // maar de voorwaarde waaronder dit hele pad mag bestaan: een gewijzigd document waarvan de
+    // klant de oude versie heeft, is precies het uiteenlopen van boeken dat deze app bestrijdt.
+    // Dezelfde orkestratie-over-HTTP als altijd: de send-route alleen kent de PDF-bouw, de
+    // opslagversieregel en de bezorging; hier iets naboetsen is het twee-definities-defect.
+    const origin = request.nextUrl.origin
+    const cookie = request.headers.get('cookie') ?? ''
+    let delivered = false
+    let deliveryError: string | null = null
+    try {
+      const sendRes = await fetch(`${origin}/api/invoice/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie },
+        body: JSON.stringify({ invoiceId: id, resend: true, herstel: true }),
+      })
+      const sendJson = await sendRes.json().catch(() => ({}))
+      delivered = sendRes.ok && !sendJson?.warning
+      if (!delivered) deliveryError = sendJson?.error ?? sendJson?.warning ?? null
+    } catch {
+      deliveryError = 'delivery_unreachable'
+    }
+    if (!delivered) {
+      // De wijziging STAAT — dat mag de response niet verhullen. Wat ontbreekt is de bezorging,
+      // en daarvoor bestaat al een herstelpad: opnieuw versturen vanaf de detailpagina.
+      return NextResponse.json({
+        success: true,
+        hersteld: true,
+        delivered: false,
+        warning: 'herstel_delivery_failed',
+        error:
+          'De factuur is aangepast, maar de gecorrigeerde versie kon nog niet naar je klant — ' +
+          'verstuur hem opnieuw vanaf de factuurpagina.',
+        ...(deliveryError ? { detail: deliveryError } : {}),
+      })
+    }
+    return NextResponse.json({ success: true, hersteld: true, delivered: true })
+  }
+
   return NextResponse.json({ success: true })
+}
+
+// [HERSTEL] De feiten waar sentEditBlockers over beslist. Lezen mag hier mislukken; beslissen
+// niet — een mislukte lezing wordt `null` en null BLOKKEERT (zie invoice-editable.ts).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function gatherSentEditFacts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  id: string,
+  ownerId: string,
+  existing: { status: string | null; invoice_type?: string | null; invoice_number?: string | null },
+  body: Record<string, unknown>,
+): Promise<SentEditFacts> {
+  // select('*'): de rij antwoordt zelf welke kolommen deze installatie kent. Een ontbrekende
+  // amount_paid-kolom betekent dat deelbetalingen niet bestaan — 0, geen onbekende.
+  const { data: rij, error: rijErr } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('id', id)
+    .eq('sender_id', ownerId)
+    .single()
+  const row = (rij ?? {}) as Record<string, unknown>
+
+  const tel = async (q: PromiseLike<{ count: number | null; error: unknown }>): Promise<boolean | null> => {
+    const { count, error } = await q
+    return error ? null : (count ?? 0) > 0
+  }
+
+  const [bankDirect, bankSplit, kas, credit] = await Promise.all([
+    tel(supabase.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    tel(supabase.from('bank_tx_invoices').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    tel(supabase.from('cash_entries').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    tel(supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('original_invoice_id', id).eq('invoice_type', 'creditnota')),
+  ])
+  // bank_tx_invoices bestaat pas na zijn migratie: een ontbrekende tabel is "geen koppeling",
+  // geen onbekende. Voor de basistabellen geldt dat niet — daar blijft null blokkeren.
+  const splitSafe = bankSplit === null ? false : bankSplit
+
+  // [HERSTEL] Het kwartaal van de HUIDIGE datum én — als de bewerking hem verplaatst — van de
+  // NIEUWE datum. Allebei: uit een ingediend kwartaal wegschuiven is even erg als erin schuiven.
+  const datums = new Set<string>()
+  const huidige = quarterKeyOf((row.invoice_date as string | null) ?? null)
+  if (huidige) datums.add(huidige)
+  if (typeof body.invoice_date === 'string') {
+    const nieuwe = quarterKeyOf(body.invoice_date)
+    if (nieuwe) datums.add(nieuwe)
+  }
+  let quarterFiled: boolean | null = false
+  for (const qKey of datums) {
+    const [jaarStr, kwStr] = qKey.split('-Q')
+    const { data: filed, error: filedErr } = await supabase
+      .from('btw_filings')
+      .select('year')
+      .eq('user_id', ownerId)
+      .eq('year', Number(jaarStr))
+      .eq('quarter', Number(kwStr))
+      .maybeSingle()
+    if (filedErr && !isMissingRelation((filedErr as { message?: string })?.message ?? '')) {
+      quarterFiled = null // niet te controleren → blokkeert
+      break
+    }
+    if (filed) { quarterFiled = true; break }
+  }
+
+  return {
+    status: existing.status,
+    invoiceType: existing.invoice_type,
+    invoiceNumber: existing.invoice_number,
+    direction: (row.direction as string | null) ?? null,
+    amountPaid: rijErr ? null : Number((row.amount_paid as number | null) ?? 0),
+    hasBankLink: bankDirect === null ? null : bankDirect || splitSafe,
+    hasCashLink: kas,
+    hasCreditnota: credit,
+    accountantStatus: (row.accountant_status as string | null) ?? null,
+    quarterFiled,
+  }
 }
 
 // DELETE /api/invoice/[id] — remove a DRAFT (and its lines). Sent invoices are

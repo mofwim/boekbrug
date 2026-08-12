@@ -3699,9 +3699,16 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
     route, /\.eq\('status', existing\.status \?\? 'draft'\)/,
     "…it guards on the status that was READ, which is what protects against a change in between",
   );
+  // [HERSTEL] The non-draft CAS forked: an unnumbered quote must STILL carry no number, and a
+  // herstel of a sent factuur must still carry exactly the number we saw plus zero payment.
+  // Both halves asserted — losing either reopens the [OFFERTE-BEWERKBAAR] defect for its lane.
   assert.match(
-    route, /if \(existing\.status !== 'draft'\) q = q\.is\('invoice_number', null\)/,
-    "…and a non-draft may only be written while it still carries no number",
+    route, /: q\.is\('invoice_number', null\)/,
+    "…a non-draft QUOTE may only be written while it still carries no number",
+  );
+  assert.match(
+    route, /q\.eq\('invoice_number', existing\.invoice_number as string\)/,
+    "…and a HERSTEL only while the row still carries the number we saw",
   );
 
   // [KLANT-EXTRA] The update is now RETRIED when the two customer lines name a column the schema
@@ -3714,7 +3721,11 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
   );
   assert.ok(runPatch.length > 0, "the patch is no longer built in a re-runnable function");
   assert.match(runPatch, /\.eq\('status', existing\.status \?\? 'draft'\)/, "the retry keeps the status lock");
-  assert.match(runPatch, /q = q\.is\('invoice_number', null\)/, "…and the number lock");
+  // [HERSTEL] The lock forked per lane but must stay INSIDE the retried closure: no number for a
+  // quote, the SEEN number plus zero payment for a herstel.
+  assert.match(runPatch, /\.is\('invoice_number', null\)/, "…and the quote's number lock");
+  assert.match(runPatch, /\.eq\('invoice_number', existing\.invoice_number as string\)/, "…and the herstel's number lock");
+  assert.match(runPatch, /amount_paid\.is\.null,amount_paid\.eq\.0/, "…and the herstel's zero-payment lock");
   assert.match(
     route, /isQuote\(existing\.invoice_type\)[\s\S]{0,160}?omgezet naar een factuur/,
     "and the 409 says which wall was hit — a converted quote is not 'inmiddels verzonden'",
@@ -7307,35 +7318,75 @@ test("[PAY-REDEN] the rule is proven where it can be", () => {
   assert.match(spec, /reads Dutch, never a key/, "a missing translation falls back, it does not blank");
 });
 
-test("[CORRIGEER] correcting a sent invoice is a pair of documents, never an edit", () => {
-  // The owner asked for the honest thing: the details are wrong on a sent invoice, the lines are
-  // fine, let me edit the details. The one form that request may never take is an UPDATE — the
-  // number is from a gapless forward-only series (Art. 35 Wet OB) and the customer already holds
-  // the document; an in-place edit makes the administration disagree with the paper it mailed.
-  //
-  // So the feature is an orchestration of the two legal halves that already existed, and this
-  // gate pins that it STAYS one: creditnota first (the half with legal weight), duplicate second,
-  // and no invoice UPDATE anywhere in the route.
-  const route = code("src/app/api/invoice/[id]/correct/route.ts");
-  assert.match(route, /\/api\/invoice\/creditnota/, "the cancel half");
-  assert.match(route, /\/duplicate`/, "…and the prefilled-draft half");
-  assert.ok(
-    route.indexOf("/api/invoice/creditnota") < route.indexOf("/duplicate`"),
-    "creditnota FIRST: if it fails nothing happened; the reverse order can mint a correcting " +
-      "draft while the wrong invoice stays live in the books",
-  );
-  assert.doesNotMatch(route, /\.update\(|\.upsert\(/,
-    "the route corrects by creating documents, never by touching the sent one");
+test("[HERSTEL] a sent invoice is fully editable — behind every lock that keeps it honest", () => {
+  // The owner's decision, reversing [CORRIGEER]: follow the market (Moneybird edits sent
+  // invoices too) — a sent factuur may be edited IN FULL, same number, for as long as nothing
+  // is attached to it, and the customer automatically receives the corrected version. What this
+  // gate pins is not the freedom but the locks: without them "edit anything" becomes rewriting
+  // documents other parties already booked.
+  const route = code("src/app/api/invoice/[id]/route.ts");
 
-  // The editability rule itself is untouched: a numbered document stays closed to editing. The
-  // correction flow exists precisely so this line never needs a "unless…" added to it.
+  // 1. The decision is the pure module's, and the route feeds it EVERY fact it asks about.
+  assert.match(route, /sentEditBlockers\(/, "the rule lives in invoice-editable.ts, not inline");
+  for (const feit of [
+    "bank_transactions", "bank_tx_invoices", "cash_entries", "btw_filings",
+    "original_invoice_id", "amount_paid", "accountant_status",
+  ]) {
+    assert.match(route, new RegExp(feit), `the route must gather ${feit} — a fact not gathered is a lock not checked`);
+  }
+
+  // 2. Owner-only. A verkoopmedewerker sends on the owner's behalf but never REWRITES an
+  //    issued document of the owner.
+  assert.match(route, /isActingForOther\(acting\)[\s\S]{0,400}Alleen de eigenaar kan een verstuurde factuur herstellen/,
+    "the herstel door refuses anyone acting for someone else");
+
+  // 3. The NUMBER never travels. The patch list is explicit; invoice_number appears in the
+  //    route only as a CAS condition (eq), never as a written key.
+  assert.doesNotMatch(route, /patch\.invoice_number|['"]invoice_number['"]\s*:/,
+    "the number is what makes the document issued — no path may write it");
+  // 4. …and the CAS holds the door against a payment landing mid-edit.
+  assert.match(route, /\.eq\('invoice_number', existing\.invoice_number/,
+    "the row must still carry the number we saw");
+  assert.match(route, /amount_paid\.is\.null,amount_paid\.eq\.0/,
+    "…and still carry zero payment — a bank match in the window turns the edit into rewriting a paid document");
+
+  // 5. Delivery is part of the write, not a courtesy: the customer holds the old version, and
+  //    a changed document they never receive is exactly the books-vs-paper divergence this app
+  //    exists to prevent. Failure is SAID (warning), never silent.
+  assert.match(route, /resend: true, herstel: true/, "saving a sent invoice delivers the corrected version");
+  assert.match(route, /herstel_delivery_failed/, "a failed delivery is reported, with the way out named");
+  assert.match(route, /invoice\.hersteld/, "and the audit trail records that an issued document was rewritten");
+
+  // 6. The PDF: a corrected version is a NEW object beside the original — {nummer}.pdf remains
+  //    the first-issued version forever (there is deliberately no storage UPDATE policy), and
+  //    pdf_url moves to the corrected one so the screen shows what the customer now holds.
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /herstel-\$\{Date\.now\(\)\}\.pdf/, "the corrected PDF is versioned, not overwritten");
+  assert.match(send, /isHerstel: herstel/, "the mail knows it carries a correction");
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /Gecorrigeerde factuur/, "the subject says corrected");
+  assert.match(mail, /vervangt de eerdere factuur/, "…the body says it replaces the earlier one");
+  assert.match(mail, /vervallen/, "…and that the earlier version is void — two PDFs, one number, no ambiguity");
+
+  // 7. The old orchestration ([CORRIGEER]: creditnota + duplicate) is GONE — one way to do a
+  //    thing. The manual creditnota remains for the locked cases.
+  assert.ok(!existsSync("src/app/api/invoice/[id]/correct"), "the correct route was removed");
+  assert.doesNotMatch(code("src/app/dashboard/invoice/[id]/page.tsx"), /\/correct/,
+    "no screen calls the removed route");
+
+  // 8. Two doors, still two: the ordinary rule did not widen. A sent factuur remains closed to
+  //    isInvoiceEditable (member-accessible, no delivery); only sentEditBlockers opens it.
   const editable = code("src/lib/invoice-editable.ts");
-  assert.match(editable, /invoiceNumber/, "the number is still what locks a document");
+  assert.match(editable, /export function isInvoiceEditable/, "the draft/quote door is untouched");
+  assert.match(editable, /export function sentEditBlockers/, "the herstel door is its own function");
+  assert.match(editable, /quarterFiled/, "…and it asks about the filed quarter — the Belastingdienst lock");
 
-  // And the screen offers the flow where the owner looks for it — beside the creditnota button,
-  // going to the new DRAFT's edit screen on success, where editing is legitimately allowed.
-  const page = code("src/app/dashboard/invoice/[id]/page.tsx");
-  assert.match(page, /t\('detail\.corrigeer'\)/, "the button is on the sent invoice");
-  assert.match(page, /router\.push\(`\/dashboard\/invoice\/\$\{data\.draft_id\}\/edit`\)/,
-    "success lands the owner in the draft, prefilled, editable");
+  // 9. The screens: the detail banner offers Bewerken only for what it can see, and the edit
+  //    screen says BEFORE the tap that saving mails the customer.
+  assert.match(code("src/app/dashboard/invoice/[id]/page.tsx"), /canHerstel/,
+    "the detail page decides visibility from the row it holds");
+  const editScreen = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(editScreen, /kanHerstellen/, "the edit screen has the third state");
+  assert.match(editScreen, /t\('bewerk\.herstel\.uitleg'/, "…and warns what saving does before the tap");
+  assert.match(editScreen, /herstel_delivery_failed/, "…and refuses to pretend a failed delivery succeeded");
 });

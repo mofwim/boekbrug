@@ -148,7 +148,11 @@ export async function POST(request: NextRequest) {
 
     // ── 3. Parse body ──────────────────────────────────────────
     // (Gelezen bij stap 1 — zie [MANDAAT] daar: de eigenaar hangt ervan af.)
-    const { invoiceId, convertOnly = false, resend = false } = body
+    // [HERSTEL] herstel=true hoort bij resend=true: de PUT-route heeft zojuist een verstuurde
+    // factuur aangepast, en deze bezorging draagt dat verschil — de mail zegt dat dit de
+    // gecorrigeerde versie is die de eerdere vervangt, en de PDF wordt als NIEUWE versie naast
+    // het origineel opgeslagen (pdf_url gaat mee), zodat de kluis beide gezichten bewaart.
+    const { invoiceId, convertOnly = false, resend = false, herstel = false } = body
     // convertOnly=true: "Maak factuur aan" flow — convert pro_forma to factuur
     // resend=true: [FACTUUR-A] re-deliver PDF+e-mail for an already-sent
     //   invoice — number/status untouched
@@ -201,6 +205,13 @@ export async function POST(request: NextRequest) {
       if (!RESENDABLE_STATUSES.includes(invoice.status) || !invoice.invoice_number) {
         return NextResponse.json(
           { error: 'Alleen verzonden facturen kunnen opnieuw worden verstuurd' },
+          { status: 400 }
+        )
+      }
+      // [HERSTEL] Alleen als bezorging van een zojuist herstelde factuur — nooit los.
+      if (herstel && invoice.invoice_type !== 'factuur') {
+        return NextResponse.json(
+          { error: 'Alleen een factuur kan als gecorrigeerde versie worden bezorgd' },
           { status: 400 }
         )
       }
@@ -647,7 +658,15 @@ export async function POST(request: NextRequest) {
     try {
       // [ACTING-FOR] Onder de map van de EIGENAAR — daar staan al zijn facturen, en de
       // storage-policies zijn per gebruikersmap geschreven.
-      const pdfPath = `${ownerId}/facturen/${finalNumber}.pdf`
+      //
+      // [HERSTEL] Een herstelde factuur krijgt een NIEUW object naast het origineel — nooit
+      // eroverheen. `{nummer}.pdf` blijft voor altijd de eerst uitgegeven versie (er is bewust
+      // geen UPDATE-policy op storage, zie [PDF-IMMUTABLE] hieronder); de gecorrigeerde versie
+      // komt er gedateerd naast en pdf_url gaat mee, zodat de PDF-knop toont wat de klant nu
+      // heeft en de kluis bewaart wat hij eerst had.
+      const pdfPath = herstel
+        ? `${ownerId}/facturen/${finalNumber}.herstel-${Date.now()}.pdf`
+        : `${ownerId}/facturen/${finalNumber}.pdf`
       // [PDF-IMMUTABLE] upsert:false, and that is not a downgrade — it is what this write can
       // actually do, and what it should do.
       //
@@ -696,6 +715,8 @@ export async function POST(request: NextRequest) {
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
         isCreditnota: finalType === 'creditnota',
+        // [HERSTEL] De mail zegt dat dit de gecorrigeerde versie is die de eerdere vervangt.
+        isHerstel: herstel,
         // [ANTWOORD-ADRES] Het adres waarmee de ondernemer zich heeft aangemeld (profiles.email
         // wordt bij registratie uit auth.users gevuld). Zonder dit komt een antwoord van de klant
         // bij noreply@ terecht.

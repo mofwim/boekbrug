@@ -330,18 +330,26 @@ export const MESSAGES = {
   'detail.nooitVerwijderen': { nl: 'Verzonden facturen mogen nooit worden verwijderd.', ar: 'الفواتير المُرسَلة لا يجوز حذفها أبداً.', en: 'Sent invoices may never be deleted.' },
   'detail.teCrediteren': { nl: 'Te crediteren:', ar: 'المبلغ المراد عكسه:', en: 'To credit:' },
   'detail.creditReden': { nl: 'bijv. verkeerd bedrag, geannuleerde opdracht', ar: 'مثلاً: مبلغ خاطئ، أو مهمة أُلغيت', en: 'e.g. wrong amount, cancelled job' },
-  // [CORRIGEER] "Edit the details of a sent invoice" in its only legal shape: creditnota + a new
-  // prefilled concept. The dialog says exactly what will exist afterwards, because the owner is
-  // about to create TWO documents with one tap.
-  'detail.corrigeer': { nl: 'Gegevens corrigeren', ar: 'تصحيح البيانات', en: 'Correct the details' },
-  'detail.corrigeer.titel': { nl: 'Gegevens corrigeren?', ar: 'تصحيح البيانات؟', en: 'Correct the details?' },
-  'detail.corrigeer.uitleg': {
-    nl: 'Een verstuurde factuur kan niet worden aangepast — het nummer ligt vast en de klant heeft het document al. Dit maakt daarom een creditnota die {number} annuleert, plus een nieuw concept met dezelfde regels. Daarin pas je de gegevens aan en verstuur je opnieuw; de factuur krijgt het volgende nummer.',
-    ar: 'الفاتورة المُرسَلة لا تُعدَّل — رقمها نهائي والعميل يملك المستند. لذا سيُنشأ إشعار دائن يُلغي {number}، ومعه مسودة جديدة بنفس البنود. تصحّح فيها البيانات وترسلها من جديد، فتأخذ الفاتورة الرقم التالي.',
-    en: 'A sent invoice cannot be changed — its number is permanent and the customer already holds the document. This therefore creates a credit note cancelling {number}, plus a new draft with the same lines. There you fix the details and send again; the invoice gets the next number.',
+  // [HERSTEL] A sent invoice is fully editable while nothing is attached to it — the market
+  // rule the owner chose after seeing the legal picture. Saving automatically delivers the
+  // corrected version to the customer; the number never changes. The old creditnota+draft
+  // orchestration is gone; a manual creditnota remains for the locked cases.
+  'bewerk.herstel.uitleg': {
+    nl: 'Dit is een verstuurde factuur — het nummer {number} blijft staan. Als je opslaat, ontvangt je klant automatisch de gecorrigeerde factuur per e-mail, met de melding dat de eerdere versie vervalt.',
+    ar: 'هذه فاتورة مُرسَلة — الرقم {number} يبقى كما هو. عند الحفظ، يستلم زبونك تلقائياً الفاتورة المصحَّحة بالبريد الإلكتروني، مع تنبيه بأن النسخة السابقة لاغية.',
+    en: 'This is a sent invoice — the number {number} stays. When you save, your customer automatically receives the corrected invoice by e-mail, noting that the earlier version is void.',
   },
-  'detail.corrigeer.ja': { nl: 'Creditnota + nieuw concept maken', ar: 'إنشاء إشعار دائن + مسودة جديدة', en: 'Create credit note + new draft' },
-  'detail.corrigeer.bezig': { nl: 'Bezig met corrigeren…', ar: 'جارٍ التصحيح…', en: 'Correcting…' },
+  'bewerk.herstel.knop': {
+    nl: 'Opslaan en gecorrigeerde factuur versturen',
+    ar: 'احفظ وأرسل الفاتورة المصحَّحة',
+    en: 'Save and send the corrected invoice',
+  },
+  'bewerk.herstel.bezig': { nl: 'Opslaan en versturen…', ar: 'جارٍ الحفظ والإرسال…', en: 'Saving and sending…' },
+  'bewerk.herstel.nietBezorgd': {
+    nl: 'De factuur is aangepast, maar de gecorrigeerde versie kon nog niet naar je klant — verstuur hem opnieuw vanaf de factuurpagina.',
+    ar: 'عُدّلت الفاتورة، لكن النسخة المصحَّحة لم تصل زبونك بعد — أعد إرسالها من صفحة الفاتورة.',
+    en: 'The invoice was updated, but the corrected version could not reach your customer yet — resend it from the invoice page.',
+  },
   'detail.onbekendeFout': { nl: 'Onbekende fout — probeer opnieuw', ar: 'خطأ غير معروف — حاول مرة أخرى', en: 'Unknown error — please try again' },
 
   'bewerk.versturenNaar': { nl: 'Versturen naar {name}?', ar: 'إرسال إلى {name}؟', en: 'Send to {name}?' },
