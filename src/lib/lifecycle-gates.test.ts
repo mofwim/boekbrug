@@ -7849,3 +7849,31 @@ test("[MIN-REGEL] the invoice the customer keeps shows the credit and still adds
   assert.match(spec, /the same invoice without the credit line is 71,85 more expensive/,
     "with the control that makes those numbers mean something");
 });
+
+test("[MIN-REGEL] the two invoice forms allow and refuse the same things", () => {
+  // The defect this gate is made of: the rule was added to the builder and the EDIT screen kept a
+  // `min="1"` on its quantity field. An owner could then create the ATAPACK invoice and not open
+  // it again — and min="1" had been refusing half an hour of work since long before any of this.
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  const qty = /type="number" value=\{line\.quantity\}([^/>]*)/.exec(edit);
+  assert.ok(qty, "the quantity field must be findable on the edit screen");
+  assert.doesNotMatch(qty![1], /min=/, "no floor: a credit line is a negative aantal");
+  assert.match(qty![1], /step="any"/, "and no whole-unit spinner, which makes 0,5 invalid");
+
+  // One rule, one module, asked by both screens and by the door.
+  assert.match(edit, /import \{ staysAFactuur \} from '@\/lib\/negative-line'/,
+    "the edit screen may not form its own opinion about what a factuur is");
+  assert.match(edit, /invoiceType !== 'creditnota' && !staysAFactuur\(lines\)/,
+    "…and a creditnota is exempt here too, or every edit of one would be refused");
+  // Both buttons. Two copies of the same pre-check is how one of them ends up a rule short.
+  const calls = [...edit.matchAll(/const lineFault = lineProblem\(\)/g)];
+  assert.equal(calls.length, 2, `opslaan AND versturen must ask: found ${calls.length}`);
+  assert.doesNotMatch(
+    edit, /if \(lines\.some\(l => !l\.description \|\| l\.unit_price <= 0\)\) \{\s*setError/,
+    "the old inline copy must be gone, or it is the one that will drift",
+  );
+
+  // And the screen renders at all — the gate that the other five cannot give.
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /src\/app\/dashboard\/invoice\/\[id\]\/edit\/page/, "the edit screen must be on the render line");
+});
