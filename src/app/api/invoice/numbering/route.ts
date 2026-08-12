@@ -11,11 +11,15 @@
 //   1. auth (session client — same pattern as the other routes).
 //   2. parse invoice_start via extractInvoiceTemplate (AUTHORITATIVE — never
 //      trust the client's live preview). empty => system default; invalid => 400.
-//   3. lock: locked = a NUMBERED factuur already exists in the year the
-//      template governs (reset => current calendar year via invoice_date;
-//      continuous => any year). NOT a permanent flag — a customer may still
-//      correct their numbering BEFORE the first issued invoice. A locked
-//      *change* => audit numbering_change_blocked + 409.
+//   3. lock: locked = a number has already been DRAWN from the counter this
+//      request would re-seed. Two witnesses, either of which locks — an issued
+//      factuur dated inside the year, or one whose NUMBER carries the year
+//      ([NUMMER-SLOT]; the date alone missed every back-dated invoice, because
+//      invoice_date is the owner's field while the counter is keyed by the
+//      clock). Continuous numbering draws from the single year=0 counter, so
+//      any issued factuur locks it and no window applies. NOT a permanent flag
+//      — a customer may still correct their numbering BEFORE the first issued
+//      invoice. A locked *change* => audit numbering_change_blocked + 409.
 //   4. apply (not locked): write profiles.template/padding (session), seed
 //      invoice_counters via seed_invoice_counter — GREATEST(existing, startSeq-1)
 //      evaluated UNDER the ON CONFLICT lock, so a concurrent next_invoice_seq
@@ -46,6 +50,59 @@ import {
 } from '@/lib/invoice-template'
 import * as Sentry from '@sentry/nextjs'
 import { requireOwner } from '@/lib/owner-only'
+// [NUMMER-JAAR] The owner's year, not the server's — see format-nl.ts.
+import { amsterdamYear } from '@/lib/format-nl'
+// [NUMMER-SLOT] The lock's two witnesses, written down once — see numbering-lock.ts.
+import { invoiceDateWindow, invoiceNumberYearPattern } from '@/lib/numbering-lock'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+/**
+ * Has a number been drawn from this owner's counter for `year`?
+ *
+ * [NUMMER-SLOT] Two witnesses, either of which locks. The date window is what this lock always
+ * asked; the number pattern is the witness it was missing, because `invoice_date` is a field the
+ * OWNER fills in while the counter is keyed by the clock at allocation. A back-dated invoice —
+ * December work billed on 4 January — drew a number from this year's counter and carries last
+ * year's date, so the date-only question answered "nothing issued yet" and the numbering could be
+ * reshaped after a number had already reached a customer. See numbering-lock.ts for the full
+ * argument, including why the union may over-lock and why that is the direction to be wrong in.
+ *
+ * Returns null when either count could not be read. [LOCK-READ-HONEST]: the caller must treat that
+ * as LOCKED, never as "nothing issued" — a database hiccup is not evidence that nobody has invoiced.
+ */
+async function countIssuedForCounterYear(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  userId: string,
+  year: number,
+  yearlyReset: boolean,
+): Promise<number | null> {
+  const base = () =>
+    supabase
+      .from('invoices')
+      .select('id', { head: true, count: 'exact' })
+      .eq('sender_id', userId)
+      .eq('invoice_type', 'factuur')
+      .not('invoice_number', 'is', null)
+
+  // Continuous numbering draws from the single year=0 counter, so ANY issued factuur locks it and
+  // there is no window to get wrong.
+  if (!yearlyReset) {
+    const { count, error } = await base()
+    return error ? null : (count ?? 0)
+  }
+
+  const { from, to } = invoiceDateWindow(year)
+  const [byDate, byNumber] = await Promise.all([
+    base().gte('invoice_date', from).lte('invoice_date', to),
+    base().like('invoice_number', invoiceNumberYearPattern(year)),
+  ])
+  // Both errors are read. Either one failing means the answer is unknown, and unknown locks.
+  if (byDate.error || byNumber.error) return null
+  // The union is not the sum — a row can satisfy both — but the caller only asks "> 0", and the
+  // maximum is the honest lower bound on the union without a second round trip.
+  return Math.max(byDate.count ?? 0, byNumber.count ?? 0)
+}
 
 // [FACTUUR-UNIFY] Unified product-wide default: YEAR+sequence, padding 4
 // (e.g. 20260001) — matches lib/invoice-numbering and the free generator.
@@ -86,7 +143,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: reasonToDutch(ex.reason), reason: ex.reason }, { status: 400 })
     }
 
-    const year = new Date().getFullYear()
+    // [NUMMER-JAAR] The owner's year. Between 23:00 UTC on 31 December and midnight the server is
+    // still in the old one, and this route would then lock — and seed — the closed year's counter.
+    const year = amsterdamYear()
     const counterYear = desired.yearlyReset ? year : 0
 
     // current profile config (for old_value + no-op detection)
@@ -103,16 +162,15 @@ export async function POST(req: NextRequest) {
         ? prof.invoice_number_padding
         : DEFAULT_PADDING
 
-    // 2. lock (date-based, reliable — no invoice_number string parsing)
-    let lockQ = supabase
-      .from('invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('sender_id', user.id)
-      .eq('invoice_type', 'factuur')
-      .not('invoice_number', 'is', null)
-    if (desired.yearlyReset) {
-      lockQ = lockQ.gte('invoice_date', `${year}-01-01`).lte('invoice_date', `${year}-12-31`)
-    }
+    // 2. lock — has a number been drawn from the counter this request would re-seed?
+    //
+    // [NUMMER-SLOT] This used to be date-only, and said so: "date-based, reliable — no
+    // invoice_number string parsing". Reliable it was not. `invoice_date` is the owner's field and
+    // the counter is keyed by the clock at allocation, so a back-dated invoice burned a number this
+    // check could not see — and the lock opened on a series that had already issued. The number is
+    // the only column that records which counter a document came from, so it is now the second
+    // witness. Union, never intersection: this can only lock more than before.
+    const issuedCount = await countIssuedForCounterYear(supabase, user.id, year, desired.yearlyReset)
     // [LOCK-READ-HONEST] The error is read, and an unreadable count LOCKS.
     //
     // `const { count }` alone made a failed read answer `count: null`, which `?? 0` turned into
@@ -124,10 +182,12 @@ export async function POST(req: NextRequest) {
     //
     // Locking on an unreadable count is the recoverable direction: an owner who has genuinely
     // issued nothing is asked to try again in a moment. The other direction cannot be undone.
-    const { count: issuedCount, error: lockError } = await lockQ
-    if (lockError) {
+    //
+    // countIssuedForCounterYear returns null for exactly that case — either of its two counts
+    // failing — so the rule survives the move into the helper rather than being re-derived here.
+    if (issuedCount === null) {
       console.error('[LOCK-READ-HONEST] issued-invoice count failed — treating numbering as locked', {
-        userId: user.id, error: lockError.message,
+        userId: user.id, year,
       })
       return NextResponse.json(
         {
@@ -139,7 +199,9 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       )
     }
-    const locked = (issuedCount ?? 0) > 0
+    // `?? 0` is gone with the null case handled above: an unknown count now refuses at the 503
+    // rather than reading as zero here, which is the whole of [LOCK-READ-HONEST].
+    const locked = issuedCount > 0
 
     const isNoOp =
       desired.template === currentTemplate &&
@@ -275,7 +337,7 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
 
-    const year = new Date().getFullYear()
+    const year = amsterdamYear() // [NUMMER-JAAR] the owner's year, as in POST
 
     const { data: prof } = await supabase
       .from('profiles')
@@ -295,17 +357,15 @@ export async function GET() {
     const yearlyReset = effTemplate.includes('{year}')
     const counterYear = yearlyReset ? year : 0
 
-    let lockQ = supabase
-      .from('invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('sender_id', user.id)
-      .eq('invoice_type', 'factuur')
-      .not('invoice_number', 'is', null)
-    if (yearlyReset) {
-      lockQ = lockQ.gte('invoice_date', `${year}-01-01`).lte('invoice_date', `${year}-12-31`)
-    }
-    const { count } = await lockQ
-    const locked = (count ?? 0) > 0
+    // [NUMMER-SLOT] The same two witnesses POST uses. This card is what tells the owner whether the
+    // numbering can still be changed; if it disagreed with POST, an owner would be shown an open
+    // form that then refuses with a 409 — or, far worse, an open form that is genuinely open on a
+    // series that has already issued.
+    const count = await countIssuedForCounterYear(supabase, user.id, year, yearlyReset)
+    // An unreadable count reads as LOCKED here too. This handler only DISPLAYS, so it cannot do
+    // damage on its own — but showing "you can still change this" on an unknown answer is how an
+    // owner is invited into the 409 above, or into believing a lock is not there.
+    const locked = count === null || count > 0
 
     const { data: cur } = await supabase
       .from('invoice_counters')
