@@ -5,6 +5,8 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { type Article } from '@/lib/articles'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
@@ -84,7 +86,7 @@ export default function ArtikelenClient() {
         body: JSON.stringify(payload),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Kon niet opslaan.'); return }
+      if (!res.ok) { setError(failureText(res.status, json, 'Kon niet opslaan.')); return }
       setShowForm(false); setToast(editingId ? 'Artikel bijgewerkt' : 'Artikel toegevoegd')
       await load()
     } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }

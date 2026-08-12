@@ -21,6 +21,8 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { resolvePaymentPlan, type PlanInvoice } from '@/lib/payment-plan'
 import { formatEuroNL, formatDateNL } from '@/lib/format-nl'
@@ -129,7 +131,9 @@ export default function VerdeelClient({ transactie, facturen }: Props) {
         body: JSON.stringify({ transactionId: transactie.id, lines: regels }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || t('verd.nietGeboekt'))
+      // [SERVER-ZIN] `data?.error` put unauthorized / transaction_not_found / invoice_read_failed
+      // straight on the payment-allocation screen. A code is never shown; a sentence still is.
+      if (!res.ok) throw new Error(failureText(res.status, data, t('verd.nietGeboekt')))
       setKlaar(
         data.remainderNote ??
           ((data.applied?.length ?? regels.length) === 1

@@ -7669,3 +7669,67 @@ test("[ANDER-TOTAAL] the offer reaches the screen where the total is edited", ()
   assert.match(render, /reaches the confirm modal as one tap/, "the render proof must exist");
   assert.match(render, /no offer on an invoice that reads right/, "…and the silent case with it");
 });
+
+// ─── [SERVER-ZIN] A machine code is not a sentence, on any screen ────────────────────────────────
+//
+// The routes in this app answer failures two ways and a screen cannot tell them apart by looking:
+//
+//     { error: "Bankafschrift niet gevonden" }   ← written for a person
+//     { error: "invoice_read_failed" }           ← written for a program
+//
+// Both arrive as `json.error`, so `showToast(json.error || 'Mislukt')` is right half the time. The
+// reported case was /vandaag ("invoice_already_paid" under the "Al betaald?" button), and a sweep
+// found the same shape on the payment-allocation screen (unauthorized, transaction_not_found,
+// invoice_read_failed), in the kasboek (opening_balance_lookup_failed), on the bank statement list
+// (lookup_failed) and in the restore-from-ignored flow (bank_linked, money_settled).
+//
+// One rule, in server-message.ts: a code has no spaces. Every site goes through it — including the
+// ones whose route emits only sentences today, because "today" is the operative word and a route
+// gaining one code would otherwise regress a screen silently.
+
+test("[SERVER-ZIN] no screen renders a route's error straight", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  // The offence is RENDERING the error, not reading it. A site that compares the code and maps it
+  // to a sentence — `showToast(json?.error === 'lookup_failed' ? '…' : '…')` — is doing exactly the
+  // right thing, and the first version of this gate flagged one of those.
+  const RAW = /(showToast|setError|setMessage|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+
+  const offenders: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components"))) {
+    if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
+    const src = code(f); // comments stripped — a note about the old shape must not count
+    for (const m of src.matchAll(RAW)) {
+      offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these put whatever the route happened to send in front of the owner — a Dutch sentence on a " +
+      `good day and "invoice_read_failed" on a bad one:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SERVER-ZIN] the rule keeps sentences and drops codes", () => {
+  const mod = code("src/lib/server-message.ts");
+  // The test is the absence of a space, and nothing else. A catalogue would only cover the codes
+  // somebody remembered; this covers the route written next month.
+  assert.match(mod, /\^\[a-z\]\[a-z0-9\]\*\(\?:_\[a-z0-9\]\+\)\*\$/, "a code is one lowercase token or snake_case");
+  // A 5xx detail is a raw PostgreSQL string with a tag and a uuid in it.
+  assert.match(mod, /if \(status < 500\)/, "a 5xx detail may never reach a phone");
+  // The fallback is the caller's, already translated — this module may hold no language of its own.
+  assert.match(mod, /fallback: string/, "the screen's line, in the screen's language");
+  assert.doesNotMatch(mod, /'[A-Z][a-z]+ (niet|mislukt|gelukt)/, "no Dutch copy inside the rule");
+  const spec = readFileSync("src/lib/server-message.test.ts", "utf8");
+  // The vocabulary is read off the routes, not invented — including the lowercase Dutch sentences
+  // a "must start with a capital" rule would have thrown away.
+  assert.match(spec, /opening_balance_lookup_failed/, "the codes that were actually reaching screens");
+  assert.match(spec, /direction moet 'in' of 'out' zijn/, "…and the lowercase Dutch that must survive");
+});

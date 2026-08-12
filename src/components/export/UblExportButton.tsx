@@ -11,6 +11,8 @@
 // Ownership: BOEK-020. Does not modify InvoiceRow / InvoiceActions directly.
 
 import { useState } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -52,7 +54,7 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
       const res = await fetch(`/api/export/ubl?invoiceId=${encodeURIComponent(invoiceId)}`)
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        throw new Error(json.error ?? t('ublx.mislukt'))
+        throw new Error(failureText(res.status, json, t('ublx.mislukt')))
       }
       const blob = await res.blob()
       const safePart = (invoiceNumber ?? 'factuur').replace(/[^a-zA-Z0-9_-]/g, '_')

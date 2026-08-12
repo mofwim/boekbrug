@@ -13,6 +13,8 @@ import { rowMatchesQuery } from '@/lib/search'
 // to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
 // [UPLOAD-PLAFOND] One shared fit-and-send — see upload-fit.ts.
 import { sendWithFit } from '@/lib/upload-fit'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -197,7 +199,8 @@ export default function KasClient() {
         body: JSON.stringify({ kas_opening_balance: val }),
       })
       if (res.ok) { setOpeningEdit(false); await load() }
-      else { const j = await res.json().catch(() => ({})); setError(j.error || 'Kon beginsaldo niet opslaan') }
+      // [SERVER-ZIN] `j.error` showed opening_balance_lookup_failed in the kasboek.
+      else { const j = await res.json().catch(() => ({})); setError(failureText(res.status, j, 'Kon beginsaldo niet opslaan')) }
     } catch { setError(t('kas.fout.verbinding')) } finally { setOpeningSaving(false) }
   }
   // Initial load — inline async IIFE so no setState runs synchronously in the effect.

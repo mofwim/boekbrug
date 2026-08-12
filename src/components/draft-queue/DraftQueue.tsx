@@ -26,6 +26,8 @@
 // This component holds UI state only.
 
 import { useEffect, useState, type CSSProperties } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import type { DraftItem } from '@/app/api/draft-queue/route'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -122,7 +124,7 @@ export default function DraftQueue({ clients }: Props) {
         body: JSON.stringify({ client_id: selectedId, item: { description, source: 'manual' } }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Toevoegen mislukt'); return }
+      if (!res.ok) { setError(failureText(res.status, json, 'Toevoegen mislukt')); return }
       setQueues(prev => ({ ...prev, [selectedId]: json.items }))
       setInput('')
       clearStatus()
@@ -160,7 +162,7 @@ export default function DraftQueue({ clients }: Props) {
         body: JSON.stringify({ action: 'compose', client_id: selectedId }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Opstellen mislukt'); return }
+      if (!res.ok) { setError(failureText(res.status, json, 'Opstellen mislukt')); return }
       setSubject(json.subject ?? '')
       setBodyText(json.body ?? '')
     } catch {
@@ -187,7 +189,7 @@ export default function DraftQueue({ clients }: Props) {
         }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.error ?? 'Verzenden mislukt'); return }
+      if (!res.ok) { setError(failureText(res.status, json, 'Verzenden mislukt')); return }
       setSentOk(true)
       setSentCleared(!!json.cleared)
       if (json.cleared) {

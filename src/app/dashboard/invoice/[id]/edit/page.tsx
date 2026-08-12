@@ -5,6 +5,8 @@
 // نفس شكل ومنطق new/page.tsx — لكن يحمّل البيانات الموجودة ويرسل PUT
 
 import { useState, useEffect } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
@@ -300,7 +302,7 @@ export default function InvoiceEditPage() {
     const data = await res.json()
 
     if (!res.ok) {
-      setError(data.error || 'Opslaan mislukt')
+      setError(failureText(res.status, data, 'Opslaan mislukt'))
       setSaving(false)
       return
     }
@@ -309,7 +311,9 @@ export default function InvoiceEditPage() {
     // may not pass silently, since the customer still holds the old version. The route says
     // what to do next.
     if (data.warning === 'corrected_delivery_failed') {
-      setError(data.error || t('bewerk.herstel.nietBezorgd'))
+      // The route answers 200 with a warning here, so there is no failing status to read —
+      // failureText is given 200, which is exactly right: a <500 body may speak for itself.
+      setError(failureText(200, data, t('bewerk.herstel.nietBezorgd')))
       setSaving(false)
       return
     }
@@ -364,7 +368,7 @@ export default function InvoiceEditPage() {
 
     if (!saveRes.ok) {
       const data = await saveRes.json().catch(() => ({}))
-      setError(data.error || 'Opslaan mislukt')
+      setError(failureText(saveRes.status, data, 'Opslaan mislukt'))
       setSending(false)
       return
     }
@@ -378,7 +382,7 @@ export default function InvoiceEditPage() {
 
     if (!sendRes.ok) {
       const data = await sendRes.json().catch(() => ({}))
-      setError(data.error || 'Verzenden mislukt')
+      setError(failureText(sendRes.status, data, 'Verzenden mislukt'))
       setSending(false)
       return
     }

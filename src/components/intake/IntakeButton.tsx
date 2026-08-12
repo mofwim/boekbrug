@@ -13,6 +13,8 @@
 // suggestion, never auto-paid.
 
 import { useRef, useState } from 'react'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 
 // [INTAKE-QUEUE] Hoeveel foto's er tegelijk verwerkt mogen worden. Drie: genoeg om door te
 // fotograferen zonder te wachten, laag genoeg om een mobiele upload niet te laten kruipen.
@@ -136,7 +138,7 @@ export default function IntakeButton({
       } else {
         // [UI-HONESTY] 409 = hij staat niet (meer) in Genegeerd. Nooit een succes tonen dat er niet was.
         const data = await res.json().catch(() => ({}))
-        showToast(data.error || 'Terugzetten mislukt — ververs de pagina')
+        showToast(failureText(res.status, data, 'Terugzetten mislukt — ververs de pagina'))
       }
     } catch {
       showToast(t('int.fout.terugzetten'))

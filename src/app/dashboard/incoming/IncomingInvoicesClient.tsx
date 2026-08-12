@@ -13,6 +13,8 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
 import Link from "next/link";
@@ -3806,7 +3808,9 @@ export default function IncomingInvoicesClient({
         // niet kan opheffen. De server maakt onderscheid tussen "tabel bestaat niet" (echt geen
         // regels, stille lege lijst) en een echte fout; die laatste zeggen we hardop.
         const data = await res.json().catch(() => ({}));
-        if (data?.error) showToast(data.error);
+        // [SERVER-ZIN] A code here would say "rules_read_failed" where the comment above
+        // promises the owner is told out loud what went wrong.
+        if (data?.error) showToast(failureText(res.status, data, 'We konden je regels niet lezen — probeer het zo opnieuw.'));
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -3830,7 +3834,7 @@ export default function IncomingInvoicesClient({
         void loadSenderRules();
       } else {
         // [UI-HONESTY] Nooit "regel ingesteld" zeggen als er niets is ingesteld.
-        showToast(data.error || "Regel instellen mislukt — probeer het opnieuw");
+        showToast(failureText(res.status, data, "Regel instellen mislukt — probeer het opnieuw"));
       }
     } catch {
       showToast("Regel instellen mislukt — controleer je verbinding");

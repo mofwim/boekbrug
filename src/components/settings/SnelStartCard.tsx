@@ -11,6 +11,8 @@
 // key): een knop die per definitie niet kan werken is erger dan geen knop.
 
 import { useCallback, useEffect, useState } from "react";
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from "@/lib/i18n/use-locale";
 import { translator, type Translator } from "@/lib/i18n/t";
@@ -143,7 +145,7 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? t("ss.koppelenMislukt"));
+        setError(failureText(res.status, data, t("ss.koppelenMislukt")));
         return;
       }
       setClientKey("");
@@ -167,7 +169,7 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? t("ss.opslaanMislukt"));
+        setError(failureText(res.status, data, t("ss.opslaanMislukt")));
         return;
       }
       setNotice(t("ss.rekeningenOpgeslagen"));
@@ -226,7 +228,7 @@ export function SnelStartCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? t("ss.doorsturenMislukt"));
+        setError(failureText(res.status, data, t("ss.doorsturenMislukt")));
         await loadStatus();
         return;
       }

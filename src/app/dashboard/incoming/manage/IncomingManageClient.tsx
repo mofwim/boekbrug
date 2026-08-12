@@ -23,6 +23,8 @@
 
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [E-FACTUUR-ZICHTBAAR] De cijfers die de leverancier zelf meestuurde — het sterkste bewijs dat
 // deze app heeft, en het enige waar het scherm nog niets over zei.
 import { eInvoiceOf } from '@/lib/e-invoice'
@@ -1016,7 +1018,7 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/email/reimport/${inv.id}`, { method: 'POST' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(json?.error || 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.')
+        showToast(failureText(res.status, json, 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.'))
         return
       }
       if (json?.returnedToQueue) {

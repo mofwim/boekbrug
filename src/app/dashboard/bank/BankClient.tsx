@@ -7,6 +7,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
+// [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { failureText } from '@/lib/server-message'
 // [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
 import { sendWithFit } from '@/lib/upload-fit'
 import Link from 'next/link'
@@ -969,7 +971,8 @@ export default function BankClient() {
         setStatements((prev) => (prev ? prev.filter((st) => st.id !== documentId) : prev))
         showToast(t('bank.afschrift.verwijderd'))
       } else {
-        showToast(json?.error || 'Verwijderen mislukt.')
+        // [SERVER-ZIN] `json?.error` showed lookup_failed when the document read failed.
+        showToast(failureText(res.status, json, t('bank.fout.algemeen')))
       }
     } catch {
       showToast(t('bank.fout.algemeen'))
@@ -1389,7 +1392,7 @@ export default function BankClient() {
           body: JSON.stringify({}),
         })
         const json = await res.json()
-        if (!res.ok) { showToast(json?.error ?? 'Ophalen mislukt.'); return }
+        if (!res.ok) { showToast(failureText(res.status, json, 'Ophalen mislukt.')); return }
         const inserted = Number(json.inserted ?? 0)
         const unread = Array.isArray(json.warnings) ? json.warnings.length : 0
         // Nooit stil een transactie kwijtraken — dezelfde regel als bij een upload.
