@@ -37,6 +37,10 @@
 // hypothetical.
 
 /** What the document's text can tell us about one number. */
+// [ANDER-TOTAAL] The document's own totals block, found among the amounts the witness read.
+import { alternativeTotals } from './amount-candidates'
+import { parseOcrAmounts, ocrAmountValues } from './ocr-amounts'
+
 export type GroundingVerdict = 'found' | 'absent' | 'unreadable'
 
 /**
@@ -65,6 +69,21 @@ export interface MoneyGrounding {
   btwAmount: GroundingVerdict
   /** Absent on rows written before OCR grounding existed → read as 'text', which is what they were. */
   source?: GroundingSource
+  /**
+   * [ANDER-TOTAAL] A totals block that IS on the document, when the one we read is not.
+   *
+   * Set only when totalIncBtw is 'absent' — the one case where the owner is being told to go and
+   * check the paper. The witness that just proved the read total is not printed also transcribed
+   * what IS printed, and among those amounts there is often exactly one triple that adds up. That
+   * is not a guess about which number is the total; it is the arithmetic every invoice's totals
+   * block satisfies. Measured on the invoice this came from: the app read EUR 1.149,56 and the
+   * document said 1.065,14 + 95,54 = 1.160,68.
+   *
+   * Never applied, only shown. Both figures come from a model reading a scan; the app knows they
+   * disagree and does not know which is right — and the owner, holding the invoice, settles it in
+   * a glance once they are told what to look for.
+   */
+  alternative?: { ex: number; btw: number; inc: number }
 }
 
 /** Below this, a number is too common in ordinary text to mean anything. */
@@ -205,12 +224,20 @@ export function groundMoneyFields(
   text: string | null | undefined,
   source: GroundingSource = 'text',
 ): MoneyGrounding {
-  return {
+  const g: MoneyGrounding = {
     totalIncBtw: groundAmount(amounts.totalIncBtw, text),
     totalExBtw: groundAmount(amounts.totalExBtw, text),
     btwAmount: groundAmount(amounts.btwAmount, text),
     source,
   }
+  // [ANDER-TOTAAL] Only when the read total is NOT on the document. When it is, there is nothing
+  // to raise and a second figure would only be noise on a correct invoice — which is how a warning
+  // stops being read.
+  if (g.totalIncBtw === 'absent') {
+    const alt = alternativeTotals(amounts.totalIncBtw, ocrAmountValues(parseOcrAmounts(text)))
+    if (alt) g.alternative = alt
+  }
+  return g
 }
 
 /**

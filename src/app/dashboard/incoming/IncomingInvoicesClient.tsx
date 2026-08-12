@@ -57,6 +57,9 @@ interface ImportHealth {
   level: "clean" | "needs-review";
   // Plain-language Dutch reasons, owner-facing. Empty when level === 'clean'.
   reasons: string[];
+  // [ANDER-TOTAAL] A totals block that IS on the document, when the one we read is not. Offered
+  // below as one tap, never applied — see the button beside the arithmetic warning.
+  alternativeTotals?: { ex: number; btw: number; inc: number };
   flags: {
     arithmetic: boolean;
     vendor: boolean;
@@ -898,7 +901,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
 // ── Confirm-paid modal — review & edit AI-extracted amounts ───────────────────
 
-function ConfirmPaidModal({
+// [ANDER-TOTAAL] Exported for tests/render, for the same reason InvoiceCard is: the one-tap offer
+// below lives in the modal's BODY, and a prop that never arrives there is perfectly typed and
+// perfectly invisible to tsc. A render is the only thing that can see it.
+export function ConfirmPaidModal({
   invoice,
   onVerify,
   onPay,
@@ -1158,6 +1164,40 @@ function ConfirmPaidModal({
                       enters the books. The paper decides; these buttons only spare the typing.
 
                       Nothing is saved by tapping — the fields fill and the owner still confirms. */}
+                  {/* [ANDER-TOTAAL] The document's own totals block, when the one we read is not
+                      on it. [ONE-TAP-REPAIR] below cannot help here: it repairs ex OR btw to match
+                      a total it treats as given, and here the TOTAL is what is in doubt.
+
+                      Reached by a second, blind read of the page ("write down every amount you can
+                      see") that failed to find our total and did find a triple that adds up to the
+                      cent. On the invoice this came from: we read € 1.149,56; the document says
+                      € 1.065,14 + € 95,54 = € 1.160,68.
+
+                      One tap fills the three fields and opens the editor. Nothing is saved — the
+                      owner still confirms, with the paper in hand. Both figures come from a model
+                      reading a scan, so the app may not pick; it may only stop making the owner
+                      type a number it is already holding. */}
+                  {invoice.health.alternativeTotals && (() => {
+                    const alt = invoice.health.alternativeTotals!
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          Staat dit bedrag op je factuur?
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { applyTriplet({ ex: alt.ex, btw: alt.btw, incl: alt.inc }); setEditing(true) }}
+                          style={{
+                            padding: "7px 12px", borderRadius: 9, background: "#fff",
+                            border: "1px solid #e0a94f", color: "#9a5b00",
+                            fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                          }}
+                        >
+                          Neem {NL_CURRENCY.format(alt.inc)} over
+                        </button>
+                      </div>
+                    )
+                  })()}
                   {(() => {
                     const rec = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
                     if (rec.ok) return null

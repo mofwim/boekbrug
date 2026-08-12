@@ -128,3 +128,73 @@ test("[ANDER-TOTAAL] a pathological transcription cannot stall the request", () 
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(ms < 200, `took ${ms.toFixed(0)}ms — the cap on considered amounts is not holding`);
 });
+
+// ─── [ANDER-TOTAAL] The pieces, joined ───────────────────────────────────────────────────────────
+//
+// The tests above prove the finder. These prove the chain the finder sits in: a transcription in,
+// a verdict carrying the alternative, and a sentence the owner reads. Each link was already there
+// and the last one was throwing the evidence away.
+
+test("[ANDER-TOTAAL] a transcription of the page reaches the grounding verdict", async () => {
+  const { groundMoneyFields } = await import("./amount-grounding");
+  // What the blind second read produces: one amount per line, as parseOcrAmounts writes it.
+  const transcription = NEMAFOOD.map((n) =>
+    n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  ).join("\n");
+
+  const g = groundMoneyFields(
+    { totalIncBtw: 1149.56, totalExBtw: 1054.64, btwAmount: 94.92 },
+    transcription,
+    "ocr",
+  );
+  assert.equal(g.totalIncBtw, "absent", "the read total is genuinely not on the page");
+  assert.ok(g.alternative, "…and the page's own totals block must travel with that verdict");
+  assert.equal(g.alternative.inc, 1160.68);
+  assert.equal(g.alternative.ex, 1065.14);
+  assert.equal(g.alternative.btw, 95.54);
+});
+
+test("[ANDER-TOTAAL] a corroborated total carries no alternative", async () => {
+  const { groundMoneyFields } = await import("./amount-grounding");
+  const transcription = NEMAFOOD.map((n) =>
+    n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  ).join("\n");
+  const g = groundMoneyFields({ totalIncBtw: 1160.68, btwAmount: 95.54 }, transcription, "ocr");
+  assert.equal(g.totalIncBtw, "found");
+  assert.equal(g.alternative, undefined, "nothing to raise on an invoice that reads correctly");
+});
+
+test("[ANDER-TOTAAL] the owner's sentence names both figures", async () => {
+  const { classifyImportHealth } = await import("./import-health");
+  const h = classifyImportHealth({
+    total_ex_btw: 1054.64, btw_amount: 94.92, total_inc_btw: 1149.56,
+    invoice_date: "2026-07-28", invoice_number: "262697", invoice_type: "factuur",
+    field_confidence: {
+      _grounding: {
+        totalIncBtw: "absent", totalExBtw: "absent", btwAmount: "absent", source: "ocr",
+        alternative: { ex: 1065.14, btw: 95.54, inc: 1160.68 },
+      },
+    } as never,
+  });
+  const reason = h.reasons.find((r) => r.includes("totaalbedrag"));
+  assert.ok(reason, "the owner must still be told the total is unverified");
+  assert.match(reason, /1\.160,68/, "…and what the document says instead");
+  assert.match(reason, /1\.065,14/);
+  assert.match(reason, /95,54/);
+  assert.match(reason, /controleer welk bedrag/, "a question, not a correction");
+  // The old dead end must be gone WHEN there is something better to say.
+  assert.doesNotMatch(reason, /controleer het aan de factuur zelf/);
+});
+
+test("[ANDER-TOTAAL] with no alternative the honest old sentence stays", async () => {
+  const { classifyImportHealth } = await import("./import-health");
+  const h = classifyImportHealth({
+    total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
+    invoice_date: "2026-07-28", invoice_number: "9", invoice_type: "factuur",
+    field_confidence: { _grounding: { totalIncBtw: "absent", source: "ocr" } } as never,
+  });
+  const reason = h.reasons.find((r) => r.includes("totaalbedrag"));
+  assert.ok(reason);
+  assert.match(reason, /controleer het aan de factuur zelf/,
+    "when the app has nothing better, it says so rather than inventing a candidate");
+});

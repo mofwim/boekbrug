@@ -7581,3 +7581,91 @@ test("[UPLOAD-PLAFOND] the retry is real, and it is bounded", () => {
   assert.match(spec, /becomes a smaller second attempt that succeeds/, "the retry must be exercised");
   assert.match(spec, /happens once, never in a loop/, "…and its bound asserted");
 });
+
+// ─── [ANDER-TOTAAL] The document's own total, when the read one is not on it ─────────────────────
+//
+// Reported with the paper invoice beside the screen. NemaFood B.V. 262697, three scanned pages with
+// no text layer: the app read € 1.149,56 with € 94,92 BTW; the document says
+// € 1.065,14 + € 95,54 = € 1.160,68. Eleven euro of cost and sixty-two cents of voorbelasting.
+//
+// The app had already noticed. [GEGROND-OCR] pays for a second, blind read of the page — "write
+// down every amount you can see" — and checks whether the extracted total is among them. It was
+// not, and the owner was told: "controleer het aan de factuur zelf". True, and a dead end: it sends
+// them to find the paper while the app is holding a transcription of that paper and discards it.
+//
+// Among those amounts there is usually exactly one triple that adds up to the cent. That is not a
+// guess about which number is the total — it is the arithmetic every invoice's totals block
+// satisfies and very little else does. So the question goes on the screen instead.
+
+test("[ANDER-TOTAAL] the transcription is used, not discarded", () => {
+  const grounding = code("src/lib/amount-grounding.ts");
+  // The verdict must carry the alternative, or the finder is unreachable from the screen.
+  assert.match(grounding, /alternative\?: \{ ex: number; btw: number; inc: number \}/,
+    "the grounding verdict must be able to carry the document's own totals block");
+  assert.match(grounding, /alternativeTotals\(amounts\.totalIncBtw/, "…and must actually look for one");
+  // Only when the read total is NOT on the document. Raising a second figure on a correct invoice
+  // is how a warning stops being read.
+  const at = grounding.indexOf("alternativeTotals(");
+  const before = grounding.slice(Math.max(0, at - 300), at);
+  assert.match(before, /totalIncBtw === 'absent'/, "the alternative is for the absent case only");
+});
+
+test("[ANDER-TOTAAL] a candidate must add up exactly, and be a plausible totals block", () => {
+  const mod = code("src/lib/amount-candidates.ts");
+  // Cents, not floats: 0.1 + 0.2 !== 0.3 in binary, and this is an equality test on money.
+  assert.match(mod, /Math\.round\(n \* 100\)/, "the comparison must be in whole cents");
+  // Distinct amounts — an invoice prints the same figure twice and x + x = 2x means nothing.
+  assert.match(mod, /seen\.has\(c\)/, "a printed amount may not pair with itself");
+  // BTW never exceeds the net it is charged on.
+  assert.match(mod, /if \(b > a\) continue/, "the BTW side must be the smaller one");
+  // A floor, because small change sums coincidentally on every receipt.
+  assert.match(mod, /MIN_TOTAL/, "small change must not become a totals block");
+  // Bounded: the search is quadratic and a model can transcribe a whole page.
+  assert.match(mod, /MAX_CONSIDERED/, "a pathological transcription must not stall a request");
+});
+
+test("[ANDER-TOTAAL] the finding is shown, never applied", () => {
+  // Both figures come from a model reading a scan. The app knows they disagree and does not know
+  // which is right, so naming a winner would be the same overconfidence that produced the wrong
+  // number. It must not write to the invoice.
+  const mod = code("src/lib/amount-candidates.ts");
+  assert.doesNotMatch(mod, /\.update\(|\.insert\(|supabase/, "this module decides nothing and writes nothing");
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /alternativeReason\(grounding\.alternative\)/, "the owner is told");
+  assert.match(health, /controleer welk bedrag op de factuur staat/, "…and asked, not overruled");
+  // And when there is no candidate the honest old sentence must remain, not disappear.
+  assert.match(health, /controleer het aan de factuur zelf/, "no candidate ⇒ the plain warning stays");
+});
+
+test("[ANDER-TOTAAL] the invoice it was built from is the fixture", () => {
+  // A synthetic example proves the arithmetic; this document proves the FEATURE. Its per-rate block
+  // (3,60 + 1.061,54 = 1.065,14) also adds up, so it is what shows the ordering has to prefer the
+  // grand total — the number that becomes money.
+  const spec = readFileSync("src/lib/amount-candidates.test.ts", "utf8");
+  assert.match(spec, /1160\.68/, "the document's real total");
+  assert.match(spec, /1149\.56/, "…and the one the app read instead");
+  assert.match(spec, /GRAND total wins over the per-rate blocks/, "the ordering must be exercised");
+  assert.match(spec, /the pieces, joined/i, "and the chain end to end, not just the finder");
+});
+
+test("[ANDER-TOTAAL] the offer reaches the screen where the total is edited", () => {
+  // The card shows the warning; the MODAL is where the owner types the number, so that is where
+  // the one tap has to be. A prop that never arrives in a modal body is perfectly typed and
+  // perfectly invisible to tsc — which is why this is asserted by a render, not by a signature.
+  const client = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(client, /alternativeTotals\?: \{ ex: number; btw: number; inc: number \}/,
+    "the client's ImportHealth mirror must carry it, or the modal cannot see it");
+  assert.match(client, /invoice\.health\.alternativeTotals && \(\(\) => \{/, "…and the modal must offer it");
+  // One tap fills and opens the editor. It must NOT save: both figures come from a model reading a
+  // scan, and the owner confirms with the paper in hand.
+  const at = client.indexOf("invoice.health.alternativeTotals && (() =>");
+  const offer = client.slice(at, at + 900);
+  assert.match(offer, /applyTriplet\(\{ ex: alt\.ex, btw: alt\.btw, incl: alt\.inc \}\)/, "fills all three fields");
+  assert.match(offer, /setEditing\(true\)/, "…and opens the editor");
+  assert.doesNotMatch(offer, /onVerify|onPay|fetch\(/, "tapping must not book anything");
+  // And the modal is exported for the render suite, or the assertion above has nothing to render.
+  assert.match(client, /export function ConfirmPaidModal/);
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /reaches the confirm modal as one tap/, "the render proof must exist");
+  assert.match(render, /no offer on an invoice that reads right/, "…and the silent case with it");
+});

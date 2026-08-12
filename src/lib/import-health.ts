@@ -54,12 +54,36 @@ function formatEuro(v: number): string {
   return `${v < 0 ? '− ' : ''}€ ${grouped},${cents}`
 }
 
+/**
+ * [ANDER-TOTAAL] What the owner reads when the document's own totals block disagrees with the read.
+ *
+ * Both numbers, in the order the eye needs them: what we said, then what the paper says, then the
+ * sum that proves the second one is a totals block and not two amounts that happened to be near
+ * each other. A question — the owner is holding the invoice and can settle it in a glance.
+ */
+function alternativeReason(alt: { ex: number; btw: number; inc: number }): string {
+  return (
+    'het totaalbedrag dat wij lazen staat niet op dit document — er staat wél ' +
+    `${formatEuro(alt.ex)} + ${formatEuro(alt.btw)} btw = ${formatEuro(alt.inc)}; ` +
+    'controleer welk bedrag op de factuur staat'
+  )
+}
+
 export type HealthLevel = 'clean' | 'needs-review'
 
 export interface ImportHealth {
   level: HealthLevel
   // Plain-language Dutch reasons, owner-facing. Empty when level === 'clean'.
   reasons: string[]
+  /**
+   * [ANDER-TOTAAL] A totals block that IS on the document, when the one we read is not.
+   *
+   * Travels with the verdict rather than being re-derived on the screen: the card and the confirm
+   * modal would each need the same reach into field_confidence._grounding, and two derivations of
+   * one fact is how they come to disagree. Present only when the read total was found to be absent
+   * from the document AND the witness's own amounts contain a block that adds up.
+   */
+  alternativeTotals?: { ex: number; btw: number; inc: number }
   // Machine-readable detail for the card/modal to highlight the right fields.
   flags: {
     arithmetic: boolean // a math problem (stored _safecore OR recomputed)
@@ -279,12 +303,32 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // Alleen 'absent' spreekt. 'unreadable' is een foto of scan — dan is er geen tekst om in te
   // zoeken, en "staat niet op je factuur" zeggen over een foto is een leugen die ervoor zorgt dat
   // de échte waarschuwingen ook niet meer gelezen worden.
-  const grounding = (fc as unknown as { _grounding?: { totalIncBtw?: string } } | null)?._grounding
+  // [ANDER-TOTAAL] Set below when the read total is absent from the document and the witness's
+  // own amounts contain a block that adds up.
+  let alternativeTotals: { ex: number; btw: number; inc: number } | undefined
+  const grounding = (fc as unknown as {
+    _grounding?: { totalIncBtw?: string; alternative?: { ex: number; btw: number; inc: number } }
+  } | null)?._grounding
   if (grounding?.totalIncBtw === 'absent') {
     flags.arithmetic = true
+    // [ANDER-TOTAAL] "controleer het aan de factuur zelf" was true and, on its own, a dead end: it
+    // sends the owner to find the paper. The witness that just proved the read total is not printed
+    // also transcribed what IS printed — and when those amounts contain a block that adds up, the
+    // app can put the question on the screen instead. Measured on the invoice this came from: read
+    // EUR 1.149,56, document 1.065,14 + 95,54 = 1.160,68. Eleven euro of cost and sixty-two cents
+    // of voorbelasting, on a document the app had already flagged as unverified.
+    //
+    // Shown, never applied: both figures come from a model reading a scan, and naming a winner
+    // would be the same overconfidence that produced the wrong number.
     reasons.push(
-      'het totaalbedrag staat niet letterlijk in de tekst van dit document — controleer het aan de factuur zelf',
+      grounding.alternative
+        ? alternativeReason(grounding.alternative)
+        : 'het totaalbedrag staat niet letterlijk in de tekst van dit document — controleer het aan de factuur zelf',
     )
+    // Carried out so the confirm modal can offer it as one tap, the way [ONE-TAP-REPAIR] already
+    // does for an arithmetic mismatch. A warning that names a figure and then makes the owner
+    // retype it is asking them to copy a number the app is holding.
+    if (grounding.alternative) alternativeTotals = grounding.alternative
   }
 
   // [GEGROND-NAAM] Dezelfde vraag over de NAAM, en tot nu toe stelde niemand hem.
@@ -621,5 +665,5 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       ? 'needs-review'
       : 'clean'
 
-  return { level, reasons, flags }
+  return { level, reasons, flags, ...(alternativeTotals ? { alternativeTotals } : {}) }
 }
