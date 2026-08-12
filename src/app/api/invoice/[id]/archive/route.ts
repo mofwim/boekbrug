@@ -145,6 +145,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // The write re-asserts every gate in the WHERE clause: this runs on the service-role client
   // (no auth.uid(), so no verwerkt trigger), and the read above can be seconds stale.
+  //
+  // [GELD-IN-WHERE] The comment above the link read says this WHERE "cannot re-assert a bank link",
+  // and that was true — but it CAN re-assert the money, and that is what the window is about. A
+  // payment booked between the read and this write (apply_manual_payment, apply_bank_payment,
+  // book_bank_batch, allocate_bank_payment — the owner's phone and the reconcile cron run at the
+  // same time as this request) used to slip through whenever it was PARTIAL: a completing payment
+  // flips the status to 'paid' and is caught by the `.in(...)` above, but a deelbetaling moves only
+  // amount_paid and leaves the status untouched, so every clause still matched and the invoice was
+  // archived with a booked bank payment on it. The invoice then leaves every ledger while the bank
+  // line that paid it is skipped as "payment of an already-counted invoice" — the debit counts
+  // NOWHERE and the quarter's kosten and voorbelasting are quietly too low. Exactly the damage the
+  // read above exists to prevent, arriving a few milliseconds later.
+  //
+  // amount_paid is a faithful witness for that window: amount_paid = SUM(amount_applied) is the
+  // invariant recompute_invoice_amount_paid enforces on every path, so any payment booked by those
+  // four functions has moved it. The legacy rows with no amount_applied — the reason the read
+  // refuses on mere EXISTENCE — cannot appear inside a millisecond window. Read for existence,
+  // write under the amount.
   const { data: updated, error } = await pipeline
     .from("invoices")
     .update({ status: "archived", updated_at: new Date().toISOString() })
@@ -152,11 +170,33 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .in("status", ["sent", "overdue", "processing", "received"])
     .or("accountant_status.is.null,accountant_status.neq.verwerkt")
+    .or("amount_paid.is.null,amount_paid.lte.0")
     .select("id");
   if (error) return NextResponse.json({ error: "archive_failed", detail: error.message }, { status: 500 });
   if (!updated || updated.length === 0) {
     // Someone paid it / the accountant locked it in the window between our read and this write.
-    return NextResponse.json({ error: "not_archivable", detail: REFUSAL_TEXT.not_archivable }, { status: 409 });
+    //
+    // [GELD-IN-WHERE] …and the owner is told WHICH. "Deze factuur kan niet op deze manier
+    // verwijderd worden" is true and useless: every refusal this route can make has a sentence that
+    // says what to do next, and the one case where the answer changed underneath the owner was the
+    // one that got none of them. Now that a deelbetaling can close this branch it matters more —
+    // "draai eerst de betaling terug" is an instruction; the generic line is a dead end.
+    //
+    // One extra read, only on a path that already failed. If it cannot be read we keep the generic
+    // sentence rather than guessing — a wrong reason is worse than a vague one.
+    const { data: now } = await pipeline
+      .from("invoices")
+      .select("status, accountant_status, amount_paid")
+      .eq("id", id)
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .maybeSingle();
+    const reason =
+      !now ? "not_archivable"
+      : now.accountant_status === "verwerkt" ? "verwerkt"
+      : Number(now.amount_paid ?? 0) > 0 ? "money_settled"
+      : now.status === "archived" ? "already_archived"
+      : "not_archivable";
+    return NextResponse.json({ error: reason, detail: REFUSAL_TEXT[reason] }, { status: 409 });
   }
 
   // ── Two consequences the owner cannot see from the row, reported instead of hidden ─────────

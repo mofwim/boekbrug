@@ -27,6 +27,9 @@ import {
   refuseSupersede,
   SUPERSEDE_REFUSAL_TEXT,
   type SupersedeInvoice,
+  // [GELD-IN-WHERE] The zero-row branch names the gate that closed, so its key is typed like the
+  // pre-checks' — a reason that is not in the catalogue would render as an empty sentence.
+  type SupersedeRefusal,
 } from "@/lib/invoice-supersede";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // The one file that knows which keys carry the duplicate signal — writer and clearer side by side.
@@ -220,6 +223,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // The WHERE clause re-asserts every gate: this runs on the service-role client (no auth.uid(),
   // so no verwerkt trigger) and the reads above can be seconds stale.
+  //
+  // [GELD-IN-WHERE] …every gate except the one about MONEY, which was the only one the WHERE could
+  // not re-assert and the only one that had just been read. A payment booked in that window is not
+  // hypothetical: apply_manual_payment, apply_bank_payment, book_bank_batch and
+  // allocate_bank_payment all reach this invoice, and the owner's phone and the reconcile cron run
+  // at the same time as this request.
+  //
+  // A payment that COMPLETES the invoice is already caught — status becomes 'paid', which is not in
+  // the list above. A DEELBETALING is not: it moves amount_paid and leaves the status exactly where
+  // it was, so every clause here still matched and the invoice was archived with a booked bank
+  // payment hanging off it. The payment is then unreachable — the invoice is out of every ledger
+  // while the bank line that paid it is skipped as "payment of an already-counted invoice", so the
+  // debit counts nowhere and the quarter's kosten and voorbelasting are quietly too low. That is
+  // the same damage the [MONEY-GUARD-CLOSED] read above exists to prevent, arriving a few
+  // milliseconds later.
+  //
+  // amount_paid can be re-asserted, and it is a faithful witness for the window: the invariant
+  // amount_paid = SUM(bank_tx_invoices.amount_applied) is what recompute_invoice_amount_paid
+  // enforces on every path, so a payment booked by any of those four functions has moved it. The
+  // pre-amount_applied legacy rows the read above guards against are exactly the ones that cannot
+  // appear inside a millisecond window — they were written years ago. Read for existence, write
+  // under the amount: the two together cover both.
   const archiveOld = (patch: InvoiceUpdate) =>
     pipeline
       .from("invoices")
@@ -229,6 +254,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .eq("direction", "incoming")
       .in("status", ["processing", "received"])
       .or("accountant_status.is.null,accountant_status.neq.verwerkt")
+      .or("amount_paid.is.null,amount_paid.lte.0")
       .select("id");
 
   const basePatch = { status: "archived", updated_at: archivedAt };
@@ -258,8 +284,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!updated || updated.length === 0) {
     // Someone paid it, the accountant locked it, or it was archived between our read and this
     // write. Nothing changed — report the conflict rather than an imaginary success.
+    //
+    // [GELD-IN-WHERE] And say WHICH. This route's refusal catalogue already writes a paragraph for
+    // money_settled ("anders zou geld uit je kas- en bankoverzicht verdwijnen") and one for
+    // verwerkt; the race path — the one case where the answer genuinely changed under the owner —
+    // was the only one answered with "kan niet op deze manier vervangen worden". One extra read on
+    // a path that already failed. Unreadable ⇒ keep the generic line: a wrong reason is worse than
+    // a vague one.
+    const { data: now } = await pipeline
+      .from("invoices")
+      .select("status, accountant_status, amount_paid")
+      .eq("id", oldId)
+      .eq("receiver_id", user.id)
+      .maybeSingle();
+    const reason: SupersedeRefusal =
+      !now ? "not_supersedable"
+      : now.accountant_status === "verwerkt" ? "verwerkt"
+      : Number(now.amount_paid ?? 0) > 0 || now.status === "paid" ? "money_settled"
+      : now.status === "archived" ? "already_archived"
+      : "not_supersedable";
     return NextResponse.json(
-      { error: "not_supersedable", detail: SUPERSEDE_REFUSAL_TEXT.not_supersedable },
+      { error: reason, detail: SUPERSEDE_REFUSAL_TEXT[reason] },
       { status: 409 },
     );
   }

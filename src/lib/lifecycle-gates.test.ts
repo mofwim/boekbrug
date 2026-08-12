@@ -6350,8 +6350,18 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     return out;
   };
 
-  // Reason 1 — the filter is in the query.
-  const OWNER_COL = /\.eq\(\s*["'](sender_id|receiver_id|user_id|owner_id|created_by|profile_id|zzper_id|accountant_id|bundle_id|original_invoice_id|invoice_id|content_hash)["']/;
+  // Reason 1 — the filter is in the query. TENANT columns only.
+  //
+  // invoice_id, bundle_id, original_invoice_id and content_hash used to sit in this list, and they
+  // are not owners — they are ROWS. With RLS off, `.eq("invoice_id", x)` narrows to one row and
+  // says nothing at all about whose row it is, which is the exact hole this gate exists to catch.
+  // A negative control found it: dropping `.eq("user_id", user.id)` from a service-role read in
+  // pay-toggle produced no failure, because `.eq("invoice_id", invoiceId)` was still there and
+  // counted as an owner. Three real queries relied on that pass; all three are safe for reasons of
+  // PROVENANCE (the id came from a row already found by the caller's own scope, or by a token),
+  // and provenance is an argument, not a pattern — so they moved to REVIEWED where someone had to
+  // write it down.
+  const OWNER_COL = /\.eq\(\s*["'](sender_id|receiver_id|user_id|owner_id|created_by|profile_id|zzper_id|accountant_id)["']/;
   const OR_SCOPE = /\.or\(\s*`?(sender_id|receiver_id|user_id)\.eq\./;
   const ID_IS_USER = /\.eq\(\s*["']id["']\s*,\s*[^)]*\b(user|userId|uid|ownerId|sender_id|bundle\.user_id)\b/;
   // Reason 4 — the token is the credential.
@@ -6375,8 +6385,15 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     for (const name of names) {
       const re = new RegExp(`\\b${name}\\s*(?:as any\\s*)?\\n?\\s*\\.from\\(\\s*["'](\\w+)["']`, "g");
       for (const m of src.matchAll(re)) {
+        // Where the chain ENDS decides what it may be credited with. `await(?!\s)` never matched
+        // `await ` — the space is always there — so a chain ran straight on into the following
+        // statement and could be waved through by ITS `.eq("user_id", …)`. That is how the
+        // rollback upsert in pay-toggle passed for months while having no filter of its own; it
+        // was borrowing the next line's. `await\b` plus `for` ends the chain where the statement
+        // ends. Checked against every service-role query on this line: no new offenders, so this
+        // is strictly more accurate rather than merely stricter.
         const chain = src.slice(m.index, m.index + 900)
-          .split(/\n\s*\n|\n\s*(?:const|let|return|if|await(?!\s))/)[0];
+          .split(/\n\s*\n|\n\s*(?:const|let|return|if|for|await\b)/)[0];
         const ok = OWNER_COL.test(chain) || OR_SCOPE.test(chain) || ID_IS_USER.test(chain)
           || TOKEN.test(chain) || STAMPS_OWNER.test(chain) || OWN_NEW_ROW.test(chain);
         if (!ok) offenders.push(`${f} → ${m[1]} :: ${chain.replace(/\s+/g, " ").slice(0, 110)}`);
@@ -6386,32 +6403,72 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
 
   // ── REVIEWED EXCEPTIONS ──
   //
-  // Four queries are safe for a reason no filter shape can express, so they are listed rather than
+  // These queries are safe for a reason no filter shape can express, so they are listed rather than
   // pattern-matched. That is deliberate: another regex would make this gate permissive enough to
   // wave through the next real hole, while a list forces a human to look and to write down why.
   //
-  // Each entry is a file + table + the reason it was cleared. A NEW unscoped query fails this test
-  // until someone reads it and adds it here — which is the whole point.
-  const REVIEWED: readonly { file: string; table: string; why: string }[] = [
+  // Each entry is a file + table + a fragment that identifies THE query + the reason it was
+  // cleared. A NEW unscoped query fails this test until someone reads it and adds it here — which
+  // is the whole point.
+  //
+  // `must` is not decoration. Keyed on file+table alone, one cleared query waved through every
+  // OTHER unscoped query against the same table in the same file — and a negative control proved
+  // it: dropping `.eq("user_id", user.id)` from pay-toggle's link READ, an unrelated statement,
+  // produced no failure at all, because the rollback upsert's entry covered it. A pardon has to
+  // name what it pardons.
+  const REVIEWED: readonly { file: string; table: string; must: string; why: string }[] = [
     {
-      file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices",
+      file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices", must: ".from(\"invoices\")",
       why: "reads the invoice by id, then refuses with 403 unless sender_id or receiver_id is the " +
         "caller — the guard is in code, before the update, not in the query",
     },
     {
-      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines",
+      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines", must: ".insert(",
       why: "inserts lines against factuur.id, the invoice this same request just created; the id " +
         "is never attacker-supplied",
     },
     {
-      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices", must: ".in(",
       why: "the ids come from a bundle already found BY the pay_token, and the route rejects " +
         "anything that is not a uuid before touching the database",
+    },
+    {
+      file: "src/app/api/invoice/[id]/archive/route.ts", table: "pay_bundle_invoices",
+      must: '.eq("invoice_id", id)',
+      why: "reads bundle_id for a notice, after loadOwned(id, user.id) at the top of the route has " +
+        "already answered 404 for an invoice that is not the caller's — so `id` is provably theirs " +
+        "by the time this runs. Scoped by provenance, not by a filter",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      must: ".eq('original_invoice_id', invoiceId)",
+      why: "isCredited(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
+        "credential. Returns a boolean from a `select('id')`, and treats its own read error as " +
+        "'credited' — the fail-closed direction, since the other side is a customer transferring " +
+        "money that is not owed",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "pay_bundle_invoices",
+      must: ".eq('bundle_id', bundle.id)",
+      why: "bundle.id comes from pay_bundles found by .eq('token', token) — the token is the " +
+        "credential, and this only expands it to the invoice ids it covers",
+    },
+    {
+      file: "src/app/api/invoice/pay-toggle/route.ts", table: "bank_tx_invoices", must: ".upsert(",
+      why: "[UNDO-EIGEN-WERK] the undo's rollback upsert. An upsert takes no .eq(), so the scope " +
+        "has to come from where the rows came from: every id in deletedLinks was RETURNED by a " +
+        "DELETE filtered .eq('user_id', user.id).eq('invoice_id', invoiceId) in this same request, " +
+        "so the ids are provably this owner's, and the payload re-stamps user_id: user.id. Note " +
+        "this is NOT the generic 'an insert that stamps the owner' pass, which an upsert must " +
+        "never get — onConflict:id can OVERWRITE an existing row, so stamping the owner proves " +
+        "nothing on its own. The provenance of the ids is what makes this one safe. It was " +
+        "invisible to this gate until the chain splitter stopped letting it borrow the next " +
+        "statement's filter",
     },
   ];
 
   const unreviewed = offenders.filter(
-    (o) => !REVIEWED.some((r) => o.startsWith(`${r.file} → ${r.table} ::`)),
+    (o) => !REVIEWED.some((r) => o.startsWith(`${r.file} → ${r.table} ::`) && o.includes(r.must)),
   );
   assert.deepEqual(
     unreviewed, [],
@@ -6424,9 +6481,11 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
   // …and the list may not rot. An entry matching nothing means the code moved out from under the
   // review, and the sentence explaining why it was safe is now about a query that no longer
   // exists — which is worse than no list, because it reads as though someone checked.
+  // The same `must` here, or a pardon outlives the query it was written for: the entry keeps
+  // matching some OTHER unscoped query in that file and never reports itself as stale.
   const stale = REVIEWED.filter(
-    (r) => !offenders.some((o) => o.startsWith(`${r.file} → ${r.table} ::`)),
-  ).map((r) => `${r.file} → ${r.table}`);
+    (r) => !offenders.some((o) => o.startsWith(`${r.file} → ${r.table} ::`) && o.includes(r.must)),
+  ).map((r) => `${r.file} → ${r.table} :: ${r.must}`);
   assert.deepEqual(stale, [], `reviewed exceptions that no longer match any query: ${stale.join(", ")}`);
 });
 
@@ -6816,4 +6875,166 @@ test("[NUMMER-SLOT] the lock's rule is proven where it can be, not only where it
   const spec = readFileSync("src/lib/numbering-lock.test.ts", "utf8");
   assert.match(spec, /BACK-DATED invoice still locks the counter it drew from/, "the bug itself must be a test");
   assert.match(spec, /first hour of the Dutch new year/, "…and so must the year boundary");
+});
+
+// ─── [UNDO-EIGEN-WERK] A rollback may only undo the writes THIS request made ─────────────────────
+//
+// Audit finding #2, reproduced against a real PostgreSQL (tests/sql/undo_payment_race.test.sql):
+// two concurrent undos on one invoice. The loser's invoice UPDATE carries `.eq('status','paid')`,
+// which the winner has already changed, so it falls into the honest zero-row branch — and that
+// branch rolls back from the snapshot the loser read at the START of its request. Measured: the
+// deleted payment returns at EUR 1.000 on an invoice whose status says 'sent', with the bank
+// transaction back to 'matched' so the matcher will never resurface it. The undo path has no
+// idempotency key, unlike the pay path, so two taps on two devices reach it.
+//
+// The seam test proves the RULE against a database. These hold the route to issuing it.
+
+test("[UNDO-EIGEN-WERK] the rollback restores the delete's own report, never the opening snapshot", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const rollback = route.slice(
+    route.indexOf("const rollbackBankState = async"),
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+  );
+  assert.ok(rollback.length > 100, "the rollback is gone — this gate has nothing to hold");
+  assert.match(rollback, /deletedLinks\.length > 0/, "it must restore what the DELETE reported");
+  assert.match(rollback, /deletedLinks\.map\(/, "…and map over that list, not another one");
+  // The opening snapshot may still exist (it is what finds the linked transactions), but it must
+  // never be what a rollback writes back. That is the whole defect in one identifier.
+  assert.doesNotMatch(
+    rollback, /\bmyLinks\b/,
+    "the rollback restores the opening snapshot again — under a lost race that resurrects a " +
+      "payment the owner deleted, measured at EUR 1.000 in tests/sql/undo_payment_race.test.sql",
+  );
+});
+
+test("[UNDO-EIGEN-WERK] the delete reports what it removed", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const del = route.slice(route.indexOf('.from("bank_tx_invoices").delete()'));
+  const stmt = del.slice(0, del.indexOf(";"));
+  assert.match(stmt, /\.select\(/, "a delete with no `.select()` cannot tell the rollback what it took");
+  // Every column the rollback writes back has to come out of the delete, or the restore is lossy.
+  // amount_applied above all: it is what recompute_invoice_amount_paid sums.
+  for (const col of ["id", "transaction_id", "amount_applied", "paid_on", "method", "client_key"]) {
+    assert.ok(stmt.includes(col), `the delete must return ${col} — the rollback writes it back`);
+  }
+});
+
+test("[UNDO-EIGEN-WERK] the transaction revert only reverts a row still carrying our write", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  const rollback = route.slice(
+    route.indexOf("const rollbackBankState = async"),
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+  );
+  // Guarded on what this request wrote. Unguarded, a rollback drags a transaction that someone
+  // else has since booked elsewhere back onto our invoice — the same staleness, one table over.
+  assert.match(rollback, /wroteTx/, "the revert must know what this request actually wrote");
+  assert.match(rollback, /revert\.eq\("status", wrote\.status\)/, "…and guard on it");
+  assert.match(rollback, /revert\.is\("invoice_id", null\)/, "…including the branch that only cleared the pointer");
+});
+
+test("[UNDO-EIGEN-WERK] every detach write reads its error", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  // Anchored on CODE, not on the "// Detach — scoped" comment beside it: code() strips comments,
+  // so a prose anchor matches nothing and the gate passes by finding an empty string. This file
+  // has caught that exact mistake before ([ART35-READ-HONEST]); it caught this one too.
+  const detach = route.slice(
+    route.indexOf("for (const [txId, prev] of txPrev) {"),
+    route.indexOf('.from("bank_tx_invoices").delete()'),
+  );
+  assert.ok(detach.length > 200, "the detach loop is gone — this gate has nothing to hold");
+  const updates = detach.match(/\.update\(/g) ?? [];
+  assert.equal(updates.length, 2, `expected the batch and single-invoice detaches, found ${updates.length}`);
+  const handled = detach.match(/if \(error\) \{/g) ?? [];
+  assert.equal(
+    handled.length, 2,
+    "a detach whose error is dropped is followed by deleting the links anyway: the invoice goes " +
+      "unpaid while its transaction stays 'matched' and pointed at it",
+  );
+  assert.equal((detach.match(/status: 503/g) ?? []).length, 2, "…and each refuses, recoverably");
+});
+
+test("[UNDO-EIGEN-WERK] the race and the rule are proven against a database", () => {
+  const spec = readFileSync("tests/sql/undo_payment_race.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: .*invoice_payment_date_rederive\.sql/m,
+    "the seam test must load the real recompute function, not a stub");
+  // The file has to demonstrate the BUG, not only the fix — a test that only shows the good path
+  // cannot tell a reader what was wrong, and cannot fail if the rule is quietly relaxed.
+  assert.match(spec, /the deleted payment is BACK on the invoice/, "the damage itself must be measured");
+  assert.match(spec, /B''s delete removed nothing/, "…and the fix asserted on the same interleaving");
+  // And the single-request rollback — the reason the rollback exists — must still be exercised.
+  assert.match(spec, /the payment is restored to the cent/, "narrowing the rollback must not break it");
+});
+
+// ─── [GELD-IN-WHERE] A money check that is only a READ has a window ──────────────────────────────
+//
+// Audit findings #6 and #7, reproduced against a real PostgreSQL
+// (tests/sql/archive_payment_race.test.sql). Both removal routes check for a booked payment with a
+// read and then write; between the two statements apply_manual_payment, apply_bank_payment,
+// book_bank_batch and allocate_bank_payment can all reach the row, and the owner's phone and the
+// reconcile cron run while the request is in flight. Each route answers that with a WHERE clause
+// that re-asserts the status and the accountant lock — and the archive route's own comment says
+// why it stops there: "it cannot re-assert a bank link".
+//
+// The gap is the DEELBETALING. A payment that completes the invoice flips the status to 'paid',
+// which the `.in(...)` already refuses. A partial one moves only amount_paid, so every clause
+// still matched and the invoice was archived on top of a booked bank payment — measured at
+// EUR 400. The invoice then leaves every ledger while the bank line that paid it is skipped as
+// "payment of an already-counted invoice": the debit counts nowhere and the quarter's kosten and
+// voorbelasting are quietly too low.
+
+test("[GELD-IN-WHERE] both removal routes re-assert the money in the WHERE, not only the status", () => {
+  for (const f of [
+    "src/app/api/invoice/[id]/archive/route.ts",
+    "src/app/api/invoice/[id]/supersede/route.ts",
+  ]) {
+    const src = code(f);
+    assert.match(
+      src, /\.or\("amount_paid\.is\.null,amount_paid\.lte\.0"\)/,
+      `${f}: the archive write does not re-assert amount_paid, so a deelbetaling booked between ` +
+        `the link read and this write is archived with the invoice`,
+    );
+    // Both halves of the NULL/0 pair. `amount_paid.lte.0` alone drops every row whose amount_paid
+    // was never written — `NULL <= 0` is NULL, not true — turning the guard into a blanket refusal
+    // on exactly the ordinary case the button exists for.
+    const clause = /\.or\("amount_paid\.([^"]*)"\)/.exec(src)?.[1] ?? "";
+    assert.ok(clause.includes("is.null"), `${f}: an unwritten amount_paid must still archive`);
+    assert.ok(clause.includes("lte.0"), `${f}: …and a booked one must not`);
+  }
+});
+
+test("[GELD-IN-WHERE] the zero-row refusal names the gate that closed", () => {
+  // "Deze factuur kan niet op deze manier verwijderd worden" is true and useless. Every other
+  // refusal in both routes carries an instruction ("draai eerst de betaling terug"); the one case
+  // where the answer changed underneath the owner got none of them — and now that a deelbetaling
+  // can close this branch, that is the case they will actually meet.
+  for (const [f, key] of [
+    ["src/app/api/invoice/[id]/archive/route.ts", "REFUSAL_TEXT"],
+    ["src/app/api/invoice/[id]/supersede/route.ts", "SUPERSEDE_REFUSAL_TEXT"],
+  ] as const) {
+    const src = code(f);
+    const at = src.indexOf("updated.length === 0");
+    assert.ok(at > 0, `${f}: the zero-row branch is gone`);
+    const branch = src.slice(at, at + 1400);
+    assert.match(branch, /accountant_status/, `${f}: the branch must re-read the row to know why`);
+    assert.match(branch, /amount_paid/, `${f}: …including the money, which is the new reason`);
+    assert.match(branch, /"money_settled"/, `${f}: …and map it to the sentence that says what to do`);
+    assert.match(branch, new RegExp(`${key}\\[reason\\]`), `${f}: the sentence comes from the catalogue`);
+    // An unreadable re-read must not invent a reason. A wrong one is worse than a vague one.
+    assert.match(branch, /!now \? "not_(archivable|supersedable)"/, `${f}: unreadable ⇒ the generic line`);
+  }
+});
+
+test("[GELD-IN-WHERE] the race and the clause are proven against a database", () => {
+  const spec = readFileSync("tests/sql/archive_payment_race.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: invoice_manual_payments\.sql/m,
+    "the deelbetaling must be booked by the REAL payment function, not by an INSERT that imitates it");
+  // The bug, the fix, and the two cases that prove the clause is not a blanket refusal.
+  assert.match(spec, /the old clause ARCHIVED it/, "the damage itself must be measured");
+  assert.match(spec, /the deelbetaling is refused/, "…and the fix asserted on the same interleaving");
+  assert.match(spec, /an unpaid invoice archives, amount_paid = 0/, "the ordinary case must still pass");
+  assert.match(spec, /amount_paid was never written/, "…and so must a NULL amount_paid");
+  // The completing payment was already safe. Saying so keeps the next reader from "fixing" the
+  // status clause too, and records which half of the guard was actually missing.
+  assert.match(spec, /the status clause alone already refused a completed payment/,
+    "the test must record what was ALREADY safe, not only what was not");
 });
