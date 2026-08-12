@@ -7038,3 +7038,54 @@ test("[GELD-IN-WHERE] the race and the clause are proven against a database", ()
   assert.match(spec, /the status clause alone already refused a completed payment/,
     "the test must record what was ALREADY safe, not only what was not");
 });
+
+// ─── [FACTUUR-B] The function that mints a legal number is tested against a database ─────────────
+//
+// A completeness gap I raised against my own audit: next_invoice_seq had no seam test at all.
+// seed_invoice_counter — its much smaller sibling — has had one for months, while the allocator
+// itself was only ever exercised against a hand-copied stub in TypeScript, which cannot fail the
+// way a database fails. Every Article 35 guarantee in this product lives in one statement inside
+// that function.
+//
+// And the claim that most needed a real database was the one no file in tests/sql/ could make:
+// every other test there runs in a SINGLE psql session, so nothing had ever driven two callers at
+// once — the gap behind every TOCTOU finding in this audit.
+
+test("[FACTUUR-B] the allocator has a seam test, and it drives two real sessions", () => {
+  const spec = readFileSync("tests/sql/next_invoice_seq.test.sql", "utf8");
+  assert.match(spec, /^-- migrations: factuur_b_numbering\.sql/m, "it must load the function that ships");
+
+  // Two REAL connections, not one session pretending. dblink is what makes that possible.
+  assert.match(spec, /CREATE EXTENSION IF NOT EXISTS dblink/, "the concurrency proof needs a second connection");
+  assert.match(spec, /dblink_connect\('sess_a'/, "…and a second one");
+  assert.match(spec, /dblink_connect\('sess_b'/);
+  // Skipping is not an option: a concurrency proof that quietly did not run is worse than none,
+  // because the suite still reports green. No conditional guard around the extension.
+  assert.doesNotMatch(spec, /IF NOT EXISTS \(SELECT 1 FROM pg_extension WHERE extname = 'dblink'\)/,
+    "a skipped concurrency proof reports green while proving nothing");
+
+  // The block must start from a SEEDED counter. From an empty table both callers take the INSERT
+  // branch and the UNIQUE index serialises them however the function is written — a negative
+  // control proved a deliberately non-atomic allocator passing that version.
+  assert.match(spec, /INSERT INTO public\.invoice_counters[\s\S]{0,200}?'factuur', 41\)/,
+    "the concurrency block must start from an EXISTING counter or it cannot tell atomic from not");
+  assert.match(spec, /two callers, two DISTINCT numbers/,
+    "the assertion a non-atomic allocator fails: it hands both callers the same number");
+
+  // The wait must be OBSERVED, not inferred. dblink_is_busy only says "not finished yet", which is
+  // true of any query for its first millisecond.
+  assert.match(spec, /wait_event_type = 'Lock'/, "the block must be observed in pg_stat_activity");
+  assert.doesNotMatch(spec, /t_eq\('B is BLOCKED[^)]*dblink_is_busy/, "is_busy is not evidence of a lock");
+
+  // And the contract the stub could never reach.
+  for (const claim of [
+    /a stranger may not allocate for someone else/,
+    /and neither may service-role/,
+    /not one of them burned a number/,
+    /the next number is 46, not 1/,
+    /…and 2027 starts at 1, not at 4/,
+    /a late 2026 invoice continues 2026/,
+  ]) {
+    assert.match(spec, claim, `the allocator's contract is missing an assertion: ${claim}`);
+  }
+});
