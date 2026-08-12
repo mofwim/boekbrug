@@ -4,6 +4,8 @@
 
 import { useState, useRef, useEffect, useCallback, DragEvent } from "react";
 import { useRouter } from "next/navigation";
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from "@/lib/upload-fit";
 import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { Spinner } from "./ui/Spinner";
@@ -49,14 +51,17 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
 
   const uploadSingleFile = useCallback(async (file: File): Promise<void> => {
     const now = new Date();
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("year", String(now.getFullYear()));
-    fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
-    if (currentFolderId) fd.append("folder_id", currentFolderId);
-
     setProgress(20);
-    const res = await fetch("/api/files", { method: "POST", body: fd });
+    // [UPLOAD-PLAFOND] Mijn bestanden takes whatever the owner has — including the 8 MB scan the
+    // platform refuses before our route sees it. Fitted like every other document path.
+    const { response: res } = await sendWithFit(file, (f) => {
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("year", String(now.getFullYear()));
+      fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
+      if (currentFolderId) fd.append("folder_id", currentFolderId);
+      return fetch("/api/files", { method: "POST", body: fd });
+    });
     const json = await res.json() as {
       id?: string;
       error?: string;

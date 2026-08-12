@@ -19,7 +19,9 @@ import { shouldOfferShrink } from '@/lib/tools/upload-shrink'
 // to a bounded JPEG in the browser BEFORE upload — otherwise an iPhone invoice reaches the
 // reader as an "unsupported type" and is silently filed away as unreadable. Same shared
 // converter the multi-page combine uses, so both paths agree on the bytes that reach the reader.
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+import { MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [UPLOAD-PLAFOND] One shared fit-and-send — see upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 // [MULTI-PAGE] "Eén factuur, meerdere pagina's" — combine the photos of ONE paper invoice into a
 // single PDF in the browser, then send it as ONE file (same /api/intake → one invoice), instead of
 // N separate invoices. Same combiner the ZZP intake button uses.
@@ -39,11 +41,14 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
 // spreadsheet exports a shop uploads monthly (kassa Z-report, PIN/kas grootboek).
 const ACCEPT = 'image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt,.940,.xls,.xlsx,.csv'
-// [SIZE-GUARD] The server rejects anything over 10 MB (/api/intake MAX_BYTES). We enforce the SAME
-// shared cap (MAX_INTAKE_UPLOAD_BYTES) in the browser so a too-big file fails instantly with a clear
-// reason — instead of the owner waiting through a full upload over a slow mobile link only to be
-// refused. Images are shrunk under this cap by normalizeImageForUpload; a too-big PDF is the one
-// case we simply can't send.
+// [SIZE-GUARD] Enforced in the browser so a too-big file fails instantly with a clear reason,
+// instead of the owner waiting through a full upload over a slow mobile link only to be refused.
+//
+// [UPLOAD-PLAFOND] The cap is no longer "the server's 10 MB". The binding limit is the PLATFORM's
+// request-body ceiling — well under half that — and it refuses before our route runs, so the
+// server's number was never the one an upload had to meet. MAX_INTAKE_UPLOAD_BYTES now carries the
+// real one, and "a too-big PDF is the one case we simply can't send" is no longer true either:
+// fitForUpload runs pdfcompress on it automatically.
 // [MULTI-PAGE] Cap the pages of one paper invoice, mirroring the intake button.
 const MAX_PAGES = 20
 
@@ -62,7 +67,7 @@ interface Item {
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
-  // [SIZE-SHRINK] Boven de 10 MB én een PDF, dus verkleinen is het aanbieden waard. De melding
+  // [SIZE-SHRINK] Boven het plafond én een PDF, dus verkleinen is het aanbieden waard. De melding
   // hieronder zei altijd al "splits een grote PDF" en gaf geen enkele manier om dat te doen —
   // dit is wat die zin een knop maakt. De afbeeldingen in het document gaan omlaag, de tekst
   // blijft tekst, dus de lezer aan de andere kant kan er nog steeds iets uit halen.
@@ -228,33 +233,32 @@ export default function UploadClient() {
         const item = pending.current.shift()!
         patch(item.id, { status: 'busy' })
         try {
-          // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable BEFORE upload. A
-          // HEIC/HEIF/WebP/BMP/TIFF (or a huge JPG/PNG) becomes a bounded JPEG the reader accepts;
-          // a normal JPG/PNG/PDF is returned untouched. Never throws — worst case the original goes.
-          const uploadFile = await normalizeImageForUpload(item.file, MAX_INTAKE_UPLOAD_BYTES)
-          // [SIZE-GUARD] After shrinking images, anything still over the server cap can't be sent.
-          // In practice this is only a very large PDF (we can't safely shrink a PDF here). Fail with
-          // an honest reason instead of a wasted full upload that the server would refuse anyway.
-          if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
-            // [SIZE-SHRINK] Een PDF kunnen we hier wél kleiner maken — alleen de afbeeldingen
-            // gaan omlaag, de tekst blijft tekst. Dat is een knop op deze regel in plaats van
-            // een opdracht ("splits een grote PDF") zonder gereedschap. Bij een afbeelding is
-            // normalizeImageForUpload hierboven al langs geweest, dus die is zo klein als hij
-            // verantwoord kan; daar valt niets meer te winnen en bieden we het niet aan.
+          // [UPLOAD-PLAFOND] Shrinking is no longer a button the owner has to find: fitForUpload
+          // runs the SAME pdfcompress pass automatically, and sendWithFit answers a platform 413
+          // by squeezing harder and sending again. The manual "Verklein" affordance below stays
+          // for the one case that is left — a document that is still too big after all of that.
+          const { response: res, sent: uploadFile, fit } = await sendWithFit(item.file, (f) => {
+            const fd = new FormData()
+            fd.append('file', f)
+            if (item.force) fd.append('force', 'true') // "toch toevoegen" override for a semantic dup
+            return fetch('/api/intake', { method: 'POST', body: fd })
+          })
+          // [SIZE-GUARD] Only reached when the automatic pass could not get under the budget.
+          // The cap is read from the shared constant, never written out: the two sentences here
+          // said "max 10 MB" long after the real ceiling had become 4 MB, so the number the owner
+          // was given was one no upload could actually meet.
+          if (!fit.fits && !res.ok) {
+            const mb = (n: number) => (n / 1024 / 1024).toFixed(1)
             const isPdf = shouldOfferShrink(uploadFile, MAX_INTAKE_UPLOAD_BYTES)
             patch(item.id, {
               status: 'error',
               tooBig: isPdf,
               message: isPdf
-                ? `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB.`
-                : `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Maak er een foto van of splits het document.`,
+                ? `Bestand te groot (${mb(uploadFile.size)} MB) — max ${mb(MAX_INTAKE_UPLOAD_BYTES)} MB. Verkleinen lukte niet ver genoeg.`
+                : `Bestand te groot (${mb(uploadFile.size)} MB) — max ${mb(MAX_INTAKE_UPLOAD_BYTES)} MB. Maak er een foto van of splits het document.`,
             })
             continue
           }
-          const fd = new FormData()
-          fd.append('file', uploadFile)
-          if (item.force) fd.append('force', 'true') // "toch toevoegen" override for a semantic dup
-          const res = await fetch('/api/intake', { method: 'POST', body: fd })
           // [UPLOAD-ERRORS] `null` bij een onleesbare body, geen `{}`. Dat onderscheid is het hele
           // punt: een 413 of 504 komt van het PLATFORM en heeft een HTML-body, dus `data.error`
           // bestond daar nooit — en juist daardoor viel elk zo'n geval in de algemene zin "Lezen
@@ -379,7 +383,7 @@ export default function UploadClient() {
   // versie gaat als nieuwe poging de wachtrij in.
   //
   // [PDF-LAZY] pdfcompress en pdf-lib worden hier binnengehaald, niet bovenaan het bestand. Dit is
-  // het uploadscherm van een ingelogde eigenaar dat elke dag opengaat; wie nooit tegen de 10 MB
+  // het uploadscherm van een ingelogde eigenaar dat elke dag opengaat; wie nooit tegen het plafond
   // aanloopt hoort er ook nooit een byte van te downloaden. Eén gewone import bovenaan zou dat
   // stilletjes ongedaan maken — precies wat /factuur-maken 1,4 MB kostte.
   const shrinkAndRetry = useCallback(async (item: Item) => {
@@ -394,7 +398,9 @@ export default function UploadClient() {
         patch(item.id, {
           shrinking: false,
           tooBig: false,
-          message: `Verkleinen hielp niet genoeg: ${(before / 1024 / 1024).toFixed(1)} MB → ${(after / 1024 / 1024).toFixed(1)} MB, nog steeds boven de 10 MB. Splits het document in delen.`,
+          // [UPLOAD-PLAFOND] Het plafond komt uit de gedeelde constante. Deze zin noemde 10 MB
+          // toen de echte grens al 4 MB was — een getal waar geen enkele upload aan kón voldoen.
+          message: `Verkleinen hielp niet genoeg: ${(before / 1024 / 1024).toFixed(1)} MB → ${(after / 1024 / 1024).toFixed(1)} MB, nog steeds boven de ${(MAX_INTAKE_UPLOAD_BYTES / 1024 / 1024).toFixed(1)} MB. Splits het document in delen.`,
         })
         return
       }

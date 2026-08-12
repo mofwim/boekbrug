@@ -7482,3 +7482,101 @@ test("[SCROLL-VEL] the shared rule caps the whole panel, padding included", () =
   assert.match(rule, /box-sizing:\s*border-box/, "max-height must include the padding, or the cap is short by it");
   assert.match(rule, /overscroll-behavior:\s*contain/, "…and the list behind the dialog must stay put");
 });
+
+// ─── [UPLOAD-PLAFOND] The ceiling the app enforces must be the one that applies ──────────────────
+//
+// Reported from a phone, with two pages of a supplier invoice already picked and the sheet still
+// open: "Dit bestand is te groot om te versturen. Splits een grote PDF, of maak er een foto van."
+//
+// The client compressed every upload down to MAX_INTAKE_UPLOAD_BYTES, which was 10 MB, "mirroring
+// /api/intake's server-side MAX_BYTES" — the APP's limit. The limit that bites belongs to the
+// platform: a function's request body is capped around 4.5 MB and refused before any of our code
+// runs, with no JSON and no sentence. So the app compressed to a size it believed was fine, handed
+// it to a platform that refused it, and then asked the owner to split the PDF by hand.
+//
+// Everything needed already existed and was not joined up: an image normalizer, a real PDF
+// compressor that downsamples embedded images while leaving text as text — wired into ONE screen —
+// and the budget. One module joins them, and answers a 413 by squeezing harder and sending again,
+// so a wrong estimate of someone else's limit is recoverable instead of terminal.
+
+test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
+  const src = code("src/lib/image-normalize-client.ts");
+  const m = /MAX_INTAKE_UPLOAD_BYTES = (\d+) \* 1024 \* 1024/.exec(src);
+  assert.ok(m, "the shared budget must stay a plain, readable number of megabytes");
+  const mb = Number(m[1]);
+  assert.ok(mb <= 4, `the budget is ${mb} MB — at or above the platform ceiling, so every file ` +
+    `compressed to exactly it is refused with a bare 413 the owner cannot act on`);
+  assert.ok(mb >= 2, `the budget is ${mb} MB — too small for a legible multi-page scan`);
+  // The server keeps its own, larger cap on purpose: it guards the paths a browser does not walk.
+  const route = code("src/app/api/intake/route.ts");
+  assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
+});
+
+test("[UPLOAD-PLAFOND] every browser upload of a document goes through the shared fit", () => {
+  // By SHAPE, not by a list: a new upload screen added next month fails this too. A CSV or an
+  // MT940 is exempt — compression cannot make a text file smaller, and pretending otherwise would
+  // spend an upload proving it.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const EXEMPT = /\/api\/(bank\/upload|turnover\/import|ledger\/import|eft\/import)/;
+
+  const raw: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components"))) {
+    if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
+    // code(), not readFileSync: a negative control removed the call from IntakeButton and left the
+    // COMMENT explaining it, and this gate went green on the word `sendWithFit` inside that
+    // comment. It is the defect class this file exists to catch — an assertion matching a mention
+    // rather than the wiring — and it caught it in the gate itself.
+    const src = code(f);
+    for (const m of src.matchAll(/append\(\s*['"]file['"]\s*,/g)) {
+      const at = m.index ?? 0;
+      const around = src.slice(Math.max(0, at - 1400), at + 900);
+      const url = /fetch\(\s*[`'"]([^`'"]+)[`'"]/.exec(around.slice(around.indexOf(m[0])))?.[1] ?? "";
+      if (EXEMPT.test(url)) continue;
+      if (!/sendWithFit|fitForUpload/.test(around)) {
+        raw.push(`${f}:${src.slice(0, at).split("\n").length} → ${url}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    raw, [],
+    "these post a document straight at the platform's ceiling, so a large scan is refused with a " +
+      `bare 413 and no sentence:\n  ${raw.join("\n  ")}`,
+  );
+});
+
+test("[UPLOAD-PLAFOND] no screen quotes a size the app does not enforce", () => {
+  // Two messages on the upload screen said "max 10 MB" long after the real ceiling had become 4.
+  // A number the owner is given must be one an upload can actually meet, so the sentences derive
+  // it from the constant.
+  for (const f of [
+    "src/app/dashboard/upload/UploadClient.tsx",
+    "src/components/intake/IntakeButton.tsx",
+  ]) {
+    const src = code(f); // comments stripped — only what the owner can read
+    assert.doesNotMatch(src, /max 10 ?MB|boven de 10 MB/i, `${f}: quotes a ceiling that is not the one enforced`);
+  }
+});
+
+test("[UPLOAD-PLAFOND] the retry is real, and it is bounded", () => {
+  const mod = code("src/lib/upload-fit.ts");
+  assert.match(mod, /res\.status !== 413/, "a platform refusal must be recognised");
+  assert.match(mod, /retryBudget\(budget\)/, "…and answered against a smaller budget");
+  // Exactly two sends in the worst case. A loop here would spend an owner's mobile data proving
+  // that a file which is not a size problem is still not a size problem.
+  assert.equal((mod.match(/await send\(/g) ?? []).length, 2, "two sends at most, never a loop");
+  // And no second upload when the squeeze gained nothing.
+  assert.match(mod, /second\.after >= first\.after/, "identical bytes must not be sent twice");
+  // The fitter is injectable, or the retry is untestable and would sit unexercised.
+  assert.match(mod, /fit: \(f: File, b: number\) => Promise<FitResult> = fitForUpload/);
+  const spec = readFileSync("src/lib/upload-fit.test.ts", "utf8");
+  assert.match(spec, /becomes a smaller second attempt that succeeds/, "the retry must be exercised");
+  assert.match(spec, /happens once, never in a loop/, "…and its bound asserted");
+});

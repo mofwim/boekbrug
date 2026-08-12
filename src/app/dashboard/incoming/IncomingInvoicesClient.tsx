@@ -33,7 +33,8 @@ import {
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-normalize-client";
+// [UPLOAD-PLAFOND] One shared fit-and-send — see upload-fit.ts.
+import { sendWithFit } from "@/lib/upload-fit";
 // [UPLOAD-ERRORS] One HTTP-status → owner-sentence translator, shared with /dashboard/upload and
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
@@ -2736,12 +2737,14 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // structured outcome (never throws) — the modal renders the destination.
   const uploadOne = async (file: File): Promise<IntakeResult> => {
     try {
-      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
-      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
-      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES);
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      const res = await fetch("/api/intake", { method: "POST", body: formData });
+      // [UPLOAD-PLAFOND] Fit an image OR a PDF to the upload budget, and answer a platform 413 by
+      // squeezing harder rather than failing. This path normalized images only, so a scanned
+      // supplier PDF over the budget was refused by the platform with no sentence at all.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const formData = new FormData();
+        formData.append("file", f);
+        return fetch("/api/intake", { method: "POST", body: formData });
+      });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
 
       if (res.ok) {

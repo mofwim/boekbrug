@@ -22,7 +22,10 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [UPLOAD-PLAFOND] Fitting an image OR a PDF to the upload budget, and surviving a platform 413,
+// is one shared decision now — see upload-fit.ts. This file used to normalize the image itself and
+// refuse everything else.
+import { sendWithFit } from '@/lib/upload-fit'
 // [UPLOAD-ERRORS] Eén vertaler van HTTP-status → wat de eigenaar leest, gedeeld met
 // /dashboard/upload. Puur en getest; zonder dit las een 402 of 413 hier als "Toevoegen mislukt".
 import { describeUploadFailure } from '@/lib/upload-failure'
@@ -217,28 +220,32 @@ export default function IntakeButton({
     batchRef.current.started += 1
     setOpen(false)
     try {
-      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
-      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
-      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
-      // [SIZE-GUARD] The server refuses anything over the same shared cap. Say so HERE, before
-      // pushing megabytes over a mobile link only to be rejected — and say WHY, which the
-      // generic failure toast could not. Images were already shrunk above, so in practice this
-      // is a very large PDF; naming that is what makes the message actionable.
-      // /dashboard/upload has enforced this from the start; this surface never did.
-      if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
-        showToast(`Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`)
-        return 'error'
+      // [UPLOAD-PLAFOND] One call that makes the file fit, whatever it is: an image is re-encoded
+      // (and an unreadable HEIC rescued), a PDF has its embedded images downsampled while its text
+      // stays text. This surface used to normalize the image and then REFUSE a large PDF with
+      // "Splits een grote PDF of maak een foto" — an instruction the owner cannot carry out on a
+      // phone, for a document the app was already able to shrink on another screen.
+      //
+      // sendWithFit also answers a platform 413 by squeezing harder and sending once more. The
+      // budget is our estimate of somebody else's limit; the retry is what makes a wrong estimate
+      // recoverable instead of terminal.
+      const { response: res, sent: uploadFile, retried } = await sendWithFit(file, (f) => {
+        const fd = new FormData()
+        fd.append('file', f)
+        // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
+        if (force) fd.append('force', 'true')
+        // [INTAKE-SOURCE] Where this file actually came from. Every intake used to be recorded as
+        // 'camera', so a PDF picked from Files — or a combined multi-page scan — claimed to be a
+        // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
+        // CHECK constraint; the server validates and falls back to 'camera'.
+        fd.append('source', source)
+        return fetch('/api/intake', { method: 'POST', body: fd })
+      })
+      if (retried) {
+        console.warn('[UPLOAD-PLAFOND] the platform refused the first attempt for size — sent a smaller one', {
+          name: file.name, first: file.size, sent: uploadFile.size,
+        })
       }
-      const fd = new FormData()
-      fd.append('file', uploadFile)
-      // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
-      if (force) fd.append('force', 'true')
-      // [INTAKE-SOURCE] Where this file actually came from. Every intake used to be recorded as
-      // 'camera', so a PDF picked from Files — or a combined multi-page scan — claimed to be a
-      // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
-      // CHECK constraint; the server validates and falls back to 'camera'.
-      fd.append('source', source)
-      const res = await fetch('/api/intake', { method: 'POST', body: fd })
       // [JSON-GUARD] A non-JSON error body (a platform 413, a proxy 502, an HTML error page)
       // made res.json() THROW, which fell through to the generic catch below and replaced the
       // real reason with "probeer opnieuw". Degrade to an empty object instead, exactly as

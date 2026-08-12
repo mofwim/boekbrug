@@ -8,6 +8,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { useHomePath } from "@/lib/navigation-hooks";
+// [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
+import { sendWithFit } from "@/lib/upload-fit";
 
 import { T } from "./tokens";
 import { BestandRow, FolderRow, FolderNode, SearchResult, ViewMode } from "./types";
@@ -1272,12 +1274,17 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 fabUploadingRef.current = true;
                 try {
                 for (const file of Array.from(files)) {
-                  const now = new Date(); const fd = new FormData();
-                  fd.append("file", file);
-                  fd.append("year", String(now.getFullYear()));
-                  fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
-                  if (currentFolderId) fd.append("folder_id", currentFolderId);
-                  const r = await fetch("/api/files", { method: "POST", body: fd });
+                  const now = new Date();
+                  // [UPLOAD-PLAFOND] The floating "+" on Mijn bestanden — the same route as
+                  // UploadArea, and it had the same platform ceiling with no fit in front of it.
+                  const { response: r } = await sendWithFit(file, (f) => {
+                    const fd = new FormData();
+                    fd.append("file", f);
+                    fd.append("year", String(now.getFullYear()));
+                    fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
+                    if (currentFolderId) fd.append("folder_id", currentFolderId);
+                    return fetch("/api/files", { method: "POST", body: fd });
+                  });
                   const j = await r.json() as { id?: string };
                   if (j.id) {
                     // [BRUG-FILES-SHARED] Did the owner upload INTO the shared folder?

@@ -11,7 +11,8 @@ import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
 // an "unsupported type" and be filed unreadable — the contant-betaald flow then never books. Convert
 // to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
-import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [UPLOAD-PLAFOND] One shared fit-and-send — see upload-fit.ts.
+import { sendWithFit } from '@/lib/upload-fit'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -301,13 +302,16 @@ export default function KasClient() {
   async function uploadCashInvoice(file: File) {
     setCashUploading(true); setCashUploadMsg(null)
     try {
-      // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable before upload.
-      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
-      const form = new FormData()
-      form.append('file', uploadFile)
-      form.append('paid_method', 'kas')
-      form.append('paid_date', date) // the date chosen in the form above (defaults to today)
-      const res = await fetch('/api/intake', { method: 'POST', body: form })
+      // [UPLOAD-PLAFOND] Fit an image OR a PDF to the upload budget, and answer a platform 413 by
+      // squeezing harder rather than failing. A kasbon photographed by a modern phone is regularly
+      // over the budget, and this screen had no answer for a scanned PDF at all.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const form = new FormData()
+        form.append('file', f)
+        form.append('paid_method', 'kas')
+        form.append('paid_date', date) // the date chosen in the form above (defaults to today)
+        return fetch('/api/intake', { method: 'POST', body: form })
+      })
       const json = await res.json().catch(() => ({}))
       if (res.ok && json?.destination === 'document') {
         // [COHERENCE-KAS-UPLOAD] The AI could not read the photo or did not recognise
