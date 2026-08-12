@@ -7935,3 +7935,25 @@ test("[LEVENSLOOP] the creditnota flip is a negation, not a magnitude", () => {
   assert.match(spec, /a creditnota is FLIPPED, not made absolute/, "covered where the exporter lives too");
   assert.match(spec, /a creditnota line with no quantity still multiplies out/, "including the default");
 });
+
+test("[MIN-REGEL] a reading may not turn a credit line into a charge", () => {
+  // Two places turn a READING into an editable line — the free invoice tool carrying a scanned
+  // document, and generateInvoiceFromPrompt turning "drie kratten retour" into a row. Both wrote
+  // `quantity > 0 ? quantity : 1`, which does two jobs with one test: it rejects a quantity that
+  // cannot be read (right, and 1 is the right answer) and a NEGATIVE one, which is a credit line.
+  // On the ATAPACK row that is -3 x EUR 23,95 = EUR -71,85 carried in as 1 x EUR 23,95: EUR 95,80
+  // of swing towards charging the customer, with nothing on the screen saying so.
+  for (const path of ["src/app/factuur-maken/GratisFactuur.tsx", "src/lib/ai.ts"]) {
+    const src = code(path);
+    assert.doesNotMatch(
+      src, /quantity === 'number' && \w*\.?\w*quantity > 0 \? /,
+      `${path} still refuses a credit line from a reading`,
+    );
+    assert.match(src, /readQuantity|readLineAmounts/, `${path} must ask read-line.ts what a quantity is`);
+  }
+  const mod = code("src/lib/read-line.ts");
+  assert.match(mod, /usable\(value\) && value !== 0 \? value : fallback/,
+    "unreadable ⇒ 1, and a negative quantity is kept");
+  assert.match(mod, /return \{ quantity: -quantity, unit_price: -unitPrice \}/,
+    "…and the minus is moved out of the price, where BR-27 forbids it");
+});
