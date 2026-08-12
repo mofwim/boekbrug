@@ -8,6 +8,9 @@ import { Icon } from "./ui/Icon";
 import { BestandRow } from "../types";
 import { fileEmoji, formatDate } from "../helpers";
 import { getSignedUrl } from "../signedUrl";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface DocCardProps {
   doc: BestandRow;
@@ -29,6 +32,7 @@ function isImage(fileType: string | null): boolean {
 }
 
 export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, cardRef, onToggleShare }: DocCardProps) {
+  const t = translator(useLocale());
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   // [BESTANDEN-THUMB] Lazily fetch a signed URL for image files (files are
@@ -119,7 +123,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {hovered && !selected && !isDragging && (
           <button
             onClick={e => { e.stopPropagation(); onContextMenu(e); }}
-            aria-label="Meer opties"
+            aria-label={t("bst.meerOpties")}
             style={{
               position: "absolute", top: 6, insetInlineEnd: 6,
               width: 26, height: 26, border: "none",
@@ -155,8 +159,8 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {(doc.shared || hovered) && !isDragging && (
           <button
             onClick={e => { e.stopPropagation(); onToggleShare(doc.id, !!doc.shared); }}
-            title={doc.shared ? "Gedeeld met boekhouder — tik om te stoppen" : "Delen met boekhouder"}
-            aria-label={doc.shared ? "Niet meer delen" : "Delen met boekhouder"}
+            title={doc.shared ? t("bst.gedeeldStop") : t("bst.delen")}
+            aria-label={doc.shared ? t("bst.nietDelen") : t("bst.delen")}
             style={{
               position: "absolute", bottom: 6, insetInlineStart: 6,
               width: 24, height: 24, border: "none",

@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -34,6 +35,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   client: Client; invoices: KlantInvoice[]; totals: { billed: number; open: number; count: number }
 }) {
   const taal = useLocale()
+  const t = translator(taal)
   const router = useRouter()
   // [SUBNAV] Push the client's name as the shared sub-page header title, and the
   // "+ Nieuwe factuur" action into the bar's actions slot. [HEADER-SYSTEM] The
@@ -47,7 +49,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
           onClick={newInvoice}
           style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}
         >
-          + Nieuwe factuur
+          {t('kld.nieuweFactuur')}
         </button>
       ),
     },
@@ -66,7 +68,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
     setSavingNote(false)
     // Never claim "saved" on failure — surface the error and keep the button so
     // the owner knows the note did NOT persist.
-    if (error) setNoteError('Opslaan mislukt — probeer opnieuw.')
+    if (error) setNoteError(t('kld.opslaanMislukt'))
     else setSavedNote(notes.trim())
   }
 
@@ -87,42 +89,42 @@ export default function KlantDetailClient({ client, invoices, totals }: {
         {/* [HEADER-SYSTEM] Name (title) + "+ Nieuwe factuur" (action) now live in the
             shared sub-page bar; only the e-mail line remains in-body. */}
         <header style={{ margin: '16px 0 18px' }}>
-          <p style={{ fontSize: 14, color: M3.neutral, margin: 0 }}>{client.email || 'Geen e-mail'}</p>
+          <p style={{ fontSize: 14, color: M3.neutral, margin: 0 }}>{client.email || t('kld.geenEmail')}</p>
         </header>
 
         {/* Totals */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-          <Stat label="Gefactureerd" value={eur.format(totals.billed)} />
-          <Stat label="Openstaand" value={eur.format(totals.open)} accent={totals.open > 0 ? M3.warning : M3.success} />
-          <Stat label="Facturen" value={String(totals.count)} />
+          <Stat label={t('kld.gefactureerd')} value={eur.format(totals.billed)} />
+          <Stat label={t('kld.openstaand')} value={eur.format(totals.open)} accent={totals.open > 0 ? M3.warning : M3.success} />
+          <Stat label={t('kld.facturen')} value={String(totals.count)} />
         </div>
 
         {/* Contact */}
-        <Card title="Gegevens">
-          <Row k="Adres" v={[client.address, [client.postal_code, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'} />
+        <Card title={t('kld.gegevens')}>
+          <Row k={t('kld.adres')} v={[client.address, [client.postal_code, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'} />
           <Row k="KVK" v={client.kvk_number || '—'} />
           <Row k="BTW" v={client.btw_number || '—'} />
           <Row k="IBAN" v={client.iban || '—'} />
         </Card>
 
         {/* Notes */}
-        <Card title="Notities">
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Context over deze klant — afspraken, voorkeuren, betaalgedrag…"
+        <Card title={t('kld.notities')}>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('kld.notitiesHint')}
             rows={3} style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${M3.outlineVariant}`, borderRadius: 10, padding: '10px 12px', fontSize: 14, fontFamily: FONT, resize: 'vertical', outline: 'none', color: M3.onSurface }} />
           {noteError && (
             <div style={{ marginTop: 8, fontSize: 12.5, color: M3.error }}>{noteError}</div>
           )}
           {notesDirty && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-              <button onClick={saveNotes} disabled={savingNote} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT }}>{savingNote ? 'Opslaan…' : 'Notitie opslaan'}</button>
+              <button onClick={saveNotes} disabled={savingNote} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT }}>{savingNote ? t('kld.opslaanBezig') : t('kld.notitieOpslaan')}</button>
             </div>
           )}
         </Card>
 
         {/* Invoice history */}
-        <div style={{ margin: '20px 2px 10px', fontSize: 13, fontWeight: 700, letterSpacing: 0.5, color: M3.neutral }}>FACTUURGESCHIEDENIS</div>
+        <div style={{ margin: '20px 2px 10px', fontSize: 13, fontWeight: 700, letterSpacing: 0.5, color: M3.neutral }}>{t('kld.geschiedenis').toUpperCase()}</div>
         {invoices.length === 0 ? (
-          <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '28px 0' }}>Nog geen facturen voor deze klant.</div>
+          <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '28px 0' }}>{t('kld.nogGeen')}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {invoices.map((iv) => {
@@ -131,7 +133,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
                 <Link key={iv.id} href={`/dashboard/facturen`} style={{ textDecoration: 'none' }}>
                   <div style={{ background: M3.surface, borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{iv.invoice_number || 'Concept'}</div>
+                      <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{iv.invoice_number || t('kld.concept')}</div>
                       <div style={{ fontSize: 12.5, color: M3.neutral }}>{dateNL(iv.invoice_date)}</div>
                     </div>
                     <span style={{ fontSize: 11.5, fontWeight: 700, color: st.color, background: st.bg, borderRadius: 999, padding: '3px 9px', whiteSpace: 'nowrap' }}>{st.label}</span>

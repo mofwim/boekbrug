@@ -8,6 +8,9 @@ import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { Spinner } from "./ui/Spinner";
 import { BestandRow } from "../types";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface UploadAreaProps {
   currentFolderId: string | null;
@@ -29,6 +32,7 @@ interface FailedFile {
 }
 
 export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
+  const t = translator(useLocale());
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   // [F#8] Guard against setState after unmount (navigating away mid-upload). React 19
@@ -62,7 +66,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
     if (!json.id) {
       // [BRIDGE-EXTRACT] Duplicate (409) carries `existing` → surface it so the
       // catch can render a link to the file that's already there.
-      const e = new Error(json.error ?? "Upload mislukt") as Error & {
+      const e = new Error(json.error ?? t("bst.uploadMislukt")) as Error & {
         existing?: FailedFile["existing"];
       };
       if (json.duplicate && json.existing) e.existing = json.existing;
@@ -122,7 +126,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
         const e = err as Error & { existing?: FailedFile["existing"] };
         failed.push({
           name: fileArray[i].name,
-          reason: e instanceof Error ? e.message : "Onbekende fout",
+          reason: e instanceof Error ? e.message : t("bst.onbekendeFout"),
           existing: e?.existing,
         });
       }
@@ -209,7 +213,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
             <Icon name="upload" size={22} color={T.primary} />
           </div>
           <p style={{ fontSize: 14, fontWeight: 500, color: T.onSurface, margin: 0 }}>
-            {dragging ? "Loslaten om te uploaden" : "Sleep bestanden of tik om te uploaden"}
+            {dragging ? t("bst.loslaten") : t("bst.sleep")}
           </p>
           <p style={{ fontSize: 12, color: T.outline, margin: 0 }}>
             Alle bestandstypen — max 50MB · meerdere bestanden tegelijk
@@ -239,7 +243,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                 {failedFiles.length} bestand{failedFiles.length > 1 ? "en" : ""} niet geüpload
               </span>
             </div>
-            <button onClick={() => setFailedFiles([])} aria-label="Sluiten"
+            <button onClick={() => setFailedFiles([])} aria-label={t("bst.sluiten")}
               style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 2 }}>
               <Icon name="close" size={16} color={T.error} />
             </button>

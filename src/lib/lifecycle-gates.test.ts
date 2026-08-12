@@ -5086,8 +5086,9 @@ test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of
     sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \(\n\s*<iframe/,
     "the iframe branch must exclude structured files, not merely be preceded by one",
   );
-  // The source is not hidden — it stops being the default view.
-  assert.match(sheet, /Openen in nieuw tabblad/, "the escape hatch stays");
+  // The source is not hidden — it stops being the default view. [TAAL] Asserted on the KEY, not
+  // the Dutch sentence: a gate written against one language fails the day the app gains a second.
+  assert.match(sheet, /t\('dsh\.nieuwTabblad'\)/, "the escape hatch stays");
 
   // The route sends the kind, from the same function, so the two cannot disagree about a format.
   const route = code("src/app/api/email/file/[id]/route.ts");
@@ -6181,7 +6182,9 @@ test("[TAAL] every message key is real, and every message is used", () => {
       // t('key'), translate(x, 'key'), and the template form t(`sent.${woord}.title`) — the last
       // one is expanded over the two document words rather than skipped, because skipping it
       // would let the orphan half of the check pass on keys nothing reaches.
-      for (const m of src.matchAll(/['"]([a-z]+(?:\.[\w]+)+)['"]/g)) used.add(m[1]);
+      // The first segment may carry digits (fout404.titel) — a scanner that only knows pure
+      // letters reports such keys as orphans while they are on the 404 screen every day.
+      for (const m of src.matchAll(/['"]([a-z][a-z0-9]*(?:\.[\w]+)+)['"]/g)) used.add(m[1]);
       for (const m of src.matchAll(/`(sent\.\$\{woord\}\.[\w]+)`/g)) {
         for (const w of ["factuur", "creditnota"]) used.add(m[1].replace("${woord}", w));
       }
@@ -6602,6 +6605,37 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/settings/facturering/page.tsx",
     "src/app/dashboard/bestanden/components/modals/MoveModal.tsx",
     "src/app/dashboard/verkoop/VerkoopClient.tsx",
+    // [TAAL] Second sweep: the shared components that render INSIDE the screens above. A
+    // translated screen with a Dutch modal in it is the exact half-translated state this gate
+    // exists to forbid — the screen looks done in Dutch, so nothing points at the gap.
+    "src/components/invoice/InvoiceActions.tsx",
+    "src/components/export/UblExportButton.tsx",
+    "src/components/invoice/InvoiceReminders.tsx",
+    "src/components/invoice/InvoiceRow.tsx",
+    "src/components/invoice/InvoiceDocumentSheet.tsx",
+    "src/components/invoice/InvoiceCorrectionModal.tsx",
+    "src/components/nav/SubPageHeader.tsx",
+    "src/components/ui/DateFieldNL.tsx",
+    "src/components/ui/InfiniteList.tsx",
+    "src/components/feedback/FeedbackButton.tsx",
+    "src/app/dashboard/error.tsx",
+    "src/app/dashboard/not-found.tsx",
+    "src/app/dashboard/settings/facturering/ManageSubscriptionButton.tsx",
+    "src/app/dashboard/klanten/[id]/KlantDetailClient.tsx",
+    "src/app/dashboard/messages/page.tsx",
+    "src/app/dashboard/verkoop/page.tsx",
+    "src/app/dashboard/bestanden/components/FolderTreeItem.tsx",
+    "src/app/dashboard/bestanden/components/DocCard.tsx",
+    "src/app/dashboard/bestanden/components/DocRow.tsx",
+    "src/app/dashboard/bestanden/components/FolderCard.tsx",
+    "src/app/dashboard/bestanden/components/UploadArea.tsx",
+    "src/app/dashboard/bestanden/components/modals/PreviewModal.tsx",
+    "src/app/dashboard/bestanden/components/ui/BulkBar.tsx",
+    "src/app/dashboard/kluis/KluisClient.tsx",
+    "src/app/dashboard/kluis/BewaarkluisCard.tsx",
+    "src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx",
+    "src/app/dashboard/bank/BankConnectPanel.tsx",
+    "src/components/settings/SnelStartCard.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -6624,6 +6658,13 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
       // A city and a street are FORMAT examples, not words: an Arabic example would have the
       // owner typing a postcode that does not exist here. Same for the VAT number shape.
       if (/^(Amsterdam|Straatnaam 1|NL\d)/.test(text)) continue;
+      // `onX?: () => Promise<void>` puts a TYPE between > and < — the text-node pattern cannot
+      // tell a generic from a rendered word. These identifiers are never screen text.
+      if (/^(Promise|Record|Array|Partial|Readonly)$/.test(text)) continue;
+      // [TAAL] The accountant's action chips (InvoiceRow renders them only in accountant mode).
+      // The accountant module is deliberately Dutch-only — see AGENTS.md — and these three words
+      // are that vocabulary, not the owner's.
+      if (/^[✓⏳?] (Verwerkt|In behandeling|Vraag)$/.test(text)) continue;
       leftovers.push(`${screen}: ${text}`);
     }
   }

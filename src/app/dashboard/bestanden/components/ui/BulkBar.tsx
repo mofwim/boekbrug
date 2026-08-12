@@ -4,6 +4,9 @@
 
 import { T } from "../../tokens";
 import { Icon } from "./Icon";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 interface BulkBarProps {
   selectedCount: number;
@@ -15,6 +18,7 @@ interface BulkBarProps {
 }
 
 export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onClear }: BulkBarProps) {
+  const t = translator(useLocale());
   if (selectedCount === 0) return null;
 
   return (
@@ -39,7 +43,7 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
       `}</style>
 
       <span style={{ fontSize: 14, fontWeight: 600, color: "white", marginInlineEnd: 4 }}>
-        {selectedCount} geselecteerd
+        {t("bst.geselecteerd", { count: selectedCount })}
       </span>
       <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)", margin: "0 4px" }} />
 
@@ -71,11 +75,11 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
         onMouseLeave={e => (e.currentTarget.style.background = "none")}
       >
         <Icon name="delete" size={16} color="#F28B82" />
-        <span className="hidden sm:block">Verwijderen</span>
+        <span className="hidden sm:block">{t("bst.verwijderen")}</span>
       </button>
 
       <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)", margin: "0 4px" }} />
-      <button onClick={onClear} aria-label="Selectie wissen" style={{
+      <button onClick={onClear} aria-label={t("bst.selectieWissen")} style={{
         width: 28, height: 28, border: "none", background: "none",
         cursor: "pointer", display: "flex", alignItems: "center",
         justifyContent: "center", borderRadius: T.full,

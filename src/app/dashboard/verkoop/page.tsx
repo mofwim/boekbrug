@@ -21,6 +21,8 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { getActingFor, loadRevokedMembership } from '@/lib/acting-for-server'
+import { serverTranslator } from '@/lib/i18n/server'
+import type { Translator } from '@/lib/i18n/t'
 import { isActingForOther } from '@/lib/acting-for'
 import { FONT, M3, R } from '@/lib/design/tokens'
 import type { SalesInvoice } from '@/lib/sales-overview'
@@ -37,6 +39,7 @@ export const metadata = { title: 'Verkoop — BoekBrug' }
  * renderfunctie puur blijft en er precies één moment is waarop de tijd wordt vastgesteld — dat
  * ene moment gaat als prop naar de client, zodat server en browser op dezelfde standen uitkomen.
  */
+// [TAAL] Server component: the translator binds via the request cookie (see i18n/server.ts).
 function readClock(): number {
   return new Date().getTime()
 }
@@ -58,6 +61,7 @@ export default async function VerkoopPage() {
     const revoked = await loadRevokedMembership(acting.actorId)
     if (!revoked) redirect('/dashboard/facturen')
 
+    const t = await serverTranslator()
     const pipelineNaam = createPipelineClient()
     const { data: exBaas } = await pipelineNaam
       .from('profiles')
@@ -67,8 +71,9 @@ export default async function VerkoopPage() {
 
     return (
       <GeenToegangMeer
-        bedrijf={exBaas?.company_name || exBaas?.full_name || 'je werkgever'}
+        bedrijf={exBaas?.company_name || exBaas?.full_name || t('vkp.werkgever')}
         sinds={revoked.revokedAt}
+        t={t}
       />
     )
   }
@@ -144,27 +149,25 @@ export default async function VerkoopPage() {
  * mag die op elk moment. Wat deze medewerker moet weten is precies drie dingen: dat het bewust
  * is gebeurd, dat zijn werk niet weg is, en bij wie hij moet zijn.
  */
-function GeenToegangMeer({ bedrijf, sinds }: { bedrijf: string; sinds: string }) {
+function GeenToegangMeer({ bedrijf, sinds, t }: { bedrijf: string; sinds: string; t: Translator }) {
   const ms = Date.parse(sinds)
+  // Datumnotatie blijft dd-mm-jjjj: zo staat hij op elk Nederlands document dat deze medewerker kent.
   const datum = Number.isFinite(ms) ? new Date(ms).toLocaleDateString('nl-NL') : null
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: M3.surface, border: `1px solid ${M3.hairline}`, borderRadius: R.lg, padding: 28, maxWidth: 460 }}>
         <h1 style={{ fontSize: 19, fontWeight: 700, color: M3.onSurface, margin: '0 0 10px' }}>
-          Je maakt geen facturen meer voor {bedrijf}
+          {t('vkp.titel', { bedrijf })}
         </h1>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-          {bedrijf} heeft je toegang{datum ? ` op ${datum}` : ''} revoked. Dat is een keuze van
-          je werkgever en er is niets misgegaan met je account.
+          {datum ? t('vkp.uitlegMetDatum', { bedrijf, datum }) : t('vkp.uitleg', { bedrijf })}
         </p>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-          <strong style={{ color: M3.onSurface }}>Je facturen zijn niet verwijderd.</strong> Ze horen
-          bij de boekhouding van {bedrijf} en staan daar gewoon — met de nummers die ze bij het
-          versturen hebben gekregen.
+          <strong style={{ color: M3.onSurface }}>{t('vkp.nietWegKop')}</strong>
+          {t('vkp.nietWegRest', { bedrijf })}
         </p>
         <p style={{ fontSize: 13.5, color: M3.mutedText, margin: 0, lineHeight: 1.6 }}>
-          Klopt dit niet? Vraag het aan {bedrijf} — alleen zij kunnen de toegang terugzetten.
-          Je eigen account blijft van jou en werkt gewoon.
+          {t('vkp.vraag', { bedrijf })}
         </p>
       </div>
     </div>

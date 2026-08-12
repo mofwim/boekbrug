@@ -26,10 +26,14 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [FEEDBACK-SEND] Dezelfde helper als elk ander bodempaneel. Dit bestand rekende
 // zijn onderrand met de hand uit en vergat de balk; de helper kan dat niet vergeten.
 import { sheetPaddingBottom } from '@/lib/design/tokens'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 
 export default function FeedbackButton() {
+  const t = translator(useLocale())
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState('')
@@ -62,7 +66,7 @@ export default function FeedbackButton() {
     // [FEEDBACK] Dezelfde grens als de server, hier alleen om er meteen iets over te kunnen zeggen.
     // De server beslist — dit scherm mag geen tweede waarheid worden over wat mag.
     if (file.size > FEEDBACK_MAX_IMAGE_BYTES) {
-      setResult({ ok: false, text: 'Die afbeelding is te groot (max 5 MB).' })
+      setResult({ ok: false, text: t('fb.teGroot') })
       return
     }
     const reader = new FileReader()
@@ -71,7 +75,7 @@ export default function FeedbackButton() {
       setImageData(typeof reader.result === 'string' ? reader.result : null)
     }
     // Stil falen zou hier betekenen: de ondernemer denkt dat de foto meegaat en dat is niet zo.
-    reader.onerror = () => setResult({ ok: false, text: 'We konden die afbeelding niet lezen. Probeer een andere.' })
+    reader.onerror = () => setResult({ ok: false, text: t('fb.nietLezen') })
     reader.readAsDataURL(file)
   }
 
@@ -86,7 +90,7 @@ export default function FeedbackButton() {
       })
       const json = await res.json().catch(() => null)
       if (res.ok) {
-        setResult({ ok: true, text: typeof json?.message === 'string' ? json.message : 'Bedankt — je melding is binnen.' })
+        setResult({ ok: true, text: typeof json?.message === 'string' ? json.message : t('fb.bedankt') })
         // Alleen het bericht wissen als het ECHT weg is. Zie de kop.
         setMessage(''); setImageName(null); setImageData(null)
         if (fileRef.current) fileRef.current.value = ''
@@ -95,11 +99,11 @@ export default function FeedbackButton() {
           ok: false,
           text: typeof json?.error === 'string' && json.error
             ? json.error
-            : 'Versturen lukte niet. Probeer het zo meteen opnieuw — je bericht is nog niet bij ons.',
+            : t('fb.mislukt'),
         })
       }
     } catch {
-      setResult({ ok: false, text: 'Versturen lukte niet. Probeer het zo meteen opnieuw — je bericht is nog niet bij ons.' })
+      setResult({ ok: false, text: t('fb.mislukt') })
     } finally {
       setSending(false)
     }
@@ -109,7 +113,7 @@ export default function FeedbackButton() {
     return (
       <button
         onClick={() => setOpen(true)}
-        aria-label="Er ging iets mis — stuur ons een bericht"
+        aria-label={t('fb.aria')}
         style={{
           position: 'fixed', insetInlineEnd: 16,
           // [FEEDBACK] Boven de BottomNav én boven de paginaknop. De vaste 88px botste
@@ -135,7 +139,7 @@ export default function FeedbackButton() {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Er ging iets mis"
+      aria-label={t('fb.titel')}
       style={{
         position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(32,33,36,0.45)',
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center', fontFamily: FONT,
@@ -165,24 +169,24 @@ export default function FeedbackButton() {
         maxHeight: '85dvh', overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <strong style={{ fontSize: 15, color: '#202124' }}>Er ging iets mis</strong>
+          <strong style={{ fontSize: 15, color: '#202124' }}>{t('fb.titel')}</strong>
           <button
             onClick={close}
             style={{ background: 'none', border: 'none', color: '#5f6368', fontSize: 13, cursor: 'pointer' }}
           >
-            Sluit
+            {t('fb.sluit')}
           </button>
         </div>
 
         <p style={{ fontSize: 12.5, color: '#5f6368', margin: '0 0 10px', lineHeight: 1.5 }}>
-          Schrijf kort wat er gebeurde. Een schermafbeelding helpt enorm — vaak zegt die meer dan een zin.
-          {pathname && <> Wij sturen automatisch mee dat je op <code style={{ fontSize: 12 }}>{pathname}</code> was.</>}
+          {t('fb.uitleg')}
+          {pathname && <> {t('fb.padMee', { path: pathname })}</>}
         </p>
 
         <textarea
           value={message}
           onChange={(e) => { setMessage(e.target.value.slice(0, FEEDBACK_MAX_CHARS)); setResult(null) }}
-          placeholder="Bijvoorbeeld: ik druk op Bevestigen en de regel komt steeds terug."
+          placeholder={t('fb.voorbeeld')}
           rows={5}
           style={{
             width: '100%', boxSizing: 'border-box', border: '1px solid #E0E0E0', borderRadius: 10,
@@ -207,7 +211,7 @@ export default function FeedbackButton() {
             }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>image</span>
-            {imageName ? 'Andere afbeelding' : 'Afbeelding toevoegen'}
+            {imageName ? t('fb.andereAfbeelding') : t('fb.afbeeldingToevoegen')}
           </label>
           {imageName && (
             <span style={{ fontSize: 12, color: '#5f6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
@@ -235,7 +239,7 @@ export default function FeedbackButton() {
             cursor: sending || tooShort ? 'default' : 'pointer',
           }}
         >
-          {sending ? 'Versturen…' : 'Versturen'}
+          {sending ? t('fb.versturenBezig') : t('fb.versturen')}
         </button>
       </div>
     </div>

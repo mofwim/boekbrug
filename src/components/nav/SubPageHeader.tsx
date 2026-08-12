@@ -22,6 +22,9 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { getParentPath, getHomePath, type Role } from "@/lib/navigation";
 import { M3, FONT, PAGE_HEADER_HEIGHT } from "@/lib/design/tokens";
 import type { ReactNode } from "react";
+// [TAAL] A component holds no language of its own.
+import { useLocale } from "@/lib/i18n/use-locale";
+import { translator } from "@/lib/i18n/t";
 
 export default function SubPageHeader({
   title,
@@ -34,6 +37,7 @@ export default function SubPageHeader({
   /** Optional right-aligned node (page-provided menu/action), via SubPageHeaderContext. */
   actions?: ReactNode;
 }) {
+  const t = translator(useLocale());
   const pathname = usePathname();
   const search = useSearchParams();
 
@@ -75,7 +79,7 @@ export default function SubPageHeader({
           it was a 38px box around a 22px glyph. */}
       <Link
         href={backHref}
-        aria-label="Terug"
+        aria-label={t('nav.terug')}
         className="pressable nav-icon-btn"
         style={{
           background: "none",
@@ -90,7 +94,7 @@ export default function SubPageHeader({
           minHeight: 44,
         }}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="icon-dir">
           <path
             d="M15 18l-6-6 6-6"
             stroke={M3.onSurfaceVariant}

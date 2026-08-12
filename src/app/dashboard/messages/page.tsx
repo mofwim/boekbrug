@@ -7,6 +7,9 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 import { COLUMN } from '@/lib/design/tokens';
+// [TAAL] The screen speaks the owner's language.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 // Eén gesprek in de lijst: samengesteld uit berichten + de naam van de tegenpartij.
 interface Conversation {
@@ -34,6 +37,7 @@ function ConversationSkeleton() {
 }
 
 export default function MessagesPage() {
+  const t = translator(useLocale())
   const router = useRouter()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -56,13 +60,13 @@ export default function MessagesPage() {
         if (res.status === 401) { router.push('/login'); return }
         const data = await res.json().catch(() => null)
         if (!res.ok) {
-          setLoadError(data?.error || 'We konden je berichten nu niet ophalen. Probeer het zo meteen opnieuw.')
+          setLoadError(data?.error || t('ber.ophaalFout'))
           return
         }
         setConversations(data?.conversations ?? [])
         setTruncated(data?.truncated === true)
       } catch {
-        setLoadError('We konden je berichten nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er berichten voor je zijn.')
+        setLoadError(t('ber.ophaalFoutEerlijk'))
       } finally {
         setLoading(false)
       }
@@ -94,12 +98,12 @@ export default function MessagesPage() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Zoek op naam of bericht…"
-              aria-label="Berichten zoeken"
+              placeholder={t('ber.zoek')}
+              aria-label={t('ber.zoekAria')}
               className="w-full bg-white border border-gray-200 rounded-xl py-2.5 ps-10 pe-9 text-sm text-gray-900 outline-none focus:border-gray-300 shadow-sm"
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44 absolute end-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center">×</button>
+              <button onClick={() => setSearch('')} aria-label={t('ber.wissen')} className="tap-44 absolute end-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center">×</button>
             )}
           </div>
         )}
@@ -122,20 +126,20 @@ export default function MessagesPage() {
                 onClick={() => window.location.reload()}
                 className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
               >
-                Opnieuw proberen
+                {t('ber.opnieuw')}
               </button>
             </div>
           ) : conversations.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-2xl mb-2">💬</p>
-              <p className="text-gray-500 text-sm font-medium">Nog geen berichten</p>
+              <p className="text-gray-500 text-sm font-medium">{t('ber.leeg')}</p>
               <p className="text-gray-300 text-xs mt-1">
-                Stuur een bericht via de pagina van een klant of boekhouder
+                {t('ber.leegHint')}
               </p>
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-16">
-              <p className="text-gray-500 text-sm font-medium">Geen berichten gevonden voor &ldquo;{rawQ}&rdquo;.</p>
+              <p className="text-gray-500 text-sm font-medium">{t('ber.nietsGevonden', { query: rawQ })}</p>
             </div>
           ) : (
             <div className="divide-y divide-gray-50">
@@ -154,7 +158,7 @@ export default function MessagesPage() {
                     </div>
                     <div>
                       <p className={`text-sm ${conv.unread > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
-                        {conv.name || 'Onbekend'}
+                        {conv.name || t('ber.onbekend')}
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
                         {conv.lastMessage}
@@ -181,7 +185,7 @@ export default function MessagesPage() {
         {/* [GEEN-STILLE-KAP] Zeg het als de lijst niet alles kon nalopen. */}
         {!loading && !loadError && truncated && (
           <p className="text-xs text-gray-400 text-center mt-3">
-            We tonen je meest recente gesprekken — oudere berichten staan er nog, maar passen niet in dit overzicht.
+            {t('ber.afgekapt')}
           </p>
         )}
       </div>

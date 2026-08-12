@@ -6,8 +6,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+// [TAAL] A component holds no language of its own.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 export default function ManageSubscriptionButton({ hasSubscription }: { hasSubscription: boolean }) {
+  const t = translator(useLocale())
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -25,14 +29,14 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
           router.push(body.redirect)
           return
         }
-        setError(body?.error || 'Kon het abonnementenbeheer niet openen.')
+        setError(body?.error || t('abo.nietOpenen'))
         setBusy(false)
         return
       }
 
       window.location.href = body.url
     } catch {
-      setError('Geen verbinding. Probeer het opnieuw.')
+      setError(t('abo.geenVerbinding'))
       setBusy(false)
     }
   }
@@ -64,7 +68,7 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
           cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit',
         }}
       >
-        {busy ? 'Bezig…' : 'Beheer abonnement'}
+        {busy ? t('abo.bezig') : t('abo.beheer')}
       </button>
       <p style={{ fontSize: 13, color: '#5f6368', margin: '8px 0 0', lineHeight: 1.5 }}>
         Betaalgegevens wijzigen, btw-facturen downloaden of opzeggen.

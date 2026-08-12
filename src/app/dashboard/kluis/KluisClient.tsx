@@ -10,6 +10,9 @@ import { useState } from 'react'
 import type { YearSummary } from '@/lib/compliance-vault'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import BewaarkluisCard from './BewaarkluisCard'
+// [TAAL] The screen speaks the owner's language.
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -25,6 +28,7 @@ export default function KluisClient({
   purpose?: 'boekhouden' | 'archief'
   justPaid?: boolean
 }) {
+  const t = translator(useLocale())
   const isArchief = purpose === 'archief'
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -37,19 +41,7 @@ export default function KluisClient({
               archiefaccount en een gewone gebruiker verhuist daarom naar de ondertitel, waar
               het net zo goed werkt en het headersysteem niet doorbreekt. */}
           <p style={{ fontSize: 14.5, color: M3.neutral, margin: 0, lineHeight: 1.5 }}>
-            {isArchief ? (
-              <>
-                Je archief, per jaar bij elkaar. De Belastingdienst vraagt je stukken{' '}
-                <strong>7 jaar</strong> te bewaren — hier staan ze klaar, doorzoekbaar en met
-                één knop per jaar te exporteren.
-              </>
-            ) : (
-              <>
-                Je administratie, per jaar bij elkaar. De Belastingdienst vraagt je stukken{' '}
-                <strong>7 jaar</strong> te bewaren — hier staan ze klaar, met één knop te
-                exporteren voor je boekhouder.
-              </>
-            )}
+            {isArchief ? t('kluis.introArchief') : t('kluis.introBoekhouden')}
           </p>
         </header>
 
@@ -58,10 +50,9 @@ export default function KluisClient({
             role="status"
             style={{ background: '#CEEAD6', border: '1px solid #137333', color: '#0d652d', borderRadius: 12, padding: '14px 16px', marginTop: 14, fontSize: 14.5, lineHeight: 1.55 }}
           >
-            <strong>Bedankt — je Bewaarkluis is geregeld.</strong>
+            <strong>{t('kluis.betaaldKop')}</strong>
             <br />
-            Je btw-factuur staat klaar in je e-mail. Je archief blijft staan voor de resterende
-            bewaarjaren, en exporteren blijft altijd werken.
+            {t('kluis.betaaldRest')}
           </div>
         )}
 
@@ -73,12 +64,10 @@ export default function KluisClient({
             // stap, en geen woord over facturen of btw — daar kwam hij niet voor.
             <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 22, marginTop: 16 }}>
               <h2 style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
-                Welkom. Breng je administratie binnen.
+                {t('kluis.welkomKop')}
               </h2>
               <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-                Upload je bonnen, facturen en bankafschriften — los of in één keer. Wij zetten ze
-                per jaar en per kwartaal op hun plek, doorzoekbaar, en je kunt elk jaar met één
-                knop als ZIP exporteren.
+                {t('kluis.welkomUitleg')}
               </p>
               <a
                 href="/dashboard/upload"
@@ -87,24 +76,20 @@ export default function KluisClient({
                   padding: '11px 20px', textDecoration: 'none', fontSize: 14, fontWeight: 600,
                 }}
               >
-                Bestanden toevoegen →
+                {t('kluis.welkomKnop')}
               </a>
               <p style={{ fontSize: 13, color: M3.neutral, margin: '14px 0 0', lineHeight: 1.6 }}>
-                Alles wat je hier neerzet blijft van jou en is altijd te exporteren. Wij nemen je
-                bewaarplicht niet over — wij zijn je tweede exemplaar, nooit je enige. En de rest
-                van BoekBrug staat gewoon klaar voor als je hem ooit nodig hebt: er is niets
-                afgesloten en niets te ontgrendelen.
+                {t('kluis.welkomVoetnoot')}
               </p>
             </div>
           ) : (
             <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14.5, padding: '48px 16px', background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, marginTop: 16 }}>
-              Nog geen stukken in de kluis. Zodra je facturen verstuurt of bankafschriften en bonnen uploadt,
-              verschijnen ze hier — netjes per jaar en kwartaal.
+              {t('kluis.leeg')}
             </div>
           )
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
-            {summaries.map((s) => <YearCard key={s.year} s={s} currentYear={currentYear} />)}
+            {summaries.map((s) => <YearCard key={s.year} s={s} currentYear={currentYear} t={t} />)}
           </div>
         )}
 
@@ -117,7 +102,7 @@ export default function KluisClient({
   )
 }
 
-function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
+function YearCard({ s, currentYear, t }: { s: YearSummary; currentYear: number; t: ReturnType<typeof translator> }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -127,7 +112,7 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
       const res = await fetch(`/api/kluis/export?year=${s.year}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
-        setErr(j.error || 'Export mislukt'); setBusy(false); return
+        setErr(j.error || t('kluis.exportMislukt')); setBusy(false); return
       }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -136,15 +121,15 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch {
-      setErr('Export mislukt')
+      setErr(t('kluis.exportMislukt'))
     }
     setBusy(false)
   }
 
   const yearsLeft = s.keepThroughYear - currentYear
   const retentionLabel = s.withinRetention
-    ? `Bewaren t/m ${s.keepThroughYear}${yearsLeft > 0 ? ` · nog ${yearsLeft} jaar` : ' · dit jaar afloopt'}`
-    : `Bewaarplicht verlopen (sinds ${s.keepThroughYear + 1}) — mag weg`
+    ? t('kluis.bewarenTm', { year: s.keepThroughYear }) + (yearsLeft > 0 ? t('kluis.nogJaar', { years: yearsLeft }) : t('kluis.ditJaarAf'))
+    : t('kluis.verlopen', { year: s.keepThroughYear + 1 })
 
   return (
     <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 18 }}>
@@ -156,7 +141,7 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
           </div>
         </div>
         <button onClick={exportYear} disabled={busy} style={{ background: M3.vault, color: '#fff', border: 'none', borderRadius: 999, padding: '9px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>
-          {busy ? 'Bezig…' : '⬇︎ Exporteer jaar'}
+          {busy ? t('kluis.bezig') : `⬇︎ ${t('kluis.exporteerJaar')}`}
         </button>
       </div>
 
@@ -164,10 +149,10 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
 
       {/* Counts */}
       <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-        <Stat label="Facturen uit" value={String(s.outgoingCount)} sub={eur.format(s.outgoingTotal)} />
-        <Stat label="Facturen in" value={String(s.incomingCount)} />
-        <Stat label="Bankafschriften" value={String(s.bankStatements)} />
-        <Stat label="Documenten" value={String(s.documentCount)} />
+        <Stat label={t('kluis.statUit')} value={String(s.outgoingCount)} sub={eur.format(s.outgoingTotal)} />
+        <Stat label={t('kluis.statIn')} value={String(s.incomingCount)} />
+        <Stat label={t('kluis.statAfschriften')} value={String(s.bankStatements)} />
+        <Stat label={t('kluis.statDocumenten')} value={String(s.documentCount)} />
       </div>
 
       {/* Quarter strip */}
@@ -175,9 +160,9 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
         {s.quarters.map((q) => (
           <div key={q.quarter} style={{ flex: 1, textAlign: 'center', background: '#F8F9FA', border: `1px solid ${q.missingBankStatement ? '#FCE8B2' : M3.outlineVariant}`, borderRadius: 10, padding: '8px 4px' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: M3.neutral }}>Q{q.quarter}</div>
-            <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 2 }}>{q.outgoingCount + q.incomingCount} fact.</div>
+            <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 2 }}>{t('kluis.qFact', { count: q.outgoingCount + q.incomingCount })}</div>
             <div style={{ fontSize: 11.5, color: q.missingBankStatement ? M3.warning : M3.neutral }}>
-              {q.missingBankStatement ? '⚠ geen afschr.' : `${q.bankStatements} afschr.`}
+              {q.missingBankStatement ? t('kluis.qGeenAfschr') : t('kluis.qAfschr', { count: q.bankStatements })}
             </div>
           </div>
         ))}
