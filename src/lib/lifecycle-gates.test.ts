@@ -8095,3 +8095,57 @@ test("[CREDIT-VERREKEN] the bank recognises a netted payment, both ways in", () 
   const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
   assert.match(messages, /'bank\.som\.kopVerrekend'/, "in the owner's language");
 });
+
+// ─── [BIJNA-BEDRAG] / [GESTRUCTUREERD] What a bank's own matcher does ───────────────────────────
+//
+// Two capabilities a real reconciliation engine has and this one did not, both measured before
+// they were built:
+//
+//   · a payment that is CLOSE — bank costs taken off a foreign transfer, a betalingskorting, a
+//     customer who rounded — produced `outcome: none, candidates: 0`. Not a weak suggestion: none
+//     at all, because an identified pair without an exact amount is capped at 0.35 under a 0.5
+//     listing floor. The owner saw "Geen factuur" over a line whose invoice was in the list.
+//   · an ISO 11649 creditor reference printed the way every bank prints it — "RF18 5390 0754
+//     7034" — did not match the invoice storing it unspaced. The scan keeps spaces as token
+//     boundaries on purpose, and that is exactly what hid the one reference that carries its own
+//     checksum.
+
+test("[BIJNA-BEDRAG] a close payment is offered with the difference named, and never booked", () => {
+  const mod = code("src/lib/bank-matching.ts");
+  // Bounded on three sides: proportional, absolutely capped, and with a floor for pure rounding.
+  assert.match(mod, /NEAR_AMOUNT_PERCENT = 0\.02/, "2% — the usual betalingskorting");
+  assert.match(mod, /NEAR_AMOUNT_MAX = 25/, "…and never more than € 25, whatever the invoice is worth");
+  assert.match(mod, /NEAR_AMOUNT_FLOOR = 0\.05/, "…always at least a nickel, for a rounded payment");
+  // A bonus BEFORE the cap. Math.min only lowers, so a raised cap alone changes nothing — the
+  // silent no-op this file's neighbours document twice over.
+  assert.match(mod, /confidence \+= 0\.35;\s*\n\s*signals\.push\("near_amount"\)/,
+    "the pair must be lifted over the listing floor, not merely allowed to reach it");
+  assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \? 0\.55 : 0\.35\);/,
+    "0.55: above the 0.5 listing floor and below the 0.7 booking bar");
+  // Identity is required, and a name resemblance is not identity.
+  assert.match(mod, /const identified = ibanOk \|\| supplierIbanOk \|\| isStrongNameIdentity\(/,
+    "the account, the registry's account, or a strong name identity — never a similarity score");
+  assert.match(mod, /const nearOk = nearDiff != null && identified;/);
+  // And the owner is told how far off it is, in euros.
+  assert.match(mod, /minder" : "meer"\} dan het openstaande bedrag/, "the difference must be on the card");
+});
+
+test("[GESTRUCTUREERD] the reference a bank routes on is read the way a bank reads it", () => {
+  const mod = code("src/lib/structured-reference.ts");
+  // ISO 7064 mod-97-10 on both formats — the checksum is what makes matching on this safe.
+  assert.match(mod, /mod97\(ref\.slice\(4\) \+ ref\.slice\(0, 4\)\) === 1/, "ISO 11649");
+  assert.match(mod, /body % 97 === 0 \? 97 : body % 97/, "the Belgian 0 → 97 rule");
+  // Whole groups, not arbitrary prefixes: twenty candidates against mod-97 invents a reference out
+  // of RF-shaped junk about one time in five.
+  assert.match(mod, /const groups = run\.trim\(\)\.split\(\/\\s\+\/\)\.filter\(Boolean\);/,
+    "the walk must step by printed groups");
+  assert.doesNotMatch(mod, /for \(let len = Math\.min\(compact\.length, 25\); len >= 5; len--\)/,
+    "…never character by character");
+  // A twelve-digit window inside a longer number is a customer number, not a mededeling.
+  assert.match(mod, /if \(\/\[0-9\]\/\.test\(before\) \|\| \/\[0-9\]\/\.test\(after\)\) continue;/);
+
+  // Wired in front of the ordinary scan, which keeps spaces and therefore could not see it.
+  const matcher = code("src/lib/bank-matching.ts");
+  assert.match(matcher, /if \(structuredReferenceMatches\(`\$\{tx\.reference \?\? ""\} \$\{tx\.description \?\? ""\}`, invoiceNumber\)\) \{/,
+    "referenceMatches must ask it first");
+});
