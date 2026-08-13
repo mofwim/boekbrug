@@ -2698,17 +2698,28 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
   // The gate follows it there rather than being relaxed — the route must reach the module, and the
   // module must harden exactly as the inline copies do.
   const credit = code("src/app/api/invoice/creditnota/route.ts");
-  assert.match(credit, /creditLinesFor\(originalLines, creditnota\.id, reason\)/,
+  // [DEEL-CREDIT] The lines now come from the validated SELECTION rather than from a second read
+  // of the invoice — same mirror, and the amounts the ceiling was checked against.
+  assert.match(credit, /creditLinesFor\(keuze\.lines, creditnota\.id, reason\)/,
     "the creditnota route must build its lines with the shared mirror");
+  // [REGEL-KOPIE] The hardening moved with the other optional columns into the module all three
+  // copiers share. Followed there, not relaxed: this assertion is the one that must survive.
+  assert.match(code("src/lib/creditnota-lines.ts"), /\.\.\.optionalLineFields\(line\)/,
+    "…and that mirror must take its optional columns from the shared copier");
   assert.match(
-    code("src/lib/creditnota-lines.ts"),
-    /vat_treatment === 'exempt' \? 'exempt' : null/,
-    "…and that mirror must harden vat_treatment like every other writer",
+    code("src/lib/invoice-line-copy.ts"),
+    /vat_treatment === "exempt" \? "exempt" : null/,
+    "…which must harden vat_treatment like every other writer",
   );
 
+  // [REGEL-KOPIE] /duplicate and the recurring cron copy LINES, and both now do it through the
+  // shared module — where the hardening lives and is asserted above. The gate follows them there
+  // instead of demanding an inline copy that is exactly what drifted three times.
+  for (const path of ["src/app/api/cron/recurring/route.ts", "src/app/api/invoice/[id]/duplicate/route.ts"]) {
+    assert.match(code(path), /copiedLinesFor\(/, `${path} must copy lines through the shared module`);
+  }
+  // The PUT route is not a copier: it writes what the edit screen sent, so it hardens its own.
   const copiers = [
-    "src/app/api/cron/recurring/route.ts",
-    "src/app/api/invoice/[id]/duplicate/route.ts",
     "src/app/api/invoice/[id]/route.ts",
   ];
   for (const path of copiers) {
@@ -3998,12 +4009,23 @@ test("[KORTING-KOPIE] the creditnota, the duplicate and the recurring cron all c
     ["src/app/api/cron/recurring/route.ts", "src"],
   ] as const) {
     const src = code(file);
+    // [DEEL-CREDIT] The creditnota does not COPY the discount any more, it carries the one that
+    // belongs to what is being credited: a percentage unchanged, a fixed amount SCALED to the
+    // credited share. Copying a fixed discount onto a partial credit gives back less than was
+    // charged for those lines — see the header of partial-credit.ts. The property the gate
+    // protects is unchanged: the header's discount and its lines must describe one document.
+    const verwacht = file.includes("creditnota")
+      ? /discount_type: keuze\.discount\?\.type \?\? null/
+      : new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`);
     assert.match(
-      src, new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`),
+      src, verwacht,
       `${file} copies the header totals, so it must copy the discount that produced them — ` +
         "otherwise its lines contradict its own stored amounts",
     );
-    assert.match(src, new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`), `${file}: and its value`);
+    const verwachtWaarde = file.includes("creditnota")
+      ? /discount_value: keuze\.discount\?\.value \?\? null/
+      : new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`);
+    assert.match(src, verwachtWaarde, `${file}: and its value`);
   }
 
   // The recurring cron reads its source explicitly — a column it does not SELECT is a column it
@@ -6560,9 +6582,16 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
         "reason is gone. The id is this request's own and is never attacker-supplied",
     },
     {
-      file: "src/app/api/pay/[token]/route.ts", table: "invoices", must: ".in(",
-      why: "the ids come from a bundle already found BY the pay_token, and the route rejects " +
-        "anything that is not a uuid before touching the database",
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      // [DEEL-CREDIT] Was `.in(`. The query grew a column and the excerpt this gate matches is
+      // truncated, so `.in(` fell past the cut and the entry stopped matching anything — which the
+      // stale-exception half of this gate caught immediately. Pinned on the select instead: it is
+      // distinctive, and it sits at the front where the excerpt cannot lose it.
+      must: ".select('original_invoice_id, total_inc_btw')",
+      why: "the bundle's credit lookup, scoped by .in() to the ids of the bundle the pay_token " +
+        "itself resolved, and the route rejects anything that is not a uuid before touching the " +
+        "database. Reads only what each credit gave back, so it can lower the amount the page " +
+        "asks for, never raise it",
     },
     {
       file: "src/app/api/invoice/[id]/archive/route.ts", table: "pay_bundle_invoices",
@@ -6574,9 +6603,9 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     {
       file: "src/app/api/pay/[token]/route.ts", table: "invoices",
       must: ".eq('original_invoice_id', invoiceId)",
-      why: "isCredited(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
-        "credential. Returns a boolean from a `select('id')`, and treats its own read error as " +
-        "'credited' — the fail-closed direction, since the other side is a customer transferring " +
+      why: "creditedOn(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
+        "credential. Returns how much was credited back, and treats its own read error as null — " +
+        "the fail-closed direction, since the other side is a customer transferring " +
         "money that is not owed",
     },
     {
@@ -8149,17 +8178,22 @@ test("[REGEL-KORTING] the e-factuur explains the difference instead of inventing
 });
 
 test("[REGEL-KORTING] a creditnota reproduces the invoice it reverses, discount included", () => {
+  // [REGEL-KOPIE] The rule moved to the module all three copiers now share — following it there
+  // rather than relaxing the gate, because this is the exact assertion that was true of the
+  // creditnota and false of /duplicate and the recurring cron at the same time.
   const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/, "the mirror asks the shared copier");
+  const copy = code("src/lib/invoice-line-copy.ts");
   // Not decoration. line_total is net and HAS been flipped, so a credit line without these two
   // says -10 x EUR 12,50 = EUR -100; the access point redoes that multiplication
   // (PEPPOL-EN16931-R120), finds -125, and refuses the file while the PDF looks perfect.
-  assert.match(credit, /discount_type: line\.discount_type \?\? null/,
+  assert.match(copy, /discount_type: line\.discount_type \?\? null/,
     "the discount travels to the credit note");
-  assert.match(credit, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
+  assert.match(copy, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
     "…and a value without a type is not a discount");
   // Conditional, like `unit` and the exemption flag: a column the database does not have must not
   // appear in the INSERT, or the creditnota loses its lines after its number is already spent.
-  assert.match(credit, /\.\.\.\(line\.discount_type !== undefined/,
+  assert.match(copy, /\.\.\.\(line\.discount_type !== undefined/,
     "absent from the source row means absent from the copy");
 });
 
@@ -8331,6 +8365,113 @@ test("[GESTRUCTUREERD] the reference a bank routes on is read the way a bank rea
     "referenceMatches must ask it first");
 });
 
+// ─── [DEEL-CREDIT] Een factuur crediteren in DELEN ────────────────────────────
+//
+// Twee dingen kunnen hier stilletjes kapot, en allebei zijn ze geld:
+//
+//   · TE VEEL TERUGGEVEN. De som van de creditnota's mag de factuur nooit passeren. Erover heen
+//     betekent btw terugvragen die nooit is afgedragen en de klant een tegoed geven dat nergens
+//     vandaan komt — op twee documenten die los van elkaar volstrekt normaal zijn.
+//   · STOPPEN MET VRAGEN. Een DEEL crediteren is geen intrekking. Wie de rest niet meer int,
+//     krijgt hem nooit — en de factuur houdt gewoon zijn status en zijn volle bedrag, dus er is
+//     geen scherm waarop het opvalt.
+test("[DEEL-CREDIT] the ceiling stands in all three places", () => {
+  // De applicatie, zodat het scherm het kan tonen.
+  const pure = code("src/lib/partial-credit.ts");
+  assert.match(pure, /export function creditableRemaining\(/);
+  assert.match(pure, /export function fitsWithinOriginal\(/);
+
+  // De route, zodat een client die het scherm overslaat wordt geweigerd — en VOOR het nummer,
+  // want een geweigerde creditnota mag geen nummer uit de reeks hebben verbruikt (Art. 35).
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /if \(!fitsWithinOriginal\(original\.total_inc_btw, alGecrediteerd, keuze\.totalIncBtw\)\)/,
+    "the route must refuse a credit that would pass the invoice");
+  const plafondAt = route.indexOf("fitsWithinOriginal");
+  const nummerAt = route.indexOf("generateInvoiceNumber(supabase");
+  assert.ok(plafondAt > 0 && nummerAt > 0 && plafondAt < nummerAt,
+    "the ceiling must be checked BEFORE a number is minted — a refused creditnota may not burn one");
+
+  // De database, zodat twee gelijktijdige verzoeken elkaar niet passeren.
+  const sql = readFileSync("supabase/migrations/creditnota_partial.sql", "utf8");
+  assert.match(sql, /DROP INDEX IF EXISTS invoices_one_creditnota_per_original/,
+    "the one-per-invoice index has to go for partial credits to exist at all");
+  assert.match(sql, /FOR UPDATE/,
+    "…and its TOCTOU protection has to be replaced, not simply removed: the original is locked");
+  assert.match(sql, /RAISE EXCEPTION/, "…and the sum is refused when it would pass the invoice");
+  assert.match(sql, /CREATE TRIGGER trg_assert_credit_within_original/);
+});
+
+test("[DEEL-CREDIT] a partial credit is still money owed, everywhere it is asked", () => {
+  // The rule itself: the set means FULLY credited now.
+  const rule = code("src/lib/credited-invoices.ts");
+  assert.match(rule, /export function fullyCreditedIdsFrom\(/);
+  assert.match(rule, /export function openAfterCredit\(/);
+
+  // And every surface that used to read it as a yes/no. Each of these decides whether a customer
+  // is asked for money, so a stale one is either a demand that should not go out or an invoice
+  // that is never collected.
+  for (const [file, needle] of [
+    ["src/app/api/cron/reminders/route.ts", /openAfterCredit\(inv\.total_inc_btw, 0, creditedByInvoice/],
+    ["src/app/api/daily-truth/route.ts", /fullyCreditedIdsFrom\(creditRows, recvAll\)/],
+    ["src/app/dashboard/vandaag/page.tsx", /fullyCreditedIdsFrom\(creditRows, remindAll\)/],
+    ["src/app/dashboard/accountant/debiteuren/page.tsx", /fullyCreditedIdsFrom\(/],
+    ["src/modules/accountant/work-queues.ts", /fullyCreditedIdsFrom\(/],
+    ["src/app/api/pay/[token]/route.ts", /fullyCreditedIdsFrom\(/],
+    ["src/app/api/invoice/betaalverzoek-bundel/route.ts", /fullyCreditedIdsFrom\(/],
+  ] as const) {
+    assert.match(code(file), needle,
+      `${file} must judge COVERAGE, not the mere existence of a creditnota`);
+  }
+
+  // The reminder must also name the reduced amount. Asking for the full total on a partly
+  // credited invoice demands money the owner put in writing was not owed.
+  assert.match(
+    code("src/app/api/cron/reminders/route.ts"),
+    /openAfterCredit\(inv\.total_inc_btw, inv\.amount_paid, gecrediteerd\)/,
+    "the amount in the reminder must have the credit taken off it",
+  );
+
+  // And so must every public payment surface, through the one function that decides them all.
+  assert.match(
+    code("src/lib/betaalverzoek.ts"),
+    /const credited = Math\.max\(0, invoice\.credited_inc_btw \?\? 0\);/,
+    "the payable amount must subtract what was credited — a live link asking for the full total " +
+      "after a partial credit is a customer transferring money that is not owed",
+  );
+});
+
+test("[DEEL-CREDIT] a FULL credit is byte-for-byte the document it always was", () => {
+  // Every creditnota this app has ever produced took the no-selection path. It must keep producing
+  // exactly the same one, or a cent of drift lands in documents already in customers' hands.
+  const pure = code("src/lib/partial-credit.ts");
+  assert.match(pure, /const alles = !input\.selection \|\| input\.selection\.length === 0;/,
+    "no selection means the whole invoice");
+  // The screen sends NO lines key at all when everything is credited, so the request is literally
+  // the request of before.
+  assert.match(
+    code("src/app/dashboard/invoice/[id]/page.tsx"),
+    /\.\.\.\(creditSelection \? \{ lines: creditSelection \} : \{\}\)/,
+    "crediting everything must send the same request it always sent",
+  );
+});
+
+test("[DEEL-CREDIT] the amount of a partial line is recomputed, never copied", () => {
+  // creditnota-lines flips line_total. The stored one belongs to the FULL quantity, so a credit
+  // for 3 of 10 would say "-3" beside the amount of ten — three times too much back, on a document
+  // where neither number looks wrong by itself.
+  assert.match(
+    code("src/lib/partial-credit.ts"),
+    /line_total: lineNetEx\(\{\s*quantity,/,
+    "the line amount must follow the chosen quantity",
+  );
+  // And the header follows the lines, rather than being copied from the original.
+  assert.match(
+    code("src/app/api/invoice/creditnota/route.ts"),
+    /total_inc_btw: -keuze\.totalIncBtw/,
+    "the creditnota's total must be the total of what is actually being credited",
+  );
+});
+
 test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
   // Every other signal in the matcher is inference about a line it is seeing for the first time.
   // A confirmation is not inference — and it was written to bank_tx_invoices and never read again.
@@ -8357,4 +8498,83 @@ test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
   const route = code("src/app/api/bank/match/route.ts");
   assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
   assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
+});
+
+// ─── [REGEL-KOPIE] The class this has now been, three times ─────────────────────────────────────
+//
+// Three routes copy invoice lines: the creditnota mirrors them, /duplicate repeats them, and the
+// recurring cron re-issues them monthly. Each typed the columns over by hand, so every column ADDED
+// to invoice_lines had to be chased into three places by someone who knew all three existed.
+//
+//   unit                              chased, after "-2 uur" became "-2 stuks" on a correction
+//   vat_treatment                     chased, after a copied exempt line booked as taxed 0%
+//   discount_type / discount_value    reached the mirror and BOTH write routes — and neither copier
+//
+// The third one was live when this gate was written. The copiers write line_total, which is already
+// discounted, so a duplicated or recurring invoice looked right until it was opened and saved:
+// computeDraftTotals then recomputed the line from quantity x unit_price with no discount to apply,
+// and a EUR 108,90 monthly invoice billed EUR 121,00. Before that save it did not even add up with
+// itself — quantity x unit_price is what PEPPOL-EN16931-R120 recomputes.
+
+test("[REGEL-KOPIE] every per-line column reaches the copiers, including the next one", () => {
+  // Read the columns from the generated database types, so a column added tomorrow fails this
+  // gate rather than a customer's invoice. That is the whole difference between a gate that
+  // catches the class and one that catches the last instance of it.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  const block = /invoice_lines: \{\s*Row: \{([\s\S]*?)\}\s*Insert:/.exec(types);
+  assert.ok(block, "the invoice_lines Row block must be findable in the generated types");
+  const columns = [...block![1].matchAll(/^\s{10}([a-z_]+):/gm)].map((m) => m[1]);
+  assert.ok(columns.length >= 8, `expected the real column list, got: ${columns.join(", ")}`);
+
+  // `id` is identity, never copied: a spread of the source row carries a primary key that exists.
+  // `invoice_id` is the destination, supplied by the caller.
+  const IDENTITY = new Set(["id", "invoice_id"]);
+  // The FUNCTION BODIES, not the file. A negative control caught this gate passing on a column that
+  // had been removed from the spread but still appeared in the interface above it — a mention where
+  // the wiring should be, which is the defect shape this whole file exists to refuse. The bodies
+  // are what runs.
+  const copier = code("src/lib/invoice-line-copy.ts");
+  const bodies = [...copier.matchAll(/export function (?:optionalLineFields|copiedLineFor)[\s\S]*?\n\}/g)]
+    .map((m) => m[0])
+    .join("\n");
+  assert.ok(bodies.length > 200, "the copier's function bodies must be findable, or this gate reads a hole");
+  const missing = columns.filter((c) => !IDENTITY.has(c) && !bodies.includes(c));
+  assert.deepEqual(
+    missing, [],
+    `invoice_lines has columns the copier never carries: ${missing.join(", ")}. ` +
+      "A copy that silently drops one is a document that differs from the one it was copied from.",
+  );
+});
+
+test("[REGEL-KOPIE] the copiers ask the module instead of listing columns themselves", () => {
+  for (const path of [
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+  ]) {
+    const src = code(path);
+    assert.match(src, /copiedLinesFor\(/, `${path} must copy through the shared module`);
+    // And it must not keep a hand-typed list beside it — that is the shape that drifted.
+    assert.doesNotMatch(
+      src, /invoice_lines"\)\.insert\(\s*\n?\s*\w+\.map\(\(l\) => \(\{/,
+      `${path} still types the columns over by hand`,
+    );
+  }
+  // The creditnota mirror keeps its own sign and prefix rules and shares only the column list.
+  const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/);
+  assert.match(credit, /quantity: flip\(line\.quantity\)/, "…and still flips, which a copy must not");
+});
+
+test("[REGEL-KOPIE] a copy is verbatim, and a missing column stays missing", () => {
+  const mod = code("src/lib/invoice-line-copy.ts");
+  // Conditional spreads: a database without the migration returns rows without the key, and
+  // sending it fails the whole INSERT with 42703 — on the creditnota path that is a correction
+  // whose number is already spent and which ends up with no lines at all.
+  for (const col of ["unit", "vat_treatment", "discount_type"]) {
+    assert.ok(
+      new RegExp(`\\.\\.\\.\\(line\\.${col} !== undefined`).test(mod),
+      `${col} must be absent from the copy when it is absent from the source row`,
+    );
+  }
+  assert.doesNotMatch(mod, /\bid:/, "a copy carries content, never the source line's identity");
 });

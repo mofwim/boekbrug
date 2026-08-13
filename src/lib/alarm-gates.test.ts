@@ -32,9 +32,14 @@ const MUST_ALARM: Array<{ file: string; needle: string }> = [
   // A ceiling that has stopped existing. Failing open is the right call on a payment page; not
   // knowing it happened is not.
   { file: "src/lib/rate-limit.ts", needle: "rate limit unavailable" },
-  // Sales side. A failed duplicate check here credits a customer twice AND burns an Art. 35 number
-  // doing it — the refusal happens before the number is minted, and it must be heard.
-  { file: "src/app/api/invoice/creditnota/route.ts", needle: "duplicate-creditnota check failed" },
+  // Sales side. [DEEL-CREDIT] renamed this check: it no longer asks "does one exist" but "how much
+  // is already credited", because a credit may now be a part. A failure still has to be heard for
+  // exactly the old reason — unheard, it credits a customer past the invoice AND burns an Art. 35
+  // number doing it. The refusal happens before the number is minted; the alarm says it happened.
+  { file: "src/app/api/invoice/creditnota/route.ts", needle: "existing-creditnota check failed" },
+  // And the read of the lines that the ceiling is measured against. Without them the route cannot
+  // know what it is crediting, and guessing is the one thing it must never do.
+  { file: "src/app/api/invoice/creditnota/route.ts", needle: "invoice lines read failed" },
   { file: "src/app/api/invoice/[id]/betaalverzoek/route.ts", needle: "creditnota check failed" },
 ];
 

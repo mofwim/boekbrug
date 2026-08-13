@@ -21,7 +21,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { buildDebtorBoard, type DebtorInput } from '@/lib/accountant-debtors'
 // [CREDITNOTA-NO-CHASE] De gedeelde regel "is dit nog geld dat ik krijg" — beide helften van een
 // gecrediteerd paar moeten samen uit de vorderingenlijst (src/lib/credited-invoices.ts).
-import { creditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
+import { fullyCreditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
 import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteuren'
 
 export const dynamic = 'force-dynamic'
@@ -140,7 +140,13 @@ export default async function AccountantDebiteurenPage() {
   const alle = (facturen ?? []) as unknown as Array<
     DebtorInput & { sender_id: string; reminders_paused: boolean | null; invoice_type?: string | null; original_invoice_id?: string | null }
   >
-  const rijen = filterOpenReceivables(alle, creditedIdsFrom(alle.filter((r) => r.invoice_type === 'creditnota')))
+  // [DEEL-CREDIT] Alleen een creditnota die de factuur DEKT haalt hem van de lijst. Een deel
+  // gecrediteerd betekent dat de rest nog openstaat, en een debiteurenlijst die dat weglaat laat
+  // geld liggen zonder dat er iets rood wordt.
+  const rijen = filterOpenReceivables(
+    alle,
+    fullyCreditedIdsFrom(alle.filter((r) => r.invoice_type === 'creditnota'), alle),
+  )
 
   // Het herinneringsspoor. invoice_reminders is per RLS alleen voor de eigenaar leesbaar, dus ook
   // dit gaat via service_role — beperkt tot de facturen die we net zelf hebben opgehaald.

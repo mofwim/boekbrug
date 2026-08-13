@@ -38,7 +38,9 @@ import {
   amsterdamTodayDayNumber,
 } from "@/lib/invoice-reminders";
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
-import { creditedIdsFrom } from "@/lib/credited-invoices";
+// [DEEL-CREDIT] …and it is a COVERAGE question now, not a yes/no one. A partly credited invoice
+// is still owed for the rest, so it must still be chased — for the remainder, never for the total.
+import { creditedTotalsFrom, openAfterCredit } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
 // [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
@@ -210,10 +212,12 @@ export async function GET(req: NextRequest) {
   // read is what stops a credited invoice being dunned. It already fails CLOSED on an error (see
   // below), so a URL that grew too long would silently halt every reminder rather than send a wrong
   // one; correct, and still a nightly outage nobody would notice.
-  const creditNoteRows = await fetchAllRowsForIds<{ original_invoice_id: string | null }, string>(ownerIds, (chunk, from, to) =>
+  const creditNoteRows = await fetchAllRowsForIds<{ original_invoice_id: string | null; total_inc_btw: number | null }, string>(ownerIds, (chunk, from, to) =>
     pipeline
       .from("invoices")
-      .select("original_invoice_id")
+      // [DEEL-CREDIT] The AMOUNT comes along: whether an invoice was withdrawn is no longer
+      // answered by the existence of a creditnota but by whether the credits cover it.
+      .select("original_invoice_id, total_inc_btw")
       .in("sender_id", chunk)
       .eq("invoice_type", "creditnota")
       .not("original_invoice_id", "is", null)
@@ -229,7 +233,7 @@ export async function GET(req: NextRequest) {
     // Fail closed: send nothing rather than risk one wrong demand. Tomorrow's run repeats it.
     return NextResponse.json({ ok: true, enabledOwners: owners.length, sent: 0, skipped: "creditnota_lookup_failed" });
   }
-  const creditedInvoiceIds = creditedIdsFrom(creditNoteRows);
+  const creditedByInvoice = creditedTotalsFrom(creditNoteRows);
 
   const sentByInvoice = new Map<string, number[]>();
   for (const r of sentRows) {
@@ -293,7 +297,11 @@ export async function GET(req: NextRequest) {
         clientEmail: inv.client_email,
         remindersPaused: false,
         // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → stop chasing the customer.
-        hasCreditnota: creditedInvoiceIds.has(inv.id),
+        // [DEEL-CREDIT] …but only when the credits cover the WHOLE invoice. Credit one disputed
+        // line of five and the other four are still owed; stopping there would mean the owner is
+        // never paid for them, on an invoice that keeps its 'sent' status and its full total, with
+        // nothing on any screen saying why the reminders went quiet.
+        hasCreditnota: openAfterCredit(inv.total_inc_btw, 0, creditedByInvoice.get(inv.id) ?? 0) <= 0,
       });
       if (tier == null) continue;
 
@@ -325,7 +333,13 @@ export async function GET(req: NextRequest) {
       const claimId = claimed[0].id as string;
 
       // The ONLY amount a reminder may show — remaining, never the full total.
-      const openstaand = openstaandOf(inv.total_inc_btw, inv.amount_paid);
+      // [DEEL-CREDIT] Minus what was credited. Asking for the full total on a partly credited
+      // invoice demands money that was given back IN WRITING — the fastest way to lose the trust
+      // a reminder needs in order to work at all.
+      const gecrediteerd = creditedByInvoice.get(inv.id) ?? 0;
+      const openstaand = gecrediteerd > 0
+        ? openAfterCredit(inv.total_inc_btw, inv.amount_paid, gecrediteerd)
+        : openstaandOf(inv.total_inc_btw, inv.amount_paid);
       // [REMINDER-TRUTH] Hoisted out of the try: the catch has to know whether the letter that
       // just failed was the statutory one, and `wik` itself is built inside.
       const finalTier = isFinalTier(tier, offsets);

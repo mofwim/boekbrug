@@ -32,7 +32,7 @@ import { computeDrawerBalance } from "@/lib/cash";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [CREDITNOTA-NO-CHASE] the shared "is this still owed to me" rule — both sides of a credited
 // pair must leave the receivable list together (see src/lib/credited-invoices.ts)
-import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+import { fullyCreditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 // [OPEN-TOTAL] One definition of openstaand, shared with every other surface.
 import { openAmountSigned } from "@/lib/partial-payment";
 // [BETALINGSVERSCHIL] Het restje dat geen vordering is — meldend, nooit boekend.
@@ -158,11 +158,12 @@ export async function GET() {
 
   const recvAll = (recvRows ?? []) as InvoiceRow[];
   const creditRows = recvAll.length > 0
-    ? await fetchAllRows<{ original_invoice_id: string | null }>((from, to) => pipeline
+    ? await fetchAllRows<{ original_invoice_id: string | null; total_inc_btw: number | null }>((from, to) => pipeline
         .from("invoices")
         // Keyed on the owner rather than on the candidate ids — an .in() over every open invoice
         // would grow the URL without bound, and one owner's creditnotas are few.
-        .select("original_invoice_id")
+        // [DEEL-CREDIT] The amount too: only a credit that COVERS the invoice withdraws it.
+        .select("original_invoice_id, total_inc_btw")
         .eq("sender_id", user.id)
         .eq("invoice_type", "creditnota")
         .not("original_invoice_id", "is", null)
@@ -175,7 +176,7 @@ export async function GET() {
   // creditnota while still counting the original) would invent a number that was never shown.
   const recv = creditRows == null
     ? recvAll
-    : filterOpenReceivables(recvAll, creditedIdsFrom(creditRows));
+    : filterOpenReceivables(recvAll, fullyCreditedIdsFrom(creditRows, recvAll));
   const toReceive = {
     count: recv.length,
     total: recv.reduce((s, r) => s + openstaandOf(r), 0),
