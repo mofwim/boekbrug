@@ -166,7 +166,7 @@ export default function InvoiceDetailPage() {
       if (!url) throw new Error('no url')
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
-      setSendError('Origineel PDF kon niet worden geopend')
+      setSendError(t('detail.fout.origineelPdf'))
     } finally {
       setLoadingOriginal(false)
     }
@@ -184,7 +184,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || 'Opnieuw versturen mislukt')
+      setSendError(data.error || t('detail.fout.opnieuwVersturen'))
       setResending(false)
       return
     }
@@ -303,7 +303,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || 'Verzenden mislukt')
+      setSendError(data.error || t('bewerk.fout.verzenden'))
       setSending(false)
       return
     }
@@ -321,7 +321,7 @@ export default function InvoiceDetailPage() {
     // [SEND-PDF-HONEST] pdf_failed = the number was issued but the PDF/email did NOT go out. Don't
     // silently close as if delivered — keep the modal open with an honest resend prompt.
     if (responseData.warning === 'pdf_failed' || responseData.delivered === false) {
-      setSendError('De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.')
+      setSendError(t('detail.fout.pdfNietGemaakt'))
       setSending(false)
       return
     }
@@ -346,7 +346,7 @@ export default function InvoiceDetailPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setCreditError(data.error || 'Creditnota aanmaken mislukt — probeer opnieuw')
+        setCreditError(data.error || t('detail.fout.creditnota'))
         setCreatingCredit(false)
         return
       }
@@ -460,7 +460,7 @@ export default function InvoiceDetailPage() {
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
-                  {invoice?.invoice_number || 'Concept'}
+                  {invoice?.invoice_number || t('status.draft')}
                 </h1>
                 {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
                   <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
@@ -472,7 +472,7 @@ export default function InvoiceDetailPage() {
                     anders was — anders is het ruis op elke eigen factuur. */}
                 {makerNaam && (
                   <span
-                    title={`Aangemaakt door ${makerNaam}`}
+                    title={t('detail.aangemaaktDoor', { name: makerNaam })}
                     style={{ fontSize: 11, fontWeight: 500, borderRadius: 9999, padding: '3px 10px', background: '#F3E5F5', color: '#6A1B9A', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>person</span>
@@ -537,7 +537,7 @@ export default function InvoiceDetailPage() {
                         cursor: 'pointer',
                         transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                       }}>
-                        {pdfLoading ? 'Laden...' : '↓ PDF'}
+                        {pdfLoading ? t('nieuw.actie.laden') : '↓ PDF'}
                       </button>
                     )}
                   </PDFDownloadLink>
@@ -559,7 +559,7 @@ export default function InvoiceDetailPage() {
                       transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                     }}
                   >
-                    {loadingOriginal ? 'Laden...' : '↓ Origineel PDF'}
+                    {loadingOriginal ? t('nieuw.actie.laden') : `↓ ${t('detail.origineelPdf')}`}
                   </button>
                 )}
               </>
@@ -585,8 +585,8 @@ export default function InvoiceDetailPage() {
                   </p>
                   <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
                     {deliveryWarning === 'pdf_failed'
-                      ? 'De PDF kon niet worden gegenereerd. Het factuurnummer is wel definitief.'
-                      : 'De e-mail kon niet worden afgeleverd. Het factuurnummer is wel definitief.'}
+                      ? t('detail.bezorging.pdf')
+                      : t('detail.bezorging.email')}
                   </p>
                 </div>
               </div>
@@ -595,7 +595,7 @@ export default function InvoiceDetailPage() {
                 disabled={resending}
                 style={{ flexShrink: 0, backgroundColor: '#F9AB00', color: '#202124', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: resending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: resending ? 0.6 : 1 }}
               >
-                {resending ? 'Verzenden...' : '↻ Opnieuw versturen'}
+                {resending ? t('bewerk.verzendenBezig') : `↻ ${t('lijst.opnieuwVersturen')}`}
               </button>
             </div>
           )}
@@ -604,7 +604,7 @@ export default function InvoiceDetailPage() {
           {resendSuccess && (
             <div style={{ backgroundColor: '#E6F4EA', borderRadius: 16, padding: '10px 16px' }}>
               <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
-                ✓ De factuur is opnieuw verzonden.
+                ✓ {t('detail.opnieuwVerzonden')}
               </p>
             </div>
           )}
@@ -631,7 +631,7 @@ export default function InvoiceDetailPage() {
                 disabled={sending}
                 style={{ flexShrink: 0, marginInlineStart: 12, backgroundColor: '#1A73E8', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: sending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: sending ? 0.6 : 1 }}
               >
-                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+                {sending ? t('bewerk.verzendenBezig') : `✉ ${t('bewerk.verstuurFactuur')}`}
               </button>
             </div>
           )}
@@ -649,13 +649,13 @@ export default function InvoiceDetailPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#B3261E' }}>↩</span>
                 <div>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>Gecrediteerd via {linkedCreditnota.invoice_number}</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>{t('detail.gecrediteerdVia', { number: linkedCreditnota.invoice_number ?? '' })}</p>
                   <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>{t('detail.geannuleerd')}</p>
                 </div>
               </div>
               <button onClick={() => router.push(`/dashboard/invoice/${linkedCreditnota.id}`)}
                 style={{ fontSize: 12, fontWeight: 500, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                Bekijken →
+                {t('detail.bekijken')} →
               </button>
             </div>
           )}
@@ -682,7 +682,7 @@ export default function InvoiceDetailPage() {
                 <button
                   onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
                   style={{ backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
-                >↩ Creditnota</button>
+                >↩ {t('status.credit')}</button>
               </div>
             </div>
           )}
@@ -692,22 +692,22 @@ export default function InvoiceDetailPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
               {[
                 {
-                  title: 'Van',
+                  title: t('nieuw.klant.van'),
                   lines: vanBlock.lines,
                 },
                 {
-                  title: 'Aan',
+                  title: t('nieuw.klant.aan'),
                   lines: aanBlock.lines,
                 },
                 {
-                  title: 'Details',
+                  title: t('bank.details'),
                   lines: [
-                    `Nummer: ${invoice?.invoice_number || '—'}`,
-                    `Datum: ${invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—'}`,
-                    `Vervaldatum: ${invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—'}`,
+                    t('detail.rij.nummer', { value: invoice?.invoice_number || '—' }),
+                    t('detail.rij.datum', { value: invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—' }),
+                    t('detail.rij.vervaldatum', { value: invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—' }),
                     // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
                     // "when did this get paid" is answered on the invoice itself.
-                    invoice?.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice?.payment_date))}` : '',
+                    invoice?.payment_date ? t('detail.rij.betaaldOp', { value: NL_DATE.format(new Date(invoice?.payment_date)) }) : '',
                   ]
                 },
               ].map(section => (
@@ -729,7 +729,7 @@ export default function InvoiceDetailPage() {
                 <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
                   <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
-                    <strong>Betaald in {xq.paidQuarterLabel}.</strong> Voor de btw telt deze factuur mee in {xq.bookedQuarterLabel} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.
+                    <strong>{t('detail.kwartaal.betaaldIn', { quarter: xq.paidQuarterLabel })}</strong> {t('detail.kwartaal.uitleg', { quarter: xq.bookedQuarterLabel })}
                   </div>
                 </div>
               )
@@ -745,7 +745,7 @@ export default function InvoiceDetailPage() {
                 (.inv-lines-*), niet inline: anders wint de inline style van de
                 media query en houdt de telefoon het brede raster. */}
             <div className="inv-lines-head" style={{ padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
-              {['Omschrijving','Aantal','Prijs','BTW','Totaal'].map((h, i) => (
+              {[t('nieuw.regel.omschrijving'), t('nieuw.regel.aantal'), t('detail.kolom.prijs'), 'BTW', t('ink.totaal')].map((h, i) => (
                 <p key={h} className={i === 0 ? 'inv-lines-desc' : 'inv-lines-total'} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>{h}</p>
               ))}
             </div>
@@ -785,9 +785,9 @@ export default function InvoiceDetailPage() {
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{t('nieuw.betaalinfo')}</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
-                Gelieve te betalen op{' '}
+                {t('detail.betaal.op')}{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
-                o.v.v. <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
+                {t('detail.betaal.ovv')} <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
               </p>
             </div>
           )}
@@ -804,23 +804,23 @@ export default function InvoiceDetailPage() {
           <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
-              Versturen naar {invoice.client_name}?
+              {t('bewerk.versturenNaar', { name: invoice.client_name ?? '' })}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
               {t('detail.bevestig')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.nummer')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>
-                {invoice.invoice_number || 'Wordt toegekend bij verzending'}
+                {invoice.invoice_number || t('bewerk.modal.nummerBijVerzending')}
               </dd>
-              <dt style={{ color: '#5F6368', margin: 0 }}>E-mail:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.email')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_email}</dd>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Bedrag:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.bedrag')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>€{(invoice.total_inc_btw ?? 0).toFixed(2)}</dd>
             </dl>
             <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
-              ⚠ Na verzending kun je deze factuur niet meer wijzigen. Voor correcties maak je een creditnota.
+              ⚠ {t('bewerk.modal.waarschuwing')}
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
@@ -831,7 +831,7 @@ export default function InvoiceDetailPage() {
               <button onClick={handleSendInvoice}
                 disabled={sending}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.6 : 1 }}>
-                {sending ? 'Verzenden...' : 'Versturen'}
+                {sending ? t('bewerk.verzendenBezig') : t('lijst.versturen')}
               </button>
             </div>
           </div>
@@ -847,15 +847,13 @@ export default function InvoiceDetailPage() {
           <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
-              Creditnota maken voor {invoice.invoice_number || 'deze factuur'}?
+              {invoice.invoice_number ? t('detail.credit.titel', { number: invoice.invoice_number }) : t('detail.credit.titelZonder')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
-              We maken automatisch een creditnota met dezelfde regels als negatieve bedragen.
-              De originele factuur blijft staan en wordt gemarkeerd als gecrediteerd. Je hoeft
-              niets over te typen.
+              {t('detail.credit.uitleg')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Klant:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.credit.klant')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_name}</dd>
               <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.teCrediteren')}</dt>
               <dd style={{ color: '#B3261E', fontWeight: 600, margin: 0 }}>
@@ -863,7 +861,7 @@ export default function InvoiceDetailPage() {
               </dd>
             </dl>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#5F6368', marginBottom: 6 }}>
-              Reden (optioneel)
+              {t('detail.credit.reden')}
             </label>
             <input
               type="text"
@@ -887,7 +885,7 @@ export default function InvoiceDetailPage() {
               <button onClick={createCreditnota}
                 disabled={creatingCredit}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit ? 'default' : 'pointer', opacity: creatingCredit ? 0.6 : 1 }}>
-                {creatingCredit ? 'Bezig…' : '↩ Creditnota maken'}
+                {creatingCredit ? t('detail.credit.bezig') : `↩ ${t('detail.credit.maken')}`}
               </button>
             </div>
           </div>

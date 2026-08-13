@@ -10,23 +10,27 @@ import { useRouter } from 'next/navigation'
 // header of tokens.ts for why the copies had to go — two of the values in them
 // were below the contrast floor for text.
 import { M3, COLUMN } from '@/lib/design/tokens'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const R    = { md: 12, lg: 16, xl: 24 }
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
+// [TAAL] Copy lives in the catalogue; this table keeps only the keys plus the visuals.
 const ITEMS = [
-  { icon: 'receipt_long', label: 'Mijn facturen',  sub: 'Verstuur en beheer',      href: '/dashboard/facturen', bg: M3.primary,   color: '#fff' },
-  { icon: 'folder_open',  label: 'Mijn bestanden', sub: 'Bonnen en documenten',     href: '/dashboard/bestanden', bg: M3.warning,   color: '#fff' },
+  { icon: 'receipt_long', labelKey: 'wp.facturen',  subKey: 'wp.facturen.sub',  href: '/dashboard/facturen', bg: M3.primary,   color: '#fff' },
+  { icon: 'folder_open',  labelKey: 'best.mijn',    subKey: 'wp.bestanden.sub', href: '/dashboard/bestanden', bg: M3.warning,   color: '#fff' },
   // [COHERENCE-ORPHAN] De Brug — the app's namesake invoice↔document tree — had no ZZP
   // entry point (only accountant surfaces linked to it), so the owner could never open it.
-  { icon: 'account_tree', label: 'De Brug',        sub: 'Zie hoe je facturen en documenten verbonden zijn', href: '/dashboard/brug', bg: '#1967D2', color: '#fff' },
-  { icon: 'people',       label: 'Mijn klanten',   sub: 'Klantgegevens en history', href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
-  { icon: 'shield',       label: 'Compliance-kluis', sub: '7 jaar bewaren, klaar voor je boekhouder', href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
-  { icon: 'settings',     label: 'Mijn gegevens',  sub: 'Bedrijf en account',       href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },
-]
+  { icon: 'account_tree', labelKey: 'wp.brug',      subKey: 'wp.brug.sub',      href: '/dashboard/brug', bg: '#1967D2', color: '#fff' },
+  { icon: 'people',       labelKey: 'wp.klanten',   subKey: 'wp.klanten.sub',   href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
+  { icon: 'shield',       labelKey: 'wp.kluis',     subKey: 'wp.kluis.sub',     href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
+  { icon: 'settings',     labelKey: 'wp.gegevens',  subKey: 'wp.gegevens.sub',  href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },
+] as const
 
 export default function WerkplekClient() {
+  const t = translator(useLocale())
   const router = useRouter()
 
   return (
@@ -55,8 +59,8 @@ export default function WerkplekClient() {
                 <span className="material-symbols-outlined" style={{ color: item.color, fontSize: 26 }}>{item.icon}</span>
               </div>
               <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{item.label}</p>
-                <p style={{ fontSize: 13, color: '#5F6368' }}>{item.sub}</p>
+                <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{t(item.labelKey)}</p>
+                <p style={{ fontSize: 13, color: '#5F6368' }}>{t(item.subKey)}</p>
               </div>
               <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
             </button>
@@ -82,7 +86,7 @@ export default function WerkplekClient() {
         }}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
-        Nieuwe factuur
+        {t('lijst.nieuw')}
       </button>
     </div>
   )

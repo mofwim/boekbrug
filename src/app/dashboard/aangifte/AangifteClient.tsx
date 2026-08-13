@@ -90,10 +90,10 @@ export default function AangifteClient() {
           // Postgres/English message.
           setLoadError(
             res.status === 401
-              ? 'Je sessie is verlopen — log opnieuw in.'
+              ? t('aang.sessieVerlopen')
               : (typeof json?.detail === 'string' && json.detail.trim())
                 ? json.detail.trim()
-                : 'Kon de concept-aangifte niet laden. Probeer het zo meteen opnieuw.',
+                : t('aang.ladenMislukt'),
           )
           return
         }
@@ -108,7 +108,7 @@ export default function AangifteClient() {
         setFiled((json.filed as Filed | null) ?? null)
         setFiledUnknown(json.filedUnknown === true)
       } catch {
-        if (!cancelled) setLoadError('Geen verbinding — probeer het zo meteen opnieuw.')
+        if (!cancelled) setLoadError(t('aang.geenVerbinding'))
       } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
@@ -197,31 +197,27 @@ export default function AangifteClient() {
         {art29 && art29.vatClawbackCount > 0 && (
           <div style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
             <strong style={{ fontWeight: 700 }}>
-              €{art29.vatClawbackBtw.toLocaleString('nl-NL')} voorbelasting terugbetalen
+              {t('aang.art29.terugbetalenKop', { amount: art29.vatClawbackBtw.toLocaleString('nl-NL') })}
             </strong>
             <div style={{ marginTop: 4 }}>
-              {art29.vatClawbackCount === 1 ? '1 inkoopfactuur staat' : `${art29.vatClawbackCount} inkoopfacturen staan`}
-              {' '}meer dan een jaar na de vervaldatum open. De BTW die je hierover in aftrek bracht wordt
-              dan weer verschuldigd (art. 29 lid 7 Wet OB). Heb je ze wél betaald? Koppel de betaling of zet
-              ze op betaald. Dit bedrag zit <strong>niet</strong> in de rubrieken hierboven.
+              {art29.vatClawbackCount === 1 ? t('aang.art29.openEen') : t('aang.art29.openMeer', { n: art29.vatClawbackCount })}
+              {' '}{t('aang.art29.clawbackUitleg')}
             </div>
           </div>
         )}
         {art29 && art29.badDebtCount > 0 && (
           <div style={{ background: M3.successContainer, color: M3.success, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
             <strong style={{ fontWeight: 700 }}>
-              €{art29.badDebtReclaimableBtw.toLocaleString('nl-NL')} BTW terug te vragen
+              {t('aang.art29.terugvragenKop', { amount: art29.badDebtReclaimableBtw.toLocaleString('nl-NL') })}
             </strong>
             <div style={{ marginTop: 4 }}>
-              {art29.badDebtCount === 1 ? '1 verkoopfactuur staat' : `${art29.badDebtCount} verkoopfacturen staan`}
-              {' '}meer dan een jaar na de vervaldatum onbetaald. De BTW die je hierover afdroeg kun je
-              terugvragen (oninbare vordering, art. 29 Wet OB). Ook dit bedrag zit <strong>niet</strong> in
-              de rubrieken hierboven — bespreek het tijdvak met je boekhouder.
+              {art29.badDebtCount === 1 ? t('aang.art29.onbetaaldEen') : t('aang.art29.onbetaaldMeer', { n: art29.badDebtCount })}
+              {' '}{t('aang.art29.terugvraagUitleg')}
             </div>
           </div>
         )}
 
-        {loading && <div style={{ color: M3.neutral, fontSize: 14 }}>Berekenen…</div>}
+        {loading && <div style={{ color: M3.neutral, fontSize: 14 }}>{t('aang.berekenen')}</div>}
 
         {/* [LOAD-REASON] Say WHICH failure it was. A concept that cannot be built is not a
             detail: the reasons the route refuses on purpose (it could not read the owner's
@@ -229,7 +225,7 @@ export default function AangifteClient() {
             session has one the owner can actually act on. */}
         {!loading && !data && (
           <div style={{ color: M3.neutral, fontSize: 14, lineHeight: 1.55 }}>
-            {loadError ?? 'Kon de concept-aangifte niet laden.'}
+            {loadError ?? t('aang.ladenMisluktKort')}
           </div>
         )}
 
@@ -283,8 +279,7 @@ export default function AangifteClient() {
                   {t('aang.icp')}
                 </div>
                 <div style={{ fontSize: 13, color: M3.neutral, lineHeight: 1.55, marginBottom: 12 }}>
-                  Leveringen aan ondernemers in de EU (rubriek 3b hierboven) moet je óók per BTW-nummer opgeven.
-                  Dit is <strong>geen onderdeel</strong> van de BTW-aangifte en wordt hier <strong>niet</strong> ingediend.
+                  {t('aang.icp.uitleg1')} {t('aang.icp.uitleg2')}
                 </div>
                 {icp.lines.map((l) => (
                   <div key={l.vatNumber} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '9px 0', borderBottom: `1px solid ${M3.outlineVariant}` }}>

@@ -90,7 +90,7 @@ export default function DraftQueue({ clients }: Props) {
 
   function clientName(id: string): string {
     const c = clients.find(x => x.id === id)
-    return c?.company_name || c?.full_name || 'Klant'
+    return c?.company_name || c?.full_name || t('dq.klant')
   }
 
   // Clears only the sent/feedback status — never a draft the user is writing.
@@ -124,7 +124,7 @@ export default function DraftQueue({ clients }: Props) {
         body: JSON.stringify({ client_id: selectedId, item: { description, source: 'manual' } }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(failureText(res.status, json, 'Toevoegen mislukt')); return }
+      if (!res.ok) { setError(failureText(res.status, json, t('dq.toevoegenMislukt'))); return }
       setQueues(prev => ({ ...prev, [selectedId]: json.items }))
       setInput('')
       clearStatus()
@@ -162,7 +162,7 @@ export default function DraftQueue({ clients }: Props) {
         body: JSON.stringify({ action: 'compose', client_id: selectedId }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(failureText(res.status, json, 'Opstellen mislukt')); return }
+      if (!res.ok) { setError(failureText(res.status, json, t('dq.opstellenMislukt'))); return }
       setSubject(json.subject ?? '')
       setBodyText(json.body ?? '')
     } catch {
@@ -189,7 +189,7 @@ export default function DraftQueue({ clients }: Props) {
         }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(failureText(res.status, json, 'Verzenden mislukt')); return }
+      if (!res.ok) { setError(failureText(res.status, json, t('dq.verzendenMislukt'))); return }
       setSentOk(true)
       setSentCleared(!!json.cleared)
       if (json.cleared) {
@@ -415,7 +415,7 @@ export default function DraftQueue({ clients }: Props) {
               {error && <p style={{ fontSize: 13, color: '#C5221F', margin: 0 }}>{error}</p>}
               {sentOk && (
                 <p style={{ fontSize: 13, color: '#137333', fontWeight: 500, margin: 0 }}>
-                  ✓ E-mail verstuurd naar {clientName(selectedId)}.{sentCleared ? ' De lijst is gewist.' : ''}
+                  {t('dq.verstuurdNaar', { naam: clientName(selectedId) })}{sentCleared ? ` ${t('dq.lijstGewist')}` : ''}
                 </p>
               )}
 

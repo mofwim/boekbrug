@@ -108,11 +108,11 @@ export function InvoiceTable(props: InvoiceTableProps) {
 
   const emptyLabel = isAccountant
     ? statusFilter === 'all'
-      ? 'Geen betaalde facturen'
-      : `Geen facturen met status "${statusFilter}"`
+      ? t('lijst.geenBetaalde')
+      : t('lijst.geenMetStatus', { status: statusFilter })
     : statusFilter === 'all'
-      ? 'Nog geen facturen'
-      : `Geen ${statusLabel(statusFilter, taal).toLowerCase()} facturen`
+      ? t('lijst.nogGeen')
+      : t('lijst.geenMetStatus', { status: statusLabel(statusFilter, taal) })
 
   return (
     <div className="card overflow-hidden">

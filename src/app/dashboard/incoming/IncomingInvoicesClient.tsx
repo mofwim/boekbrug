@@ -320,14 +320,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       const res = await fetch(`/api/documents/${docId}/read-as-invoice`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setRereadMessage(typeof json?.error === "string" ? json.error : "Dat lukte niet — probeer het zo meteen opnieuw.");
+        setRereadMessage(typeof json?.error === "string" ? json.error : t('ink.reread.fout'));
         return;
       }
-      setRereadMessage(typeof json?.message === "string" ? json.message : "Klaar.");
+      setRereadMessage(typeof json?.message === "string" ? json.message : t('ink.reread.klaar'));
       // Booked → it left the unread list; drop it here too rather than making the owner reload.
       if (json?.booked) setUnreadDocs((prev) => prev.filter((d) => d.id !== docId));
     } catch {
-      setRereadMessage("Dat lukte niet — controleer je verbinding en probeer het opnieuw.");
+      setRereadMessage(t('ink.reread.foutVerbinding'));
     } finally {
       setRereadingId(null);
     }
@@ -375,7 +375,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         const data = await res.json();
 
         if (data.error) {
-          setSyncResult(`Fout: ${data.error}`);
+          setSyncResult(`${t('ink.sync.foutPrefix')} ${data.error}`);
           setSyncing(false);
           return;
         }
@@ -401,8 +401,8 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           if (noProgress) {
             setSyncResult(
               totalSaved > 0
-                ? `${totalSaved} opgeslagen — de rest kon nu niet verwerkt worden, probeer later opnieuw`
-                : "Er kon nu niets verwerkt worden — probeer het later opnieuw"
+                ? t('ink.sync.deelOpgeslagen', { n: totalSaved })
+                : t('ink.sync.nietsVerwerkt')
             );
             setSyncing(false);
             return;
@@ -410,7 +410,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           lastRemaining = remaining;
           // Live progress — the denominator grows as we learn about the backlog
           setSyncResult(
-            `Bezig met importeren… ${totalSaved} opgeslagen, nog ~${remaining} te gaan`
+            t('ink.sync.bezig', { n: totalSaved, rest: remaining })
           );
           continue; // next batch immediately
         }
@@ -423,23 +423,24 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         //   · rare gap    → "even controleren" without alarm
         let message: string;
         if (anyUnbalanced) {
-          message = `${totalSaved} geïmporteerd — we controleren nog een paar items`;
+          message = t('ink.sync.controleren', { n: totalSaved });
         } else if (totalErrors > 0) {
-          message = `${totalSaved} geïmporteerd. ${totalErrors} worden zo opnieuw geprobeerd.`;
+          message = t('ink.sync.opnieuwGeprobeerd', { n: totalSaved, fouten: totalErrors });
         } else {
           const extra = totalSkipped + totalDuplicate;
           message =
             extra > 0
-              ? `${totalSaved} geïmporteerd. Alles is verwerkt (${extra} overgeslagen of al aanwezig).`
-              : `${totalSaved} geïmporteerd. Alles is verwerkt.`;
+              ? t('ink.sync.verwerktExtra', { n: totalSaved, extra })
+              : t('ink.sync.verwerkt', { n: totalSaved });
         }
         // [COULD-NOT-READ] Never hide files we couldn't read: tell the owner to check
         // them in bestanden (they were kept, not discarded, and not booked as anything).
         if (totalCouldNotRead > 0) {
-          message +=
+          message += ' ' + (
             totalCouldNotRead === 1
-              ? " 1 bestand konden we niet lezen — het staat in je bestanden, controleer het even."
-              : ` ${totalCouldNotRead} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.`;
+              ? t('ink.sync.nietLezenEen')
+              : t('ink.sync.nietLezenMeer', { n: totalCouldNotRead })
+          );
         }
         setSyncResult(message);
         setTimeout(() => router.refresh(), 1500);
@@ -448,13 +449,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
       // MAX_ROUNDS hit — extremely large mailbox; be honest, let them tap again
       setSyncResult(
-        `${totalSaved} opgeslagen — er staan er nog meer klaar, synchroniseer opnieuw`
+        t('ink.sync.meerKlaar', { n: totalSaved })
       );
     } catch {
       setSyncResult(
         totalSaved > 0
-          ? `${totalSaved} opgeslagen — verbinding onderbroken, synchroniseer opnieuw voor de rest`
-          : "Sync mislukt — probeer opnieuw"
+          ? t('ink.sync.onderbroken', { n: totalSaved })
+          : t('ink.sync.mislukt')
       );
     } finally {
       setSyncing(false);
@@ -463,9 +464,9 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
   const handleDisconnect = async () => {
     const ok = await dialog.confirm({
-      title: "E-mailverbinding verwijderen?",
-      message: "Nieuwe facturen komen dan niet meer automatisch binnen. Facturen die al ingelezen zijn, blijven staan.",
-      confirmLabel: "Verbinding verwijderen",
+      title: t('ink.email.verwijderenVraag'),
+      message: t('ink.email.verwijderenUitleg'),
+      confirmLabel: t('ink.email.verwijderenBevestig'),
       danger: true,
     });
     if (!ok) return;
@@ -497,12 +498,12 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         setSkippedError(
           typeof data?.error === "string" && data.error
             ? data.error
-            : "We konden deze lijst nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er iets is overgeslagen.",
+            : t('ink.skipped.fout'),
         );
       }
     } catch {
       setSkippedError(
-        "We konden deze lijst nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er iets is overgeslagen.",
+        t('ink.skipped.fout'),
       );
     } finally {
       setSkippedLoading(false);
@@ -581,7 +582,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               cursor: syncing ? "default" : "pointer",
             }}
           >
-            {syncing ? "Bezig…" : "Synchroniseer"}
+            {syncing ? t('act.bezig') : t('ink.sync.knop')}
           </button>
           <button
             onClick={() => setManageOpen((o) => !o)}
@@ -621,7 +622,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           <div
             style={{
               marginTop: 8, fontSize: 13,
-              color: syncResult.startsWith("Fout") ? M3.error : M3.success,
+              color: syncResult.startsWith(t('ink.sync.foutPrefix')) ? M3.error : M3.success,
             }}
           >
             {syncResult}
@@ -654,8 +655,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           ) : (
             <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
               <div style={{ fontSize: 12.5, color: "#3c4043", lineHeight: 1.5, marginBottom: 8 }}>
-                Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al
-                geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
+                {t('ink.backfill.uitleg')}
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <DateFieldNL
@@ -680,7 +680,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                     cursor: syncing || !backfillDate ? "not-allowed" : "pointer",
                   }}
                 >
-                  {syncing ? "Bezig…" : "Opnieuw ophalen"}
+                  {syncing ? t('act.bezig') : t('ink.backfill.knop')}
                 </button>
                 <button
                   onClick={() => setBackfillOpen(false)}
@@ -722,7 +722,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 </button>
               </div>
               {skippedLoading ? (
-                <div style={{ fontSize: 13, color: "#5f6368" }}>Laden…</div>
+                <div style={{ fontSize: 13, color: "#5f6368" }}>{t('oneind.laden')}</div>
               ) : skippedError ? (
                 /* [SKIPPED-READ-HONEST] The failure, in words, INSTEAD of the list. Not beside it:
                    an all-clear next to an error is still an all-clear, and "Niets overgeslagen" is
@@ -734,7 +734,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 <>
                   {couldNotReadCount > 0 && (
                     <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
-                      {couldNotReadCount} {couldNotReadCount === 1 ? "bestand konden" : "bestanden konden"} we niet lezen — {couldNotReadCount === 1 ? "het staat" : "ze staan"} in je bestanden, controleer {couldNotReadCount === 1 ? "het" : "ze"} even.
+                      {couldNotReadCount === 1 ? t('ink.sync.nietLezenEen') : t('ink.sync.nietLezenMeer', { n: couldNotReadCount })}
                     </div>
                   )}
                   {/* [TWEEDE-KANS] The sentence above said "ze staan in je bestanden" and there was
@@ -745,8 +745,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   {(unreadDocs?.length ?? 0) > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 6, lineHeight: 1.5 }}>
-                        Wij lezen inmiddels meer bestandstypes dan toen deze binnenkwamen. Laat het opnieuw proberen —
-                        er verandert niets aan je boekhouding tot je het in de wachtrij bevestigt.
+                        {t('ink.reread.uitleg')}
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {(unreadDocs ?? []).map((d) => (
@@ -759,7 +758,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                               disabled={rereadingId === d.id}
                               style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, border: "1px solid #dadce0", background: "#fff", color: "#0B57D0", borderRadius: 999, padding: "5px 12px", cursor: rereadingId === d.id ? "default" : "pointer", minHeight: 32 }}
                             >
-                              {rereadingId === d.id ? "Bezig…" : "Lees opnieuw"}
+                              {rereadingId === d.id ? t('act.bezig') : t('ink.reread.knop')}
                             </button>
                           </div>
                         ))}
@@ -769,7 +768,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                           likeliest to be the one being looked for. */}
                       {couldNotReadCount > unreadDocs.length && (
                         <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 6, lineHeight: 1.5 }}>
-                          Dit zijn de {unreadDocs.length} nieuwste van {couldNotReadCount}. De rest vind je bij je bestanden.
+                          {t('ink.reread.kap', { n: unreadDocs.length, totaal: couldNotReadCount })}
                         </div>
                       )}
                       {rereadMessage && (
@@ -826,9 +825,11 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                       full of signature images is not worth storing), so the honest route back is the
                       mailbox itself — which is why the rows above now carry their date. */}
                   <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
-                    Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op. Open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.
+                    {t('ink.email.echteFactuur')}
                     <br />
-                    {t('ink.email.misFactuur')} <em>niet</em> tussen staat? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven.
+                    {/* [TAAL] One key per sentence — the old <em>niet</em> split cannot survive a
+                        word order that changes per language. */}
+                    {t('ink.email.misFactuur')} {t('ink.email.nietTussen')}
                   </div>
                 </>
               )}
@@ -893,7 +894,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             }}
           >
             <span style={{ fontSize: 20 }}>{provider === "gmail" ? "📧" : "📮"}</span>
-            Verbind {provider === "gmail" ? "Gmail" : "Outlook"}
+            {t('ink.email.verbindProvider', { provider: provider === "gmail" ? "Gmail" : "Outlook" })}
           </a>
         ))}
       </div>
@@ -1083,7 +1084,7 @@ export function ConfirmPaidModal({
     // being rendered. A message about an invisible field is worse than the silence it replaced.
     setPayStep(false);
     setEditing(true);
-    showToast("Vul eerst de factuurdatum in — die bepaalt in welk kwartaal deze factuur telt");
+    showToast(t('ink.datumEerst'));
     setTimeout(() => {
       dateInputRef.current?.focus();
       dateInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1184,7 +1185,7 @@ export function ConfirmPaidModal({
                     return (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
-                          Staat dit bedrag op je factuur?
+                          {t('ink.bedrag.staatOp')}
                         </div>
                         <button
                           type="button"
@@ -1195,7 +1196,7 @@ export function ConfirmPaidModal({
                             fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
                           }}
                         >
-                          Neem {NL_CURRENCY.format(alt.inc)} over
+                          {t('ink.bedrag.neemOver', { bedrag: NL_CURRENCY.format(alt.inc) })}
                         </button>
                       </div>
                     )
@@ -1207,13 +1208,13 @@ export function ConfirmPaidModal({
                     const options: Array<{ label: string; t: { ex: number; btw: number; incl: number } }> = []
                     if (rec.exclRepairPossible) {
                       options.push({
-                        label: `Excl. BTW = ${NL_CURRENCY.format(rec.impliedExcl)}`,
+                        label: t('ink.bedrag.exclIs', { bedrag: NL_CURRENCY.format(rec.impliedExcl) }),
                         t: { ex: rec.impliedExcl, btw: invoice.btw_amount, incl: stored },
                       })
                     }
                     if (rec.btwRepairPossible) {
                       options.push({
-                        label: `BTW = ${NL_CURRENCY.format(rec.impliedBtw)}`,
+                        label: t('ink.bedrag.btwIs', { bedrag: NL_CURRENCY.format(rec.impliedBtw) }),
                         t: { ex: invoice.total_ex_btw, btw: rec.impliedBtw, incl: stored },
                       })
                     }
@@ -1221,7 +1222,7 @@ export function ConfirmPaidModal({
                     return (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
-                          Welke klopt volgens de factuur? Het totaal ({NL_CURRENCY.format(stored)}) blijft staan.
+                          {t('ink.bedrag.welkeKlopt', { bedrag: NL_CURRENCY.format(stored) })}
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {options.map((o) => (
@@ -1334,9 +1335,7 @@ export function ConfirmPaidModal({
               </div>
               {editing && (
                 <div style={{ fontSize: 12, color: "#5f6368", lineHeight: 1.4, marginTop: 8 }}>
-                  Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag
-                  exclusief rekent zichzelf uit. Staat er statiegeld, emballage of een retour op de
-                  factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.
+                  {t('corr.bedragUitleg')} {t('corr.statiegeld')}
                 </div>
               )}
 
@@ -1353,11 +1352,7 @@ export function ConfirmPaidModal({
                     style={{ marginTop: 2, width: 16, height: 16, accentColor: "#0B8043" }}
                   />
                   <span style={{ fontSize: 12, color: "#3c4043", lineHeight: 1.4 }}>
-                    <strong>{t('ink.isCreditnota')}</strong> — geld dat jou toekomt. Vink dit aan als er
-                    “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden
-                    dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw
-                    wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen —
-                    staat er al een, dan blijft die staan.
+                    <strong>{t('ink.isCreditnota')}</strong>{t('corr.creditUitleg')}
                   </span>
                 </label>
               )}
@@ -1381,13 +1376,13 @@ export function ConfirmPaidModal({
                 }}>
                   <span style={{ fontSize: 14, lineHeight: 1.3 }}>💡</span>
                   <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.4 }}>
-                    De AI was niet zeker over{" "}
-                    {[
-                      vendorLow ? "de leverancier" : null,
-                      numberLow ? "het factuurnummer" : null,
-                      dateLow ? "de factuurdatum" : null,
-                    ].filter(Boolean).join(", ")}
-                    . Controleer en pas aan waar nodig.
+                    {t('ink.onzeker.zin', {
+                      velden: [
+                        vendorLow ? t('ink.onzeker.leverancier') : null,
+                        numberLow ? t('ink.onzeker.nummer') : null,
+                        dateLow ? t('ink.onzeker.datum') : null,
+                      ].filter(Boolean).join(", "),
+                    })}
                   </span>
                 </div>
               )}
@@ -1395,7 +1390,7 @@ export function ConfirmPaidModal({
               {/* Vendor */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
                 <span style={{ fontSize: 14, color: vendorLow ? "#EA8600" : "#5f6368", flexShrink: 0, fontWeight: vendorLow ? 600 : 400 }}>
-                  Leverancier {vendorLow && "⚠️"}
+                  {t('inkoop.leverancier')} {vendorLow && "⚠️"}
                 </span>
                 {editing ? (
                   <input
@@ -1541,7 +1536,7 @@ export function ConfirmPaidModal({
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
                   }}
                 >
-                  {submitting ? "Bezig…" : "Toch niet betaald — verifieer"}
+                  {submitting ? t('act.bezig') : t('ink.tochNietBetaald')}
                 </button>
               </>
             ) : (
@@ -1557,7 +1552,7 @@ export function ConfirmPaidModal({
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
                   }}
                 >
-                  {submitting ? "Bezig…" : "Bevestig / verifieer"}
+                  {submitting ? t('act.bezig') : t('ink.bevestigVerifieer')}
                 </button>
 
                 {/* SECONDARY — mark as paid → opens Bank/Contant choice */}
@@ -1597,7 +1592,7 @@ export function ConfirmPaidModal({
               {t('ink.hoeBetaald')}
             </div>
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
-              De factuur wordt als betaald gemarkeerd en doorgestuurd naar je boekhouder.
+              {t('ink.betaaldUitleg')}
             </div>
 
             {/* [BRIDGE-QUARTER] Real payment date — the day the money actually
@@ -1627,7 +1622,7 @@ export function ConfirmPaidModal({
             {/* [BRIDGE-QUARTER] Confirmation amount — UI only for now (not stored).
                 Explicit defer per brief §2: helps the user sanity-check, no DB write. */}
             <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#202124", marginBottom: 6 }}>
-              {t('ink.betaaldBedrag')} <span style={{ color: "#5f6368", fontWeight: 400 }}>(optioneel)</span>
+              {t('ink.betaaldBedrag')} <span style={{ color: "#5f6368", fontWeight: 400 }}>{t('ink.optioneel')}</span>
             </label>
             <input
               type="number"
@@ -1691,12 +1686,12 @@ export function ConfirmPaidModal({
                     }}>
                       <span style={{ fontSize: 14, lineHeight: 1.2 }}>🧾</span>
                       <span>
-                        {t('ink.bonVermeldt')} <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? "contant" : "bankpas")}</strong>
-                        {fc?._intake_paid_card4 ? ` (pas ••••${fc._intake_paid_card4})` : ""} —
-                        {uitPapier === "kas"
-                          ? " dit is contant betaald en gaat naar je kasboek."
-                          : " dit is met de bank betaald en wordt tegen je bankregel gelegd."}
-                        {" Klopt dat niet? Kies dan het andere."}
+                        {t('ink.bonVermeldt')} <strong>{fc?._intake_paid_evidence || (uitPapier === "kas" ? t('ink.papier.contant') : t('ink.papier.bankpas'))}</strong>
+                        {fc?._intake_paid_card4 ? ` ${t('ink.papier.pas', { cijfers: fc._intake_paid_card4 })}` : ""} —
+                        {" "}{uitPapier === "kas"
+                          ? t('ink.papier.kas')
+                          : t('ink.papier.bank')}
+                        {" "}{t('ink.papier.kloptNiet')}
                       </span>
                     </div>
                   )}
@@ -1782,7 +1777,7 @@ function ConfirmDialog({
         {choices && choices.length > 0 && (
           <div style={{ textAlign: "start", marginBottom: 18 }}>
             <div style={{ fontSize: 12, color: "#80868b", marginBottom: 8, fontWeight: 600 }}>
-              Waarom? (optioneel)
+              {t('ink.negeren.waarom')}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {choices.map((c) => {
@@ -1902,7 +1897,9 @@ export function InvoiceCard({
       return null;
     }
     const of = typeof s.possible_duplicate_of === "string" ? s.possible_duplicate_of.trim() : "";
-    return { label: of ? `factuur ${of}` : "de andere factuur" };
+    // [TAAL] Only the invoice NUMBER is data; every sentence that mentions the other invoice has
+    // its own with/without-number variant in the catalogue (a noun is not a parameter).
+    return { number: of || null };
   })();
 
   // [MULTI-INVOICE] "Nee, dit is één factuur" — the owner's answer to a suspicion.
@@ -1921,13 +1918,9 @@ export function InvoiceCard({
   const handleDismissMultiInvoice = async () => {
     if (dismissingMulti) return;
     const ok = await dialog.confirm({
-      title: "Bevat dit bestand één factuur?",
-      message:
-        "We konden niet uitsluiten dat er meer facturen in dit bestand zitten. Zeg je dat het er één is, " +
-        "dan halen we die waarschuwing weg en beoordelen we deze factuur verder op zichzelf.\n\n" +
-        "Andere waarschuwingen op deze factuur blijven staan. Zit er tóch een tweede factuur in, voeg die " +
-        "dan los toe — hij staat nu nergens in je boekhouding.",
-      confirmLabel: "Ja, dit is één factuur",
+      title: t('ink.multi.vraag'),
+      message: t('ink.multi.uitleg'),
+      confirmLabel: t('ink.multi.bevestig'),
     });
     if (!ok) return;
     setDismissingMulti(true);
@@ -1936,17 +1929,17 @@ export function InvoiceCard({
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         await dialog.alert({
-          title: "Niet gelukt",
-          message: data?.detail || "De waarschuwing kon niet worden weggehaald — ververs de pagina en probeer het opnieuw.",
+          title: t('ink.nietGelukt'),
+          message: data?.detail || t('ink.multi.foutWeghalen'),
         });
         return;
       }
-      toast("Genoteerd — deze factuur wordt verder op zichzelf beoordeeld");
+      toast(t('ink.multi.genoteerd'));
       router.refresh(); // the flag is answered; the queue re-renders without it
     } catch {
       await dialog.alert({
-        title: "Geen verbinding",
-        message: "De waarschuwing is niet weggehaald. Controleer je verbinding en probeer het opnieuw.",
+        title: t('inkoop.geenVerbinding'),
+        message: t('ink.multi.foutVerbinding'),
       });
     } finally {
       setDismissingMulti(false);
@@ -1960,13 +1953,13 @@ export function InvoiceCard({
     // leaves the books, and that it comes back with one tap. The server decides for real — this
     // dialog is the owner's informed yes, never the permission.
     const ok = await dialog.confirm({
-      title: `Vervangt deze ${supersedeTarget.label}?`,
-      message:
-        `${supersedeTarget.label.charAt(0).toUpperCase() + supersedeTarget.label.slice(1)} verdwijnt uit je lijst ` +
-        `en telt niet meer mee in je kosten en voorbelasting. Hij blijft bewaard (7 jaar bewaarplicht) en je kunt ` +
-        `hem terugzetten bij Inkomend › Genegeerd.\n\n` +
-        `Deze factuur blijft gewoon in de wachtrij staan — je controleert hem daarna zoals altijd.`,
-      confirmLabel: "Ja, vervangen",
+      title: supersedeTarget.number
+        ? t('ink.vervang.vraagMetNr', { nr: supersedeTarget.number })
+        : t('ink.vervang.vraagZonderNr'),
+      message: supersedeTarget.number
+        ? t('ink.vervang.uitlegMetNr', { nr: supersedeTarget.number })
+        : t('ink.vervang.uitlegZonderNr'),
+      confirmLabel: t('ink.vervang.bevestig'),
     });
     if (!ok) return;
     setSuperseding(true);
@@ -1977,21 +1970,21 @@ export function InvoiceCard({
         // The server asked the same questions of fresher data — show ITS answer, not ours. This
         // is where "the old one is already paid" lands, with the exit named.
         await dialog.alert({
-          title: "Vervangen kan nu niet",
-          message: data?.detail || "Vervangen mislukt — ververs de pagina en probeer het opnieuw.",
+          title: t('ink.vervang.kanNiet'),
+          message: data?.detail || t('ink.vervang.mislukt'),
         });
         return;
       }
       toast(
         data?.archivedNumber
-          ? `Factuur ${data.archivedNumber} staat nu bij Genegeerd`
-          : "De oude factuur staat nu bij Genegeerd",
+          ? t('ink.vervang.genegeerdMetNr', { nr: data.archivedNumber })
+          : t('ink.vervang.genegeerdZonderNr'),
       );
       router.refresh(); // the flag is answered; the queue re-renders without it
     } catch {
       await dialog.alert({
-        title: "Geen verbinding",
-        message: "Vervangen is niet gelukt. Controleer je verbinding en probeer het opnieuw.",
+        title: t('inkoop.geenVerbinding'),
+        message: t('ink.vervang.foutVerbinding'),
       });
     } finally {
       setSuperseding(false);
@@ -2010,17 +2003,17 @@ export function InvoiceCard({
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         await dialog.alert({
-          title: "Niet gelukt",
-          message: data?.detail || "De melding kon niet worden weggehaald — probeer het opnieuw.",
+          title: t('ink.nietGelukt'),
+          message: data?.detail || t('ink.dubbel.foutWeghalen'),
         });
         return;
       }
-      toast("Genoteerd — dit zijn twee verschillende facturen");
+      toast(t('ink.dubbel.genoteerd'));
       router.refresh();
     } catch {
       await dialog.alert({
-        title: "Geen verbinding",
-        message: "De melding kon niet worden weggehaald. Probeer het opnieuw.",
+        title: t('inkoop.geenVerbinding'),
+        message: t('ink.dubbel.foutVerbinding'),
       });
     } finally {
       setSuperseding(false);
@@ -2059,29 +2052,28 @@ export function InvoiceCard({
         // document away. See docs/MOTION_SYSTEM.md.
         if (data.archived) {
           await dialog.alert({
-            title: "Dit lijkt geen boekbare factuur",
+            title: t('ink.herlees.geenFactuur'),
             message:
-              "Bij het opnieuw inlezen vonden we geen factuurgegevens" +
+              t('ink.herlees.geenGegevens') +
               (data.reason ? ` (${data.reason})` : "") +
-              ". Hij staat nu bij Genegeerd, met reden “Geen factuur”.\n\n" +
-              "Klopt dat niet? Zet hem daar met één tik terug.",
+              ". " + t('ink.herlees.naarGenegeerd'),
           });
           router.refresh(); // de kaart hoort nu bij Genegeerd, niet meer in de wachtrij
           return;
         }
         await dialog.alert({
-          title: "Dit lijkt geen boekbare factuur",
+          title: t('ink.herlees.geenFactuur'),
           message:
-            "Bij het opnieuw inlezen vonden we geen factuurgegevens" +
+            t('ink.herlees.geenGegevens') +
             (data.reason ? ` (${data.reason})` : "") +
             ". " +
-            (data.detail ?? "De opgeslagen gegevens zijn niet gewijzigd — je kunt hem zelf negeren."),
+            (data.detail ?? t('ink.herlees.nietGewijzigd')),
         });
       } else {
-        toast(data.error || "Opnieuw inlezen is niet gelukt — probeer het later opnieuw.", { tone: "error" });
+        toast(data.error || t('ink.herlees.mislukt'), { tone: "error" });
       }
     } catch {
-      toast("Opnieuw inlezen is niet gelukt — probeer het later opnieuw.", { tone: "error" });
+      toast(t('ink.herlees.mislukt'), { tone: "error" });
     } finally {
       setReimporting(false);
     }
@@ -2178,7 +2170,7 @@ export function InvoiceCard({
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}
           >
-            {invoice.client_name || "Onbekende afzender"}
+            {invoice.client_name || t('ink.onbekendeAfzender')}
           </div>
           {/* [INCOMING-CHROME] The date and every badge on ONE line, in the app's
               own overflow strip (.inv-strip in globals.css: no wrap, scrolls
@@ -2307,7 +2299,7 @@ export function InvoiceCard({
             const remaining = Math.max(0, total - paid);
             return (
               <span
-                title={`Deelbetaling: € ${paid.toFixed(2)} van € ${total.toFixed(2)} ontvangen`}
+                title={t('ink.deelbetaling', { betaald: paid.toFixed(2), totaal: total.toFixed(2) })}
                 style={{
                   fontSize: 11, fontWeight: 600, color: "#b06000", background: "#fef7e0",
                   border: "1px solid #fde293", borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap",
@@ -2408,7 +2400,7 @@ export function InvoiceCard({
                     }}
                   >
                     <span style={{ fontSize: 13 }}>↻</span>
-                    {reimporting ? "Bezig met opnieuw inlezen…" : "Opnieuw inlezen"}
+                    {reimporting ? t('ink.opnieuwBezig') : t('ink.herleesKnop')}
                   </button>
                   {/* [SUPERSEDE] "Deze vervangt factuur X" — the answer to the one flag on this
                       card that is not a reading problem. A supplier who invoices the wrong amount
@@ -2431,8 +2423,8 @@ export function InvoiceCard({
                     >
                       <span style={{ fontSize: 13 }}>⇄</span>
                       {superseding
-                        ? "Bezig…"
-                        : `Deze vervangt ${supersedeTarget.label}`}
+                        ? t('act.bezig')
+                        : (supersedeTarget.number ? t('ink.vervang.knopMetNr', { nr: supersedeTarget.number }) : t('ink.vervang.knopZonderNr'))}
                     </button>
                   )}
                   {/* [SUPERSEDE] The second answer, so the question can be closed BOTH ways. Without
@@ -2473,7 +2465,7 @@ export function InvoiceCard({
                       }}
                     >
                       <span style={{ fontSize: 13 }}>✓</span>
-                      {dismissingMulti ? "Bezig…" : "Nee, dit is één factuur"}
+                      {dismissingMulti ? t('act.bezig') : t('ink.multi.nee')}
                     </button>
                   )}
               </div>
@@ -2492,7 +2484,7 @@ export function InvoiceCard({
               background: "#fff4e5", borderRadius: 10, border: "1px solid #ffd9a8",
             }}>
               <div style={{ flex: 1, minWidth: 180, fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
-                Mogelijk dubbel met {supersedeTarget.label}.
+                {supersedeTarget.number ? t('ink.dubbel.metNr', { nr: supersedeTarget.number }) : t('ink.dubbel.zonderNr')}
               </div>
               <button
                 onClick={handleSupersede}
@@ -2503,7 +2495,7 @@ export function InvoiceCard({
                   color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
                 }}
               >
-                {superseding ? "Bezig…" : `Deze vervangt ${supersedeTarget.label}`}
+                {superseding ? t('act.bezig') : (supersedeTarget.number ? t('ink.vervang.knopMetNr', { nr: supersedeTarget.number }) : t('ink.vervang.knopZonderNr'))}
               </button>
               <button
                 onClick={handleDismissDuplicate}
@@ -2538,7 +2530,7 @@ export function InvoiceCard({
             />
             <DetailRow
               label={t('ink.bron')}
-              value={invoice.source === "email" ? "E-mail" : "Upload"}
+              value={invoice.source === "email" ? t('nieuw.bevestig.email') : t('ink.bron.upload')}
             />
           </div>
 
@@ -2583,7 +2575,7 @@ export function InvoiceCard({
                 }}
               >
                 <span style={{ fontSize: 13 }}>↻</span>
-                {reimporting ? "Bezig met opnieuw inlezen…" : "Opnieuw inlezen"}
+                {reimporting ? t('ink.opnieuwBezig') : t('ink.herleesKnop')}
               </button>
             </div>
           )}
@@ -2600,9 +2592,9 @@ export function InvoiceCard({
             >
               <span style={{ fontSize: 15 }}>📁</span>
               <span style={{ flex: 1, fontSize: 13, color: "#5f6368" }}>
-                Opgeslagen in{" "}
+                {t('ink.opgeslagenIn')}{" "}
                 <span style={{ color: "#202124", fontWeight: 600 }}>
-                  {invoice.folder_name || "Mijn Bestanden"}
+                  {invoice.folder_name || t('best.mijn')}
                 </span>
               </span>
               <span style={{ fontSize: 15, color: "#dadce0" }}>›</span>
@@ -2622,13 +2614,13 @@ export function InvoiceCard({
                 color: invoice.status === "paid" ? "#137333" : "#1a56c4",
               }}>
                 <span style={{ fontSize: 15 }}>{invoice.status === "paid" ? "✓" : "•"}</span>
-                {invoice.status === "paid" ? "Betaald" : "Bevestigd · te betalen"}
+                {invoice.status === "paid" ? t('status.paid') : t('ink.bevestigdTeBetalen')}
               </span>
               <a
                 href="/dashboard/incoming/manage"
                 style={{ marginInlineStart: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
               >
-                Beheren ›
+                {t('ink.beheren')} ›
               </a>
             </div>
           ) : mode === "pending" ? (
@@ -2664,7 +2656,7 @@ export function InvoiceCard({
                   fontWeight: 700, fontSize: 14, cursor: "pointer",
                 }}
               >
-                Verifiëren
+                {t('ink.verifieren')}
               </button>
             </div>
           ) : (
@@ -2724,17 +2716,19 @@ type IntakeResult = {
   invoiceId?: string;
 };
 
-const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string; label: string }> = {
-  auto:      { icon: "✓",  color: M3.success, label: "Automatisch verwerkt" },
-  invoice:   { icon: "✓",  color: M3.success, label: "Wacht op je controle" },
-  statement: { icon: "🧾", color: "#9a5b00",  label: "Rekeningoverzicht gecontroleerd" },
-  turnover:  { icon: "🛒", color: M3.success, label: "Omzet geboekt" },
-  ledger:    { icon: "🔗", color: "#7B1FA2",  label: "Controle-check" },
-  document:  { icon: "📁", color: "#1a73e8",  label: "In je bestanden" },
-  bank:      { icon: "🏦", color: "#1a73e8",  label: "Bankafschrift" },
-  duplicate: { icon: "ℹ️", color: "#5f6368",  label: "Al toegevoegd" },
-  error:     { icon: "⚠️", color: "#b3261e",  label: "Niet gelukt" },
-};
+// [TAAL] The labels live in the catalogue; this table keeps only the keys plus the visuals,
+// rendered through the component's translator.
+const RESULT_META = {
+  auto:      { icon: "✓",  color: M3.success, labelKey: "ink.result.auto" },
+  invoice:   { icon: "✓",  color: M3.success, labelKey: "ink.result.invoice" },
+  statement: { icon: "🧾", color: "#9a5b00",  labelKey: "ink.result.statement" },
+  turnover:  { icon: "🛒", color: M3.success, labelKey: "ink.result.turnover" },
+  ledger:    { icon: "🔗", color: "#7B1FA2",  labelKey: "ink.result.ledger" },
+  document:  { icon: "📁", color: "#1a73e8",  labelKey: "ink.result.document" },
+  bank:      { icon: "🏦", color: "#1a73e8",  labelKey: "ink.result.bank" },
+  duplicate: { icon: "ℹ️", color: "#5f6368",  labelKey: "ink.result.duplicate" },
+  error:     { icon: "⚠️", color: "#b3261e",  labelKey: "ink.result.error" },
+} as const satisfies Record<IntakeResult["status"], { icon: string; color: string; labelKey: string }>;
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const t = translator(useLocale())
@@ -2791,7 +2785,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 
       if (res.ok) {
         const dest = (data as { destination?: string }).destination;
-        const message = (data as { message?: string }).message || "Toegevoegd";
+        const message = (data as { message?: string }).message || t('ink.upload.toegevoegdKort');
         if (dest === "document") {
           const docId = (data as { document_id?: string }).document_id;
           return {
@@ -2830,7 +2824,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         const existing = (data as { existing?: { id: string; folder_id: string | null } }).existing;
         return {
           name: file.name, status: "duplicate",
-          message: (data as { error?: string }).error || "Al toegevoegd",
+          message: (data as { error?: string }).error || t('ink.result.duplicate'),
           link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
         };
       }
@@ -2846,7 +2840,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         message: describeUploadFailure(res.status, (data as { error?: string }).error).message,
       };
     } catch {
-      return { name: file.name, status: "error", message: "Upload mislukt — probeer opnieuw" };
+      return { name: file.name, status: "error", message: t('ink.upload.mislukt') };
     }
   };
 
@@ -2858,7 +2852,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 
     const all = Array.from(fileList);
     if (all.length > MAX_BATCH) {
-      toast(`Maximaal ${MAX_BATCH} bestanden per keer. Je koos er ${all.length}.`, { tone: "error" });
+      toast(t('ink.upload.maxBatch', { max: MAX_BATCH, n: all.length }), { tone: "error" });
       return;
     }
 
@@ -2866,7 +2860,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     const collected: IntakeResult[] = [];
     for (const f of all) {
       if (isOkType(f)) accepted.push(f);
-      else collected.push({ name: f.name, status: "error", message: "Niet ondersteund bestandstype" });
+      else collected.push({ name: f.name, status: "error", message: t('ink.upload.nietOndersteund') });
     }
 
     if (accepted.length === 0) {
@@ -2894,7 +2888,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       if (booked > 0) {
         for (const r of collected) {
           if (r.status === "bank") {
-            r.message = `${r.message} — ${booked} betaling${booked === 1 ? "" : "en"} automatisch gekoppeld.`;
+            r.message = `${r.message} — ${booked === 1 ? t('ink.gekoppeld.autoEen') : t('ink.gekoppeld.autoMeer', { n: booked })}`;
           }
         }
       }
@@ -2914,13 +2908,13 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       (f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(f.name),
     );
     if (imgs.length === 0) {
-      toast("Kies foto's of afbeeldingen — de pagina's van de factuur.", { tone: "error" });
+      toast(t('ink.mp.alleenFotos'), { tone: "error" });
       return;
     }
     setMpPages((prev) => {
       const merged = [...prev, ...imgs];
       if (merged.length > MAX_PAGES) {
-        toast(`Maximaal ${MAX_PAGES} pagina's per factuur.`, { tone: "error" });
+        toast(t('ink.mp.maxPaginas', { max: MAX_PAGES }), { tone: "error" });
         return merged.slice(0, MAX_PAGES);
       }
       return merged;
@@ -2939,7 +2933,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       // [MP-RETRY] On a transient upload failure, KEEP the collected pages + the panel so the
       // owner can retry — never make them re-photograph every page.
       if (result.status === "error") {
-        toast(result.message || "Uploaden mislukt — probeer het opnieuw.", { tone: "error" });
+        toast(result.message || t('ink.upload.misluktOpnieuw'), { tone: "error" });
         return;
       }
       setMpOpen(false);
@@ -2950,8 +2944,8 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     } catch (e) {
       // A combine failure names the failing page — keep the pages so the owner redoes only that one.
       toast(e instanceof Error && /Pagina/.test(e.message)
-        ? `${e.message} De andere pagina's blijven bewaard.`
-        : "Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.", { tone: "error" });
+        ? `${e.message} ${t('ink.mp.paginasBewaard')}`
+        : t('ink.mp.combinerenMislukt'), { tone: "error" });
     } finally {
       setCombining(false);
     }
@@ -3011,7 +3005,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         }}
       >
         <span style={{ fontSize: 20 }}>📷</span>
-        {uploading ? "Verwerken…" : "Foto maken"}
+        {uploading ? t('ink.upload.verwerken') : t('ink.upload.foto')}
       </button>
 
       {/* File / drag-drop (PDF, image, bank statement) — [INTAKE-MULTI] multiple */}
@@ -3045,11 +3039,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         <span style={{ fontSize: 28 }}>{uploading ? "⏳" : "📎"}</span>
         <span style={{ fontSize: 14, color: uploading ? "#5f6368" : "#1a73e8", fontWeight: 600 }}>
           {uploading
-            ? (total > 1 ? `${current} van ${total} verwerkt…` : "Verwerken…")
-            : "Kies bestanden of sleep hier naartoe"}
+            ? (total > 1 ? t('ink.upload.voortgang', { n: current, totaal: total }) : t('ink.upload.verwerken'))
+            : t('ink.upload.kies')}
         </span>
         <span style={{ fontSize: 12, color: "#5f6368" }}>
-          PDF, afbeelding of bankafschrift — meerdere tegelijk (max {MAX_BATCH})
+          {t('ink.upload.types', { max: MAX_BATCH })}
         </span>
 
         {/* [INTAKE-MULTI] Batch progress bar */}
@@ -3098,8 +3092,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             {t('ink.eenFactuurMeerPaginas')}
           </div>
           <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 12, lineHeight: 1.4 }}>
-            Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één
-            factuur — geen losse facturen. (Voor verschillende facturen: voeg ze los toe.)
+            {t('ink.mp.uitleg')}
           </div>
 
           {/* Collected pages */}
@@ -3107,7 +3100,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
               {mpPages.map((f, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>Pagina {i + 1}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>{t('ink.mp.pagina', { n: i + 1 })}</span>
                   <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
                   <button onClick={() => removeMpPage(i)} aria-label={t('ink.verwijderPagina')}
                     disabled={combining}
@@ -3121,11 +3114,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
               style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
-              📷 Pagina fotograferen
+              {t('ink.mp.fotograferen')}
             </button>
             <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
               style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
-              🖼️ Pagina&apos;s kiezen
+              {t('ink.mp.kiezen')}
             </button>
           </div>
 
@@ -3139,7 +3132,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
                 background: combining || uploading || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
                 cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
-              {combining ? "Bezig…" : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? "" : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
+              {combining ? t('act.bezig') : mpPages.length > 0 ? (mpPages.length === 1 ? t('ink.mp.combineerEen') : t('ink.mp.combineerMeer', { n: mpPages.length })) : t('ink.mp.voegEerstToe')}
             </button>
           </div>
         </div>
@@ -3148,8 +3141,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       {/* [MULTI-PAGE] Honest note: one PDF must be one invoice — the app reads a PDF as a single
           invoice (all pages together). A PDF holding several DIFFERENT invoices can't be split. */}
       <div style={{ fontSize: 11.5, color: "#8e8e93", marginTop: 8, lineHeight: 1.45 }}>
-        Let op: één PDF = één factuur (alle pagina&apos;s samen). Zitten er meerdere verschillende
-        facturen in één PDF? Splits ze niet — voeg elke factuur los toe.
+        {t('ink.mp.let')}
       </div>
 
       {/* [INTAKE-FEEDBACK] Results modal — where did each file go? */}
@@ -3168,11 +3160,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           >
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
               {addedCount > 0
-                ? `${addedCount} bestand${addedCount > 1 ? "en" : ""} toegevoegd`
-                : "Klaar"}
+                ? (addedCount === 1 ? t('ink.result.eenToegevoegd') : t('ink.result.meerToegevoegd', { n: addedCount }))
+                : t('ink.klaar')}
             </div>
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 16 }}>
-              Dit is er met je {results.length > 1 ? "bestanden" : "bestand"} gebeurd:
+              {results.length > 1 ? t('ink.result.gebeurdMeer') : t('ink.result.gebeurdEen')}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
@@ -3189,7 +3181,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           server's sentence. The message alone could not distinguish an invoice
                           that is waiting for a tap from one that is already booked — and those
                           are the two outcomes the owner must never confuse. */}
-                      <p style={{ fontSize: 12, color: meta.color, margin: 0, fontWeight: 600 }}>{meta.label}</p>
+                      <p style={{ fontSize: 12, color: meta.color, margin: 0, fontWeight: 600 }}>{t(meta.labelKey)}</p>
                       <p style={{ fontSize: 12, color: "#5f6368", margin: 0 }}>{r.message}</p>
                       {r.link && (
                         <button
@@ -3219,7 +3211,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           href={r.invoiceId ? `/dashboard/incoming/manage?focus=${r.invoiceId}` : "/dashboard/incoming/manage"}
                           style={{ marginTop: 6, display: "inline-block", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
                         >
-                          Naar Inkoopfacturen →
+                          {t('ink.result.naarInkoop')} →
                         </Link>
                       )}
                     </div>
@@ -3291,8 +3283,8 @@ export default function IncomingInvoicesClient({
       setExpandedId(id);
     }, 0);
     window.history.replaceState({}, "", window.location.pathname);
-    const t = setTimeout(() => setFocusId(null), 2600);
-    return () => { clearTimeout(applyTimer); clearTimeout(t); };
+    const focusTimer = setTimeout(() => setFocusId(null), 2600);
+    return () => { clearTimeout(applyTimer); clearTimeout(focusTimer); };
   }, []);
   useEffect(() => {
     if (!focusId) return;
@@ -3346,11 +3338,11 @@ export default function IncomingInvoicesClient({
     const error = params.get("error");
     if (!connected && !error) return;
     const msg = connected
-      ? `${connected === "gmail" ? "Gmail" : "Outlook"} succesvol verbonden!`
-      : "Verbinding mislukt — probeer opnieuw";
-    const t = setTimeout(() => showToast(msg), 0);
+      ? t('ink.oauth.verbonden', { provider: connected === "gmail" ? "Gmail" : "Outlook" })
+      : t('ink.oauth.mislukt');
+    const timer = setTimeout(() => showToast(msg), 0);
     window.history.replaceState({}, "", window.location.pathname);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, []);
 
   // ── [BRIDGE-B] Verify — processing → received (shared Crediteur, unpaid) ──
@@ -3389,8 +3381,8 @@ export default function IncomingInvoicesClient({
           const booked = await triggerBankAutoConfirm();
           showToast(
             booked > 0
-              ? `✓ Geverifieerd · ${booked} betaling${booked > 1 ? "en" : ""} automatisch gekoppeld`
-              : "✓ Factuur geverifieerd"
+              ? (booked === 1 ? t('ink.geverifieerd.metKoppelingEen') : t('ink.geverifieerd.metKoppelingMeer', { n: booked }))
+              : t('ink.geverifieerd')
           );
         } else {
           // [UI-HONESTY] The server rejected it — roll back the optimistic remove so the invoice
@@ -3406,11 +3398,11 @@ export default function IncomingInvoicesClient({
           // bevestigd — ververs de pagina". None of it used to arrive: the fixed sentence below
           // claimed the invoice was "still in the queue" and invited a retry, which on that 409 is
           // a retry that can never succeed — the row is already confirmed on the server.
-          showToast(await confirmFailureMessage(res, "Verificatie mislukt — factuur staat nog in de wachtrij"));
+          showToast(await confirmFailureMessage(res, t('ink.fout.verificatie')));
         }
       } catch {
         setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-        showToast("Fout — factuur staat nog in de wachtrij");
+        showToast(t('ink.fout.nogInWachtrij'));
       }
     },
     []
@@ -3476,7 +3468,7 @@ export default function IncomingInvoicesClient({
     const cleanTargets = targets.filter((p) => p.health.level !== "needs-review");
     if (cleanTargets.length === 0) {
       setBulkConfirmOpen(false);
-      showToast(`${flagged.length} factuur${flagged.length > 1 ? "en hebben" : " heeft"} aandacht nodig — open ${flagged.length > 1 ? "ze" : "hem"} los om te controleren`);
+      showToast(flagged.length > 1 ? t('ink.bulk.aandachtMeer', { n: flagged.length }) : t('ink.bulk.aandachtEen'));
       return;
     }
     setBulkConfirmOpen(false);
@@ -3529,12 +3521,12 @@ export default function IncomingInvoicesClient({
     // would re-scan the full set N times). Everything just verified is now matchable; any bank
     // lines already waiting for them get booked in a single sweep.
     const booked = ok > 0 ? await triggerBankAutoConfirm() : 0;
-    const heldNote = flagged.length > 0 ? ` · ${flagged.length} met aandacht overgeslagen` : "";
-    const bookedNote = booked > 0 ? ` · ${booked} betaling${booked > 1 ? "en" : ""} gekoppeld` : "";
+    const heldNote = flagged.length > 0 ? ` · ${t('ink.bulk.overgeslagenNote', { n: flagged.length })}` : "";
+    const bookedNote = booked > 0 ? ` · ${booked === 1 ? t('ink.gekoppeld.een') : t('ink.gekoppeld.meer', { n: booked })}` : "";
     if (failedNames.length === 0) {
-      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd${bookedNote}${heldNote}`);
+      showToast(`${ok > 1 ? t('ink.bulk.geverifieerdMeer', { n: ok }) : t('ink.bulk.geverifieerdEen')}${bookedNote}${heldNote}`);
     } else {
-      showToast(`${ok} geverifieerd · ${failedNames.length} mislukt${heldNote} — ververs de pagina`);
+      showToast(`${t('ink.bulk.deelsMislukt', { ok, mislukt: failedNames.length })}${heldNote} — ${t('ink.bulk.ververs')}`);
     }
   }, [pending, selected]);
 
@@ -3568,18 +3560,18 @@ export default function IncomingInvoicesClient({
           }),
         });
         if (res.ok) {
-          showToast("✓ Factuur gemarkeerd als betaald");
+          showToast(t('ink.betaaldGemarkeerd'));
         } else {
           // [UI-HONESTY] Roll back the optimistic remove — the payment was NOT recorded.
           // [SERVER-REASON] …and then say why, in the server's own words (see handleVerify).
           // NB: no deferAutoConfirm on this path — it runs no pass of its own, so the server's
           // inline one is the only one there is.
           setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-          showToast(await confirmFailureMessage(res, "Bevestiging mislukt — factuur staat nog in de wachtrij"));
+          showToast(await confirmFailureMessage(res, t('ink.fout.bevestiging')));
         }
       } catch {
         setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-        showToast("Fout — factuur staat nog in de wachtrij");
+        showToast(t('ink.fout.nogInWachtrij'));
       }
     },
     []
@@ -3603,16 +3595,16 @@ export default function IncomingInvoicesClient({
     try {
       const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "PATCH" });
       if (res.ok) {
-        showToast("Factuur teruggezet");
+        showToast(t('ink.teruggezetToast'));
       } else {
         // [SERVER-REASON] The PATCH answers "Deze factuur staat niet (meer) in Genegeerd — ververs
         // de pagina" on a 409. "Probeer opnieuw" is the one thing that will NOT help there.
         rollback();
-        showToast(await confirmFailureMessage(res, "Terugzetten mislukt — probeer opnieuw"));
+        showToast(await confirmFailureMessage(res, t('ink.fout.terugzetten')));
       }
     } catch {
       rollback();
-      showToast("Fout — probeer opnieuw");
+      showToast(t('ink.fout.opnieuw'));
     }
   }, []);
 
@@ -3674,10 +3666,10 @@ export default function IncomingInvoicesClient({
         // verdwijnen. Het aanbod is een tweede scherm, nooit iets dat vanzelf gebeurt.
         if (mayOfferSenderRule(reason, invoice.client_email)) {
           setRuleOfferFor(invoice);
-          showToast("Factuur genegeerd");
+          showToast(t('ink.genegeerdToast'));
         } else {
-          showToast("Factuur genegeerd", {
-            label: "Ongedaan maken",
+          showToast(t('ink.genegeerdToast'), {
+            label: t('ink.ongedaanMaken'),
             run: () => { void handleRestore(invoice); },
           });
         }
@@ -3689,11 +3681,11 @@ export default function IncomingInvoicesClient({
         rollback();
         // DELETE answers with a CODE in `error` and the written sentence in `detail` — so this one
         // reads `detail`, and the same 5xx rule applies (there `detail` is a raw Postgres string).
-        showToast(await confirmFailureMessage(res, "Negeren mislukt — factuur staat nog in de wachtrij", "detail"));
+        showToast(await confirmFailureMessage(res, t('ink.fout.negeren'), "detail"));
       }
     } catch {
       rollback();
-      showToast("Fout — factuur staat nog in de wachtrij");
+      showToast(t('ink.fout.nogInWachtrij'));
     }
   }, [handleRestore]);
 
@@ -3727,7 +3719,7 @@ export default function IncomingInvoicesClient({
       setBulkIgnoreReason(null);
       setSelectMode(false);
       setSelected(new Set());
-      showToast("Die facturen staan niet meer in de wachtrij — ververs de pagina");
+      showToast(t('ink.bulk.nietMeerInWachtrij'));
       return;
     }
     const reason = bulkIgnoreReason;
@@ -3773,7 +3765,7 @@ export default function IncomingInvoicesClient({
 
     const message = bulkIgnoreSummary(tally);
     if (bulkIgnoreOffersUndo(tally)) {
-      showToast(message, { label: "Ongedaan maken", run: () => { void restoreMany(archived); } });
+      showToast(message, { label: t('ink.ongedaanMaken'), run: () => { void restoreMany(archived); } });
     } else {
       showToast(message);
     }
@@ -3810,13 +3802,13 @@ export default function IncomingInvoicesClient({
         const data = await res.json().catch(() => ({}));
         // [SERVER-ZIN] A code here would say "rules_read_failed" where the comment above
         // promises the owner is told out loud what went wrong.
-        if (data?.error) showToast(failureText(res.status, data, 'We konden je regels niet lezen — probeer het zo opnieuw.'));
+        if (data?.error) showToast(failureText(res.status, data, t('ink.regels.foutLezen')));
         return;
       }
       const data = await res.json().catch(() => ({}));
       setSenderRules(Array.isArray(data.rules) ? data.rules : []);
     } catch {
-      showToast("Afzenderregels konden niet worden geladen — ververs de pagina");
+      showToast(t('ink.regels.foutLaden'));
     }
   }, []);
 
@@ -3830,14 +3822,14 @@ export default function IncomingInvoicesClient({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showToast(`Post van ${data.sender_email ?? "deze afzender"} wordt voortaan overgeslagen`);
+        showToast(data.sender_email ? t('ink.regels.ingesteld', { email: data.sender_email }) : t('ink.regels.ingesteldZonder'));
         void loadSenderRules();
       } else {
         // [UI-HONESTY] Nooit "regel ingesteld" zeggen als er niets is ingesteld.
-        showToast(failureText(res.status, data, "Regel instellen mislukt — probeer het opnieuw"));
+        showToast(failureText(res.status, data, t('ink.regels.instellenMislukt')));
       }
     } catch {
-      showToast("Regel instellen mislukt — controleer je verbinding");
+      showToast(t('ink.regels.instellenVerbinding'));
     }
   }, [loadSenderRules]);
 
@@ -3847,13 +3839,13 @@ export default function IncomingInvoicesClient({
     try {
       const res = await fetch(`/api/email/sender-rules?email=${encodeURIComponent(email)}`, { method: "DELETE" });
       if (res.ok) {
-        showToast(`Post van ${email} komt weer binnen`);
+        showToast(t('ink.regels.opgeheven', { email }));
       } else {
-        showToast("Regel opheffen mislukt — probeer het opnieuw");
+        showToast(t('ink.regels.opheffenMislukt'));
         void loadSenderRules();
       }
     } catch {
-      showToast("Regel opheffen mislukt — controleer je verbinding");
+      showToast(t('ink.regels.opheffenVerbinding'));
       void loadSenderRules();
     }
   }, [loadSenderRules]);
@@ -3872,9 +3864,9 @@ export default function IncomingInvoicesClient({
     // an accidental tap.
     if (targets.length > 1) {
       const ok = await dialog.confirm({
-        title: `${targets.length} facturen opnieuw inlezen?`,
-        message: "Elke gemarkeerde factuur wordt opnieuw gelezen. Dat kan even duren — je kunt ondertussen niets anders doen op dit scherm.",
-        confirmLabel: "Opnieuw inlezen",
+        title: t('ink.herleesAlles.vraag', { n: targets.length }),
+        message: t('ink.herleesAlles.uitleg'),
+        confirmLabel: t('ink.herleesKnop'),
       });
       if (!ok) return;
     }
@@ -3910,7 +3902,7 @@ export default function IncomingInvoicesClient({
         // reached it). That is not a failure — count it as skipped so the summary stays honest.
         else if (res.status === 409) skipped++;
         else if (data.code === "model_unavailable") {
-          stoppedReason = typeof data.error === "string" ? data.error : "Het leesmodel is niet beschikbaar op dit account.";
+          stoppedReason = typeof data.error === "string" ? data.error : t('ink.herleesAlles.modelWeg');
           setReimportAllDone((n) => n + 1);
           break;
         }
@@ -3932,21 +3924,21 @@ export default function IncomingInvoicesClient({
       await dialog.alert({
         // [MODEL-CONFIG] An aborted run is not called "done". The title is read first, and it must
         // not suggest the batch was handled when nothing happened.
-        title: stoppedReason ? "Opnieuw inlezen gestopt" : "Opnieuw inlezen klaar",
+        title: stoppedReason ? t('ink.herleesAlles.gestopt') : t('ink.herleesAlles.klaar'),
         message:
           (stoppedReason ? `${stoppedReason}\n\n` : "") +
-          `• ${reread} opnieuw ingelezen\n` +
+          `• ${t('ink.herleesAlles.ingelezen', { n: reread })}\n` +
           (archivedNotInvoice
-            ? `• ${archivedNotInvoice} bleek geen boekbare factuur — verplaatst naar Genegeerd (reden: geen factuur)\n`
+            ? `• ${t('ink.herleesAlles.weggezet', { n: archivedNotInvoice })}\n`
             : "") +
           (notInvoice - archivedNotInvoice > 0
-            ? `• ${notInvoice - archivedNotInvoice} bleek geen boekbare factuur, maar kon niet worden weggezet — bekijk die zelf\n`
+            ? `• ${t('ink.herleesAlles.nietWeggezet', { n: notInvoice - archivedNotInvoice })}\n`
             : "") +
-          (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
-          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "") +
+          (skipped ? `• ${t('ink.herleesAlles.overgeslagen', { n: skipped })}\n` : "") +
+          (failed ? `• ${t('ink.herleesAlles.nietGelukt', { n: failed })}\n` : "") +
           // Not counted as "failed": these never reached the server. They sit unchanged in the
           // queue and nothing was attempted on them.
-          (untried ? `• ${untried} niet geprobeerd — ze staan onveranderd in de wachtrij` : ""),
+          (untried ? `• ${t('ink.herleesAlles.nietGeprobeerd', { n: untried })}` : ""),
       });
     }
     router.refresh();
@@ -4013,12 +4005,10 @@ export default function IncomingInvoicesClient({
           </p>
         ) : needsAttentionCount > 0 ? (
           <p style={{ fontSize: 14, color: "#EA8600", margin: "4px 0 0", fontWeight: 600 }}>
-            {needsAttentionCount}{" "}
-            {needsAttentionCount === 1 ? "factuur heeft" : "facturen hebben"} je
-            aandacht nodig
+            {needsAttentionCount === 1 ? t('ink.kop.aandachtEen') : t('ink.kop.aandachtMeer', { n: needsAttentionCount })}
             {readyToConfirmCount > 0 && (
               <span style={{ color: "#5f6368", fontWeight: 400 }}>
-                {" "}· {readyToConfirmCount} klaar om te bevestigen
+                {" "}· {t('ink.kop.klaarNote', { n: readyToConfirmCount })}
               </span>
             )}
           </p>
@@ -4027,9 +4017,7 @@ export default function IncomingInvoicesClient({
             <span style={{ color: M3.success, fontWeight: 600 }}>
               {t('ink.nietsCorrigeren')}
             </span>{" "}
-            · {readyToConfirmCount}{" "}
-            {readyToConfirmCount === 1 ? "factuur klaar" : "facturen klaar"} om te
-            bevestigen
+            · {readyToConfirmCount === 1 ? t('ink.kop.klaarEen') : t('ink.kop.klaarMeer', { n: readyToConfirmCount })}
           </p>
         )}
       </div>
@@ -4045,9 +4033,9 @@ export default function IncomingInvoicesClient({
           }}
         >
           {([
-            ["pending", `Te bevestigen${pending.length ? ` (${pending.length})` : ""}`],
-            ["confirmed", `Bevestigd${confirmed.length ? ` (${confirmed.length})` : ""}`],
-            ["ignored", `Genegeerd${ignored.length ? ` (${ignored.length})` : ""}`],
+            ["pending", `${t('ink.tab.teBevestigen')}${pending.length ? ` (${pending.length})` : ""}`],
+            ["confirmed", `${t('ink.tab.bevestigd')}${confirmed.length ? ` (${confirmed.length})` : ""}`],
+            ["ignored", `${t('bank.genegeerd')}${ignored.length ? ` (${ignored.length})` : ""}`],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -4120,7 +4108,7 @@ export default function IncomingInvoicesClient({
                     padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
                   }}
                 >
-                  Selecteer klaar ({pending.filter((p) => p.health.level !== "needs-review").length})
+                  {t('ink.selecteerKlaar', { n: pending.filter((p) => p.health.level !== "needs-review").length })}
                 </button>
                 <button
                   onClick={exitSelectMode}
@@ -4154,8 +4142,8 @@ export default function IncomingInvoicesClient({
                 }}
               >
                 {reimportAllRunning
-                  ? `Opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
-                  : `↻ Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
+                  ? t('ink.herleesAlles.voortgang', { n: reimportAllDone, totaal: needsAttentionCount })
+                  : t('ink.herleesAlles.knop', { n: needsAttentionCount })}
               </button>
             )}
 
@@ -4186,8 +4174,8 @@ export default function IncomingInvoicesClient({
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: "#174ea6", marginBottom: 6 }}>
                 {missing.length === 1
-                  ? "Er lijkt een factuur te ontbreken"
-                  : `Er lijken ${missing.length} facturen te ontbreken`}
+                  ? t('ink.ontbreekt.een')
+                  : t('ink.ontbreekt.meer', { n: missing.length })}
               </div>
               <button
                 onClick={() => setMissingDismissed(true)}
@@ -4222,8 +4210,7 @@ export default function IncomingInvoicesClient({
               {t('ink.afzendersOverslaan')}
             </div>
             <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 10, lineHeight: 1.45 }}>
-              Bijlagen van deze adressen worden niet geïmporteerd. De e-mails zelf blijven gewoon in
-              je mailbox staan, en wat overgeslagen is zie je terug bij “Overgeslagen bij import”.
+              {t('ink.regels.uitleg')}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {senderRules.map((r) => (
@@ -4278,7 +4265,7 @@ export default function IncomingInvoicesClient({
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
             <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
             <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>{t('ink.leeg')}</div>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>{tab === "pending" ? t('ink.zoekleeg.pending', { query: rawQ }) : tab === "confirmed" ? t('ink.zoekleeg.confirmed', { query: rawQ }) : t('ink.zoekleeg.ignored', { query: rawQ })}</div>
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
@@ -4286,14 +4273,14 @@ export default function IncomingInvoicesClient({
               {tab === "pending" ? "✅" : tab === "confirmed" ? "🗂️" : "📭"}
             </div>
             <div style={{ fontWeight: 600, fontSize: 17, marginBottom: 8, color: "#202124" }}>
-              {tab === "pending" ? "Alles bijgewerkt" : tab === "confirmed" ? "Nog niets bevestigd" : "Geen genegeerde facturen"}
+              {tab === "pending" ? t('ink.leegtab.pending') : tab === "confirmed" ? t('ink.leegtab.confirmed') : t('ink.leegtab.ignored')}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.5 }}>
               {tab === "pending"
-                ? "Nieuwe facturen verschijnen hier zodra ze binnenkomen."
+                ? t('ink.leegtab.pendingSub')
                 : tab === "confirmed"
-                  ? "Facturen die je verifieert of markeert als betaald verschijnen hier."
-                  : "Facturen die je negeert komen hier terecht."}
+                  ? t('ink.leegtab.confirmedSub')
+                  : t('ink.leegtab.ignoredSub')}
             </div>
           </div>
         )}
@@ -4352,18 +4339,18 @@ export default function IncomingInvoicesClient({
                 fontWeight: 700, fontSize: 16, cursor: "pointer",
               }}
             >
-              Bevestig {selected.size} factuur{selected.size > 1 ? "en" : ""}
+              {selected.size === 1 ? t('ink.bulk.bevestigEen') : t('ink.bulk.bevestigMeer', { n: selected.size })}
             </button>
             <button
               onClick={() => { setBulkIgnoreReason(null); setBulkIgnoreOpen(true); }}
-              aria-label={`${selected.size} geselecteerde factuur${selected.size > 1 ? "en" : ""} negeren`}
+              aria-label={selected.size === 1 ? t('ink.bulk.negeerAriaEen') : t('ink.bulk.negeerAriaMeer', { n: selected.size })}
               style={{
                 flex: "0 0 auto", padding: "16px 18px", borderRadius: 14,
                 background: "#fce8e6", color: "#c5221f", border: "none",
                 fontWeight: 700, fontSize: 16, cursor: "pointer", whiteSpace: "nowrap",
               }}
             >
-              Negeer {selected.size}
+              {t('ink.bulk.negeerKnop', { n: selected.size })}
             </button>
           </div>
         </div>
@@ -4422,10 +4409,10 @@ export default function IncomingInvoicesClient({
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
-              {selected.size} factuur{selected.size > 1 ? "en" : ""} bevestigen?
+              {selected.size === 1 ? t('ink.bulk.bevestigVraagEen') : t('ink.bulk.bevestigVraag', { n: selected.size })}
             </div>
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
-              De geselecteerde facturen worden geverifieerd en als Crediteur naar je boekhouder gestuurd. De bedragen worden overgenomen zoals uitgelezen.
+              {t('ink.bulk.bevestigUitleg')}
             </div>
             <button
               onClick={handleVerifyBatch}
@@ -4457,8 +4444,8 @@ export default function IncomingInvoicesClient({
       {ruleOfferFor && (
         <ConfirmDialog
           title={t('ink.negeren.altijd')}
-          message={`Je negeerde dit als “geen factuur”. Wil je bijlagen van ${ruleOfferFor.client_email} voortaan overslaan? De e-mails blijven in je mailbox, en je kunt de regel bij Genegeerd weer opheffen.`}
-          confirmLabel="Ja, altijd overslaan"
+          message={t('ink.regels.aanbod', { email: ruleOfferFor.client_email ?? '' })}
+          confirmLabel={t('ink.regels.aanbodBevestig')}
           confirmColor="#1a73e8"
           onConfirm={() => addSenderRule(ruleOfferFor)}
           onCancel={() => setRuleOfferFor(null)}
@@ -4471,9 +4458,9 @@ export default function IncomingInvoicesClient({
           niets in te vullen. */}
       {bulkIgnoreOpen && selected.size > 0 && (
         <ConfirmDialog
-          title={`${selected.size} factuur${selected.size > 1 ? "en" : ""} negeren?`}
-          message={`Ze gaan naar Genegeerd en tellen nergens meer mee. Je kunt ze daar terugzetten — of meteen hierna met één tik ongedaan maken.`}
-          confirmLabel={`Ja, negeer ${selected.size}`}
+          title={selected.size === 1 ? t('ink.bulk.negerenVraagEen') : t('ink.bulk.negerenVraag', { n: selected.size })}
+          message={t('ink.bulk.negerenUitleg')}
+          confirmLabel={t('ink.bulk.negerenBevestig', { n: selected.size })}
           confirmColor="#ea4335"
           choices={ARCHIVE_REASONS.map((v) => ({
             value: v,
@@ -4491,8 +4478,8 @@ export default function IncomingInvoicesClient({
       {ignoreFor && (
         <ConfirmDialog
           title={t('ink.negeren.titel')}
-          message="De factuur wordt verplaatst naar Genegeerd. Je kunt hem later terugzetten."
-          confirmLabel="Ja, negeer"
+          message={t('ink.negeren.uitleg')}
+          confirmLabel={t('ink.negeren.bevestig')}
           confirmColor="#ea4335"
           choices={ARCHIVE_REASONS.map((v) => ({
             value: v,

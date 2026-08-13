@@ -159,9 +159,9 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     })
     if (!res.ok) {
       const json = await res.json().catch(() => ({}))
-      setError(failureText(res.status, json, 'Opslaan mislukt')); setSaving(false); return
+      setError(failureText(res.status, json, t('ss.opslaanMislukt'))); setSaving(false); return
     }
-    showToast(editingId ? 'Klant bijgewerkt' : 'Klant toegevoegd')
+    showToast(editingId ? t('kl.bijgewerkt') : t('kl.toegevoegd'))
 
     setForm(EMPTY); setShowForm(false); setEditingId(null)
     setLoading(true)
@@ -192,9 +192,9 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     // named neither the client nor the consequence.
     const client = clients.find(c => c.id === id)
     const ok = await dialog.confirm({
-      title: 'Klant verwijderen?',
-      message: `${client?.name ?? 'Deze klant'} verdwijnt uit je klantenlijst. Facturen die je al aan deze klant stuurde, blijven staan.`,
-      confirmLabel: 'Verwijderen',
+      title: t('kl.verwijderVraag'),
+      message: t('kl.verwijderUitleg', { name: client?.name ?? t('kl.dezeKlant') }),
+      confirmLabel: t('lijst.verwijderen'),
       danger: true,
     })
     if (!ok) return
@@ -206,15 +206,17 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
 
   // `as const` op de sleutels: daardoor weet TypeScript dat f.key een veld van het
   // formulier is, in plaats van een willekeurige string die een cast nodig heeft.
+  // [TAAL] The placeholders stay Dutch on purpose: they are FORMAT examples (a Dutch postcode,
+  // KVK number, IBAN, street), not words — see the header of the 'nieuw' block in messages.ts.
   const FIELDS = [
-    { key: 'name',        label: 'Naam *',      placeholder: 'Bedrijfsnaam of naam', required: true },
-    { key: 'email',       label: 'E-mail',       placeholder: 'info@bedrijf.nl' },
-    { key: 'kvk_number',  label: 'KVK nummer',  placeholder: '12345678' },
-    { key: 'btw_number',  label: 'BTW nummer',  placeholder: 'NL123456789B01' },
-    { key: 'iban',        label: 'IBAN',         placeholder: 'NL91ABNA0417164300' },
-    { key: 'address',     label: 'Adres',        placeholder: 'Straatnaam 1' },
-    { key: 'postal_code', label: 'Postcode',     placeholder: '1234 AB' },
-    { key: 'city',        label: 'Stad',         placeholder: 'Amsterdam' },
+    { key: 'name',        label: t('kl.veld.naam'),  placeholder: t('kl.veld.naamHint'), required: true },
+    { key: 'email',       label: t('nieuw.bevestig.email'), placeholder: 'info@bedrijf.nl' },
+    { key: 'kvk_number',  label: t('kl.veld.kvk'),   placeholder: '12345678' },
+    { key: 'btw_number',  label: t('kl.veld.btw'),   placeholder: 'NL123456789B01' },
+    { key: 'iban',        label: 'IBAN',             placeholder: 'NL91ABNA0417164300' },
+    { key: 'address',     label: t('nieuw.klant.adres'),    placeholder: 'Straatnaam 1' },
+    { key: 'postal_code', label: t('nieuw.klant.postcode'), placeholder: '1234 AB' },
+    { key: 'city',        label: t('nieuw.klant.stad'),     placeholder: 'Amsterdam' },
   ] as const
 
   return (
@@ -271,7 +273,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         {showForm && (
           <div style={{ background: '#fff', borderRadius: R.lg, padding: '20px 16px', boxShadow: EL1, marginBottom: 14, border: `1px solid ${M3.primaryContainer}` }}>
             <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 16, fontFamily: FONT }}>
-              {editingId ? 'Klant bewerken' : 'Nieuwe klant'}
+              {editingId ? t('kl.bewerken') : t('kl.nieuweKlant')}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {FIELDS.map(f => (
@@ -294,7 +296,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
               </button>
               <button onClick={handleSave} disabled={saving}
                 style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: saving ? M3.surfaceVariant : M3.primary, color: saving ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
-                {saving ? 'Opslaan...' : editingId ? 'Bijwerken' : 'Opslaan'}
+                {saving ? t('kl.opslaanBezig') : editingId ? t('kl.bijwerken') : t('kl.opslaan')}
               </button>
             </div>
           </div>
@@ -305,10 +307,10 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
           <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>people</span>
             <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 4, fontFamily: FONT }}>
-              {search ? 'Geen resultaten' : 'Nog geen klanten'}
+              {search ? t('kl.geenResultaten') : t('kl.leeg')}
             </p>
             <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>
-              {search ? `Geen klant gevonden voor "${search}"` : 'Voeg je eerste klant toe'}
+              {search ? t('kl.geenGevonden', { query: search }) : t('kl.voegEersteToe')}
             </p>
           </div>
         ) : (
@@ -335,7 +337,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
-                      <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
+                      <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? t('kld.geenEmail')}</p>
                     </div>
                     <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
                   </div>

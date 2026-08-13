@@ -83,13 +83,13 @@ export default function TurnoverInsights() {
       const res = await fetch(`/api/turnover/import?date=${encodeURIComponent(date)}`, { method: 'DELETE' })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
-        setDeleteError(j.error || 'Kon de dag niet verwijderen — probeer opnieuw.')
+        setDeleteError(j.error || t('dz.fout.verwijderenDag'))
         return
       }
       setPendingDelete(null)
       setReloadTick((t) => t + 1)
     } catch {
-      setDeleteError('Er ging iets mis — probeer opnieuw.')
+      setDeleteError(t('dz.fout.iets'))
     } finally {
       setDeleting(null)
     }
@@ -161,7 +161,7 @@ export default function TurnoverInsights() {
           <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>{t('dz.geboekt')}</div>
           {Nav}
         </div>
-        <div style={{ padding: '20px 18px', fontSize: 13.5, color: M3.neutral }}>Geen kassa-omzet geboekt in {data?.label}.</div>
+        <div style={{ padding: '20px 18px', fontSize: 13.5, color: M3.neutral }}>{t('dz.geenGeboekt', { period: data?.label ?? '—' })}</div>
       </div>
     )
   }
@@ -175,12 +175,12 @@ export default function TurnoverInsights() {
 
       {/* KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, padding: '16px 18px' }}>
-        <Kpi label={`Omzet (${a.days} dagen)`} value={eur.format(a.totalOmzetIncl)} />
+        <Kpi label={t('dz.omzetDagen', { n: a.days })} value={eur.format(a.totalOmzetIncl)} />
         <Kpi label={t('dz.gemiddeld')} value={eur.format(a.avgDayOmzet)} />
         {a.busiestDay && <Kpi label={t('dz.drukste')} value={eur.format(a.busiestDay.omzet)} sub={a.busiestDay.date} />}
         {a.avgPinTicket != null
-          ? <Kpi label="Gem. pinbon" value={eur.format(a.avgPinTicket)} sub={a.posTicketCount ? `${a.posTicketCount} pintransacties` : undefined} />
-          : <Kpi label="Gem. pinbon" value="—" sub="geen pin-aantallen in de bank" />}
+          ? <Kpi label={t('dz.gemPinbon')} value={eur.format(a.avgPinTicket)} sub={a.posTicketCount ? t('dz.pintransacties', { n: a.posTicketCount }) : undefined} />
+          : <Kpi label={t('dz.gemPinbon')} value="—" sub={t('dz.geenPinAantallen')} />}
       </div>
 
       {/* Monthly trend */}
@@ -218,7 +218,7 @@ export default function TurnoverInsights() {
           <ul style={{ margin: 0, paddingInlineStart: 18 }}>
             {a.anomalies.map((x) => (
               <li key={x.date} style={{ fontSize: 13, color: M3.onSurface, lineHeight: 1.5 }}>
-                {x.date} — ongewoon {x.direction} ({eur.format(x.omzet)})
+                {x.date} — {t(x.direction === 'hoog' ? 'dz.ongewoonHoog' : 'dz.ongewoonLaag')} ({eur.format(x.omzet)})
               </li>
             ))}
           </ul>
@@ -234,14 +234,13 @@ export default function TurnoverInsights() {
             onClick={() => setManageOpen((o) => !o)}
             style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '14px 18px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
           >
-            <span style={{ fontSize: 12.5, color: M3.neutral }}>Geboekte dagen beheren ({days.length})</span>
-            <span style={{ fontSize: 13, color: M3.primary, fontWeight: 600 }}>{manageOpen ? 'Verbergen' : 'Tonen'}</span>
+            <span style={{ fontSize: 12.5, color: M3.neutral }}>{t('dz.dagenBeheren', { n: days.length })}</span>
+            <span style={{ fontSize: 13, color: M3.primary, fontWeight: 600 }}>{manageOpen ? t('vandaag.verbergen') : t('dz.tonen')}</span>
           </button>
           {manageOpen && (
             <div style={{ padding: '0 18px 14px' }}>
               <p style={{ fontSize: 12, color: M3.neutral, margin: '0 0 10px', lineHeight: 1.5 }}>
-                Staat hier een dag met de verkeerde datum of uit een andere periode? Verwijder hem —
-                dat corrigeert je omzet en BTW-aangifte. Daarna kun je het juiste Z-rapport opnieuw importeren.
+                {t('dz.beheerUitleg')}
               </p>
               {deleteError && (
                 <p style={{ fontSize: 12.5, color: M3.error, margin: '0 0 10px' }}>{deleteError}</p>
@@ -258,15 +257,15 @@ export default function TurnoverInsights() {
                         <span style={{ fontSize: 12, color: M3.neutral }}>{t('dz.zeker')}</span>
                         <button onClick={() => deleteDay(d.date)} disabled={deleting === d.date}
                           style={{ border: 'none', background: M3.error, color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
-                          {deleting === d.date ? 'Bezig…' : 'Verwijder'}
+                          {deleting === d.date ? t('act.bezig') : t('art.verwijder')}
                         </button>
                         <button onClick={() => setPendingDelete(null)} disabled={deleting === d.date}
                           style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.neutral, borderRadius: 8, padding: '6px 10px', fontSize: 12.5, cursor: 'pointer' }}>
-                          Nee
+                          {t('dz.nee')}
                         </button>
                       </div>
                     ) : (
-                      <button onClick={() => { setPendingDelete(d.date); setDeleteError(null) }} aria-label={`Verwijder ${d.date}`}
+                      <button onClick={() => { setPendingDelete(d.date); setDeleteError(null) }} aria-label={t('dz.verwijderDag', { date: d.date })}
                         style={{ border: 'none', background: 'none', color: M3.error, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 }}>
                         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>delete</span>
                       </button>

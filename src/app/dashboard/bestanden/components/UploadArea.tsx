@@ -221,7 +221,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
             {dragging ? t("bst.loslaten") : t("bst.sleep")}
           </p>
           <p style={{ fontSize: 12, color: T.outline, margin: 0 }}>
-            Alle bestandstypen — max 50MB · meerdere bestanden tegelijk
+            {t("bst.typenMax")}
           </p>
           <input
             ref={inputRef}

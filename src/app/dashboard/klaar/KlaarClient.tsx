@@ -37,11 +37,13 @@ interface ApiResponse {
   concept: { verschuldigd: number; voorbelasting: number; saldo: number }
 }
 
-const STATUS_META: Record<Status, { emoji: string; title: string; bg: string; fg: string; bar: string }> = {
-  ready:     { emoji: '🟢', title: 'Klaar voor de boekhouder', bg: M3.successContainer, fg: M3.success, bar: M3.success },
-  almost:    { emoji: '🟡', title: 'Bijna klaar',              bg: M3.warningContainer, fg: M3.warning, bar: '#E37400' },
-  attention: { emoji: '🔴', title: 'Nog niet klaar',           bg: M3.errorContainer,   fg: M3.error,   bar: M3.error },
-}
+// [TAAL] The verdict titles live in the catalogue; this table keeps only the visuals plus the
+// key each status renders through the component's translator.
+const STATUS_META = {
+  ready:     { emoji: '🟢', titleKey: 'klr.status.klaar',   bg: M3.successContainer, fg: M3.success, bar: M3.success },
+  almost:    { emoji: '🟡', titleKey: 'klr.status.bijna',   bg: M3.warningContainer, fg: M3.warning, bar: '#E37400' },
+  attention: { emoji: '🔴', titleKey: 'klr.status.nogNiet', bg: M3.errorContainer,   fg: M3.error,   bar: M3.error },
+} as const satisfies Record<Status, { emoji: string; titleKey: string; bg: string; fg: string; bar: string }>
 
 const DIM_ICON: Record<DimensionKey, string> = {
   invoices: 'receipt_long', bank: 'account_balance', cash: 'point_of_sale', vat: 'calculate',
@@ -75,7 +77,7 @@ export default function KlaarClient() {
       const res = await fetch(`/api/closing-package?year=${y}&quarter=${q}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({} as { error?: string }))
-        setPkgError(j?.error ?? 'Het pakket kon niet worden gemaakt. Probeer het opnieuw.')
+        setPkgError(j?.error ?? t('klr.fout.pakket'))
         return
       }
       const blob = await res.blob()
@@ -90,7 +92,7 @@ export default function KlaarClient() {
       a.remove()
       URL.revokeObjectURL(url)
     } catch {
-      setPkgError('Geen verbinding — het pakket is niet gedownload.')
+      setPkgError(t('klr.fout.pakketOffline'))
     } finally {
       setPkgBusy(false)
     }
@@ -143,7 +145,7 @@ export default function KlaarClient() {
             const active = quarter === q
             const future = year > curYear || (year === curYear && q > curQuarter)
             return (
-              <button key={q} onClick={() => !future && setQuarter(q)} disabled={future} title={future ? 'Dit kwartaal is nog niet begonnen' : undefined} style={{ flex: 1, padding: '9px 0', borderRadius: 10, cursor: future ? 'default' : 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, opacity: future ? 0.4 : 1 }}>Q{q}</button>
+              <button key={q} onClick={() => !future && setQuarter(q)} disabled={future} title={future ? t('klr.kwartaalNietBegonnen') : undefined} style={{ flex: 1, padding: '9px 0', borderRadius: 10, cursor: future ? 'default' : 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, opacity: future ? 0.4 : 1 }}>Q{q}</button>
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
@@ -159,7 +161,7 @@ export default function KlaarClient() {
           </div>
         </div>
 
-        {loading && <div style={{ color: M3.neutral, fontSize: 14, padding: '32px 0', textAlign: 'center' }}>Controleren…</div>}
+        {loading && <div style={{ color: M3.neutral, fontSize: 14, padding: '32px 0', textAlign: 'center' }}>{t('ss.controleren')}</div>}
         {/* A bare sentence on the screen that decides whether the quarter may be handed over is a
             dead end — and the retry it needed was already sitting in setReloadKey, driving the
             "Vernieuwen" link above. Say what it does NOT mean, and offer the way out. */}
@@ -185,12 +187,12 @@ export default function KlaarClient() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 30, lineHeight: 1 }}>{meta.emoji}</span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 19, fontWeight: 700, color: meta.fg }}>{meta.title}</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, color: meta.fg }}>{t(meta.titleKey)}</div>
                   <div style={{ fontSize: 13, color: meta.fg, opacity: 0.85 }}>{report.quarterLabel}</div>
                 </div>
                 <div style={{ textAlign: 'end' }}>
                   <div style={{ fontSize: 30, fontWeight: 800, color: meta.fg, fontFamily: FONT_NUM, lineHeight: 1 }}>{report.score}%</div>
-                  <div style={{ fontSize: 11, color: meta.fg, opacity: 0.8 }}>compleet</div>
+                  <div style={{ fontSize: 11, color: meta.fg, opacity: 0.8 }}>{t('klr.compleet')}</div>
                 </div>
               </div>
               <div style={{ height: 8, borderRadius: 99, background: 'rgba(0,0,0,0.08)', marginTop: 16, overflow: 'hidden' }}>
@@ -209,7 +211,7 @@ export default function KlaarClient() {
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '15px 18px', borderRadius: 14, border: 'none', background: M3.primary, color: '#fff', fontSize: 15.5, fontWeight: 700, marginBottom: 8, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, opacity: pkgBusy ? 0.6 : 1 }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>inventory_2</span>
-              {pkgBusy ? 'Pakket maken…' : 'Download voor de boekhouder'}
+              {pkgBusy ? t('klr.pakketBezig') : t('klr.download')}
             </button>
             {pkgError && (
               <div role="alert" style={{ fontSize: 13, color: M3.error, textAlign: 'center', marginBottom: 8, lineHeight: 1.45 }}>
@@ -217,7 +219,7 @@ export default function KlaarClient() {
               </div>
             )}
             <div style={{ fontSize: 12.5, color: M3.neutral, textAlign: 'center', marginBottom: 22, lineHeight: 1.5 }}>
-              Eén ZIP: facturen, bonnen, bankafschrift, dagomzet én je concept BTW-aangifte.
+              {t('klr.zipUitleg')}
             </div>
 
             {/* ── What still needs to happen (missing) ── */}
@@ -249,8 +251,11 @@ export default function KlaarClient() {
               {/* [DISAMBIGUATE] Each row shows two figures — the colored number is how
                   COMPLETE that part is; the grey chip is how heavily it WEIGHS in the total.
                   Two bare percentages side by side read as competing scores, so name them. */}
+              {/* [TAAL] The mid-sentence <b> tags had to go: a bold noun cannot travel through a
+                  translated sentence whose word order changes (see messages.ts rule 1). Two plain
+                  sentences, one key each. */}
               <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.45, padding: '0 0 8px' }}>
-                Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>gekleurde percentage</b> is hoe compleet dit onderdeel is. Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>grijze label</b> is hoe zwaar het meetelt in je totaalscore.
+                {t('klr.rubriek.kleur')} {t('klr.rubriek.grijs')}
               </div>
               {report.dimensions.map((d, i) => (
                 <DimRow key={d.key} d={d} last={i === report.dimensions.length - 1} />
@@ -261,7 +266,7 @@ export default function KlaarClient() {
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '14px 18px', marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <span style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
-                  {teBetalen ? 'Concept BTW te betalen' : 'Concept BTW terug te ontvangen'}
+                  {teBetalen ? t('klr.btwTeBetalen') : t('klr.btwTerug')}
                 </span>
                 <span style={{ fontSize: 20, fontWeight: 700, color: teBetalen ? M3.onSurface : M3.success, fontFamily: FONT_NUM }}>
                   {eur.format(Math.abs(data!.concept.saldo))}
@@ -330,6 +335,7 @@ function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
 }
 
 function DimRow({ d, last }: { d: Dimension; last: boolean }) {
+  const t = translator(useLocale())
   const pct = d.applicable ? Math.round(d.subscore * 100) : null
   const barColor = pct == null ? M3.outlineVariant : pct >= 90 ? M3.success : pct >= 60 ? '#E37400' : M3.error
   return (
@@ -342,11 +348,11 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
             weighs nothing here — showing "weegt 20%" would contradict that. */}
         {pct != null && (
           <span style={{ fontSize: 10.5, color: M3.neutral, fontWeight: 600, background: '#f1f3f4', borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
-            weegt {d.weight}%
+            {t('klr.weegt', { n: d.weight })}
           </span>
         )}
         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'end' }}>
-          {pct == null ? 'n.v.t.' : `${pct}%`}
+          {pct == null ? t('klr.nvt') : `${pct}%`}
         </span>
       </div>
       {/* Thin fill bar — makes the colored percentage read as a completeness level. */}

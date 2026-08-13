@@ -25,6 +25,7 @@ import { limitsPlanFor } from '@/lib/subscription'
 import ManageSubscriptionButton from './ManageSubscriptionButton'
 import { COLUMN } from '@/lib/design/tokens'
 import { serverTranslator } from '@/lib/i18n/server'
+import type { Translator } from '@/lib/i18n/t'
 
 export const dynamic = 'force-dynamic'
 
@@ -115,17 +116,16 @@ export default async function FactureringPage({
         >
           <strong>{t('plan.betaald')}</strong>
           <br />
-          Het kan een paar seconden duren voordat je plan hieronder bijgewerkt is.
-          Ververs deze pagina als je het nog niet ziet.
+          {t('plan.betaaldUitleg')}
         </div>
       )}
 
       <section style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 22 }}>
-        <Row label={t('plan.titel')} value={planLabel(decision, profile)} />
+        <Row label={t('plan.titel')} value={planLabel(decision, profile, t)} />
 
         {profile?.current_period_end && decision.plan === 'plus' && (
           <Row
-            label={decision.reason === 'grace_period' ? 'Plus loopt tot' : 'Volgende verlenging'}
+            label={decision.reason === 'grace_period' ? t('plan.plusLooptTot') : t('plan.volgendeVerlenging')}
             value={dateNL(profile.current_period_end) ?? '—'}
           />
         )}
@@ -149,10 +149,7 @@ export default async function FactureringPage({
             </>
           ) : (
             <>
-              {t('plan.jeWordt')} <strong>nooit automatisch afgeschreven</strong> en er is geen proefperiode
-              die stilzwijgend overgaat in een abonnement. Kom je boven het eerlijk gebruik, dan
-              pauzeert alleen de handeling die ons geld kost — inzien, doorzoeken en exporteren
-              van je eigen administratie blijven altijd werken.{' '}
+              {t('plan.jeWordt')} <strong>{t('plan.nooitAfgeschreven')}</strong> {t('plan.geenProefperiode')}{' '}
               <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>
                 {t('plan.beleid')}
               </Link>
@@ -166,9 +163,7 @@ export default async function FactureringPage({
           // staan, ook niet als er wél voor betaald is. Beter dit te zeggen dan te doen
           // alsof "gratis" hier een meting is.
           <p style={{ fontSize: 13, color: '#7C5800', background: '#FEE8C4', borderRadius: 8, padding: '10px 12px', margin: '16px 0 0', lineHeight: 1.5 }}>
-            De abonnementskolommen bestaan nog niet in de database
-            (billing_subscription.sql is nog niet toegepast). Alles werkt, maar een lopend
-            Plus-abonnement kan hier nog niet worden getoond.
+            {t('plan.migratieOntbreekt')}
           </p>
         )}
       </section>
@@ -179,8 +174,7 @@ export default async function FactureringPage({
             {t('plan.gebruik')}
           </h2>
           <p style={{ fontSize: 13.5, color: '#5f6368', margin: '0 0 16px', lineHeight: 1.6 }}>
-            De maandtellers beginnen op de 1e weer bij nul. Opslag en mailboxen worden gemeten
-            zoals ze nu zijn, niet opgeteld over de maand.
+            {t('plan.maandtellers')}
           </p>
 
           <div style={{ display: 'grid', gap: 14 }}>
@@ -214,7 +208,7 @@ export default async function FactureringPage({
                     <p style={{ fontSize: 13, color: kleur, margin: '6px 0 0', lineHeight: 1.5 }}>
                       {over
                         ? limit.onExceed
-                        : `Je zit op ${pct}% van deze grens. Er gebeurt nu nog niets — dit is alleen zodat je het weet.`}
+                        : t('plan.bijnaGrens', { pct })}
                     </p>
                   )}
                 </div>
@@ -223,8 +217,7 @@ export default async function FactureringPage({
           </div>
 
           <p style={{ fontSize: 13, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
-            Wij waarschuwen vanaf {Math.round(NEAR_LIMIT_RATIO * 100)}% van een grens, en wat
-            er dan gebeurt staat er per regel bij.{' '}
+            {t('plan.waarschuwenVanaf', { pct: Math.round(NEAR_LIMIT_RATIO * 100) })}{' '}
             <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>{t('plan.beleidVolledig')}</Link>.
           </p>
         </section>
@@ -249,19 +242,20 @@ function readClock(): number {
   return new Date().getTime()
 }
 
-function planLabel(decision: PlanDecision, profile: BillingProfile | null): string {
+function planLabel(decision: PlanDecision, profile: BillingProfile | null, t: Translator): string {
   switch (decision.reason) {
     case 'boekhouder':
+      // Read by the boekhouder — accountant-facing text is deliberately Dutch-only (AGENTS.md).
       return 'Boekhouder — gratis, altijd'
     case 'active':
-      return `${PLUS.name} — actief`
+      return t('plan.actief', { name: PLUS.name })
     case 'grace_period':
       return profile?.subscription_status === 'past_due'
-        ? 'Betaling mislukt — we proberen het opnieuw, je houdt Plus'
-        : 'Plus loopt af — je houdt hem tot het einde van de betaalde periode'
+        ? t('plan.betalingMislukt')
+        : t('plan.looptAf')
     case 'free':
     default:
-      return 'Gratis'
+      return t('plan.gratis')
   }
 }
 

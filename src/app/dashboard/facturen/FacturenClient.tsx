@@ -108,8 +108,13 @@ interface ScheduleRow {
   active: boolean
   source: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null } | null
 }
-const CADENCE_NL: Record<string, string> = {
-  weekly: 'elke week', monthly: 'elke maand', quarterly: 'elk kwartaal', yearly: 'elk jaar',
+// [TAAL] One key per cadence per sentence — the cadence word is never a parameter, because
+// agreement/suffixes differ per language (see the noun rule in messages.ts).
+const CADENCE_ACTIVE_KEY: Record<ScheduleRow['cadence'], MessageKey> = {
+  weekly: 'lijst.schema.week', monthly: 'lijst.schema.maand', quarterly: 'lijst.schema.kwartaal', yearly: 'lijst.schema.jaar',
+}
+const CADENCE_PAUSED_KEY: Record<ScheduleRow['cadence'], MessageKey> = {
+  weekly: 'lijst.schema.weekPauze', monthly: 'lijst.schema.maandPauze', quarterly: 'lijst.schema.kwartaalPauze', yearly: 'lijst.schema.jaarPauze',
 }
 // [INVOICE-REMOVE] What the confirm dialog is about: the invoice, and the decision made for it.
 interface RemoveCtx { id: string; decision: RemovalDecision }
@@ -583,10 +588,10 @@ export default function FacturenClient({
       const remaining = (json as { remaining?: number }).remaining ?? 0
       if (partial) {
         updateOptimistic(ctx.id, { amount_paid: amountPaidNow ?? null })
-        showToast(`${fmtEur((json as { applied?: number }).applied ?? 0)} genoteerd · nog ${fmtEur(remaining)} open`)
+        showToast(t('lijst.deelGenoteerd', { applied: fmtEur((json as { applied?: number }).applied ?? 0), remaining: fmtEur(remaining) }))
       } else if (ctx.invoiceType === 'creditnota') {
         updateOptimistic(ctx.id, { status: 'paid' })
-        showToast(`Creditnota ${ctx.number} voldaan ✓`)
+        showToast(t('lijst.creditnotaVoldaan', { number: ctx.number }))
       } else {
         updateOptimistic(ctx.id, { status: 'paid' })
         // Notification insert needs service role (RLS blocks client insert) → API route
@@ -595,15 +600,15 @@ export default function FacturenClient({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              title: 'Factuur betaald',
-              body: `Factuur ${ctx.number} is gemarkeerd als betaald.`,
+              title: 'Factuur betaald', // [TAAL-DB] stored notification content — Dutch by design
+              body: `Factuur ${ctx.number} is gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
               type: 'payment',
               // [BRIDGE-NOTIF] dead-click fix: open the invoices list.
               link: '/dashboard/facturen',
             }),
           })
         } catch { /* non-blocking — payment already succeeded */ }
-        showToast(`Factuur ${ctx.number} betaald ✓`)
+        showToast(t('lijst.factuurBetaald', { number: ctx.number }))
       }
     } else {
       // [PARTIAL-PAY] An undo also clears every recorded instalment server-side
@@ -639,7 +644,7 @@ export default function FacturenClient({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         receiver_id: link.accountant_id,
-        content: `Verzoek: maak de verwerking van factuur ${verwerktCtx.number} ongedaan, zodat ik de betaalstatus kan aanpassen.`,
+        content: `Verzoek: maak de verwerking van factuur ${verwerktCtx.number} ongedaan, zodat ik de betaalstatus kan aanpassen.`, // [TAAL-DB] message to the boekhouder — Dutch by design
       }),
     })
 
@@ -669,9 +674,10 @@ export default function FacturenClient({
       })
       const json = await res.json().catch(() => ({}))
       if (res.ok) {
-        const label = cadence === 'weekly' ? 'elke week' : cadence === 'monthly' ? 'elke maand'
-          : cadence === 'quarterly' ? 'elk kwartaal' : 'elk jaar'
-        showToast(`Herhaalt ${label} — het volgende concept staat klaar op ${fmtDate(json?.schedule?.next_run_date ?? null)}`)
+        // [TAAL] One key per cadence — the cadence word is not a parameter.
+        const key: MessageKey = cadence === 'weekly' ? 'lijst.gestart.week' : cadence === 'monthly' ? 'lijst.gestart.maand'
+          : cadence === 'quarterly' ? 'lijst.gestart.kwartaal' : 'lijst.gestart.jaar'
+        showToast(t(key, { date: fmtDate(json?.schedule?.next_run_date ?? null) }))
         await loadSchedules()
       } else {
         showToast(json?.detail || t('lijst.fout.herhalen'))
@@ -709,13 +715,13 @@ export default function FacturenClient({
         body: JSON.stringify({ id: scheduleId, active }),
       })
       if (res.ok) {
-        showToast(active ? 'Herhalen hervat' : 'Herhalen gepauzeerd — er wordt niets meer klaargezet')
+        showToast(active ? t('lijst.herhalen.hervat') : t('lijst.herhalen.gepauzeerd'))
         await loadSchedules()
       } else {
         const j = await res.json().catch(() => ({}))
-        showToast(j?.detail || (active ? 'Hervatten mislukt' : 'Pauzeren mislukt'))
+        showToast(j?.detail || (active ? t('lijst.fout.hervatten') : t('lijst.fout.pauzeren')))
       }
-    } catch { showToast(active ? 'Hervatten mislukt' : 'Pauzeren mislukt') }
+    } catch { showToast(active ? t('lijst.fout.hervatten') : t('lijst.fout.pauzeren')) }
   }
 
   // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
@@ -788,7 +794,7 @@ export default function FacturenClient({
         // Consequences the row could not show: a filed BTW quarter that now differs, a bundled
         // payment link that stopped working. Said out loud, once, instead of discovered later.
         const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
-        showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten onderaan de lijst')
+        showToast(notices.length > 0 ? notices[0] : t('lijst.verwijderdTerug'))
       }
       await refresh()
     } catch {
@@ -810,13 +816,13 @@ export default function FacturenClient({
       const res = await fetch(`/api/invoice/${invoiceId}/send-offerte`, { method: 'POST' })
       const json = await res.json().catch(() => null)
       if (res.ok) {
-        showToast(typeof json?.message === 'string' ? json.message : 'De offerte is verstuurd.')
+        showToast(typeof json?.message === 'string' ? json.message : t('lijst.offerteVerstuurd'))
         await refresh()
       } else {
         // De route weigert met een eigen zin per reden (geen e-mailadres, geen regels, al omgezet).
         // Die tonen, niet vervangen door "mislukt": vier redenen vragen vier verschillende dingen
         // van de ondernemer.
-        showToast(typeof json?.error === 'string' && json.error ? json.error : 'Versturen lukte niet.')
+        showToast(typeof json?.error === 'string' && json.error ? json.error : t('lijst.fout.offerteVersturen'))
       }
     } catch {
       showToast(t('lijst.fout.versturenStraks'))
@@ -867,11 +873,11 @@ export default function FacturenClient({
         body: JSON.stringify({ invoiceId: ctx.id, resend: ctx.isResend }),
       })
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Verzenden mislukt' }))
+        const err = await res.json().catch(() => ({ error: t('lijst.fout.verzenden') }))
         // [BOEK-RESEND] rollback to the ORIGINAL status (draft for a first send,
         // sent/overdue for a resend) — never wrongly downgrade a sent invoice.
         updateOptimistic(ctx.id, { status: ctx.prevStatus })
-        showToast(err.error || 'Verzenden mislukt')
+        showToast(err.error || t('lijst.fout.verzenden'))
       } else {
         // [BOEK-031 FIX] Get generated invoice_number + invoice_type from API response
         // Pro forma → factuur conversion: both number and type change
@@ -894,17 +900,17 @@ export default function FacturenClient({
           showToast(
             result.warning === 'email_failed'
               ? (displayNumber
-                  ? `Factuur ${displayNumber} kreeg een nummer, maar de e-mail is niet verstuurd — verstuur opnieuw`
-                  : 'De e-mail is niet verstuurd — verstuur de factuur opnieuw')
+                  ? t('lijst.emailNietVerstuurd', { number: displayNumber })
+                  : t('lijst.emailNietVerstuurdZonder'))
               : displayNumber
-                ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
-                : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
+                ? t('lijst.pdfNietGemaakt', { number: displayNumber })
+                : t('lijst.pdfNietGemaaktZonder')
           )
         } else {
           showToast(
             ctx.isResend
-              ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
-              : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
+              ? (displayNumber ? t('lijst.opnieuwVerzonden', { number: displayNumber }) : t('lijst.opnieuwVerzondenZonder'))
+              : (displayNumber ? t('lijst.verzonden', { number: displayNumber }) : t('lijst.verzondenZonder'))
           )
         }
       }
@@ -954,13 +960,13 @@ export default function FacturenClient({
               <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
                 style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
-                {selectMode ? 'Klaar' : 'Selecteer'}
+                {selectMode ? t('lijst.klaar') : t('lijst.selecteer')}
               </button>
               {/* Sort */}
               <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
                 style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
-                {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
+                {sort === 'desc' ? t('lijst.nieuwste') : t('lijst.oudste')}
               </button>
               {/* Refresh */}
               <button onClick={refresh} aria-label={t('lijst.vernieuwen')} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1069,8 +1075,8 @@ export default function FacturenClient({
                   </div>
                   <div style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT }}>
                     {sc.active
-                      ? `${CADENCE_NL[sc.cadence] ?? sc.cadence} · volgende ${fmtDate(sc.next_run_date)}`
-                      : `${CADENCE_NL[sc.cadence] ?? sc.cadence} · gepauzeerd`}
+                      ? t(CADENCE_ACTIVE_KEY[sc.cadence], { date: fmtDate(sc.next_run_date) })
+                      : t(CADENCE_PAUSED_KEY[sc.cadence])}
                     {sc.source?.invoice_number ? ` · ${sc.source.invoice_number}` : ''}
                   </div>
                 </div>
@@ -1078,7 +1084,7 @@ export default function FacturenClient({
                   <button
                     onClick={() => toggleRepeat(sc.id, !sc.active)}
                     style={{ fontSize: 12.5, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
-                    {sc.active ? 'Pauzeer' : 'Hervat'}
+                    {sc.active ? t('lijst.pauzeer') : t('lijst.hervat')}
                   </button>
                   <button
                     onClick={() => stopRepeat(sc.id)}
@@ -1096,7 +1102,7 @@ export default function FacturenClient({
         ) : sorted.length === 0 ? (
           searching ? (
             <p style={{ textAlign: 'center', color: '#5F6368', fontSize: 14, padding: '48px 16px', fontFamily: FONT }}>
-              Geen facturen gevonden voor &ldquo;{search.trim()}&rdquo;
+              {t('lijst.zoek.geen', { query: search.trim() })}
             </p>
           ) : typeFiltered && (hasMore || loading) ? (
             // [TAB-DRAIN] Older pages are still being pulled in — an honest
@@ -1190,7 +1196,7 @@ export default function FacturenClient({
                             werd het spoor wel geschreven en nooit gelezen. */}
                         {makers[inv.id] && (
                           <span
-                            title={`Aangemaakt door ${makers[inv.id]}`}
+                            title={t('lijst.aangemaaktDoor', { name: makers[inv.id] })}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#F3E5F5', color: '#6A1B9A', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>person</span>
@@ -1209,11 +1215,11 @@ export default function FacturenClient({
                         )}
                         {xq && (
                           <span
-                            title={`De factuur telt voor de btw mee in ${xq.bookedQuarterLabel} (factuurdatum). De betaling kwam binnen in ${xq.paidQuarterLabel}.`}
+                            title={t('lijst.kwartaal.uitleg', { booked: xq.bookedQuarterLabel, paid: xq.paidQuarterLabel })}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
-                            Betaald in {xq.paidQuarterLabel}
+                            {t('lijst.betaaldIn', { quarter: xq.paidQuarterLabel })}
                           </span>
                         )}
                       </div>
@@ -1236,7 +1242,7 @@ export default function FacturenClient({
                           chased and never counted in Te ontvangen, with nothing explaining why. */}
                       {creditedIds.has(inv.id) && (
                         <span
-                          title="Er is een creditnota voor deze factuur gemaakt — hij wordt niet meer aangemaand en telt niet mee als openstaand."
+                          title={t('lijst.gecrediteerd.uitleg')}
                           style={{
                             fontSize: 11, fontWeight: 600, color: '#5F6368', background: M3.surfaceVariant,
                             border: '1px solid #DADCE0', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
@@ -1260,14 +1266,14 @@ export default function FacturenClient({
                             // (or finishing the invoice) is one tap from where the owner reads it.
                             setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
                           }}
-                          title={`Deelbetaling: ${fmtEur(inv.amount_paid ?? 0)} van ${fmtEur(Math.abs(inv.total_inc_btw ?? 0))} betaald — tik om de rest te noteren`}
+                          title={t('lijst.deelbetaling.uitleg', { paid: fmtEur(inv.amount_paid ?? 0), total: fmtEur(Math.abs(inv.total_inc_btw ?? 0)) })}
                           style={{
                             fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
                             border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
                             cursor: 'pointer', fontFamily: FONT,
                           }}
                         >
-                          Deels betaald · {fmtEur(openAmount(inv))} open
+                          {t('lijst.deelsBetaald', { open: fmtEur(openAmount(inv)) })}
                         </button>
                       )}
 
@@ -1303,7 +1309,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primary, color: '#fff', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {inv.status === 'sent' ? 'Opnieuw sturen' : 'Offerte versturen'}</>}
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {inv.status === 'sent' ? t('lijst.offerte.opnieuw') : t('lijst.offerte.versturen')}</>}
                         </button>
                       )}
 
@@ -1362,7 +1368,7 @@ export default function FacturenClient({
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : 'Betaald?'}
+                            : t('lijst.betaaldVraag')}
                         </button>
                       )}
 
@@ -1455,7 +1461,7 @@ export default function FacturenClient({
                       <button
                         onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
                         disabled={processingId === inv.id}
-                        aria-label={`Factuur ${inv.invoice_number ?? ''} verwijderen`}
+                        aria-label={t('lijst.verwijderen.aria', { number: inv.invoice_number ?? '' })}
                         title={t('lijst.verwijderen')}
                         style={{
                           flexShrink: 0, marginInlineStart: 2, width: 34, height: 34, borderRadius: R.full,
@@ -1476,11 +1482,11 @@ export default function FacturenClient({
                   {expanded && (
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
-                        <InfoLine label="Aan"       value={inv.client_name} />
-                        {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label="BTW" value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
-                        <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
-                        <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
+                        <InfoLine label={t('lijst.aan')} value={inv.client_name} />
+                        {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label={t('lijst.btw')} value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
+                        <InfoLine label={t('lijst.exclBtw')} value={fmtEur(totalExBtw)} mono />
+                        <InfoLine label={((r) => r == null ? t('lijst.btw') : t('lijst.btwPct', { pct: r }))(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={t('lijst.inclBtw')} value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.due_date && <InfoLine label={t('lijst.vervaldatum')} value={fmtDate(inv.due_date)} />}
                       </div>
 
@@ -1493,7 +1499,7 @@ export default function FacturenClient({
                             onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
                             style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                            Verwijderen
+                            {t('lijst.verwijderen')}
                           </button>
                         )}
                         {/* [HERHAAL] Only on a real, already-sent verkoopfactuur: a concept has
@@ -1502,19 +1508,19 @@ export default function FacturenClient({
                         {!isCredit && !isOfferte && inv.status !== 'draft' && (() => {
                           const sc = schedules[inv.id]
                           const label = !sc
-                            ? 'Herhalen'
+                            ? t('lijst.herhalen.knop')
                             : !sc.active
-                              ? 'Herhalen gepauzeerd'
-                              : sc.cadence === 'weekly' ? 'Herhaalt elke week'
-                                : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
-                                  : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
-                                    : 'Herhaalt elk jaar'
+                              ? t('lijst.herhalen.pauzeLabel')
+                              : sc.cadence === 'weekly' ? t('lijst.herhaalt.week')
+                                : sc.cadence === 'monthly' ? t('lijst.herhaalt.maand')
+                                  : sc.cadence === 'quarterly' ? t('lijst.herhaalt.kwartaal')
+                                    : t('lijst.herhaalt.jaar')
                           return (
                             <button
                               onClick={e => {
                                 e.stopPropagation()
                                 setRepeatCtx({
-                                  id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? 'deze klant',
+                                  id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? t('lijst.dezeKlant'),
                                   ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date, active: sc.active } : {}),
                                 })
                               }}
@@ -1540,14 +1546,14 @@ export default function FacturenClient({
             {/* Infinite scroll sentinel */}
             <div ref={sentinelRef} style={{ height: 1 }} />
             {loading && sorted.length > 0 && (
-              <p style={{ textAlign: 'center', fontSize: 12, color: '#5F6368', padding: '16px 0' }}>Laden...</p>
+              <p style={{ textAlign: 'center', fontSize: 12, color: '#5F6368', padding: '16px 0' }}>{t('lijst.laden')}</p>
             )}
 
             {/* [BOEK-029] Archived — end of Alle only, no buttons (hidden while searching) */}
             {filter === 'all' && !searching && archivedInvoices.length > 0 && (
               <>
                 <div style={{ padding: '8px 4px 2px' }}>
-                  <p style={{ fontSize: 11, color: '#70757a', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
+                  <p style={{ fontSize: 11, color: '#70757a', fontWeight: 500, letterSpacing: 0.4 }}>{t('lijst.gearchiveerd')}</p>
                 </div>
                 {archivedInvoices.map(inv => (
                   <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: inv.replaced_by_number ? 0.4 : 0.6 }}>
@@ -1555,7 +1561,7 @@ export default function FacturenClient({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         {inv.replaced_by_number && (
-                          <p style={{ fontSize: 12, color: '#5F6368' }}>Vervangen door {inv.replaced_by_number}</p>
+                          <p style={{ fontSize: 12, color: '#5F6368' }}>{t('lijst.vervangenDoor', { number: inv.replaced_by_number })}</p>
                         )}
                       </div>
                       <p style={{ fontSize: 14, fontWeight: 700, color: '#5F6368', fontFamily: FONT_NUM }}>{fmtEur(inv.total_inc_btw)}</p>
@@ -1587,14 +1593,14 @@ export default function FacturenClient({
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
-                {selectedList.length} geselecteerd · {fmtEur(selectedSum)}
+                {t('lijst.geselecteerd', { count: selectedList.length, amount: fmtEur(selectedSum) })}
               </p>
               <p style={{ fontSize: 11.5, color: !sameClient ? M3.error : '#5F6368', margin: '2px 0 0' }}>
                 {!sameClient
-                  ? 'Kies facturen van dezelfde klant'
+                  ? t('lijst.zelfdeKlant')
                   : selectedList.length < 2
-                    ? 'Kies minimaal 2 openstaande facturen'
-                    : `Eén betaallink voor ${selectedList[0]?.client || 'deze klant'}`}
+                    ? t('lijst.minimaalTwee')
+                    : t('lijst.eenBetaallink', { client: selectedList[0]?.client || t('lijst.dezeKlant') })}
               </p>
             </div>
             <button
@@ -1608,7 +1614,7 @@ export default function FacturenClient({
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
-              {bundleLoading ? 'Bezig…' : 'Betaalverzoek'}
+              {bundleLoading ? t('lijst.bezig') : t('lijst.betaalverzoek')}
             </button>
           </div>
         </div>
@@ -1648,18 +1654,19 @@ export default function FacturenClient({
             style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
             <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
-              Betaalverzoek voor {bundle.count} facturen
+              {t('lijst.bundel.titel', { count: bundle.count })}
             </h3>
+            {/* [TAAL] Split around the styled reference — no styled span inside one key. */}
             <p style={{ fontSize: 13.5, color: '#5F6368', lineHeight: 1.5, margin: '0 0 16px' }}>
-              Deel deze link met je klant. Ze betalen {fmtEur(bundle.amount)} in één overboeking —
-              met kenmerk <span style={{ fontWeight: 600, color: '#3C4043' }}>{bundle.reference || '—'}</span>.
-              Zodra de betaling in je bankafschrift binnenkomt, herkent BoekBrug alle facturen tegelijk.
+              {t('lijst.bundel.deel', { amount: fmtEur(bundle.amount) })}{' '}
+              <span style={{ fontWeight: 600, color: '#3C4043' }}>{bundle.reference || '—'}</span>.{' '}
+              {t('lijst.bundel.herkent')}
             </p>
 
             {bundleQr && (
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={bundleQr} alt="QR naar betaalpagina" width={180} height={180} style={{ borderRadius: 12 }} />
+                <img src={bundleQr} alt={t('lijst.bundel.qrAlt')} width={180} height={180} style={{ borderRadius: 12 }} />
               </div>
             )}
 
@@ -1668,13 +1675,12 @@ export default function FacturenClient({
                 style={{ flex: 1, background: 'transparent', fontSize: 13, color: '#3C4043', border: 'none', outline: 'none', padding: '0 6px', minWidth: 0 }} />
               <button onClick={() => bundleCopy(bundle.url)}
                 style={{ flexShrink: 0, background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontFamily: FONT }}>
-                {bundleCopied ? 'Gekopieerd' : 'Kopieer link'}
+                {bundleCopied ? t('lijst.gekopieerd') : t('lijst.kopieerLink')}
               </button>
             </div>
 
             <p style={{ fontSize: 11.5, color: '#70757a', lineHeight: 1.5, margin: '0 0 16px' }}>
-              BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN
-              ({bundle.iban.replace(/(.{4})/g, '$1 ').trim()}).
+              {t('lijst.bundel.iban', { iban: bundle.iban.replace(/(.{4})/g, '$1 ').trim() })}
             </p>
 
             <button onClick={() => setBundle(null)}
@@ -1690,22 +1696,22 @@ export default function FacturenClient({
         <BottomSheet
           title={
             payCtx.invoiceType === 'creditnota'
-              ? (payCtx.newStatus === 'paid' ? 'Creditnota als voldaan markeren?' : 'Voldaan status ongedaan maken?')
-              : (payCtx.newStatus === 'paid' ? 'Factuur markeren als betaald?'    : 'Betaling ongedaan maken?')
+              ? (payCtx.newStatus === 'paid' ? t('lijst.pay.creditTitel') : t('lijst.pay.creditOngedaanTitel'))
+              : (payCtx.newStatus === 'paid' ? t('lijst.pay.titel')       : t('lijst.pay.ongedaanTitel'))
           }
           body={
             payCtx.invoiceType === 'creditnota'
               ? (payCtx.newStatus === 'paid'
-                  ? `Weet u zeker dat u creditnota ${payCtx.number} als voldaan wilt markeren?`
-                  : `Creditnota ${payCtx.number} wordt teruggeplaatst naar 'Verzonden'.`)
+                  ? t('lijst.pay.creditBody', { number: payCtx.number })
+                  : t('lijst.pay.creditOngedaanBody', { number: payCtx.number }))
               : (payCtx.newStatus === 'paid'
-                  ? `Factuur ${payCtx.number} wordt als betaald gemarkeerd en doorgestuurd naar uw accountant. Weet u het zeker?`
-                  : `Factuur ${payCtx.number} wordt teruggeplaatst naar 'Verzonden'.`)
+                  ? t('lijst.pay.body', { number: payCtx.number })
+                  : t('lijst.pay.ongedaanBody', { number: payCtx.number }))
           }
           confirmLabel={
             payCtx.invoiceType === 'creditnota'
-              ? (payCtx.newStatus === 'paid' ? 'Ja, voldaan' : 'Ja, ongedaan maken')
-              : (payCtx.newStatus === 'paid' ? 'Ja, markeer als betaald' : 'Ongedaan maken')
+              ? (payCtx.newStatus === 'paid' ? t('lijst.pay.jaVoldaan') : t('lijst.pay.jaOngedaan'))
+              : (payCtx.newStatus === 'paid' ? t('lijst.pay.jaBetaald') : t('lijst.pay.ongedaan'))
           }
           confirmBg={
             payCtx.newStatus === 'paid' ? M3.success : M3.warning
@@ -1736,19 +1742,19 @@ export default function FacturenClient({
       {/* [BOEK-029] ── Send confirmation modal ── */}
       {sendCtx && (
         <BottomSheet
-          title={`Versturen naar ${sendCtx.clientName}?`}
+          title={t('lijst.send.titel', { name: sendCtx.clientName })}
           body={
             sendCtx.invoiceType === 'pro_forma' || sendCtx.invoiceType === 'offerte'
-              ? 'Deze pro forma wordt omgezet naar een officiële factuur met een nieuw factuurnummer.'
-              : 'Bevestig de gegevens voordat je de factuur verstuurt.'
+              ? t('lijst.send.proForma')
+              : t('lijst.send.bevestig')
           }
           details={[
-            { label: 'Factuurnummer', value: sendCtx.number || 'Wordt toegekend bij verzenden' },
-            { label: 'E-mail',        value: sendCtx.clientEmail },
-            { label: 'Bedrag',        value: fmtEur(sendCtx.totalIncBtw) },
+            { label: t('lijst.send.nummer'), value: sendCtx.number || t('lijst.send.nummerVolgt') },
+            { label: t('lijst.send.email'),  value: sendCtx.clientEmail },
+            { label: t('lijst.send.bedrag'), value: fmtEur(sendCtx.totalIncBtw) },
           ]}
-          warning="Na verzending kun je deze factuur niet meer wijzigen. Voor correcties moet je een creditnota maken."
-          confirmLabel="Versturen"
+          warning={t('lijst.send.waarschuwing')}
+          confirmLabel={t('lijst.versturen')}
           confirmBg={M3.primary}
           onConfirm={() => executeSend(sendCtx)}
           onCancel={() => setSendCtx(null)}
@@ -1769,18 +1775,16 @@ export default function FacturenClient({
             style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
             <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>
-              {!repeatCtx.scheduleId ? 'Hoe vaak herhalen?' : repeatCtx.active === false ? 'Herhalen staat op pauze' : 'Deze factuur herhaalt'}
+              {!repeatCtx.scheduleId ? t('lijst.repeat.titel') : repeatCtx.active === false ? t('lijst.repeat.pauzeTitel') : t('lijst.repeat.actiefTitel')}
             </p>
+            {/* [TAAL] Plain text — no <strong> mid-sentence, its position differs per language. */}
             <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 20, lineHeight: 1.5 }}>
               {repeatCtx.scheduleId ? (
-                repeatCtx.active === false ? (
-                  <>Er wordt niets klaargezet voor {repeatCtx.client} zolang dit op pauze staat. Het schema blijft bewaard.</>
-                ) : (
-                  <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
-                )
+                repeatCtx.active === false
+                  ? t('lijst.repeat.pauzeBody', { client: repeatCtx.client })
+                  : t('lijst.repeat.actiefBody', { client: repeatCtx.client, date: fmtDate(repeatCtx.nextRun ?? null) })
               ) : (
-                <>We maken deze factuur voor {repeatCtx.client} telkens opnieuw klaar — met dezelfde regels en hetzelfde
-                betaaltermijn. Je krijgt een <strong>concept</strong> dat je zelf verstuurt.</>
+                t('lijst.repeat.uitleg', { client: repeatCtx.client })
               )}
             </p>
             {/* [HERHAAL] Stopping is the promise the dialog makes when it starts, so it lives in
@@ -1793,7 +1797,7 @@ export default function FacturenClient({
                   onClick={() => { const id = repeatCtx.scheduleId as string; const next = repeatCtx.active === false; setRepeatCtx(null); void toggleRepeat(id, next) }}
                   style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
                 >
-                  {repeatCtx.active === false ? 'Hervatten' : 'Pauzeren'}
+                  {repeatCtx.active === false ? t('lijst.hervatten') : t('lijst.pauzeren')}
                 </button>
                 <button
                   onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
@@ -1804,26 +1808,28 @@ export default function FacturenClient({
               </>
             ) : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              {/* [TAAL] The first value is the API cadence and stays English/constant; the label
+                  comes from the catalogue. */}
               {([
-                ['weekly', 'Elke week'],
-                ['monthly', 'Elke maand'],
-                ['quarterly', 'Elk kwartaal'],
-                ['yearly', 'Elk jaar'],
-              ] as const).map(([value, label]) => (
+                ['weekly', 'lijst.elke.week'],
+                ['monthly', 'lijst.elke.maand'],
+                ['quarterly', 'lijst.elke.kwartaal'],
+                ['yearly', 'lijst.elke.jaar'],
+              ] as const).map(([value, labelKey]) => (
                 <button
                   key={value}
                   onClick={() => startRepeat(value)}
                   style={{ padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
                 >
-                  {label}
+                  {t(labelKey)}
                 </button>
               ))}
             </div>
             )}
             <p style={{ fontSize: 12, color: '#70757a', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
               {repeatCtx.scheduleId
-                ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
-                : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
+                ? t('lijst.repeat.blijftStaan')
+                : t('lijst.repeat.stoppenKan')}
             </p>
             <button
               onClick={() => setRepeatCtx(null)}
@@ -1915,8 +1921,8 @@ export default function FacturenClient({
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
               {requestSent
-                ? `Je verzoek voor factuur ${verwerktCtx.number} is naar de boekhouder gestuurd.`
-                : `De boekhouder heeft factuur ${verwerktCtx.number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je de betaalstatus wijzigt.`}
+                ? t('lijst.verzoekGestuurd', { number: verwerktCtx.number })
+                : t('lijst.verwerktUitleg', { number: verwerktCtx.number })}
             </p>
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
               {!requestSent && (
@@ -2088,10 +2094,10 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                   {entry.error
                     ? entry.error
                     : amountText.trim() === ''
-                      ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
+                      ? t('lijst.pay.leegAlles', { amount: fmtEur(openBalance) })
                       : entry.settlesFully
-                        ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} — kies hieronder hoe je dit deel betaalde`}
+                        ? t('lijst.pay.volledig')
+                        : t('lijst.pay.nogOpen', { amount: fmtEur(entry.remainingAfter) })}
                 </p>
               </>
             )}

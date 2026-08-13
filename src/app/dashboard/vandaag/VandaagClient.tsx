@@ -109,17 +109,18 @@ function urgencyOf(dueIso: string): Urgency {
   return daysUntilDue(dueIso) < 0 ? "overdue" : "soon";
 }
 
-// Human Dutch due-date status. [OWNER-DECISION] Every overdue invoice shows the
+// Human due-date status. [OWNER-DECISION] Every overdue invoice shows the
 // real day count ("36 dagen te laat") — no calm tier, no grouping.
-function dueLabel(dueIso: string): string {
+// [TAAL] Takes the caller's translator; each count band has its own key.
+function dueLabel(dueIso: string, t: ReturnType<typeof translator>): string {
   const d = daysUntilDue(dueIso);
   if (d < 0) {
     const late = Math.abs(d);
-    return late === 1 ? "1 dag te laat" : `${late} dagen te laat`;
+    return late === 1 ? t('vandaag.telaatEen') : t('vandaag.telaatMeer', { n: late });
   }
-  if (d === 0) return "Vervalt vandaag";
-  if (d === 1) return "Vervalt morgen";
-  return `Vervalt over ${d} dagen`;
+  if (d === 0) return t('vandaag.vervaltVandaag');
+  if (d === 1) return t('vandaag.vervaltMorgen');
+  return t('vandaag.vervaltOver', { n: d });
 }
 
 // Red for ANY overdue invoice, amber for soon-due. (The old scheme colored a
@@ -315,7 +316,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           <span style={{ fontSize: 22 }}>📥</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#7A4F00" }}>
-              {toVerifyCount === 1 ? "1 factuur wacht op verificatie" : `${toVerifyCount} facturen wachten op verificatie`}
+              {toVerifyCount === 1 ? t('vandaag.verificatieEen') : t('vandaag.verificatieMeer', { n: toVerifyCount })}
             </span>
             <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
               {t('vandaag.controleerKosten')}
@@ -341,7 +342,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           <span style={{ fontSize: 22 }}>📅</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#7A4F00" }}>
-              {datelessPayableCount === 1 ? "1 factuur zonder vervaldatum" : `${datelessPayableCount} facturen zonder vervaldatum`}
+              {datelessPayableCount === 1 ? t('vandaag.zonderVervalEen') : t('vandaag.zonderVervalMeer', { n: datelessPayableCount })}
             </span>
             <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
               {t('vandaag.geenBetaallijst')}
@@ -503,13 +504,15 @@ function ListSection({
   onPayNow?: (id: string, paymentMethod: "bank" | "kas") => void;
   onOpenFullPay?: (id: string) => void;
 }) {
+  // [TAAL] Bound before the early return — a hook may not sit behind a condition.
+  const t = translator(useLocale())
   if (invoices.length === 0) return null;
 
   // One flat list in the chosen sort order — no "Al langer open" split (it made
   // a 36-days-late invoice render BELOW a 10-days-late one: looked like a bug).
 
   const countLabel =
-    invoices.length === 1 ? "1 factuur" : `${invoices.length} facturen`;
+    invoices.length === 1 ? t('vandaag.eenFactuur') : t('vandaag.meerFacturen', { n: invoices.length });
 
   return (
     <section style={{ marginBottom: 32 }}>
@@ -632,7 +635,7 @@ function InvoiceCard({
   // list stays a calm overview and deliberately does NOT expose an ad-hoc one-tap
   // send (the schedule is tier-based; per-invoice pause/history lives on the
   // invoice page).
-  const primaryLabel = isCredit ? "Bekijken" : isIncoming ? "Betalen" : "Bekijken";
+  const primaryLabel = isCredit ? t('vandaag.bekijken') : isIncoming ? t('inkoop.betalen') : t('vandaag.bekijken');
 
   return (
     <div
@@ -666,7 +669,7 @@ function InvoiceCard({
               whiteSpace: "nowrap",
             }}
           >
-            {invoice.client_name?.trim() || "Onbekende partij"}
+            {invoice.client_name?.trim() || t('vandaag.onbekendePartij')}
           </div>
 
           {/* [TODAY-UX-FIELDS] Invoice number — quiet secondary line. */}
@@ -688,7 +691,7 @@ function InvoiceCard({
           <div
             style={{ fontSize: 14, color: accent, fontWeight: 500, marginTop: 4 }}
           >
-            {dueLabel(due)}
+            {dueLabel(due, t)}
           </div>
 
           {/* [TODAY-UX-FIELDS] Dates — factuurdatum + vervaldatum, via the shared
@@ -846,7 +849,7 @@ function InvoiceCard({
                   opacity: payBusy ? 0.5 : 1,
                 }}
               >
-                {payBusy ? "Bezig…" : m === "bank" ? "Bank" : "Contant"}
+                {payBusy ? t('act.bezig') : m === "bank" ? t('lijst.bank') : t('lijst.contant')}
               </button>
             ))}
             <button
@@ -877,7 +880,7 @@ function InvoiceCard({
           leest als "weg", en de eigenaar hoort te ZIEN dat zijn handeling is aangekomen. */}
       {justPaid && (
         <div style={{ marginTop: 10, fontSize: 13.5, color: "#188038", fontWeight: 600 }}>
-          ✓ Afgeboekt als betaald
+          {t('vandaag.afgeboekt')}
         </div>
       )}
     </div>

@@ -20,6 +20,7 @@ import { useDialog } from '@/components/ui/Dialog'
 import { M3, R, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -37,11 +38,13 @@ type DocStatusMap = Record<string, { status: string; vraag_text: string | null }
 
 // Document status → badge label + tone. 'te_verwerken' is the neutral default;
 // the three action buttons drive verwerkt / in_behandeling / vraag.
-const DOC_STATUS_META: Record<string, { label: string; tone: NodeBadge['tone'] }> = {
-  verwerkt:       { label: 'Verwerkt',       tone: 'success' },
-  in_behandeling: { label: 'In behandeling', tone: 'warning' },
-  vraag:          { label: 'Vraag',          tone: 'error' },
-  te_verwerken:   { label: 'Te verwerken',   tone: 'neutral' },
+// [TAAL] The map keys ARE the API status values and stay Dutch; only the label is a catalogue
+// key, translated at render time (a module-level const cannot know the viewer's locale).
+const DOC_STATUS_META: Record<string, { key: MessageKey; tone: NodeBadge['tone'] }> = {
+  verwerkt:       { key: 'brug.status.verwerkt',      tone: 'success' },
+  in_behandeling: { key: 'brug.status.inBehandeling', tone: 'warning' },
+  vraag:          { key: 'brug.status.vraag',         tone: 'error' },
+  te_verwerken:   { key: 'brug.status.teVerwerken',   tone: 'neutral' },
 }
 
 // ─── Design tokens — Material You (BoekBrug Design System v1.0) ───────────────
@@ -69,9 +72,9 @@ const TONE: Record<NodeBadge['tone'], { bg: string; color: string }> = {
 // [BRIDGE-POLISH 3a-1] Direction marker — reuses existing TONE swatches so no
 // new palette is introduced. Uitg. (outgoing) = success green; Ink. (incoming)
 // = error red — matching the colour language used elsewhere in the bridge.
-const DIRECTION_MARK: Record<'outgoing' | 'incoming', { label: string; tone: NodeBadge['tone'] }> = {
-  outgoing: { label: 'Uitg.', tone: 'success' },
-  incoming: { label: 'Ink.',  tone: 'error' },
+const DIRECTION_MARK: Record<'outgoing' | 'incoming', { key: MessageKey; tone: NodeBadge['tone'] }> = {
+  outgoing: { key: 'brug.uitgaand', tone: 'success' },
+  incoming: { key: 'brug.inkomend', tone: 'error' },
 }
 
 // ─── Level view: from flat nodes + current path → subfolders + files here ─────
@@ -167,7 +170,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       const res = await fetch(`/api/closing-package?clientId=${encodeURIComponent(clientId)}&year=${year}&quarter=${quarter}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({} as { error?: string }))
-        setPkgError(j?.error ?? 'Het pakket kon niet worden gemaakt. Probeer het opnieuw.')
+        setPkgError(j?.error ?? t('brug.fout.pakket'))
         return
       }
       const blob = await res.blob()
@@ -183,7 +186,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       a.remove()
       URL.revokeObjectURL(url)
     } catch {
-      setPkgError('Geen verbinding — het pakket is niet gedownload.')
+      setPkgError(t('brug.fout.pakketOffline'))
     } finally {
       setPkgBusy(false)
     }
@@ -295,7 +298,9 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       {readFailed && readFailed.length > 0 && (
         <div role="alert" style={{ marginBottom: 16, background: '#F9DEDC', border: `1px solid ${M3.error}`, borderRadius: R.lg, padding: '14px 16px' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: '#B3261E' }}>
-            We konden {readFailed.join(' en ')} niet laden
+            {/* [TAAL] The part names come from the server as printed; only the conjunction and
+                the sentence around them are translated. */}
+            {t('brug.fout.nietLaden', { parts: readFailed.join(` ${t('brug.en')} `) })}
           </div>
           <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4, lineHeight: 1.5 }}>
             {t('brug.fout.nietCompleet')}
@@ -321,7 +326,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                 onChange={e => { setSelectedClientId(e.target.value); setHubTab('overzicht') }}
                 style={{ width: '100%', appearance: 'none', padding: '12px 40px 12px 14px', borderRadius: R.md, border: `1px solid ${M3.outline}`, background: '#fff', fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT, cursor: 'pointer' }}
               >
-                <option value="">— Kies een klant —</option>
+                <option value="">{t('brug.kiesKlantOptie')}</option>
                 {clientSummaries.map(c => (
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
@@ -339,7 +344,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, flexShrink: 0, opacity: pkgBusy ? 0.6 : 1 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>inventory_2</span>
-                {pkgBusy ? 'Bezig…' : 'Download kwartaal'}
+                {pkgBusy ? t('brug.bezig') : t('brug.downloadKwartaal')}
               </button>
             )}
           </div>
@@ -398,14 +403,14 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
 
               {/* Tabs */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
-                {([['overzicht', 'Overzicht', 'fact_check'], ['kwartaal', 'Kwartaal', 'bar_chart'], ['documenten', 'Documenten', 'folder']] as const).map(([key, label, icon]) => (
+                {([['overzicht', 'brug.tab.overzicht', 'fact_check'], ['kwartaal', 'brug.tab.kwartaal', 'bar_chart'], ['documenten', 'brug.tab.documenten', 'folder']] as const).map(([key, labelKey, icon]) => (
                   <button
                     key={key}
                     onClick={() => setHubTab(key)}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, color: hubTab === key ? M3.primary : M3.outline, borderBottom: `2px solid ${hubTab === key ? M3.primary : 'transparent'}`, marginBottom: -1 }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
-                    {label}
+                    {t(labelKey)}
                   </button>
                 ))}
               </div>
@@ -424,7 +429,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
             <div style={{ textAlign: 'center', padding: '40px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#C4C7C5', display: 'block', marginBottom: 8 }}>groups</span>
               <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>{t('brug.kiesKlant')}</p>
-              <p style={{ fontSize: 12.5, color: M3.outline, margin: '4px 0 0' }}>{clientSummaries.length} klanten gekoppeld</p>
+              <p style={{ fontSize: 12.5, color: M3.outline, margin: '4px 0 0' }}>{t('brug.klantenGekoppeld', { count: clientSummaries.length })}</p>
             </div>
           )}
         </div>
@@ -487,12 +492,14 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       {treeSearch !== null ? (
         treeSearch.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '48px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
-            <p style={{ fontSize: 14, color: M3.outline, margin: 0 }}>Geen documenten gevonden voor &ldquo;{search.trim()}&rdquo;</p>
+            <p style={{ fontSize: 14, color: M3.outline, margin: 0 }}>{t('brug.zoek.geen', { query: search.trim() })}</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <p style={{ fontSize: 12.5, color: M3.outline, margin: '0 0 4px' }}>
-              {treeSearch.length} {treeSearch.length === 1 ? 'resultaat' : 'resultaten'} in alle mappen
+              {treeSearch.length === 1
+                ? t('brug.zoek.resultaat', { count: 1 })
+                : t('brug.zoek.resultaten', { count: treeSearch.length })}
             </p>
             {treeSearch.map(file => (
               <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} override={statusOverrides[file.id]} onStatusSet={(s) => setStatusOverrides(prev => ({ ...prev, [file.id]: s }))} />
@@ -575,12 +582,12 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
       // much you had written. A textarea in the app's own dialog says, by its
       // shape, that this is something to write rather than something to fill in.
       const answer = await dialog.prompt({
-        title: 'Vraag over dit document',
-        message: 'Je klant ziet deze tekst op zijn scherm en kan er direct op antwoorden.',
-        placeholder: 'Waar gaat deze bon over?',
+        title: t('brug.vraag.titel'),
+        message: t('brug.vraag.uitleg'),
+        placeholder: t('brug.vraag.placeholder'),
         multiline: true,
         maxLength: 500,
-        confirmLabel: 'Vraag versturen',
+        confirmLabel: t('brug.vraag.versturen'),
         // Optional by design: sending the status with no text still tells the
         // client there is a question, which is what the old prompt allowed by
         // accepting an empty string.
@@ -603,15 +610,15 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
         // The previous (truthful) status stays; the route's own sentence explains why.
         const j = await res.json().catch(() => ({} as { error?: string }))
         setSaveError(
-          (j?.error ?? 'Opslaan mislukt.') +
-          (next === 'vraag' && vraagText ? ' Je vraag is niet verstuurd — probeer het opnieuw.' : ''),
+          (j?.error ?? t('brug.fout.opslaan')) +
+          (next === 'vraag' && vraagText ? ` ${t('brug.fout.vraagOpnieuw')}` : ''),
         )
       }
     } catch {
       setSaveError(
         next === 'vraag' && vraagText
-          ? 'Geen verbinding — je vraag is niet verstuurd.'
-          : 'Geen verbinding — de status is niet opgeslagen.',
+          ? t('brug.fout.vraagOffline')
+          : t('brug.fout.statusOffline'),
       )
     } finally {
       setBusy(false)
@@ -628,7 +635,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
           {/* [BRIDGE-POLISH 3a-1] direction marker (invoices only) */}
           {node.direction && (
             <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: R.full, background: TONE[DIRECTION_MARK[node.direction].tone].bg, color: TONE[DIRECTION_MARK[node.direction].tone].color }}>
-              {DIRECTION_MARK[node.direction].label}
+              {t(DIRECTION_MARK[node.direction].key)}
             </span>
           )}
           <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -643,7 +650,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
               accountant and client. Only rendered when a status row exists. */}
           {statusMeta && (
             <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: R.full, background: TONE[statusMeta.tone].bg, color: TONE[statusMeta.tone].color }}>
-              {statusMeta.label}
+              {t(statusMeta.key)}
             </span>
           )}
         </div>
@@ -719,7 +726,9 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
         {row}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingInlineStart: 4 }}>
-          {([['verwerkt', 'Verwerkt'], ['in_behandeling', 'In behandeling'], ['vraag', 'Vraag']] as const).map(([key, label]) => {
+          {/* [TAAL] The array values are the API action words and stay Dutch; the label the
+              accountant reads comes from the catalogue via DOC_STATUS_META. */}
+          {(['verwerkt', 'in_behandeling', 'vraag'] as const).map((key) => {
             const active = status === key
             const meta = DOC_STATUS_META[key]
             return (
@@ -735,7 +744,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
                   cursor: busy ? 'default' : 'pointer', fontFamily: FONT, opacity: busy ? 0.6 : 1,
                 }}
               >
-                {label}
+                {t(meta.key)}
               </button>
             )
           })}
@@ -768,10 +777,10 @@ interface ReadinessResponse {
   report: ReadinessReport
   concept: { verschuldigd: number; voorbelasting: number; saldo: number }
 }
-const READINESS_STATUS: Record<ReadinessStatus, { emoji: string; title: string; bg: string; fg: string }> = {
-  ready:     { emoji: '🟢', title: 'Klaar voor verwerking', bg: '#CEEAD6', fg: '#137333' },
-  almost:    { emoji: '🟡', title: 'Bijna klaar',            bg: '#FEE8C4', fg: '#7C5800' },
-  attention: { emoji: '🔴', title: 'Nog niet klaar',         bg: '#F9DEDC', fg: '#B3261E' },
+const READINESS_STATUS: Record<ReadinessStatus, { emoji: string; titleKey: MessageKey; bg: string; fg: string }> = {
+  ready:     { emoji: '🟢', titleKey: 'brug.klaar.voorVerwerking', bg: '#CEEAD6', fg: '#137333' },
+  almost:    { emoji: '🟡', titleKey: 'brug.klaar.bijna',          bg: '#FEE8C4', fg: '#7C5800' },
+  attention: { emoji: '🔴', titleKey: 'brug.klaar.nogNiet',        bg: '#F9DEDC', fg: '#B3261E' },
 }
 
 function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
@@ -839,14 +848,14 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
       <div style={{ background: meta.bg, borderRadius: R.lg, padding: '16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
         <span style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: meta.fg }}>{meta.title}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: meta.fg }}>{t(meta.titleKey)}</div>
           <div style={{ fontSize: 12.5, color: meta.fg, opacity: 0.85 }}>{rep.quarterLabel}</div>
         </div>
         <div style={{ fontSize: 24, fontWeight: 800, color: meta.fg }}>{rep.score}%</div>
       </div>
 
-      {rep.missing.length > 0 && itemList('Wat moet er nog gebeuren', '#7C5800', rep.missing)}
-      {rep.risks.length > 0 && itemList('Even controleren', M3.error, rep.risks)}
+      {rep.missing.length > 0 && itemList(t('brug.moetGebeuren'), '#7C5800', rep.missing)}
+      {rep.risks.length > 0 && itemList(t('brug.evenControleren'), M3.error, rep.risks)}
       {rep.missing.length === 0 && rep.risks.length === 0 && (
         <div style={{ background: '#CEEAD6', color: '#137333', borderRadius: R.lg, padding: '12px 16px', marginBottom: 12, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
@@ -857,7 +866,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
       {/* Concept BTW saldo — the number to file */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>
-          {teBetalen ? 'Concept BTW te betalen' : 'Concept BTW terug te ontvangen'}
+          {teBetalen ? t('brug.conceptBtwBetalen') : t('brug.conceptBtwTerug')}
         </span>
         <span style={{ fontSize: 18, fontWeight: 700, color: teBetalen ? M3.onSurface : '#137333' }}>{fmtEur(Math.abs(data.concept.saldo))}</span>
       </div>
@@ -938,22 +947,22 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
   return (
     <div style={{ fontFamily: FONT }}>
       <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
-        Q{quarter} {year} · alle kanalen (kassa, bank, kas, facturen)
+        {t('brug.alleKanalen', { quarter, year })}
       </div>
 
       {/* Resultaat — cross-channel P&L (cents-accurate) */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px', marginBottom: 10 }}>
-        {line('Omzet (excl. BTW)', fmtEur(pnl.omzet), { color: '#137333' })}
-        {line('Kosten (excl. BTW)', fmtEur(pnl.kosten), { color: '#B3261E' })}
-        {line('Resultaat', fmtEur(pnl.resultaat), { strong: true, top: true })}
+        {line(t('brug.omzetExcl'), fmtEur(pnl.omzet), { color: '#137333' })}
+        {line(t('brug.kostenExcl'), fmtEur(pnl.kosten), { color: '#B3261E' })}
+        {line(t('brug.resultaat'), fmtEur(pnl.resultaat), { strong: true, top: true })}
       </div>
 
       {/* Concept BTW — whole-euro, matches het formulier, de ZIP en het Overzicht */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px' }}>
-        {line('BTW verschuldigd (5a)', fmtEur(concept.verschuldigd))}
-        {line('Voorbelasting (5b)', `− ${fmtEur(concept.voorbelasting)}`)}
+        {line(t('brug.btw5a'), fmtEur(concept.verschuldigd))}
+        {line(t('brug.btw5b'), `− ${fmtEur(concept.voorbelasting)}`)}
         {line(
-          teBetalen ? 'Concept te betalen (5g)' : 'Concept terug te ontvangen (5g)',
+          teBetalen ? t('brug.btw5gBetalen') : t('brug.btw5gTerug'),
           fmtEur(Math.abs(concept.saldo)),
           { strong: true, top: true, color: teBetalen ? M3.onSurface : '#137333' },
         )}
@@ -961,7 +970,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
 
       {pnl.cashOmzetZonderBtw > 0 && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: R.md, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, lineHeight: 1.5 }}>
-          {fmtEur(pnl.cashOmzetZonderBtw)} omzet (contant of via de bank) heeft nog geen BTW-tarief — die BTW zit niet in 5a.
+          {t('brug.omzetZonderTarief', { amount: fmtEur(pnl.cashOmzetZonderBtw) })}
         </div>
       )}
     </div>

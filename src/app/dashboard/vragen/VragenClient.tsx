@@ -50,7 +50,6 @@ export default function VragenClient({
 }) {
   const t = translator(useLocale())
   const router = useRouter()
-  const boekhouder = accountantNaam ?? 'je boekhouder'
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -58,10 +57,12 @@ export default function VragenClient({
 
         {/* [HEADER-SYSTEM] De titel woont in de gedeelde sub-paginabalk; hier alleen de uitleg. */}
         <header style={{ margin: '16px 0 18px' }}>
+          {/* [TAAL] Two full sentences instead of a swapped-in noun: with a name the sentence
+              reads differently than without one, and only the NAME itself is data. */}
           <p style={{ fontSize: 14.5, color: M3.neutral, margin: 0, lineHeight: 1.55 }}>
-            Als {boekhouder} iets mist of niet begrijpt bij een van je bestanden, staat de vraag
-            hier. Je antwoord komt bij {accountantNaam ? 'hem of haar' : 'je boekhouder'} binnen als
-            bericht — je hoeft er geen app voor te wisselen.
+            {accountantNaam
+              ? t('vr.uitleg.metNaam', { naam: accountantNaam })
+              : t('vr.uitleg.zonderNaam')}
           </p>
         </header>
 
@@ -69,9 +70,10 @@ export default function VragenClient({
         {loadFailed ? (
           <div style={{ background: M3.warningContainer, borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
             <div style={{ fontSize: 14.5, fontWeight: 600, color: '#7a4f00' }}>{t('vr.fout.ophalen')}</div>
+            {/* [TAAL] The mid-sentence <strong> was dropped: emphasis cannot travel through a
+                sentence whose word order changes per language. */}
             <div style={{ fontSize: 13.5, color: '#7a4f00', margin: '4px 0 12px', lineHeight: 1.5 }}>
-              Dit betekent <strong>niet</strong> dat er niets openstaat — we konden de lijst even
-              niet lezen.
+              {t('vr.fout.betekentNiet')}
             </div>
             <button
               onClick={() => router.refresh()}
@@ -85,8 +87,8 @@ export default function VragenClient({
             <div style={{ fontSize: 15.5, fontWeight: 600, color: '#0B5345' }}>{t('vr.geen')}</div>
             <div style={{ fontSize: 13.5, color: '#0B5345', marginTop: 4, lineHeight: 1.55 }}>
               {accountantId
-                ? 'Er staat op dit moment niets van je boekhouder open. Zodra er een vraag komt, krijg je er bericht van en staat hij hier.'
-                : 'Je hebt nog geen boekhouder gekoppeld. Zodra dat gebeurt, komen zijn vragen hier binnen.'}
+                ? t('vr.geen.metBoekhouder')
+                : t('vr.geen.zonderBoekhouder')}
             </div>
           </div>
         ) : (
@@ -135,8 +137,8 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
   const isFactuur = vraag.subjectType === 'invoice'
   const naam = vraag.documentName ?? (
     isFactuur
-      ? (vraag.documentMissing ? 'Een factuur die we niet meer kunnen tonen' : 'Factuur')
-      : (vraag.documentMissing ? 'Een bestand dat we niet meer kunnen tonen' : 'Naamloos bestand')
+      ? (vraag.documentMissing ? t('vr.naam.factuurWeg') : t('nieuw.type.factuur'))
+      : (vraag.documentMissing ? t('vr.naam.bestandWeg') : t('vr.naam.naamloos'))
   )
   // De factuur zelf, met ?focus= — dezelfde deep-link die een melding gebruikt: hij klapt de rij
   // open, scrollt hem in beeld en licht hem even op. Alleen wanneer wij de factuur ook echt konden
@@ -157,13 +159,13 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setFout(json?.error || 'Versturen mislukt. Probeer het opnieuw.')
+        setFout(json?.error || t('vr.fout.versturen'))
       } else {
         setVerstuurd(true)
         setAntwoord('')
       }
     } catch {
-      setFout('Versturen mislukt. Probeer het opnieuw.')
+      setFout(t('vr.fout.versturen'))
     } finally {
       setBezig(false)
     }
@@ -178,8 +180,8 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word' }}>{naam}</div>
             <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>
-              {datum ? `Gevraagd op ${datum}` : 'Datum onbekend'}
-              {vraag.documentTrashed && ' · ligt in je prullenbak'}
+              {datum ? t('vr.gevraagdOp', { datum }) : t('vr.datumOnbekend')}
+              {vraag.documentTrashed && ` · ${t('vr.inPrullenbak')}`}
             </div>
           </div>
           {vraag.fileUrl && (
@@ -214,8 +216,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
           </p>
         ) : (
           <p style={{ margin: 0, fontSize: 14, color: '#5a3e00', lineHeight: 1.55 }}>
-            Je boekhouder heeft dit bestand als vraag gemarkeerd, maar er geen toelichting bij
-            geschreven. Vraag gerust wat hij precies nodig heeft.
+            {t('vr.geenToelichting')}
           </p>
         )}
       </div>
@@ -224,15 +225,13 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
       <div style={{ padding: '0 16px 16px' }}>
         {!accountantId ? (
           <p style={{ margin: 0, fontSize: 13, color: M3.neutral, lineHeight: 1.5 }}>
-            Er is op dit moment geen boekhouder aan je account gekoppeld, dus we kunnen je antwoord
-            nergens naartoe sturen.
+            {t('vr.geenKoppeling')}
           </p>
         ) : verstuurd ? (
           <div style={{ background: M3.successContainer, borderRadius: R.md, padding: '12px 14px' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#0B5345' }}>{t('vr.verstuurd')}</div>
             <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 3, lineHeight: 1.5 }}>
-              De vraag blijft hier staan tot je boekhouder hem zelf afvinkt — wij zetten geen vinkje
-              namens hem.
+              {t('vr.blijftStaan')}
             </div>
           </div>
         ) : (
@@ -267,7 +266,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
                 color: antwoord.trim().length === 0 ? M3.neutral : '#fff',
               }}
             >
-              {bezig ? 'Versturen…' : 'Antwoord versturen'}
+              {bezig ? t('fb.versturenBezig') : t('vr.antwoordVersturen')}
             </button>
           </>
         )}

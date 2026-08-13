@@ -198,7 +198,7 @@ export default function SettingsPage() {
     }
     if (!kvkRes.valid || !btwRes.valid || !ibanRes.valid) {
       setFieldErrors(nextErrors)
-      setErrorProfile('Controleer de gemarkeerde velden')
+      setErrorProfile(t('inst.controleerVelden'))
       setLoadingProfile(false)
       return
     }
@@ -253,7 +253,7 @@ export default function SettingsPage() {
       .eq('id', user.id)
 
     if (error) {
-      setErrorProfile('Opslaan mislukt — probeer opnieuw')
+      setErrorProfile(t('inst.opslaanMislukt'))
     } else {
       // [REMINDERS] Persist the reminder preferences in a SEPARATE, best-effort
       // update — never bundled with the core save above. Reason: if this deploys
@@ -301,7 +301,7 @@ export default function SettingsPage() {
       setVatSchemeSince(since) // [KASSTELSEL] keep local since in sync with what we persisted
       setVatExemptSince(exemptSince) // [VRIJGESTELD] idem — so a second save does not re-anchor
       setReminderOffsetsText(finalOffsets.join(', ')) // [REMINDERS] reflect the normalized cadence
-      setSuccessProfile('Profiel opgeslagen ✓')
+      setSuccessProfile(t('inst.profielOpgeslagen'))
     }
 
     setLoadingProfile(false)
@@ -318,22 +318,22 @@ export default function SettingsPage() {
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setNumberingError(d?.error || 'Opslaan mislukt — probeer opnieuw')
+        setNumberingError(d?.error || t('inst.opslaanMislukt'))
         if (d?.locked) setNumberingLocked(true)
       } else {
         setNumberingNext(d.next ?? '')
         setNumberingInput('')
-        setNumberingSuccess('Nummering opgeslagen ✓')
+        setNumberingSuccess(t('inst.nummeringOpgeslagen'))
       }
     } catch {
-      setNumberingError('Opslaan mislukt — probeer opnieuw')
+      setNumberingError(t('inst.opslaanMislukt'))
     }
     setNumberingLoading(false)
   }
 
   // إرسال دعوة للمحاسب
   async function sendInvite() {
-    if (!accountantEmail) { setErrorInvite('Vul een e-mailadres in'); return }
+    if (!accountantEmail) { setErrorInvite(t('inst.vulEmail')); return }
     setLoadingInvite(true)
     setErrorInvite('')
     setSuccessInvite('')
@@ -347,14 +347,14 @@ export default function SettingsPage() {
     const data = await res.json()
 
     if (!res.ok) {
-      setErrorInvite(data.error || 'Uitnodiging mislukt')
+      setErrorInvite(data.error || t('inst.uitnodigingMislukt'))
     } else if (data.warning === 'email_failed') {
       // [INVITE-HONEST] The invitation row was created but the e-mail did NOT go out (Resend
       // rejected it / no API key). Don't claim "verstuurd" — tell the owner to share the link
       // themselves so the invite isn't silently lost.
-      setErrorInvite('De uitnodiging is aangemaakt, maar de e-mail kon niet worden verzonden. Controleer het e-mailadres of deel de uitnodigingslink zelf met je boekhouder.')
+      setErrorInvite(t('inst.uitnodigingNietVerzonden'))
     } else {
-      setSuccessInvite(`Uitnodiging verstuurd naar ${accountantEmail}`)
+      setSuccessInvite(t('inst.uitnodigingVerstuurd', { email: accountantEmail }))
       setAccountantEmail('')
     }
     setLoadingInvite(false)
@@ -362,9 +362,11 @@ export default function SettingsPage() {
   // إزالة ربط المحاسب مع تأكيد
   async function unlinkAccountant() {
     const confirmed = await dialog.confirm({
-      title: 'Koppeling met je boekhouder verwijderen?',
-      message: `${accountant?.full_name || accountant?.email || 'Je boekhouder'} kan je administratie daarna niet meer inzien. Je kunt later opnieuw uitnodigen.`,
-      confirmLabel: 'Ontkoppelen',
+      title: t('inst.ontkoppelTitel'),
+      message: t('inst.ontkoppelUitleg', {
+        name: accountant?.full_name || accountant?.email || t('inst.jeBoekhouder'),
+      }),
+      confirmLabel: t('inst.ontkoppelen'),
       danger: true,
     })
     if (!confirmed) return
@@ -378,7 +380,7 @@ export default function SettingsPage() {
       setMayConfirm(false)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
+      toast(data.error || t('inst.ontkoppelenMislukt'), { tone: 'error' })
     }
   }
 
@@ -391,22 +393,18 @@ export default function SettingsPage() {
   async function toggleMandate(soort: 'facturen' | 'bevestigen') {
     if (mandaatBezig) return
     const aan = soort === 'facturen' ? mayInvoice : mayConfirm
-    const naam = accountant?.company_name || accountant?.full_name || 'Je boekhouder'
+    const naam = accountant?.company_name || accountant?.full_name || t('inst.jeBoekhouder')
     if (!aan) {
       const confirmed = await dialog.confirm({
         title:
           soort === 'facturen'
-            ? 'Je boekhouder laten factureren?'
-            : 'Je boekhouder je inkoopfacturen laten bevestigen?',
+            ? t('inst.mandaatFacturenTitel')
+            : t('inst.mandaatBevestigenTitel'),
         message:
           soort === 'facturen'
-            ? `${naam} mag dan facturen versturen op jouw naam, met jouw nummerreeks en jouw btw-nummer. ` +
-              'Je krijgt van elke factuur bericht, en je blijft er zelf verantwoordelijk voor. ' +
-              'Je kunt dit hier op elk moment weer uitzetten.'
-            : `${naam} mag dan je inkoopfacturen controleren en boeken, zodat je kwartaal kan sluiten zonder dat jij ze stuk voor stuk nakijkt. ` +
-              'Hij kan geen bedragen wijzigen — alleen bevestigen wat er staat. Bij elke bevestiging komt zijn naam te staan, ' +
-              'je krijgt er bericht van, en je blijft er zelf verantwoordelijk voor.',
-        confirmLabel: 'Machtigen',
+            ? t('inst.mandaatFacturenUitleg', { name: naam })
+            : t('inst.mandaatBevestigenUitleg', { name: naam }),
+        confirmLabel: t('inst.machtigen'),
       })
       if (!confirmed) return
     }
@@ -424,7 +422,7 @@ export default function SettingsPage() {
       else setMayConfirm(!aan)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || 'Wijzigen mislukt', { tone: 'error' })
+      toast(data.error || t('inst.wijzigenMislukt'), { tone: 'error' })
     }
     setMandaatBezig(null)
   }
@@ -437,7 +435,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/account/export', { method: 'POST' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || 'Export mislukt')
+        setDelError(data.error || t('kluis.exportMislukt'))
         return
       }
       const blob = await res.blob()
@@ -449,7 +447,7 @@ export default function SettingsPage() {
       URL.revokeObjectURL(url)
       setExportConfirmed(true)
     } catch {
-      setDelError('Export mislukt — probeer opnieuw')
+      setDelError(t('inst.exportMisluktOpnieuw'))
     } finally {
       setExportLoading(false)
     }
@@ -458,7 +456,7 @@ export default function SettingsPage() {
   // [BOEK-032] تأكيد الحذف بـ email + password — تعطيل لا حذف فيزيائي
   async function confirmDelete() {
     if (!delEmail || !delPassword) {
-      setDelError('Vul je e-mailadres en wachtwoord in')
+      setDelError(t('inst.vulEmailWachtwoord'))
       return
     }
     setDelLoading(true)
@@ -471,13 +469,13 @@ export default function SettingsPage() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || 'Verwijderen mislukt')
+        setDelError(data.error || t('act.verwijderenMislukt'))
         return
       }
       await supabase.auth.signOut()
       router.push('/login')
     } catch {
-      setDelError('Verwijderen mislukt — probeer opnieuw')
+      setDelError(t('lijst.fout.verwijderen'))
     } finally {
       setDelLoading(false)
     }
@@ -486,7 +484,7 @@ export default function SettingsPage() {
   // انتظار تحميل البيانات
   if (!profile) return (
     <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
-      <p className="text-gray-400 text-sm">Laden...</p>
+      <p className="text-gray-400 text-sm">{t('nieuw.actie.laden')}</p>
     </div>
   )
 
@@ -522,13 +520,13 @@ export default function SettingsPage() {
                 value={companyName}
                 onChange={e => setCompanyName(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="Jouw Bedrijf BV"
+                placeholder={t('inst.bedrijfVoorbeeld')}
               />
             </div>
 
             {/* رقم KVK */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">KVK-nummer</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.kvkNummer')}</label>
               <input
                 type="text"
                 value={kvk}
@@ -541,7 +539,7 @@ export default function SettingsPage() {
 
             {/* رقم BTW */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">BTW-nummer</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('inst.btwNummer')}</label>
               <input
                 type="text"
                 value={btw}
@@ -619,9 +617,7 @@ export default function SettingsPage() {
                   {t('inst.kor')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een
-                  duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de
-                  BTW-afdracht vervalt.
+                  {t('inst.korUitleg')}
                 </span>
               </span>
             </label>
@@ -643,15 +639,11 @@ export default function SettingsPage() {
                   {t('inst.vrijgesteld')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  Voor werk dat is vrijgesteld van BTW (art. 11) — zoals zorg, onderwijs of
-                  verzekeringsbemiddeling. Je kunt dan per factuurregel &quot;Vrijgesteld&quot; kiezen.
-                  Let op: vrijgesteld is NIET hetzelfde als 0%. Bij 0% mag je de BTW op je inkopen
-                  gewoon terugvragen, bij een vrijstelling niet — heb je beide soorten omzet, dan
-                  wordt de BTW op kosten die allebei dienen naar verhouding afgetrokken.
+                  {t('inst.vrijgesteldUitleg')}
                 </span>
                 {vatExemptActivity && vatExemptSince && (
                   <span className="block text-xs text-gray-500 mt-1">
-                    Geldt vanaf {vatExemptSince} — eerdere kwartalen worden niet opnieuw berekend.
+                    {t('inst.geldtVanaf', { date: vatExemptSince })}
                   </span>
                 )}
               </span>
@@ -668,12 +660,8 @@ export default function SettingsPage() {
               {t('inst.toelichting')}
             </label>
             <p className="text-xs text-gray-500">
-              Deze zin komt onder het totaal te staan op elke factuur waar geen BTW op zit. Zonder
-              toelichting ziet je klant een factuur zonder BTW en niets dat uitlegt waarom — zijn
-              boekhouder kan hem dan niet plaatsen. Vul de grond in die voor jouw werk geldt,
-              bijvoorbeeld: <em>{t('inst.toelichtingVoorbeeld')}</em>
-              {' '}Voor de KOR en voor btw verlegd hoef je niets in te vullen — die zet de app er
-              zelf op.
+              {t('inst.toelichtingUitleg')} <em>{t('inst.toelichtingVoorbeeld')}</em>
+              {' '}{t('inst.toelichtingKor')}
             </p>
             <input
               id="vat-note"
@@ -681,14 +669,14 @@ export default function SettingsPage() {
               value={vatStatementNote}
               onChange={e => setVatStatementNote(e.target.value.slice(0, MAX_NOTE_LENGTH))}
               maxLength={MAX_NOTE_LENGTH}
-              placeholder="Bijv. Vrijgesteld van btw op grond van artikel 11-1-o Wet OB (onderwijs)."
+              placeholder={t('inst.toelichtingPlaceholder')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
           {/* [KASSTELSEL] BTW-methode: factuurstelsel (accrual) vs kasstelsel (cash basis). */}
           <div className="border-t border-gray-100 pt-4 space-y-2">
-            <span className="block text-sm font-medium text-gray-800">BTW-methode</span>
+            <span className="block text-sm font-medium text-gray-800">{t('inst.btwMethode')}</span>
             <label className="flex items-start gap-3 cursor-pointer">
               <input
                 type="radio"
@@ -698,7 +686,7 @@ export default function SettingsPage() {
                 className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span>
-                <span className="block text-sm text-gray-800">Factuurstelsel (standaard)</span>
+                <span className="block text-sm text-gray-800">{t('inst.factuurstelsel')}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
                   {t('inst.factuurstelsel.uitleg')}
                 </span>
@@ -715,9 +703,7 @@ export default function SettingsPage() {
               <span>
                 <span className="block text-sm text-gray-800">{t('inst.kasstelsel')}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  BTW telt op de betaaldatum — voor veel winkels/horeca verplicht. Ingaat vanaf het
-                  huidige kwartaal; eerdere kwartalen blijven ongewijzigd. Een betaalde factuur
-                  zonder betaaldatum blokkeert &ldquo;klaar&rdquo; tot je de betaling koppelt.
+                  {t('inst.kasstelselUitleg')}
                 </span>
               </span>
             </label>
@@ -737,9 +723,7 @@ export default function SettingsPage() {
                   {t('inst.herinneringen')}
                 </span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  Staat een verstuurde factuur na de vervaldatum nog open, dan mailt BoekBrug je klant
-                  automatisch een vriendelijke herinnering met het openstaande bedrag. Een betaalde
-                  factuur wordt nooit herinnerd — jij hoeft niets te doen.
+                  {t('inst.herinneringenUitleg')}
                 </span>
               </span>
             </label>
@@ -756,7 +740,7 @@ export default function SettingsPage() {
                   placeholder="14, 30"
                 />
                 <span className="block text-xs text-gray-400 mt-1">
-                  Bijv. &ldquo;14, 30&rdquo;: een vriendelijke herinnering na 14 dagen, een steviger na 30.
+                  {t('inst.herinnerVoorbeeld')}
                 </span>
               </div>
             )}
@@ -768,7 +752,7 @@ export default function SettingsPage() {
             disabled={loadingProfile}
             className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
-            {loadingProfile ? 'Opslaan...' : 'Opslaan'}
+            {loadingProfile ? t('inst.opslaanBezig') : t('inst.opslaan')}
           </button>
         </div>
 
@@ -789,38 +773,36 @@ export default function SettingsPage() {
 
             {numberingNext && (
               <p className="text-sm text-gray-600">
-                Je volgende factuur wordt:{' '}
+                {t('inst.volgendeFactuur')}{' '}
                 <span className="font-semibold text-gray-900">{numberingNext}</span>
               </p>
             )}
 
             {numberingLocked ? (
               <p className="text-sm text-gray-500">
-                🔒 Je nummering staat vast — er is al een factuur verstuurd.
-                Wijzigen kan niet meer (wettelijk verplicht).
+                {t('inst.nummeringVast')}
               </p>
             ) : (
               <>
                 <p className="text-sm text-gray-500">
-                  Kom je van een ander programma? Vul je volgende factuurnummer in —
-                  bijv. <span className="font-mono">045-2026</span>.
+                  {t('inst.nummeringUitleg')} <span className="font-mono">045-2026</span>.
                 </p>
                 <input
                   type="text"
                   value={numberingInput}
                   onChange={e => { setNumberingInput(e.target.value); setNumberingError(''); setNumberingSuccess('') }}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                  placeholder="bijv. 045-2026"
+                  placeholder={t('inst.nummeringPlaceholder')}
                 />
 
                 {/* live preview */}
                 {(() => {
-                  const t = numberingInput.trim()
-                  if (!t) return null
-                  const p = previewInvoiceStart(t, new Date().getFullYear())
+                  const raw = numberingInput.trim()
+                  if (!raw) return null
+                  const p = previewInvoiceStart(raw, new Date().getFullYear())
                   if (p.ok) return (
                     <p className="text-sm text-green-600">
-                      ✓ Eerste factuur: <span className="font-semibold">{p.first}</span> · volgende: {p.next}
+                      {t('inst.eersteFactuur')} <span className="font-semibold">{p.first}</span> {t('inst.volgende')} {p.next}
                     </p>
                   )
                   if (p.reason !== 'empty') return <p className="text-sm text-amber-600">{reasonToDutch(p.reason)}</p>
@@ -839,7 +821,7 @@ export default function SettingsPage() {
                   }
                   className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {numberingLoading ? 'Opslaan...' : 'Nummering opslaan'}
+                  {numberingLoading ? t('inst.opslaanBezig') : t('inst.nummeringOpslaanKnop')}
                 </button>
               </>
             )}
@@ -853,7 +835,7 @@ export default function SettingsPage() {
               {t('inst.boekhouderKoppelen')}
             </p>
             <p className="text-sm text-gray-500">
-              Vul het e-mailadres van je boekhouder in. Hij ontvangt een uitnodiging om je facturen te beheren.
+              {t('inst.boekhouderUitleg')}
             </p>
             <div className="flex gap-2">
               <input
@@ -869,7 +851,7 @@ export default function SettingsPage() {
                 disabled={loadingInvite}
                 className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
               >
-                {loadingInvite ? '...' : 'Uitnodigen'}
+                {loadingInvite ? '...' : t('inst.uitnodigen')}
               </button>
             </div>
             {successInvite && <p className="text-sm text-green-600">{successInvite}</p>}
@@ -910,20 +892,16 @@ export default function SettingsPage() {
               {
                 soort: 'facturen' as const,
                 aan: mayInvoice,
-                titel: 'Facturen versturen namens mij',
-                aanTekst:
-                  'Aan. De facturen krijgen jouw nummerreeks en jouw btw-nummer, en je krijgt van elke verstuurde factuur bericht. Je blijft er zelf verantwoordelijk voor.',
-                uitTekst:
-                  'Uit. Je boekhouder kan je administratie wel inzien, maar geen facturen op jouw naam versturen.',
+                titel: t('inst.rijFacturenTitel'),
+                aanTekst: t('inst.rijFacturenAan'),
+                uitTekst: t('inst.rijFacturenUit'),
               },
               {
                 soort: 'bevestigen' as const,
                 aan: mayConfirm,
-                titel: 'Mijn inkoopfacturen bevestigen',
-                aanTekst:
-                  'Aan. Je boekhouder controleert en boekt je bonnen en inkoopfacturen, zodat je kwartaal kan sluiten zonder dat jij ze stuk voor stuk nakijkt. Hij kan geen bedragen wijzigen — alleen bevestigen wat er staat. Bij elke bevestiging staat zijn naam.',
-                uitTekst:
-                  'Uit. Alleen jij bevestigt je inkoopfacturen. Zolang er nog onbevestigde stukken zijn, is je kwartaal niet klaar.',
+                titel: t('inst.rijBevestigenTitel'),
+                aanTekst: t('inst.rijBevestigenAan'),
+                uitTekst: t('inst.rijBevestigenUit'),
               },
             ]).map((rij) => (
               <div key={rij.soort} className="pt-3 border-t border-gray-100">
@@ -944,7 +922,7 @@ export default function SettingsPage() {
                         : 'text-blue-600 border-blue-200 hover:bg-blue-50'
                     } disabled:opacity-50`}
                   >
-                    {mandaatBezig === rij.soort ? '…' : rij.aan ? 'Intrekken' : 'Machtigen'}
+                    {mandaatBezig === rij.soort ? '…' : rij.aan ? t('team.intrekken') : t('inst.machtigen')}
                   </button>
                 </div>
               </div>
@@ -996,10 +974,7 @@ export default function SettingsPage() {
             {t('inst.gevarenzone')}
           </p>
           <p className="text-sm text-gray-500">
-            Exporteer eerst al je gegevens. Daarna kun je je account verwijderen.
-            Je gegevens worden niet direct gewist: facturen en administratie
-            moeten wettelijk 7 jaar bewaard blijven (Bewaarplicht). Je account
-            wordt gedeactiveerd en is daarna niet meer toegankelijk.
+            {t('inst.gevarenzoneUitleg')}
           </p>
           <div className="flex flex-col sm:flex-row gap-2">
             <button
@@ -1008,10 +983,10 @@ export default function SettingsPage() {
               className="flex-1 bg-[#1A73E8] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50"
             >
               {exportLoading
-                ? 'Exporteren...'
+                ? t('inst.exporterenBezig')
                 : exportConfirmed
-                ? 'Opnieuw exporteren'
-                : 'Exporteer mijn gegevens'}
+                ? t('inst.opnieuwExporteren')
+                : t('inst.exporteerGegevens')}
             </button>
             <button
               onClick={() => { setDelError(''); setDeleteModalOpen(true) }}
@@ -1043,9 +1018,7 @@ export default function SettingsPage() {
           >
             <h2 className="text-base font-bold text-gray-900">{t('inst.accountVerwijderen')}</h2>
             <p className="text-sm text-gray-500">
-              Bevestig met je e-mailadres en wachtwoord. Je account wordt
-              gedeactiveerd en is daarna niet meer toegankelijk. Je gegevens
-              blijven wettelijk bewaard (Bewaarplicht ~7 jaar).
+              {t('inst.verwijderUitleg')}
             </p>
             <div className="space-y-2">
               <input
@@ -1053,7 +1026,7 @@ export default function SettingsPage() {
                 value={delEmail}
                 onChange={e => setDelEmail(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="E-mailadres"
+                placeholder={t('nieuw.klant.email')}
               />
               <input
                 type="password"
@@ -1077,7 +1050,7 @@ export default function SettingsPage() {
                 disabled={delLoading}
                 className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
               >
-                {delLoading ? 'Verwijderen...' : 'Definitief verwijderen'}
+                {delLoading ? t('inst.verwijderenBezig') : t('inst.definitiefVerwijderen')}
               </button>
             </div>
           </div>
