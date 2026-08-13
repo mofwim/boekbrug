@@ -49,6 +49,64 @@ console.log("\n— opening balance carries across quarters (Q2 opens where Q1 cl
   check("configured starting balance respected", near(startBal, 500));
 }
 
+// ── [KAS-DUBBELTELLING] The same takings, counted from two sources ────────────────────────────
+// A till shop's cash revenue reaches the drawer twice by design of the data model: as
+// daily_turnover.cash_amount AND as a cash_entries 'omzet' row (the Kas page's default category).
+// buildKasboek skipped the entry on a covered day; openingBalanceForQuarter did NOT — so the
+// suppression only held for the quarter being looked at, and every earlier quarter's double count
+// walked back in through the carry-in. These lock BOTH halves of the rule to one predicate.
+console.log("\n— [KAS-DUBBELTELLING] a till-counted cash sale is not counted twice —");
+{
+  const till: KasTurnoverDay[] = [{ turnover_date: "2026-01-05", cash_amount: 500 }];
+  // The owner wrote the same counted drawer down as a cash sale — the natural thing to do.
+  const sameMoney: KasEntry[] = [
+    { entry_date: "2026-01-05", direction: "in", amount: 500, category: "omzet", description: "kassa" },
+  ];
+
+  const q1 = buildKasboek({ turnover: till, entries: sameMoney, year: 2026, quarter: 1, openingBalance: 0 });
+  check("in-quarter: the day counts €500 once, not €1000", near(q1.closingBalance, 500));
+
+  const q2open = openingBalanceForQuarter({ turnover: till, entries: sameMoney, year: 2026, quarter: 2 });
+  check("carry-in: Q2 opens at €500, not €1000", near(q2open, 500));
+
+  // The carry-in feeds every eindsaldo of the next quarter AND lowestDrawerPoint's seed, so an
+  // inflated one masks exactly the negative drawer the filing gate refuses on. True drawer:
+  // 500 in − 700 out = −200. Inflated: 1000 − 700 = +300 → no banner, no blocked aangifte.
+  const q2 = buildKasboek({
+    turnover: till,
+    entries: [...sameMoney, { entry_date: "2026-04-10", direction: "out", amount: 700, category: "kosten", description: "inkoop" }],
+    year: 2026, quarter: 2, openingBalance: q2open,
+  });
+  check("the masked dip is visible again: Q2 closes at −200", near(q2.closingBalance, -200));
+  const masked = lowestDrawerPoint(q2);
+  check("...and lowestDrawerPoint (the filing gate's witness) reports it", masked !== null && near(masked.balance, -200));
+
+  // Only 'omzet' IN is the same money. Everything else on that day is a separate movement.
+  const otherKinds = openingBalanceForQuarter({
+    turnover: till,
+    entries: [
+      ...sameMoney,
+      { entry_date: "2026-01-05", direction: "out", amount: 60, category: "kosten", description: "bloemen" },
+      { entry_date: "2026-01-05", direction: "out", amount: 100, category: "transfer", description: "storting" },
+      { entry_date: "2026-01-05", direction: "in", amount: 40, category: "betaling", description: "contant ontvangen" },
+    ],
+    year: 2026, quarter: 2,
+  });
+  check("a cost / storting / settlement on a covered day still counts", near(otherKinds, 500 - 60 - 100 + 40));
+
+  // A day the till did NOT count cash for must never suppress a real cash sale.
+  const uncovered = openingBalanceForQuarter({
+    turnover: [{ turnover_date: "2026-01-05", cash_amount: 0 }],
+    entries: [{ entry_date: "2026-01-05", direction: "in", amount: 500, category: "omzet", description: null }],
+    year: 2026, quarter: 2,
+  });
+  check("a zero-cash turnover day suppresses nothing (ZZP / card-only day)", near(uncovered, 500));
+
+  // The two halves must agree, whichever quarter you ask about — that is the whole point.
+  const carriedThenBuilt = buildKasboek({ turnover: till, entries: sameMoney, year: 2026, quarter: 2, openingBalance: q2open });
+  check("Q2 opens where Q1 closed (carry-in and rows use one rule)", near(carriedThenBuilt.openingBalance, q1.closingBalance));
+}
+
 console.log("\n— pure / safe: no P&L notion, only balance —");
 {
   const empty = buildKasboek({ turnover: [], entries: [], year: 2026, quarter: 1, openingBalance: 300 });

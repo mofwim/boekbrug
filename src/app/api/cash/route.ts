@@ -15,6 +15,14 @@ import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { round2 } from "@/lib/invoice-totals";
 
+// [KAS-SALDO] Never a cached drawer. Every sibling money route declares this (/api/kasboek,
+// /api/readiness, /api/aangifte …) and this one did not. Reading cookies already forces the route
+// dynamic today, so this changes nothing at runtime — it removes the possibility that a later
+// refactor (a read moved off the session client, a framework default that flips) turns the balance
+// in someone's till into a figure served from a cache, which on this endpoint is a wrong number
+// presented as a counted one.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -109,17 +117,41 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
 
   const direction = body.direction;
-  const amount = typeof body.amount === "number" ? body.amount : Number(body.amount);
+  const rawAmount = typeof body.amount === "number" ? body.amount : Number(body.amount);
   const category = body.category;
 
   if (direction !== "in" && direction !== "out") {
     return NextResponse.json({ error: "direction moet 'in' of 'out' zijn" }, { status: 400 });
   }
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
     return NextResponse.json({ error: "amount moet groter dan 0 zijn" }, { status: 400 });
   }
+  // [KAS-CENTEN] A drawer is counted in coins. cash_entries.amount is an unconstrained `numeric`,
+  // so whatever arrives is stored verbatim — and 12.3456789 then rides the RUNNING balance through
+  // every following day, into the Kasboek sheet the accountant receives and into the eindsaldo the
+  // filing gate compares against zero. The opening balance is already rounded at this door (PATCH
+  // below); a movement is the same kind of money and gets the same treatment. Rounded AFTER the
+  // >0 test so a sub-cent amount is refused rather than silently becoming €0.
+  const amount = round2(rawAmount);
   if (!isCashCategory(category)) {
     return NextResponse.json({ error: "ongeldige categorie" }, { status: 400 });
+  }
+  // [CASH-SETTLE-NO-MANUAL-DELETE] 'betaling' is not a category a person writes — it is the DERIVED
+  // drawer movement of an invoice paid in cash, created and healed only by reconcileCashSettlements
+  // and keyed to its invoice. The add form has never offered it, but the door accepted it, and the
+  // row that came through had no invoice_id: nothing to reconcile it against, no invoice to undo,
+  // and the DELETE guard below refused to remove it because of its label. That is an unremovable
+  // line in a cash administration — precisely what a kasboek may never contain.
+  if (category === "betaling") {
+    return NextResponse.json(
+      {
+        error: "settlement_category",
+        detail:
+          "Een 'betaling' hoort bij een factuur die contant is betaald en wordt automatisch geboekt. " +
+          "Markeer de factuur als contant betaald; dan verschijnt deze regel zelf in je kasboek.",
+      },
+      { status: 400 },
+    );
   }
 
   // entry_date: accept a valid YYYY-MM-DD, else let the DB default to today.
@@ -237,9 +269,16 @@ export async function DELETE(req: NextRequest) {
   // failed lookup left `existing` null, the guard below never matched, and the delete went
   // through — landing on exactly the behaviour this guard exists to prevent: the row disappears,
   // the next GET's reconcile puts it straight back, and nothing explains it.
+  //
+  // The guard reads the INVOICE LINK, not just the label. Refusing on `category === 'betaling'`
+  // alone also refused a 'betaling' row with no invoice_id — a row no reconcile can see (it reads
+  // `.not("invoice_id", "is", null)`), so nothing recreates it and nothing removes it either. The
+  // sentence below then told the owner to undo a payment on a factuur that does not exist, about a
+  // line they could not get out of their cash book by any route. The label is what it LOOKS like;
+  // the link is what actually makes it derived.
   const { data: existing, error: readErr } = await supabase
     .from("cash_entries")
-    .select("category")
+    .select("category, invoice_id")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -249,7 +288,8 @@ export async function DELETE(req: NextRequest) {
       { status: 500 },
     );
   }
-  if ((existing as { category?: string | null } | null)?.category === "betaling") {
+  const row = existing as { category?: string | null; invoice_id?: string | null } | null;
+  if (row?.category === "betaling" && row.invoice_id) {
     return NextResponse.json(
       {
         error: "settlement_entry",

@@ -5,7 +5,10 @@
 // Cash sales (in) and cash expenses (out); deposits/withdrawals to the bank are
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// [TAAL] useCallback/useMemo are gone from this file on purpose — see catLabel and filteredEntries
+// below: the React Compiler memoizes the component, and a manual memo whose dependency it cannot
+// prove stable is refused anyway.
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
@@ -15,6 +18,13 @@ import { rowMatchesQuery } from '@/lib/search'
 import { sendWithFit } from '@/lib/upload-fit'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [PARSE-NL] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts. This screen
+// used `Number(x.replace(',', '.'))`, which reads the two ordinary Dutch ways of writing money
+// wrongly and in opposite directions: "1.306,36" became NaN (refused with "bedrag moet groter dan
+// 0" over an amount that is plainly valid), and "1.250" became 1.25 — a cash sale booked at a
+// thousandth of itself, into the drawer, the BTW and the kasboek an inspector reads, with nothing
+// on screen to suggest anything was misread.
+import { parseAmountNL } from '@/lib/parse-nl'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -181,6 +191,44 @@ export default function KasClient() {
     if (!kb) void loadKasboek(null)
   }
 
+  // [KAS-NEGATIEF] Re-ask the readiness quarter's drawer whether it ever dipped below zero.
+  //
+  // Its own quarter only — the unparameterised call, which IS the quarter the readiness gate blocks
+  // on (see alertPeriodRef) — and deliberately WITHOUT touching kb/kbPeriod: the owner may be
+  // browsing another quarter in the panel, and refreshing a warning must not walk them out of it.
+  //
+  // Called after every write, not only on mount. That is the fix: the banner is a VERDICT over a
+  // whole quarter, and the three remedies it names — book the missing bon, correct a date, record
+  // the opname from the bank — are all carried out on THIS screen, usually with the panel closed.
+  // Fetched once at mount it then went stale in both directions, and both are worse than a stale
+  // list would be:
+  //   · the owner books exactly what the banner asked for and the red banner stays, so the fix
+  //     reads as ineffective and the blocked aangifte stays unexplained;
+  //   · or they backdate a cash expense into that quarter, push the drawer under zero, and the
+  //     screen says nothing at all until someone happens to reload — while the filing gate, which
+  //     re-reads this same witness per request, has already started refusing.
+  // A page that keeps a money verdict from before the money moved is the one thing this screen
+  // exists to prevent.
+  async function refreshDrawerAlert(isCancelled: () => boolean = () => false) {
+    try {
+      const res = await fetch('/api/kasboek')
+      const json = await res.json()
+      if (isCancelled()) return
+      if (res.ok && json.kasboek) {
+        // This unparameterised answer owns the banner, and pins which quarter may update it later.
+        alertPeriodRef.current = { year: json.kasboek.year, quarter: json.kasboek.quarter }
+        setLowestPoint((json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        setLowestPointUnknown(false)
+      } else {
+        // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which on
+        // this screen is indistinguishable from "your drawer never went negative".
+        setLowestPointUnknown(true)
+      }
+    } catch {
+      if (!isCancelled()) setLowestPointUnknown(true)
+    }
+  }
+
   async function load() {
     try {
       const res = await fetch('/api/cash')
@@ -192,7 +240,11 @@ export default function KasClient() {
 
   // [KAS-OPENING] Persist the starting float, then reload so the saldo reflects it immediately.
   async function saveOpeningBalance() {
-    const val = Number((openingInput || '').replace(',', '.'))
+    // [PARSE-NL] A float is typed the way a Dutch owner writes money ("1.000", "1.000,50").
+    // parseAmountNL answers 0 for anything it cannot read, which on THIS field would silently
+    // store €0,00 over a typo — so the digit test comes first and keeps that an error.
+    const raw = (openingInput || '').trim()
+    const val = /\d/.test(raw) ? parseAmountNL(raw) : NaN
     if (!Number.isFinite(val) || val < 0) { setError(t('kas.beginsaldoNegatief')); return }
     setOpeningSaving(true)
     try {
@@ -222,22 +274,8 @@ export default function KasClient() {
       // dipped below zero. A dip can happen mid-quarter and recover — the headline saldo would
       // look perfectly healthy while the kasboek an inspector reads does not. Failure here is
       // silent on purpose: it is a warning channel, never a reason to break the page.
-      try {
-        const kbRes = await fetch('/api/kasboek')
-        const kbJson = await kbRes.json()
-        if (cancelled) return
-        if (kbRes.ok && kbJson.kasboek) {
-          // [KAS-NEGATIEF] This unparameterised call IS the readiness quarter, so it owns the
-          // banner — and pins which quarter may update it later (see alertPeriodRef).
-          alertPeriodRef.current = { year: kbJson.kasboek.year, quarter: kbJson.kasboek.quarter }
-          setLowestPoint((kbJson.lowestPoint ?? null) as { date: string; balance: number } | null)
-          setLowestPointUnknown(false)
-        } else {
-          // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which
-          // on this screen is indistinguishable from "your drawer never went negative".
-          setLowestPointUnknown(true)
-        }
-      } catch { if (!cancelled) setLowestPointUnknown(true) }
+      // One implementation, shared with every write on this screen — see refreshDrawerAlert.
+      await refreshDrawerAlert(() => cancelled)
     })()
     return () => { cancelled = true }
   }, [])
@@ -249,7 +287,9 @@ export default function KasClient() {
   }
 
   async function add() {
-    const val = Number(amount.replace(',', '.'))
+    // [PARSE-NL] "1.306,36" is a valid amount and "1.250" means twelve hundred and fifty — see the
+    // import. An unreadable amount parses to 0 and is caught by the same test as before.
+    const val = parseAmountNL(amount)
     if (!Number.isFinite(val) || val <= 0) { setError(t('kas.fout.bedragNul')); return }
     setSaving(true); setError('')
     try {
@@ -257,7 +297,16 @@ export default function KasClient() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_date: date, direction, amount: val, category, description, btw_rate: category === 'omzet' ? btwRate : undefined }),
       })
-      if (res.ok) { setAmount(''); setDescription(''); setError(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
+      if (res.ok) {
+        setAmount(''); setDescription(''); setError('')
+        await load()
+        if (kbOpen) void loadKasboek(kbPeriod)
+        // [KAS-NEGATIEF] The boeking may have pushed the readiness quarter's drawer under zero — or
+        // been the very receipt that lifts it back over. Either way the banner's verdict is now
+        // older than the money it describes. Backdating INTO that quarter is not an edge case: it
+        // is the fix the banner itself asks for.
+        void refreshDrawerAlert()
+      }
       else {
         // [CASH-ADD-HONEST] The route answers with the actual reason ("ongeldige categorie",
         // "beginsaldo moet 0 of hoger zijn", …). Replacing it with "probeer opnieuw" told the
@@ -284,9 +333,13 @@ export default function KasClient() {
       }
       await load()
       if (kbOpen) void loadKasboek(kbPeriod)
+      // [KAS-NEGATIEF] Removing a receipt is the ordinary way a drawer goes negative — the money
+      // that covered the day's expenses is the thing that just disappeared. Re-ask the witness.
+      void refreshDrawerAlert()
     } catch {
       setError(t('kas.fout.verwijderd'))
       await load()
+      void refreshDrawerAlert()
     }
   }
 

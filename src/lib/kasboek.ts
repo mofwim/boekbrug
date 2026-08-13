@@ -81,9 +81,64 @@ const isoDay = (s: string | null | undefined): string | null =>
   typeof s === "string" && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 
 /**
+ * [KAS-DUBBELTELLING] The days the till's own Z-report already counted cash for.
+ *
+ * Only days with a NON-ZERO cash amount: a zero/empty turnover row means the till counted no
+ * cash that day, so it must never suppress a real cash movement. An unparseable date cannot be
+ * matched against anything and is left out — the safe side for a figure that gets SUBTRACTED.
+ */
+function tillCountedDays(turnover: KasTurnoverDay[]): Set<string> {
+  const days = new Set<string>();
+  for (const t of turnover) {
+    const d = isoDay(t.turnover_date);
+    if (!d) continue;
+    if ((Number(t.cash_amount) || 0) === 0) continue;
+    days.add(d);
+  }
+  return days;
+}
+
+/**
+ * [KAS-DUBBELTELLING] Is this entry the SAME money the till already counted on that day?
+ *
+ * A till shop's cash revenue reaches the drawer twice by design of the data model, not by
+ * mistake: once as daily_turnover.cash_amount (what the Z-report counted) and once as a
+ * cash_entries row with direction 'in' and category 'omzet' — which is what the Kas page's
+ * default category makes the natural way to write down the counted drawer.
+ *
+ * Only 'omzet' IN: a cash purchase, a bank deposit or a private withdrawal on that same day are
+ * separate movements and still count. One predicate, used by BOTH the carry-in and the in-quarter
+ * rows below, because those two disagreeing is the bug this exists to prevent — see the
+ * [KAS-DUBBELTELLING] note in openingBalanceForQuarter.
+ */
+function isTillCountedOmzet(e: KasEntry, day: string, counted: ReadonlySet<string>): boolean {
+  return e.direction === "in" && (e.category ?? "") === "omzet" && counted.has(day);
+}
+
+/**
  * The drawer's OPENING balance for a quarter = a configured starting balance PLUS every cash
  * movement dated BEFORE the quarter start. Pure — same combine rule as the in-quarter rows, so
  * the balance is continuous across quarter boundaries (Q2 opens where Q1 closed).
+ *
+ * ── [KAS-DUBBELTELLING] The carry-in obeys the same rule as the rows ──
+ *
+ * buildKasboek has skipped a till-covered cash 'omzet' entry since that bug was found, and
+ * computeDrawerBalance (the headline "SALDO IN KASSA") skips it too. This function did not — it
+ * summed BOTH sources for every day before the quarter — so the suppression only ever held for
+ * the quarter you were LOOKING at, and every earlier quarter's double count came back in through
+ * the carry-in. A shop taking €500 a day in cash opened Q2 roughly €45.000 above the money that
+ * was ever in the drawer.
+ *
+ * That figure is not decorative, and it is the same list of consequences as the original bug, one
+ * quarter later:
+ *   · every eindsaldo in the quarter, in the Kasboek sheet the closing package hands the
+ *     accountant — the cash administration the Belastingdienst reads;
+ *   · the drawer witness that /api/btw/file and readiness.ts use to REFUSE a filing on a negative
+ *     drawer (lowestDrawerPoint SEEDS its worst point with this number), so a Q2 drawer that
+ *     really dipped to −200 read as +300 and the quarter filed with the strongest naheffing
+ *     signal masked;
+ *   · and the headline saldo on the Kas page, which uses the honest definition, then disagreed
+ *     with the Kasboek panel directly beneath it on the same screen.
  */
 export function openingBalanceForQuarter(args: {
   turnover: KasTurnoverDay[];
@@ -94,6 +149,7 @@ export function openingBalanceForQuarter(args: {
 }): number {
   const { turnover, entries, year, quarter, startingBalance = 0 } = args;
   const { start } = quarterRange(year, quarter);
+  const counted = tillCountedDays(turnover);
   let bal = startingBalance;
   for (const t of turnover) {
     const d = isoDay(t.turnover_date);
@@ -101,7 +157,9 @@ export function openingBalanceForQuarter(args: {
   }
   for (const e of entries) {
     const d = isoDay(e.entry_date);
-    if (d && d < start) bal += (e.direction === "in" ? 1 : -1) * (Number(e.amount) || 0);
+    if (!d || d >= start) continue;
+    if (isTillCountedOmzet(e, d, counted)) continue;
+    bal += (e.direction === "in" ? 1 : -1) * (Number(e.amount) || 0);
   }
   return r2(bal);
 }
@@ -130,15 +188,16 @@ export function buildKasboek(args: {
     return x;
   };
 
-  // Days the till already counted. Kept as a set because the entry loop below needs it to avoid
-  // booking the same takings a second time — see [KAS-DUBBELTELLING] there.
-  const tellByTill = new Set<string>();
+  // Days the till already counted. The entry loop below needs it to avoid booking the same
+  // takings a second time — see [KAS-DUBBELTELLING] there. Built by the SHARED helper, which
+  // openingBalanceForQuarter uses as well: the carry-in and the rows applying different rules is
+  // exactly how this bug came back once already.
+  const tellByTill = tillCountedDays(turnover);
   for (const t of turnover) {
     const d = isoDay(t.turnover_date);
     if (!d || d < start || d > end) continue;
     const cash = Number(t.cash_amount) || 0;
     if (cash === 0) continue;
-    tellByTill.add(d);
     get(d).in += cash;
     // (daily takings need no per-line description — it's the day's kassa-omzet)
   }
@@ -165,7 +224,7 @@ export function buildKasboek(args: {
     // financial-result.ts has always known this and skips the entry when computing REVENUE. Only
     // the drawer summed both. Same rule here, and only for 'omzet': a cash purchase, a bank deposit
     // or a private withdrawal on that same day are separate movements and still count.
-    if (e.direction === "in" && (e.category ?? "") === "omzet" && tellByTill.has(d)) continue;
+    if (isTillCountedOmzet(e, d, tellByTill)) continue;
 
     const day = get(d);
     if (e.direction === "in") day.in += amt;
