@@ -297,6 +297,148 @@ export function findMoneyViolations(input: {
   return out.sort((a, b) => b.euros - a.euros);
 }
 
+// ─── [GELD-INVARIANT-KAS] The drawer, checked backwards ────────────────────────────────────────
+//
+// Everything above this line is about invoices, bank lines and the links between them. The CASH
+// drawer was not in this file at all, and it is the one ledger where the module's own opening
+// argument applies hardest: cash-settle.ts does not merely admit that its passes can fail, it
+// NAMES the states they leave behind, in its own reportHandledFailure calls —
+//
+//   "cash settlement entry not created — the kas balance is now too high"
+//   "orphaned cash settlements not removed — the kas balance is now too low"
+//   "cash reconcile threw — the drawer may be left half-healed"
+//
+// — and then nothing ever looks again. Each of those is reported once, to Sentry, at the moment it
+// happens. The drawer stays out of step until someone counts the money by hand, and the same drawer
+// decides whether a BTW-aangifte may be filed at all (readiness.ts, /api/btw/file).
+//
+// ── IT ASKS THE RECONCILER, IT DOES NOT SECOND-GUESS IT ──
+//
+// The check is not a second opinion about what the drawer should hold. It runs the SAME pure
+// function the app reconciles with (computeCashSettlementSync) over the live data and reports what
+// that function still WANTS to change. In an administration in step it wants nothing: the reconcile
+// runs on every kasboek read and hourly. So anything it wants is a state that survived those.
+//
+// A second implementation of "what the drawer should hold" would eventually disagree with the first
+// one, and then this audit would report differences that exist only between the two spellings —
+// which is how an audit stops being believed. Same reason loadCashSettlementState was extracted
+// rather than re-read here.
+//
+// ── A SNAPSHOT, NOT A VERDICT ON THE PAST ──
+//
+// A finding can heal itself: open the Kas page and the reconcile runs. That is not a flaw, it is the
+// signal — a finding that comes back on the NEXT run is one the self-healing cannot reach, and those
+// are exactly the three states above.
+
+export type DrawerViolationKind =
+  | "drawer_settlement_missing"   // paid in cash, no drawer movement → the kas balance stands TOO HIGH
+  | "drawer_settlement_orphan"    // a movement belonging to no cash payment → the balance stands TOO LOW
+  | "drawer_settlement_stale"     // the invoice's amount/date/direction moved and the entry did not
+  | "drawer_negative";            // the drawer goes below zero on a day — physically impossible
+
+export interface DrawerViolation {
+  kind: DrawerViolationKind;
+  /** The invoice id for the settlement kinds; the ISO day for drawer_negative. */
+  entityId: string;
+  /** What is at stake, in euros — the number that decides urgency. */
+  euros: number;
+  /** Dutch, owner-facing, and it names which way the drawer is wrong. */
+  message: string;
+}
+
+/**
+ * Is the cash book still in step with the invoices it claims to settle?
+ *
+ * `state` is what loadCashSettlementState read (one definition, see its header). `sync` is the
+ * verdict of the app's own reconciler over that state — passed in rather than computed here so this
+ * module keeps no opinion of its own about cash settlement.
+ *
+ * `lowestPoint` is the drawer's worst day for the audited quarter, from lowestDrawerPoint — the
+ * exact witness readiness and the filing gate block on. Omitted → not checked, and a check that did
+ * not run is never reported as one that passed.
+ */
+export function findDrawerViolations(input: {
+  settlementEntries: readonly {
+    id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null;
+  }[];
+  sync: {
+    toCreate: readonly { invoice_id: string; amount: number; description: string }[];
+    toUpdate: readonly { id: string; row: { invoice_id: string; amount: number; entry_date?: string; description: string } }[];
+    toDeleteIds: readonly string[];
+  };
+  lowestPoint?: { date: string; balance: number } | null;
+}): DrawerViolation[] {
+  const out: DrawerViolation[] = [];
+  const byId = new Map(input.settlementEntries.map((e) => [e.id, e]));
+
+  // Wanted and absent: the invoice says cash left (or entered) the till and the drawer never moved.
+  for (const row of input.sync.toCreate) {
+    out.push({
+      kind: "drawer_settlement_missing",
+      entityId: row.invoice_id,
+      euros: round2(Math.abs(num(row.amount))),
+      message:
+        `${row.description} — deze contante betaling van ${eur(row.amount)} staat niet in je ` +
+        `kasboek. Je kassaldo staat daardoor ${eur(row.amount)} HOGER dan het geld dat er ligt.`,
+    });
+  }
+
+  // Present and unwanted. Three shapes, one honest sentence: the invoice is no longer paid in cash,
+  // OR the entry is a duplicate of another, OR it is a legacy aggregate whose instalments now each
+  // have their own row. In all three the drawer is short by the amount that should not be there.
+  for (const id of input.sync.toDeleteIds) {
+    const entry = byId.get(id);
+    const amount = Math.abs(num(entry?.amount));
+    out.push({
+      kind: "drawer_settlement_orphan",
+      entityId: entry?.invoice_id ?? id,
+      euros: round2(amount),
+      message:
+        `Een kasregel van ${eur(amount)}${entry?.entry_date ? ` op ${entry.entry_date}` : ""} hoort bij ` +
+        `geen enkele contante betaling (meer). Je kassaldo staat daardoor ${eur(amount)} LAGER dan ` +
+        `het geld dat er ligt.`,
+    });
+  }
+
+  // The invoice was corrected after it was paid and the drawer did not follow. The delta is what is
+  // at stake — not the whole amount, which is mostly right.
+  for (const { id, row } of input.sync.toUpdate) {
+    const entry = byId.get(id);
+    const drift = round2(Math.abs(num(entry?.amount) - num(row.amount)));
+    const dateMoved = !!row.entry_date && (entry?.entry_date ?? null) !== row.entry_date;
+    out.push({
+      kind: "drawer_settlement_stale",
+      entityId: row.invoice_id,
+      euros: drift,
+      message: drift > MONEY_EPSILON
+        ? `${row.description} — je kasboek houdt ${eur(num(entry?.amount))} aan, de factuur zegt ` +
+          `${eur(row.amount)}. Verschil ${eur(drift)}.`
+        : `${row.description} — het bedrag klopt, maar ${dateMoved
+            ? `de datum in je kasboek (${entry?.entry_date ?? "onbekend"}) is niet de betaaldatum van de factuur (${row.entry_date})`
+            : "de richting van de kasregel volgt de factuur niet"}. Het saldo per dag klopt daardoor niet.`,
+    });
+  }
+
+  // The one violation that is not about a settlement: a drawer below zero. You cannot pay out cash
+  // you never had, and this is the strongest signal the Belastingdienst uses to reject a cash
+  // administration. Reported here too — not because readiness does not (it does), but because this
+  // audit runs across every administration at once, which is the only way to see how many of them
+  // currently cannot be filed.
+  const lp = input.lowestPoint;
+  if (lp && lp.balance < 0) {
+    out.push({
+      kind: "drawer_negative",
+      entityId: lp.date,
+      euros: round2(Math.abs(lp.balance)),
+      message:
+        `Het kassaldo stond op ${lp.date} ${eur(lp.balance)} ONDER nul. Dat kan fysiek niet, en het ` +
+        `blokkeert de BTW-aangifte van dat kwartaal.`,
+    });
+  }
+
+  return out.sort((a, b) => b.euros - a.euros);
+}
+
 /** The one line that says whether anything needs doing today. */
 export function moneyAuditHeadline(violations: readonly Violation[]): string {
   if (violations.length === 0) return "De boeken kloppen met zichzelf. Geen enkel verschil gevonden.";

@@ -78,148 +78,186 @@ export interface CashSettleSummary {
 
 const CASH_SETTLE_BAILED: CashSettleSummary = { ok: false, created: 0, updated: 0, deleted: 0 };
 
+/**
+ * [GELD-INVARIANT] The two sides this module reconciles, read once and shared.
+ *
+ * It was inlined in reconcileCashSettlements, which was fine while the reconcile was the only
+ * caller. It is not the only one any more: money-audit.ts looks BACKWARD at the same two sides to
+ * ask whether the drawer is still in step with the invoices it claims to settle — the three states
+ * this module's own reportHandledFailure calls admit can persist ("the kas balance is now too
+ * high", "…too low", "the drawer may be left half-healed").
+ *
+ * Extracted rather than re-read there, because "which invoices are settled in cash" is a
+ * DEFINITION, not a query: status paid + method kas, UNION anything holding a kas instalment, with
+ * the cash portion taken from the instalment rows and not from gross − amount_paid. An audit that
+ * spelled that out a second time would eventually spell it differently, and then it would report
+ * differences that only exist between the two spellings. One definition, two readers.
+ *
+ * `ok: false` means a read failed and the answer must not be used: the reconcile bails rather than
+ * delete on it, and the audit says it could not look rather than report a clean drawer.
+ */
+export interface CashSettlementState {
+  ok: boolean;
+  perInstalment: boolean;
+  paid: SettleableInvoice[];
+  existing: Array<{
+    id: string; invoice_id: string | null; settlement_id?: string | null;
+    amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null;
+  }>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function loadCashSettlementState(supabase: SupabaseClient<any>, userId: string): Promise<CashSettlementState> {
+  // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).
+  const perInstalment = await cashInstalmentsSupported(supabase);
+  // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
+  // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
+  // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
+  // [CASH-PARTIAL] amount_paid = the portion already settled (instalments). For LEGACY rows
+  // without instalment records that still means "paid by bank", and the cash settlement books
+  // the REMAINDER — see settlementGross.
+  //
+  // [MANUAL-PARTIAL-PAY] Two changes here, both required by manual cash instalments:
+  //  1. An invoice can hold cash while still OPEN (paid €200 of €500 from the till). It is not
+  //     status 'paid', yet the drawer really moved — so the eligible set is "settled in cash"
+  //     (status paid + method kas) UNION "has a kas instalment", not status alone.
+  //  2. The cash amount comes from those instalment rows (method='kas'), not from
+  //     gross − amount_paid: amount_paid now includes cash too, so the old formula would
+  //     compute €0 for a fully cash-paid invoice and the reconciler would DELETE its entry.
+  // [CASH-INSTALMENT] Read the instalments THEMSELVES, not just their sum: each one becomes its
+  // own drawer movement, on its own day. Summing them (the old model) made the kasboek claim
+  // the whole amount left the till on the date of the last payment.
+  //
+  // [PAGINATION] All three reads below MUST page. PostgREST caps a response at ~1000 rows and
+  // says nothing about it, and this function does not merely REPORT what it read — it DELETES
+  // on the strength of it. computeCashSettlementSync treats any existing 'betaling' entry whose
+  // invoice is missing from the paid set as an orphan and removes it. Truncate the invoice read
+  // and hundreds of perfectly good kasboek entries become "orphans" on the next hourly run:
+  // real cash outflows vanish from the book the Belastingdienst reads, and the drawer balance
+  // is overstated by their sum. They are never recreated, because creation is driven from the
+  // same truncated set. A trader with more than a thousand till-settled invoices hits this.
+  const kasLinkRows = await fetchAllRows<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>(
+    (from, to) => supabase
+      .from("bank_tx_invoices")
+      .select("id, invoice_id, amount_applied, paid_on")
+      .eq("user_id", userId)
+      .eq("method", "kas")
+      .is("transaction_id", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const cashByInvoice = new Map<string, number>();
+  const instalmentsByInvoice = new Map<string, CashInstalment[]>();
+  const lastCashDate = new Map<string, string>();
+  for (const l of kasLinkRows) {
+    if (!l.invoice_id) continue;
+    const amount = Math.abs(Number(l.amount_applied) || 0);
+    cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
+    const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
+    list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
+    instalmentsByInvoice.set(l.invoice_id, list);
+    // Kept for the pre-migration model: it dates its one entry by the last cash instalment.
+    const day = l.paid_on ? l.paid_on.slice(0, 10) : null;
+    if (day && (!lastCashDate.get(l.invoice_id) || day > lastCashDate.get(l.invoice_id)!)) {
+      lastCashDate.set(l.invoice_id, day);
+    }
+  }
+
+  // [CASH-CREDITNOTA] invoice_type rides along, and without it the fix in cash.ts cannot reach a
+  // single real row: settlementDirection would see `undefined` and fall back to the sign alone,
+  // so a creditnota stored with positive amounts (the 'conflict' stance import-health flags)
+  // would still book the drawer backwards.
+  const baseColumns = "id, direction, invoice_type, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
+  const invRows = await fetchAllRows<Record<string, unknown> & { id: string }>(
+    (from, to) => supabase
+      .from("invoices")
+      .select(baseColumns)
+      .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
+      .eq("status", "paid")
+      .eq("payment_method", "kas")
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown> & { id: string }> | null; error: { message: string } | null }>,
+  );
+
+  // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
+  // [PAGINATION] Chunked rather than paged: a single .in() with hundreds of uuids builds a URL
+  // long enough to be rejected by the gateway, and a rejected read here reads as "no paid
+  // invoices" — the same destructive shape as truncation. 200 ids per chunk keeps both the URL
+  // and each response well under their caps.
+  const knownIds = new Set(invRows.map((r) => r.id));
+  const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
+  const openCashRows: unknown[] = [];
+  const ID_CHUNK = 200;
+  for (let i = 0; i < openCashIds.length; i += ID_CHUNK) {
+    const { data, error } = await supabase
+      .from("invoices")
+      .select(baseColumns)
+      .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
+      .in("id", openCashIds.slice(i, i + ID_CHUNK));
+    // A failed chunk would silently shrink the paid set, so it bails instead of deleting.
+    //
+    // [KAS-STIL] Bailing is the right call and it is still a failure: the pass that keeps the
+    // kasboek in step with the invoices did not run, and every caller ignores the returned
+    // `ok: false` (see the header). Refusing to delete on bad data protects the drawer; saying
+    // nothing about it is how a drawer stays out of step for weeks.
+    if (error) {
+      reportHandledFailure({
+        tag: "CASH-SETTLE",
+        message: "cash reconcile bailed on a failed read — the drawer was not brought in step",
+        severity: "gate-unavailable",
+        context: { userId, error: error.message },
+      });
+      return { ok: false, perInstalment, paid: [], existing: [] };
+    }
+    openCashRows.push(...(data ?? []));
+  }
+
+  // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
+  // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
+  const entryRows = await fetchAllRows<Record<string, unknown>>(
+    (from, to) => supabase
+      .from("cash_entries")
+      .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
+      .eq("user_id", userId)
+      .eq("category", "betaling")
+      .not("invoice_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
+  );
+
+  const paid = ([...invRows, ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
+    .map((r) => ({
+      ...r,
+      direction: r.direction === "outgoing" ? "outgoing" : "incoming",
+      // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
+      // back to the legacy gross − amount_paid inference for pre-instalment invoices).
+      cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
+      // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
+      // movement on its own day. The invoice's payment_date is only the fallback: it can be the
+      // day a BANK instalment landed, which is a different day from any cash handover.
+      cash_instalments: perInstalment ? instalmentsByInvoice.get(r.id) : undefined,
+      // [DEPLOY-SAFE] In the old model the single entry is dated by the LAST cash instalment —
+      // the day the till last moved — which is what it always did. With per-instalment entries
+      // each one carries its own date and this is only the fallback.
+      payment_date: (perInstalment ? null : lastCashDate.get(r.id)) ?? r.payment_date ?? null,
+    })) as SettleableInvoice[];
+  // The projection differs by capability, so PostgREST's inferred row type does too — read it
+  // back through `unknown` rather than teach the type system about a runtime-chosen select.
+  const existing = (entryRows ?? []) as unknown as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
+  return { ok: true, perInstalment, paid, existing };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<CashSettleSummary> {
   let created = 0;
   let updated = 0;
   let deleted = 0;
   try {
-    // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).
-    const perInstalment = await cashInstalmentsSupported(supabase);
-    // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
-    // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
-    // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
-    // [CASH-PARTIAL] amount_paid = the portion already settled (instalments). For LEGACY rows
-    // without instalment records that still means "paid by bank", and the cash settlement books
-    // the REMAINDER — see settlementGross.
-    //
-    // [MANUAL-PARTIAL-PAY] Two changes here, both required by manual cash instalments:
-    //  1. An invoice can hold cash while still OPEN (paid €200 of €500 from the till). It is not
-    //     status 'paid', yet the drawer really moved — so the eligible set is "settled in cash"
-    //     (status paid + method kas) UNION "has a kas instalment", not status alone.
-    //  2. The cash amount comes from those instalment rows (method='kas'), not from
-    //     gross − amount_paid: amount_paid now includes cash too, so the old formula would
-    //     compute €0 for a fully cash-paid invoice and the reconciler would DELETE its entry.
-    // [CASH-INSTALMENT] Read the instalments THEMSELVES, not just their sum: each one becomes its
-    // own drawer movement, on its own day. Summing them (the old model) made the kasboek claim
-    // the whole amount left the till on the date of the last payment.
-    //
-    // [PAGINATION] All three reads below MUST page. PostgREST caps a response at ~1000 rows and
-    // says nothing about it, and this function does not merely REPORT what it read — it DELETES
-    // on the strength of it. computeCashSettlementSync treats any existing 'betaling' entry whose
-    // invoice is missing from the paid set as an orphan and removes it. Truncate the invoice read
-    // and hundreds of perfectly good kasboek entries become "orphans" on the next hourly run:
-    // real cash outflows vanish from the book the Belastingdienst reads, and the drawer balance
-    // is overstated by their sum. They are never recreated, because creation is driven from the
-    // same truncated set. A trader with more than a thousand till-settled invoices hits this.
-    const kasLinkRows = await fetchAllRows<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>(
-      (from, to) => supabase
-        .from("bank_tx_invoices")
-        .select("id, invoice_id, amount_applied, paid_on")
-        .eq("user_id", userId)
-        .eq("method", "kas")
-        .is("transaction_id", null)
-        .order("id", { ascending: true })
-        .range(from, to),
-    );
-    const cashByInvoice = new Map<string, number>();
-    const instalmentsByInvoice = new Map<string, CashInstalment[]>();
-    const lastCashDate = new Map<string, string>();
-    for (const l of kasLinkRows) {
-      if (!l.invoice_id) continue;
-      const amount = Math.abs(Number(l.amount_applied) || 0);
-      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
-      const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
-      list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
-      instalmentsByInvoice.set(l.invoice_id, list);
-      // Kept for the pre-migration model: it dates its one entry by the last cash instalment.
-      const day = l.paid_on ? l.paid_on.slice(0, 10) : null;
-      if (day && (!lastCashDate.get(l.invoice_id) || day > lastCashDate.get(l.invoice_id)!)) {
-        lastCashDate.set(l.invoice_id, day);
-      }
-    }
-
-    // [CASH-CREDITNOTA] invoice_type rides along, and without it the fix in cash.ts cannot reach a
-    // single real row: settlementDirection would see `undefined` and fall back to the sign alone,
-    // so a creditnota stored with positive amounts (the 'conflict' stance import-health flags)
-    // would still book the drawer backwards.
-    const baseColumns = "id, direction, invoice_type, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
-    const invRows = await fetchAllRows<Record<string, unknown> & { id: string }>(
-      (from, to) => supabase
-        .from("invoices")
-        .select(baseColumns)
-        .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
-        .eq("status", "paid")
-        .eq("payment_method", "kas")
-        .order("id", { ascending: true })
-        .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown> & { id: string }> | null; error: { message: string } | null }>,
-    );
-
-    // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
-    // [PAGINATION] Chunked rather than paged: a single .in() with hundreds of uuids builds a URL
-    // long enough to be rejected by the gateway, and a rejected read here reads as "no paid
-    // invoices" — the same destructive shape as truncation. 200 ids per chunk keeps both the URL
-    // and each response well under their caps.
-    const knownIds = new Set(invRows.map((r) => r.id));
-    const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
-    const openCashRows: unknown[] = [];
-    const ID_CHUNK = 200;
-    for (let i = 0; i < openCashIds.length; i += ID_CHUNK) {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select(baseColumns)
-        .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
-        .in("id", openCashIds.slice(i, i + ID_CHUNK));
-      // A failed chunk would silently shrink the paid set, so it bails instead of deleting.
-      //
-      // [KAS-STIL] Bailing is the right call and it is still a failure: the pass that keeps the
-      // kasboek in step with the invoices did not run, and every caller ignores the returned
-      // `ok: false` (see the header). Refusing to delete on bad data protects the drawer; saying
-      // nothing about it is how a drawer stays out of step for weeks.
-      if (error) {
-        reportHandledFailure({
-          tag: "CASH-SETTLE",
-          message: "cash reconcile bailed on a failed read — the drawer was not brought in step",
-          severity: "gate-unavailable",
-          context: { userId, error: error.message },
-        });
-        return CASH_SETTLE_BAILED;
-      }
-      openCashRows.push(...(data ?? []));
-    }
-
-    // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
-    // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
-    const entryRows = await fetchAllRows<Record<string, unknown>>(
-      (from, to) => supabase
-        .from("cash_entries")
-        .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
-        .eq("user_id", userId)
-        .eq("category", "betaling")
-        .not("invoice_id", "is", null)
-        .order("id", { ascending: true })
-        .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
-    );
-
-    const paid = ([...invRows, ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
-      .map((r) => ({
-        ...r,
-        direction: r.direction === "outgoing" ? "outgoing" : "incoming",
-        // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
-        // back to the legacy gross − amount_paid inference for pre-instalment invoices).
-        cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
-        // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
-        // movement on its own day. The invoice's payment_date is only the fallback: it can be the
-        // day a BANK instalment landed, which is a different day from any cash handover.
-        cash_instalments: perInstalment ? instalmentsByInvoice.get(r.id) : undefined,
-        // [DEPLOY-SAFE] In the old model the single entry is dated by the LAST cash instalment —
-        // the day the till last moved — which is what it always did. With per-instalment entries
-        // each one carries its own date and this is only the fallback.
-        payment_date: (perInstalment ? null : lastCashDate.get(r.id)) ?? r.payment_date ?? null,
-      })) as SettleableInvoice[];
-    // The projection differs by capability, so PostgREST's inferred row type does too — read it
-    // back through `unknown` rather than teach the type system about a runtime-chosen select.
-    const existing = (entryRows ?? []) as unknown as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
+    const state = await loadCashSettlementState(supabase, userId);
+    // A read it could not trust: bail rather than delete on it — the reason is written at the
+    // failing read inside loadCashSettlementState, which also reports it.
+    if (!state.ok) return CASH_SETTLE_BAILED;
+    const { perInstalment, paid, existing } = state;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
