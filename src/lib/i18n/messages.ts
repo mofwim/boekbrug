@@ -616,6 +616,30 @@ export const MESSAGES = {
   'kas.vorigKwartaal': { nl: 'Vorig kwartaal', ar: 'الربع السابق', en: 'Previous quarter' },
   'kas.volgendKwartaal': { nl: 'Volgend kwartaal', ar: 'الربع التالي', en: 'Next quarter' },
   'kas.contantToevoegen': { nl: 'Contant betaalde factuur toevoegen', ar: 'أضف فاتورة دُفعت نقداً', en: 'Add a cash-paid invoice' },
+  // [KAS-SPOOR] Wat dit kwartaal WEL hield en niet meer houdt. Een kasboeking wordt hard verwijderd,
+  // dus het auditspoor is de enige plek waar de beweging nog bestaat. De zin zegt er meteen bij dat
+  // deze regels NIET in de saldi zitten — anders is de eerste vraag van iedere lezer of het
+  // eindsaldo hierboven ze meerekent.
+  'kas.verwijderd.titel': {
+    nl: 'Verwijderd uit dit kwartaal',
+    ar: 'محذوف من هذا الربع',
+    en: 'Removed from this quarter',
+  },
+  'kas.verwijderd.uitleg': {
+    nl: 'Deze kasboekingen zijn verwijderd. Ze zitten niet in de saldi hierboven — ze staan hier omdat een kasboek waaruit regels ongemerkt verdwijnen niet te controleren is.',
+    ar: 'هذه القيود النقدية محذوفة. وهي ليست ضمن الأرصدة أعلاه — تظهر هنا لأن دفتر نقد تختفي منه سطور بلا أثر لا يمكن التحقّق منه.',
+    en: 'These cash entries were removed. They are not included in the balances above — they are listed here because a cash book whose lines can vanish unnoticed cannot be checked.',
+  },
+  'kas.verwijderd.op': {
+    nl: 'verwijderd op {datum}',
+    ar: 'حُذف بتاريخ {datum}',
+    en: 'removed on {datum}',
+  },
+  'kas.verwijderd.onbekend': {
+    nl: 'We konden niet volledig nalezen wat er uit dit kwartaal is verwijderd. Wat hieronder staat kan dus onvolledig zijn.',
+    ar: 'لم نتمكّن من قراءة كل ما حُذف من هذا الربع. لذا قد تكون القائمة أدناه ناقصة.',
+    en: 'We could not fully read what was removed from this quarter, so the list below may be incomplete.',
+  },
   'kas.negatiefSaldo': { nl: 'Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.', ar: 'رصيد سالب — قيّدت مصروفات أكثر من المقبوضات.', en: 'Negative balance — you booked more spending than receipts.' },
   'kas.fout.laden': { nl: 'Kon het kasboek niet laden.', ar: 'تعذّر تحميل دفتر الصندوق.', en: 'Could not load the cash book.' },
   'kas.fout.saldo': { nl: 'We konden je kassaldo niet laden', ar: 'تعذّر تحميل رصيد صندوقك', en: 'Could not load your cash balance' },

@@ -16,8 +16,10 @@ import {
   buildKasboek,
   openingBalanceForQuarter,
   kasboekToMatrix,
+  removedInQuarter,
   type KasTurnoverDay,
   type KasEntry,
+  type RemovedKasEntry,
   lowestDrawerPoint,
   type Quarter,
 } from "@/lib/kasboek";
@@ -118,8 +120,64 @@ export async function GET(req: NextRequest) {
   const opening = openingBalanceForQuarter({ turnover, entries, year, quarter: quarter as Quarter, startingBalance });
   const kb = buildKasboek({ turnover, entries, year, quarter: quarter as Quarter, openingBalance: opening });
 
+  // ── [KAS-SPOOR] What this quarter's cash book HELD and no longer holds ───────────────────────
+  //
+  // A cash_entries delete is a hard delete: the row is gone, and the audit trail is the only place
+  // the movement still exists. So this is the one question the cash book cannot answer from its own
+  // rows, and it is a question both the owner and their accountant are entitled to ask about a
+  // period — a cash administration where lines can disappear without trace is exactly the shape an
+  // inspector treats as unreliable.
+  //
+  // Read with the OWNER's session (audit_logs has a "Users see own logs" SELECT policy), so this
+  // discloses nobody else's trail and cannot widen what anyone sees.
+  //
+  // A failure here does NOT refuse the cash book, unlike the three source reads above. That is a
+  // deliberate difference in kind: those three DECIDE the saldi, so half of them produces a wrong
+  // number presented as a right one. This one is a disclosure ALONGSIDE the saldi — the balances are
+  // complete without it — so refusing the whole book over it would trade a real answer for no
+  // answer. It says it could not look instead, and the panel says so too.
+  let removed: RemovedKasEntry[] = [];
+  let removedUnknown = false;
+  {
+    const { data: trail, error: trailErr } = await supabase
+      .from("audit_logs")
+      .select("old_value, created_at")
+      .eq("user_id", user.id)
+      .eq("action", "cash.entry_removed")
+      .order("created_at", { ascending: false })
+      // A ceiling, and it is DISCLOSED rather than silent: beyond this many removals the list is
+      // the newest ones and removedUnknown says the rest were not read. A silent slice here would
+      // be a cash book quietly claiming that nothing else was ever taken out of it.
+      .limit(500);
+    if (trailErr) {
+      console.error("[KAS-SPOOR] removed-entry trail unreadable — the kasboek is served without it", { userId: user.id, error: trailErr.message });
+      removedUnknown = true;
+    } else {
+      const rows = trail ?? [];
+      removedUnknown = rows.length >= 500;
+      const all: RemovedKasEntry[] = rows.flatMap((r) => {
+        const o = (r as { old_value?: Record<string, unknown> | null }).old_value ?? null;
+        if (!o) return [];
+        const date = typeof o.entry_date === "string" ? o.entry_date.slice(0, 10) : null;
+        const amount = Math.abs(Number(o.amount) || 0);
+        if (!date || amount === 0) return [];
+        return [{
+          date,
+          direction: o.direction === "in" ? "in" as const : "out" as const,
+          amount,
+          category: typeof o.category === "string" ? o.category : null,
+          description: typeof o.description === "string" ? o.description : null,
+          removedOn: typeof (r as { created_at?: string | null }).created_at === "string"
+            ? (r as { created_at: string }).created_at.slice(0, 10)
+            : null,
+        }];
+      });
+      removed = removedInQuarter(all, year, quarter as Quarter);
+    }
+  }
+
   if (format === "xlsx") {
-    const bytes = matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`);
+    const bytes = matrixToXlsxBytes(kasboekToMatrix(kb, removed), `Kasboek Q${quarter} ${year}`);
     return new NextResponse(Buffer.from(bytes) as BodyInit, {
       status: 200,
       headers: {
@@ -135,5 +193,14 @@ export async function GET(req: NextRequest) {
   // gate can never tell the owner two different stories. A negative kassaldo is physically
   // impossible (you cannot pay out cash you never had) and is the single strongest signal the
   // Belastingdienst uses to reject a cash administration. Null when it never goes below zero.
-  return NextResponse.json({ ok: true, kasboek: kb, lowestPoint: lowestDrawerPoint(kb) });
+  return NextResponse.json({
+    ok: true,
+    kasboek: kb,
+    lowestPoint: lowestDrawerPoint(kb),
+    // [KAS-SPOOR] Alongside the saldi, never inside them — the movements this quarter no longer
+    // holds. `removedUnknown` is the honest half: the trail could not be read, or there is more of
+    // it than one read returns.
+    removed,
+    removedUnknown,
+  });
 }

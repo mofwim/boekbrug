@@ -65,6 +65,13 @@ interface Kasboek {
   year: number; quarter: number; openingBalance: number; closingBalance: number
   months: KasMonth[]; totalIn: number; totalOut: number
 }
+// [KAS-SPOOR] A movement this quarter's cash book HELD and no longer holds. Reconstructed from the
+// audit trail by /api/kasboek, because a cash_entries delete is a hard delete — the trail is the
+// only place the movement still exists. Never part of any saldo; see the panel at the bottom.
+interface RemovedEntry {
+  date: string; direction: 'in' | 'out'; amount: number
+  category: string | null; description: string | null; removedOn: string | null
+}
 
 // Previous quarter for the ◀ selector (Q1 → Q4 of the prior year).
 function prevQuarter(y: number, q: number): { year: number; quarter: number } {
@@ -148,6 +155,9 @@ export default function KasClient() {
   // the last completed quarter and tells us which one it picked (kb.year/kb.quarter).
   const [kbOpen, setKbOpen] = useState(false)
   const [kb, setKb] = useState<Kasboek | null>(null)
+  // [KAS-SPOOR] Travels with the loaded quarter, so browsing to another quarter shows ITS removals
+  // and not the ones from the quarter before it.
+  const [kbRemoved, setKbRemoved] = useState<{ rows: RemovedEntry[]; unknown: boolean }>({ rows: [], unknown: false })
   const [kbLoading, setKbLoading] = useState(false)
   const [kbPeriod, setKbPeriod] = useState<{ year: number; quarter: number } | null>(null)
   // [KAS-NEGATIEF] The day this quarter's drawer went below zero, if it ever did. A negative
@@ -192,6 +202,9 @@ export default function KasClient() {
       if (res.ok && json.kasboek) {
         setKb(json.kasboek as Kasboek)
         setKbPeriod({ year: json.kasboek.year, quarter: json.kasboek.quarter })
+        // [KAS-SPOOR] Set from the SAME answer as the book itself, so the two can never describe
+        // different quarters.
+        setKbRemoved({ rows: (json.removed ?? []) as RemovedEntry[], unknown: !!json.removedUnknown })
         // The first load (no explicit period) IS the readiness quarter — remember it.
         if (!period) alertPeriodRef.current = { year: json.kasboek.year, quarter: json.kasboek.quarter }
         // [SHADOW] Named alertQ, not alert: a local `alert` shadows window.alert for the whole
@@ -832,6 +845,47 @@ export default function KasClient() {
                     <span>{t('kas.eindsaldo')}</span>
                     <span style={{ fontFamily: FONT_NUM, color: kb.closingBalance < 0 ? M3.error : M3.onSurface }}>{eur.format(kb.closingBalance)}</span>
                   </div>
+
+                  {/* [KAS-SPOOR] What this quarter held and no longer holds. BELOW the eindsaldo and
+                      outside every total above it — the balances are complete without these rows,
+                      because they were removed. It is here for the reason the sentence gives: a cash
+                      book whose lines can disappear unnoticed cannot be checked, by the owner or by
+                      anyone they hand it to. The same block is appended to the .xlsx.
+                      The list is skipped entirely when nothing was removed, which is the normal
+                      case — an empty "Verwijderd" heading on every quarter would read as a defect. */}
+                  {(kbRemoved.rows.length > 0 || kbRemoved.unknown) && (
+                    <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${M3.outlineVariant}` }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>{t('kas.verwijderd.titel')}</div>
+                      <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 4, lineHeight: 1.45 }}>{t('kas.verwijderd.uitleg')}</div>
+                      {kbRemoved.unknown && (
+                        <div style={{ fontSize: 11.5, color: '#7A4F00', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 8, padding: '6px 8px', marginTop: 6, lineHeight: 1.45 }}>
+                          {t('kas.verwijderd.onbekend')}
+                        </div>
+                      )}
+                      {kbRemoved.rows.map((r, i) => (
+                        <div key={`${r.date}-${r.amount}-${i}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 2px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none', fontSize: 12.5 }}>
+                          <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(r.date)}</span>
+                          <span style={{ flex: 1, minWidth: 0, color: M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'line-through' }}>
+                            {r.description?.trim() || catLabel(r.category ?? '', r.direction)}
+                          </span>
+                          <span style={{ fontFamily: FONT_NUM, color: M3.neutral, whiteSpace: 'nowrap', flexShrink: 0, textDecoration: 'line-through' }}>
+                            {r.direction === 'in' ? '+' : '−'}{eur.format(r.amount)}
+                          </span>
+                        </div>
+                      ))}
+                      {/* The day of the deletion, per row, in words — a second date column would
+                          crowd a phone and this is read rarely. */}
+                      {kbRemoved.rows.some((r) => r.removedOn) && (
+                        <div style={{ fontSize: 11, color: M3.neutral, marginTop: 6, lineHeight: 1.5 }}>
+                          {kbRemoved.rows.filter((r) => r.removedOn).map((r, i) => (
+                            <div key={`${r.date}-${r.removedOn}-${i}`}>
+                              {formatDate(r.date)} · {t('kas.verwijderd.op', { datum: formatDate(r.removedOn!) })}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {kbPeriod && (
                     <a href={`/api/kasboek?year=${kbPeriod.year}&quarter=${kbPeriod.quarter}&format=xlsx`}

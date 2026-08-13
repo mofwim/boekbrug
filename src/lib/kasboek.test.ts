@@ -1,6 +1,6 @@
 // [KASBOEK] Pure node test — run: npx tsx src/lib/kasboek.test.ts
 // Validated against the store's REAL "Kiwi 1ste kw 2026" cash book numbers.
-import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry } from "./kasboek";
+import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, kasboekToMatrix, removedInQuarter, type KasTurnoverDay, type KasEntry, type RemovedKasEntry } from "./kasboek";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -229,6 +229,44 @@ console.log("\n— [PAGE-KEY] a duplicated / dropped row is a wrong RUNNING bala
   });
   check("dropping a same-day RECEIPT fabricates a negative day", lowestDrawerPoint(dropped) !== null);
   check("…which the complete read does not have", lowestDrawerPoint(complete) === null);
+}
+
+// ── [KAS-SPOOR] What was REMOVED from a quarter's cash book ────────────────────────────────────
+// A cash_entries delete is a hard delete, so the audit trail is the only place the movement still
+// exists. These rows go BELOW the eindsaldo and are in none of the totals — they were removed, so
+// the balance is correct without them — but an accountant reconciling a till against this sheet is
+// entitled to know that lines were taken out of the period.
+console.log("\n— [KAS-SPOOR] removed movements are disclosed, never counted —");
+{
+  const removed: RemovedKasEntry[] = [
+    { date: "2026-02-14", direction: "out", amount: 90, category: "kosten", description: "bloemen", removedOn: "2026-04-02" },
+    { date: "2026-05-01", direction: "out", amount: 500, category: "kosten", description: "buiten dit kwartaal", removedOn: "2026-05-02" },
+    { date: "2026-01-09", direction: "in", amount: 40, category: "omzet", description: null, removedOn: null },
+  ];
+  const inQ1 = removedInQuarter(removed, 2026, 1);
+  check("only the quarter's own movements, oldest first", inQ1.length === 2 && inQ1[0].date === "2026-01-09" && inQ1[1].date === "2026-02-14");
+  check("a movement dated outside the quarter is not disclosed under it", !inQ1.some((r) => r.date === "2026-05-01"));
+
+  const kb = buildKasboek({
+    turnover: [{ turnover_date: "2026-01-05", cash_amount: 200 }],
+    entries: [], year: 2026, quarter: 1, openingBalance: 0,
+  });
+  const plain = kasboekToMatrix(kb);
+  const withRemoved = kasboekToMatrix(kb, removed);
+  check("the sheet is unchanged when nothing was removed", JSON.stringify(kasboekToMatrix(kb, [])) === JSON.stringify(plain));
+  check("the disclosure is APPENDED — every row of the original sheet is untouched",
+    JSON.stringify(withRemoved.slice(0, plain.length)) === JSON.stringify(plain));
+
+  const flat = withRemoved.map((r) => r.join("|"));
+  const eindIdx = flat.findIndex((r) => r.startsWith("Eindsaldo kwartaal"));
+  const blockIdx = flat.findIndex((r) => r.startsWith("Verwijderd uit dit kwartaal"));
+  check("the block sits BELOW the eindsaldo, never inside it", eindIdx >= 0 && blockIdx > eindIdx);
+  check("…and says so, so nobody wonders whether the saldo includes it", flat.some((r) => /NIET in de saldi/.test(r)));
+  check("a removed 'out' carries a negative amount and an 'in' a positive one",
+    flat.some((r) => r.startsWith("14-02-2026|-90")) && flat.some((r) => r.startsWith("09-01-2026|40")));
+  check("the day it was removed travels with it, and an unknown one is blank, never invented",
+    flat.some((r) => r.endsWith("|02-04-2026")) && flat.some((r) => r.startsWith("09-01-2026") && r.endsWith("|")));
+  check("the eindsaldo itself did not move", kb.closingBalance === 200);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

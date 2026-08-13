@@ -310,12 +310,53 @@ export function lowestDrawerPoint(kb: Kasboek): { date: string; balance: number 
 }
 
 /**
+ * [KAS-SPOOR] A cash movement that was REMOVED from a quarter's cash book.
+ *
+ * Reconstructed from the audit trail, because it cannot come from anywhere else: a cash_entries
+ * delete is a hard delete, so the row is gone and the trail is the only place it still exists.
+ *
+ * `date` is the day the MOVEMENT was on — not the day it was deleted. That is the field the cash
+ * book is organised by, and the question this answers is "what did this quarter hold that is no
+ * longer in it", which is a question about the quarter, not about when someone pressed a button.
+ * `removedOn` carries that second date separately, because it is the other half of the answer.
+ */
+export interface RemovedKasEntry {
+  date: string;                // ISO — the movement's own entry_date
+  direction: "in" | "out";
+  amount: number;
+  category: string | null;
+  description: string | null;
+  removedOn: string | null;    // ISO day the deletion was recorded, when the trail knows it
+}
+
+/** Only removals whose MOVEMENT fell inside this quarter, oldest first. Pure. */
+export function removedInQuarter(
+  removed: readonly RemovedKasEntry[],
+  year: number,
+  quarter: Quarter,
+): RemovedKasEntry[] {
+  const { start, end } = quarterRange(year, quarter);
+  return removed
+    .filter((r) => {
+      const d = isoDay(r.date);
+      return !!d && d >= start && d <= end;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.removedOn ?? "").localeCompare(b.removedOn ?? ""));
+}
+
+/**
  * Lay the Kasboek out as a cell matrix in the store's own format (monthly blocks: a title row,
  * a header row, one row per active day — Datum · Beginsaldo · Uitgaven · Omschrijving ·
  * Ontvangsten · Eindsaldo — then a month totals row). Pure: matrix in → matrix out; the SheetJS
  * writer (xlsx-adapter.matrixToXlsxBytes) turns it into the .xlsx the accountant receives.
+ *
+ * [KAS-SPOOR] `removed` appends the movements that were taken OUT of this quarter, BELOW the
+ * eindsaldo and never inside it. That placement is the whole point: these rows are not part of the
+ * balance — they were removed, so the eindsaldo above is correct without them — but an accountant
+ * reconciling a till against this sheet is entitled to know that lines were deleted from the period,
+ * on which days and for how much. Omitted → the sheet is byte-for-byte what it was before.
  */
-export function kasboekToMatrix(kb: Kasboek): (string | number)[][] {
+export function kasboekToMatrix(kb: Kasboek, removed?: readonly RemovedKasEntry[]): (string | number)[][] {
   const rows: (string | number)[][] = [];
   rows.push([`Kasboek — Q${kb.quarter} ${kb.year}`]);
   rows.push([`Beginsaldo kwartaal`, kb.openingBalance]);
@@ -337,5 +378,25 @@ export function kasboekToMatrix(kb: Kasboek): (string | number)[][] {
     rows.push([]);
   }
   rows.push(["Eindsaldo kwartaal", kb.closingBalance]);
+
+  // [KAS-SPOOR] Below the eindsaldo, and outside every total above it.
+  const gone = removed ? removedInQuarter(removed, kb.year, kb.quarter as Quarter) : [];
+  if (gone.length > 0) {
+    rows.push([]);
+    rows.push(["Verwijderd uit dit kwartaal"]);
+    // Stated in the sheet itself, because a reader who finds these rows will otherwise wonder
+    // whether the eindsaldo includes them. It does not.
+    rows.push(["Deze kasboekingen zijn verwijderd en zitten NIET in de saldi hierboven."]);
+    rows.push(["Datum", "Bedrag", "Soort", "Omschrijving", "Verwijderd op"]);
+    for (const r of gone) {
+      rows.push([
+        nlDate(r.date),
+        (r.direction === "in" ? 1 : -1) * r2(Math.abs(Number(r.amount) || 0)),
+        r.category ?? "",
+        r.description ?? "",
+        r.removedOn ? nlDate(r.removedOn) : "",
+      ]);
+    }
+  }
   return rows;
 }
