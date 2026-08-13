@@ -7975,3 +7975,46 @@ test("[CREDIT-SIGN] a creditnota without lines can still be sent as an e-factuur
   assert.match(spec, /a factuur without lines is synthesized exactly as it always was/,
     "…and the case that already worked must be untouched");
 });
+
+// ─── [CREDIT-VERREKEN] A supplier credit is settled by deducting it ──────────────────────────────
+//
+// Reported with the screen open on it: an invoice of € 1.764,76 and a creditnota of € 52,38 from
+// the same supplier, selected together on Crediteuren, refused with "haal hem uit de selectie".
+// That refusal was right about the arithmetic — the credit would have been ADDED, so the owner paid
+// twice its value too much — and wrong as an answer. Deducting a credit from the next payment and
+// naming both documents in the description is how this trade settles a return.
+
+test("[CREDIT-VERREKEN] the credit subtracts, and only from the supplier it belongs to", () => {
+  const mod = code("src/lib/bundel-betaling.ts");
+  assert.match(mod, /const amount = round2\(debtTotal - creditTotal\)/, "it comes OFF the transfer");
+  // Only a row whose sign and type agree. A 'conflict' is the app contradicting itself and a
+  // 'suspected' is a guess; netting on either pays the wrong amount for an invisible reason.
+  assert.match(mod, /if \(stance === "credit"\) \{ credits\.push\(inv\); continue; \}/,
+    "only a confirmed credit may be deducted");
+  assert.match(mod, /stance === "conflict"/, "a positive creditnota is refused, not netted");
+  assert.match(mod, /bevestig/i, "…and an unconfirmed one is refused by name");
+  // Same supplier: the IBAN when the credit has one, the shared counterpart key when it does not.
+  assert.match(mod, /normalizeIban\(cn\.vendor_iban\) !== iban/, "another IBAN is another supplier");
+  assert.match(mod, /counterpartKey\(cn\.client_name \?\? null\)/,
+    "a creditnota without an IBAN must match on the name, or it is refused");
+  // No transfer of nothing, and both numbers on the payment.
+  assert.match(mod, /if \(amount <= 0\)/, "a credit bigger than the bill is an answer, not a € 0,00 QR");
+  assert.match(mod, /\$\{debtRefs\} -\/- \$\{creditRefs\}/, "the kenmerk names the credits after -/-");
+});
+
+test("[CREDIT-VERREKEN] the screen shows the net, and settles the credit with the payment", () => {
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // The bar read "2 geselecteerd · € 1.817,14" over a payment of € 1.712,38: it added the credit.
+  assert.match(client, /selectedRows\.reduce\(\(s, r\) => s \+ openAmountSigned\(r\), 0\)/,
+    "the selection total must net the credit, like the list total below it already does");
+  // The builder cannot see a credit note booked as a debt without the supplier's other numbers,
+  // and this screen is the side that has them.
+  assert.match(client, /buildBundelBetaling\(selectedRows, bundleVendorNumbers\)/,
+    "the evidence for the 'suspected' state must travel with the selection");
+  // The sheet has to explain the subtraction where the money is confirmed.
+  assert.match(client, /built\.creditTotal != null &&/, "the netting is spelled out on the sheet");
+  assert.match(client, /aan creditnota&apos;s/, "…naming what came off");
+  // And the settle step closes the credit too, or it is deducted again next month.
+  assert.match(client, /De creditnota's zijn met deze betaling verrekend en gaan mee dicht/,
+    "the confirm sheet must say what happens to the creditnota");
+});
