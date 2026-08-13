@@ -8067,3 +8067,31 @@ test("[CREDIT-VERREKEN] the screen shows the net, and settles the credit with th
   assert.match(messages, /'ink\.bundelMarkerenCredit'/, "the key must exist");
   assert.match(messages, /verrekend en gaan mee dicht/, "…and say that the credit closes with the payment");
 });
+
+test("[CREDIT-VERREKEN] the bank recognises a netted payment, both ways in", () => {
+  const mod = code("src/lib/bank-batch-reconcile.ts");
+  // The AUTOMATIC path, when the transfer quotes both numbers (our own bundle writes them).
+  // It refused because "reconcileBatch sums by MAGNITUDE" — true when written, false since
+  // [BATCH-SIGN] made it a net sum. The guard outlived its reason and blocked the everyday case.
+  assert.doesNotMatch(mod, /if \(inv\.total_inc_btw <= 0\) return null;/,
+    "a creditnota must be allowed into an automatic batch");
+  assert.match(mod, /if \(open == null \|\| open === 0\) return null;/,
+    "…while a settled document, whatever its sign, still cannot be part of one");
+  // What replaces it: the net must be money OWED, because reconcileBatch ties on magnitudes.
+  assert.match(mod, /const net = slots\.reduce\(\(sum, s\) => sum \+ \(s\.amount \?\? 0\), 0\);\s*\n\s*if \(net <= 0\) return null;/,
+    "a net running the other way ties just as neatly and must not be booked");
+
+  // The SUGGESTION path, when nothing is quoted: the subset-sum walk takes credits with their sign.
+  assert.match(mod, /\.filter\(\(x\) => x\.openCents !== 0\);/, "credits belong in the pool");
+  assert.doesNotMatch(mod, /if \(chosen\.length >= SUM_SUBSET_MAX \|\| sum >= targetCents\) return;/,
+    "the positive-only pruning would MISS a netted answer that overshoots on the way");
+  assert.match(mod, /amounts: members\.map\(\(m\) => m\.openCents \/ 100\)/,
+    "the per-member signs must travel, or the card cannot print the subtraction");
+
+  // And the card prints arithmetic that adds up.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /x\.a < 0 \? ' − ' : ' \+ '/, "a creditnota is joined with a minus, never a plus");
+  assert.match(bank, /\(s\.sumMatch\.amounts \?\? \[\]\)\.some\(a => a < 0\)/, "…and the heading says what it is");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'bank\.som\.kopVerrekend'/, "in the owner's language");
+});

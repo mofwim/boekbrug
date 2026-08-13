@@ -2729,6 +2729,14 @@ export const MESSAGES = {
     ar: '— العميل نفسه، ولا رقم في الوصف. تحقّق واربطها معاً.',
     en: '— same client, no number in the description. Check and link them together.',
   },
+  // [CREDIT-VERREKEN] The same recognition, when one of the posten is a creditnota. "De som van
+  // 2 facturen" would be wrong twice over: a creditnota is not a factuur, and it is subtracted
+  // rather than added — the card prints the arithmetic underneath, and it has to add up.
+  'bank.som.kopVerrekend': {
+    nl: 'Dit bedrag klopt precies: een factuur met een creditnota eraf',
+    ar: 'هذا المبلغ مطابق تماماً: فاتورة مخصوم منها إشعار دائن',
+    en: 'This amount matches exactly: an invoice with a credit note deducted',
+  },
   'bank.som.kop': {
     nl: 'Dit bedrag is precies de som van {count} openstaande facturen',
     ar: 'هذا المبلغ هو بالضبط مجموع {count} فاتورة مفتوحة',

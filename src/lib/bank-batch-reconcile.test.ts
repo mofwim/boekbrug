@@ -257,13 +257,28 @@ console.log("\n— [ROOT] planBatchAutoConfirm: auto-book ONLY a provably-unambi
   check("a paid invoice can't be re-booked in a batch",
     planBatchAutoConfirm({ reference: "900, 901", bankAmount: -200, invoices: paidOne }) === null);
 
-  // [REVIEW-B] A credit note (negative gross) must never enter the automatic path — reconcileBatch
-  // sums by magnitude, so an abs-tie could book the wrong amount. ≤0 candidate → whole batch null.
+  // [CREDIT-VERREKEN] A credit note may be part of an automatic batch — that is how this trade
+  // settles a return, and reconcileBatch has netted the sign since [BATCH-SIGN]. The guard that
+  // used to refuse it said "reconcileBatch sums by magnitude"; that stopped being true, and the
+  // guard went on refusing the everyday case for a reason that no longer existed.
   const withCredit = [inv("cn1", "1001", 300), { ...inv("cn2", "CR55", -20) }];
-  check("a credit note in the batch blocks auto-book (magnitude-tie at 320)",
+  check("the NET debit (280) is auto-booked, both documents together", (() => {
+    const plan = planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -280, invoices: withCredit });
+    return plan?.invoiceIds.length === 2 && plan.invoiceIds.includes("cn1") && plan.invoiceIds.includes("cn2");
+  })());
+  // …and the magnitude tie it was protecting against is STILL refused: 300 + |−20| = 320 is not
+  // what these two documents come to. That is the assertion that must never be lost.
+  check("the magnitude tie at 320 is still refused",
     planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -320, invoices: withCredit }) === null);
-  check("a credit note also blocks the genuine net debit (280)",
-    planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -280, invoices: withCredit }) === null);
+  // A batch of nothing but credit notes is not a payment, whichever way the money went.
+  const onlyCredits = [inv("o1", "CR01", -100), inv("o2", "CR02", -180)];
+  check("credit notes alone are never a batch",
+    planBatchAutoConfirm({ reference: "CR01, CR02", bankAmount: -280, invoices: onlyCredits }) === null);
+  // Credits outweighing the invoices net to −180, which magnitude-ties a €180 debit. Refused: the
+  // arithmetic says the money should have run the other way.
+  const creditHeavy = [inv("h1", "2001", 100), inv("h2", "CR77", -280)];
+  check("a net that runs the other way is refused, however neatly it ties",
+    planBatchAutoConfirm({ reference: "2001, CR77", bankAmount: -180, invoices: creditHeavy }) === null);
 }
 
 console.log("\n— [BUNDEL] the app must recognise the payment IT generated —");
@@ -359,10 +374,72 @@ console.log("\n— [BANK-SUM-SUGGEST] same-supplier sum without quoted numbers �
   check("open balances (not totals) make the tie", partial?.invoiceIds.length === 2 && partial.total === 700);
 
   // Guards: a creditnota in the pool, a single-invoice tie, direction, cents.
-  check("a creditnota never joins the sum", findSupplierSumMatch({
+  // [CREDIT-VERREKEN] The netted payment — an invoice paid short by a credit the supplier sent.
+  // Nothing is quoted in the reference, so this suggestion is the only thing standing between the
+  // owner and "Geen factuur" over a line that reconciles exactly.
+  check("a creditnota is netted INTO the sum", (() => {
+    const hit = findSupplierSumMatch({
+      amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+      invoices: [sInv("a", 300), sInv("cn", -20)],
+    });
+    return hit?.invoiceIds.length === 2 && hit.total === 280;
+  })());
+  check("…and the reported payment: 1.764,76 − 52,38 = 1.712,38", (() => {
+    const hit = findSupplierSumMatch({
+      amount: -1712.38, counterpartName: "Enka Horeca B.V.",
+      invoices: [
+        sInv("i", 1764.76, { client_name: "Enka Horeca B.V." }),
+        sInv("c", -52.38, { client_name: "Enka Horeca B.V." }),
+      ],
+    });
+    return hit?.invoiceIds.length === 2 && hit.total === 1712.38;
+  })());
+  check("credit notes alone are not a payment", findSupplierSumMatch({
     amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
-    invoices: [sInv("a", 300), sInv("cn", -20)],
+    invoices: [sInv("x", -100), sInv("y", -180)],
   }) === null);
+  check("a net that runs the other way is refused", findSupplierSumMatch({
+    amount: -180, counterpartName: "ATAPACK Cash & Carry B.V.",
+    invoices: [sInv("a", 100), sInv("cn", -280)],
+  }) === null);
+  check("a SUPERSET that also ties is an ambiguity, not a bonus", (() => {
+    // {300, −20} = 280, and so does {300, −20, 100, −100} — an invoice cancelled by its own
+    // credit note, which is an ordinary pair to be holding. Both answers move the same money and
+    // close DIFFERENT documents, so there is no honest way to pick one. The walk therefore keeps
+    // looking after it finds a tie; returning early (the shape it had while every member was
+    // positive, where a superset could only overshoot) would have hidden this one.
+    return findSupplierSumMatch({
+      amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+      invoices: [sInv("a", 300), sInv("cn", -20), sInv("b", 100), sInv("c", -100)],
+    }) === null;
+  })());
+  check("a tie can never be negative, so no sign guard is needed after it", (() => {
+    // Stated because the automatic batch path DOES need one: it compares magnitudes. Here the
+    // target is |amount|, a positive number, so a set of credit notes cannot reach it at all.
+    return findSupplierSumMatch({
+      amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+      invoices: [sInv("x", -100), sInv("y", -180)],
+    }) === null;
+  })());
+  check("an ambiguous netting stays silent — two sets, same total", (() => {
+    // {a 300, cn −20} = 280 and {b 280} … the single-invoice case is not this feature's job, so
+    // the second tie has to be another PAIR: {c 400, d −120} also nets 280.
+    const two = findSupplierSumMatch({
+      amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+      invoices: [sInv("a", 300), sInv("cn", -20), sInv("c", 400), sInv("d", -120)],
+    });
+    return two === null;
+  })());
+  check("the walk still finds a tie that overshoots on the way", (() => {
+    // 600 − 20 − 300 = 280. The old positive-only pruning cut the branch the moment the running
+    // sum passed the target, so a netted answer that goes high before coming back down was
+    // invisible — a miss that looks exactly like "no match".
+    const deep = findSupplierSumMatch({
+      amount: -280, counterpartName: "ATAPACK Cash & Carry B.V.",
+      invoices: [sInv("a", 600), sInv("cn", -20), sInv("b", -300)],
+    });
+    return deep?.invoiceIds.length === 3 && deep.total === 280;
+  })());
   check("a single-invoice equality is NOT this feature's job", findSupplierSumMatch({
     amount: -500, counterpartName: "ATAPACK Cash & Carry B.V.",
     invoices: [sInv("a", 500), sInv("b", 601)],

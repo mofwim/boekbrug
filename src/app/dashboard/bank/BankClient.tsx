@@ -159,7 +159,9 @@ interface Suggestion {
   // [BANK-SUM-SUGGEST] Server-computed: this payment is EXACTLY the sum of these 2..4 open
   // invoices of THIS counterparty (unique tie, cents-exact) — a suggestion for the "Geen
   // factuur" card. Booking still runs invoice-by-invoice through the normal confirm.
-  sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number } | null
+  // [CREDIT-VERREKEN] `amounts` is signed per member, so the card can print the subtraction it
+  // is claiming. Optional: an older cached response has none, and then it reads as it always did.
+  sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number; amounts?: number[] } | null
 }
 interface MatchResponse {
   ok: boolean
@@ -2731,10 +2733,20 @@ function TxCard({
             }}>
               <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
-                {t('bank.som.kop', { count: s.sumMatch.invoiceIds.length })}
+                {(s.sumMatch.amounts ?? []).some(a => a < 0)
+                  ? t('bank.som.kopVerrekend')
+                  : t('bank.som.kop', { count: s.sumMatch.invoiceIds.length })}
               </div>
               <div style={{ margin: '4px 0 8px' }}>
-                {s.sumMatch.invoiceNumbers.filter(Boolean).join(' + ')} = {eur.format(s.sumMatch.total)} {t(s.amount < 0 ? 'bank.som.leverancier' : 'bank.som.klant')}
+                {/* [CREDIT-VERREKEN] Each number with the sign of what it does to the payment. A
+                    creditnota joined by " + " would print "1.764,76 + 52,38 = 1.712,38" — an
+                    arithmetic that fails in front of the owner on the screen asking them to
+                    confirm it. Falls back to the old join when the response carries no amounts. */}
+                {s.sumMatch.invoiceNumbers
+                  .map((n, i) => ({ n, a: s.sumMatch?.amounts?.[i] ?? 0 }))
+                  .filter(x => !!x.n)
+                  .map((x, i) => `${i === 0 ? '' : x.a < 0 ? ' − ' : ' + '}${x.n}`)
+                  .join('')} = {eur.format(s.sumMatch.total)} {t(s.amount < 0 ? 'bank.som.leverancier' : 'bank.som.klant')}
               </div>
               <button
                 onClick={onConfirmSum}
