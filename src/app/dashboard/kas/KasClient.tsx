@@ -83,6 +83,21 @@ function currentQuarter(): { year: number; quarter: number } {
 function isAtOrAfter(a: { year: number; quarter: number }, b: { year: number; quarter: number }): boolean {
   return a.year > b.year || (a.year === b.year && a.quarter >= b.quarter)
 }
+/**
+ * "Q1 2026" for the quarter the readiness gate blocks on — the one the negative-drawer banner is
+ * about.
+ *
+ * DERIVED, not read from alertPeriodRef: a ref may not be read during render (the label would not
+ * re-render when it changed), and it does not need to be. The unparameterised /api/kasboek call
+ * defaults through quarterFromParams to lastCompletedQuarter, which is exactly
+ * prevQuarter(currentQuarter()) on the same Amsterdam day this file already pins — the identical
+ * definition, so the label cannot drift from the quarter it names.
+ */
+function readinessQuarterLabel(): string {
+  const now = currentQuarter()
+  const p = prevQuarter(now.year, now.quarter)
+  return `Q${p.quarter} ${p.year}`
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return ''
@@ -154,6 +169,19 @@ export default function KasClient() {
   // unreadable). Not the same as "your drawer is fine", and this screen must not let the two
   // look alike — the absence of the banner is the only thing the owner has to go on.
   const [lowestPointUnknown, setLowestPointUnknown] = useState(false)
+  // [KAS-NEGATIEF-NU] The dip in the quarter that is STILL OPEN — the one nobody was told about.
+  //
+  // Everything above is about the readiness quarter (the last completed one), because that is what
+  // the filing gate blocks on. So a drawer that goes below zero TODAY had exactly one witness on
+  // this screen: the headline saldo turning red — and only if it is STILL negative right now. A dip
+  // that recovered before today (a cash purchase booked before the takings that paid for it, the
+  // single most common shape of this error) showed nothing at all, in the one place it is cheap to
+  // fix: this quarter is not filed, the days are days old, and the owner still remembers them.
+  //
+  // Then the quarter closes, and the same dip arrives as a blocked aangifte with three months of
+  // hindsight to reconstruct. The information existed the whole time — /api/kasboek answers for any
+  // quarter you ask it about, and nobody was asking about this one.
+  const [openDip, setOpenDip] = useState<{ date: string; balance: number } | null>(null)
 
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
@@ -209,19 +237,40 @@ export default function KasClient() {
   //     re-reads this same witness per request, has already started refusing.
   // A page that keeps a money verdict from before the money moved is the one thing this screen
   // exists to prevent.
+  // [KAS-NEGATIEF-NU] …and the same question about the quarter we are IN, asked in the same breath.
+  // Two quarters, two answers, and they cannot be folded into one call: the endpoint reports the
+  // lowest point of the period it was asked about, and these are always different periods (the
+  // readiness quarter is by definition the one BEFORE the current one). Run together so asking twice
+  // costs one wait rather than two.
   async function refreshDrawerAlert(isCancelled: () => boolean = () => false) {
-    try {
-      const res = await fetch('/api/kasboek')
+    const cur = currentQuarter()
+    const ask = async (qs: string) => {
+      const res = await fetch(`/api/kasboek${qs}`)
       const json = await res.json()
+      return { ok: res.ok && !!json.kasboek, json }
+    }
+    try {
+      const [blocking, open] = await Promise.all([
+        ask(''),
+        ask(`?year=${cur.year}&quarter=${cur.quarter}`),
+      ])
       if (isCancelled()) return
-      if (res.ok && json.kasboek) {
+      if (blocking.ok) {
         // This unparameterised answer owns the banner, and pins which quarter may update it later.
-        alertPeriodRef.current = { year: json.kasboek.year, quarter: json.kasboek.quarter }
-        setLowestPoint((json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        alertPeriodRef.current = { year: blocking.json.kasboek.year, quarter: blocking.json.kasboek.quarter }
+        setLowestPoint((blocking.json.lowestPoint ?? null) as { date: string; balance: number } | null)
         setLowestPointUnknown(false)
       } else {
         // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which on
         // this screen is indistinguishable from "your drawer never went negative".
+        setLowestPointUnknown(true)
+      }
+      if (open.ok) {
+        setOpenDip((open.json.lowestPoint ?? null) as { date: string; balance: number } | null)
+      } else {
+        // Same rule for this half: an unanswered question must not render as a clean drawer. It
+        // shares the one "could not check" banner rather than raising a second — the sentence is
+        // already exactly right for both, and two of them would only be noise.
         setLowestPointUnknown(true)
       }
     } catch {
@@ -514,27 +563,32 @@ export default function KasClient() {
         )}
 
         {lowestPoint && (
-          <div style={{ margin: '0 0 20px', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error }}>error</span>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>
-                {t('kas.negatief.titel', { datum: formatDate(lowestPoint.date), bedrag: eur.format(lowestPoint.balance) })}
-              </div>
-            </div>
-            <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>
-              {t('kas.negatief.uitleg')}
-            </div>
-            {/* [TAAL] The mid-sentence <strong> tags were dropped: emphasis cannot travel through
-                a translated sentence whose word order changes (see messages.ts rule 1). */}
-            <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
-              <li>{t('kas.negatief.reden1')}</li>
-              <li>{t('kas.negatief.reden2')}</li>
-              <li>{t('kas.negatief.reden3')}</li>
-            </ul>
-            <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>
-              {t('kas.negatief.blokkeert')}
-            </div>
-          </div>
+          <DrawerDipNotice
+            tone="blocking"
+            heading={t('kas.negatief.titel', { datum: formatDate(lowestPoint.date), bedrag: eur.format(lowestPoint.balance) })}
+            period={readinessQuarterLabel()}
+            explanation={t('kas.negatief.uitleg')}
+            reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
+            closing={t('kas.negatief.blokkeert')}
+          />
+        )}
+
+        {/* [KAS-NEGATIEF-NU] The same dip in the quarter that is still OPEN — see the openDip state.
+            Amber, not red, and it says something different: nothing is being blocked yet, and this is
+            the cheap moment. Claiming a blocked aangifte here would simply be false.
+            Its own panel rather than a variant of the one above, because both can be true at once:
+            two quarters can each hold a dip, and collapsing them would hide one. The period is named
+            on both for that reason — two near-identical red blocks with no quarter on them is how an
+            owner fixes the wrong one. */}
+        {openDip && (
+          <DrawerDipNotice
+            tone="open"
+            heading={t('kas.negatief.titel', { datum: formatDate(openDip.date), bedrag: eur.format(openDip.balance) })}
+            period={`Q${currentQuarter().quarter} ${currentQuarter().year}`}
+            explanation={t('kas.negatief.uitleg')}
+            reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
+            closing={t('kas.negatief.nogNietIngediend')}
+          />
         )}
 
         {/* [KAS-UPLOAD] Add a cash-paid invoice/receipt (photo or PDF). It goes to the verify queue
@@ -794,6 +848,54 @@ export default function KasClient() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * [KAS-NEGATIEF] A drawer that went below zero, in one quarter, said once.
+ *
+ * Two callers, two tones, and the difference between them is a fact about the quarter rather than a
+ * decoration: a dip in the quarter the filing gate is refusing right now is red and says the aangifte
+ * is blocked; the same dip in the quarter still open is amber and says it is not blocked yet. The
+ * copy for both is handed in — [TAAL] this component holds no language of its own, so it cannot be
+ * the place a Dutch sentence survives a translation pass.
+ */
+function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing }: {
+  tone: 'blocking' | 'open'
+  heading: string
+  /** "Q2 2026" — a period label, identical in every language. Named on BOTH panels so that when
+   *  they appear together the owner can tell which quarter each one is about. */
+  period: string | null
+  explanation: string
+  reasons: string[]
+  closing: string
+}) {
+  const blocking = tone === 'blocking'
+  const accent = blocking ? M3.error : '#B06000'
+  return (
+    <div style={{
+      margin: '0 0 20px', background: blocking ? '#FCECEA' : '#FEF7E0',
+      border: `1px solid ${blocking ? M3.error : '#FBBC04'}`, borderRadius: 14, padding: '14px 16px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent }}>
+          {blocking ? 'error' : 'warning'}
+        </span>
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: accent }}>{heading}</div>
+        {period && (
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: accent, border: `1px solid ${accent}`, borderRadius: 999, padding: '1px 8px', fontFamily: FONT_NUM }}>
+            {period}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>{explanation}</div>
+      {/* [TAAL] The mid-sentence <strong> tags were dropped: emphasis cannot travel through a
+          translated sentence whose word order changes (see messages.ts rule 1). */}
+      <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
+        {reasons.map((r) => <li key={r}>{r}</li>)}
+      </ul>
+      <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>{closing}</div>
     </div>
   )
 }

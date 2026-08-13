@@ -8615,3 +8615,52 @@ test("[KAS-SPOOR] the cash drawer's three doors all leave a trail", () => {
   // audit line claiming a change that never happened is worse than a gap in the trail.
   assert.match(cash, /previous_value_unknown/, "a failed read of the old float must be admitted, not guessed as 0");
 });
+
+test("[KAS-NEGATIEF-NU] the open quarter is warned about, and never told its aangifte is blocked", () => {
+  // Two banners on one screen, and the difference between them is a FACT about the quarter, not a
+  // shade of red: the readiness quarter's dip is blocking a filing right now; the open quarter's is
+  // not blocking anything yet. The failure this holds is the cheap one — someone copies the red
+  // panel for the open quarter and leaves 'kas.negatief.blokkeert' on it, and the app then tells an
+  // owner their aangifte is blocked over a quarter that cannot be filed yet at all.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+
+  // The open quarter is asked about at all. It was not: /api/kasboek answers for any quarter, and
+  // this screen only ever asked about the one the gate blocks on.
+  assert.match(
+    ui, /year=\$\{cur\.year\}&quarter=\$\{cur\.quarter\}/,
+    "the screen must ask about the quarter the owner is IN, not only the last completed one",
+  );
+  assert.match(ui, /setOpenDip/, "…and keep that answer apart from the blocking one");
+
+  // Each sentence stays on its own panel.
+  const openPanel = ui.slice(ui.indexOf("{openDip &&"));
+  assert.match(openPanel, /kas\.negatief\.nogNietIngediend/, "the open quarter gets the not-yet-filed sentence");
+  assert.doesNotMatch(
+    openPanel.slice(0, openPanel.indexOf("</div>")), /kas\.negatief\.blokkeert/,
+    "the open quarter may never claim a blocked aangifte — nothing is being blocked yet",
+  );
+  const blockingPanel = ui.slice(ui.indexOf("{lowestPoint && ("), ui.indexOf("{openDip &&"));
+  assert.match(blockingPanel, /kas\.negatief\.blokkeert/, "the readiness quarter keeps saying what IS happening");
+  assert.doesNotMatch(blockingPanel, /nogNietIngediend/);
+
+  // Both name their quarter. Two near-identical panels with no period on them is how an owner goes
+  // and fixes the wrong quarter.
+  assert.match(blockingPanel, /period=/);
+  assert.match(openPanel.slice(0, openPanel.indexOf("/>")), /period=/);
+
+  // A ref read during render would not re-render when it changed, so the label is derived from the
+  // same definition the endpoint defaults to (see readinessQuarterLabel).
+  assert.doesNotMatch(
+    blockingPanel, /alertPeriodRef\.current/,
+    "the banner's period label must not be read from a ref during render",
+  );
+
+  // And the check that could not RUN still may not read as a clean drawer — the rule this screen
+  // states outright for its saldo, applied to the second question as well.
+  const refresh = ui.slice(ui.indexOf("async function refreshDrawerAlert"));
+  assert.equal(
+    (refresh.slice(0, refresh.indexOf("async function load(")).match(/setLowestPointUnknown\(true\)/g) ?? []).length,
+    3,
+    "each unanswered half (blocking, open, and a thrown fetch) must set the 'could not check' state",
+  );
+});

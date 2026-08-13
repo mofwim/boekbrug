@@ -7037,6 +7037,16 @@ export const MESSAGES = {
     ar: 'ما دام هذا معلّقاً يمنع التطبيق تقديم إقرار الضريبة — تحديداً كي لا تقدّم شيئاً لا يمكن أن يكون صحيحاً.',
     en: 'While this is open the app blocks your VAT return — precisely to keep you from filing something that cannot be right.',
   },
+  // [KAS-NEGATIEF-NU] The same dip, in the quarter that is still open. Deliberately a DIFFERENT
+  // sentence from kas.negatief.blokkeert: that one is about a quarter whose aangifte the app is
+  // refusing right now, and saying it here would be false — nothing is being blocked yet. What is
+  // true is that this is the moment it is cheap to fix, while the days are still fresh enough to
+  // remember and no filing has been built on them.
+  'kas.negatief.nogNietIngediend': {
+    nl: 'Dit kwartaal is nog niet ingediend. Los je dit nu op, dan blokkeert het je aangifte straks niet — en de dagen liggen nog vers genoeg om ze na te lopen.',
+    ar: 'لم يُقدَّم هذا الربع بعد. إن أصلحته الآن فلن يحجب إقرارك لاحقاً — والأيام لا تزال قريبة بما يكفي لتتبّعها.',
+    en: 'This quarter has not been filed yet. Fix it now and it will not block your return later — and the days are still fresh enough to retrace.',
+  },
   'kas.negatief.reden1': {
     nl: 'het beginsaldo staat te laag (het geld dat al in de kassa lag)',
     ar: 'الرصيد الافتتاحي منخفض جداً (المال الذي كان في الدرج أصلاً)',
