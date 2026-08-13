@@ -2732,6 +2732,14 @@ export const MESSAGES = {
     ar: '— العميل نفسه، ولا رقم في الوصف. تحقّق واربطها معاً.',
     en: '— same client, no number in the description. Check and link them together.',
   },
+  // [CREDIT-VERREKEN] The same recognition, when one of the posten is a creditnota. "De som van
+  // 2 facturen" would be wrong twice over: a creditnota is not a factuur, and it is subtracted
+  // rather than added — the card prints the arithmetic underneath, and it has to add up.
+  'bank.som.kopVerrekend': {
+    nl: 'Dit bedrag klopt precies: een factuur met een creditnota eraf',
+    ar: 'هذا المبلغ مطابق تماماً: فاتورة مخصوم منها إشعار دائن',
+    en: 'This amount matches exactly: an invoice with a credit note deducted',
+  },
   'bank.som.kop': {
     nl: 'Dit bedrag is precies de som van {count} openstaande facturen',
     ar: 'هذا المبلغ هو بالضبط مجموع {count} فاتورة مفتوحة',
@@ -4548,6 +4556,14 @@ export const MESSAGES = {
     nl: 'De geselecteerde inkoopfacturen van {name} worden allemaal als betaald gemarkeerd.',
     ar: 'ستُعلَّم كل فواتير المشتريات المحددة من {name} كمدفوعة.',
     en: 'The selected purchase invoices from {name} are all marked as paid.',
+  },
+  // [CREDIT-VERREKEN] The same confirmation when a creditnota was deducted from the transfer.
+  // "Als betaald" about a document that pays YOU reads wrong unless the sentence says what
+  // happened to it — and leaving it open is how the same credit gets deducted again next month.
+  'ink.bundelMarkerenCredit': {
+    nl: 'De geselecteerde inkoopfacturen van {name} worden afgerond. De creditnota’s zijn met deze betaling verrekend en gaan mee dicht — anders zou je ze een tweede keer aftrekken.',
+    ar: 'ستُقفل فواتير المشتريات المحددة من {name}. وقد خُصمت الإشعارات الدائنة بهذه الدفعة وتُقفل معها — وإلا لخصمتها مرة ثانية.',
+    en: 'The selected purchase invoices from {name} are closed. The credit notes were deducted from this payment and close with it — otherwise you would deduct them a second time.',
   },
   'ink.bundelNietGelukt': {
     nl: '{n} betaald ✓ — niet gelukt · {reasons}',

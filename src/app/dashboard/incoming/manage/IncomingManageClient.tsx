@@ -628,12 +628,16 @@ export default function IncomingManageClient({
   )
   // Live validation — pure and cheap, so the action bar can explain itself
   // (same-IBAN rule, missing IBAN, sum) on every tap.
-  const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows) : null
   // [PARTIAL-PAY] openAmount(), not a second hand-rolled copy of it. The local version omitted the
   // status check that openAmount exists for — partial-payment.ts:44-45 says in as many words that
   // screens must use it, because a row marked paid before amount_paid existed reports a phantom
   // balance without it. The import was already at the top of this file.
-  const openSum = selectedRows.reduce((s, r) => s + openAmount(r), 0)
+  //
+  // [CREDIT-VERREKEN] SIGNED, like the list total a few hundred lines down already is. The bar read
+  // "2 geselecteerd · € 1.817,14" over an invoice of € 1.764,76 and a creditnota of € 52,38 — it
+  // ADDED the credit, so the one number the owner reads before tapping Betalen was € 104,76 above
+  // the transfer that follows. A credit takes money OFF what you owe; the bar has to say so.
+  const openSum = selectedRows.reduce((s, r) => s + openAmountSigned(r), 0)
 
   function toggleSelect(id: string) {
     setSelectedIds(prev => {
@@ -1209,6 +1213,18 @@ export default function IncomingManageClient({
     }
     return m
   }, [invoices])
+
+  // [CREDIT-VERREKEN] Built HERE and not up with the rest of the selection state, because it
+  // reads vendorNumbersByName — a const declared just above. The supplier's other document numbers
+  // travel with the selection. Without
+  // them buildBundelBetaling cannot see a credit note that was booked as an ordinary debt — the
+  // 'suspected' state needs a contrasting prefix from the SAME supplier to mean anything, and this
+  // screen is the side that has the list. Keyed off the first selected row; the same-IBAN rule
+  // inside the builder is what makes that one name stand for the whole set.
+  const bundleVendorNumbers = selectedRows.length > 0
+    ? (vendorNumbersByName.get((selectedRows[0].client_name ?? '').trim().toLowerCase()) ?? [])
+    : []
+  const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows, bundleVendorNumbers) : null
 
   const showsOpen = displayed.some(i => i.status !== 'paid')
   const showsPaid = paidSumDisplayed !== 0 || displayed.some(i => i.status === 'paid')
@@ -3448,7 +3464,18 @@ export default function IncomingManageClient({
       {bundlePayRows && (
         <BottomSheet
           title={t('ink.bundelMarkeren', { n: bundlePayRows.length })}
-          body={t('ink.bundelMarkerenUitleg', { name: bundlePayRows[0]?.client_name ?? t('ink.dezeLeverancierKlein') })}
+          body={
+            // [CREDIT-VERREKEN] A creditnota in the batch is settled too — it has been used up by
+            // the deduction, and leaving it open is how it gets deducted a second time next month.
+            // Said out loud, because "als betaald" about a document that pays YOU reads wrong
+            // unless the sentence explains what happened to it.
+            t(
+              bundlePayRows.some(r => (r.total_inc_btw ?? 0) < 0)
+                ? 'ink.bundelMarkerenCredit'
+                : 'ink.bundelMarkerenUitleg',
+              { name: bundlePayRows[0]?.client_name ?? t('ink.dezeLeverancierKlein') },
+            )
+          }
           confirmLabel={t('ink.jaMarkeerBetaald')}
           confirmBg={M3.success}
           onConfirm={() => { /* paymentChoice handles it */ }}
@@ -4582,19 +4609,33 @@ function BundelBetalenSheet({
           {t('ink.eenOverboeking', { amount: fmtEur(amount), name: built.beneficiaryName ?? '—' })}
         </p>
 
-        {/* The invoices this ONE transfer settles */}
+        {/* The invoices this ONE transfer settles — and the creditnota's that come off it.
+            [CREDIT-VERREKEN] A credit row prints with its minus and in green, because that is what
+            it does to the amount below. The netting is then spelled out: facturen − creditnota's =
+            wat je overmaakt. Without that line the sheet shows three numbers and leaves the owner
+            to work out why the total is not their sum, on the screen where they are about to move
+            real money. */}
         <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '4px 14px', marginBottom: 16 }}>
           {(built.items ?? []).map((it, i) => (
             <div key={it.invoiceId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderBottom: i === (built.items?.length ?? 0) - 1 ? 'none' : '1px solid #EEF0F1' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: it.amount < 0 ? M3.success : '#202124', fontFamily: FONT_NUM }}>
                 {it.invoiceNumber ?? '—'}
+                {it.amount < 0 && <span style={{ fontSize: 11, fontWeight: 600, marginInlineStart: 6 }}>creditnota</span>}
               </span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: it.amount < 0 ? M3.success : '#202124', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
                 {fmtEur(it.amount)}
               </span>
             </div>
           ))}
         </div>
+
+        {built.creditTotal != null && (
+          <div style={{ background: '#F1F8F4', borderRadius: R.md, padding: '10px 14px', marginBottom: 16, fontSize: 12.5, color: '#1E4620', lineHeight: 1.5 }}>
+            {fmtEur(built.debtTotal ?? 0)} aan facturen min {fmtEur(built.creditTotal)} aan creditnota&apos;s
+            {' = '}<strong>{fmtEur(amount)}</strong> die je overmaakt. Het kenmerk noemt beide nummers, zodat je
+            leverancier ziet welke creditnota je hebt verrekend.
+          </div>
+        )}
 
         {/* QR */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>

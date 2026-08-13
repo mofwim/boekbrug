@@ -118,27 +118,177 @@ check("two ordinary invoices still bundle", (() => {
   return r.ok === true && Math.abs((r.amount ?? 0) - 801.63) < 0.005;
 })());
 
-check("a creditnota in the selection is REFUSED, not added", buildBundelBetaling([
-  ...creditRows,
-  inv({ id: "c", invoice_number: "CR9", total_inc_btw: -51.80, invoice_type: "creditnota" }),
-]).ok === false);
+// ─── [CREDIT-VERREKEN] …and is now SETTLED by deducting it ───────────────────
+//
+// The refusal above was right about the arithmetic and wrong as an answer. A wholesaler who takes
+// goods back sends a creditnota and expects it off the next payment: you transfer the difference
+// and name both documents. Reported with the screen open on exactly that — an invoice of
+// € 1.764,76 and a credit of € 52,38 from Enka Horeca, selected together, refused.
+//
+// So the credit joins the bundle and SUBTRACTS. What must never come back is the direction: the
+// number below is 749,83, and both 853,43 (added) and 801,63 (ignored) are failures.
 
-check("…and a negative total alone is enough — however the supplier typed it", buildBundelBetaling([
-  ...creditRows,
-  inv({ id: "c", invoice_number: "51190", total_inc_btw: -51.80 }),
-]).ok === false);
-
-check("the refusal names the row and says what to do with it", (() => {
+check("a creditnota SUBTRACTS from the transfer", (() => {
   const r = buildBundelBetaling([
     ...creditRows,
     inv({ id: "c", invoice_number: "CR9", total_inc_btw: -51.80, invoice_type: "creditnota" }),
   ]);
-  return r.ok === false
-    && /CR9/.test(r.error ?? "")
-    && /creditnota/.test(r.error ?? "")
-    && /openstaande saldo/.test(r.error ?? "");
+  return r.ok === true && Math.abs((r.amount ?? 0) - 749.83) < 0.005;
 })());
 
+check("…never added (the € 103,60 defect), never ignored", (() => {
+  const r = buildBundelBetaling([
+    ...creditRows,
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -51.80, invoice_type: "creditnota" }),
+  ]);
+  return (r.amount ?? 0) !== 853.43 && (r.amount ?? 0) !== 801.63;
+})());
+
+check("a negative total alone is enough — however the supplier typed it", (() => {
+  const r = buildBundelBetaling([
+    ...creditRows,
+    inv({ id: "c", invoice_number: "51190", total_inc_btw: -51.80 }),
+  ]);
+  return r.ok === true && Math.abs((r.amount ?? 0) - 749.83) < 0.005;
+})());
+
+check("the kenmerk names the invoices AND the creditnota, after -/-", (() => {
+  const r = buildBundelBetaling([
+    ...creditRows,
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -51.80, invoice_type: "creditnota" }),
+  ]);
+  return r.reference === "RE1, RE2 -/- CR9";
+})());
+
+check("the credit line is signed, so the sheet can show it as a deduction", (() => {
+  const r = buildBundelBetaling([
+    ...creditRows,
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -51.80, invoice_type: "creditnota" }),
+  ]);
+  const credit = r.items?.find((it) => it.invoiceNumber === "CR9");
+  return credit?.amount === -51.80 && r.items?.length === 3
+    && r.debtTotal === 801.63 && r.creditTotal === 51.80;
+})());
+
+check("an ordinary bundle carries no netting fields at all", (() => {
+  const r = buildBundelBetaling(creditRows);
+  return r.ok === true && r.debtTotal === undefined && r.creditTotal === undefined;
+})());
+
+check("the reported case: 1.764,76 minus 52,38 is 1.712,38", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "26709711", total_inc_btw: 1764.76 }),
+    inv({ id: "b", invoice_number: "2671141810155", total_inc_btw: -52.38, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === true
+    && Math.abs((r.amount ?? 0) - 1712.38) < 0.005
+    && r.reference === "26709711 -/- 2671141810155"
+    && !!r.epcPayload && r.epcPayload.includes("EUR1712.38");
+})());
+
+check("a partially paid invoice nets against its OPEN rest, not its total", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 1000, amount_paid: 400 }),
+    inv({ id: "b", invoice_number: "RE2", total_inc_btw: 100 }),
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -50, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === true && Math.abs((r.amount ?? 0) - 650) < 0.005;
+})());
+
+// ─── The four rules that keep the deduction safe ─────────────────────────────
+
+check("a creditnota alone is refused — there is nothing to transfer", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "CR8", total_inc_btw: -10, invoice_type: "creditnota" }),
+    inv({ id: "b", invoice_number: "CR9", total_inc_btw: -20, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === false && /kies er een factuur/i.test(r.error ?? "");
+})());
+
+check("credits worth more than the invoices are refused, with both totals named", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+    inv({ id: "b", invoice_number: "CR9", total_inc_btw: -150, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === false
+    && /150,00/.test(r.error ?? "")
+    && /100,00/.test(r.error ?? "")
+    && /terug/.test(r.error ?? "");
+})());
+
+check("exactly equal is refused too — a transfer of € 0,00 is not a payment", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+    inv({ id: "b", invoice_number: "CR9", total_inc_btw: -100, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === false;
+})());
+
+check("a creditnota from ANOTHER supplier's IBAN is refused", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+    inv({ id: "b", invoice_number: "RE2", total_inc_btw: 100 }),
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -50, invoice_type: "creditnota", vendor_iban: IBAN_B }),
+  ]);
+  return r.ok === false && /andere leverancier/i.test(r.error ?? "");
+})());
+
+check("a creditnota with NO iban is allowed when the name matches — spelled either way", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100, client_name: "Enka Horeca B.V.", vendor_iban: IBAN_A }),
+    inv({ id: "b", invoice_number: "RE2", total_inc_btw: 100, client_name: "Enka Horeca B.V.", vendor_iban: IBAN_A }),
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -50, invoice_type: "creditnota", vendor_iban: null, client_name: "ENKA HORECA BV" }),
+  ]);
+  return r.ok === true && Math.abs((r.amount ?? 0) - 150) < 0.005;
+})());
+
+check("…and refused when the name does not", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100, client_name: "Enka Horeca B.V." }),
+    inv({ id: "b", invoice_number: "RE2", total_inc_btw: 100, client_name: "Enka Horeca B.V." }),
+    inv({ id: "c", invoice_number: "CR9", total_inc_btw: -50, invoice_type: "creditnota", vendor_iban: null, client_name: "Sligro Food Group" }),
+  ]);
+  return r.ok === false && /geen IBAN/.test(r.error ?? "") && /te weinig/.test(r.error ?? "");
+})());
+
+check("a row typed creditnota with POSITIVE money is refused — the app contradicting itself", (() => {
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+    inv({ id: "b", invoice_number: "CR9", total_inc_btw: 50, invoice_type: "creditnota" }),
+  ]);
+  return r.ok === false && /positief/.test(r.error ?? "");
+})());
+
+check("a SUSPECTED credit note is refused until it is confirmed", (() => {
+  // Its number carries a credit prefix and the same supplier uses another prefix for invoices —
+  // creditnota-signal's two requirements. Netting on that guess would pay too little; paying it in
+  // full is what happens today. Neither is something to do silently, so it is refused by name.
+  const r = buildBundelBetaling(
+    [
+      inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+      inv({ id: "b", invoice_number: "CN2401", total_inc_btw: 50 }),
+    ],
+    ["RE1", "RE2", "CN2401"],
+  );
+  return r.ok === false && /bevestig/i.test(r.error ?? "");
+})());
+
+check("…and without the supplier's other numbers that check cannot fire", (() => {
+  // Stated rather than left to be discovered: one prefix on its own is not evidence, so a caller
+  // that passes no history gets the behaviour this module had before the parameter existed.
+  const r = buildBundelBetaling([
+    inv({ id: "a", invoice_number: "RE1", total_inc_btw: 100 }),
+    inv({ id: "b", invoice_number: "CN2401", total_inc_btw: 50 }),
+  ]);
+  return r.ok === true;
+})());
+
+check("the 140-char kenmerk limit counts the creditnota's too", (() => {
+  const many = Array.from({ length: 12 }, (_, i) =>
+    inv({ id: `d${i}`, invoice_number: `FACTUURNUMMER-2026-${String(i).padStart(4, "0")}`, total_inc_btw: 100 }));
+  const r = buildBundelBetaling([...many, inv({ id: "c", invoice_number: "CREDITNOTA-2026-0001", total_inc_btw: -50, invoice_type: "creditnota" })]);
+  return r.ok === false && /tekens/.test(r.error ?? "");
+})());
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

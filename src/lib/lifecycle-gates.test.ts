@@ -8191,3 +8191,136 @@ test("[REGEL-KORTING] a creditnota carries no discount of its own, on either scr
       `${path} must not offer a line discount on a creditnota`);
   }
 });
+// ─── [CREDIT-VERREKEN] A supplier credit is settled by deducting it ──────────────────────────────
+//
+// Reported with the screen open on it: an invoice of € 1.764,76 and a creditnota of € 52,38 from
+// the same supplier, selected together on Crediteuren, refused with "haal hem uit de selectie".
+// That refusal was right about the arithmetic — the credit would have been ADDED, so the owner paid
+// twice its value too much — and wrong as an answer. Deducting a credit from the next payment and
+// naming both documents in the description is how this trade settles a return.
+
+test("[CREDIT-VERREKEN] the credit subtracts, and only from the supplier it belongs to", () => {
+  const mod = code("src/lib/bundel-betaling.ts");
+  assert.match(mod, /const amount = round2\(debtTotal - creditTotal\)/, "it comes OFF the transfer");
+  // Only a row whose sign and type agree. A 'conflict' is the app contradicting itself and a
+  // 'suspected' is a guess; netting on either pays the wrong amount for an invisible reason.
+  assert.match(mod, /if \(stance === "credit"\) \{ credits\.push\(inv\); continue; \}/,
+    "only a confirmed credit may be deducted");
+  assert.match(mod, /stance === "conflict"/, "a positive creditnota is refused, not netted");
+  assert.match(mod, /bevestig/i, "…and an unconfirmed one is refused by name");
+  // Same supplier: the IBAN when the credit has one, the shared counterpart key when it does not.
+  assert.match(mod, /normalizeIban\(cn\.vendor_iban\) !== iban/, "another IBAN is another supplier");
+  assert.match(mod, /counterpartKey\(cn\.client_name \?\? null\)/,
+    "a creditnota without an IBAN must match on the name, or it is refused");
+  // No transfer of nothing, and both numbers on the payment.
+  assert.match(mod, /if \(amount <= 0\)/, "a credit bigger than the bill is an answer, not a € 0,00 QR");
+  assert.match(mod, /\$\{debtRefs\} -\/- \$\{creditRefs\}/, "the kenmerk names the credits after -/-");
+});
+
+test("[CREDIT-VERREKEN] the screen shows the net, and settles the credit with the payment", () => {
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // The bar read "2 geselecteerd · € 1.817,14" over a payment of € 1.712,38: it added the credit.
+  assert.match(client, /selectedRows\.reduce\(\(s, r\) => s \+ openAmountSigned\(r\), 0\)/,
+    "the selection total must net the credit, like the list total below it already does");
+  // The builder cannot see a credit note booked as a debt without the supplier's other numbers,
+  // and this screen is the side that has them.
+  assert.match(client, /buildBundelBetaling\(selectedRows, bundleVendorNumbers\)/,
+    "the evidence for the 'suspected' state must travel with the selection");
+  // The sheet has to explain the subtraction where the money is confirmed.
+  assert.match(client, /built\.creditTotal != null &&/, "the netting is spelled out on the sheet");
+  assert.match(client, /aan creditnota&apos;s/, "…naming what came off");
+  // And the settle step closes the credit too, or it is deducted again next month. The sentence
+  // lives in the catalogue ([TAAL]), so the gate follows it there: the screen must CHOOSE that key
+  // on a batch containing a credit, and the key must exist in every language the panel carries.
+  assert.match(
+    client, /\? 'ink\.bundelMarkerenCredit'\s*\n\s*: 'ink\.bundelMarkerenUitleg'/,
+    "the confirm sheet must say what happens to the creditnota",
+  );
+  assert.match(client, /bundlePayRows\.some\(r => \(r\.total_inc_btw \?\? 0\) < 0\)/,
+    "…and choose it by looking for one");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'ink\.bundelMarkerenCredit'/, "the key must exist");
+  assert.match(messages, /verrekend en gaan mee dicht/, "…and say that the credit closes with the payment");
+});
+
+test("[CREDIT-VERREKEN] the bank recognises a netted payment, both ways in", () => {
+  const mod = code("src/lib/bank-batch-reconcile.ts");
+  // The AUTOMATIC path, when the transfer quotes both numbers (our own bundle writes them).
+  // It refused because "reconcileBatch sums by MAGNITUDE" — true when written, false since
+  // [BATCH-SIGN] made it a net sum. The guard outlived its reason and blocked the everyday case.
+  assert.doesNotMatch(mod, /if \(inv\.total_inc_btw <= 0\) return null;/,
+    "a creditnota must be allowed into an automatic batch");
+  assert.match(mod, /if \(open == null \|\| open === 0\) return null;/,
+    "…while a settled document, whatever its sign, still cannot be part of one");
+  // What replaces it: the net must be money OWED, because reconcileBatch ties on magnitudes.
+  assert.match(mod, /const net = slots\.reduce\(\(sum, s\) => sum \+ \(s\.amount \?\? 0\), 0\);\s*\n\s*if \(net <= 0\) return null;/,
+    "a net running the other way ties just as neatly and must not be booked");
+
+  // The SUGGESTION path, when nothing is quoted: the subset-sum walk takes credits with their sign.
+  assert.match(mod, /\.filter\(\(x\) => x\.openCents !== 0\);/, "credits belong in the pool");
+  assert.doesNotMatch(mod, /if \(chosen\.length >= SUM_SUBSET_MAX \|\| sum >= targetCents\) return;/,
+    "the positive-only pruning would MISS a netted answer that overshoots on the way");
+  assert.match(mod, /amounts: members\.map\(\(m\) => m\.openCents \/ 100\)/,
+    "the per-member signs must travel, or the card cannot print the subtraction");
+
+  // And the card prints arithmetic that adds up.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /x\.a < 0 \? ' − ' : ' \+ '/, "a creditnota is joined with a minus, never a plus");
+  assert.match(bank, /\(s\.sumMatch\.amounts \?\? \[\]\)\.some\(a => a < 0\)/, "…and the heading says what it is");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'bank\.som\.kopVerrekend'/, "in the owner's language");
+});
+
+// ─── [BIJNA-BEDRAG] / [GESTRUCTUREERD] What a bank's own matcher does ───────────────────────────
+//
+// Two capabilities a real reconciliation engine has and this one did not, both measured before
+// they were built:
+//
+//   · a payment that is CLOSE — bank costs taken off a foreign transfer, a betalingskorting, a
+//     customer who rounded — produced `outcome: none, candidates: 0`. Not a weak suggestion: none
+//     at all, because an identified pair without an exact amount is capped at 0.35 under a 0.5
+//     listing floor. The owner saw "Geen factuur" over a line whose invoice was in the list.
+//   · an ISO 11649 creditor reference printed the way every bank prints it — "RF18 5390 0754
+//     7034" — did not match the invoice storing it unspaced. The scan keeps spaces as token
+//     boundaries on purpose, and that is exactly what hid the one reference that carries its own
+//     checksum.
+
+test("[BIJNA-BEDRAG] a close payment is offered with the difference named, and never booked", () => {
+  const mod = code("src/lib/bank-matching.ts");
+  // Bounded on three sides: proportional, absolutely capped, and with a floor for pure rounding.
+  assert.match(mod, /NEAR_AMOUNT_PERCENT = 0\.02/, "2% — the usual betalingskorting");
+  assert.match(mod, /NEAR_AMOUNT_MAX = 25/, "…and never more than € 25, whatever the invoice is worth");
+  assert.match(mod, /NEAR_AMOUNT_FLOOR = 0\.05/, "…always at least a nickel, for a rounded payment");
+  // A bonus BEFORE the cap. Math.min only lowers, so a raised cap alone changes nothing — the
+  // silent no-op this file's neighbours document twice over.
+  assert.match(mod, /confidence \+= 0\.35;\s*\n\s*signals\.push\("near_amount"\)/,
+    "the pair must be lifted over the listing floor, not merely allowed to reach it");
+  assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \? 0\.55 : 0\.35\);/,
+    "0.55: above the 0.5 listing floor and below the 0.7 booking bar");
+  // Identity is required, and a name resemblance is not identity.
+  assert.match(mod, /const identified = ibanOk \|\| supplierIbanOk \|\| isStrongNameIdentity\(/,
+    "the account, the registry's account, or a strong name identity — never a similarity score");
+  assert.match(mod, /const nearOk = nearDiff != null && identified;/);
+  // And the owner is told how far off it is, in euros.
+  assert.match(mod, /minder" : "meer"\} dan het openstaande bedrag/, "the difference must be on the card");
+});
+
+test("[GESTRUCTUREERD] the reference a bank routes on is read the way a bank reads it", () => {
+  const mod = code("src/lib/structured-reference.ts");
+  // ISO 7064 mod-97-10 on both formats — the checksum is what makes matching on this safe.
+  assert.match(mod, /mod97\(ref\.slice\(4\) \+ ref\.slice\(0, 4\)\) === 1/, "ISO 11649");
+  assert.match(mod, /body % 97 === 0 \? 97 : body % 97/, "the Belgian 0 → 97 rule");
+  // Whole groups, not arbitrary prefixes: twenty candidates against mod-97 invents a reference out
+  // of RF-shaped junk about one time in five.
+  assert.match(mod, /const groups = run\.trim\(\)\.split\(\/\\s\+\/\)\.filter\(Boolean\);/,
+    "the walk must step by printed groups");
+  assert.doesNotMatch(mod, /for \(let len = Math\.min\(compact\.length, 25\); len >= 5; len--\)/,
+    "…never character by character");
+  // A twelve-digit window inside a longer number is a customer number, not a mededeling.
+  assert.match(mod, /if \(\/\[0-9\]\/\.test\(before\) \|\| \/\[0-9\]\/\.test\(after\)\) continue;/);
+
+  // Wired in front of the ordinary scan, which keeps spaces and therefore could not see it.
+  const matcher = code("src/lib/bank-matching.ts");
+  assert.match(matcher, /if \(structuredReferenceMatches\(`\$\{tx\.reference \?\? ""\} \$\{tx\.description \?\? ""\}`, invoiceNumber\)\) \{/,
+    "referenceMatches must ask it first");
+});
