@@ -46,7 +46,10 @@ export interface CopyableLine {
   unit?: string | null;
   vat_treatment?: string | null;
   discount_type?: string | null;
-  discount_value?: number | null;
+  // [REGEL-KORTING] Widened for the same reason the rest of the discount chain is: the value is
+  // the number the owner AGREED, and it reaches a copier both as a stored numeric and — through
+  // the creditnota mirror, which shares this shape — as raw input.
+  discount_value?: number | string | null;
 }
 
 /**
