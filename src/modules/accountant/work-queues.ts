@@ -31,7 +31,7 @@
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { daysLate } from '@/lib/accountant-debtors'
 import { outstandingAmount, type SalesInvoice } from '@/lib/sales-overview'
-import { creditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
+import { fullyCreditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
 
 /** Minimal shape of the session client — the same relaxed form the screens use. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -212,9 +212,10 @@ async function sumOverdue(
     const all = (data ?? []) as unknown as Array<
       SalesInvoice & { invoice_type?: string | null; original_invoice_id?: string | null }
     >
+    // [DEEL-CREDIT] Dekkend gecrediteerd = van de lijst; deels gecrediteerd = de rest telt nog.
     const rows = filterOpenReceivables(
       all,
-      creditedIdsFrom(all.filter((r) => r.invoice_type === 'creditnota')),
+      fullyCreditedIdsFrom(all.filter((r) => r.invoice_type === 'creditnota'), all),
     )
 
     let count = 0

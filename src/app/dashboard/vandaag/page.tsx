@@ -24,7 +24,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 // [CREDITNOTA-NO-CHASE] shared "is this still owed to me" rule — both sides of a credited pair
 // must leave the list together (see src/lib/credited-invoices.ts)
-import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+import { fullyCreditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 // [AUTO-INCASSO] The same normalized supplier key the registry stores — see src/lib/auto-incasso.ts.
 import { supplierNameKey } from "@/lib/supplier-registry";
 
@@ -152,7 +152,8 @@ export default async function VandaagPage() {
   const creditRows = remindAll.length > 0
     ? await supabase
         .from("invoices")
-        .select("original_invoice_id")
+        // [DEEL-CREDIT] The amount too: a partial credit does not take the invoice off the list.
+        .select("original_invoice_id, total_inc_btw")
         .eq("sender_id", user.id)
         .eq("invoice_type", "creditnota")
         .not("original_invoice_id", "is", null)
@@ -160,7 +161,7 @@ export default async function VandaagPage() {
     : [];
   const remind = creditRows == null
     ? remindAll
-    : filterOpenReceivables(remindAll, creditedIdsFrom(creditRows));
+    : filterOpenReceivables(remindAll, fullyCreditedIdsFrom(creditRows, remindAll));
 
   // [COHERENCE-ERRSTATE] A failed load must NEVER masquerade as a calm "all clear".
   // Supabase returns { data: null, error } without throwing, so `?? []` silently

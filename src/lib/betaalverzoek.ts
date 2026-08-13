@@ -33,6 +33,15 @@ export interface BetaalverzoekInvoice {
   // request asks for the REMAINDER (never the full total), and the bundle asks
   // the per-invoice open amount so a half-paid invoice is never over-asked.
   amount_paid?: number | null;
+  // [DEEL-CREDIT] What has been given back on this invoice with a creditnota, incl. btw, as a
+  // POSITIVE amount. Absent or 0 on an invoice with no credit against it, which is nearly all of
+  // them — and then every amount below is exactly what it was before partial credits existed.
+  //
+  // It is deliberately NOT folded into amount_paid. A credit and a payment both lower what the
+  // customer must transfer, and they are opposite facts everywhere else in the app: amount_paid is
+  // money that came in, a credit is money that was never owed. Merging them here would put a
+  // payment on the books that nobody made.
+  credited_inc_btw?: number | null;
   client_name: string | null;
   pay_token: string | null;
   due_date?: string | null;
@@ -101,9 +110,17 @@ export function buildBetaalverzoek(
   // [PARTIAL-PAY] Request the REMAINING openstaand, never the full total: a
   // customer who already paid a bank-confirmed €400 instalment on a €1.000
   // invoice must see €600 on the pay page/QR, not the full €1.000 again.
+  //
+  // [DEEL-CREDIT] The sign guard stays FIRST and separate. openAmount below works in magnitudes
+  // (it has to — a payment is a positive figure), so asking it about a creditnota would turn a
+  // refund the owner owes into an amount to demand from the customer. The direction is decided
+  // here, on the signed total, before any magnitude is taken.
   const total = invoice.total_inc_btw ?? 0;
-  const paid = Math.max(0, invoice.amount_paid ?? 0);
-  const amount = paid > 0.005 ? Math.max(0, total - paid) : total;
+  if (!Number.isFinite(total) || total <= 0) {
+    return { ok: false, error: "Het factuurbedrag is niet geschikt voor een betaalverzoek." };
+  }
+  // …and only then the remainder: minus instalments, minus what was credited back.
+  const amount = openAmount(invoice);
   if (!Number.isFinite(amount) || amount <= 0) {
     return { ok: false, error: "Het factuurbedrag is niet geschikt voor een betaalverzoek." };
   }
@@ -141,11 +158,21 @@ export interface BundelBetaalverzoekResult extends BetaalverzoekResult {
   items?: { invoiceId: string; invoiceNumber: string | null; amount: number }[];
 }
 
-/** Openstaand per invoice: |total| minus what [PARTIAL-PAY] already settled. */
+/**
+ * Openstaand per invoice: |total| minus what [PARTIAL-PAY] already settled and minus what
+ * [DEEL-CREDIT] was credited back.
+ *
+ * This one function decides what the public payment page shows, what the QR asks for, and what a
+ * payment request adds up to. So the credit has to come off HERE and nowhere else: a partly
+ * credited invoice that kept asking for its full total would have a real customer transferring
+ * money the owner had already put in writing they were not owed — from a link that stays live
+ * forever.
+ */
 function openAmount(invoice: BetaalverzoekInvoice): number {
   const total = Math.abs(invoice.total_inc_btw ?? 0);
   const paid = Math.max(0, invoice.amount_paid ?? 0);
-  return round2(Math.max(0, total - paid));
+  const credited = Math.max(0, invoice.credited_inc_btw ?? 0);
+  return round2(Math.max(0, total - paid - credited));
 }
 
 /** Case/whitespace-insensitive client key — a bundle is paid by ONE customer. */
@@ -293,16 +320,18 @@ export function toPublicPayView(
   // [PARTIAL-PAY] An invoice fully settled by instalments (amount_paid covers
   // the total) may still carry status 'sent' — treat it as paid here so the
   // customer sees "already paid" instead of a €0-request 404.
+  // [DEEL-CREDIT] "Nothing left to transfer" now has two causes — instalments and credits — and
+  // one function that knows both. A partly credited invoice with the rest already paid must read
+  // as settled here, or the customer gets a EUR 0 request and a 404 about their own invoice.
   const totalAmt = invoice.total_inc_btw ?? 0;
-  const paidAmt = Math.max(0, invoice.amount_paid ?? 0);
-  const settledByInstalments = totalAmt > 0 && paidAmt >= totalAmt - 0.005;
+  const settledByInstalments = totalAmt > 0 && openAmount(invoice) <= 0.005;
   const alreadyPaid = invoice.status === "paid" || settledByInstalments;
   // A paid invoice still renders (so the customer sees "already paid"), but we must
   // still be able to build the beneficiary/amount block. Build with a payable-status
   // stand-in when it's paid (amount_paid stripped so the shown amount is the
   // full total, matching the status-'paid' rendering), so buildBetaalverzoek's
   // guards don't reject it.
-  const probe = alreadyPaid ? { ...invoice, status: "sent", amount_paid: 0 } : invoice;
+  const probe = alreadyPaid ? { ...invoice, status: "sent", amount_paid: 0, credited_inc_btw: 0 } : invoice;
   const built = buildBetaalverzoek(probe, owner);
   if (!built.ok) return null;
 

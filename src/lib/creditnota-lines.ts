@@ -46,7 +46,9 @@ export interface OriginalLine {
   unit?: string | null
   vat_treatment?: string | null
   discount_type?: string | null
-  discount_value?: number | null
+  // Widened for the same reason as everywhere else in the discount chain: the value is the number
+  // the owner AGREED, and it reaches this module both as a stored numeric and as raw input.
+  discount_value?: number | string | null
 }
 
 /** A line as it is inserted for the creditnota. */
@@ -60,7 +62,7 @@ export interface CreditLine {
   unit?: string | null
   vat_treatment?: string | null
   discount_type?: string | null
-  discount_value?: number | null
+  discount_value?: number | string | null
 }
 
 /**
