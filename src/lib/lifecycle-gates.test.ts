@@ -8054,7 +8054,16 @@ test("[CREDIT-VERREKEN] the screen shows the net, and settles the credit with th
   // The sheet has to explain the subtraction where the money is confirmed.
   assert.match(client, /built\.creditTotal != null &&/, "the netting is spelled out on the sheet");
   assert.match(client, /aan creditnota&apos;s/, "…naming what came off");
-  // And the settle step closes the credit too, or it is deducted again next month.
-  assert.match(client, /De creditnota's zijn met deze betaling verrekend en gaan mee dicht/,
-    "the confirm sheet must say what happens to the creditnota");
+  // And the settle step closes the credit too, or it is deducted again next month. The sentence
+  // lives in the catalogue ([TAAL]), so the gate follows it there: the screen must CHOOSE that key
+  // on a batch containing a credit, and the key must exist in every language the panel carries.
+  assert.match(
+    client, /\? 'ink\.bundelMarkerenCredit'\s*\n\s*: 'ink\.bundelMarkerenUitleg'/,
+    "the confirm sheet must say what happens to the creditnota",
+  );
+  assert.match(client, /bundlePayRows\.some\(r => \(r\.total_inc_btw \?\? 0\) < 0\)/,
+    "…and choose it by looking for one");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'ink\.bundelMarkerenCredit'/, "the key must exist");
+  assert.match(messages, /verrekend en gaan mee dicht/, "…and say that the credit closes with the payment");
 });
