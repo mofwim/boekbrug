@@ -20,6 +20,8 @@ import type { BankTransaction } from "./bank-parser";
 import { round2 } from "./invoice-totals";
 // [GESTRUCTUREERD] The references a bank routes on, checksum and all — see structured-reference.ts.
 import { structuredReferenceMatches } from "./structured-reference";
+// [GEHEUGEN] The owner's own confirmations, read back as identity — see match-memory.ts.
+import { remembersParty, type MatchMemory } from "./match-memory";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -71,7 +73,10 @@ export type MatchSignal =
   | "supplier_iban"
   // [BIJNA-BEDRAG] Not the amount, but close to it, on a counterparty this payment identifies —
   // see the block in scorePair. Listed for the owner to allocate; never enough to book.
-  | "near_amount";
+  | "near_amount"
+  // [GEHEUGEN] The owner has confirmed a payment from this counterpart against this party before.
+  // Their own answer, read back — see match-memory.ts.
+  | "memory";
 
 // [BIJNA-BEDRAG] How far a payment may sit from an open balance and still be worth showing.
 //
@@ -206,6 +211,13 @@ export interface MatchOptions {
   autoConfidence: number; // min top confidence to consider 'auto'
   autoMargin: number; // top must beat 2nd by this to be 'auto'
   maxCandidates: number; // cap the candidate list shown to the user
+  /**
+   * [GEHEUGEN] What the owner has already confirmed, derived from the link rows. Absent means the
+   * matcher reasons purely from the payment, exactly as it did before — the caller degrades to
+   * that when the read fails, because a memory that could not be loaded is not a reason to show
+   * the owner a worse answer than yesterday's.
+   */
+  memory?: MatchMemory | null;
 }
 
 export const DEFAULT_OPTIONS: MatchOptions = {
@@ -216,6 +228,7 @@ export const DEFAULT_OPTIONS: MatchOptions = {
   autoConfidence: 0.7,
   autoMargin: 0.15,
   maxCandidates: 5,
+  memory: null,
 };
 
 // [BANK-MATCH-VERIFY] Statuses that must NEVER be offered as a bank-match candidate:
@@ -699,6 +712,27 @@ export function scorePair(
     //
     // Direction and order matter: a payment cannot precede the intent that produced it, so a debit
     // dated before the stamp is not this payment however well the amount fits.
+    // [GEHEUGEN] The owner has settled a payment from this counterpart against this party before.
+    //
+    // Every other signal here is inference about a line the app is seeing for the first time. This
+    // one is not inference at all: it is the owner's own answer, given by confirming, and until now
+    // it was written to bank_tx_invoices and never read again. A supplier whose statement line the
+    // bank mangles — "SUMUP *JANSEN" against an invoice from "Jansen Bouw B.V." — fails
+    // isStrongNameIdentity every month by design (one shared token is the asymmetric surname shape
+    // that rule exists to reject), so the same payment was identified by hand every month.
+    //
+    // Weighted like [SUPPLIER-IBAN] and for the same reason: it identifies the PARTY, not the bill,
+    // and it rests on one more link than the document itself (which confirmation, made when). It
+    // also does not open a door that was shut — memory + an exact amount lands on the same 0.95
+    // coincidence ceiling that amount + name + date already reached, so nothing books unattended
+    // that did not before. What it changes is which invoice is on top when several could be, and
+    // whether a counterparty is IDENTIFIED at all — which is what [BIJNA-BEDRAG] above needs.
+    const rememberedOk = remembersParty(opts.memory, tx, inv.client_name);
+    if (rememberedOk) {
+      confidence += 0.30;
+      signals.push("memory");
+      reasons.push(`je hebt eerder een betaling van deze tegenpartij aan ${inv.client_name ?? "deze partij"} gekoppeld`);
+    }
     if (preparedOk) {
       // Weighted like the other identity-ish signals rather than as a tie-break, and measured:
       // with a token nudge a declared payment scored 0.6994 against an autoConfidence of 0.70 —
@@ -739,7 +773,7 @@ export function scorePair(
     // coincidence this file spends its length guarding against. The account, the registry's
     // account, or the owner's own declaration that they were about to pay this bill.
     const nearDiff = amtOk ? null : nearAmountDifference(tx.amount, amountTarget, opts.amountEpsilon);
-    const identified = ibanOk || supplierIbanOk || isStrongNameIdentity(tx.counterpartName, inv.client_name);
+    const identified = ibanOk || supplierIbanOk || rememberedOk || isStrongNameIdentity(tx.counterpartName, inv.client_name);
     const nearOk = nearDiff != null && identified;
     if (nearOk) {
       // A bonus BEFORE the cap, not a raised cap. Math.min only ever lowers, so a cap of 0.55 on a
