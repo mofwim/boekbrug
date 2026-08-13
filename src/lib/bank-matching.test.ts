@@ -1,5 +1,6 @@
 // [BOEK-016] Pure node test for bank-matching.ts — run: npx tsx bank-matching.test.ts
 import type { BankTransaction } from "./bank-parser";
+import { buildMatchMemory } from "./match-memory";
 import {
   matchTransactions,
   nameSimilarity,
@@ -1090,6 +1091,79 @@ console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is
     return !(m.best?.signals ?? []).includes("reference");
   })());
 }
+
+// ─── [GEHEUGEN] The owner's own confirmations, read back ───────────────────────────────────────
+//
+// Every other signal is inference about a line the app is seeing for the first time. This one is
+// the owner's answer, given by confirming — written to bank_tx_invoices and, until now, never read
+// again. The supplier below is the case it exists for: the bank writes "SUMUP *JANSEN" and the
+// invoice says "Jansen Bouw B.V.", which isStrongNameIdentity rejects on purpose (one shared token
+// is the asymmetric surname shape). So the same payment was identified by hand every month.
+
+{
+  const memInv = {
+    id: "m1", invoice_number: "2026-0044", total_inc_btw: 100, amount_paid: 0,
+    client_name: "Jansen Bouw B.V.", direction: "outgoing" as const, status: "sent",
+    invoice_date: "2026-07-01", due_date: "2026-07-31", accountant_status: null,
+  };
+  const memTx = (amount: number) => ({
+    date: "2026-07-20", amount, description: "SEPA", reference: null,
+    counterpartName: "SUMUP *JANSEN", counterpartIban: null, transactionId: "t1",
+  });
+  const remembered = buildMatchMemory([
+    { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Jansen Bouw B.V." },
+  ]);
+  const run = (amount: number, memory: ReturnType<typeof buildMatchMemory> | null) =>
+    matchTransactions([memTx(amount)] as never, [memInv] as never, { memory }).matches[0];
+
+  check("[GEHEUGEN] a remembered counterpart identifies the party", (() => {
+    const m = run(100, remembered);
+    return (m.best?.signals ?? []).includes("memory");
+  })());
+  check("[GEHEUGEN] …and says so, naming who", (() => {
+    const m = run(100, remembered);
+    return /eerder een betaling van deze tegenpartij aan Jansen Bouw B\.V\. gekoppeld/.test(m.best?.reason ?? "");
+  })());
+
+  // What it is FOR: a near amount needs identity, and this counterparty had none the token rules
+  // would accept. Without memory the line is not merely weak — it is absent.
+  check("[GEHEUGEN] it turns an invisible near-amount line into an offer", (() => {
+    const without = run(99.5, null);
+    const withMem = run(99.5, remembered);
+    return without.outcome === "none" && without.candidates.length === 0
+      && withMem.outcome === "choice" && (withMem.candidates[0].signals ?? []).includes("near_amount");
+  })());
+
+  // What it is NOT for: it must not book anything that did not book before. Memory identifies the
+  // PARTY, never the bill, and it lands under the same coincidence ceiling as amount+name+date.
+  check("[GEHEUGEN] it opens no new door to an unattended booking", (() => {
+    const exact = run(100, remembered);
+    const exactWithout = run(100, null);
+    return exact.outcome === exactWithout.outcome
+      && (exact.best?.confidence ?? 0) === (exactWithout.best?.confidence ?? 0);
+  })());
+  check("[GEHEUGEN] a near amount stays a choice, remembered or not", run(99.5, remembered).outcome === "choice");
+
+  // The rule that makes one mistaken confirmation self-limiting.
+  check("[GEHEUGEN] a counterpart that settled two parties stops speaking", (() => {
+    const channel = buildMatchMemory([
+      { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Jansen Bouw B.V." },
+      { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Iemand Anders" },
+    ]);
+    return !(run(100, channel).best?.signals ?? []).includes("memory")
+      && run(99.5, channel).outcome === "none";
+  })());
+
+  // A printed invoice number is still the strongest thing on the page. Memory ranks; it never
+  // outranks the document naming the bill.
+  check("[GEHEUGEN] a printed number still outranks a remembered counterparty", (() => {
+    const other = { ...memInv, id: "m2", invoice_number: "2026-0099", client_name: "Iemand Anders" };
+    const tx = { ...memTx(100), description: "Factuur 2026-0099" };
+    const m = matchTransactions([tx] as never, [memInv, other] as never, { memory: remembered }).matches[0];
+    return m.best?.invoiceNumber === "2026-0099";
+  })());
+}
+
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

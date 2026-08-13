@@ -24,6 +24,8 @@ import {
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
+// [GEHEUGEN] The owner's own confirmations, read back — see match-memory.ts for what it means.
+import { loadMatchMemory } from "@/lib/match-memory-server";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history";
 import { allocatedByTransaction } from "@/lib/bank-line-budget";
@@ -126,13 +128,26 @@ export async function GET() {
     await fetchSupplierIbans(pipeline, user.id, rawInvoices),
   );
 
+  // [GEHEUGEN] What the owner has already confirmed, read back. Derived from the link rows a
+  // confirmation writes anyway — there is no memory table, so there is nothing to migrate and
+  // nothing that can drift from what actually happened. See match-memory.ts.
+  //
+  // Best-effort in the strongest sense: a failed read leaves `null`, and the matcher then reasons
+  // purely from the payment exactly as it did before. A memory that could not be loaded is not a
+  // reason to show the owner a worse answer than yesterday's, and this GET renders the whole bank
+  // page.
+  const memory = await loadMatchMemory(pipeline, user.id).catch((e) => {
+    console.error("[GEHEUGEN] confirmed-match memory read failed — matching without it", e);
+    return null;
+  });
+
   // 4. Run the pure matcher.
   // [BANK-BIG-BUNDLE] maxCandidates raised from the default 5: a wholesaler bundle routinely
   // lists 6-10 invoice numbers in one debit, and the UI resolves its slots FROM this candidate
   // list — a truncated list rendered existing invoices as "missing" slots with an upload
   // control, inviting a duplicate import of a bill that was already there. Fifteen covers any
   // realistic bundle; the choice-list UI still shows only the top few.
-  const result = matchTransactions(transactions, invoices, { maxCandidates: 15 });
+  const result = matchTransactions(transactions, invoices, { maxCandidates: 15, memory });
 
   // [BANK-MULTI-LINK-PERSIST] Partial-link coverage. A multi-invoice tx that has
   // already had ONE invoice paid against it keeps status='pending' + an invoice_id.

@@ -8318,8 +8318,14 @@ test("[BIJNA-BEDRAG] a close payment is offered with the difference named, and n
   assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \? 0\.55 : 0\.35\);/,
     "0.55: above the 0.5 listing floor and below the 0.7 booking bar");
   // Identity is required, and a name resemblance is not identity.
-  assert.match(mod, /const identified = ibanOk \|\| supplierIbanOk \|\| isStrongNameIdentity\(/,
-    "the account, the registry's account, or a strong name identity — never a similarity score");
+  // [GEHEUGEN] added `rememberedOk` to this line, which is the point of it — so the gate asks for
+  // the terms that must be there rather than for one exact composition.
+  const identityLine = /const identified = ([^;]+);/.exec(mod)?.[1] ?? "";
+  for (const term of ["ibanOk", "supplierIbanOk", "isStrongNameIdentity("]) {
+    assert.ok(identityLine.includes(term), `identity must include ${term}: ${identityLine}`);
+  }
+  assert.ok(!/nameSim|cpBonus|sim >=/.test(identityLine),
+    `a similarity score is not identity — that is the coincidence this file guards against: ${identityLine}`);
   assert.match(mod, /const nearOk = nearDiff != null && identified;/);
   // And the owner is told how far off it is, in euros.
   assert.match(mod, /minder" : "meer"\} dan het openstaande bedrag/, "the difference must be on the card");
@@ -8450,4 +8456,32 @@ test("[DEEL-CREDIT] the amount of a partial line is recomputed, never copied", (
     /total_inc_btw: -keuze\.totalIncBtw/,
     "the creditnota's total must be the total of what is actually being credited",
   );
+});
+
+test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
+  // Every other signal in the matcher is inference about a line it is seeing for the first time.
+  // A confirmation is not inference — and it was written to bank_tx_invoices and never read again.
+  const mod = code("src/lib/match-memory.ts");
+  // Derived, not stored: no table, no migration, and it cannot drift from what happened.
+  assert.doesNotMatch(mod, /insert|upsert|from\(/, "the memory is derived from the link rows, never written");
+  // The rule that makes one mistaken confirmation self-limiting.
+  assert.match(mod, /parties != null && parties\.size === 1 && parties\.has\(party\)/,
+    "a counterpart that settled TWO parties is a channel, not an identity");
+  assert.match(mod, /MATCH_MEMORY_LIMIT = 400/, "bounded: a memory older than the relationship is not one");
+
+  const matcher = code("src/lib/bank-matching.ts");
+  assert.match(matcher, /const rememberedOk = remembersParty\(opts\.memory, tx, inv\.client_name\);/);
+  assert.match(matcher, /confidence \+= 0\.30;\s*\n\s*signals\.push\("memory"\)/,
+    "weighted like the supplier registry — it identifies the party, not the bill");
+  // It must count as identity for the near-amount offer, which is what it is FOR: the counterparty
+  // whose name the bank mangles had no identity the token rules would accept.
+  assert.match(matcher, /const identified = ibanOk \|\| supplierIbanOk \|\| rememberedOk \|\|/);
+
+  // The read degrades to nothing rather than to a guess, and the route says so out loud.
+  const server = code("src/lib/match-memory-server.ts");
+  assert.match(server, /if \(error \|\| !linkRows \|\| linkRows\.length === 0\) return buildMatchMemory\(\[\]\);/);
+  assert.match(server, /if \(!tx \|\| !inv\) continue;/, "a half-read link must teach nothing");
+  const route = code("src/app/api/bank/match/route.ts");
+  assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
+  assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
 });
