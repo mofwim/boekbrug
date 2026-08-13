@@ -205,3 +205,91 @@ test("[MIN-REGEL] a line that is not a number gets its own answer, not this one"
     assert.equal(out.errors[0].index, 0, "…and it points at the line the owner has to fix");
   }
 });
+
+// ─── [REGEL-KORTING] The discount that belongs to one line ────────────────────
+
+test("[REGEL-KORTING] a line discount lowers the total, and the BTW with it", () => {
+  const totals = computeDraftTotals(
+    [{ quantity: 10, unit_price: 12.5, btw_rate: 21, discount_type: "percent", discount_value: 20 }],
+    1,
+  );
+  assert.equal(totals.total_ex_btw, 100, "125 minus 20%");
+  assert.equal(totals.btw_amount, 21, "BTW is owed over the reduced amount, not the list price");
+  assert.equal(totals.total_inc_btw, 121);
+});
+
+test("[REGEL-KORTING] the two discounts stack, line first and document second", () => {
+  // The other order is a different, wrong, number: 10% of 225 is 22,50, not the 20 that is right.
+  const totals = computeDraftTotals(
+    [
+      { quantity: 10, unit_price: 12.5, btw_rate: 21, discount_type: "percent", discount_value: 20 },
+      { quantity: 1, unit_price: 100, btw_rate: 21 },
+    ],
+    1,
+    { type: "percent", value: 10 },
+  );
+  assert.equal(totals.total_ex_btw, 180);
+  assert.equal(totals.btw_amount, 37.8);
+});
+
+test("[REGEL-KORTING] a creditnota mirrors the line discount exactly", () => {
+  // [CREDIT-SIGN] The credit note must reproduce the invoice it reverses to the cent — a residue
+  // left behind here is turnover that never gets taken back out of the aangifte.
+  const line = { quantity: 4, unit_price: 25, btw_rate: 21, discount_type: "percent", discount_value: 10 };
+  const factuur = computeDraftTotals([line], 1);
+  const credit = computeDraftTotals([line], -1);
+  assert.equal(factuur.total_ex_btw, 90);
+  assert.equal(credit.total_ex_btw, -90);
+  assert.equal(credit.total_inc_btw, round2(-factuur.total_inc_btw));
+});
+
+test("[REGEL-KORTING] a discount the app will not honour is refused, not dropped", () => {
+  // Dropping it silently issues the invoice at the FULL price while the owner believes they gave
+  // a discount — a money surprise on a numbered document.
+  for (const bad of [{ discount_type: "percent", discount_value: 150 },
+                     { discount_type: "korting", discount_value: 10 },
+                     { discount_type: "amount", discount_value: -5 }]) {
+    const out = validateDraftLines([{ ...r(1, 100, 21), ...bad }]);
+    assert.equal(out.ok, false, `${JSON.stringify(bad)} must be refused`);
+    if (!out.ok) assert.equal(out.errors[0].field, "discount_value");
+  }
+});
+
+test("[REGEL-KORTING] no discount, and a cleared discount, both pass and store nothing", () => {
+  for (const none of [{}, { discount_type: "", discount_value: "" },
+                      { discount_type: null, discount_value: null }]) {
+    const out = validateDraftLines([{ ...r(1, 100, 21), ...none }]);
+    assert.equal(out.ok, true, `${JSON.stringify(none)} is simply no discount`);
+    if (out.ok) {
+      assert.equal(out.lines[0].discount_type, null);
+      assert.equal(out.lines[0].discount_value, null);
+    }
+  }
+});
+
+test("[REGEL-KORTING] the validated line carries the PARSED discount, not the raw input", () => {
+  // What was checked is what gets stored: the database never sees a string its CHECK would catch.
+  const out = validateDraftLines([{ ...r(1, 100, 21), discount_type: "amount", discount_value: "12,50" }]);
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    assert.equal(out.lines[0].discount_type, "amount");
+    assert.equal(out.lines[0].discount_value, 12.5, "the Dutch comma is read as a decimal point");
+  }
+});
+
+test("[REGEL-KORTING] a line discounted to nothing does not turn the invoice into a creditnota", () => {
+  // 100% off is a free line, not money flowing back. Exactly zero stays a factuur (negative-line.ts).
+  const out = validateDraftLines([{ ...r(1, 100, 21), discount_type: "percent", discount_value: 100 }]);
+  assert.equal(out.ok, true);
+  assert.equal(computeDraftTotals(out.ok ? out.lines : [], 1).total_inc_btw, 0);
+});
+
+test("[REGEL-KORTING] discounts are judged on the NET amount when deciding factuur vs creditnota", () => {
+  // A EUR 100 line at 100% off next to a EUR 20 credit line gives money back — it is a creditnota,
+  // and judging the gross would have called it a factuur and issued it from the wrong series.
+  const out = validateDraftLines([
+    { ...r(1, 100, 21), discount_type: "percent", discount_value: 100 },
+    r(-1, 20, 21, "retour"),
+  ]);
+  assert.equal(out.ok, false, "the credits are worth more than what is delivered");
+});

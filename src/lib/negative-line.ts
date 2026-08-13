@@ -45,6 +45,12 @@ export interface SignedLine {
   quantity?: number | null
   unit_price?: number | null
   btw_rate?: number | null
+  // [REGEL-KORTING] A line's own discount lowers what it is worth, so the question this module
+  // answers — is this still a factuur? — has to be asked of the DISCOUNTED amount. A line at
+  // 100% off is worth nothing, and a set of lines that is worth nothing next to one credit line
+  // gives money back.
+  discount_type?: string | null
+  discount_value?: number | string | null
 }
 
 // [CENT] The app's one rounding. This module had `Math.round(x * 100) / 100`, which is wrong in
@@ -54,6 +60,14 @@ export interface SignedLine {
 // back. It also has to be the SAME rounding as the routes', because they store
 // round2(quantity × unit_price) per line and this decides whether the sum of those is below zero.
 import { round2 } from './invoice-totals'
+// [REGEL-KORTING] "What is this line worth" had TWO definitions — one here, one in
+// invoice-discount.ts — and they were the same expression until a line could carry a discount.
+// At that moment they would have disagreed, and this is the module that decides whether a
+// document is a factuur or a creditnota: the cheaper definition wins that argument by accident.
+// So there is one, it lives with the discount rules, and this module uses it.
+import { lineNetEx } from './invoice-discount'
+
+export { lineNetEx }
 
 /**
  * Cents, as an integer — the only safe unit for deciding whether a total crossed zero.
@@ -63,15 +77,7 @@ import { round2 } from './invoice-totals'
  */
 const cents = (n: number): number => Math.round(n * 100)
 
-/** What a line is worth, sign included. */
-export function lineNetEx(line: SignedLine): number {
-  const q = Number(line.quantity ?? 0)
-  const p = Number(line.unit_price ?? 0)
-  if (!Number.isFinite(q) || !Number.isFinite(p)) return 0
-  return round2(q * p)
-}
-
-/** The invoice's net excl-BTW total, credits included. */
+/** The invoice's net excl-BTW total, credits and line discounts included. */
 export function invoiceNetEx(lines: readonly SignedLine[]): number {
   return round2(lines.reduce((s, l) => s + lineNetEx(l), 0))
 }

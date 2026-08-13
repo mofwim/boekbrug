@@ -28,7 +28,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
-import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+import { applyDiscount, parseDiscount, discountLabel, lineNetEx } from '@/lib/invoice-discount'
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
@@ -139,6 +139,12 @@ type InvoiceLine = {
   // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
   // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
   unit?: string | null
+  // [REGEL-KORTING] De korting op DEZE regel. `discount_value` is de RUWE invoer, net als bij de
+  // documentkorting: het scherm bewaart wat er getypt staat en parseDiscount beslist of het een
+  // korting is. Zo blijft "12," tijdens het typen gewoon een half getypt getal in plaats van een
+  // veld dat onder je vingers naar nul springt.
+  discount_type?: 'percent' | 'amount' | null
+  discount_value?: string
   // [BOEK-031] AI translation support per line
   translating?: boolean
   rawInput?: string
@@ -786,6 +792,13 @@ function NewInvoicePageContent() {
     setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
   }
 
+  // [REGEL-KORTING] Aan- en uitzetten, en de waarde bijhouden. Uitzetten wist ALLEBEI de velden:
+  // een achtergebleven waarde zonder soort is geen korting, maar hij zou wel meereizen naar de
+  // server en daar als "half ingevulde korting" moeten worden geweigerd.
+  function setLineDiscount(i: number, patch: Partial<Pick<InvoiceLine, 'discount_type' | 'discount_value'>>) {
+    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l))
+  }
+
   // [PRIJS-MODUS] Het prijsveld schrijft niet rechtstreeks in de regel: in incl-modus is wat er
   // staat het bedrag VOOR DE KLANT, en wat we bewaren de prijs ex-btw.
   function updateLinePrice(i: number, typed: number) {
@@ -935,11 +948,20 @@ function NewInvoicePageContent() {
   // [KORTING] Dezelfde module als de server, zodat het scherm en de factuur nooit een ander bedrag
   // laten zien. Zonder korting geeft applyDiscount exact dezelfde drie getallen als hiervoor.
   const korting = parseDiscount(discountType, discountValue)
+  // [REGEL-KORTING] Wat één regel waard is, korting en al. Eén functie met de server (lineNetEx),
+  // want een scherm dat zijn eigen versie van deze som maakt is precies hoe een concept en de
+  // verstuurde factuur een cent uit elkaar gaan lopen — zie de kop van invoice-totals.ts.
+  const regelNetto = (l: InvoiceLine) => lineNetEx({
+    quantity: l.quantity, unit_price: l.unit_price,
+    discount_type: l.discount_type, discount_value: l.discount_value,
+  })
   // [REGEL-AFRONDING] Afgerond per regel, want dát is wat er in invoice_lines.line_total komt te
   // staan en wat de klant straks in de kolom optelt. Ongerond optellen liet dit scherm EUR 395,00
   // tonen terwijl er EUR 394,99 werd verstuurd — zie de kop van draft-totals.ts.
   const kortingTotalen = applyDiscount(
-    lines.map(l => ({ line_total: round2(l.quantity * l.unit_price), btw_rate: l.btw_rate })),
+    // [REGEL-KORTING] Netto per regel — dezelfde functie die de server in line_total zet, dus het
+    // bedrag op dit scherm is het bedrag dat straks wordt opgeslagen en verstuurd.
+    lines.map(l => ({ line_total: regelNetto(l), btw_rate: l.btw_rate })),
     sign === 1 ? korting : null,
   )
   const subtotalEx = kortingTotalen.subtotal_ex_btw
@@ -972,7 +994,7 @@ function NewInvoicePageContent() {
     const exByRate: Record<number, number> = {}
     lines.forEach(l => {
       const rate = l.btw_rate
-      exByRate[rate] = (exByRate[rate] ?? 0) + round2(l.quantity * l.unit_price)
+      exByRate[rate] = (exByRate[rate] ?? 0) + regelNetto(l)
     })
     const aftrekPerTarief: Record<number, number> = {}
     for (const a of kortingTotalen.allowances) {
@@ -1033,6 +1055,10 @@ function NewInvoicePageContent() {
           btw_rate: l.btw_rate,
           unit: l.unit ?? null,
           vat_treatment: l.vat_treatment ?? null,
+          // [REGEL-KORTING] Ruwe invoer; validateDraftLines op de server keurt hem opnieuw en
+          // weigert wat niet kan. Een creditnota draagt er geen — zie het scherm hieronder.
+          discount_type: l.discount_type ?? null,
+          discount_value: l.discount_value ?? null,
         })),
       }),
     })
@@ -1226,6 +1252,10 @@ function NewInvoicePageContent() {
           btw_rate: l.btw_rate,
           unit: l.unit ?? null,
           vat_treatment: l.vat_treatment ?? null,
+          // [REGEL-KORTING] Ruwe invoer; validateDraftLines op de server keurt hem opnieuw en
+          // weigert wat niet kan. Een creditnota draagt er geen — zie het scherm hieronder.
+          discount_type: l.discount_type ?? null,
+          discount_value: l.discount_value ?? null,
         })),
       }),
     })
@@ -1857,19 +1887,90 @@ function NewInvoicePageContent() {
                         die "10,00" in het prijsveld toont en "8,26" als totaal bij aantal 1, leest
                         als een rekenfout. In incl-modus staat de ex-prijs er klein onder, want dát
                         is wat er straks op de factuur en in de aangifte komt te staan. */}
+                    {/* [REGEL-KORTING] Het NETTO regeltotaal — met de korting van deze regel er al
+                        af, want dat is het bedrag dat op de factuur komt en dat de klant optelt. */}
                     <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>
                       {NL_NUMBER.format(toDisplayCents(
                         priceMode === 'incl'
-                          ? line.quantity * line.unit_price * (1 + line.btw_rate / 100)
-                          : line.quantity * line.unit_price,
+                          ? regelNetto(line) * (1 + line.btw_rate / 100)
+                          : regelNetto(line),
                       ))}
                       {priceMode === 'incl' && (
                         <span style={{ fontWeight: 400, color: '#80868B', fontSize: 11.5, marginInlineStart: 6 }}>
-                          {t('nieuw.regel.exclTussen', { amount: NL_NUMBER.format(toDisplayCents(line.quantity * line.unit_price)) })}
+                          {t('nieuw.regel.exclTussen', { amount: NL_NUMBER.format(toDisplayCents(regelNetto(line))) })}
                         </span>
                       )}
                     </span>
                   </div>
+
+                  {/* [REGEL-KORTING] De korting die bij DEZE regel hoort. Niet op een creditnota:
+                      dat document is zelf al een correctie, en een korting op een terugbetaling is
+                      rekenwerk dat niemand met het blote oog kan controleren — dezelfde regel als
+                      bij de documentkorting hieronder. */}
+                  {invoiceType !== ('creditnota' as InvoiceType) && (
+                    line.discount_type
+                      ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F3F4' }}>
+                          <span style={{ fontSize: 13, color: '#5F6368' }}>{t('nieuw.regelKorting')}</span>
+                          <div style={{ display: 'inline-flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden' }}>
+                            {(['percent', 'amount'] as const).map(soort => (
+                              <button
+                                key={soort}
+                                type="button"
+                                onClick={() => setLineDiscount(i, { discount_type: soort })}
+                                style={{
+                                  fontSize: 12.5, fontWeight: 500, padding: '5px 11px', border: 'none', cursor: 'pointer',
+                                  backgroundColor: line.discount_type === soort ? cfg.activeBg : 'white',
+                                  color: line.discount_type === soort ? cfg.activeColor : '#5F6368',
+                                }}
+                              >
+                                {soort === 'percent' ? '%' : '€'}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            inputMode="decimal"
+                            autoFocus
+                            placeholder={line.discount_type === 'percent' ? t('nieuw.korting.hintPercentage') : t('nieuw.korting.hintBedrag')}
+                            value={line.discount_value ?? ''}
+                            onChange={e => setLineDiscount(i, { discount_value: e.target.value })}
+                            aria-label={line.discount_type === 'percent' ? t('nieuw.korting.percentage') : t('nieuw.korting.bedrag')}
+                            style={{ width: 96, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 10px', fontSize: 14, outline: 'none' }}
+                          />
+                          {/* Het BEDRAG dat er echt af gaat — een percentage zegt niets tot je ziet
+                              hoeveel het is, en bij een korting groter dan de regel is dat de regel zelf. */}
+                          {parseDiscount(line.discount_type, line.discount_value) && (
+                            <span style={{ fontSize: 13, color: '#137333', fontFamily: 'Roboto Mono, monospace' }}>
+                              −{NL_NUMBER.format(toDisplayCents(round2(line.quantity * line.unit_price) - regelNetto(line)))}
+                            </span>
+                          )}
+                          {(line.discount_value ?? '').trim() !== '' && !parseDiscount(line.discount_type, line.discount_value) && (
+                            <span style={{ fontSize: 12, color: '#B3261E' }}>
+                              {line.discount_type === 'percent' ? t('nieuw.korting.foutPercentage') : t('nieuw.korting.foutBedrag')}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setLineDiscount(i, { discount_type: null, discount_value: '' })}
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: '#70757a' }}
+                          >
+                            {t('nieuw.regelKorting.weg')}
+                          </button>
+                        </div>
+                      )
+                      : (
+                        <button
+                          type="button"
+                          onClick={() => setLineDiscount(i, { discount_type: 'percent', discount_value: '' })}
+                          style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: '8px 0 0', cursor: 'pointer', fontSize: 12.5, color: '#1A73E8', fontWeight: 500 }}
+                        >
+                          + {t('nieuw.regelKorting')}
+                        </button>
+                      )
+                  )}
                 </div>
               )})}
 

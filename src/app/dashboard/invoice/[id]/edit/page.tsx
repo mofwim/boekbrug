@@ -9,7 +9,7 @@ import { useState, useEffect } from 'react'
 import { failureText } from '@/lib/server-message'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS, longPaymentTermNotice } from '@/lib/payment-term'
-import { applyDiscount, parseDiscount, discountLabel } from '@/lib/invoice-discount'
+import { applyDiscount, parseDiscount, discountLabel, lineNetEx, lineGrossEx } from '@/lib/invoice-discount'
 import { round2 } from '@/lib/invoice-totals'
 // [MIN-REGEL] When a set of lines stops describing a factuur — the same module the builder and the
 // PUT route ask, so this screen cannot form its own opinion. See negative-line.ts.
@@ -23,7 +23,7 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 import type { ProfileRow } from '@/types/rows'
 import { COLUMN } from '@/lib/design/tokens';
-import { formatDateNL } from '@/lib/format-nl'
+import { formatDateNL, formatEuroNL } from '@/lib/format-nl'
 // [PRIJS-MODUS] Dezelfde omrekening als het aanmaakscherm — één definitie, twee schermen.
 import { priceFieldValue, priceFieldToStored, repriceForRateChange, type PriceMode } from '@/lib/price-mode'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
@@ -46,6 +46,11 @@ type InvoiceLine = {
   // herkent; een vervaldatum wijzigen mag geen omzet naar een andere rubriek verhuizen.
   unit?: string | null
   vat_treatment?: string | null
+  // [REGEL-KORTING] Wél bewerkbaar hier — een korting op een regel is bij uitstek iets wat je
+  // aanpast nadat je hem hebt gegeven. `discount_value` is de ruwe invoer, net als bij de
+  // documentkorting; parseDiscount beslist of het een korting is.
+  discount_type?: 'percent' | 'amount' | null
+  discount_value?: number | string | null
 }
 
 export default function InvoiceEditPage() {
@@ -139,10 +144,16 @@ export default function InvoiceEditPage() {
       // جلب الـ lines
       const { data: linesData } = await supabase
         .from('invoice_lines')
-        // [VRIJGESTELD-ROUNDTRIP] unit en vat_treatment horen erbij, want dit scherm PUT terug wat het
-        // leest en de PUT vervangt alle regels. Wat hier niet wordt gelezen, bestaat na het opslaan
-        // niet meer — en vat_treatment is de vlag waaraan de aangifte vrijgestelde omzet herkent.
-        .select('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total')
+        // [VRIJGESTELD-ROUNDTRIP] Dit scherm PUT terug wat het LEEST, en de PUT vervangt alle
+        // regels. Wat hier niet wordt gelezen bestaat na het opslaan niet meer — vat_treatment is
+        // de vlag waaraan de aangifte vrijgestelde omzet herkent, en [REGEL-KORTING] zou de
+        // volgende kolom zijn geweest die van het lijstje viel.
+        //
+        // Vandaar '*' en geen opsomming. Een naam in dat lijstje die de database niet kent laat
+        // deze query FALEN, en de fout wordt hier niet gelezen: linesData is dan null, het scherm
+        // houdt zijn ene lege beginregel, en Opslaan vervangt daarmee alle echte regels. Een
+        // kolomlijst die fout kan zijn, staat één tikfout van het leegmaken van een factuur af.
+        .select('*')
         .eq('invoice_id', invoiceId)
 
       // تعبئة الـ state بالبيانات الموجودة
@@ -235,6 +246,12 @@ export default function InvoiceEditPage() {
     setLines(lines.filter((_, i) => i !== index))
   }
 
+  // [REGEL-KORTING] Aan- en uitzetten. Uitzetten wist allebei de velden: een waarde zonder soort
+  // is geen korting, maar hij zou wel meereizen en op de server als half ingevuld worden geweigerd.
+  function setLineDiscount(index: number, patch: Partial<Pick<InvoiceLine, 'discount_type' | 'discount_value'>>) {
+    setLines(lines.map((l, i) => i === index ? { ...l, ...patch } : l))
+  }
+
   function updateLine(index: number, field: keyof InvoiceLine, value: string | number) {
     const updated = [...lines]
     updated[index] = { ...updated[index], [field]: value }
@@ -251,8 +268,13 @@ export default function InvoiceEditPage() {
   // [REGEL-AFRONDING] Afgerond per regel — dezelfde waarde die de PUT-route opslaat (line_total:
   // round2(quantity * unit_price)). Zonder dit toont dit scherm een ander totaal dan het bedrag
   // dat je met Opslaan wegschrijft.
+  // [REGEL-KORTING] Netto per regel — dezelfde functie die de PUT-route in line_total zet.
+  const regelNetto = (l: InvoiceLine) => lineNetEx({
+    quantity: l.quantity, unit_price: l.unit_price,
+    discount_type: l.discount_type, discount_value: l.discount_value,
+  })
   const kortingTotalen = applyDiscount(
-    lines.map(l => ({ line_total: round2(l.quantity * l.unit_price), btw_rate: l.btw_rate })),
+    lines.map(l => ({ line_total: regelNetto(l), btw_rate: l.btw_rate })),
     korting,
   )
   const subtotalEx = kortingTotalen.subtotal_ex_btw
@@ -687,7 +709,8 @@ export default function InvoiceEditPage() {
           </div>
 
           {lines.map((line, index) => (
-            <div key={index} className="grid grid-cols-12 gap-2 items-center">
+            <div key={index}>
+            <div className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-5">
                 <input
                   type="text" value={line.description}
@@ -719,7 +742,12 @@ export default function InvoiceEditPage() {
                      prijs die niet met zijn eigen regeltotaal vermenigvuldigt — en verving die
                      afgeronde prijs de opgeslagen breuk zodra er iets in het veld terechtkwam.
                      step="any": met step="0.01" weigert de browser zelf al een derde decimaal. */
-                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity, (line as { line_total?: number | null }).line_total)} min="0" step="any"
+                  /* [REGEL-KORTING] Bij een korting is het opgeslagen regeltotaal het NETTO
+                     bedrag, en dat is niet waar deze prijs bij hoort: het veld zou dan naar een
+                     precisie zoeken waarop aantal × prijs op het verlaagde bedrag uitkomt en een
+                     prijs tonen die nooit is afgesproken. Dus het brutobedrag, of — zonder
+                     korting — precies het regeltotaal dat hier altijd al werd meegegeven. */
+                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity, line.discount_type ? lineGrossEx(line) : (line as { line_total?: number | null }).line_total)} min="0" step="any"
                   onChange={e => updateLinePrice(index, parseFloat(e.target.value) || 0)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                   placeholder="0.00"
@@ -746,6 +774,63 @@ export default function InvoiceEditPage() {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* [REGEL-KORTING] Onder de regel waar hij bij hoort. Niet op een creditnota: dat
+                document is zelf al een correctie — dezelfde regel als bij de documentkorting. */}
+            {invoiceType !== 'creditnota' && (
+              line.discount_type ? (
+                <div className="flex items-center gap-2 flex-wrap mt-2 mb-1 ps-1">
+                  <span className="text-xs text-gray-500">{t('nieuw.regelKorting')}</span>
+                  <div className="inline-flex rounded-full border border-gray-200 overflow-hidden">
+                    {(['percent', 'amount'] as const).map(soort => (
+                      <button
+                        key={soort}
+                        type="button"
+                        onClick={() => setLineDiscount(index, { discount_type: soort })}
+                        className={`text-xs font-medium px-3 py-1 ${line.discount_type === soort ? 'bg-blue-600 text-white' : 'bg-white text-gray-500'}`}
+                      >
+                        {soort === 'percent' ? '%' : '€'}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number" min="0" step="0.01" inputMode="decimal"
+                    value={line.discount_value ?? ''}
+                    onChange={e => setLineDiscount(index, { discount_value: e.target.value })}
+                    aria-label={line.discount_type === 'percent' ? t('nieuw.korting.percentage') : t('nieuw.korting.bedrag')}
+                    placeholder={line.discount_type === 'percent' ? t('nieuw.korting.hintPercentage') : t('nieuw.korting.hintBedrag')}
+                    className="w-24 border border-gray-300 rounded-xl px-2 py-1 text-sm"
+                  />
+                  {/* Het bedrag dat er echt af gaat — een percentage zegt niets tot je het ziet. */}
+                  {parseDiscount(line.discount_type, line.discount_value) && (
+                    <span className="text-xs text-green-700 font-mono">
+                      −{formatEuroNL(lineGrossEx(line) - regelNetto(line))}
+                    </span>
+                  )}
+                  {String(line.discount_value ?? '').trim() !== '' && !parseDiscount(line.discount_type, line.discount_value) && (
+                    <span className="text-xs text-red-600">
+                      {line.discount_type === 'percent' ? t('nieuw.korting.foutPercentage') : t('nieuw.korting.foutBedrag')}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setLineDiscount(index, { discount_type: null, discount_value: '' })}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    {t('nieuw.regelKorting.weg')}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLineDiscount(index, { discount_type: 'percent', discount_value: '' })}
+                  className="text-xs text-blue-600 font-medium mt-1 mb-1 ps-1"
+                >
+                  + {t('nieuw.regelKorting')}
+                </button>
+              )
+            )}
             </div>
           ))}
 

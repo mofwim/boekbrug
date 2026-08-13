@@ -147,6 +147,9 @@ export const MESSAGES = {
   'nieuw.prijsmodus.incl': { nl: 'Je typt wat je klant betaalt; wij rekenen de btw eruit.', ar: 'تكتب ما يدفعه العميل، ونحن نستخرج الضريبة منه.', en: 'You type what your customer pays; we work the VAT back out.' },
 
   'nieuw.korting': { nl: 'Korting', ar: 'خصم', en: 'Discount' },
+  // [REGEL-KORTING] De korting die bij één regel hoort, naast de korting op de hele factuur.
+  'nieuw.regelKorting': { nl: 'Korting op deze regel', ar: 'خصم على هذا البند', en: 'Discount on this line' },
+  'nieuw.regelKorting.weg': { nl: 'Korting weghalen', ar: 'إزالة الخصم', en: 'Remove discount' },
   'nieuw.korting.percentage': { nl: 'Kortingspercentage', ar: 'نسبة الخصم', en: 'Discount percentage' },
   'nieuw.korting.bedrag': { nl: 'Kortingsbedrag', ar: 'مبلغ الخصم', en: 'Discount amount' },
   'nieuw.korting.foutPercentage': { nl: 'Vul een percentage tussen 0 en 100 in.', ar: 'أدخل نسبة بين 0 و100.', en: 'Enter a percentage between 0 and 100.' },

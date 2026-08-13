@@ -17,15 +17,13 @@
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
-// [REGEL-AFRONDING] Dezelfde afronding als de PUT-route — zie de regel hieronder.
-import { round2 } from '@/lib/invoice-totals'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
 import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
 import { checkInvoiceDates } from '@/lib/invoice-dates'
-import { parseDiscount } from '@/lib/invoice-discount'
+import { parseDiscount, lineNetEx } from '@/lib/invoice-discount'
 // [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
 // gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
 import { isKnownUnit } from '@/lib/units'
@@ -283,7 +281,7 @@ export async function POST(request: NextRequest) {
     // als created_by: bestaat de kolom nog niet, dan worden de regels ZONDER eenheid geschreven
     // in plaats van dat het aanmaken van de factuur helemaal faalt (PGRST204). Wat je dan mist is
     // de juiste eenheidscode in de e-factuur, niet de factuur zelf.
-    const { error: lineErr } = await writeWithTrail(
+    const { error: lineErr, trailWritten: regelKolommenGeschreven } = await writeWithTrail(
       (spoor) => pipeline.from('invoice_lines').insert(
         gecontroleerd.lines.map((l, i) => ({
           invoice_id: factuur.id,
@@ -306,7 +304,16 @@ export async function POST(request: NextRequest) {
           // En het bedrag hing af van de route: dezelfde factuur via het bewerkscherm opgeslagen
           // kwam er wél op EUR 121,00 uit, omdat de PUT per regel afrondt. Twee wegen naar hetzelfde
           // document met twee verschillende totalen is precies wat een boekhouder niet kan uitleggen.
-          line_total: round2(sign * l.quantity * l.unit_price),
+          // [REGEL-KORTING] NETTO — aantal × prijs min de korting die op deze regel zelf zit.
+          // Dat is de afspraak van de kolom (invoice_line_discount.sql): elke lezer die van
+          // regelkortingen nooit heeft gehoord telt line_total op en komt op het juiste bedrag
+          // uit. Andersom zou elke vergeten lezer de klant te veel in rekening brengen.
+          line_total: lineNetEx({
+            quantity: sign * l.quantity,
+            unit_price: l.unit_price,
+            discount_type: l.discount_type,
+            discount_value: l.discount_value,
+          }),
           // De eenheid hoort bij de regel, dus per regel — niet één keer voor de hele factuur.
           ...(Object.keys(spoor).length
             ? {
@@ -315,16 +322,43 @@ export async function POST(request: NextRequest) {
                 // NULL = gewoon belast. Zo kan een oude of vreemde client deze kolom niet
                 // gebruiken om omzet uit de aangifte te laten verdwijnen.
                 vat_treatment: bron[i]?.vat_treatment === 'exempt' ? 'exempt' : null,
+                // [REGEL-KORTING] Het AFGESPROKEN getal, al gecontroleerd door validateDraftLines.
+                // Het uitgerekende bedrag staat niet in een kolom — line_total is al netto.
+                discount_type: l.discount_type ?? null,
+                discount_value: l.discount_value ?? null,
               }
             : {}),
         })),
       ),
-      // De sleutel is een vlag: is hij aanwezig, dan worden `unit` en `vat_treatment` per regel
-      // meegeschreven. Ze reizen samen omdat writeWithTrail één terugval kent: mist één van de
-      // twee kolommen, dan worden de regels zonder allebei geschreven — een factuur zonder
-      // eenheid of zonder vrijstellingsvlag, nooit helemaal geen factuur.
+      // De sleutel is een vlag: is hij aanwezig, dan worden `unit`, `vat_treatment` en de twee
+      // kortingskolommen per regel meegeschreven. Ze reizen samen omdat writeWithTrail één
+      // terugval kent: mist één van die kolommen, dan worden de regels zonder allemaal
+      // geschreven — een factuur zonder eenheid, nooit helemaal geen factuur.
       { unit: true },
     )
+
+    // [REGEL-KORTING] Maar een KORTING mag niet op die manier verdwijnen.
+    //
+    // Bij de andere kolommen is de terugval goedaardig: je mist een eenheidscode, niet je geld.
+    // Hier niet. line_total is al verlaagd, dus het bedrag klopt — maar het WAAROM is weg, en
+    // zodra de ondernemer deze factuur opnieuw opent rekent het bewerkscherm aantal × prijs uit
+    // en staat de volle prijs er weer. De korting verdampt bij de eerstvolgende bewerking, zonder
+    // dat iemand iets ziet gebeuren.
+    //
+    // Dus: is er een korting gegeven en bestaan de kolommen niet, dan gaat het concept terug en
+    // hoort de ondernemer waarom. Regels eerst — een factuur die weg is met haar regels er nog is
+    // erger dan de fout zelf.
+    if (!lineErr && !regelKolommenGeschreven && gecontroleerd.lines.some((l) => l.discount_type)) {
+      await pipeline.from('invoice_lines').delete().eq('invoice_id', factuur.id)
+      await pipeline.from('invoices').delete().eq('id', factuur.id)
+      console.error('[REGEL-KORTING] regelkorting gevraagd maar de kolommen bestaan nog niet — ' +
+        'pas supabase/migrations/invoice_line_discount.sql toe', { invoiceId: factuur.id })
+      return NextResponse.json(
+        { error: 'Korting per regel kan nog niet worden opgeslagen — de database mist een update. Haal de korting van de regels af, of neem contact op.' },
+        { status: 503 },
+      )
+    }
+
     if (lineErr) {
       // Een factuurkop zonder regels is erger dan geen factuur: hij telt mee in overzichten en
       // is leeg als je hem opent. Terugdraaien, en eerlijk melden dat het niet lukte.

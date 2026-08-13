@@ -51,8 +51,8 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
-import { computeInvoiceTotals, round2 } from "./invoice-totals";
-import { applyDiscount, type Discount } from "./invoice-discount";
+import { computeInvoiceTotals } from "./invoice-totals";
+import { applyDiscount, lineNetEx, parseDiscount, type Discount } from "./invoice-discount";
 // [MIN-REGEL] When a set of lines stops describing a factuur — one definition, shared with the
 // screen that refuses it before the request is sent. See negative-line.ts.
 import { staysAFactuur, NOT_A_FACTUUR_REASON } from "./negative-line";
@@ -61,6 +61,10 @@ export interface DraftLine {
   quantity: number;
   unit_price: number;
   btw_rate: number;
+  // [REGEL-KORTING] The line's own discount, as the owner agreed it. Optional: a line without one
+  // computes to exactly the amount it computed before this field existed.
+  discount_type?: string | null;
+  discount_value?: number | string | null;
 }
 
 export interface DraftTotals {
@@ -93,8 +97,13 @@ export function computeDraftTotals(
   // in /api/invoice/draft, sign and all. Everything below sums these and nothing else, so the
   // header can never claim a different subtotal than the column the customer reads. See the block
   // at the top of this file for what the raw-product version produced.
+  // [REGEL-KORTING] And the line's own discount comes off HERE, before anything is summed, because
+  // this is the amount the route stores in invoice_lines.line_total. The document discount below
+  // then works on the reduced amounts — the order EN 16931 prescribes (a line allowance lowers
+  // BT-131; the document allowance works on the sum of those lowered line amounts).
   const stored = lines.map((l) => ({
-    line_total: round2(sign * l.quantity * l.unit_price),
+    line_total: lineNetEx({ quantity: sign * l.quantity, unit_price: l.unit_price,
+      discount_type: l.discount_type, discount_value: l.discount_value }),
     btw_rate: l.btw_rate,
   }));
 
@@ -163,7 +172,36 @@ export function validateDraftLines(
       // Art. 35a Wet OB: the nature of the goods or services supplied belongs on the invoice.
       errors.push({ index: i, field: "description", reason: "een regel zonder omschrijving mag niet op een factuur" });
     }
-    clean.push({ quantity: q, unit_price: p, btw_rate: t });
+
+    // [REGEL-KORTING] A discount that cannot be read is REFUSED, not dropped.
+    //
+    // parseDiscount answers null for "no discount" and for "121%" alike, and the difference
+    // matters here: dropping the second one silently sends the customer an invoice at the full
+    // price while the owner believes they gave a discount. A typed number that the app will not
+    // honour has to come back as a question, not as a quietly higher amount.
+    //
+    // An EMPTY field is not a typo — clearing a discount is a normal edit — so both fields blank
+    // is simply no discount, exactly as before this feature.
+    const filled = (v: unknown) => v != null && String(v).trim() !== "";
+    const wantsDiscount = filled(row.discount_type) || filled(row.discount_value);
+    const discount = parseDiscount(row.discount_type, row.discount_value);
+    if (wantsDiscount && !discount) {
+      errors.push({
+        index: i,
+        field: "discount_value",
+        reason: "een korting is een percentage tot 100 of een bedrag boven nul",
+      });
+    }
+
+    clean.push({
+      quantity: q,
+      unit_price: p,
+      btw_rate: t,
+      // The PARSED value, never the raw input: what was checked is what gets stored, so the
+      // database never sees a string the CHECK constraint would have to catch.
+      discount_type: discount?.type ?? null,
+      discount_value: discount?.value ?? null,
+    });
   });
 
   // [MIN-REGEL] A factuur that gives more money back than it asks for is a creditnota, and issuing
