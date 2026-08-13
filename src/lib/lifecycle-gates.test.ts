@@ -2700,15 +2700,24 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
   const credit = code("src/app/api/invoice/creditnota/route.ts");
   assert.match(credit, /creditLinesFor\(originalLines, creditnota\.id, reason\)/,
     "the creditnota route must build its lines with the shared mirror");
+  // [REGEL-KOPIE] The hardening moved with the other optional columns into the module all three
+  // copiers share. Followed there, not relaxed: this assertion is the one that must survive.
+  assert.match(code("src/lib/creditnota-lines.ts"), /\.\.\.optionalLineFields\(line\)/,
+    "…and that mirror must take its optional columns from the shared copier");
   assert.match(
-    code("src/lib/creditnota-lines.ts"),
-    /vat_treatment === 'exempt' \? 'exempt' : null/,
-    "…and that mirror must harden vat_treatment like every other writer",
+    code("src/lib/invoice-line-copy.ts"),
+    /vat_treatment === "exempt" \? "exempt" : null/,
+    "…which must harden vat_treatment like every other writer",
   );
 
+  // [REGEL-KOPIE] /duplicate and the recurring cron copy LINES, and both now do it through the
+  // shared module — where the hardening lives and is asserted above. The gate follows them there
+  // instead of demanding an inline copy that is exactly what drifted three times.
+  for (const path of ["src/app/api/cron/recurring/route.ts", "src/app/api/invoice/[id]/duplicate/route.ts"]) {
+    assert.match(code(path), /copiedLinesFor\(/, `${path} must copy lines through the shared module`);
+  }
+  // The PUT route is not a copier: it writes what the edit screen sent, so it hardens its own.
   const copiers = [
-    "src/app/api/cron/recurring/route.ts",
-    "src/app/api/invoice/[id]/duplicate/route.ts",
     "src/app/api/invoice/[id]/route.ts",
   ];
   for (const path of copiers) {
@@ -8149,17 +8158,22 @@ test("[REGEL-KORTING] the e-factuur explains the difference instead of inventing
 });
 
 test("[REGEL-KORTING] a creditnota reproduces the invoice it reverses, discount included", () => {
+  // [REGEL-KOPIE] The rule moved to the module all three copiers now share — following it there
+  // rather than relaxing the gate, because this is the exact assertion that was true of the
+  // creditnota and false of /duplicate and the recurring cron at the same time.
   const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/, "the mirror asks the shared copier");
+  const copy = code("src/lib/invoice-line-copy.ts");
   // Not decoration. line_total is net and HAS been flipped, so a credit line without these two
   // says -10 x EUR 12,50 = EUR -100; the access point redoes that multiplication
   // (PEPPOL-EN16931-R120), finds -125, and refuses the file while the PDF looks perfect.
-  assert.match(credit, /discount_type: line\.discount_type \?\? null/,
+  assert.match(copy, /discount_type: line\.discount_type \?\? null/,
     "the discount travels to the credit note");
-  assert.match(credit, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
+  assert.match(copy, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
     "…and a value without a type is not a discount");
   // Conditional, like `unit` and the exemption flag: a column the database does not have must not
   // appear in the INSERT, or the creditnota loses its lines after its number is already spent.
-  assert.match(credit, /\.\.\.\(line\.discount_type !== undefined/,
+  assert.match(copy, /\.\.\.\(line\.discount_type !== undefined/,
     "absent from the source row means absent from the copy");
 });
 
@@ -8357,4 +8371,83 @@ test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
   const route = code("src/app/api/bank/match/route.ts");
   assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
   assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
+});
+
+// ─── [REGEL-KOPIE] The class this has now been, three times ─────────────────────────────────────
+//
+// Three routes copy invoice lines: the creditnota mirrors them, /duplicate repeats them, and the
+// recurring cron re-issues them monthly. Each typed the columns over by hand, so every column ADDED
+// to invoice_lines had to be chased into three places by someone who knew all three existed.
+//
+//   unit                              chased, after "-2 uur" became "-2 stuks" on a correction
+//   vat_treatment                     chased, after a copied exempt line booked as taxed 0%
+//   discount_type / discount_value    reached the mirror and BOTH write routes — and neither copier
+//
+// The third one was live when this gate was written. The copiers write line_total, which is already
+// discounted, so a duplicated or recurring invoice looked right until it was opened and saved:
+// computeDraftTotals then recomputed the line from quantity x unit_price with no discount to apply,
+// and a EUR 108,90 monthly invoice billed EUR 121,00. Before that save it did not even add up with
+// itself — quantity x unit_price is what PEPPOL-EN16931-R120 recomputes.
+
+test("[REGEL-KOPIE] every per-line column reaches the copiers, including the next one", () => {
+  // Read the columns from the generated database types, so a column added tomorrow fails this
+  // gate rather than a customer's invoice. That is the whole difference between a gate that
+  // catches the class and one that catches the last instance of it.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  const block = /invoice_lines: \{\s*Row: \{([\s\S]*?)\}\s*Insert:/.exec(types);
+  assert.ok(block, "the invoice_lines Row block must be findable in the generated types");
+  const columns = [...block![1].matchAll(/^\s{10}([a-z_]+):/gm)].map((m) => m[1]);
+  assert.ok(columns.length >= 8, `expected the real column list, got: ${columns.join(", ")}`);
+
+  // `id` is identity, never copied: a spread of the source row carries a primary key that exists.
+  // `invoice_id` is the destination, supplied by the caller.
+  const IDENTITY = new Set(["id", "invoice_id"]);
+  // The FUNCTION BODIES, not the file. A negative control caught this gate passing on a column that
+  // had been removed from the spread but still appeared in the interface above it — a mention where
+  // the wiring should be, which is the defect shape this whole file exists to refuse. The bodies
+  // are what runs.
+  const copier = code("src/lib/invoice-line-copy.ts");
+  const bodies = [...copier.matchAll(/export function (?:optionalLineFields|copiedLineFor)[\s\S]*?\n\}/g)]
+    .map((m) => m[0])
+    .join("\n");
+  assert.ok(bodies.length > 200, "the copier's function bodies must be findable, or this gate reads a hole");
+  const missing = columns.filter((c) => !IDENTITY.has(c) && !bodies.includes(c));
+  assert.deepEqual(
+    missing, [],
+    `invoice_lines has columns the copier never carries: ${missing.join(", ")}. ` +
+      "A copy that silently drops one is a document that differs from the one it was copied from.",
+  );
+});
+
+test("[REGEL-KOPIE] the copiers ask the module instead of listing columns themselves", () => {
+  for (const path of [
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+  ]) {
+    const src = code(path);
+    assert.match(src, /copiedLinesFor\(/, `${path} must copy through the shared module`);
+    // And it must not keep a hand-typed list beside it — that is the shape that drifted.
+    assert.doesNotMatch(
+      src, /invoice_lines"\)\.insert\(\s*\n?\s*\w+\.map\(\(l\) => \(\{/,
+      `${path} still types the columns over by hand`,
+    );
+  }
+  // The creditnota mirror keeps its own sign and prefix rules and shares only the column list.
+  const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/);
+  assert.match(credit, /quantity: flip\(line\.quantity\)/, "…and still flips, which a copy must not");
+});
+
+test("[REGEL-KOPIE] a copy is verbatim, and a missing column stays missing", () => {
+  const mod = code("src/lib/invoice-line-copy.ts");
+  // Conditional spreads: a database without the migration returns rows without the key, and
+  // sending it fails the whole INSERT with 42703 — on the creditnota path that is a correction
+  // whose number is already spent and which ends up with no lines at all.
+  for (const col of ["unit", "vat_treatment", "discount_type"]) {
+    assert.ok(
+      new RegExp(`\\.\\.\\.\\(line\\.${col} !== undefined`).test(mod),
+      `${col} must be absent from the copy when it is absent from the source row`,
+    );
+  }
+  assert.doesNotMatch(mod, /\bid:/, "a copy carries content, never the source line's identity");
 });

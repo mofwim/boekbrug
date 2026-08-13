@@ -2,6 +2,8 @@
 // BOEK-003: Invoice Duplicate (POST)
 
 import { NextRequest, NextResponse } from 'next/server'
+// [REGEL-KOPIE] One definition of "the content of an invoice line" — see invoice-line-copy.ts.
+import { copiedLinesFor } from '@/lib/invoice-line-copy'
 import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
@@ -136,30 +138,14 @@ export async function POST(
       // This first had select('*') with a spread, and that was wrong: then the `id` of the
       // ORIGINAL line travels into the INSERT — a primary key that already exists. What has to
       // be copied is the CONTENT of a line, not its identity.
+      // [REGEL-KOPIE] The line's content comes from the one module that knows which columns a
+      // line has. It was typed over by hand here, and [REGEL-KORTING] added discount_type and
+      // discount_value to the creditnota mirror and to both write routes — but not here. The copy
+      // still carried the DISCOUNTED line_total beside the undiscounted price, so it looked right
+      // until it was opened and saved: € 100,00 + € 21,00 where the original said € 90,00 +
+      // € 18,90. See invoice-line-copy.ts for the two columns before it that drifted the same way.
       await supabase.from('invoice_lines').insert(
-        originalLines.map((l) => ({
-          invoice_id: newInvoice.id,
-          description: l.description,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          btw_rate: l.btw_rate,
-          line_total: l.line_total,
-          // A database where invoice_line_unit.sql has not been applied returns rows without
-          // this key; then it is not sent either, and the INSERT stays valid.
-          ...(l.unit !== undefined ? { unit: l.unit ?? null } : {}),
-          // [VRIJGESTELD-KOPIE] En de vrijstellingsvlag reist mee, om precies dezelfde reden als
-          // de eenheid — maar met een duurder gevolg als hij dat niet doet.
-          //
-          // Zonder haar wordt een gekopieerde vrijgestelde regel geclassificeerd als BELASTE omzet
-          // tegen 0%. Bij een creditnota betekent dat dat de correctie het origineel niet opheft:
-          // het origineel blijft +EUR 1.000 vrijgestelde omzet en de creditnota landt als -EUR 1.000
-          // in de 0%/verlegd-rubriek. Twee rubrieken tegelijk fout, en 5a/5b blijven kloppen — dus
-          // geen enkel scherm laat het zien.
-          //
-          // Dezelfde harding als overal waar deze vlag wordt geschreven: alleen de letterlijke
-          // waarde 'exempt' telt. Een onbekende waarde wordt NULL, nooit een vrijstelling.
-          ...(l.vat_treatment !== undefined ? { vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null } : {}),
-        })),
+        copiedLinesFor(originalLines as never, newInvoice.id) as never,
       )
     }
 

@@ -32,6 +32,10 @@
 // is absent from the source row is absent from the copy, which is the behaviour of before the flag
 // existed.
 
+// [REGEL-KOPIE] Which optional columns a line HAS, and the rules for carrying them. Shared with
+// /duplicate and the recurring cron, because that is where the drift happened.
+import { optionalLineFields } from './invoice-line-copy'
+
 /** As much of an invoice line as the mirror reads. The DB row satisfies this. */
 export interface OriginalLine {
   description?: string | null
@@ -94,25 +98,10 @@ export function creditLineFor(
     unit_price: line.unit_price ?? null,
     btw_rate: line.btw_rate ?? null,
     line_total: flip(line.line_total),
-    ...(line.unit !== undefined ? { unit: line.unit ?? null } : {}),
-    // Only the literal value counts. An unknown value becomes NULL, never an exemption.
-    ...(line.vat_treatment !== undefined
-      ? { vat_treatment: line.vat_treatment === 'exempt' ? 'exempt' : null }
-      : {}),
-    // [REGEL-KORTING] The line's own discount travels UNFLIPPED — it is a percentage or an agreed
-    // amount, not a total, so the mirror of "20% off" is "20% off".
-    //
-    // And it is not decoration. line_total above is the NET amount and it HAS been flipped, so a
-    // credit line that arrived without these two would say −10 × € 12,50 = € −100. The e-factuur
-    // recomputes exactly that multiplication (PEPPOL-EN16931-R120) and finds € −125: the file is
-    // refused at the access point and the credit note never reaches the customer, while the PDF
-    // looks perfect. The columns are what make the arithmetic add up again.
-    ...(line.discount_type !== undefined
-      ? {
-          discount_type: line.discount_type ?? null,
-          discount_value: line.discount_type ? (line.discount_value ?? null) : null,
-        }
-      : {}),
+    // [REGEL-KOPIE] The optional columns come from the ONE place that knows which columns a
+    // line has. They drifted three times — unit, vat_treatment, and then the discount pair, which
+    // reached this mirror and not /duplicate or the recurring cron. See invoice-line-copy.ts.
+    ...optionalLineFields(line),
   }
 }
 
