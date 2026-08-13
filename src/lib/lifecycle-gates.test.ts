@@ -8578,3 +8578,40 @@ test("[REGEL-KOPIE] a copy is verbatim, and a missing column stays missing", () 
   }
   assert.doesNotMatch(mod, /\bid:/, "a copy carries content, never the source line's identity");
 });
+
+test("[KAS-SPOOR] the cash drawer's three doors all leave a trail", () => {
+  // The drawer was the only money ledger in this app writing no audit row, and it is the worst one
+  // to leave untraced: the only ledger the owner writes by hand with no bank line and no document
+  // behind it, deleted HARD (cash_entries keeps no reversal row), and gated on — readiness.ts and
+  // /api/btw/file both refuse a filing on a negative drawer. Accusing on a number nobody can trace
+  // is half a gate, and the honest owner had no way to show they were honest either.
+  //
+  // Source-level for the same reason as every other gate here: what is being locked is that the
+  // call is PRESENT at each of the three doors, which no return value can express.
+  const cash = code("src/app/api/cash/route.ts");
+  for (const action of ["cash.entry_added", "cash.entry_removed", "cash.opening_balance_set"]) {
+    assert.match(
+      cash, new RegExp(`action: ['"]${action.replace(".", "\\.")}['"]`),
+      `/api/cash must record ${action} — every other money write in the app does`,
+    );
+  }
+
+  // The removal's trail carries the MOVEMENT, not just the fact of a removal. This is a hard
+  // delete, so this row is the only place that will ever say the line existed; "a cash entry was
+  // removed" without its date and amount answers nothing anyone would ask.
+  const removal = cash.slice(cash.indexOf("cash.entry_removed"));
+  for (const field of ["entry_date", "amount", "category", "description"]) {
+    assert.match(removal, new RegExp(`${field}:`), `the removal trail must carry ${field}`);
+  }
+
+  // …and the float's trail carries what it WAS. This single number shifts every eindsaldo in the
+  // owner's whole history, filed quarters included, and it seeds the witness lowestDrawerPoint
+  // compares against zero — so "set to 2000" with no previous value is not an answer.
+  assert.match(
+    cash, /oldValue:[\s\S]{0,400}?kas_opening_balance/,
+    "the opening-balance trail must record the value it replaced",
+  );
+  // The read that fetches it may fail, and then the row must say so rather than assert €0 — an
+  // audit line claiming a change that never happened is worse than a gap in the trail.
+  assert.match(cash, /previous_value_unknown/, "a failed read of the old float must be admitted, not guessed as 0");
+});

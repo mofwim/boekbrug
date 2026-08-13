@@ -14,6 +14,10 @@ import { amsterdamToday } from "@/lib/format-nl";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { round2 } from "@/lib/invoice-totals";
+// [KAS-SPOOR] The drawer's three write doors were the only money writes in the app that left no
+// audit row — see the block above 'cash.entry_added' in audit.ts for why that is the worst ledger
+// to leave untraced.
+import { logAuditAction, getClientIP } from "@/lib/audit";
 
 // [KAS-SALDO] Never a cached drawer. Every sibling money route declares this (/api/kasboek,
 // /api/readiness, /api/aangifte …) and this one did not. Reading cookies already forces the route
@@ -219,6 +223,29 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ error: "kon kasboeking niet opslaan" }, { status: 500 });
   }
+
+  // [KAS-SPOOR] A cash movement is the only money row in this administration with nothing behind
+  // it — no bank line, no supplier document, no Z-report. What it says is what the owner typed. The
+  // date is recorded as well as the amount because a backdated entry is what moves money between
+  // quarters, and the drawer decides whether a quarter may be filed at all.
+  const created = data as { id?: string; entry_date?: string | null } | null;
+  await logAuditAction({
+    userId: user.id,
+    action: "cash.entry_added",
+    entityType: "cash_entry",
+    entityId: created?.id,
+    newValue: {
+      entry_date: created?.entry_date ?? entryDate ?? null,
+      direction, amount, category,
+      btw_rate: btwRate,
+      document_id: documentId,
+      // The owner's own words, kept: on a hard-deleted ledger the trail has to be able to say WHAT
+      // the line was, not merely that there was one. The invoice routes log their whole payload for
+      // the same reason, and sanitizeForAudit already strips anything secret and caps the size.
+      description: body.description?.trim() || null,
+    },
+    ipAddress: getClientIP(req),
+  });
   return NextResponse.json({ ok: true, entry: data });
 }
 
@@ -238,11 +265,35 @@ export async function PATCH(req: NextRequest) {
   }
   const opening = round2(val);
 
+  // [KAS-SPOOR] Read what it WAS before overwriting it. An audit row saying "set to €2.000" answers
+  // nothing on its own — the whole question about a starting float is what it used to be, because
+  // this single number shifts every eindsaldo in the owner's entire history, including quarters
+  // already filed, and it is the seed lowestDrawerPoint compares against zero. A failed read must
+  // not block the owner from correcting their float, but it must not be recorded as "it was €0"
+  // either: that would be an audit row asserting a change that never happened.
+  const { data: before, error: beforeErr } = await supabase
+    .from("profiles")
+    .select("kas_opening_balance")
+    .eq("id", user.id)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("profiles")
     .update({ kas_opening_balance: opening } as never)
     .eq("id", user.id);
   if (error) return NextResponse.json({ error: "kon beginsaldo niet opslaan" }, { status: 500 });
+
+  await logAuditAction({
+    userId: user.id,
+    action: "cash.opening_balance_set",
+    entityType: "cash_drawer",
+    entityId: user.id,
+    oldValue: beforeErr
+      ? { kas_opening_balance: null, previous_value_unknown: true, read_error: beforeErr.message }
+      : { kas_opening_balance: Number((before as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0 },
+    newValue: { kas_opening_balance: opening },
+    ipAddress: getClientIP(req),
+  });
   return NextResponse.json({ ok: true, openingBalance: opening });
 }
 
@@ -276,9 +327,14 @@ export async function DELETE(req: NextRequest) {
   // sentence below then told the owner to undo a payment on a factuur that does not exist, about a
   // line they could not get out of their cash book by any route. The label is what it LOOKS like;
   // the link is what actually makes it derived.
+  //
+  // [KAS-SPOOR] The whole row is read, not just the two fields the guard needs. This is a HARD
+  // delete — cash_entries keeps no reversal row — so the audit entry below is the only place that
+  // will ever say this movement existed, and a trail that records "a cash entry was removed"
+  // without its date, amount and description cannot answer the question anyone would actually ask.
   const { data: existing, error: readErr } = await supabase
     .from("cash_entries")
-    .select("category, invoice_id")
+    .select("category, invoice_id, entry_date, direction, amount, description, btw_rate, document_id")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -288,7 +344,11 @@ export async function DELETE(req: NextRequest) {
       { status: 500 },
     );
   }
-  const row = existing as { category?: string | null; invoice_id?: string | null } | null;
+  const row = existing as {
+    category?: string | null; invoice_id?: string | null; entry_date?: string | null;
+    direction?: string | null; amount?: number | null; description?: string | null;
+    btw_rate?: number | null; document_id?: string | null;
+  } | null;
   if (row?.category === "betaling" && row.invoice_id) {
     return NextResponse.json(
       {
@@ -308,5 +368,26 @@ export async function DELETE(req: NextRequest) {
     .eq("user_id", user.id);
 
   if (error) return NextResponse.json({ error: "kon boeking niet verwijderen" }, { status: 500 });
+
+  // [KAS-SPOOR] Logged AFTER the delete succeeded, so the trail never claims a removal that was
+  // refused — and only when there was something to remove (a row already gone writes nothing).
+  if (row) {
+    await logAuditAction({
+      userId: user.id,
+      action: "cash.entry_removed",
+      entityType: "cash_entry",
+      entityId: id,
+      oldValue: {
+        entry_date: row.entry_date ?? null,
+        direction: row.direction ?? null,
+        amount: row.amount ?? null,
+        category: row.category ?? null,
+        description: row.description ?? null,
+        btw_rate: row.btw_rate ?? null,
+        document_id: row.document_id ?? null,
+      },
+      ipAddress: getClientIP(req),
+    });
+  }
   return NextResponse.json({ ok: true });
 }
