@@ -107,6 +107,35 @@ console.log("\n— [KAS-DUBBELTELLING] a till-counted cash sale is not counted t
   check("Q2 opens where Q1 closed (carry-in and rows use one rule)", near(carriedThenBuilt.openingBalance, q1.closingBalance));
 }
 
+// ── [KAS-NEGATIEVE-DAG] A day whose till cash is NEGATIVE ─────────────────────────────────────
+// turnover-import keeps the sign of "(1.234,56)" / "-1.234,56" on purpose: a day with more cash
+// refunded than rung up is real. It belongs in Uitgaven, not in Ontvangsten as a negative — the
+// balance was right either way, but the screen hides an `ontvangsten > 0 &&` column and the .xlsx
+// showed money leaving inside the receipts column.
+console.log("\n— [KAS-NEGATIEVE-DAG] a net-refund till day is an uitgave, not a negative receipt —");
+{
+  const kb = buildKasboek({
+    turnover: [{ turnover_date: "2026-02-10", cash_amount: 300 }, { turnover_date: "2026-02-11", cash_amount: -50 }],
+    entries: [], year: 2026, quarter: 1, openingBalance: 0,
+  });
+  const rows = kb.months.find((m) => m.key === "2026-02")!.rows;
+  const refundDay = rows.find((r) => r.date === "2026-02-11")!;
+  check("the refund day books €50 as uitgaven", near(refundDay.uitgaven, 50));
+  check("...and nothing as ontvangsten", near(refundDay.ontvangsten, 0));
+  check("the row shows an amount at all (both columns render only when > 0)", refundDay.uitgaven > 0 || refundDay.ontvangsten > 0);
+  check("the balance is unchanged by the move: 300 − 50", near(kb.closingBalance, 250));
+  const feb = kb.months.find((m) => m.key === "2026-02")!;
+  check("month totals keep receipts and payments apart", near(feb.totalIn, 300) && near(feb.totalOut, 50));
+  // A negative day still counts as "the till counted this day", so a cash 'omzet' entry on it is
+  // the same money and stays suppressed — the rule does not care about the sign.
+  const withEntry = buildKasboek({
+    turnover: [{ turnover_date: "2026-02-11", cash_amount: -50 }],
+    entries: [{ entry_date: "2026-02-11", direction: "in", amount: 50, category: "omzet", description: null }],
+    year: 2026, quarter: 1, openingBalance: 100,
+  });
+  check("a cash 'omzet' entry on a negative till day is still the same money", near(withEntry.closingBalance, 50));
+}
+
 console.log("\n— pure / safe: no P&L notion, only balance —");
 {
   const empty = buildKasboek({ turnover: [], entries: [], year: 2026, quarter: 1, openingBalance: 300 });

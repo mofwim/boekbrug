@@ -198,7 +198,21 @@ export function buildKasboek(args: {
     if (!d || d < start || d > end) continue;
     const cash = Number(t.cash_amount) || 0;
     if (cash === 0) continue;
-    get(d).in += cash;
+    // [KAS-NEGATIEVE-DAG] A day's cash takings CAN be negative, and the import means it: a day with
+    // more cash refunded than rung up is written "(1.234,56)" or "-1.234,56" in the Z-report, and
+    // turnover-import's num() captures that sign on purpose ([L1] there).
+    //
+    // Such a day belongs in Uitgaven, not in Ontvangsten as a negative. The running balance was
+    // right either way — begin + (−50) − 0 is the same money — but the LINE was not, and this is a
+    // ledger, read column by column:
+    //   · on screen the row renders `ontvangsten > 0 &&` and `uitgaven > 0 &&`, so BOTH amounts
+    //     were hidden: the eindsaldo dropped €50 with no figure anywhere on the row saying why;
+    //   · in the .xlsx the accountant opens, "Ontvangsten" held −50 while "Uitgaven" was blank —
+    //     a receipts column with money leaving in it.
+    // A cash administration whose columns disagree with its own balance is the kind of thing an
+    // inspector asks about, and the owner would have had no answer.
+    if (cash > 0) get(d).in += cash;
+    else get(d).out += -cash;
     // (daily takings need no per-line description — it's the day's kassa-omzet)
   }
   for (const e of entries) {

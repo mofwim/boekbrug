@@ -8,8 +8,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { computeTurnoverAnalytics } from "@/lib/turnover-analytics";
 import { parsePosSettlement, type DailyTurnover } from "@/lib/turnover";
+// [TZ] "Which quarter is it now?" is answered on the owner's Amsterdam day — see below.
+import { amsterdamToday } from "@/lib/format-nl";
+
+// [TURNOVER-ANALYTICS] Never a cached quarter. Same reason /api/cash declares it: reading cookies
+// forces this dynamic today, and this is owner-specific money that must not survive a refactor into
+// something a cache may serve.
+export const dynamic = "force-dynamic";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
+
+/**
+ * [TZ] The calendar quarter `now` falls in, on the AMSTERDAM day.
+ *
+ * This route read now.getUTCMonth()/getUTCFullYear() in both of its fallbacks, and quarter.ts's
+ * [TZ] note is about exactly that: between 00:00 and 02:00 Dutch time the UTC date is still
+ * yesterday, so on 1 January 00:30 in Amsterdam a UTC read lands in the previous year's Q4. It is
+ * only a default and it self-corrects an hour later, "which is exactly why it could sit here
+ * unnoticed" — and the panel this feeds is the one place an owner checks whether a quarter's
+ * kassa-omzet is in. Every other date-sensitive surface in the app already pins Europe/Amsterdam.
+ */
+function amsterdamCalendarQuarter(now: Date): { year: number; quarter: 1 | 2 | 3 | 4 } {
+  const iso = amsterdamToday(now);
+  return {
+    year: Number(iso.slice(0, 4)),
+    quarter: (Math.floor((Number(iso.slice(5, 7)) - 1) / 3) + 1) as 1 | 2 | 3 | 4,
+  };
+}
 function shiftDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -28,16 +53,17 @@ export async function GET(req: NextRequest) {
 
   let year: number;
   let quarter: 1 | 2 | 3 | 4;
+  const nowQ = amsterdamCalendarQuarter(now);
   if (explicitYear || explicitQuarter) {
     // The year is RANGE-checked, not merely coerced. `Number(x) || fallback` let ?year=99999 and
     // ?year=-5 straight through, and the quarter bounds below are then built into a malformed
     // date string ("-5-01-01") that Postgres rejects — which, before the error was read, came
     // back as an empty quarter. Same 2000..2100 window the shared quarterFromParams uses.
     const y = Number(explicitYear);
-    year = Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : now.getUTCFullYear();
+    year = Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : nowQ.year;
     quarter = ([1, 2, 3, 4].includes(Number(explicitQuarter))
       ? Number(explicitQuarter)
-      : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+      : nowQ.quarter) as 1 | 2 | 3 | 4;
   } else {
     // [TURNOVER-SHOW] No explicit period → default to the quarter of the owner's MOST RECENT booked
     // day, so "ga naar Dagomzet" actually shows their omzet. Booking Q2 while the calendar is in Q3
@@ -50,9 +76,17 @@ export async function GET(req: NextRequest) {
       .order("turnover_date", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const ref = latest?.turnover_date ? new Date(`${latest.turnover_date}T00:00:00Z`) : now;
-    year = ref.getUTCFullYear();
-    quarter = (Math.floor(ref.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+    // A booked day is an ISO string and carries its own quarter — read it straight off the string
+    // instead of round-tripping through a Date. With nothing booked yet, fall back to the quarter
+    // the owner is actually in, on their day (see amsterdamCalendarQuarter).
+    const booked = latest?.turnover_date;
+    if (booked) {
+      year = Number(booked.slice(0, 4));
+      quarter = (Math.floor((Number(booked.slice(5, 7)) - 1) / 3) + 1) as 1 | 2 | 3 | 4;
+    } else {
+      year = nowQ.year;
+      quarter = nowQ.quarter;
+    }
   }
 
   const startMonth = (quarter - 1) * 3;

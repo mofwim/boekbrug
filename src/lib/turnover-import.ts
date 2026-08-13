@@ -381,13 +381,21 @@ export function normalizeTurnoverSheet(
   // [DATE-WINDOW] Name any day that cannot exist BEFORE the owner approves. The commit route
   // refuses them outright; showing them here means the refusal is never a surprise, and the
   // owner sees which cell to fix rather than a rejected file.
+  //
+  // The sentence says what the route actually DOES, which it did not: "deze dag wordt niet
+  // opgeslagen" describes a partial import — one day dropped, the rest booked — and the route has
+  // no such mode. It refuses the whole payload ("Er is niets opgeslagen"), on purpose: a
+  // half-imported month is worse than an unimported one because nobody can tell which half is in.
+  // So the owner read that one day would be skipped, pressed Goedkeuren, and got a hard failure
+  // over a file they had just been told was fine apart from one row. Two surfaces, one refusal,
+  // one sentence.
   const today = opts?.today ?? amsterdamToday();
   for (const dt of rows) {
     if (turnoverDateOutOfWindow(dt.turnover_date, today)) {
       warnings.push({
         row: 0,
         code: "date_out_of_window",
-        message: `${dt.turnover_date}: deze datum kan niet kloppen (een omzetdag ligt niet in de toekomst). Controleer het jaartal in je Z-rapport — deze dag wordt niet opgeslagen.`,
+        message: `${dt.turnover_date}: deze datum kan niet kloppen (een omzetdag ligt niet in de toekomst). Controleer het jaartal in je Z-rapport en importeer opnieuw — zolang deze datum erin staat, wordt het hele bestand niet opgeslagen.`,
       });
     }
   }
