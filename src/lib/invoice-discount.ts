@@ -38,6 +38,12 @@ export interface DiscountLine {
   quantity?: number | null;
   unit_price?: number | null;
   btw_rate?: number | null;
+  // [REGEL-KORTING] The line's OWN discount. Only read when line_total is absent — see lineEx.
+  // The value is `number | string` because the editor holds RAW input: a half-typed "12," must
+  // stay half-typed rather than snap to zero under the owner's fingers. parseDiscount reads both,
+  // so the screen and the stored row go through one definition instead of two.
+  discount_type?: string | null;
+  discount_value?: number | string | null;
 }
 
 /** What the discount takes off one BTW rate group. */
@@ -61,8 +67,69 @@ export interface DiscountedTotals {
 
 const MAX_PERCENT = 100;
 
+/**
+ * [REGEL-KORTING] What one line is worth BEFORE its own discount: quantity × price.
+ *
+ * Rounded, because this is the number the discount is computed over and the number the PDF prints
+ * as the line's base. An unrounded base would put a fraction of a cent into the allowance and from
+ * there into a UBL file that has to add up exactly (BR-CO-10).
+ */
+export function lineGrossEx(l: DiscountLine): number {
+  return round2((Number(l.quantity) || 0) * (Number(l.unit_price) || 0));
+}
+
+/**
+ * [REGEL-KORTING] What a line's own discount takes off it. Signed, and never more than the line.
+ *
+ * The same shape as the document discount one level down, and deliberately the same arithmetic:
+ * a percentage of the magnitude, or a fixed amount, capped at the line and carrying the line's
+ * sign. A credit line (negative quantity — see negative-line.ts) therefore mirrors its discount
+ * exactly like a creditnota mirrors the document's, which is what lets a credit note reproduce
+ * the invoice it reverses line for line.
+ *
+ * Returns 0 for no discount, so a caller can subtract unconditionally.
+ */
+export function lineDiscountEx(grossEx: number, discount: Discount | null): number {
+  const gross = round2(grossEx);
+  if (!discount || gross === 0) return 0;
+  const sign = gross < 0 ? -1 : 1;
+  const magnitude = Math.abs(gross);
+  const wanted = discount.type === "percent"
+    ? round2((magnitude * discount.value) / 100)
+    : round2(discount.value);
+  // Capped at the line, never through it. A EUR 80 discount on a EUR 50 line is a typo, and
+  // letting it turn the line negative would invent a credit inside a delivery — a different
+  // document (negative-line.ts) reached by arithmetic nobody asked for.
+  return round2(sign * Math.min(wanted, magnitude));
+}
+
+/**
+ * [REGEL-KORTING] What a line is worth after its own discount — the amount that gets STORED.
+ *
+ * Both operands are already rounded to cents, so the subtraction is exact and the stored line
+ * total is reproducible from the three fields beside it. That exactness is what the e-factuur
+ * needs: PEPPOL-EN16931-R120 recomputes quantity × price − allowance and compares it to the line
+ * amount, and a rounding done in the wrong order is a rejected file.
+ */
+export function lineNetEx(l: DiscountLine): number {
+  const gross = lineGrossEx(l);
+  return round2(gross - lineDiscountEx(gross, parseDiscount(l.discount_type, l.discount_value)));
+}
+
+/**
+ * The excl.-BTW amount of one line, as every summation here reads it.
+ *
+ * WHEN line_total IS PRESENT IT IS ALREADY NET. That is the whole contract of
+ * invoice_line_discount.sql: the stored column carries the amount after the line's own discount,
+ * so a reader that knows nothing about the discount columns still sums the right money. Subtracting
+ * the discount again here would take it off twice — an invoice that undercharges, silently, on
+ * exactly the lines that were meant to be cheaper.
+ *
+ * The fallback is the only place the discount is applied, because there the amount is being
+ * computed from quantity × price and nothing has taken it off yet.
+ */
 function lineEx(l: DiscountLine): number {
-  return typeof l.line_total === "number" ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+  return typeof l.line_total === "number" ? l.line_total : lineNetEx(l);
 }
 
 /**

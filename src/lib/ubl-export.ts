@@ -101,6 +101,19 @@ export interface UblInvoiceLine {
    * column has not been added yet, which then behaves exactly as before.
    */
   vat_treatment?: string | null;
+  /**
+   * [REGEL-KORTING] De korting op DEZE regel. `line_total` hierboven is er al mee verlaagd — dat
+   * is de afspraak van de kolom — dus deze twee veranderen geen enkel bedrag in dit bestand. Wat
+   * ze doen is het VERSCHIL verklaren: zonder hen zou de e-factuur een stuksprijs moeten
+   * verzinnen die het verlaagde regelbedrag oplevert, en dan staat er een prijs op die de
+   * ondernemer nooit heeft afgesproken. Met hen staat er wat er is: de prijs, en de korting
+   * eronder (EN 16931 BG-27).
+   *
+   * Optioneel, en afwezig op een installatie waar invoice_line_discount.sql nog open staat: het
+   * bestand is dan precies wat het altijd was.
+   */
+  discount_type?: string | null;
+  discount_value?: number | null;
 }
 
 // ─── Errors (stable codes — UI/route maps to Dutch copy) ───────────────────────
@@ -681,6 +694,43 @@ export function buildInvoiceUbl(
     const stuksprijs = Math.abs(storedPrice);
     line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
+
+    // [REGEL-KORTING] Wat de regel kostte VOORDAT haar eigen korting eraf ging.
+    //
+    // Gerekend met de volle opgeslagen prijs, niet met de afgeronde stuksprijs hieronder: dit is
+    // het bedrag dat de schrijfroute als bruto hanteerde, en de korting moet het verschil met het
+    // opgeslagen regeltotaal exact overbruggen. Zonder korting is dit letterlijk `ex` en verandert
+    // er niets aan het bestand dat deze factuur altijd al opleverde.
+    const brutoRegel = round2(aantal * Math.abs(Number(l.unit_price ?? 0)));
+    const regelKorting = parseDiscount(l.discount_type, l.discount_value);
+    // Afgeleid uit de OPGESLAGEN getallen, niet opnieuw uitgerekend uit het percentage. Wijkt een
+    // oude rij een cent af, dan telt dit bestand nog steeds op — en optellen is hier geen
+    // schoonheid maar de voorwaarde om afgeleverd te worden (PEPPOL-EN16931-R120 rekent
+    // aantal × prijs − korting na en vergelijkt het met het regelbedrag).
+    const kortingBedrag = regelKorting ? round2(brutoRegel - ex) : 0;
+
+    if (kortingBedrag !== 0) {
+      // BG-27, en de plek is niet vrij: in UBL 2.1 staat cac:AllowanceCharge NA
+      // LineExtensionAmount en VÓÓR cac:Item. Op een andere plek is het bestand niet
+      // schemavalide en komt het niet door de eerste poort heen.
+      //
+      // Géén cac:TaxCategory hier, anders dan bij de documentkorting: een regelkorting erft het
+      // tarief van de regel waar hij op staat (ClassifiedTaxCategory hieronder). EN 16931 kent
+      // BG-27 dan ook geen eigen btw-categorie toe.
+      const ac = line.ele(NS.cac, "AllowanceCharge");
+      ac.ele(NS.cbc, "ChargeIndicator").txt("false"); // false = korting, true = toeslag
+      ac.ele(NS.cbc, "AllowanceChargeReason").txt("Korting");
+      if (regelKorting?.type === "percent") {
+        // BT-138. Alleen bij een percentage: bij een vast bedrag zou elk getal hier een
+        // percentage suggereren dat niemand heeft afgesproken.
+        ac.ele(NS.cbc, "MultiplierFactorNumeric").txt(String(regelKorting.value));
+      }
+      ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(kortingBedrag));
+      // BT-137 — waar de korting overheen gaat. Samen met Amount is de regel naleesbaar zonder
+      // dat iemand hem hoeft terug te rekenen.
+      ac.ele(NS.cbc, "BaseAmount", { currencyID: EUR }).txt(money(round2(ex + kortingBedrag)));
+    }
+
     const item = line.ele(NS.cac, "Item");
     const desc = l.description?.trim() || "Artikel";
     item.ele(NS.cbc, "Description").txt(desc);
@@ -724,11 +774,31 @@ export function buildInvoiceUbl(
     // magnitudes: the sign is already in InvoicedQuantity, and (quantity ÷ BaseQuantity) × price
     // hands the signed line total back. PEPPOL-EN16931-R121 also requires BaseQuantity itself to
     // be a positive number, which is the same abs().
+    //
+    // [REGEL-KORTING] De vermenigvuldiging die de validator narekent gaat over het BRUTObedrag.
+    //
+    // R120 luidt voluit: regelbedrag = aantal × prijs ÷ basisaantal + toeslagen − kortingen. De
+    // korting staat hierboven als AllowanceCharge, dus de prijs moet het bedrag VÓÓR die korting
+    // opleveren — en dat is precies de prijs die de ondernemer met zijn klant afsprak. De vorige
+    // versie vergeleek met `ex` (nu het NETTO bedrag), en dat zou op elke gekorte regel de
+    // uitwijkvorm hieronder hebben gekozen: een verzonnen stuksprijs die het verlaagde bedrag
+    // oplevert, met de korting er nog eens naast. Twee keer korting in één regel, en een prijs op
+    // de e-factuur die nergens is overeengekomen.
+    //
+    // Het bedrag dat de prijs moet OPLEVEREN is dus het regelbedrag plus de korting die we
+    // hierboven al apart hebben gezet — niet het bruto dat uit aantal × prijs volgt. Dat verschil
+    // is het vangnet: is er een regel waarvan het opgeslagen totaal om wat voor reden dan ook niet
+    // gelijk is aan aantal × prijs, en staat er GEEN korting bij die het verklaart, dan valt hij
+    // hieronder terug op de vorm die per definitie klopt. Zo bleef dit bestand altijd al
+    // aflevernaar, en dat mag een nieuwe kolom niet ongedaan maken.
+    //
+    // Zonder korting is dit letterlijk `ex` en staat hier exact de test die er altijd stond.
+    const teReproduceren = round2(ex + kortingBedrag);
     const price = line.ele(NS.cac, "Price");
-    if (round2(aantal * stuksprijs) === ex) {
+    if (round2(aantal * stuksprijs) === teReproduceren) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
-      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(ex)));
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(teReproduceren)));
       // Zelfde eenheidscode als InvoicedQuantity — anders vergelijkt de validator appels met peren.
       price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Math.abs(aantal)));
     }

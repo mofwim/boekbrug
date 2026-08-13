@@ -47,8 +47,12 @@ const INVOICE_SELECT =
 // een vrijgestelde regel (art. 11 Wet OB) te herkennen is, en zonder die vlag exporteert de UBL
 // hem als categorie Z — een 0%-BELASTE levering. Dat is een ander juridisch feit dan vrijgesteld,
 // en het is precies het feit dat de ontvanger anders moet boeken.
+// [REGEL-KORTING] En de twee kortingskolommen reizen in diezelfde optionele groep mee. Ze
+// veranderen geen bedrag — line_total is al netto — maar zonder hen kan de export het verschil
+// tussen de afgesproken prijs en het regelbedrag niet verklaren, en moet hij een stuksprijs
+// afdrukken die niemand heeft afgesproken.
 const LINES_SELECT =
-  "description, quantity, unit_price, btw_rate, line_total, unit, vat_treatment" as const;
+  "description, quantity, unit_price, btw_rate, line_total, unit, vat_treatment, discount_type, discount_value" as const;
 const LINES_SELECT_ZONDER_EENHEID =
   "description, quantity, unit_price, btw_rate, line_total" as const;
 

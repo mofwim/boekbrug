@@ -112,3 +112,52 @@ test("[CREDIT-SIGN] the whole set keeps its order and its identity", () => {
   assert.deepEqual(out.map((l) => l.line_total), [-10, -40]);
   assert.ok(out.every((l) => l.invoice_id === CN));
 });
+
+// ─── [REGEL-KORTING] The discount has to come along ───────────────────────────
+
+test("[REGEL-KORTING] the line's own discount travels unflipped", () => {
+  // A percentage is not a total: the mirror of "20% off" is "20% off", not "-20% off".
+  const [out] = creditLinesFor(
+    [{ description: "Aanbieding", quantity: 10, unit_price: 12.5, btw_rate: 21, line_total: 100,
+       discount_type: "percent", discount_value: 20 }],
+    CN,
+  );
+  assert.equal(out.quantity, -10);
+  assert.equal(out.line_total, -100, "the NET amount is what flips");
+  assert.equal(out.unit_price, 12.5, "the price is a price — BR-27");
+  assert.equal(out.discount_type, "percent");
+  assert.equal(out.discount_value, 20);
+});
+
+test("[REGEL-KORTING] without the discount the credit note's e-factuur would not add up", () => {
+  // This is why the columns are carried rather than dropped as decoration. line_total is NET and
+  // it HAS been flipped, so a credit line without them says -10 x EUR 12,50 = EUR -100. The
+  // receiving access point redoes exactly that multiplication (PEPPOL-EN16931-R120), gets -125,
+  // and refuses the file — while the PDF looks perfect.
+  const [out] = creditLinesFor(
+    [{ description: "Aanbieding", quantity: 10, unit_price: 12.5, btw_rate: 21, line_total: 100,
+       discount_type: "percent", discount_value: 20 }],
+    CN,
+  );
+  const bruto = Number(out.quantity) * Number(out.unit_price);
+  assert.notEqual(bruto, out.line_total, "gross and net differ — something must explain the gap");
+  assert.ok(out.discount_type, "…and that something is on the line");
+});
+
+test("[REGEL-KORTING] a source row without the columns produces a copy without them", () => {
+  // Same rule as `unit` and the exemption flag: a column the database does not have must not
+  // appear in the INSERT, or the creditnota loses its lines after its number is already spent.
+  const [out] = creditLinesFor([{ description: "Werk", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100 }], CN);
+  assert.ok(!("discount_type" in out), "absent from the source is absent from the copy");
+  assert.ok(!("discount_value" in out));
+});
+
+test("[REGEL-KORTING] a value without a type is not a discount", () => {
+  const [out] = creditLinesFor(
+    [{ description: "Werk", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100,
+       discount_type: null, discount_value: 20 }],
+    CN,
+  );
+  assert.equal(out.discount_type, null);
+  assert.equal(out.discount_value, null, "a stray value must not become a discount on the copy");
+});

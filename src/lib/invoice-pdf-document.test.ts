@@ -490,3 +490,63 @@ test("[MIN-REGEL] the same invoice without the credit line is 71,85 more expensi
   assert.ok(!text.includes("€ 101,18"), "…which is not the netted total");
   assert.ok(!text.includes("Knoopzakken HDPE"), "and the credit line is genuinely gone from this one");
 });
+
+// ─── [REGEL-KORTING] The discount the customer has to be able to check ────────
+
+test("[REGEL-KORTING] a discounted line names its discount and still adds up on paper", async () => {
+  // The whole point of printing it: a customer who multiplies the column has to arrive at the
+  // amount beside it. 10 x EUR 12,50 = 125, minus 20% = 100 — with nothing on the page saying so,
+  // that line reads as an arithmetic error on a document the customer keeps.
+  const text = await pdfText(await renderInvoicePdf(
+    { ...QUOTE, invoice_type: "factuur", invoice_number: "20260099",
+      total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121 },
+    [{ description: "Aanbieding", quantity: 10, unit_price: 12.5, btw_rate: 21, line_total: 100,
+       discount_type: "percent", discount_value: 20 }],
+    PROFILE,
+  ));
+  assert.ok(text.includes("Korting (20%)"), "the discount is named, with the percentage agreed");
+  assert.ok(text.includes("€ 25,00"), "…and with the amount it took off");
+  assert.ok(text.includes("€ 12,50"), "the price column shows the AGREED price, not a derived one");
+  assert.ok(text.includes("€ 100,00"), "and the line total is the net amount");
+});
+
+test("[REGEL-KORTING] a discount leaves the printed unit price untouched", async () => {
+  // unitPriceDecimals hunts for the precision at which quantity x price equals the amount it is
+  // handed. Hand it the NET total of a discounted line and NO precision reconciles, so it prints
+  // the maximum six — a unit price nobody agreed, on the document the customer keeps. It has to be
+  // handed the GROSS, because that is the amount the price column belongs to; the discount row
+  // below the description accounts for the rest.
+  //
+  // This fixture is the one that made the rule: prices typed INCLUSIVE of 9% btw, so the ex-price
+  // is a long fraction and the column already needs five decimals to reconcile at all.
+  const geenKorting = await pdfText(await renderInvoicePdf(
+    { ...QUOTE, invoice_type: "factuur", invoice_number: "20260100",
+      total_ex_btw: 123.85, btw_amount: 11.15, total_inc_btw: 135 },
+    [{ description: "Worstjes", quantity: 150, unit_price: 0.9 / 1.09, btw_rate: 9, line_total: 123.85 }],
+    PROFILE,
+  ));
+  // 123,85 gross, minus 10% (12,39) = 111,46 net — the amount the route stores.
+  const metKorting = await pdfText(await renderInvoicePdf(
+    { ...QUOTE, invoice_type: "factuur", invoice_number: "20260100",
+      total_ex_btw: 111.46, btw_amount: 10.03, total_inc_btw: 121.49 },
+    [{ description: "Worstjes", quantity: 150, unit_price: 0.9 / 1.09, btw_rate: 9, line_total: 111.46,
+       discount_type: "percent", discount_value: 10 }],
+    PROFILE,
+  ));
+  const prijs = geenKorting.match(/€ 0,\d+/)![0];
+  assert.equal(prijs, "€ 0,82569", "the column already needs five decimals to reconcile with 123,85");
+  assert.ok(metKorting.includes(prijs), "the SAME price after a discount — a discount is not a new price");
+  assert.ok(metKorting.includes("Korting (10%)") && metKorting.includes("€ 12,39"),
+    "and the difference is spelled out instead of hidden in the price");
+});
+
+test("[REGEL-KORTING] an invoice without a discount prints exactly what it always printed", async () => {
+  const zonder = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  const metNulls = await pdfText(await renderInvoicePdf(
+    QUOTE,
+    LINES.map((l) => ({ ...l, discount_type: null, discount_value: null })),
+    PROFILE,
+  ));
+  assert.equal(metNulls, zonder);
+  assert.ok(!zonder.includes("Korting"), "no discount, no discount row anywhere on the page");
+});

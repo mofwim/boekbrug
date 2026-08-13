@@ -2741,11 +2741,25 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
 // rounds per line. Two routes to one document with two totals.
 test("[REGEL-AFRONDING] the draft route rounds line_total, like the PUT route does", () => {
   const draft = code("src/app/api/invoice/draft/route.ts");
-  assert.match(
-    draft,
-    /line_total: round2\(/,
-    "the draft route must round line_total — an unrounded value is stored verbatim and the document stops adding up",
-  );
+  // [REGEL-KORTING] The rounding moved INSIDE lineNetEx, which is now the one definition of what a
+  // line is worth — quantity x price, minus the line's own discount, rounded once. The property the
+  // gate is here for is unchanged and now stronger: the amount is not computed inline at all, so
+  // there is no second expression that could round differently. Every writer calls this function.
+  for (const [path, src] of [
+    ["src/app/api/invoice/draft/route.ts", draft],
+    ["src/app/api/invoice/[id]/route.ts", code("src/app/api/invoice/[id]/route.ts")],
+  ] as const) {
+    assert.match(
+      src,
+      /line_total: lineNetEx\(/,
+      `${path} must take line_total from lineNetEx — an unrounded value is stored verbatim and the document stops adding up`,
+    );
+    assert.doesNotMatch(
+      src,
+      /line_total: (?!lineNetEx)[^,\n]*quantity \* [^,\n]*unit_price/,
+      `${path} is computing a line total inline again — that is the second opinion this gate exists to prevent`,
+    );
+  }
 });
 
 // ── [CI-PARITEIT] CI must run the gates it claims to run ─────────────────────
@@ -4085,11 +4099,15 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
 test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STORED, never raw", () => {
   const totals = code("src/lib/draft-totals.ts");
 
+  // [REGEL-KORTING] One function, called by all of them: lineNetEx. It IS round2(quantity x price)
+  // when there is no discount, and it is the discounted amount when there is — and the create route
+  // inserts exactly what it returns. Pinning the shared call is a stronger version of pinning the
+  // shared expression: two copies of one formula can drift, one function cannot.
   assert.match(
     totals,
-    /line_total: round2\(sign \* l\.quantity \* l\.unit_price\),/,
-    "computeDraftTotals must build its lines with the SAME expression the create route inserts — " +
-      "round2(sign * quantity * unit_price). Anything else is a second opinion about one number",
+    /line_total: lineNetEx\(\{ quantity: sign \* l\.quantity/,
+    "computeDraftTotals must build its lines with the SAME function the create route inserts — " +
+      "lineNetEx. Anything else is a second opinion about one number",
   );
   // The two raw reducers that used to be the whole function. Paired with the match above, so a
   // file that somehow read empty cannot make this pass vacuously.
@@ -4114,9 +4132,16 @@ test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STOR
     const page = code(path);
     assert.match(
       page,
-      /line_total: round2\(l\.quantity \* l\.unit_price\), btw_rate: l\.btw_rate/,
-      `${path} must total the rounded line amounts — unrounded, this screen showed EUR 395,00 ` +
-        "while EUR 394,99 was stored",
+      /line_total: regelNetto\(l\), btw_rate: l\.btw_rate/,
+      `${path} must total the same amounts the server stores — unrounded, this screen showed ` +
+        "EUR 395,00 while EUR 394,99 was stored",
+    );
+    // …and `regelNetto` must be the shared function, not a local re-derivation of it.
+    assert.match(
+      page,
+      /const regelNetto = \(l: InvoiceLine\) => lineNetEx\(\{/,
+      `${path} must define regelNetto as lineNetEx — a screen that re-implements the line amount ` +
+        "is how the concept and the issued invoice come apart by a cent",
     );
     assert.doesNotMatch(
       page,
@@ -4131,8 +4156,9 @@ test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STOR
   const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
   assert.match(
     nieuw,
-    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\)/,
-    "the on-screen BTW-per-rate breakdown must use the rounded line amounts too",
+    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ regelNetto\(l\)/,
+    "the on-screen BTW-per-rate breakdown must use the same line amounts the total does — beside " +
+      "each other on one card, two different answers about one invoice",
   );
   // [KORTING] And it must subtract the korting that applyDiscount assigned to each rate. This
   // assertion used to pin a one-liner that summed `round2(line) * rate/100` straight into
@@ -4440,7 +4466,11 @@ test("[PRIJS-KOLOM] the PDF and the screen format a unit price the same way", ()
     assert.match(src, importLine, `${path} must take the price column from the shared module`);
     assert.match(
       src,
-      /formatUnitPriceNL\(line\.unit_price, line\.quantity, line(Total|\.line_total)\)/,
+      // [REGEL-KORTING] The PDF passes `prijsBasis`: the line total, or the GROSS amount when the
+      // line carries its own discount. Handing it the discounted total would send
+      // unitPriceDecimals hunting for a precision that reconciles with an amount the price does
+      // not belong to — six decimals of a unit price nobody agreed.
+      /formatUnitPriceNL\(line\.unit_price, line\.quantity, (prijsBasis|line(Total|\.line_total))\)/,
       `${path} must pass the quantity AND the line total — the needed precision depends on both, ` +
         "so a formatter given only the price cannot know how many decimals make the row true",
     );
@@ -5989,8 +6019,19 @@ test("[PRIJSVELD-CENT] the price field is told the quantity, so it can show enou
   // The edit screen must also READ the stored line total — it is the number the field has to
   // reconcile with, and it was not in the select at all.
   const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
-  assert.match(edit, /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total'\)/);
-  assert.match(edit, /priceFieldValue\([^)]*line_total/, "…and pass it to the field");
+  // [REGEL-KORTING] The column list became `*`, and that is the point rather than a shortcut: this
+  // screen PUTs back what it READS, and a name in the list that the database does not have makes
+  // the query fail silently — linesData is null, the screen keeps its one empty starter line, and
+  // Saving replaces every real line with it. A list that can be wrong sits one typo away from
+  // emptying an invoice. Reading everything cannot be wrong, and a column added later travels free.
+  assert.match(edit, /\.select\('\*'\)/,
+    "the edit screen must read the whole line row — a partial list is how a column falls off and a " +
+      "wrong name empties the invoice");
+  assert.match(edit, /priceFieldValue\([^;]{0,240}?line_total/, "…and pass the stored total to the field");
+  // And the field must reconcile against the GROSS on a discounted line, for the same reason the
+  // PDF does: the net total is not the amount this price belongs to.
+  assert.match(edit, /line\.discount_type \? lineGrossEx\(line\)/,
+    "a discounted line must hand the price field its gross amount");
 
   // step="0.01" makes the BROWSER refuse a third decimal, whatever the value says.
   assert.doesNotMatch(edit, /type="number" value=\{priceFieldValue[\s\S]{0,200}?step="0\.01"/,
@@ -6509,6 +6550,14 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
       file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines", must: ".insert(",
       why: "inserts lines against factuur.id, the invoice this same request just created; the id " +
         "is never attacker-supplied",
+    },
+    {
+      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines",
+      must: ".delete().eq('invoice_id', factuur.id)",
+      why: "[REGEL-KORTING] the rollback of that same insert, against that same just-created id. " +
+        "It runs when a line discount was asked for on a database where the columns do not exist " +
+        "yet: the lines are removed and the invoice with them, rather than leaving a total whose " +
+        "reason is gone. The id is this request's own and is never attacker-supplied",
     },
     {
       file: "src/app/api/pay/[token]/route.ts", table: "invoices", must: ".in(",
@@ -7878,9 +7927,15 @@ test("[MIN-REGEL] the e-factuur can never carry a negative price", () => {
   assert.match(ubl, /const stuksprijs = Math\.abs\(storedPrice\)/, "…leaving the price a magnitude");
   assert.match(ubl, /"InvoicedQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(aantal\)\)/,
     "the emitted quantity must be the normalized one, or the two fields disagree");
-  // The fallback branch: PriceAmount = the line total, which on a credit line is negative.
-  assert.match(ubl, /"PriceAmount", \{ currencyID: EUR \}\)\.txt\(money\(Math\.abs\(ex\)\)\)/,
+  // The fallback branch: PriceAmount is expressed per LINE, and on a credit line that amount is
+  // negative. [REGEL-KORTING] renamed what it reproduces — `ex` is the net line total, and the
+  // per-line price has to reproduce the amount BEFORE the allowance that is now emitted beside it
+  // — but the rule this gate is here for is untouched: whatever goes in that element is an abs().
+  assert.match(ubl, /"PriceAmount", \{ currencyID: EUR \}\)\.txt\(money\(Math\.abs\(teReproduceren\)\)\)/,
     "the per-line price form must be a magnitude too");
+  assert.match(ubl, /const teReproduceren = round2\(ex \+ kortingBedrag\)/,
+    "…and it must reproduce the line amount plus whatever the allowance took off, or " +
+      "PEPPOL-EN16931-R120 fails and the file is refused");
   assert.match(ubl, /"BaseQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(Math\.abs\(aantal\)\)\)/,
     "PEPPOL-EN16931-R121: the base quantity must be a positive number");
 
@@ -8014,4 +8069,125 @@ test("[CREDIT-SIGN] a creditnota without lines can still be sent as an e-factuur
   assert.match(spec, /a creditnota with no lines is exportable/, "proven by a document");
   assert.match(spec, /a factuur without lines is synthesized exactly as it always was/,
     "…and the case that already worked must be untouched");
+});
+
+// ─── [REGEL-KORTING] A discount that belongs to ONE line ──────────────────────
+//
+// The invariant the whole feature rests on is a STORAGE CONTRACT: invoice_lines.line_total holds
+// the NET amount — quantity x price minus the line's own discount. It is chosen deliberately as
+// the direction in which a mistake costs nothing: a reader that never learns the two new columns
+// sums line_total and gets the right money. The other direction (store gross, let readers
+// subtract) means every reader that misses them overcharges the customer on a numbered document.
+//
+// Two ways that contract can break silently, and neither shows on any screen:
+//   · subtract the discount AGAIN somewhere that already reads line_total → the customer is
+//     undercharged, on exactly the lines that were meant to be cheaper;
+//   · write the GROSS into line_total → the customer is overcharged and the discount is a lie.
+test("[REGEL-KORTING] the stored line total is net, and is never discounted twice", () => {
+  const discount = code("src/lib/invoice-discount.ts");
+
+  // One definition of what a line is worth. negative-line.ts had its own copy of this expression —
+  // identical until a line could carry a discount, and it is the module that decides whether a
+  // document is a factuur or a creditnota, so the cheaper definition would have won that argument
+  // by accident.
+  assert.match(discount, /export function lineNetEx\(l: DiscountLine\): number \{/,
+    "the line amount has one home");
+  assert.match(code("src/lib/negative-line.ts"), /import \{ lineNetEx \} from '\.\/invoice-discount'/,
+    "negative-line must USE it rather than keep a second copy");
+
+  // The double-subtraction guard, in the one function every summation goes through.
+  assert.match(
+    discount,
+    /function lineEx\(l: DiscountLine\): number \{\s*return typeof l\.line_total === "number" \? l\.line_total : lineNetEx\(l\);/,
+    "a stored line_total is taken AS IS — it is already net, and taking the discount off it again " +
+      "undercharges the customer on precisely the discounted lines",
+  );
+
+  // And the cap, which is what keeps a typo from inventing a credit inside a delivery.
+  assert.match(discount, /Math\.min\(wanted, magnitude\)/,
+    "a discount larger than the line is capped at the line, never turned into a negative line");
+});
+
+test("[REGEL-KORTING] the migration exists and constrains what may be stored", () => {
+  const path = "supabase/migrations/invoice_line_discount.sql";
+  assert.ok(existsSync(path), `${path} must exist — the columns are what make the discount reproducible`);
+  const sql = readFileSync(path, "utf8");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS discount_type text/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS discount_value numeric/);
+  assert.match(sql, /discount_type IN \('percent', 'amount'\)/,
+    "a third spelling would be accepted by a route and guessed at by every reader");
+  assert.match(sql, /discount_value > 0/, "zero is not a discount — it would print 'Korting 0%' on a customer's invoice");
+  assert.match(sql, /discount_value <= 100/, "over 100% is not a big discount, it is a negative line with a friendly word in front");
+});
+
+test("[REGEL-KORTING] the e-factuur explains the difference instead of inventing a price", () => {
+  const ubl = code("src/lib/ubl-export.ts");
+  // BG-27. The placement is not free: UBL 2.1 puts cac:AllowanceCharge after LineExtensionAmount
+  // and before cac:Item, and elsewhere the file is not schema-valid — refused before any business
+  // rule is even reached.
+  // Anchored on CODE, not on a comment: code() strips comments, so a comment anchor silently
+  // becomes -1 and every assertion below it passes against the wrong slice of the file.
+  const lineLoopAt = ubl.indexOf("effLines.forEach(");
+  assert.ok(lineLoopAt > 0, "the InvoiceLine loop must be findable");
+  const lineBlock = ubl.slice(lineLoopAt);
+  const allowanceAt = lineBlock.indexOf('line.ele(NS.cac, "AllowanceCharge")');
+  const itemAt = lineBlock.indexOf('const item = line.ele(NS.cac, "Item")');
+  const amountAt = lineBlock.indexOf('"LineExtensionAmount"');
+  assert.ok(allowanceAt > 0, "a line-level allowance must be emitted at all");
+  assert.ok(allowanceAt > amountAt, "…after LineExtensionAmount");
+  assert.ok(allowanceAt < itemAt, "…and before Item");
+
+  // A line allowance inherits the line's tax category; EN 16931 gives BG-27 none of its own, and
+  // the document-level allowance right above DOES carry one — so the two must not be copied from
+  // each other by a later hand.
+  const allowanceBlock = lineBlock.slice(allowanceAt, itemAt);
+  assert.doesNotMatch(allowanceBlock, /TaxCategory/,
+    "a line allowance must not carry a tax category of its own");
+  assert.match(allowanceBlock, /MultiplierFactorNumeric/,
+    "a percentage discount states its percentage (BT-138)");
+  assert.match(allowanceBlock, /BaseAmount/, "…and what it came off (BT-137)");
+});
+
+test("[REGEL-KORTING] a creditnota reproduces the invoice it reverses, discount included", () => {
+  const credit = code("src/lib/creditnota-lines.ts");
+  // Not decoration. line_total is net and HAS been flipped, so a credit line without these two
+  // says -10 x EUR 12,50 = EUR -100; the access point redoes that multiplication
+  // (PEPPOL-EN16931-R120), finds -125, and refuses the file while the PDF looks perfect.
+  assert.match(credit, /discount_type: line\.discount_type \?\? null/,
+    "the discount travels to the credit note");
+  assert.match(credit, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
+    "…and a value without a type is not a discount");
+  // Conditional, like `unit` and the exemption flag: a column the database does not have must not
+  // appear in the INSERT, or the creditnota loses its lines after its number is already spent.
+  assert.match(credit, /\.\.\.\(line\.discount_type !== undefined/,
+    "absent from the source row means absent from the copy");
+});
+
+test("[REGEL-KORTING] a discount the app will not honour is refused, never dropped", () => {
+  // Dropping it silently issues the invoice at the FULL price while the owner believes they gave a
+  // discount — the surprise lands on a numbered document that cannot be taken back.
+  const totals = code("src/lib/draft-totals.ts");
+  assert.match(totals, /const wantsDiscount = filled\(row\.discount_type\) \|\| filled\(row\.discount_value\)/,
+    "a half-filled discount has to be recognised as an attempt");
+  assert.match(totals, /if \(wantsDiscount && !discount\) \{/, "…and refused");
+  assert.match(totals, /field: "discount_value"/, "…on the field the owner can fix");
+  // Clearing one is an ordinary edit and must stay one.
+  assert.match(totals, /discount_type: discount\?\.type \?\? null/,
+    "what was validated is what gets stored — never raw input the CHECK would have to catch");
+});
+
+test("[REGEL-KORTING] a creditnota carries no discount of its own, on either screen", () => {
+  // A discount on a correction is arithmetic nobody can check by eye — the same rule the document
+  // discount already follows. The credit note gets its discount by COPY, never by typing.
+  for (const path of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ]) {
+    const page = code(path);
+    const at = page.indexOf("t('nieuw.regelKorting')");
+    assert.ok(at > 0, `${path} must offer a line discount`);
+    // The control sits inside a creditnota guard — look back from it for the condition.
+    assert.match(page.slice(Math.max(0, at - 3000), at), /invoiceType !== \(?'creditnota'/,
+      `${path} must not offer a line discount on a creditnota`);
+  }
 });

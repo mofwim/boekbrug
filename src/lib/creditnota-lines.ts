@@ -41,6 +41,8 @@ export interface OriginalLine {
   line_total?: number | null
   unit?: string | null
   vat_treatment?: string | null
+  discount_type?: string | null
+  discount_value?: number | null
 }
 
 /** A line as it is inserted for the creditnota. */
@@ -53,6 +55,8 @@ export interface CreditLine {
   line_total: number
   unit?: string | null
   vat_treatment?: string | null
+  discount_type?: string | null
+  discount_value?: number | null
 }
 
 /**
@@ -94,6 +98,20 @@ export function creditLineFor(
     // Only the literal value counts. An unknown value becomes NULL, never an exemption.
     ...(line.vat_treatment !== undefined
       ? { vat_treatment: line.vat_treatment === 'exempt' ? 'exempt' : null }
+      : {}),
+    // [REGEL-KORTING] The line's own discount travels UNFLIPPED — it is a percentage or an agreed
+    // amount, not a total, so the mirror of "20% off" is "20% off".
+    //
+    // And it is not decoration. line_total above is the NET amount and it HAS been flipped, so a
+    // credit line that arrived without these two would say −10 × € 12,50 = € −100. The e-factuur
+    // recomputes exactly that multiplication (PEPPOL-EN16931-R120) and finds € −125: the file is
+    // refused at the access point and the credit note never reaches the customer, while the PDF
+    // looks perfect. The columns are what make the arithmetic add up again.
+    ...(line.discount_type !== undefined
+      ? {
+          discount_type: line.discount_type ?? null,
+          discount_value: line.discount_type ? (line.discount_value ?? null) : null,
+        }
       : {}),
   }
 }

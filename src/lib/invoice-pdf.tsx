@@ -122,6 +122,9 @@ const styles = StyleSheet.create({
   // De omschrijving is `flex: 1` en geeft die punten vanzelf terug.
   colAantal: { width: 62, fontSize: 10 },
   colOmschrijving: { flex: 1, fontSize: 10, paddingRight: 8 },
+  // [REGEL-KORTING] Kleiner en grijzer dan de omschrijving: het is een toelichting op de regel,
+  // geen tweede regel. Een klant die de kolom natelt moet hem vinden, niet erover struikelen.
+  regelKorting: { fontSize: 8.5, color: '#5f6368', marginTop: 1 },
   colPrijs: { width: 78, fontSize: 10, textAlign: 'right' },
   colTotaal: { width: 84, fontSize: 10, textAlign: 'right' },
   headerText: { fontFamily: 'Helvetica-Bold', color: '#202124' },
@@ -204,6 +207,14 @@ type LineLike = {
    * de oude weergave op — alleen het aantal, zoals het altijd was.
    */
   unit?: string | null
+  /**
+   * [REGEL-KORTING] De korting op deze regel. `line_total` is er al mee verlaagd, dus geen enkel
+   * bedrag hieronder verandert erdoor — wat ze toevoegen is de REGEL die het verschil uitlegt.
+   * Zonder die regel leest de klant een prijs maal een aantal die niet uitkomt op het totaal
+   * ernaast, en dat is precies het soort factuur waar een telefoontje op volgt.
+   */
+  discount_type?: string | null
+  discount_value?: number | null
 }
 
 function btwBreakdown(lines: LineLike[]): { rate: number; ex: number; btw: number }[] {
@@ -454,6 +465,16 @@ export function InvoicePDF({
           {(lines ?? []).map((line, index) => {
             const lineTotal =
               line.line_total ?? Number(line.quantity ?? 0) * Number(line.unit_price ?? 0)
+            // [REGEL-KORTING] Bruto = aantal × prijs, netto = wat er in de kolom staat.
+            const brutoRegel = round2(Number(line.quantity ?? 0) * Number(line.unit_price ?? 0))
+            const regelKorting = parseDiscount(line.discount_type, line.discount_value)
+            const regelKortingBedrag = regelKorting ? round2(brutoRegel - lineTotal) : 0
+            // De prijskolom moet uitkomen op het bedrag waar hij bij hoort: bij een gekorte regel
+            // is dat het BRUTO bedrag, want de korting staat er als eigen regel onder. Zou hier
+            // het netto bedrag staan, dan gaat unitPriceDecimals op zoek naar een precisie waarop
+            // aantal × prijs = het VERLAAGDE totaal — en drukt een stuksprijs af met zes cijfers
+            // achter de komma die niemand ooit heeft afgesproken.
+            const prijsBasis = regelKortingBedrag !== 0 ? brutoRegel : lineTotal
             return (
               <View key={index} style={styles.tableRow}>
                 {/* [UNIT] "2 uur" leest als een levering; "2" leest als niets. De eenheid
@@ -464,11 +485,21 @@ export function InvoicePDF({
                   {formatQtyNL(line.quantity)}
                   {line.unit ? ` ${unitLabel(line.unit, Number(line.quantity ?? 1))}` : ''}
                 </Text>
-                <Text style={styles.colOmschrijving}>{line.description}</Text>
+                <View style={styles.colOmschrijving}>
+                  <Text>{line.description}</Text>
+                  {/* [REGEL-KORTING] Onder de omschrijving, want daar hoort hij: hij gaat over
+                      DEZE levering. Met het percentage erbij als dat is afgesproken, en met het
+                      bedrag, zodat de klant de regel kan natellen: prijs × aantal, min dit. */}
+                  {regelKortingBedrag !== 0 && (
+                    <Text style={styles.regelKorting}>
+                      {`${discountLabel(regelKorting)}: - ${formatEuroNL(Math.abs(regelKortingBedrag))}`}
+                    </Text>
+                  )}
+                </View>
                 {/* [PRIJS-KOLOM] Met zoveel decimalen als de regel nodig heeft. Op twee stond hier
                     "150 x EUR 0,83" naast een regeltotaal van EUR 123,85 — 65 cent verschil, op het
                     papier dat de klant bewaart en zelf natelt. Zie unit-price-display.ts. */}
-                <Text style={styles.colPrijs}>{formatUnitPriceNL(line.unit_price, line.quantity, lineTotal)}</Text>
+                <Text style={styles.colPrijs}>{formatUnitPriceNL(line.unit_price, line.quantity, prijsBasis)}</Text>
                 <Text style={styles.colTotaal}>{formatEuroNL(lineTotal)}</Text>
               </View>
             )
