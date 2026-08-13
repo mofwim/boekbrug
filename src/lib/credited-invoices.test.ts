@@ -7,7 +7,9 @@ import {
   isCreditnota,
   isOpenReceivable,
   filterOpenReceivables,
-  creditedIdsFrom,
+  creditedTotalsFrom,
+  fullyCreditedIdsFrom,
+  openAfterCredit,
 } from "./credited-invoices";
 
 let passed = 0, failed = 0;
@@ -67,12 +69,50 @@ console.log("\n— the regression: both sides go, or neither —");
   check("a lone creditnota is dropped even with an empty credited set", rows.length === 1 && rows[0].id === "inv-2");
 }
 
-console.log("\n— creditedIdsFrom —");
-check("collects original ids", creditedIdsFrom([{ original_invoice_id: "a" }, { original_invoice_id: "b" }]).size === 2);
-check("skips nulls", creditedIdsFrom([{ original_invoice_id: null }, { original_invoice_id: "a" }]).size === 1);
-check("tolerates null input", creditedIdsFrom(null).size === 0);
-check("tolerates undefined input", creditedIdsFrom(undefined).size === 0);
-check("dedupes", creditedIdsFrom([{ original_invoice_id: "a" }, { original_invoice_id: "a" }]).size === 1);
+console.log("\n— creditedTotalsFrom —");
+check("adds several credits against one invoice",
+  creditedTotalsFrom([{ original_invoice_id: "a", total_inc_btw: -50 }, { original_invoice_id: "a", total_inc_btw: -30 }]).get("a") === 80);
+check("takes magnitudes — a creditnota is stored negative",
+  creditedTotalsFrom([{ original_invoice_id: "a", total_inc_btw: -121 }]).get("a") === 121);
+check("skips nulls", creditedTotalsFrom([{ original_invoice_id: null, total_inc_btw: -5 }]).size === 0);
+check("tolerates null input", creditedTotalsFrom(null).size === 0);
+check("tolerates undefined input", creditedTotalsFrom(undefined).size === 0);
+
+console.log("\n— fullyCreditedIdsFrom [DEEL-CREDIT] —");
+{
+  // The case the whole feature turns on: credit EUR 50 of a EUR 1.000 invoice. The invoice is not
+  // withdrawn — EUR 950 is still owed — so it must stay on every chase list.
+  const partial = fullyCreditedIdsFrom([{ original_invoice_id: "inv-1", total_inc_btw: -50 }], [ORIGINAL]);
+  check("a PARTIAL credit does not withdraw the invoice", partial.has("inv-1") === false);
+  check("…so it is still an open receivable", isOpenReceivable(ORIGINAL, partial) === true);
+
+  const full = fullyCreditedIdsFrom([{ original_invoice_id: "inv-1", total_inc_btw: -1000 }], [ORIGINAL]);
+  check("a credit that covers the invoice DOES withdraw it", full.has("inv-1") === true);
+  check("…and it leaves the receivable list", isOpenReceivable(ORIGINAL, full) === false);
+
+  // Several partial credits that together cover it.
+  const both = fullyCreditedIdsFrom(
+    [{ original_invoice_id: "inv-1", total_inc_btw: -400 }, { original_invoice_id: "inv-1", total_inc_btw: -600 }],
+    [ORIGINAL],
+  );
+  check("two credits that add up to the whole withdraw it together", both.has("inv-1") === true);
+
+  // Rounding noise must not keep an invoice alive for a cent.
+  const almost = fullyCreditedIdsFrom([{ original_invoice_id: "inv-1", total_inc_btw: -999.996 }], [ORIGINAL]);
+  check("half a cent short still counts as covered", almost.has("inv-1") === true);
+
+  check("an invoice with no credit at all is untouched",
+    fullyCreditedIdsFrom([], [ORIGINAL]).size === 0);
+  check("a credit against an unknown invoice is ignored",
+    fullyCreditedIdsFrom([{ original_invoice_id: "ghost", total_inc_btw: -10 }], [ORIGINAL]).size === 0);
+}
+
+console.log("\n— openAfterCredit —");
+check("total minus paid minus credited", openAfterCredit(1000, 200, 50) === 750);
+check("never negative", openAfterCredit(100, 80, 80) === 0);
+check("no credit behaves exactly like before", openAfterCredit(1000, 200, 0) === 800);
+check("magnitudes — a negative total is read as its size", openAfterCredit(-1000, 0, 100) === 900);
+check("rounds to cents", openAfterCredit(100, 0, 33.333) === 66.67);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

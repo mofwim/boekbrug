@@ -11,6 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { toPublicPayView, toPublicBundlePayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+// [DEEL-CREDIT] Coverage, not presence — see the header of credited-invoices.ts.
+import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 
@@ -70,7 +72,18 @@ export async function GET(
   // asking a real customer, from a link they already have, to transfer money that is no longer
   // owed. A shared link stays live forever, so "the owner just won't share it" is no guard.
   // 404 like every other not-payable case: the page says the link is unknown, never why.
-  if (await isCredited(pipeline, (invoice as { id: string }).id)) {
+  // [DEEL-CREDIT] …but only when the credits COVER the invoice. A partial credit does not
+  // withdraw it: the rest is genuinely still owed, and hiding the page would leave the customer
+  // no way to pay it and the owner no way to be paid. So the page stays live and asks for the
+  // REMAINDER — the reduction is threaded into the amount below, where openAmount subtracts it.
+  const credited = await creditedOn(pipeline, (invoice as { id: string }).id)
+  if (credited === null) {
+    // Fail CLOSED, exactly as before: a lookup that failed must never let the page ask for the
+    // full amount on an invoice that may have been credited.
+    return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  }
+  const invoiceTotal = Math.abs(Number((invoice as { total_inc_btw: number | null }).total_inc_btw) || 0)
+  if (credited > 0 && credited + 0.005 >= invoiceTotal) {
     return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
   }
 
@@ -82,7 +95,7 @@ export async function GET(
     .single()
 
   const view = toPublicPayView(
-    invoice as BetaalverzoekInvoice,
+    { ...(invoice as BetaalverzoekInvoice), credited_inc_btw: credited },
     owner ?? { iban: null, company_name: null, full_name: null }
   )
   // null = not payable (draft, wrong type, missing IBAN). 404 — no existence leak.
@@ -91,21 +104,30 @@ export async function GET(
   return NextResponse.json(view)
 }
 
-// [CREDITNOTA-NO-CHASE] Has this invoice been withdrawn with a creditnota? Fail CLOSED: if the
-// lookup itself errors we treat the invoice as credited and hide the page, because the failure
-// mode on the other side is a customer transferring money that is not owed.
-async function isCredited(
+// [CREDITNOTA-NO-CHASE] How much has been credited back on this invoice? Fail CLOSED: a lookup
+// that errors returns null and the caller hides the page, because the failure mode on the other
+// side is a customer transferring money that is not owed.
+//
+// [DEEL-CREDIT] It answers with an AMOUNT rather than yes/no. The question the page has to settle
+// is no longer "was this withdrawn" but "how much of it is still owed", and those give different
+// answers the moment a credit can be a part: yes/no would hide the page over a EUR 50 credit on a
+// EUR 500 invoice and leave the remaining EUR 450 unpayable.
+async function creditedOn(
   pipeline: ReturnType<typeof createPipelineClient>,
   invoiceId: string
-): Promise<boolean> {
+): Promise<number | null> {
   const { data, error } = await pipeline
     .from('invoices')
-    .select('id')
+    .select('total_inc_btw')
     .eq('original_invoice_id', invoiceId)
     .eq('invoice_type', 'creditnota')
-    .limit(1)
-  if (error) return true
-  return (data ?? []).length > 0
+  if (error) return null
+  return creditedTotalsFrom(
+    ((data ?? []) as { total_inc_btw: number | null }[]).map((r) => ({
+      original_invoice_id: invoiceId,
+      total_inc_btw: r.total_inc_btw,
+    })),
+  ).get(invoiceId) ?? 0
 }
 
 // [BUNDEL-BETAALVERZOEK] Resolve a bundle token → the combined public view
@@ -172,21 +194,30 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
   // cannot be silently truncated by PostgREST's ~1000-row cap. A truncated credited set would
   // fail OPEN (a withdrawn invoice slipping back into the payable set and the combined amount
   // over-asking), which is exactly the outcome the fail-closed design exists to prevent.
+  // [DEEL-CREDIT] With the amount, so a partly credited invoice can stay in the bundle for what it
+  // still owes instead of being dropped whole. (The comment sits ABOVE the chain rather than inside
+  // it: [RLS-UIT] matches service-role queries on their own text, and a comment spliced between the
+  // links changes that text — the query then reads as a new, unreviewed one.)
   const { data: creditRows, error: creditErr } = await pipeline
     .from('invoices')
-    .select('original_invoice_id')
+    .select('original_invoice_id, total_inc_btw')
     .eq('invoice_type', 'creditnota')
     .in('original_invoice_id', ids)
   // Still fails CLOSED — nothing is rendered, so the combined amount can never over-ask. What
   // changes is only what the customer is told: 503 and "try again" instead of "unknown link". Both
   // refuse equally; one of them is true.
   if (creditErr) return payUnavailable('credited-invoice lookup failed', { token: tokenTail(token), error: creditErr.message })
-  const credited = new Set(
-    ((creditRows ?? []) as { original_invoice_id: string | null }[])
-      .map((r) => r.original_invoice_id)
-      .filter((id): id is string => !!id)
+  const creditRowList = (creditRows ?? []) as { original_invoice_id: string | null; total_inc_btw: number | null }[]
+  const creditedByInvoice = creditedTotalsFrom(creditRowList)
+  const volledig = fullyCreditedIdsFrom(
+    creditRowList,
+    invoices as { id: string; total_inc_btw?: number | null }[],
   )
-  const payable = (invoices as { id: string }[]).filter((i) => !credited.has(i.id))
+  // Fully credited leaves the bundle; partly credited stays, carrying what it gave back so the
+  // combined amount asks for the remainder and never for the full total.
+  const payable = (invoices as { id: string }[])
+    .filter((i) => !volledig.has(i.id))
+    .map((i) => ({ ...i, credited_inc_btw: creditedByInvoice.get(i.id) ?? 0 }))
   if (payable.length === 0) return notFound
 
   // Without the owner's IBAN buildEpcQrPayload refuses and the page 404s — fail-closed, and right:

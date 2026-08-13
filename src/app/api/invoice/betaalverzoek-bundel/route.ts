@@ -15,7 +15,7 @@ import {
 } from '@/lib/betaalverzoek'
 import { SITE_URL } from '@/lib/site'
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
-import { creditedIdsFrom } from '@/lib/credited-invoices'
+import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
 import { requireOwner } from '@/lib/owner-only'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -58,17 +58,27 @@ export async function POST(req: NextRequest) {
   // picked those invoices deliberately and must see why one cannot be in the bundle.
   const { data: creditRows, error: creditErr } = await supabase
     .from('invoices')
-    .select('original_invoice_id')
+    // [DEEL-CREDIT] With the amount: only a credit that COVERS an invoice keeps it out.
+    .select('original_invoice_id, total_inc_btw')
     .eq('sender_id', user.id)
     .eq('invoice_type', 'creditnota')
     .in('original_invoice_id', invoiceIds)
   if (creditErr) {
     return NextResponse.json({ error: 'Controle op creditnota’s mislukt — probeer het opnieuw.' }, { status: 500 })
   }
-  if ((creditRows ?? []).length > 0) {
-    const creditedSet = creditedIdsFrom(creditRows as { original_invoice_id: string | null }[])
+  const creditRowList = (creditRows ?? []) as { original_invoice_id: string | null; total_inc_btw: number | null }[]
+  const creditedByInvoice = creditedTotalsFrom(creditRowList)
+  // [DEEL-CREDIT] A PARTLY credited invoice may join — it still owes the rest, and both sides of
+  // the link now agree on that rest because the credit travels into the builder below. Only a
+  // fully credited one is refused, for the reason the comment above gives: the owner would see a
+  // total the customer is never asked for.
+  const volledigGecrediteerd = fullyCreditedIdsFrom(
+    creditRowList,
+    invoices as { id: string; total_inc_btw?: number | null }[],
+  )
+  if (volledigGecrediteerd.size > 0) {
     const names = invoices
-      .filter((i) => creditedSet.has((i as { id: string }).id))
+      .filter((i) => volledigGecrediteerd.has((i as { id: string }).id))
       .map((i) => (i as { invoice_number: string | null }).invoice_number)
       .filter(Boolean)
     return NextResponse.json(
@@ -89,7 +99,12 @@ export async function POST(req: NextRequest) {
     .single()
 
   const built = buildBundelBetaalverzoek(
-    invoices as BetaalverzoekInvoice[],
+    // The credit travels with each invoice, so the combined amount the owner sees here is the same
+    // one the customer is asked for on the public page.
+    (invoices as BetaalverzoekInvoice[]).map((i) => ({
+      ...i,
+      credited_inc_btw: creditedByInvoice.get((i as { id: string }).id) ?? 0,
+    })),
     owner ?? { iban: null, company_name: null, full_name: null }
   )
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 400 })

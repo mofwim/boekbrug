@@ -3782,6 +3782,28 @@ export const MESSAGES = {
     ar: 'العميل:',
     en: 'Client:',
   },
+  // ── [DEEL-CREDIT] Een factuur kan in DELEN worden gecrediteerd ────────────────
+  'detail.deelsGecrediteerd': {
+    nl: 'Deels gecrediteerd: {credited} terug, {open} staat nog open.',
+    ar: 'مُقيَّد جزئياً: أُعيد {credited}، وما زال {open} مفتوحاً.',
+    en: 'Partly credited: {credited} returned, {open} still open.',
+  },
+  'detail.credit.alles': { nl: 'Hele factuur', ar: 'الفاتورة كاملة', en: 'Whole invoice' },
+  'detail.credit.deel': { nl: 'Een deel', ar: 'جزء منها', en: 'Part of it' },
+  'detail.credit.aantal': { nl: 'Aantal om te crediteren', ar: 'الكمية المراد تقييدها', en: 'Quantity to credit' },
+  'detail.credit.van': { nl: 'van {max}', ar: 'من {max}', en: 'of {max}' },
+  'detail.credit.alGecrediteerd': { nl: 'Al gecrediteerd', ar: 'المُقيَّد سابقاً', en: 'Already credited' },
+  'detail.credit.nogMogelijk': { nl: 'Nog mogelijk', ar: 'المتبقي الممكن', en: 'Still possible' },
+  'detail.credit.kiesRegel': {
+    nl: 'Kies minstens één regel om te crediteren.',
+    ar: 'اختر بنداً واحداً على الأقل لتقييده.',
+    en: 'Choose at least one line to credit.',
+  },
+  'detail.credit.teVeel': {
+    nl: 'Dat is meer dan er nog van deze factuur gecrediteerd kan worden ({max}).',
+    ar: 'هذا أكثر مما يمكن تقييده من هذه الفاتورة ({max}).',
+    en: 'That is more than can still be credited on this invoice ({max}).',
+  },
   'detail.credit.maken': {
     nl: 'Creditnota maken',
     ar: 'إنشاء إشعار دائن',
