@@ -41,6 +41,8 @@ import { formatEuroNL } from "./format-nl";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "./cash-live";
 import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, removedInQuarter, type KasEntry, type KasTurnoverDay, type RemovedKasEntry, type Quarter as KasQuarter } from "./kasboek";
 import { matrixToXlsxBytes } from "./xlsx-adapter";
 import type { EftSettlement } from "./eft-parser";
@@ -1163,6 +1165,8 @@ export async function summarizeClosingPackage(args: {
   supabase: PipelineClient;
 }): Promise<ClosingPackageSummary> {
   const { ownerId, year, quarter, supabase } = args;
+  // [KAS-ZACHT] Live movements only, resolved once for every cash read in this function.
+  const liveCash = await liveCashEntries(supabase);
   const start = quarterStartDate(year, quarter);
   const end = quarterEndDate(year, quarter);
   const warnings: ClosingPackageWarning[] = [];
@@ -1363,7 +1367,11 @@ export async function buildClosingPackageZip(args: {
   quarter: Quarter;
   supabase: PipelineClient;
 }): Promise<ClosingPackageResult> {
+
   const { ownerId, year, quarter, supabase } = args;
+  // [KAS-ZACHT] Live movements only — a removed line is out of the aangifte, out of the Kasboek
+  // sheet and out of every total in this package. Resolved once for the three cash reads below.
+  const liveCash = await liveCashEntries(supabase);
   const start = quarterStartDate(year, quarter);
   const end = quarterEndDate(year, quarter);
   const warnings: ClosingPackageWarning[] = [];
@@ -1624,13 +1632,13 @@ export async function buildClosingPackageZip(args: {
           .order("id", { ascending: true })
           .range(from, to)).catch(() => []),
       fetchAllRows((from, to) =>
-        supabase
+        liveCash.only(supabase
           .from("cash_entries")
           .select("entry_date, amount")
           .eq("user_id", ownerId)
           .eq("category", "omzet")
           .gte("entry_date", start)
-          .lte("entry_date", end)
+          .lte("entry_date", end))
           .order("id", { ascending: true })
           .range(from, to)).catch(() => []),
       fetchAllRows((from, to) =>
@@ -1692,12 +1700,12 @@ export async function buildClosingPackageZip(args: {
   const cashAllRows = await fetchAllRows<{
     direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null; document_id: string | null;
   }>((from, to) =>
-    supabase
+    liveCash.only(supabase
       .from("cash_entries")
       .select("direction, amount, category, btw_rate, entry_date, document_id")
       .eq("user_id", ownerId)
       .gte("entry_date", start)
-      .lte("entry_date", end)
+      .lte("entry_date", end))
       .order("id", { ascending: true })
       .range(from, to),
   ).catch((e) => { console.error("[CLOSING-PACKAGE] cash_entries read failed", { ownerId, error: String(e) }); return null; });
@@ -1982,8 +1990,8 @@ export async function buildClosingPackageZip(args: {
   const kasEntriesRaw = await fetchAllRows<{
     entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null;
   }>((from, to) =>
-    supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
-      .eq("user_id", ownerId).lte("entry_date", end)
+    liveCash.only(supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
+      .eq("user_id", ownerId).lte("entry_date", end))
       // [PAGE-KEY] Ordered by id, not entry_date — the same read on /api/kasboek already says why,
       // and this copy is the one that did not: entry_date is NOT unique (several cash entries on
       // one day is the ordinary case for a shop), Postgres gives no defined order among ties, so

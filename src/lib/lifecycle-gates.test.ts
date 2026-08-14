@@ -8919,6 +8919,82 @@ test("[KAS-SAMENHANG] both documents built from the cash book are built by one g
   assert.match(code("src/lib/kasboek.ts"), /export function quarterRange/, "one definition of the quarter's range");
 });
 
+
+test("[KAS-ZACHT] every reader of the cash book asks only for the movements that still count", () => {
+  // Soft delete turned one hard DELETE into a rule that has to hold in EIGHTEEN reads: the drawer
+  // balance, the kasboek projection and its .xlsx, the result engine, the aangifte, the readiness
+  // verdict, the filing witness, search, the home tile, the accountant's closing package, the
+  // settlement reconcile, the cron's candidate scan, the money audit. Miss one and a removed movement
+  // still counts THERE and nowhere else — two surfaces disagreeing about the same euro, neither
+  // looking broken. That is strictly worse than the hard delete this replaced.
+  //
+  // So the rule is not written eighteen times, and this is the check that keeps it that way: every
+  // query against cash_entries either goes through cash-live.ts, or is a WRITE, or is one of the two
+  // documented exceptions. A nineteenth reader added next year turns this red on the day it is
+  // written, not the day someone reads a balance that includes a line the owner removed.
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) files.push(p);
+    }
+  };
+  walk("src");
+  walk("scripts");
+
+  // Two exceptions, each for a stated reason.
+  const EXEMPT_FILES = new Set([
+    // The definition itself: it probes the column and applies the filter.
+    "src/lib/cash-live.ts",
+    // [KAS-ZACHT] The GDPR/portability export ships cash_entries verbatim, removed rows INCLUDED with
+    // their deleted_at visible. Everywhere else a removed line is absent; there it must be present,
+    // because an export of "all your data" that silently drops rows is the harm that file is written
+    // against.
+    "src/lib/account-export.ts",
+  ]);
+  // A WRITE is not a read: an insert creates, an update heals a row already identified by a filtered
+  // read, and a delete is the pre-migration path.
+  const WRITE_MARKERS = [".insert(", ".update(", ".delete()"];
+  // Two capability probes, which must NOT be filtered — they exist to discover whether the column is
+  // there at all.
+  const PROBE_MARKERS = ['select("settlement_id")', 'select("deleted_at")'];
+  const WRAPPERS = ["liveCash.only(", "cash.only(", "live.only(", "liveForDelete.only("];
+
+  const unfiltered: string[] = [];
+  for (const f of files) {
+    if (EXEMPT_FILES.has(f)) continue;
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/from\((?:"|')cash_entries(?:"|')\)/g)) {
+      // A generous window: the wrapper opens before `.from(` and the write/probe marker follows it,
+      // and real call sites carry long comments between the two.
+      const window = src.slice(Math.max(0, m.index - 700), m.index + 700);
+      if (WRAPPERS.some((w) => window.includes(w))) continue;
+      if (WRITE_MARKERS.some((w) => window.includes(w))) continue;
+      if (PROBE_MARKERS.some((w) => window.includes(w))) continue;
+      unfiltered.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(
+    unfiltered, [],
+    "these read cash_entries without asking cash-live.ts for the live rows:\n  " + unfiltered.join("\n  "),
+  );
+
+  // And the door: soft delete when the column is there, the old hard delete when it is not. Shipping
+  // an UPDATE on a column a hand-applied migration has not created yet would leave the owner unable
+  // to remove anything at all.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(
+    route, /liveForDelete\.supported[\s\S]{0,400}?\.update\(\{ deleted_at/,
+    "the removal must be capability-gated, not assume the column",
+  );
+  assert.match(route, /: await supabase[\s\S]{0,120}?\.delete\(\)/, "…and fall back to the hard delete without it");
+  assert.match(
+    route, /\.update\(\{ deleted_at[\s\S]{0,400}?\.is\("deleted_at", null\)/,
+    "a second concurrent removal may not overwrite the first one's timestamp",
+  );
+});
+
 // ─── [OFFERTE-OPVOLGING] Een offerte die stil verloopt ────────────────────────
 //
 // "Geldig tot" staat op elke offerte-PDF en de app wist er niets van: geen badge, geen filter,
@@ -9081,4 +9157,36 @@ test("[FACTUUR-BIJLAGE] the invoice PDF stays the first attachment", () => {
   const pdfAt = block.indexOf("filename: `${invoiceNumber}.pdf`");
   const extraAt = block.indexOf("extraAttachment ? [extraAttachment]");
   assert.ok(pdfAt > 0 && extraAt > 0 && pdfAt < extraAt, "the legal document comes first");
+});
+
+test("[DEEL-KORTING] a line's own fixed discount scales with the part being credited", () => {
+  // Two features landed on main within hours of each other, from different sessions: a discount per
+  // invoice LINE, and a creditnota for PART of a line. Neither is wrong on its own. Together, a
+  // fixed line discount was subtracted in FULL from a partial credit — measured on 10 × € 50 with
+  // € 25 off, where the customer paid € 47,50 per unit:
+  //
+  //     fair credit for 3 units   3 × 47,50 = € 142,50
+  //     what was credited         150 − 25  = € 125,00      € 17,50 too little
+  //
+  // The same function already scaled a fixed DOCUMENT discount pro rata, with the argument written
+  // out. The argument applies one level down and had not been made there.
+  const mod = code("src/lib/partial-credit.ts");
+  assert.match(
+    mod, /eigen && eigen\.type === "amount"\s*\n\s*\? \{ discount_type: "amount", discount_value: round2\(eigen\.value \* deel\) \}/,
+    "a fixed line discount must scale by the credited share",
+  );
+  assert.match(mod, /const deel = geheel === 0 \? 0 : Math\.abs\(quantity\) \/ Math\.abs\(geheel\);/,
+    "…by the share of THAT line, not of the document");
+  // The scaled amount has to travel with the line. The e-factuur recomputes quantity × price −
+  // allowance (PEPPOL-EN16931-R120) and compares it to the line amount, so a scaled total beside
+  // an unscaled discount is a refused file — the half-fix is worse than the defect.
+  assert.match(mod, /const regel = \{ \.\.\.l, \.\.\.geschaald, quantity \};/,
+    "the scaled discount must be ON the credited line, not only in its total");
+
+  const spec = readFileSync("src/lib/partial-credit.test.ts", "utf8");
+  assert.match(spec, /a fixed line discount scales with the part being credited/);
+  assert.match(spec, /a percentage needs no scaling, and must not get any/,
+    "a percentage is already pro rata — scaling it twice is the mirror-image defect");
+  assert.match(spec, /a FULL credit is unchanged, to the cent/,
+    "every creditnota this app has ever made took that path");
 });

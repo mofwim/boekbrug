@@ -53,6 +53,8 @@ import {
 // [GELD-INVARIANT-KAS] The drawer is checked by ASKING the app's own reconciler what it still wants
 // to change, never by re-deriving what the kasboek should hold — see findDrawerViolations.
 import { loadCashSettlementState } from '@/lib/cash-settle'
+// [KAS-ZACHT] One definition of "the movements that still count" — see cash-live.ts.
+import { liveCashEntries } from '@/lib/cash-live'
 import { computeCashSettlementSync } from '@/lib/cash'
 import { loadDrawerWitness } from '@/lib/drawer-witness'
 // The quarter whose BTW is actually due — the same default every surface in the app uses, and the
@@ -117,8 +119,11 @@ async function auditDrawers(
   if (onlyUser) {
     ownerIds = [onlyUser]
   } else {
+    // [KAS-ZACHT] Owners with a LIVE drawer. A user whose only cash rows are removed has no cash
+    // book to check, and counting them would inflate the coverage this script claims.
+    const live = await liveCashEntries(pipeline)
     const rows = await fetchAllRows<{ user_id: string }>((from, to) =>
-      pipeline.from('cash_entries').select('user_id').order('user_id', { ascending: true }).range(from, to),
+      live.only(pipeline.from('cash_entries').select('user_id')).order('user_id', { ascending: true }).range(from, to),
     ).catch(() => [] as { user_id: string }[])
     ownerIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))]
   }

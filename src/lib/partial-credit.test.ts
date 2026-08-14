@@ -11,6 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { round2 } from "./invoice-totals";
 
 import {
   buildCreditSelection,
@@ -199,4 +200,76 @@ test("[DEEL-CREDIT] a FULL credit reproduces the stored line totals exactly", ()
   ];
   const out = buildCreditSelection({ lines: met });
   assert.deepEqual(out.lines.map((l) => l.line_total), [50, 100]);
+});
+
+// ─── [DEEL-KORTING] A line's OWN discount when only part of the line is credited ────────────────
+//
+// The document discount below already scales a fixed amount pro rata, with the reasoning written
+// out. The same argument applies one level down and was not made there: a percentage on a line is
+// already pro rata, a fixed amount on a line belongs to the WHOLE line.
+//
+// Measured on 10 × € 50 with € 25 off, where the customer paid € 47,50 per unit:
+//
+//     fair credit for 3 units    3 × 47,50   = € 142,50
+//     what was credited          150 − 25    = € 125,00     € 17,50 too little
+//
+// The two features that produce this shape — line discounts and partial credits — landed on main
+// within hours of each other, from different sessions. Neither is wrong on its own.
+
+const KORTINGSREGEL = {
+  id: "k1", description: "Advies", quantity: 10, unit_price: 50, btw_rate: 21,
+  line_total: 475, discount_type: "amount", discount_value: 25,
+};
+
+test("[DEEL-KORTING] a fixed line discount scales with the part being credited", () => {
+  const out = buildCreditSelection({ lines: [KORTINGSREGEL], selection: [{ id: "k1", quantity: 3 }] });
+  assert.equal(out.lines[0].line_total, 142.5, "3 × € 47,50 — what the customer actually paid per unit");
+  // The scaled amount must travel WITH the line, or the e-factuur recomputes
+  // quantity × price − allowance (PEPPOL-EN16931-R120), finds € 125, and refuses the file.
+  assert.equal(out.lines[0].discount_value, 7.5, "€ 25 × 3/10");
+  assert.equal(out.lines[0].discount_type, "amount");
+});
+
+test("[DEEL-KORTING] a percentage needs no scaling, and must not get any", () => {
+  const pct = { ...KORTINGSREGEL, discount_type: "percent", discount_value: 10, line_total: 450 };
+  const out = buildCreditSelection({ lines: [pct], selection: [{ id: "k1", quantity: 3 }] });
+  assert.equal(out.lines[0].line_total, 135, "3 × € 45,00");
+  assert.equal(out.lines[0].discount_value, 10, "ten percent of three units is still ten percent");
+});
+
+test("[DEEL-KORTING] a FULL credit is unchanged, to the cent", () => {
+  // The property this file is built on: every creditnota the app has ever made took this path.
+  const alles = buildCreditSelection({ lines: [KORTINGSREGEL] });
+  assert.equal(alles.lines[0].line_total, 475, "the stored amount, reproduced exactly");
+  assert.equal(alles.lines[0].discount_value, 25, "…with the discount it was agreed at");
+  const expliciet = buildCreditSelection({ lines: [KORTINGSREGEL], selection: [{ id: "k1", quantity: 10 }] });
+  assert.deepEqual(expliciet.lines[0].line_total, alles.lines[0].line_total);
+});
+
+test("[DEEL-KORTING] one unit of ten, where the old arithmetic was worst", () => {
+  // 50 − 25 = € 25,00 against a fair € 47,50: nearly half. And with a discount LARGER than the
+  // partial gross, lineDiscountEx clamps to the amount itself — a credit line of € 0,00 for goods
+  // that genuinely went back.
+  const out = buildCreditSelection({ lines: [KORTINGSREGEL], selection: [{ id: "k1", quantity: 1 }] });
+  assert.equal(out.lines[0].line_total, 47.5);
+  const groot = { ...KORTINGSREGEL, discount_value: 60, line_total: 440 };
+  const een = buildCreditSelection({ lines: [groot], selection: [{ id: "k1", quantity: 1 }] });
+  assert.equal(een.lines[0].line_total, 44, "€ 50 − € 6,00 — not € 0,00");
+});
+
+test("[DEEL-KORTING] the scaling rounds to cents, and the line reproduces itself", () => {
+  // A third of € 25 is € 8,3333…. The stored discount and the stored line total must be computed
+  // from the SAME rounded number, or the two disagree by a cent in the file that gets validated.
+  const drie = { ...KORTINGSREGEL, quantity: 3, line_total: 125 };
+  const out = buildCreditSelection({ lines: [drie], selection: [{ id: "k1", quantity: 1 }] });
+  const line = out.lines[0];
+  assert.equal(line.discount_value, 8.33);
+  assert.equal(line.line_total, round2(50 - 8.33), "quantity × price − the stored allowance");
+});
+
+test("[DEEL-KORTING] a line with no discount at all is untouched", () => {
+  const kaal = { id: "k1", description: "Advies", quantity: 10, unit_price: 50, btw_rate: 21, line_total: 500 };
+  const out = buildCreditSelection({ lines: [kaal], selection: [{ id: "k1", quantity: 3 }] });
+  assert.equal(out.lines[0].line_total, 150);
+  assert.equal("discount_type" in out.lines[0], false, "a column the row never had stays absent");
 });

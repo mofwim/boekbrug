@@ -21,6 +21,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 import { amountOrConditions, foldText } from "@/lib/search";
 import type { SearchResult, SearchResultGroup, SearchTarget } from "@/lib/search";
 
@@ -228,6 +230,9 @@ export async function GET(req: NextRequest) {
   const idList = senderIds.join(",");
 
   // Parallel queries across all sources
+  // [KAS-ZACHT] A removed cash movement must not be findable: search is how an owner reaches a
+  // booking, and a hit that opens a drawer the entry is no longer in is worse than no hit.
+  const liveCash = await liveCashEntries(supabase);
   const [invoicesRes, docsRes, clientsRes, bankRes, cashRes] = await Promise.all([
 
     // Source 1: invoices — sender OR receiver (received/incoming invoices included)
@@ -305,10 +310,10 @@ export async function GET(req: NextRequest) {
     // Source 5: cash entries (kasboek) — own rows. category is a key (omzet/kosten/…) so a
     // "omzet" query still matches; description is the free-text line.
     target === "all" || target === "kas"
-      ? supabase
+      ? liveCash.only(supabase
           .from("cash_entries")
           .select("id, entry_date, amount, category, description, direction, created_at")
-          .eq("user_id", user.id)
+          .eq("user_id", user.id))
           .or(
             [
               buildOr(["description", "category"], terms),

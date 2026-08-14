@@ -28,6 +28,8 @@ import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
 import { loadDrawerWitness } from "@/lib/drawer-witness";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
@@ -284,10 +286,13 @@ export async function GET(req: NextRequest) {
     return !!(fc && typeof fc === "object" && fc._auto_verified);
   }).length;
 
-  const cashRows = await fetchAllRows((from, to) => pipeline
+  // [KAS-ZACHT] Live movements only. This route computes the readiness verdict that BLOCKS a filing;
+  // a line the owner removed from the books may not keep a quarter blocked.
+  const liveCash = await liveCashEntries(pipeline);
+  const cashRows = await fetchAllRows((from, to) => liveCash.only(pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date, document_id")
-    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end)
+    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end))
     .order("id", { ascending: true }).range(from, to));
   const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
@@ -329,9 +334,11 @@ export async function GET(req: NextRequest) {
         .eq("user_id", ownerId).eq("category", "pos_income")
         .gte("date", shiftDays(start, -5)).lte("date", shiftDays(end, 5))
         .order("id", { ascending: true }).range(from, to)),
-      fetchAllRows((from, to) => pipeline.from("cash_entries").select("entry_date, amount")
+      // [KAS-ZACHT] Live rows only, like every other reader — a removed cash sale is not a
+      // reconciliation witness for the till either.
+      fetchAllRows((from, to) => liveCash.only(pipeline.from("cash_entries").select("entry_date, amount")
         .eq("user_id", ownerId).eq("category", "omzet")
-        .gte("entry_date", start).lte("entry_date", end)
+        .gte("entry_date", start).lte("entry_date", end))
         .order("id", { ascending: true }).range(from, to)),
     ]);
     const posLines = posRows.map((p) => ({ description: p.description, amount: p.amount }));

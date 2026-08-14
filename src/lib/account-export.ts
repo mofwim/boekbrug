@@ -462,6 +462,11 @@ export async function buildAccountExportZip(args: {
   const [bankRows, cashRows, turnoverRows, msgRows, cashTrailRows] = await Promise.all([
     readAll("bank_transactions", (from, to) =>
       supabase.from("bank_transactions").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    // [KAS-ZACHT] The ONE cash read in the app that deliberately does NOT filter out removed
+    // movements. Everywhere else a soft-deleted row counts in nothing; here it must be PRESENT, with
+    // its deleted_at visible, because this is the export of "al je gegevens" and a file that silently
+    // drops rows is the exact harm the rest of this module is written against. select("*") carries
+    // the column, so the reader can see which lines were removed and when.
     readAll("cash_entries", (from, to) =>
       supabase.from("cash_entries").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("daily_turnover", (from, to) =>
