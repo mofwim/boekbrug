@@ -30,6 +30,14 @@ export interface AccountExportSummary {
   fileCount: number; // files successfully included
   bankCount: number;
   cashCount: number;
+  /**
+   * [KAS-SPOOR] Rows in the drawer's audit trail: removed movements and beginsaldo changes.
+   *
+   * Counted separately from cashCount because it answers a different question. cashCount says how
+   * much the cash book holds; this says how much happened TO it — and for the removals it is the
+   * only surviving record, since a cash_entries delete destroys the row.
+   */
+  cashTrailCount: number;
   turnoverCount: number;
   messageCount: number;
   btwFilingCount: number;
@@ -84,6 +92,11 @@ interface AssembleInput {
   // GDPR export actually contains "al je gegevens" — not just invoices/docs/profile.
   bankTransactions?: unknown[];
   cashEntries?: unknown[];
+  // [KAS-SPOOR] The drawer's audit trail. The one ledger whose rows are not the whole story: a
+  // cash_entries delete is a HARD delete and a cash movement has no source document to re-read, so
+  // these rows are the only place a removed movement still exists. See the read in
+  // buildAccountExport for why only the three cash.* actions travel.
+  cashTrail?: unknown[];
   dailyTurnover?: unknown[];
   messages?: unknown[];
   // [EXPORT-FILED] The filed BTW-aangiftes. Typed structurally, so a `select("*")` row keeps
@@ -208,6 +221,7 @@ export async function assembleAccountExportZip(
   const { userId, profile, invoices, files } = input;
   const bankTransactions = input.bankTransactions ?? [];
   const cashEntries = input.cashEntries ?? [];
+  const cashTrail = input.cashTrail ?? [];
   const dailyTurnover = input.dailyTurnover ?? [];
   const messages = input.messages ?? [];
   const btwFilings = input.btwFilings ?? [];
@@ -249,6 +263,11 @@ export async function assembleAccountExportZip(
   //    genuinely "al je gegevens" (not just invoices/docs/profile).
   zip.file("bank.json", JSON.stringify(bankTransactions, null, 2));
   zip.file("kas.json", JSON.stringify(cashEntries, null, 2));
+  // [KAS-SPOOR] Next to kas.json, never merged into it: these are not cash entries, they are the
+  // record of what happened TO them — movements that were removed (which exist nowhere else, the
+  // delete is hard) and every change to the beginsaldo, which shifts every eindsaldo in the whole
+  // history and appears in profiel.json only as its current value.
+  zip.file("kas-spoor.json", JSON.stringify(cashTrail, null, 2));
   zip.file("dagomzet.json", JSON.stringify(dailyTurnover, null, 2));
   zip.file("berichten.json", JSON.stringify(messages, null, 2));
   // [EXPORT-FILED] Verbatim alongside the CSV: the CSV is what a human reads, this is the
@@ -264,6 +283,7 @@ export async function assembleAccountExportZip(
     fileCount,
     bankCount: bankTransactions.length,
     cashCount: cashEntries.length,
+    cashTrailCount: cashTrail.length,
     turnoverCount: dailyTurnover.length,
     messageCount: messages.length,
     btwFilingCount: btwFilingsAvailable ? btwFilings.length : 0,
@@ -276,7 +296,7 @@ export async function assembleAccountExportZip(
     JSON.stringify(
       {
         beschrijving:
-          "Export van je BoekBrug-account: facturen, ingediende BTW-aangiftes, documenten, profiel, bank, kas, dagomzet en berichten.",
+          "Export van je BoekBrug-account: facturen, ingediende BTW-aangiftes, documenten, profiel, bank, kas (met het spoor van verwijderde kasboekingen en beginsaldo-wijzigingen), dagomzet en berichten.",
         bewaarplicht:
           "Je bewaarplicht van 7 jaar (art. 52 AWR) rust op jou als ondernemer en loopt door nadat je stopt met BoekBrug. Bewaar deze export.",
         gegenereerd_op: summary.generatedAt,
@@ -284,6 +304,9 @@ export async function assembleAccountExportZip(
         aantal_bestanden: summary.fileCount,
         aantal_banktransacties: summary.bankCount,
         aantal_kasboekingen: summary.cashCount,
+        // [KAS-SPOOR] Wat er MET je kasboekingen is gebeurd: verwijderde boekingen (die staan
+        // nergens anders — een kasregel wordt hard verwijderd) en elke wijziging van het beginsaldo.
+        aantal_kas_spoorregels: summary.cashTrailCount,
         aantal_dagomzetdagen: summary.turnoverCount,
         aantal_berichten: summary.messageCount,
         aantal_btw_aangiftes: summary.btwFilingCount,
@@ -416,7 +439,27 @@ export async function buildAccountExportZip(args: {
       throw new Error(`[BOEK-032] ${label} query failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  const [bankRows, cashRows, turnoverRows, msgRows] = await Promise.all([
+  // [KAS-SPOOR] …and the drawer's own trail, which is the ONE ledger where the rows are not the
+  // whole story.
+  //
+  // Every other table in this export keeps its history inside itself: an archived invoice is still a
+  // row with a status, a bank line is never destroyed, a turnover day that was removed can be
+  // re-imported from the Z-report it came from. A cash_entries delete is a HARD delete, and a cash
+  // movement has no source document to re-read — the owner typed it. So the audit row is the only
+  // place a removed movement still exists, and an export that ships kas.json without it hands the
+  // owner a cash book that cannot answer what the app itself now answers on screen and in the
+  // accountant's quarterly sheet.
+  //
+  // Which is exactly what this file's own promise is about: an owner "could take their invoices,
+  // bank, kas and dagomzet with them" — and the kas they took was silently missing the lines that
+  // were taken out of it. The beginsaldo history belongs here for the same reason: profiel.json
+  // carries the CURRENT float, and that one number shifts every eindsaldo in the whole history.
+  //
+  // Only the three cash.* actions. Not the rest of audit_logs: this is not "give the owner the log",
+  // it is "an exported ledger must be complete", and the completeness gap exists only where rows can
+  // vanish. A wider dump is a separate decision with its own privacy questions (ip_address, seven
+  // years of every action) and it does not belong inside a fix for this one.
+  const [bankRows, cashRows, turnoverRows, msgRows, cashTrailRows] = await Promise.all([
     readAll("bank_transactions", (from, to) =>
       supabase.from("bank_transactions").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("cash_entries", (from, to) =>
@@ -425,6 +468,15 @@ export async function buildAccountExportZip(args: {
       supabase.from("daily_turnover").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("messages", (from, to) =>
       supabase.from("messages").select("*").or(`sender_id.eq.${userId},receiver_id.eq.${userId}`).order("id", { ascending: true }).range(from, to)),
+    // Held to the same rule as the four above: a failed read THROWS rather than shipping an empty
+    // list, because "no movement was ever removed from this cash book" is a claim, and an export
+    // that makes it on the strength of a failed query is the harm this whole file is written against.
+    readAll("audit_logs (kas)", (from, to) =>
+      supabase.from("audit_logs")
+        .select("action, created_at, entity_id, old_value, new_value")
+        .eq("user_id", userId)
+        .in("action", ["cash.entry_added", "cash.entry_removed", "cash.opening_balance_set"])
+        .order("id", { ascending: true }).range(from, to)),
   ]);
 
   // [EXPORT-FILED] btw_filings, read apart from the four above because it answers a different
@@ -465,6 +517,7 @@ export async function buildAccountExportZip(args: {
     userId, profile, invoices, files, skipped,
     bankTransactions: bankRows,
     cashEntries: cashRows,
+    cashTrail: cashTrailRows,
     dailyTurnover: turnoverRows,
     messages: msgRows,
     btwFilings: btwFilingRows,
