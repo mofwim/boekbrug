@@ -3893,6 +3893,11 @@ export const MESSAGES = {
     en: 'The invoice got a number, but the PDF could not be created — the client received nothing. Send again.',
   },
   // ── [OFFERTE-AKKOORD] Wat de klant antwoordde ────────────────────────────────
+  // ── [FACTUUR-BIJLAGE] Een eigen bestand met de factuurmail mee ───────────────
+  'bijlage.meesturen': { nl: 'Een bestand meesturen (optioneel)', ar: 'إرفاق ملف (اختياري)', en: 'Send a file along (optional)' },
+  'bijlage.zoekHint': { nl: 'Zoek in je bestanden…', ar: 'ابحث في ملفاتك…', en: 'Search your files…' },
+  'bijlage.zoeken': { nl: 'Zoeken…', ar: 'جارٍ البحث…', en: 'Searching…' },
+  'bijlage.weghalen': { nl: 'Weghalen', ar: 'إزالة', en: 'Remove' },
   'detail.offerte.akkoord': { nl: 'De klant gaat akkoord', ar: 'وافق العميل', en: 'The customer accepted' },
   'detail.offerte.afgewezen': { nl: 'De klant gaat niet akkoord', ar: 'لم يوافق العميل', en: 'The customer declined' },
   'detail.offerte.doorOp': { nl: 'Door {naam}, op {datum}', ar: 'بواسطة {naam}، بتاريخ {datum}', en: 'By {naam}, on {datum}' },

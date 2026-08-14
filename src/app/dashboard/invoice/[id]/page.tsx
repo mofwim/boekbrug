@@ -97,6 +97,14 @@ export default function InvoiceDetailPage() {
   // never invoked: the owner retyped everything and handleSubmit wrote a
   // creditnota with original_invoice_id=null — an orphan that severed the link and
   // allowed unlimited duplicate legal credits. This dialog calls the route directly.
+  // [FACTUUR-BIJLAGE] Het eigen bestand dat met deze factuurmail meegaat — een werkbon, een
+  // urenstaat, een pakbon. Gekozen vlak voor het versturen, want dat is het moment waarop je
+  // eraan denkt.
+  const [bijlage, setBijlage] = useState<{ id: string; file_name: string; file_size: number } | null>(null)
+  const [bijlageZoek, setBijlageZoek] = useState('')
+  const [bijlageTreffers, setBijlageTreffers] = useState<{ id: string; file_name: string; file_size: number }[]>([])
+  const [bijlageZoekt, setBijlageZoekt] = useState(false)
+
   const [showCreditDialog, setShowCreditDialog] = useState(false)
   // [DEEL-CREDIT] Per regel-id het aantal dat wordt gecrediteerd. Leeg = de hele factuur, en dat
   // is de STAND waarin de dialoog opent: het gewone geval blijft één klik.
@@ -312,7 +320,7 @@ export default function InvoiceDetailPage() {
     const res = await fetch('/api/invoice/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId }),
+      body: JSON.stringify({ invoiceId, attachment_document_id: bijlage?.id ?? null }),
     })
 
     if (!res.ok) {
@@ -927,6 +935,68 @@ export default function InvoiceDetailPage() {
             <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
               ⚠ {t('bewerk.modal.waarschuwing')}
             </p>
+
+            {/* [FACTUUR-BIJLAGE] Eén eigen bestand mee. Het staat hier en niet op het
+                bewerkscherm, omdat je er pas aan denkt op het moment dat je verstuurt — en omdat
+                dit het scherm is waarop de mail écht weggaat. */}
+            <div style={{ marginBottom: 16, paddingTop: 12, borderTop: '1px solid #F1F3F4' }}>
+              {bijlage ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+                  <span style={{ color: '#5F6368' }}>📎</span>
+                  <span style={{ flex: 1, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {bijlage.file_name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setBijlage(null); setBijlageZoek(''); setBijlageTreffers([]) }}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: '#70757a' }}
+                  >
+                    {t('bijlage.weghalen')}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label htmlFor="bijlage-zoek" style={{ display: 'block', fontSize: 13, color: '#5F6368', marginBottom: 6 }}>
+                    {t('bijlage.meesturen')}
+                  </label>
+                  <input
+                    id="bijlage-zoek"
+                    type="text"
+                    value={bijlageZoek}
+                    placeholder={t('bijlage.zoekHint')}
+                    onChange={async (e) => {
+                      const q = e.target.value
+                      setBijlageZoek(q)
+                      if (q.trim().length < 2) { setBijlageTreffers([]); return }
+                      setBijlageZoekt(true)
+                      try {
+                        const r = await fetch(`/api/bestanden?search=${encodeURIComponent(q.trim())}`)
+                        const d = await r.json().catch(() => ({}))
+                        setBijlageTreffers(Array.isArray(d?.documents) ? d.documents.slice(0, 6) : [])
+                      } catch {
+                        // Zoeken dat niet lukt laat de lijst leeg; versturen kan gewoon door, want
+                        // een bijlage is nooit verplicht.
+                        setBijlageTreffers([])
+                      } finally {
+                        setBijlageZoekt(false)
+                      }
+                    }}
+                    style={{ width: '100%', minHeight: 40, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 15, boxSizing: 'border-box' }}
+                  />
+                  {bijlageZoekt && <p style={{ fontSize: 12, color: '#70757a', margin: '6px 0 0' }}>{t('bijlage.zoeken')}</p>}
+                  {bijlageTreffers.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => { setBijlage(d); setBijlageTreffers([]) }}
+                      style={{ display: 'block', width: '100%', textAlign: 'start', background: 'none', border: 'none', padding: '8px 4px', cursor: 'pointer', fontSize: 13.5, color: '#202124', borderBottom: '1px solid #F1F3F4' }}
+                    >
+                      {d.file_name}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
                 disabled={sending}

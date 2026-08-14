@@ -213,6 +213,7 @@ export async function sendInvoiceToClient({
   isCreditnota = false,
   senderEmail,
   isCorrected = false,
+  extraAttachment,
 }: {
   toEmail: string
   clientName: string
@@ -248,6 +249,13 @@ export async function sendInvoiceToClient({
    * zoals het was.
    */
   senderEmail?: string | null
+  /**
+   * [FACTUUR-BIJLAGE] Het eigen bestand van de ondernemer, als hij er een koos.
+   *
+   * Al opgehaald en gekeurd door de verstuurroute, VOORDAT de factuur een nummer kreeg — zie de
+   * kop van invoice-attachment.ts. Hier komt dus alleen nog een bestand binnen dat mee mag.
+   */
+  extraAttachment?: { filename: string; content: Buffer } | null
 }) {
   const docLabel = isCreditnota ? 'Creditnota' : 'Factuur'
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
@@ -259,9 +267,17 @@ export async function sendInvoiceToClient({
     ? ''
     : `<p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
 
+  // [FACTUUR-BIJLAGE] De zin noemt wat er ECHT in de mail zit. Zit er een eigen bestand bij, dan
+  // wordt het bij naam genoemd: een klant die een werkbon verwacht moet kunnen zien dat hij er is
+  // zonder de bijlagen open te klappen, en een naam is ook het enige waaraan hij merkt dat er per
+  // ongeluk het verkeerde bestand meeging.
   const attachmentLine = pdfBuffer
-    ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
-    : ''
+    ? extraAttachment
+      ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF, samen met <strong>${escapeHtml(extraAttachment.filename)}</strong>.</p>`
+      : `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
+    : extraAttachment
+      ? `<p style="color: #555;"><strong>${escapeHtml(extraAttachment.filename)}</strong> is bijgevoegd.</p>`
+      : ''
 
   // [TRUST-DELIVERY] Resend's SDK resolves to { data, error } and does NOT throw on
   // an API-level rejection (invalid recipient, unverified domain, rate-limit,
@@ -307,13 +323,18 @@ export async function sendInvoiceToClient({
     `,
     // [FACTUUR-A] Attach the legal PDF — only when rendering succeeded.
     // No attachments key at all when absent (cleaner than empty array).
-    ...(pdfBuffer
+    //
+    // [FACTUUR-BIJLAGE] En daarnaast, als de ondernemer er een koos, zijn eigen bestand: een
+    // werkbon, een urenstaat, een pakbon. Het is al opgehaald en gekeurd VOORDAT de factuur een
+    // nummer kreeg (zie invoice-attachment.ts) — hier wordt het alleen nog meegegeven.
+    //
+    // De factuur-PDF staat vooraan. De klant opent de eerste bijlage, en dat hoort het document
+    // te zijn waar de mail over gaat.
+    ...(pdfBuffer || extraAttachment
       ? {
           attachments: [
-            {
-              filename: `${invoiceNumber}.pdf`,
-              content: pdfBuffer,
-            },
+            ...(pdfBuffer ? [{ filename: `${invoiceNumber}.pdf`, content: pdfBuffer }] : []),
+            ...(extraAttachment ? [extraAttachment] : []),
           ],
         }
       : {})

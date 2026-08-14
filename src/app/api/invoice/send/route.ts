@@ -39,6 +39,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { createNotification } from '@/lib/notifications'
 import { sendInvoiceToClient } from '@/lib/email'
+// [FACTUUR-BIJLAGE] Of het eigen bestand mee mag, en wat de ondernemer leest als het niet kan.
+import { attachmentRefusal, attachmentRefusalText, safeAttachmentName } from '@/lib/invoice-attachment'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
@@ -452,6 +454,70 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── 7b. [FACTUUR-BIJLAGE] De eigen bijlage, VOOR het nummer ──────────────
+    //
+    // Hier en niet verderop, en dat is de hele reden dat dit blok bestaat. Een paar regels lager
+    // wordt een nummer gemunt uit de doorlopende reeks (Art. 35 — onomkeerbaar, geen gaten).
+    // Blijkt de bijlage pas daarna onleesbaar, dan zijn er twee slechte uitkomsten en geen goede:
+    // versturen zonder het bestand dat de ondernemer er bewust bij zette (de klant krijgt een
+    // onvolledig pakket en kan de factuur niet verwerken), of afbreken met een nummer dat al weg
+    // is. Dus: eerst ophalen, dan pas nummeren.
+    //
+    // De kolom bestaat pas na invoice_bijlage.sql. Op een database waar die migratie nog open
+    // staat is `attachment_document_id` simpelweg undefined en slaat dit blok zichzelf over —
+    // exact de route van hiervoor.
+    let bijlage: { filename: string; content: Buffer } | null = null
+    // Uit het VERZOEK als het scherm er een meestuurt, anders wat er op de factuur staat. Het
+    // scherm kiest de bijlage vlak voor het versturen, dus die keuze moet hier binnen kunnen komen
+    // zonder eerst een aparte opslagronde — en hij wordt hieronder op de factuur vastgelegd, zodat
+    // opnieuw versturen dezelfde bijlage meeneemt.
+    const gevraagdeBijlage = typeof body?.attachment_document_id === 'string' && body.attachment_document_id
+      ? body.attachment_document_id
+      : null
+    const bijlageId = gevraagdeBijlage ?? (invoice as { attachment_document_id?: string | null }).attachment_document_id ?? null
+    if (bijlageId) {
+      // Namens een medewerker is de documentrij van de eigenaar via RLS onleesbaar; dan langs
+      // service_role, precies zoals de rest van deze route dat doet.
+      const bijlageClient = isActingForOther(acting) ? createPipelineClient() : supabase
+      const { data: bijlageDoc, error: bijlageErr } = await bijlageClient
+        .from('documents')
+        .select('id, user_id, file_name, file_url, file_size, file_type, trashed')
+        .eq('id', bijlageId)
+        // [RLS-UIT] Op de EIGENAAR, in de query zelf. Het id komt uit het verzoek en is dus
+        // attacker-supplied; attachmentRefusal weigert andermans bestand hieronder ook, maar een
+        // filter in code is de tweede verdedigingslinie en niet de eerste. Namens een medewerker
+        // loopt dit langs service_role, en dan is deze regel het enige wat er tussen zit.
+        .eq('user_id', ownerId)
+        .maybeSingle()
+
+      if (bijlageErr) {
+        // [LOCK-READ-HONEST] Niet kunnen kijken is niet hetzelfde als "er is niets". Weigeren, en
+        // zeggen dat het tijdelijk is — er is nog niets verbruikt.
+        return NextResponse.json(
+          { error: 'We konden de bijlage nu niet ophalen. Er is nog niets verstuurd — probeer het zo meteen opnieuw.' },
+          { status: 503 },
+        )
+      }
+
+      const weigering = attachmentRefusal(bijlageDoc as Parameters<typeof attachmentRefusal>[0], ownerId)
+      if (weigering) {
+        return NextResponse.json({ error: attachmentRefusalText(weigering), code: `attachment_${weigering}` }, { status: 400 })
+      }
+
+      const pad = (bijlageDoc as { file_url: string }).file_url
+      const { data: blob, error: dlErr } = await createPipelineClient().storage.from('documents').download(pad)
+      if (dlErr || !blob) {
+        return NextResponse.json(
+          { error: 'De bijlage kon niet worden gelezen. Er is nog niets verstuurd — probeer het zo meteen opnieuw of kies een ander bestand.' },
+          { status: 503 },
+        )
+      }
+      bijlage = {
+        filename: safeAttachmentName((bijlageDoc as { file_name: string | null }).file_name),
+        content: Buffer.from(await blob.arrayBuffer()),
+      }
+    }
+
     // ── 8. Generate number — skipped entirely for resend ───────
     // [FAIR-USE] Het maandhek, hier: alles is gevalideerd, en de eerstvolgende stap geeft een
     // nummer uit dat niet meer teruggegeven kan worden. Faalt open. Een weigering pauzeert
@@ -535,6 +601,15 @@ export async function POST(request: NextRequest) {
           // `select('*')` above returns the key iff the column exists, so the row itself answers.
           ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
           ...(computedTotals ?? {}),
+          // [FACTUUR-BIJLAGE] Vastleggen WAT er meeging, en alleen als het scherm een nieuwe keuze
+          // meestuurde. Zonder dit zou opnieuw versturen de bijlage vergeten die de klant de eerste
+          // keer wél kreeg — twee mails over dezelfde factuur met een verschillende inhoud.
+          //
+          // Dezelfde voorwaarde als de regel hierboven: de sleutel reist alleen mee als de kolom er
+          // is. Deze UPDATE is het punt van geen terugkeer.
+          ...(gevraagdeBijlage && 'attachment_document_id' in invoice
+            ? { attachment_document_id: gevraagdeBijlage }
+            : {}),
           updated_at: new Date().toISOString(),
         })
         .eq('id', invoiceId)
@@ -737,6 +812,8 @@ export async function POST(request: NextRequest) {
         toEmail: invoice.client_email,
         clientName: invoice.client_name,
         zzperName,
+        // [FACTUUR-BIJLAGE] Al opgehaald en gekeurd voordat er een nummer bestond.
+        extraAttachment: bijlage,
         invoiceNumber: finalNumber,
         totalInc: finalTotalInc,
         dueDate: invoice.due_date ?? '',

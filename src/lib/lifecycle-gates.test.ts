@@ -9038,3 +9038,47 @@ test("[OFFERTE-AKKOORD] an answered quote changes what Vandaag asks for", () => 
   // Nee haalt hem van de lijst: doorgaan met porren is werk verzinnen dat er niet is.
   assert.match(regel, /if \(quote\.offerte_response === "declined"\) return null;/);
 });
+
+// ─── [FACTUUR-BIJLAGE] Een eigen bestand met de factuurmail mee ───────────────
+test("[FACTUUR-BIJLAGE] the attachment is resolved BEFORE a number is minted", () => {
+  // Dit is de hele reden dat deze regels bestaan. Een paar regels na het ophalen wordt een nummer
+  // gemunt uit de doorlopende reeks (Art. 35 — onomkeerbaar). Blijkt de bijlage pas dáárna
+  // onleesbaar, dan zijn er twee slechte uitkomsten en geen goede: versturen zonder het bestand
+  // dat de ondernemer er bewust bij zette, of afbreken met een nummer dat al weg is.
+  const send = code("src/app/api/invoice/send/route.ts");
+  const bijlageAt = send.indexOf("const bijlageId =");
+  const nummerAt = send.indexOf("generateInvoiceNumber(supabase");
+  assert.ok(bijlageAt > 0, "the send route must resolve the attachment");
+  assert.ok(nummerAt > 0);
+  assert.ok(bijlageAt < nummerAt,
+    "the attachment must be fetched and judged before a number exists — after it, no outcome is good");
+
+  // En het downloaden zelf ook, niet alleen de keuring.
+  const downloadAt = send.indexOf(".storage.from('documents').download(");
+  assert.ok(downloadAt > 0 && downloadAt < nummerAt, "the bytes must be in hand before the number");
+});
+
+test("[FACTUUR-BIJLAGE] a file that cannot go along stops the send, and says why", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /attachmentRefusal\(/, "the rule decides, not the route");
+  assert.match(send, /attachmentRefusalText\(weigering\)/, "…and the owner reads the reason");
+  // Een leesfout is niet hetzelfde als "de bijlage deugt niet": het eerste is tijdelijk.
+  assert.match(send, /Er is nog niets verstuurd/,
+    "a failed read must say that nothing was issued — the owner may safely retry");
+
+  const regel = code("src/lib/invoice-attachment.ts");
+  // Andermans bestand gaat nooit naar een derde.
+  assert.match(regel, /if \(!doc\.user_id \|\| doc\.user_id !== ownerId\) return "not_owned";/);
+  // En de grens gaat over de mailbox van de KLANT, niet over onze opslag.
+  assert.match(regel, /BASE64_FACTOR/, "base64 makes a file a third bigger in transit");
+  assert.match(regel, /RESERVED_FOR_INVOICE_BYTES/, "…and the invoice PDF has to fit beside it");
+});
+
+test("[FACTUUR-BIJLAGE] the invoice PDF stays the first attachment", () => {
+  // De klant opent de eerste bijlage, en dat hoort het document te zijn waar de mail over gaat.
+  const email = code("src/lib/email.ts");
+  const block = email.slice(email.indexOf("...(pdfBuffer || extraAttachment"));
+  const pdfAt = block.indexOf("filename: `${invoiceNumber}.pdf`");
+  const extraAt = block.indexOf("extraAttachment ? [extraAttachment]");
+  assert.ok(pdfAt > 0 && extraAt > 0 && pdfAt < extraAt, "the legal document comes first");
+});
