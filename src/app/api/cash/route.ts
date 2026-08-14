@@ -16,6 +16,8 @@ import { amsterdamToday } from "@/lib/format-nl";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { round2 } from "@/lib/invoice-totals";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 // [KAS-SPOOR] The drawer's three write doors were the only money writes in the app that left no
 // audit row — see the block above 'cash.entry_added' in audit.ts for why that is the worst ledger
 // to leave untraced.
@@ -54,14 +56,17 @@ export async function GET() {
   // Page past the ~1000-row PostgREST cap with a stable id order, then sort newest-first for display.
   // This same full read also feeds the saldo below, so it replaces the separate movements fetch (one
   // scan instead of two).
+  // [KAS-ZACHT] The ledger the owner sees and the saldo above it: live movements only. A removed
+  // line is out of the books — it is disclosed per quarter in the kasboek panel, not counted here.
+  const liveCash = await liveCashEntries(supabase);
   const allEntries = await fetchAllRows<{
     id: string; entry_date: string; created_at: string | null; direction: string;
     amount: number | null; category: string; description: string | null; document_id: string | null; btw_rate: number | null;
   }>((from, to) =>
-    supabase
+    liveCash.only(supabase
       .from("cash_entries")
       .select("id, entry_date, created_at, direction, amount, category, description, document_id, btw_rate")
-      .eq("user_id", user.id)
+      .eq("user_id", user.id))
       .order("id", { ascending: true })
       .range(from, to),
   );
@@ -347,11 +352,14 @@ export async function DELETE(req: NextRequest) {
   // delete — cash_entries keeps no reversal row — so the audit entry below is the only place that
   // will ever say this movement existed, and a trail that records "a cash entry was removed"
   // without its date, amount and description cannot answer the question anyone would actually ask.
-  const { data: existing, error: readErr } = await supabase
+  // [KAS-ZACHT] Live rows only: removing an already-removed movement is not an error to explain,
+  // it is a row that is no longer in the books — the same 404 as an id that never existed.
+  const liveForDelete = await liveCashEntries(supabase);
+  const { data: existing, error: readErr } = await liveForDelete.only(supabase
     .from("cash_entries")
     .select("category, invoice_id, entry_date, direction, amount, description, btw_rate, document_id")
     .eq("id", id)
-    .eq("user_id", user.id)
+    .eq("user_id", user.id))
     .maybeSingle();
   if (readErr) {
     return NextResponse.json(
@@ -376,16 +384,44 @@ export async function DELETE(req: NextRequest) {
     );
   }
 
-  const { error } = await supabase
-    .from("cash_entries")
-    .delete()
-    .eq("id", id)
-    .eq("user_id", user.id);
+  // ── [KAS-ZACHT] Removed from the books, not destroyed ────────────────────────────────────────
+  //
+  // A real bookkeeping system reverses; it does not delete. Every other ledger here already works
+  // that way — an archived invoice is still a row with a status, a bank line is never destroyed, a
+  // removed turnover day can be re-imported from its Z-report. The cash book was the exception, and
+  // it is the one ledger with no source document to re-read (the owner typed it) AND the one the app
+  // refuses a BTW-aangifte on. A running balance that can lose a line without trace, used as grounds
+  // to block a filing, is not a book anyone can check.
+  //
+  // deleted_at set → the movement counts NOWHERE (cash-live.ts filters all eighteen readers) and
+  // stays readable: the kasboek panel and the accountant's .xlsx disclose it per quarter, and the
+  // owner's export ships it verbatim. Reversible, which is what a correction means.
+  //
+  // [DEPLOY-SAFE] Until the migration lands the column does not exist, and an UPDATE naming it would
+  // fail — leaving the owner unable to remove anything at all. So the capability decides: with the
+  // column, soft delete; without it, exactly the hard delete of the day before this shipped. The same
+  // probe the readers use, so a request can never filter on a column its own write does not have.
+  const { error } = liveForDelete.supported
+    ? await supabase
+        .from("cash_entries")
+        .update({ deleted_at: new Date().toISOString() } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+        // Only a live row: two concurrent removals must not overwrite the first one's timestamp,
+        // which is the moment the trail below is about.
+        .is("deleted_at", null)
+    : await supabase
+        .from("cash_entries")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
 
   if (error) return NextResponse.json({ error: "kon boeking niet verwijderen" }, { status: 500 });
 
-  // [KAS-SPOOR] Logged AFTER the delete succeeded, so the trail never claims a removal that was
-  // refused — and only when there was something to remove (a row already gone writes nothing).
+  // [KAS-SPOOR] Logged AFTER the removal succeeded, so the trail never claims one that was refused —
+  // and only when there was something to remove (a row already gone writes nothing). The trail stays
+  // exactly as valuable with soft delete: it is what records WHO removed it and WHEN, which the row's
+  // own deleted_at cannot say.
   if (row) {
     await logAuditAction({
       userId: user.id,

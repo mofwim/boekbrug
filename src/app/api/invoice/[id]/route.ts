@@ -32,6 +32,8 @@ import { checkInvoiceDates } from '@/lib/invoice-dates'
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
 // blijft er een concept staan dat niemand meer aanraakt. Alles wordt gescoopt op de EIGENAAR, en
 // canAccessInvoice() eist daarbovenop dat een medewerker het zelf heeft aangemaakt.
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from '@/lib/cash-live'
 import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId, canAccessInvoice, isActingForOther } from '@/lib/acting-for'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -720,10 +722,14 @@ async function gatherSentEditFacts(
     return isMissingRelation(message) ? false : null
   }
 
+  const liveCash = await liveCashEntries(supabase);
   const [bankDirect, bankSplit, cashLink, creditnota] = await Promise.all([
     linkExists(supabase.from('bank_transactions').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
     linkExists(supabase.from('bank_tx_invoices').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
-    linkExists(supabase.from('cash_entries').select('id', { count: 'exact', head: true }).eq('invoice_id', id)),
+    // [KAS-ZACHT] Through the shared reader, not a raw .is(): the column arrives with a hand-applied
+    // migration, and a filter on a column PostgREST does not know refuses the whole read. A removed
+    // drawer movement is not a link that should hold this invoice back.
+    linkExists(liveCash.only(supabase.from('cash_entries').select('id', { count: 'exact', head: true }).eq('invoice_id', id))),
     linkExists(supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('original_invoice_id', id).eq('invoice_type', 'creditnota')),
   ])
 

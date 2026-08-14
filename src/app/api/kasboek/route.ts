@@ -25,6 +25,8 @@ import {
   type Quarter,
 } from "@/lib/kasboek";
 import { matrixToXlsxBytes } from "@/lib/xlsx-adapter";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 // [KAS-BRUG] The fourth reason a drawer goes below zero — a bank cash withdrawal the cash book never
 // heard about. The bank half is recognised by the classifier's own patterns, never a copy of them.
 import { findUnrecordedCashWithdrawals } from "@/lib/cash-transfer-match";
@@ -61,6 +63,9 @@ export async function GET(req: NextRequest) {
   // The closing package already refuses to emit this very sheet when either source fails
   // (closing-package.ts, same [NO-EMPTY-LEDGER] tag) and says why. This is that rule, here.
   const end = `${year}-12-31`;
+  // [KAS-ZACHT] Removed movements are out of the books: out of the running balance, out of the sheet
+  // the accountant receives, and out of the witness this route hands the negative-drawer banner.
+  const cash = await liveCashEntries(supabase);
   let turnover: KasTurnoverDay[];
   let rawEntries: Array<{ entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null }>;
   try {
@@ -72,8 +77,8 @@ export async function GET(req: NextRequest) {
         .order("turnover_date", { ascending: true }).range(from, to),
     )) as KasTurnoverDay[];
     rawEntries = await fetchAllRows<{ entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null }>((from, to) =>
-      supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
-        .eq("user_id", user.id).lte("entry_date", end)
+      cash.only(supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
+        .eq("user_id", user.id).lte("entry_date", end))
         // [PAGE-KEY] Ordered by id, not entry_date. entry_date is NOT unique — several cash
         // entries on one day is the ordinary case for a shop — and Postgres gives no defined
         // order among ties, so across separate .range() windows a row could be served twice or

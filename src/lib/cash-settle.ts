@@ -30,6 +30,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 // [KAS-STIL] Caught failures that must still reach someone — the same reporter incasso-settle.ts
 // uses for the same class, in the same hourly reconcile. See report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 
 // [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
 // (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
@@ -266,13 +268,18 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
 
   // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
   // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
+  // [KAS-ZACHT] Live entries only, and this is the read where that matters most in BOTH directions:
+  // a removed settlement must not be seen (or the reconcile thinks the drawer movement exists and
+  // never re-creates it), and must not be deleted again. The unique index is partial on deleted_at
+  // for the same reason — see cash_entry_soft_delete.sql.
+  const liveCash = await liveCashEntries(supabase);
   const entryRows = await fetchAllRows<Record<string, unknown>>(
-    (from, to) => supabase
+    (from, to) => liveCash.only(supabase
       .from("cash_entries")
       .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
       .eq("user_id", userId)
       .eq("category", "betaling")
-      .not("invoice_id", "is", null)
+      .not("invoice_id", "is", null))
       .order("id", { ascending: true })
       .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
   );

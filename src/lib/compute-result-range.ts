@@ -13,6 +13,8 @@
 import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry, type FinancialResult } from "./financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { fetchAllRows } from "./supabase-paginate";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "./cash-live";
 import { reconcileTriangle, bankNetByDay } from "./triangle";
 import { netCommissionToBook, ACQUIRER_VENDOR_RE } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
@@ -187,13 +189,15 @@ export async function computeResultForRange(args: {
     .filter((b) => b.date != null && b.date >= start && b.date <= end)
     .map(toResultBankTx);
 
-  // Cash entries in the window.
-  const cashRows = await fetchAllRows((from, to) => pipeline
+  // Cash entries in the window. [KAS-ZACHT] Live ones only — a removed movement is not a cost,
+  // not turnover and not voorbelasting.
+  const liveCash = await liveCashEntries(pipeline);
+  const cashRows = await fetchAllRows((from, to) => liveCash.only(pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date, document_id")
     .eq("user_id", ownerId)
     .gte("entry_date", start)
-    .lte("entry_date", end)
+    .lte("entry_date", end))
     .order("id", { ascending: true }).range(from, to));
   const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
