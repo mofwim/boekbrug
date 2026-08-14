@@ -300,6 +300,26 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 9 | `snelstart_connection.sql` | pas nodig met een subscription key |
 | 10 | `kluis_subscriptions.sql` | **vóór de eerste Bewaarkluis-betaling** |
 | 11 | `cash_entry_soft_delete.sql` | zet zachte verwijdering in het kasboek AAN; tot dan blijft een kasboeking hard verwijderd |
+| 12 | `invoice_line_discount.sql` | korting per factuurregel |
+| 13 | `creditnota_partial.sql` | een creditnota voor een DEEL van een factuur |
+| 14 | `offerte_akkoord.sql` | de klant kan zelf akkoord geven op een offerte |
+| 15 | `invoice_bijlage.sql` | één eigen bestand met de factuurmail mee |
+
+**Over 12 t/m 15.** Deze horen bij vier functies die al op `main` staan. Ze hebben geen onderlinge
+volgorde en mogen los van elkaar. **Zonder de migratie werkt de app precies als de dag ervoor** —
+elke functie is aan de kolom vastgeknoopt, niet aan een schakelaar, en de code weigert het NIEUWE
+in plaats van het bestaande stuk te maken:
+
+- **12** — een concept met een regelkorting wordt teruggedraaid en de ondernemer leest waarom
+  (`/api/invoice/draft`, HTTP 503). Een factuur zonder regelkorting merkt niets.
+- **13** — de oude unieke index laat één creditnota per factuur toe, dus een tweede deelcreditnota
+  wordt door de database geweigerd. Het plafond (Σ|credits| ≤ |origineel|) staat óók in de route en
+  in `partial-credit.ts`, dus het bedrag kan nooit te hoog worden; de migratie voegt de
+  vergrendeling tegen twee gelijktijdige verzoeken toe.
+- **14** — de offertemail gaat zonder akkoordknop de deur uit, met een luide regel in het log
+  (`send-offerte`). De offerte zelf verstuurt gewoon.
+- **15** — de bijlage kan per verzending worden meegegeven maar wordt niet op de factuur onthouden.
+  De weigering blijft vóór het factuurnummer staan, dus er ontstaat nooit een gat in de reeks.
 
 **Over 11.** Deze mag op elk moment, ook los van de rest, en er zit geen haast bij: de app werkt er
 volledig zonder. De code PROBEERT de kolom (`src/lib/cash-live.ts`) en gedraagt zich zonder hem
