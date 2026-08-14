@@ -20,6 +20,8 @@ import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [OFFERTE-AKKOORD] De datum waarop de klant antwoordde — dezelfde weergave als overal.
+// [AKKOORD-VERLOPEN] Of het akkoord ná de geldigheidsdatum binnenkwam — zie offerte-akkoord.ts.
+import { answeredAfterExpiry } from '@/lib/offerte-akkoord'
 import { formatDateNL } from '@/lib/format-nl'
 // [DEEL-CREDIT] Hoeveel er is gecrediteerd en hoeveel er nog kan — dezelfde regels als de route.
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
@@ -721,6 +723,23 @@ export default function InvoiceDetailPage() {
                     })
                   : t('detail.offerte.op', { datum: formatDateNL(invoice?.offerte_responded_at ?? null) })}
               </p>
+              {/* [AKKOORD-VERLOPEN] answeredAfterExpiry existed, was documented as "de ondernemer
+                  ziet het en beslist", was tested — and was called from nowhere. So the owner saw a
+                  plain acceptance for a quote whose price had expired, and the screen with the
+                  "omzetten naar factuur" button was exactly where they would not learn it. The app
+                  still refuses nothing: the answer is valid, and whether last quarter's price is
+                  still honoured is the owner's call. It just stops being invisible. */}
+              {answeredAfterExpiry({
+                invoice_type: invoice?.invoice_type ?? null,
+                status: invoice?.status ?? null,
+                due_date: invoice?.due_date ?? null,
+                offerte_response: invoice?.offerte_response ?? null,
+                offerte_responded_at: invoice?.offerte_responded_at ?? null,
+              }) && (
+                <p style={{ fontSize: 12, fontWeight: 600, color: '#B06000', margin: '6px 0 0' }}>
+                  {t('detail.offerte.naVervaldatum', { datum: formatDateNL(invoice?.due_date ?? null) })}
+                </p>
+              )}
             </div>
           )}
           {invoice?.offerte_response === 'declined' && (

@@ -20,6 +20,7 @@ import { amsterdamToday } from '@/lib/format-nl'
 import {
   toPublicQuoteView,
   answerRefusal,
+  answeredAfterExpiry,
   isQuoteAnswer,
   cleanResponderName,
   type AnswerableQuote,
@@ -179,6 +180,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
 
   const rij = quote as unknown as { id: string; sender_id: string; invoice_number: string | null; client_name: string | null }
 
+  // [AKKOORD-VERLOPEN] Kwam dit akkoord ná de geldigheidsdatum? De regel bestond, was getest, en
+  // werd nergens aangeroepen — dus de ondernemer kreeg "Offerte geaccepteerd" over een prijs die
+  // maanden geleden was ingetrokken, en zette hem om. Het antwoord blijft geldig en wordt nergens
+  // geweigerd; het wordt alleen gezegd, hier en op het scherm waar de factuur wordt gemaakt.
+  const teLaat = answeredAfterExpiry({
+    ...(quote as unknown as AnswerableQuote),
+    offerte_response: antwoord,
+    offerte_responded_at: nu,
+  })
+
   // [ALARM-VRIJ] Vanaf hier is het antwoord vastgelegd. Alles hieronder is bericht en spoor, en
   // niets ervan mag het antwoord ongedaan maken of de klant een fout tonen: hij heeft gedaan wat
   // hem gevraagd werd, en dat is gelukt.
@@ -204,7 +215,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       title: antwoord === 'accepted' ? 'Offerte geaccepteerd' : 'Offerte afgewezen',
       body: antwoord === 'accepted'
         // [TAAL-DB] stored notification content — Dutch by design
-        ? `${wie} gaat akkoord met offerte${nummer}. Zet hem om in een factuur wanneer je wilt.`
+        ? `${wie} gaat akkoord met offerte${nummer}.${teLaat
+            // [AKKOORD-VERLOPEN] Dit is het bericht dat de ondernemer bereikt op het moment zelf.
+            // Zonder deze zin leest een akkoord van vandaag over een offerte van maart als een
+            // gewoon akkoord, en is de prijs van maart wat er wordt gefactureerd.
+            ? ' Let op: dit kwam ná de geldigheidsdatum — controleer of je prijs nog klopt.'
+            : ''} Zet hem om in een factuur wanneer je wilt.`
         // [TAAL-DB] stored notification content — Dutch by design
         : `${wie} gaat niet akkoord met offerte${nummer}.`,
       type: 'invoice',
