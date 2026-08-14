@@ -7089,6 +7089,21 @@ export const MESSAGES = {
     ar: 'لم يُقدَّم هذا الربع بعد. إن أصلحته الآن فلن يحجب إقرارك لاحقاً — والأيام لا تزال قريبة بما يكفي لتتبّعها.',
     en: 'This quarter has not been filed yet. Fix it now and it will not block your return later — and the days are still fresh enough to retrace.',
   },
+  // [KAS-BRUG] De vierde reden, en in een winkel de gewoonste: er is contant geld van de bank
+  // gehaald en de opname is nooit in het kasboek geschreven. De app ZIET die opname al — hij staat
+  // geclassificeerd op het bankafschrift dat ze zelf heeft ingelezen. Een poort die een aangifte
+  // weigert om een getal, terwijl de waarschijnlijkste onschuldige verklaring voor dat getal in haar
+  // eigen database ligt, beschuldigt iemand met het bewijs op zak.
+  'kas.brug.titel': {
+    nl: 'Je hebt contant geld van de bank gehaald dat niet in je kasboek staat',
+    ar: 'سحبت نقداً من البنك ولا يظهر في دفتر النقد',
+    en: 'You took cash out of the bank that is not in your cash book',
+  },
+  'kas.brug.uitleg': {
+    nl: 'Dit staat wél op je bankafschrift. Hoort dit geld in de kassa? Boek het dan als opname — dan klopt je kassaldo weer, en meestal is dit precies wat er ontbrak.',
+    ar: 'هذا موجود في كشف حسابك البنكي. هل يخصّ هذا المال الكاسة؟ إذاً قيّده كسحب — فيعود رصيدك صحيحاً، وغالباً هذا بالضبط ما كان ناقصاً.',
+    en: 'It is on your bank statement. Did this money go into the till? Book it as a withdrawal — your cash balance adds up again, and this is usually exactly what was missing.',
+  },
   'kas.negatief.reden1': {
     nl: 'het beginsaldo staat te laag (het geld dat al in de kassa lag)',
     ar: 'الرصيد الافتتاحي منخفض جداً (المال الذي كان في الدرج أصلاً)',

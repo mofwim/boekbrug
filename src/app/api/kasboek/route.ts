@@ -17,6 +17,7 @@ import {
   openingBalanceForQuarter,
   kasboekToMatrix,
   removedInQuarter,
+  quarterRange,
   type KasTurnoverDay,
   type KasEntry,
   type RemovedKasEntry,
@@ -24,6 +25,10 @@ import {
   type Quarter,
 } from "@/lib/kasboek";
 import { matrixToXlsxBytes } from "@/lib/xlsx-adapter";
+// [KAS-BRUG] The fourth reason a drawer goes below zero — a bank cash withdrawal the cash book never
+// heard about. The bank half is recognised by the classifier's own patterns, never a copy of them.
+import { findUnrecordedCashWithdrawals } from "@/lib/cash-transfer-match";
+import { isCashTransferDescription } from "@/lib/bank-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -193,10 +198,65 @@ export async function GET(req: NextRequest) {
   // gate can never tell the owner two different stories. A negative kassaldo is physically
   // impossible (you cannot pay out cash you never had) and is the single strongest signal the
   // Belastingdienst uses to reject a cash administration. Null when it never goes below zero.
+  // ── [KAS-BRUG] The fourth reason, looked up only when there is something to explain ───────────
+  //
+  // The drawer went below zero, so the app is refusing this quarter's aangifte and the Kas screen is
+  // about to name three possible causes. There is a fourth and in a shop it is the most ordinary of
+  // all: cash was taken out of the bank and the opname was never written in the cash book. The
+  // withdrawal is on a statement this app has already imported and already classified.
+  //
+  // Naming it is not a nicety. A gate that refuses a filing over a number while holding the most
+  // likely innocent explanation for that number in its own database is accusing someone with the
+  // evidence in its pocket.
+  //
+  // Read ONLY when the drawer is actually negative. Two reasons: the answer is worthless otherwise
+  // (an unrecorded withdrawal in a healthy drawer is a bookkeeping tidiness matter, not a blocker,
+  // and nagging about it here would be noise under no banner at all), and this endpoint is on the
+  // page's load path — it must not grow a bank read for every owner who has no problem.
+  const dip = lowestDrawerPoint(kb);
+  let unrecordedWithdrawals: Array<{ date: string; amount: number; description: string | null }> = [];
+  if (dip) {
+    // The shared range — June has 30 days, and a hand-rolled "-31" is a cast error on a `date`
+    // column rather than an empty result. See quarterRange.
+    const { start: qStart, end: qEnd } = quarterRange(year, quarter as Quarter);
+    // A failed read leaves the list empty and the three original causes standing. It must NOT fail
+    // the kasboek: this is an explanation offered alongside an accusation, and losing it costs the
+    // owner a hint, while refusing the whole book would cost them the cash administration itself.
+    const { data: bankRows, error: bankErr } = await supabase
+      .from("bank_transactions")
+      .select("id, date, amount, description, counterpart_name")
+      .eq("user_id", user.id)
+      .eq("category", "transfer")
+      .gte("date", qStart)
+      .lte("date", qEnd)
+      .order("date", { ascending: true });
+    if (bankErr) {
+      console.error("[KAS-BRUG] bank cash-transfer read failed — the drawer warning keeps its three causes", { userId: user.id, error: bankErr.message });
+    } else {
+      const cashLines = (bankRows ?? []).filter((r) =>
+        isCashTransferDescription(r.description, (r as { counterpart_name?: string | null }).counterpart_name ?? null),
+      );
+      unrecordedWithdrawals = findUnrecordedCashWithdrawals({
+        bankLines: cashLines.map((r) => ({
+          id: r.id, date: r.date, amount: r.amount, description: r.description,
+          counterpartName: (r as { counterpart_name?: string | null }).counterpart_name ?? null,
+        })),
+        // The drawer's own transfers, from the rows this route already read — no second query, and
+        // no chance of the two halves describing different periods.
+        drawerTransfers: entries
+          .filter((e) => (e.category ?? "") === "transfer")
+          .map((e) => ({ date: e.entry_date, direction: e.direction, amount: e.amount })),
+      }).map((w) => ({ date: w.date, amount: w.amount, description: w.description }));
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     kasboek: kb,
-    lowestPoint: lowestDrawerPoint(kb),
+    lowestPoint: dip,
+    // [KAS-BRUG] Cash withdrawals from the bank that no opname in this quarter accounts for. Empty
+    // unless the drawer went negative — the question is only asked when it has to be answered.
+    unrecordedWithdrawals,
     // [KAS-SPOOR] Alongside the saldi, never inside them — the movements this quarter no longer
     // holds. `removedUnknown` is the honest half: the trail could not be read, or there is more of
     // it than one read returns.

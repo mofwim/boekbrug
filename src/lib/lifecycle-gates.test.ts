@@ -8742,3 +8742,60 @@ test("[KAS-VOCABULAIRE] the closed categories are refused at the door, by the sh
     "the reading vocabulary must stay complete",
   );
 });
+
+
+test("[KAS-BRUG] the drawer warning names the withdrawal the app can already see", () => {
+  // The app refuses a BTW-aangifte over a negative drawer and names three possible causes. There is a
+  // fourth, and in a shop it is the most ordinary of all: cash was taken out of the bank and the
+  // opname was never written in the cash book. That withdrawal is on a statement this app has already
+  // imported AND already classified. A gate that refuses a filing over a number while holding the
+  // likeliest innocent explanation for it in its own database is accusing someone with the evidence
+  // in its pocket.
+  const route = code("src/app/api/kasboek/route.ts");
+  assert.match(route, /findUnrecordedCashWithdrawals/, "the endpoint must look for it");
+  // Only when there is something to explain: an unrecorded withdrawal under no banner is tidiness,
+  // not a blocker, and this endpoint sits on the page's load path for every owner.
+  assert.match(
+    route, /const dip = lowestDrawerPoint\(kb\);[\s\S]{0,400}?if \(dip\) \{/,
+    "the bank read must be gated on the drawer actually being negative",
+  );
+  // Losing the hint may never cost the cash book itself.
+  assert.match(
+    route, /bankErr[\s\S]{0,300}?console\.error/,
+    "a failed bank read leaves the three original causes standing, it does not fail the kasboek",
+  );
+
+  // The bank half is recognised by the classifier's OWN patterns. A second copy of ATM_RE would drift
+  // and then disagree with the classifier about the same line — and the stored category cannot answer
+  // it, because savings transfers and cash machines both land on 'transfer'.
+  assert.match(route, /isCashTransferDescription/);
+  const identity = code("src/lib/bank-identity.ts");
+  // The predicate must REFERENCE the classifier's regex, not restate its patterns. (Counting the
+  // word "geldautomaat" would not say this: KEY_NOISE holds it too, for an unrelated purpose —
+  // building a counterpart memory key. A gate has to match the thing it means.)
+  assert.equal((identity.match(/const ATM_RE = /g) ?? []).length, 1, "one cash-machine pattern in the file");
+  assert.match(
+    identity, /export function isCashTransferDescription[\s\S]{0,200}?return ATM_RE\.test\(/,
+    "the exported predicate must reuse ATM_RE — a second copy would drift from the classifier and then disagree with it about the same line",
+  );
+
+  // The quarter's range has ONE definition. The hand-rolled `${quarter * 3}-31` is wrong for June and
+  // September, and a Postgres date column answers an invalid date with an error, not an empty result.
+  assert.match(route, /quarterRange\(year, quarter as Quarter\)/);
+  // The invariant is that this route does no quarter-month arithmetic of its own — not that the
+  // string "-31" never appears (the year-end bound above it is `${year}-12-31`, and December really
+  // does have 31 days). What must not come back is a quarter END derived by hand.
+  assert.doesNotMatch(
+    route, /quarter \* 3|\(quarter - 1\) \* 3/,
+    "the quarter's months come from quarterRange, never from arithmetic repeated here",
+  );
+
+  // On screen it is set apart from the three possibilities: those ask the owner to look, this one has
+  // already looked and carries a date and an amount.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(ui, /bridge=\{\{ title: t\('kas\.brug\.titel'\)/);
+  assert.equal(
+    (ui.match(/bridge=\{\{/g) ?? []).length, 2,
+    "both the blocking and the open quarter's banner must offer it — a dip is a dip in either",
+  );
+});

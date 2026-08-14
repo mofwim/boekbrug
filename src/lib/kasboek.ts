@@ -69,7 +69,16 @@ const nlDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}
 const pad = (n: number) => String(n).padStart(2, "0");
 const r2 = round2;
 
-function quarterRange(year: number, q: Quarter): { start: string; end: string } {
+/**
+ * The quarter's first and last day, as ISO strings.
+ *
+ * Exported because a caller that needs to bound a query to the same quarter must not compute it a
+ * second time. The obvious hand-rolled version — `${year}-${quarter * 3}-31` — is wrong for Q2 and
+ * Q4 (June and September have 30 days), and a Postgres `date` column answers an invalid date with an
+ * error rather than an empty result, so the second spelling does not fail quietly in testing either.
+ * One definition, used by everything that means "this quarter".
+ */
+export function quarterRange(year: number, q: Quarter): { start: string; end: string } {
   const startMonth = (q - 1) * 3; // 0-based
   const start = `${year}-${pad(startMonth + 1)}-01`;
   const endD = new Date(Date.UTC(year, startMonth + 3, 0)); // last day of the quarter
@@ -298,9 +307,8 @@ export function buildKasboek(args: {
  * the OPENING balance so a negative carry-in with no in-quarter movements is caught too. Pure.
  */
 export function lowestDrawerPoint(kb: Kasboek): { date: string; balance: number } | null {
-  const startMonth = (kb.quarter - 1) * 3;
-  const quarterStart = `${kb.year}-${String(startMonth + 1).padStart(2, "0")}-01`;
-  let worst = { date: quarterStart, balance: kb.openingBalance };
+  // The shared range, not a third hand-rolled quarter start (see quarterRange).
+  let worst = { date: quarterRange(kb.year, kb.quarter).start, balance: kb.openingBalance };
   for (const m of kb.months) {
     for (const row of m.rows) {
       if (row.eindsaldo < worst.balance) worst = { date: row.date, balance: row.eindsaldo };

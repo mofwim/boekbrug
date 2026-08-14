@@ -83,6 +83,9 @@ interface RemovedEntry {
   date: string; direction: 'in' | 'out'; amount: number
   category: string | null; description: string | null; removedOn: string | null
 }
+// [KAS-BRUG] Cash that left the BANK and never arrived in the cash book as an opname. Computed by
+// /api/kasboek only when the drawer went below zero — see cash-transfer-match.ts.
+interface UnrecordedWithdrawal { date: string; amount: number; description: string | null }
 
 // Previous quarter for the ◀ selector (Q1 → Q4 of the prior year).
 function prevQuarter(y: number, q: number): { year: number; quarter: number } {
@@ -203,6 +206,11 @@ export default function KasClient() {
   // hindsight to reconstruct. The information existed the whole time — /api/kasboek answers for any
   // quarter you ask it about, and nobody was asking about this one.
   const [openDip, setOpenDip] = useState<{ date: string; balance: number } | null>(null)
+  // [KAS-BRUG] Cash withdrawn from the bank in the blocking quarter that no opname in the cash book
+  // accounts for — the fourth cause of a negative drawer, and in a shop the most ordinary of all.
+  // The endpoint only computes it when the drawer is actually negative, so this is empty unless
+  // there is an accusation for it to explain. Kept per quarter, like the dip it belongs to.
+  const [bridgeGaps, setBridgeGaps] = useState<{ blocking: UnrecordedWithdrawal[]; open: UnrecordedWithdrawal[] }>({ blocking: [], open: [] })
 
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
@@ -284,6 +292,9 @@ export default function KasClient() {
         alertPeriodRef.current = { year: blocking.json.kasboek.year, quarter: blocking.json.kasboek.quarter }
         setLowestPoint((blocking.json.lowestPoint ?? null) as { date: string; balance: number } | null)
         setLowestPointUnknown(false)
+        // [KAS-BRUG] Set from the same answer as the dip, so a cause can never be shown under a
+        // banner about a different quarter.
+        setBridgeGaps((g) => ({ ...g, blocking: (blocking.json.unrecordedWithdrawals ?? []) as UnrecordedWithdrawal[] }))
       } else {
         // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which on
         // this screen is indistinguishable from "your drawer never went negative".
@@ -291,6 +302,7 @@ export default function KasClient() {
       }
       if (open.ok) {
         setOpenDip((open.json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        setBridgeGaps((g) => ({ ...g, open: (open.json.unrecordedWithdrawals ?? []) as UnrecordedWithdrawal[] }))
       } else {
         // Same rule for this half: an unanswered question must not render as a clean drawer. It
         // shares the one "could not check" banner rather than raising a second — the sentence is
@@ -594,6 +606,7 @@ export default function KasClient() {
             explanation={t('kas.negatief.uitleg')}
             reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
             closing={t('kas.negatief.blokkeert')}
+            bridge={{ title: t('kas.brug.titel'), explanation: t('kas.brug.uitleg'), rows: bridgeGaps.blocking }}
           />
         )}
 
@@ -612,6 +625,7 @@ export default function KasClient() {
             explanation={t('kas.negatief.uitleg')}
             reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
             closing={t('kas.negatief.nogNietIngediend')}
+            bridge={{ title: t('kas.brug.titel'), explanation: t('kas.brug.uitleg'), rows: bridgeGaps.open }}
           />
         )}
 
@@ -937,7 +951,7 @@ export default function KasClient() {
  * copy for both is handed in — [TAAL] this component holds no language of its own, so it cannot be
  * the place a Dutch sentence survives a translation pass.
  */
-function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing }: {
+function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing, bridge }: {
   tone: 'blocking' | 'open'
   heading: string
   /** "Q2 2026" — a period label, identical in every language. Named on BOTH panels so that when
@@ -946,6 +960,13 @@ function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing 
   explanation: string
   reasons: string[]
   closing: string
+  /**
+   * [KAS-BRUG] The fourth cause, when the app can actually point at it: cash withdrawn from the bank
+   * in this quarter that no opname accounts for. Not one of `reasons` above, because those are three
+   * possibilities to consider and this is a fact with a date and an amount on it — a list the owner
+   * can check off. Absent → the three possibilities stand alone, exactly as before.
+   */
+  bridge?: { title: string; explanation: string; rows: UnrecordedWithdrawal[] }
 }) {
   const blocking = tone === 'blocking'
   const accent = blocking ? M3.error : '#B06000'
@@ -971,6 +992,27 @@ function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing 
       <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
         {reasons.map((r) => <li key={r}>{r}</li>)}
       </ul>
+      {/* [KAS-BRUG] Set apart from the three possibilities above, and deliberately: those ask the
+          owner to go and look, this one has already looked. A dated, amounted list of cash that left
+          the bank and never reached the cash book — the most ordinary cause of a negative drawer in a
+          shop, and the app was holding the evidence for it the whole time. */}
+      {bridge && bridge.rows.length > 0 && (
+        <div style={{ marginTop: 10, background: '#fff', border: `1px solid ${blocking ? '#F3B8B0' : '#F0D488'}`, borderRadius: 10, padding: '10px 12px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface }}>{bridge.title}</div>
+          <div style={{ margin: '6px 0 0' }}>
+            {bridge.rows.map((w, i) => (
+              <div key={`${w.date}-${w.amount}-${i}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12.5, padding: '3px 0' }}>
+                <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(w.date)}</span>
+                <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>{eur.format(w.amount)}</span>
+                {w.description && (
+                  <span style={{ flex: 1, minWidth: 0, color: M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 6, lineHeight: 1.45 }}>{bridge.explanation}</div>
+        </div>
+      )}
       <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>{closing}</div>
     </div>
   )

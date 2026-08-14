@@ -75,6 +75,24 @@ export function isPosPayoutDescription(description: string | null, counterpartNa
   return POS_PAYOUT_RE.test(hay(counterpartName, description));
 }
 
+/**
+ * [KAS-BRUG] Does this line move CASH between the bank and the till?
+ *
+ * A cash withdrawal at a machine, or cash handed over the counter — the bank half of a drawer
+ * 'transfer'. The stored `category` cannot answer this: TRANSFER_RE (savings, own account,
+ * kruispost) and ATM_RE both collapse into 'transfer', and a savings transfer has nothing to do with
+ * anyone's till. So the question is asked of the TEXT, against the same regex the classifier uses —
+ * a second copy of these patterns would drift from the classifier and then disagree with it about
+ * the same line, which is the failure this codebase keeps finding in itself.
+ *
+ * Pure pattern test; the caller decides what the SIGN means. A debit is cash leaving the bank (it
+ * should arrive in the drawer as an 'opname'), a credit is cash arriving at the bank (it should have
+ * left the drawer as a 'storting').
+ */
+export function isCashTransferDescription(description: string | null, counterpartName: string | null = null): boolean {
+  return ATM_RE.test(hay(counterpartName, description));
+}
+
 function hay(counterpartName: string | null, description: string | null): string {
   return `${counterpartName ?? ''} ${description ?? ''}`.toLowerCase();
 }
