@@ -7,7 +7,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { computeDrawerBalance, isCashCategory } from "@/lib/cash";
+// [KAS-VOCABULAIRE] isCashCategory says the word exists; closedCashCategoryReason says whether it is
+// the OWNER's to write, and why not — see the block above OWNER_CASH_CATEGORIES in cash.ts.
+import { computeDrawerBalance, isCashCategory, closedCashCategoryReason } from "@/lib/cash";
 // [PAY-DATE-SANE] one tested window for every date that lands in the kasboek — see payment-date.ts
 import { paymentDateOutOfWindow } from "@/lib/payment-date";
 import { amsterdamToday } from "@/lib/format-nl";
@@ -140,20 +142,33 @@ export async function POST(req: NextRequest) {
   if (!isCashCategory(category)) {
     return NextResponse.json({ error: "ongeldige categorie" }, { status: 400 });
   }
-  // [CASH-SETTLE-NO-MANUAL-DELETE] 'betaling' is not a category a person writes — it is the DERIVED
-  // drawer movement of an invoice paid in cash, created and healed only by reconcileCashSettlements
-  // and keyed to its invoice. The add form has never offered it, but the door accepted it, and the
-  // row that came through had no invoice_id: nothing to reconcile it against, no invoice to undo,
-  // and the DELETE guard below refused to remove it because of its label. That is an unremovable
-  // line in a cash administration — precisely what a kasboek may never contain.
-  if (category === "betaling") {
+  // [KAS-VOCABULAIRE] Three of the eight categories are not the owner's to write, for three
+  // different reasons — all of them argued at OWNER_CASH_CATEGORIES in cash.ts, which is the single
+  // list this door asserts against. The reasons decide the sentence; the list decides the refusal, so
+  // the two cannot drift apart the way an inline string check eventually does.
+  const closed = closedCashCategoryReason(category);
+  if (closed) {
     return NextResponse.json(
-      {
-        error: "settlement_category",
-        detail:
-          "Een 'betaling' hoort bij een factuur die contant is betaald en wordt automatisch geboekt. " +
-          "Markeer de factuur als contant betaald; dan verschijnt deze regel zelf in je kasboek.",
-      },
+      closed === "system_managed"
+        ? {
+            // [CASH-SETTLE-NO-MANUAL-DELETE] A hand-written 'betaling' has no invoice_id: no
+            // reconcile can see it, so nothing recreates it and nothing removes it, and the DELETE
+            // guard below refuses it on its label. An unremovable line in a cash administration.
+            error: "settlement_category",
+            detail:
+              "Een 'betaling' hoort bij een factuur die contant is betaald en wordt automatisch geboekt. " +
+              "Markeer de factuur als contant betaald; dan verschijnt deze regel zelf in je kasboek.",
+          }
+        : {
+            // 'tax' / 'fee': the cash side of the result engine does not count them, so a row like
+            // this would sit in the drawer and in NO cost total — a silent hole rather than a
+            // booking. Say what it is and where it does belong today.
+            error: "category_not_counted",
+            detail:
+              "Belasting en bankkosten kun je (nog) niet als kasboeking vastleggen: ze zouden wel in " +
+              "je kassaldo staan maar in geen enkel kostentotaal, en dan klopt je resultaat niet. " +
+              "Boek een contante uitgave als 'Kost'; bankkosten komen automatisch mee via je bankregels.",
+          },
       { status: 400 },
     );
   }

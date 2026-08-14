@@ -8693,3 +8693,52 @@ test("[KAS-NEGATIEF-NU] the open quarter is warned about, and never told its aan
     "each unanswered half (blocking, open, and a thrown fetch) must set the 'could not check' state",
   );
 });
+
+
+test("[KAS-LOON] a cash wage is bookable, and never carries BTW", () => {
+  // The vocabulary has carried 'salaris' from the start and financial-result has always booked it
+  // distinctly — a cost that NEVER carries voorbelasting, rate-free by construction — while the add
+  // form offered four categories and not this one. So the one movement an owner could not record
+  // truthfully in their own drawer was a wage, and their only option was 'Kost': the category where
+  // a bon plus a rate DOES produce voorbelasting, and which hides a payroll obligation inside a
+  // general cost total.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(ui, /key: 'salaris', labelKey: 'kas\.cat\.salaris'/, "the add form must offer a cash wage");
+
+  // The BTW row stays bound to a cash SALE. A rate on a wage is a deduction on money that carries
+  // none — and the route forces it null regardless, so the two sides must not disagree.
+  assert.match(ui, /\{category === 'omzet' && \(/, "the rate selector belongs to 'omzet' alone");
+  assert.match(
+    ui, /category === 'salaris' &&[\s\S]{0,200}?kas\.loon\.uitleg/,
+    "choosing 'Loon' must say that the loonaangifte is not handled here — nobody may think the booking finished it",
+  );
+
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(
+    route, /category === "omzet" \|\| \(category === "kosten" && documentId !== null\)/,
+    "the server keeps a rate to a cash sale, or a cash cost with an owned bon — never a wage",
+  );
+});
+
+test("[KAS-VOCABULAIRE] the closed categories are refused at the door, by the shared list", () => {
+  // Three of the eight categories are not the owner's to write, for three different reasons. The
+  // list lives in cash.ts (tested there); the door asserts against it rather than re-spelling it,
+  // because an inline string check is what drifts once a ninth category appears.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(route, /closedCashCategoryReason/, "the door must ask the shared rule, not its own copy");
+  assert.doesNotMatch(
+    route, /category === "tax"|category === "fee"/,
+    "…and must not re-list the closed categories inline",
+  );
+  // Two distinct sentences, because the two reasons are different facts about the app: one is
+  // system-managed, the other is not counted by the result engine at all.
+  assert.match(route, /settlement_category/);
+  assert.match(route, /category_not_counted/);
+  // The vocabulary itself keeps all eight: a row already stored as 'tax' must still read as a cash
+  // category. Closing a door is not denying that anyone walked through it.
+  const cash = code("src/lib/cash.ts");
+  assert.match(
+    cash, /CASH_CATEGORIES = \["omzet", "kosten", "salaris", "prive", "transfer", "tax", "fee", "betaling"\]/,
+    "the reading vocabulary must stay complete",
+  );
+});

@@ -6991,6 +6991,24 @@ export const MESSAGES = {
     ar: 'إيراد',
     en: 'Revenue',
   },
+  // [KAS-LOON] Contant uitbetaald loon. Een eigen categorie en niet 'Kost', omdat de twee in de
+  // boeking verschillen: loon draagt NOOIT btw (financial-result boekt salaris rate-free by
+  // construction), terwijl een kost met bon en tarief voorbelasting oplevert. Wie een loon als kost
+  // moet boeken, verstopt bovendien een loonverplichting in een algemeen kostentotaal.
+  'kas.cat.salaris': {
+    nl: 'Loon',
+    ar: 'أجر',
+    en: 'Wages',
+  },
+  // [KAS-LOON] Wat deze app WEL en NIET doet met een contant loon. De boeking legt de kasbeweging
+  // en de kostenpost vast; de loonaangifte is een aparte verplichting die hier niet gebeurt. Dat
+  // hoort er te staan op het moment dat de eigenaar 'Loon' kiest, niet in een handleiding: iemand
+  // die zijn loon net heeft geboekt mag niet denken dat hij klaar is.
+  'kas.loon.uitleg': {
+    nl: 'Loon draagt geen btw, dus hier komt geen tarief bij. Let op: dit legt alleen de kasuitgave vast — de loonaangifte en loonheffingen regel je apart.',
+    ar: 'الأجر لا يحمل ضريبة قيمة مضافة، فلا تُضاف نسبة هنا. تنبيه: هذا يسجّل الحركة النقدية فقط — إقرار الأجور واستقطاعاتها تتولّاها بشكل منفصل.',
+    en: 'Wages carry no VAT, so no rate is added here. Note: this records the cash payment only — the payroll return and payroll taxes are handled separately.',
+  },
   'kas.cat.opname': {
     nl: 'Opname (van bank)',
     ar: 'سحب (من البنك)',

@@ -44,6 +44,17 @@ const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' 
 const CATS = [
   { key: 'omzet', labelKey: 'kas.cat.omzet' },
   { key: 'kosten', labelKey: 'kas.cat.kosten' },
+  // [KAS-LOON] Cash-paid wages. The vocabulary has carried 'salaris' from the beginning and the
+  // result engine has always booked it distinctly — a cost that NEVER carries any BTW, rate-free by
+  // construction — and the form did not offer it. So the one thing an owner could not record
+  // truthfully in this drawer was a wage: their only option was 'Kost', which is the category where
+  // a bon plus a rate DOES produce voorbelasting, and which puts a payroll obligation inside a
+  // general cost total where an accountant will not see it.
+  //
+  // Offered in BOTH directions on purpose. Out is the wage paid; in is a wage repaid into the till,
+  // which financial-result already handles explicitly (it reduces the cost). Hiding the rare one is
+  // how a rare event gets booked as something it is not — the same reasoning as this entry itself.
+  { key: 'salaris', labelKey: 'kas.cat.salaris' },
   { key: 'prive', labelKey: 'kas.cat.prive' },
   { key: 'transfer', labelKey: 'kas.cat.transfer' },
 ] as const
@@ -678,6 +689,17 @@ export default function KasClient() {
                   </button>
                 )
               })}
+            </div>
+          )}
+
+          {/* [KAS-LOON] Said here, at the moment 'Loon' is chosen, and not in a help page: someone
+              who has just booked a cash wage must not be left thinking that is the whole obligation.
+              The app records the cash movement and the cost; the loonaangifte and loonheffingen are
+              not handled anywhere in it. It also explains the missing BTW row above rather than
+              leaving its absence to be guessed at. */}
+          {category === 'salaris' && (
+            <div style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 12, lineHeight: 1.45 }}>
+              {t('kas.loon.uitleg')}
             </div>
           )}
 
