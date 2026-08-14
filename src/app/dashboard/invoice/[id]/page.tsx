@@ -19,6 +19,8 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [OFFERTE-AKKOORD] De datum waarop de klant antwoordde — dezelfde weergave als overal.
+import { formatDateNL } from '@/lib/format-nl'
 // [DEEL-CREDIT] Hoeveel er is gecrediteerd en hoeveel er nog kan — dezelfde regels als de route.
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
 import { creditableRemaining, buildCreditSelection, type LineSelection } from '@/lib/partial-credit'
@@ -691,6 +693,41 @@ export default function InvoiceDetailPage() {
           {sendError && (
             <div style={{ backgroundColor: '#FCE8E6', borderRadius: 16, padding: '12px 16px' }}>
               <p style={{ fontSize: 13, color: '#B3261E', margin: 0 }}>{sendError}</p>
+            </div>
+          )}
+
+          {/* [OFFERTE-AKKOORD] Wat de KLANT antwoordde, en wanneer.
+              Dit is het enige stukje van dit scherm dat niet door de ondernemer of de app is
+              gezet maar door iemand buiten het bedrijf — en daarom precies wat er staat bij een
+              meningsverschil over wat er is afgesproken. */}
+          {invoice?.offerte_response === 'accepted' && (
+            <div style={{ backgroundColor: '#E6F4EA', borderRadius: 16, padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#137333', margin: 0 }}>
+                {t('detail.offerte.akkoord')}
+              </p>
+              <p style={{ fontSize: 12, color: '#137333', margin: '2px 0 0', opacity: 0.9 }}>
+                {invoice?.offerte_response_name
+                  ? t('detail.offerte.doorOp', {
+                      naam: invoice?.offerte_response_name ?? '',
+                      datum: formatDateNL(invoice?.offerte_responded_at ?? null),
+                    })
+                  : t('detail.offerte.op', { datum: formatDateNL(invoice?.offerte_responded_at ?? null) })}
+              </p>
+            </div>
+          )}
+          {invoice?.offerte_response === 'declined' && (
+            <div style={{ backgroundColor: '#F1F3F4', borderRadius: 16, padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#3c4043', margin: 0 }}>
+                {t('detail.offerte.afgewezen')}
+              </p>
+              <p style={{ fontSize: 12, color: '#5f6368', margin: '2px 0 0' }}>
+                {invoice?.offerte_response_name
+                  ? t('detail.offerte.doorOp', {
+                      naam: invoice?.offerte_response_name ?? '',
+                      datum: formatDateNL(invoice?.offerte_responded_at ?? null),
+                    })
+                  : t('detail.offerte.op', { datum: formatDateNL(invoice?.offerte_responded_at ?? null) })}
+              </p>
             </div>
           )}
 

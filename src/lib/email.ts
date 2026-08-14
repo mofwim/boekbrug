@@ -933,10 +933,19 @@ export async function sendOfferteToClient({
   offerteDate,
   pdfBuffer,
   fileName,
+  akkoordUrl,
 }: {
   toEmail: string
   clientName: string
   senderName: string
+  /**
+   * [OFFERTE-AKKOORD] De link waarop de klant met één tik ja of nee zegt.
+   *
+   * Optioneel: bestaat het token niet (de migratie staat nog open, of de schrijfbeurt mislukte),
+   * dan gaat exact de mail uit die hier altijd al uitging — met "antwoord op deze mail". Een knop
+   * naar een pagina die niet bestaat is erger dan geen knop.
+   */
+  akkoordUrl?: string | null
   /**
    * [OFFERTE-ANTWOORD] Waar het "ja" naartoe moet.
    *
@@ -968,7 +977,7 @@ export async function sendOfferteToClient({
     // [OFFERTE-ANTWOORD] Beantwoorden komt bij de ondernemer terecht, niet bij noreply@.
     ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
     subject: offerteSubject(senderName),
-    html: offerteEmailHtml({ clientName, senderName, senderEmail, totalInc, validUntil, offerteDate }),
+    html: offerteEmailHtml({ clientName, senderName, senderEmail, totalInc, validUntil, offerteDate, akkoordUrl }),
     ...(pdfBuffer
       ? { attachments: [{ filename: fileName || 'offerte.pdf', content: pdfBuffer }] }
       : {}),

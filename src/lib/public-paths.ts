@@ -25,6 +25,9 @@ export const PUBLIC_PATHS = [
   // dien dat zijn e-mailadres gelijk is aan het uitgenodigde adres.
   "/team/accepteren",
   "/pay",
+  // [OFFERTE-AKKOORD] De pagina waarop de klant ja of nee zegt op een offerte. Publiek om dezelfde
+  // reden als /pay: de lezer is een klant zonder account, en het token in de link IS de toegang.
+  "/offerte",
   "/factuur-maken",
   "/bankafschrift-naar-excel",
   "/btw-berekenen",

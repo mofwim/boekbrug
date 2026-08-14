@@ -41,7 +41,7 @@ const SELECT =
   // [PARTIAL-PAY] amount_paid so a deelbetaling shows the REMAINING openstaand, not the full total.
   // [CREDITNOTA-NO-CHASE] invoice_type so a creditnota can be recognised: it is ALSO outgoing +
   // 'sent' and would otherwise sit in "Herinner je klant" as a negative amount to chase.
-  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, amount_paid, status, direction, invoice_type";
+  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, amount_paid, status, direction, invoice_type, offerte_response";
 
 export default async function VandaagPage() {
   const supabase = await createServerSupabaseClient();
@@ -95,7 +95,9 @@ export default async function VandaagPage() {
     .eq("direction", "outgoing")
     .in("invoice_type", ["pro_forma", "offerte"])
     .eq("status", "sent")
-    .not("due_date", "is", null)
+    // [OFFERTE-AKKOORD] GEEN filter op due_date: een geaccepteerde offerte hoort op de lijst ook
+    // zonder geldigheidsdatum — het antwoord van de klant zet hem daar, niet de datum. Wat er
+    // overblijft beslist offerte-followup.ts, op één plek.
     .order("due_date", { ascending: true })
     .limit(100);
 

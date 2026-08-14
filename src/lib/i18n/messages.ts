@@ -657,14 +657,19 @@ export const MESSAGES = {
   // ─── [VANDAAG] De takenlijst van vandaag ────────────────────────────────────────────────────
 
   // ── [OFFERTE-OPVOLGING] Offertes die verlopen ────────────────────────────────
-  'vandaag.offertes': { nl: 'Offertes die verlopen', ar: 'عروض أسعار توشك أن تنتهي', en: 'Quotes about to lapse' },
+  'vandaag.offertes': { nl: 'Offertes die aandacht vragen', ar: 'عروض أسعار تحتاج انتباهك', en: 'Quotes needing attention' },
   'vandaag.offertesUitleg': {
-    nl: 'Nog geen antwoord — één belletje is vaak genoeg',
-    ar: 'ما من ردّ بعد — اتصال واحد يكفي غالباً',
-    en: 'No answer yet — one call is often enough',
+    nl: 'Geaccepteerd of bijna verlopen',
+    ar: 'مقبولة أو توشك أن تنتهي',
+    en: 'Accepted, or about to lapse',
   },
   'vandaag.offerteEen': { nl: '1 offerte', ar: 'عرض سعر واحد', en: '1 quote' },
   'vandaag.offerteMeer': { nl: '{n} offertes', ar: '{n} عرض سعر', en: '{n} quotes' },
+  'vandaag.offerteAkkoord': {
+    nl: 'Akkoord — maak er een factuur van',
+    ar: 'تمت الموافقة — حوّله إلى فاتورة',
+    en: 'Accepted — turn it into an invoice',
+  },
   'vandaag.offerteVandaag': { nl: 'Verloopt vandaag', ar: 'ينتهي اليوم', en: 'Lapses today' },
   'vandaag.offerteMorgen': { nl: 'Verloopt morgen', ar: 'ينتهي غداً', en: 'Lapses tomorrow' },
   'vandaag.offerteOver': { nl: 'Verloopt over {n} dagen', ar: 'ينتهي بعد {n} أيام', en: 'Lapses in {n} days' },
@@ -3887,6 +3892,11 @@ export const MESSAGES = {
     ar: 'أخذت الفاتورة رقماً، لكن تعذّر إنشاء ملف PDF — لم يستلم العميل شيئاً. أعد الإرسال.',
     en: 'The invoice got a number, but the PDF could not be created — the client received nothing. Send again.',
   },
+  // ── [OFFERTE-AKKOORD] Wat de klant antwoordde ────────────────────────────────
+  'detail.offerte.akkoord': { nl: 'De klant gaat akkoord', ar: 'وافق العميل', en: 'The customer accepted' },
+  'detail.offerte.afgewezen': { nl: 'De klant gaat niet akkoord', ar: 'لم يوافق العميل', en: 'The customer declined' },
+  'detail.offerte.doorOp': { nl: 'Door {naam}, op {datum}', ar: 'بواسطة {naam}، بتاريخ {datum}', en: 'By {naam}, on {datum}' },
+  'detail.offerte.op': { nl: 'Op {datum}', ar: 'بتاريخ {datum}', en: 'On {datum}' },
   'detail.gecrediteerdVia': {
     nl: 'Gecrediteerd via {number}',
     ar: 'عُكست عبر الإشعار الدائن {number}',
