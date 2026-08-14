@@ -27,6 +27,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [OFFERTE-AKKOORD] De basis van de publieke akkoordlink.
+import { SITE_URL } from '@/lib/site'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId, canAccessInvoice } from '@/lib/acting-for'
@@ -121,7 +123,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }, { status: 502 })
   }
 
+  // ── [OFFERTE-AKKOORD] Het token, VOOR de mail ──
+  //
+  // De link moet in de mail, dus hij moet bestaan voordat de mail weggaat — en hij moet zijn
+  // OPGESLAGEN, want een link met een token dat nooit in de database kwam is een dode knop bij de
+  // klant. Lukt het schrijven niet, dan gaat de mail uit ZONDER knop: dat is de mail zoals hij
+  // altijd was ("antwoord op deze mail"), en die werkt.
+  //
+  // Hergebruikt wat er al staat, zodat opnieuw versturen dezelfde link oplevert — de klant kan de
+  // eerste mail nog hebben.
+  const bestaandToken = (invoice as { offerte_token?: string | null }).offerte_token ?? null
+  let akkoordToken: string | null = bestaandToken
+  if (!akkoordToken) {
+    const nieuw = crypto.randomUUID()
+    const { error: tokenErr } = await createPipelineClient()
+      .from('invoices')
+      .update({ offerte_token: nieuw } as never)
+      .eq('id', id)
+      .eq('sender_id', ownerId)
+    if (tokenErr) {
+      // Luid, want dit is te repareren: meestal betekent het dat offerte_akkoord.sql nog open
+      // staat. De offerte gaat gewoon de deur uit, alleen zonder knop.
+      console.warn('[OFFERTE-AKKOORD] akkoordlink kon niet worden vastgelegd — de offerte gaat ' +
+        'zonder knop de deur uit. Pas supabase/migrations/offerte_akkoord.sql toe.',
+        { id, error: tokenErr.message })
+    } else {
+      akkoordToken = nieuw
+    }
+  }
+
   const delivered = await sendOfferteToClient({
+    akkoordUrl: akkoordToken ? `${SITE_URL}/offerte/${akkoordToken}` : null,
     toEmail: String(invoice.client_email),
     clientName: invoice.client_name?.trim() || 'klant',
     senderName,

@@ -136,6 +136,15 @@ export interface OfferteEmailFields {
   /** ISO date. A quote need not carry one — but the mail must then SAY it does not. */
   validUntil?: string | null;
   offerteDate?: string | null;
+  /**
+   * [OFFERTE-AKKOORD] De link waarop de klant ja of nee kan zeggen.
+   *
+   * Optioneel, en dat is geen luiheid: op een installatie waar offerte_akkoord.sql nog open staat
+   * bestaat het token niet, en dan hoort deze mail exact de mail te zijn die hij altijd was — met
+   * de zin "antwoord op deze mail". Een knop die naar een pagina wijst die niet bestaat is erger
+   * dan geen knop.
+   */
+  akkoordUrl?: string | null;
 }
 
 /**
@@ -169,6 +178,16 @@ export function offerteEmailHtml(f: OfferteEmailFields): string {
     f.validUntil ? formatDateNL(f.validUntil) : "niet afgesproken"
   }</p>`;
 
+  // [OFFERTE-AKKOORD] Eén knop, en alleen als er een link IS. Hij belooft niets meer dan wat er
+  // gebeurt: je laat weten wat je ervan vindt. Geen "bestel", geen "betaal" — er komt geen factuur
+  // uit deze knop, en de pagina erachter zegt dat ook.
+  const akkoordLink = (f.akkoordUrl ?? "").trim();
+  const akkoordBlok = akkoordLink
+    ? `<p style="margin:24px 0;">
+          <a href="${escapeHtml(akkoordLink)}" style="display:inline-block; background:#1a73e8; color:#ffffff; text-decoration:none; padding:13px 22px; border-radius:10px; font-weight:600;">Bekijk en reageer op de offerte</a>
+        </p>`
+    : "";
+
   return `
       <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
         <h2 style="color: #202124;">${escapeHtml(kopregel)}</h2>
@@ -179,11 +198,14 @@ export function offerteEmailHtml(f: OfferteEmailFields): string {
           ${geldigRegel}
           ${heeftBedrag ? `<p style="margin:4px 0; color:#202124;"><strong>Totaal incl. btw:</strong> ${bedrag}</p>` : ""}
         </div>
+        ${akkoordBlok}
         <p style="color: #555;">
           Deze offerte is <strong>vrijblijvend</strong>: er hoeft nog niets betaald te worden en er
-          is nog geen factuur. Ga je akkoord, ${antwoordAdres
-            ? `antwoord dan op deze mail of stuur een bericht naar <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>`
-            : "laat het ons dan weten"} — dan sturen we de factuur.
+          is nog geen factuur. Ga je akkoord, ${akkoordLink
+            ? "gebruik dan de knop hierboven"
+            : antwoordAdres
+              ? `antwoord dan op deze mail of stuur een bericht naar <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>`
+              : "laat het ons dan weten"} — dan sturen we de factuur.
         </p>
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>

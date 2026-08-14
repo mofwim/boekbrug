@@ -9040,3 +9040,77 @@ test("[OFFERTE-OPVOLGING] Vandaag cannot say 'niets te doen' while quotes go col
   assert.match(client, /zichtbareOffertes\.length === 0;/,
     "the empty state must count the quotes too, or the screen reassures while work sits there");
 });
+
+// ─── [OFFERTE-AKKOORD] De klant zegt ja of nee, in het document zelf ──────────
+//
+// Dit is de tweede publieke, loginvrije pagina in het product, en de eerste waarop iemand van
+// BUITEN het bedrijf iets SCHRIJFT. Twee dingen mogen daar nooit misgaan.
+test("[OFFERTE-AKKOORD] accepting never mints an invoice", () => {
+  // Nummeren verbruikt een nummer uit de doorlopende reeks (Art. 35) en is onomkeerbaar. Dat
+  // laten gebeuren door een klik van een derde, via een link die eeuwig blijft werken, is de ene
+  // macht die deze app nergens weggeeft. Een akkoord is een SEIN; de ondernemer factureert.
+  const route = code("src/app/api/offerte/[token]/route.ts");
+  assert.doesNotMatch(route, /generateInvoiceNumber/, "a public route may never mint a number");
+  assert.doesNotMatch(route, /\.insert\(/, "…nor create a row of any kind");
+
+  // En wat het WEL schrijft, is precies drie velden. Getoetst op de update zelf en niet op het
+  // hele bestand: een typeannotatie die `invoice_number` noemt is geen schrijfactie, en een gate
+  // die dat verschil niet maakt bewaakt een tekst in plaats van een gedrag.
+  const updates = route.match(/\.update\(\{[\s\S]*?\}/g) ?? [];
+  assert.equal(updates.length, 1, "exactly one write, and it is the answer");
+  assert.match(updates[0], /offerte_response:/);
+  assert.match(updates[0], /offerte_responded_at:/);
+  assert.match(updates[0], /offerte_response_name:/);
+  for (const verboden of ["invoice_number", "invoice_type", "status:", "total_"]) {
+    assert.ok(!updates[0].includes(verboden),
+      `the answer must not write ${verboden} — it is a fact that is added, never a transition`);
+  }
+});
+
+test("[OFFERTE-AKKOORD] the first answer stands, and the database is what enforces it", () => {
+  const route = code("src/app/api/offerte/[token]/route.ts");
+  // De regel zelf weigert een tweede antwoord…
+  assert.match(code("src/lib/offerte-akkoord.ts"), /if \(answerOf\(quote\)\) return "already_answered";/);
+  // …maar twee gelijktijdige klikken zien elkaars antwoord niet. De schrijfbeurt eist daarom zelf
+  // dat het veld nog leeg is; verliest hij de race, dan raakt hij nul rijen.
+  assert.match(route, /\.is\('offerte_response', null\)/,
+    "the write must be the lock: a check without it is a TOCTOU race on the evidence");
+  assert.match(route, /if \(!bijgewerkt \|\| bijgewerkt\.length === 0\)/,
+    "…and losing that race must be answered honestly, not silently");
+});
+
+test("[OFFERTE-AKKOORD] the public page is an allowlist and leaks no working link", () => {
+  const route = code("src/app/api/offerte/[token]/route.ts");
+  // Eén projectie bepaalt wat een buitenstaander ziet — dezelfde regel als toPublicPayView.
+  assert.match(route, /toPublicQuoteView\(/, "the view must go through the single allowlist");
+  assert.doesNotMatch(route, /select\('\*'\)/, "never select('*') on a public route");
+  // Het token IS de sleutel: een werkende link mag nooit in een foutrapport belanden.
+  assert.match(route, /token\.slice\(-6\)/, "only a fragment of the token may be reported");
+  for (const call of route.match(/offerteOnbeschikbaar\([^)]*\)/g) ?? []) {
+    assert.doesNotMatch(call, /token:\s*token\b/, `a full token is being reported: ${call}`);
+  }
+  // [PAY-READ-HONEST] Een mislukte lezing zegt niet "deze link bestaat niet".
+  assert.match(route, /customer told to retry, not that the link is unknown/);
+});
+
+test("[OFFERTE-AKKOORD] the mail degrades to the mail it always was", () => {
+  // Zonder token (migratie nog open, of de schrijfbeurt mislukte) gaat er GEEN knop mee. Een knop
+  // naar een pagina die niet bestaat is erger dan geen knop.
+  const send = code("src/lib/offerte-send.ts");
+  assert.match(send, /const akkoordLink = \(f\.akkoordUrl \?\? ""\)\.trim\(\);/);
+  assert.match(send, /: "";/, "no link, no button");
+  // En de route legt het token VAST voordat de mail weggaat — anders is de knop bij de klant dood.
+  const route = code("src/app/api/invoice/[id]/send-offerte/route.ts");
+  const tokenAt = route.indexOf("offerte_token: nieuw");
+  const mailAt = route.indexOf("sendOfferteToClient({");
+  assert.ok(tokenAt > 0 && mailAt > 0 && tokenAt < mailAt,
+    "the token must be stored BEFORE the mail carrying it goes out");
+});
+
+test("[OFFERTE-AKKOORD] an answered quote changes what Vandaag asks for", () => {
+  const regel = code("src/lib/offerte-followup.ts");
+  // Ja is het dringendst: er ligt getekend werk dat nog niet is gefactureerd.
+  assert.match(regel, /if \(quote\.offerte_response === "accepted"\) return "geaccepteerd";/);
+  // Nee haalt hem van de lijst: doorgaan met porren is werk verzinnen dat er niet is.
+  assert.match(regel, /if \(quote\.offerte_response === "declined"\) return null;/);
+});

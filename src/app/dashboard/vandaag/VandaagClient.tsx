@@ -55,7 +55,7 @@ import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reaso
 
 /** [OFFERTE-OPVOLGING] Een offerte met het oordeel van de pure regel erbij. */
 export interface VandaagOfferte extends VandaagInvoice {
-  followupState: "verloopt-binnenkort" | "verlopen";
+  followupState: "geaccepteerd" | "verloopt-binnenkort" | "verlopen";
   /** Dagen tot "Geldig tot". Negatief = al verlopen. */
   followupDays: number;
 }
@@ -521,6 +521,8 @@ function OfferteSection({
 
   /** Hoeveel tijd er nog is, in woorden die bij een offerte horen. */
   function termijn(o: VandaagOfferte): string {
+    // [OFFERTE-AKKOORD] Ja is geen termijn maar een uitkomst: hier staat wat er te DOEN is.
+    if (o.followupState === 'geaccepteerd') return t('vandaag.offerteAkkoord');
     if (o.followupState === 'verlopen') {
       const dagen = Math.abs(o.followupDays);
       return dagen === 1 ? t('vandaag.offerteVerlopenEen') : t('vandaag.offerteVerlopenMeer', { n: dagen });
@@ -543,12 +545,13 @@ function OfferteSection({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {offertes.map((o) => {
           const verlopen = o.followupState === 'verlopen';
+          const gewonnen = o.followupState === 'geaccepteerd';
           return (
             <div
               key={o.id}
               style={{
                 background: M3.surface, borderRadius: 14, padding: '12px 14px',
-                border: `1px solid ${verlopen ? '#F9DEDC' : M3.outlineVariant}`,
+                border: `1px solid ${gewonnen ? '#C8E6C9' : verlopen ? '#F9DEDC' : M3.outlineVariant}`,
                 display: 'flex', alignItems: 'center', gap: 12,
               }}
             >
@@ -556,7 +559,7 @@ function OfferteSection({
                 <p style={{ fontSize: 15, fontWeight: 500, color: M3.onSurface, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {o.client_name?.trim() || t('vandaag.onbekendePartij')}
                 </p>
-                <p style={{ fontSize: 12.5, color: verlopen ? '#B3261E' : M3.onSurfaceVariant, margin: '2px 0 0' }}>
+                <p style={{ fontSize: 12.5, color: gewonnen ? '#137333' : verlopen ? '#B3261E' : M3.onSurfaceVariant, margin: '2px 0 0', fontWeight: gewonnen ? 600 : 400 }}>
                   {termijn(o)}
                   {o.invoice_number ? ` · ${o.invoice_number}` : ''}
                 </p>

@@ -100,3 +100,37 @@ test("[OFFERTE-OPVOLGING] the day arithmetic survives a DST change", () => {
   assert.equal(daysBetweenIso("2026-03-28", "2026-03-30"), 2);
   assert.equal(daysBetweenIso("nonsense", "2026-01-01"), null);
 });
+
+// ─── [OFFERTE-AKKOORD] Het antwoord van de klant gaat vóór elke datum ─────────
+
+test("[OFFERTE-AKKOORD] an accepted quote is the most urgent thing on the list", () => {
+  // Signed work that has not been invoiced, and the invoice only exists once the owner makes it.
+  const ja = quote({ offerte_response: "accepted", due_date: "2026-12-01" });
+  assert.equal(quoteFollowupState(ja, TODAY), "geaccepteerd", "even with months of validity left");
+  const jaVerlopen = quote({ offerte_response: "accepted", due_date: "2026-01-01" });
+  assert.equal(quoteFollowupState(jaVerlopen, TODAY), "geaccepteerd",
+    "an accepted quote that also lapsed was not left lying around — it was WON");
+});
+
+test("[OFFERTE-AKKOORD] a declined quote stops being chased", () => {
+  // Nagging about a quote the customer already said no to is giving the owner work that is not there.
+  assert.equal(quoteFollowupState(quote({ offerte_response: "declined", due_date: "2026-01-01" }), TODAY), null);
+  assert.equal(quoteFollowupState(quote({ offerte_response: "declined", due_date: "2026-08-15" }), TODAY), null);
+});
+
+test("[OFFERTE-AKKOORD] accepted quotes sort above the ones running out", () => {
+  const rows = [
+    quote({ due_date: "2026-07-01" }),                                  // long expired
+    quote({ offerte_response: "accepted", due_date: "2026-11-01" }),    // won
+    quote({ due_date: "2026-08-16" }),                                  // 2 days left
+  ];
+  const out = quotesNeedingFollowup(rows, TODAY);
+  assert.deepEqual(out.map((r) => r.state), ["geaccepteerd", "verlopen", "verloopt-binnenkort"]);
+});
+
+test("[OFFERTE-AKKOORD] an accepted quote WITHOUT a validity date still shows up", () => {
+  // No date means nothing lapses — but the acceptance is what puts it on the list, not the date.
+  const out = quotesNeedingFollowup([quote({ offerte_response: "accepted", due_date: null })], TODAY);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].state, "geaccepteerd");
+});
