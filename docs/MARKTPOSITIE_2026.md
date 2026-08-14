@@ -9,6 +9,46 @@ _Dit is geen pitch en geen troost._
 
 ---
 
+> ## ⚠ Hertoetsing 14 augustus 2026 — vier dragende uitspraken zijn achterhaald
+>
+> Dit stuk beschrijft de repo van juli 2026. Sindsdien is er doorgebouwd, en **twee van de acht
+> stoppunten waren al opgelost voordat iemand ze las** — het document stuurde de oprichter naar
+> werk dat niet meer bestond. Wat er nu feitelijk staat, regel voor regel nagekeken:
+>
+> | Uitspraak in dit stuk | Status per 14 aug 2026 |
+> |---|---|
+> | "geen PSD2" (§1, §2) | **ACHTERHAALD.** `src/lib/enablebanking-client.ts` + `-connection` + `-sync` + `-map`, een `/dashboard/bank`-koppelscherm en een dagelijkse cron in `vercel.json`. Het is een volledige AIS-koppeling die een eerdere GoCardless-client vervángt. Wacht nog op `ENABLEBANKING_APPLICATION_ID` en `_PRIVATE_KEY` — dus gebouwd, niet aangezet |
+> | "geen rechtspersoon: `/voorwaarden` staat live met `[JOUW NAAM]`" (§1, stoppunt 0) | **ACHTERHAALD.** `src/content/legal/company.ts` vult de identiteit bij het renderen uit `NEXT_PUBLIC_COMPANY_*`, met opzettelijk onaffe terugvallen (`(volgt)`) die nooit als een echt-maar-onjuist KVK-nummer kunnen lezen. `company.test.ts` scant de gerénderde documenten op elk overgebleven `[...]`-token en laat de build vallen. De KvK-inschrijving zelf is nog steeds open — de placeholder-lek niet |
+> | "AV noemt Pro € 25 en Pro+ € 45 incl. PSD2" (stoppunt 0b) | **ACHTERHAALD.** AV §5.1 kent nu Boekhouder € 0 (≤ 10 klanten) · Ondernemer Gratis € 0 · Ondernemer Plus € 12,99 incl. btw. Van PSD2 wordt in geen enkel juridisch document meer iets beloofd |
+> | "de database kent een ánder viertrapsmodel" (stoppunt 0b) | **ACHTERHAALD.** `database.sql:436` staat op `free/plus/boekhouder`; `supabase/migrations/subscription_plans_fair_use.sql` tilt de oude rijen over en verbiedt `boekhouder_pro`. Geen niet-testcode leest de oude waarden nog |
+>
+> **Wat wél overeind bleef** en opnieuw op de code is bevestigd: geen XAF-auditfile, geen RGS,
+> geen indiening bij de Belastingdienst (het `aangifte`-scherm bereidt voor, verstuurt niet),
+> de UBL-export is nog steeds bewust géén SI-UBL/Peppol BIS (`src/lib/ubl-export.ts:7`), de
+> SnelStart-koppeling wacht nog steeds op een subscription key
+> (`docs/SNELSTART_INTEGRATION.md:3`), en de drievoudige kaartafletting bestaat echt.
+>
+> **Eén uitspraak in §6 valt uiteen in twee.** "Engels bestaat alleen voor de publieke tools en
+> de blog" is **achterhaald**: `src/lib/i18n/` draagt een volledige vertaallaag (`messages.ts`,
+> `locale.ts`, `server.ts`, `t.ts`, `use-locale.ts`) die tot in het dashboard reikt, in
+> nl/en/ar/tr. De twee details ernaast **gelden nog wel**: `lang="nl"` staat nog hard in
+> `layout.tsx:90`, en `preferred_language` op `profiles` wordt nog steeds door geen regel code
+> gelezen — dat laatste inmiddels met opzet, want de taal zit in een cookie en bewust niet in
+> een profileskolom (`use-locale.ts:6`).
+>
+> **Eén claim kon hier niet getoetst worden:** de commit-verdeling "80 mofwim naast 131 AI" in
+> §7. Deze werkkopie is een shallow clone (125 commits, één auteur zichtbaar), dus dat getal is
+> hier niet te controleren — niet weerlegd, wel ongeverifieerd.
+>
+> **De les die groter is dan de correcties.** Dit document waarschuwde in §0 dat zijn
+> marktcijfers ongetoetst waren, maar presenteerde zijn uitspraken over de eigen repo als het
+> harde deel ("regel voor regel nagekeken"). Dat wás waar op de schrijfdatum en is precies
+> daarom het gevaarlijkste deel geworden: ongetoetste marktcijfers blijven ongetoetst, maar
+> een gecontroleerde uitspraak over je eigen code **veroudert** — en leest daarna nog steeds
+> als feit. Toets de repo-uitspraken opnieuw vóór elk besluit dat erop steunt.
+
+---
+
 ## 0. Hoe betrouwbaar is dit stuk
 
 Zes parallelle onderzoekssporen (concurrenten, de voorbewerkingscategorie, marktomvang,
