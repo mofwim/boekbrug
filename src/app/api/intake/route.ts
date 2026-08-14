@@ -72,7 +72,7 @@ import { readPdfTextLayer } from "@/lib/pdf-text"
 import { groundingOf } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead } from '@/lib/e-invoice'
-import { reconcileCashSettlements } from "@/lib/cash-settle"
+import { reconcileCashWithRetry } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
 // ingest, so every invoice lives as a PDF from day one (opens uniformly, can be
@@ -1275,7 +1275,10 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
     }
     // Runs AFTER the settlement above on purpose: a 'kas' booking becomes a dated kasboek entry,
     // and reconciling before it exists would leave the drawer a pass behind.
-    try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
+    // [CASH-RETRY] Through the shared retry: this is the door the Kas screen's own upload uses
+    // (paid_method=kas), so a bailed pass means the owner photographed a paid bon and the drawer
+    // never moved. reconcileCashWithRetry never throws, so the try//catch around it is gone with it.
+    await reconcileCashWithRetry(pipeline, user.id)
     try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
     await createNotification({
       userId: user.id,

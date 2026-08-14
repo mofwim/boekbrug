@@ -106,6 +106,58 @@ export interface CashSettlementState {
   }>;
 }
 
+/**
+ * [CASH-RETRY] Reconcile the kasboek, and if the pass reported it bailed, ask exactly once more.
+ *
+ * One retry, not a loop: the failure this covers is a transient read (a chunked invoice fetch that
+ * errored), and a pass that fails twice is a real outage the hourly cron and the Kas page load are
+ * there for. Still best-effort by contract — the invoice write already succeeded and must never be
+ * undone over a drawer entry that will heal by itself.
+ *
+ * ── WHY IT LIVES HERE AND NOT IN ONE ROUTE ──
+ *
+ * It was written inside /api/invoice/pay-toggle, with that argument attached, while FOUR other doors
+ * that also turn a cash payment into a drawer movement called the bare reconcile and dropped its
+ * verdict on the floor: the verify-queue confirm, the intake auto-book, the e-mail intake, and moving
+ * a booked payment between invoices. The confirm route is the sharpest case, because its own comment
+ * states the stakes — "the kasboek settlement is UNCONDITIONAL … the pay path has nothing else that
+ * would do it" — and it was the one not checking whether the thing had worked.
+ *
+ * Every door that CREATES a cash payment calls this. The three that merely REPORT the pass keep using
+ * reconcileCashSettlements directly and read its summary themselves (the Kas load, the on-demand
+ * matcher, /api/cash/settle), and the hourly cron does not retry because it IS the retry.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function reconcileCashWithRetry(supabase: SupabaseClient<any>, userId: string): Promise<void> {
+  try {
+    const first = await reconcileCashSettlements(supabase, userId);
+    if (first.ok) return;
+    // Not a failure yet — the retry exists precisely because this one is usually transient.
+    console.warn("[CASH-RETRY] kasboek reconcile bailed — retrying once", { userId });
+    const second = await reconcileCashSettlements(supabase, userId);
+    if (!second.ok) {
+      // [KAS-STIL] Through the reporter, not the console, and this file's own rule is why: a cron or
+      // a route writing to stdout is the same as writing nothing. Twice in a row is also a stronger
+      // fact than the inner pass's own bail report — it happened at a door that had JUST booked a
+      // cash payment, so the drawer is out of step with an invoice the owner was told is paid.
+      reportHandledFailure({
+        tag: "CASH-RETRY",
+        message: "cash reconcile bailed twice right after a cash payment — the drawer is out of step with the invoice",
+        severity: "data-integrity",
+        context: { userId },
+      });
+    }
+  } catch (e) {
+    // Documented as never-throwing, but a contract is not a guarantee: a payment must not fail here.
+    reportHandledFailure({
+      tag: "CASH-RETRY",
+      message: "cash reconcile threw at a pay door — the payment stands, the drawer entry may not",
+      severity: "data-integrity",
+      context: { userId, error: e instanceof Error ? e.message : String(e) },
+    });
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function loadCashSettlementState(supabase: SupabaseClient<any>, userId: string): Promise<CashSettlementState> {
   // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).

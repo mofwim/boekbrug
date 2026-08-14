@@ -1630,15 +1630,25 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
     email, /settlePlan\.method === 'kas'\) cashSettledThisRun = true/,
     "the e-mail loop must remember it settled cash",
   );
+  // [CASH-RETRY] Either the reconcile itself or the shared retry wrapper around it — what this gate
+  // is about is that the kasboek is brought in step once the loop has settled cash, not which of the
+  // two names does it. The wrapper is the stronger form: it reads the pass's verdict and asks again.
   assert.match(
-    email, /if \(cashSettledThisRun\)[\s\S]{0,220}?reconcileCashSettlements\(/,
+    email, /if \(cashSettledThisRun\)[\s\S]{0,320}?reconcileCash(?:Settlements|WithRetry)\(/,
     "and reconcile the kasboek once after the loop",
   );
   // The camera door reconciles in its existing side-effect block — the settlement must come FIRST,
   // or the drawer is a pass behind.
   const intake = code("src/app/api/intake/route.ts");
   const settleAt = intake.indexOf("apply_manual_payment");
-  const reconcileAt = intake.indexOf("reconcileCashSettlements(pipeline");
+  // [CASH-RETRY] Anchored on the shared wrapper OR the bare pass, for the same reason as the
+  // assertion above: what is being held here is the ORDER, and a needle pinned to one function name
+  // reports a rename as a broken ordering. This gate did exactly that when the four pay doors were
+  // moved onto reconcileCashWithRetry — the settle still came first, and the search found nothing.
+  const reconcileAt = Math.max(
+    intake.indexOf("reconcileCashWithRetry(pipeline"),
+    intake.indexOf("reconcileCashSettlements(pipeline"),
+  );
   assert.ok(settleAt > 0 && reconcileAt > settleAt, "intake must settle before it reconciles");
 
   // The other consequence: a card bon becomes 'paid', which hides it from the matcher — and a
@@ -8798,4 +8808,113 @@ test("[KAS-BRUG] the drawer warning names the withdrawal the app can already see
     (ui.match(/bridge=\{\{/g) ?? []).length, 2,
     "both the blocking and the open quarter's banner must offer it — a dip is a dip in either",
   );
+});
+
+
+// ── [KAS-SAMENHANG] The rules that must hold in MORE THAN ONE place ────────────────────────────
+//
+// Almost every defect found in the cash line this session had one shape: a rule written, argued for
+// at length in its own comment, and then applied in one place while a sibling path was left out.
+// Not carelessness — asymmetry. openingBalanceForQuarter did not apply the double-count suppression
+// its own two neighbours did. The negative-drawer banner knew one quarter. Cents were rounded at one
+// door. The kasboek's removed-entry disclosure could have gone to the screen and not the accountant's
+// sheet. Four of the five pay doors dropped the reconcile's verdict that the fifth retried on.
+//
+// Individually those are bugs. Together they are a pattern, and a pattern is mechanically checkable.
+// This is that check: not "is the code correct" but "is each of these rules applied everywhere it has
+// to be". A new surface that combines the same sources, or a new door that writes the same money,
+// turns this red on the day it is written rather than the day someone reads a wrong balance.
+
+test("[KAS-SAMENHANG] every reader that combines the drawer's two sources suppresses the double count", () => {
+  // A till shop's cash revenue exists twice by design: daily_turnover.cash_amount AND a cash_entries
+  // 'omzet' row. Any function that adds those two together must skip the entry on a covered day, or
+  // the drawer is overstated by a quarter's takings — and the negative-drawer gate is then computed
+  // on a number that is too high, which is the direction that lets a bad quarter be filed.
+  //
+  // Three combine them, and each must carry the rule: the pure projection (both halves), and the
+  // headline balance.
+  const kasboek = code("src/lib/kasboek.ts");
+  assert.match(kasboek, /function isTillCountedOmzet/, "the predicate must exist once, shared");
+  assert.equal(
+    (kasboek.match(/isTillCountedOmzet\(/g) ?? []).length, 3,
+    "declared once and applied in BOTH combining functions — the carry-in and the in-quarter rows",
+  );
+  const cash = code("src/lib/cash.ts");
+  assert.match(
+    cash, /coveredDays[\s\S]{0,600}?\(e\.category \?\? ""\) !== "omzet"/,
+    "computeDrawerBalance (the headline saldo) must apply the same rule",
+  );
+  // And the P&L side, which has known it longest — if that one ever stops, the drawer and the result
+  // disagree about the same euro.
+  assert.match(
+    code("src/lib/financial-result.ts"), /c\.date \? covered\.has\(c\.date\) : covered\.size > 0/,
+    "computeResult must keep skipping a covered-day cash omzet",
+  );
+});
+
+test("[KAS-SAMENHANG] every door that writes drawer money rounds to cents and leaves a trail", () => {
+  // cash_entries.amount and the daily_turnover columns are unconstrained `numeric`: whatever arrives
+  // is stored. Sub-cent dust then rides a RUNNING balance through every following day, into the sheet
+  // the accountant reads and into the eindsaldo the filing gate compares against zero.
+  const cashRoute = code("src/app/api/cash/route.ts");
+  assert.match(cashRoute, /const amount = round2\(rawAmount\)/, "a movement is rounded at the door");
+  assert.match(cashRoute, /const opening = round2\(val\)/, "so is the opening float");
+  assert.match(
+    code("src/app/api/turnover/import/route.ts"), /Number\.isFinite\(v\) \? round2\(v\) : /,
+    "and every committed turnover figure — btw_9/btw_21 go into rubriek 1a/1b as tax owed",
+  );
+
+  // Every write door leaves an audit row. The drawer is the ledger where that matters most: it is the
+  // only one the owner writes by hand, and its delete is a hard delete.
+  for (const action of ["cash.entry_added", "cash.entry_removed", "cash.opening_balance_set"]) {
+    assert.match(cashRoute, new RegExp(`action: ['"]${action.replace(".", "\\.")}['"]`), `${action} must be recorded`);
+  }
+});
+
+test("[KAS-SAMENHANG] every door that books a cash payment goes through the same retry", () => {
+  // Five doors turn a payment_method 'kas' into a drawer movement. One of them read the reconcile's
+  // verdict and asked again on a bail; the other four dropped it — including the verify-queue confirm,
+  // whose own comment states it is the ONLY thing that would move the drawer for that payment.
+  //
+  // The three that merely REPORT the pass are deliberately not on this list: they read the summary
+  // themselves (the Kas load logs a stale drawer, /api/cash/settle answers with it, the on-demand
+  // matcher shows the numbers). And the hourly cron does not retry because it IS the retry.
+  const payDoors = [
+    "src/app/api/invoice/pay-toggle/route.ts",
+    "src/app/api/email/confirm/[id]/route.ts",
+    "src/app/api/invoice/payment/move/route.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  for (const f of payDoors) {
+    const src = code(f);
+    assert.match(src, /reconcileCashWithRetry/, `${f} must book the drawer through the shared retry`);
+    assert.doesNotMatch(
+      src, /await reconcileCashSettlements\(/,
+      `${f} must not call the bare pass — its verdict would be dropped on the floor`,
+    );
+  }
+  // The wrapper lives next to what it wraps, and reports through the channel this file's own
+  // [KAS-STIL] rule requires: a route writing to stdout is the same as writing nothing.
+  const settle = code("src/lib/cash-settle.ts");
+  assert.match(settle, /export async function reconcileCashWithRetry/, "one wrapper, in the money module");
+  assert.match(
+    settle, /reconcileCashWithRetry[\s\S]{0,1200}?reportHandledFailure\(\{/,
+    "a pass that bails twice right after a payment must reach the reporter",
+  );
+});
+
+test("[KAS-SAMENHANG] both documents built from the cash book are built by one generator", () => {
+  // The live panel and the .xlsx in the accountant's quarterly package are the same cash book, and
+  // they are generated by one function precisely so they cannot describe a period differently. Every
+  // addition to that sheet has to reach both — the removed-entry disclosure was the first one that
+  // could have reached only the screen.
+  for (const f of ["src/app/api/kasboek/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(f);
+    assert.match(src, /kasboekToMatrix\(kb, \w+\)/, `${f} must build the sheet from the shared generator, with its removals`);
+    assert.match(src, /openingBalanceForQuarter\(/, `${f} must carry the balance in from prior periods the shared way`);
+  }
+  // Nobody may hand-roll the quarter's months: `${quarter * 3}-31` is not a date in June or September,
+  // and a Postgres date column answers an invalid cast with an error rather than an empty result.
+  assert.match(code("src/lib/kasboek.ts"), /export function quarterRange/, "one definition of the quarter's range");
 });

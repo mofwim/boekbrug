@@ -26,7 +26,7 @@ import {
   type MovablePayment,
 } from "@/lib/payment-move";
 import { logAuditAction, getClientIP } from "@/lib/audit";
-import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { reconcileCashWithRetry } from "@/lib/cash-settle";
 import { requireOwner } from '@/lib/owner-only'
 
 export const dynamic = "force-dynamic";
@@ -298,7 +298,9 @@ export async function POST(req: NextRequest) {
   // resolving the origin correctly, two ways to fail at a step that must not be able to fail
   // loudly. Best-effort: the money write already committed, and the kasboek reconciles on load.
   try {
-    await reconcileCashSettlements(supabase, user.id);
+    // [CASH-RETRY] A moved payment that was CASH has to drag its drawer entry to the other invoice;
+    // a bailed pass leaves the entry pointing at the invoice the money no longer settles.
+    await reconcileCashWithRetry(supabase, user.id);
   } catch {
     /* non-fatal */
   }
