@@ -1,472 +1,487 @@
-# BoekBrug — marktpositie, eerlijk opgeschreven
+# BoekBrug — market position, written down honestly
 
-_Juli 2026. Geschreven op verzoek van de oprichter, met deze woorden erbij: "SnelStart biedt
-echt iets groots; wat ons onderscheidt is niets vergeleken met hun mogelijkheden. Toen we
-begonnen was het idee: de kleine klant maakt een factuur, ontvangt een factuur, en die bereikt
-de boekhouder."_
+_July 2026. Written at the founder's request, with these words attached: "SnelStart offers
+something genuinely big; what sets us apart is nothing compared to what they can do. When we
+started, the idea was: the small client makes an invoice, receives an invoice, and it reaches
+the boekhouder."_
 
-_Dit is geen pitch en geen troost._
+_This is not a pitch and not a consolation._
+
+> **On language.** This document is written in English, per `AGENTS.md`. Quoted material stays
+> in the language it was written in — the founder's words above, the code comment in §2, and the
+> wording of the published terms — because translating a quote changes what was said. Dutch
+> domain terms (btw, KvK, zzp, aangifte, boekhouder), URL segments and plan names are product
+> facts, not prose, and stay as they are.
 
 ---
 
-> ## ⚠ Hertoetsing 14 augustus 2026 — vier dragende uitspraken zijn achterhaald
+> ## ⚠ Re-verified 14 August 2026 — four load-bearing statements are out of date
 >
-> Dit stuk beschrijft de repo van juli 2026. Sindsdien is er doorgebouwd, en **twee van de acht
-> stoppunten waren al opgelost voordat iemand ze las** — het document stuurde de oprichter naar
-> werk dat niet meer bestond. Wat er nu feitelijk staat, regel voor regel nagekeken:
+> This document describes the repo as it stood in July 2026. Building continued afterwards, and
+> **two of the eight stop points were already resolved before anyone read them** — the document
+> was sending the founder at work that no longer existed. What is actually in the repo now,
+> checked line by line:
 >
-> | Uitspraak in dit stuk | Status per 14 aug 2026 |
+> | Statement in this document | Status on 14 Aug 2026 |
 > |---|---|
-> | "geen PSD2" (§1, §2) | **ACHTERHAALD.** `src/lib/enablebanking-client.ts` + `-connection` + `-sync` + `-map`, een `/dashboard/bank`-koppelscherm en een dagelijkse cron in `vercel.json`. Het is een volledige AIS-koppeling die een eerdere GoCardless-client vervángt. Wacht nog op `ENABLEBANKING_APPLICATION_ID` en `_PRIVATE_KEY` — dus gebouwd, niet aangezet |
-> | "geen rechtspersoon: `/voorwaarden` staat live met `[JOUW NAAM]`" (§1, stoppunt 0) | **ACHTERHAALD.** `src/content/legal/company.ts` vult de identiteit bij het renderen uit `NEXT_PUBLIC_COMPANY_*`, met opzettelijk onaffe terugvallen (`(volgt)`) die nooit als een echt-maar-onjuist KVK-nummer kunnen lezen. `company.test.ts` scant de gerénderde documenten op elk overgebleven `[...]`-token en laat de build vallen. De KvK-inschrijving zelf is nog steeds open — de placeholder-lek niet |
-> | "AV noemt Pro € 25 en Pro+ € 45 incl. PSD2" (stoppunt 0b) | **ACHTERHAALD.** AV §5.1 kent nu Boekhouder € 0 (≤ 10 klanten) · Ondernemer Gratis € 0 · Ondernemer Plus € 12,99 incl. btw. Van PSD2 wordt in geen enkel juridisch document meer iets beloofd |
-> | "de database kent een ánder viertrapsmodel" (stoppunt 0b) | **ACHTERHAALD.** `database.sql:436` staat op `free/plus/boekhouder`; `supabase/migrations/subscription_plans_fair_use.sql` tilt de oude rijen over en verbiedt `boekhouder_pro`. Geen niet-testcode leest de oude waarden nog |
+> | "no PSD2" (§1, §2) | **OUT OF DATE.** `src/lib/enablebanking-client.ts` plus `-connection`, `-sync` and `-map`, a `/dashboard/bank` connect screen, and a daily cron in `vercel.json`. It is a full AIS bank connection that *replaces* an earlier GoCardless client. It still waits on `ENABLEBANKING_APPLICATION_ID` and `_PRIVATE_KEY` — so: built, not switched on |
+> | "no legal entity: `/voorwaarden` is live with `[JOUW NAAM]`" (§1, stop point 0) | **OUT OF DATE.** `src/content/legal/company.ts` fills the identity at render time from `NEXT_PUBLIC_COMPANY_*`, with deliberately unfinished fallbacks (`(volgt)`) that can never read as a real-but-wrong KvK number. `company.test.ts` scans the *rendered* documents for any surviving `[...]` token and fails the build. The KvK registration itself is still open — the placeholder leak is not |
+> | "the terms quote Pro € 25 and Pro+ € 45 incl. PSD2" (stop point 0b) | **OUT OF DATE.** §5.1 of the terms now reads Boekhouder € 0 (≤ 10 linked clients) · Ondernemer Gratis € 0 · Ondernemer Plus € 12,99 incl. btw. No legal document promises PSD2 anywhere any more |
+> | "the database knows a different four-tier model" (stop point 0b) | **OUT OF DATE.** `database.sql:436` is `free/plus/boekhouder`; `supabase/migrations/subscription_plans_fair_use.sql` migrates the old rows across and forbids `boekhouder_pro`. No non-test code reads the old values |
 >
-> **Wat wél overeind bleef** en opnieuw op de code is bevestigd: geen XAF-auditfile, geen RGS,
-> geen indiening bij de Belastingdienst (het `aangifte`-scherm bereidt voor, verstuurt niet),
-> de UBL-export is nog steeds bewust géén SI-UBL/Peppol BIS (`src/lib/ubl-export.ts:7`), de
-> SnelStart-koppeling wacht nog steeds op een subscription key
-> (`docs/SNELSTART_INTEGRATION.md:3`), en de drievoudige kaartafletting bestaat echt.
+> **What survived re-verification**, confirmed against the code again: no XAF audit file, no RGS,
+> no filing to the Belastingdienst (the `aangifte` screen prepares, it does not submit), the UBL
+> export is still deliberately *not* SI-UBL/Peppol BIS (`src/lib/ubl-export.ts:7`), the SnelStart
+> connection still waits on a subscription key (`docs/SNELSTART_INTEGRATION.md:3`), and the
+> triple card reconciliation is real.
 >
-> **Eén uitspraak in §6 valt uiteen in twee.** "Engels bestaat alleen voor de publieke tools en
-> de blog" is **achterhaald**: `src/lib/i18n/` draagt een volledige vertaallaag (`messages.ts`,
-> `locale.ts`, `server.ts`, `t.ts`, `use-locale.ts`) die tot in het dashboard reikt, in
-> nl/en/ar/tr. De twee details ernaast **gelden nog wel**: `lang="nl"` staat nog hard in
-> `layout.tsx:90`, en `preferred_language` op `profiles` wordt nog steeds door geen regel code
-> gelezen — dat laatste inmiddels met opzet, want de taal zit in een cookie en bewust niet in
-> een profileskolom (`use-locale.ts:6`).
+> **One claim in §6 needs splitting in two.** "English exists only for the public tools and the
+> blog" is now **out of date**: `src/lib/i18n/` carries a full translation layer (`messages.ts`,
+> `locale.ts`, `server.ts`, `t.ts`, `use-locale.ts`) reaching the dashboard, in nl/en/ar/tr. But
+> the two details cited alongside it still **hold**: `lang="nl"` is still hard-coded in
+> `layout.tsx:90`, and `preferred_language` on `profiles` is still read by no line of code —
+> the latter now by explicit design, because the locale lives in a cookie and deliberately not
+> in a profiles column (`use-locale.ts:6`).
 >
-> **Eén claim kon hier niet getoetst worden:** de commit-verdeling "80 mofwim naast 131 AI" in
-> §7. Deze werkkopie is een shallow clone (125 commits, één auteur zichtbaar), dus dat getal is
-> hier niet te controleren — niet weerlegd, wel ongeverifieerd.
+> **One claim could not be tested here:** the commit split "80 mofwim alongside 131 AI" in §7.
+> This working copy is a shallow clone (125 commits, one author visible), so that number cannot
+> be checked from here — not refuted, but unverified.
 >
-> **De les die groter is dan de correcties.** Dit document waarschuwde in §0 dat zijn
-> marktcijfers ongetoetst waren, maar presenteerde zijn uitspraken over de eigen repo als het
-> harde deel ("regel voor regel nagekeken"). Dat wás waar op de schrijfdatum en is precies
-> daarom het gevaarlijkste deel geworden: ongetoetste marktcijfers blijven ongetoetst, maar
-> een gecontroleerde uitspraak over je eigen code **veroudert** — en leest daarna nog steeds
-> als feit. Toets de repo-uitspraken opnieuw vóór elk besluit dat erop steunt.
+> **The lesson that is bigger than the corrections.** §0 warned that the market figures were
+> untested, but presented the statements about our own repo as the *hard* part ("checked line by
+> line"). That was true on the day it was written, and that is exactly what made it the most
+> dangerous part: untested market figures stay untested, but a verified statement about your own
+> code **decays** — and goes on reading as fact afterwards. Re-check the repo statements before
+> any decision that leans on them.
 
 ---
 
-## 0. Hoe betrouwbaar is dit stuk
+## 0. How reliable is this document
 
-Zes parallelle onderzoekssporen (concurrenten, de voorbewerkingscategorie, marktomvang,
-distributie, wettelijke krachten, taalsegment), daarna een tegenlezing, daarna een controle van
-elke uitspraak over het product tegen de code zelf.
+Six parallel research tracks (competitors, the pre-processing category, market size,
+distribution, legal forces, language segment), then a counter-read, then a check of every
+statement about the product against the code itself.
 
-**Twee waarschuwingen die je moet lezen vóór je hier een beslissing op baseert:**
+**Two warnings to read before basing a decision on any of this:**
 
-1. **De adversariële toetsing is mislukt.** Vijf dragende claims gingen naar onafhankelijke
-   verificatie; **vijf van de vijf kwamen terug als ONVERIFIEERBAAR** — niet omdat ze onwaar
-   zijn, maar omdat het zoekbudget van de sessie op was en de uitgaande verbindingen werden
-   geweigerd. Nul claims zijn bevestigd. Meer dan tachtig dragende claims zijn nooit getoetst.
-   **Het volledige prijsbeeld in hoofdstuk 3 is dus ongeverifieerd**, inclusief de cijfers
-   waarop de meeste conclusies leunen.
-2. **Niemand in deze hele stapel heeft een tarievenpagina van een concurrent daadwerkelijk
-   geopend.** Alle prijzen komen uit vergelijkings- en affiliate-sites. Drie affiliate-sites
-   die hetzelfde zeggen zijn één bron, geen drie.
+1. **The adversarial verification failed.** Five load-bearing claims went out for independent
+   verification; **five out of five came back UNVERIFIABLE** — not because they are untrue, but
+   because the session's search budget ran out and outbound connections were refused. Zero
+   claims were confirmed. More than eighty load-bearing claims were never tested at all.
+   **The entire pricing picture in chapter 3 is therefore unverified**, including the figures
+   most of the conclusions lean on.
+2. **Nobody in this whole stack actually opened a competitor's pricing page.** Every price comes
+   from comparison and affiliate sites. Three affiliate sites saying the same thing are one
+   source, not three.
 
-Wat wél hard is: alles over BoekBrug zelf. Dat is regel voor regel in de repo nagekeken en
-staat met bestandsnaam erbij.
+What *is* solid: everything about BoekBrug itself. That was checked line by line in the repo and
+is cited with the file name. (See the re-verification block above: that solidity has a shelf
+life, and part of it has now expired.)
 
-> **Eén middag werk vervangt honderd pagina's deskresearch:** open zelf de tarievenpagina's van
-> Moneybird, e-Boekhouden, SnelStart, Reeleezee, Basecone, TriFact365 en Yuki. Noteer de
-> raadpleegdatum en of het bedrag in- of exclusief btw is. Doe dat vóór één prijsbeslissing.
-
----
-
-## 1. Het eerlijke antwoord in vijf zinnen
-
-Als **boekhoudpakket** verliest BoekBrug elke vergelijking op rij één van de featuretabel —
-geen PSD2, geen indiening bij de Belastingdienst, geen XAF-auditfile, geen RGS, en de
-UBL-export is blijkens `src/lib/ubl-export.ts:7` bewust géén SI-UBL/Peppol BIS — en dat is geen
-inhaalbare achterstand maar een verkeerde categorie. Tegelijk staat er in dezelfde repo iets
-wat geen enkele Nederlandse partij in het segment van € 0–25 heeft: een **drievoudige afletting
-van kaartomzet** (kassa-Z-bon versus terminalafslag versus netto bankuitbetaling) die het
-verschil als acquirer-commissie boekt in plaats van het in een tolerantie te laten verdwijnen.
-De oprichter heeft dus gelijk over het oppervlak van zijn product en ongelijk over de diepte
-ervan: wat hij als onderscheid opsomt (factureren, scannen, de boekhouder laten meekijken) is
-inderdaad commodity, en wat wél onderscheidt staat op geen enkele featurelijst — ook niet op de
-zijne. Maar dat onderscheid is bewezen op **één winkel, één acquirerformaat, twee dagen**, de
-SnelStart-koppeling is **niet live** (hij wacht op een subscription key die de tegenpartij nog
-moet verstrekken), en er is **geen rechtspersoon**: `src/content/legal/algemene-voorwaarden.ts`
-zegt live op `/voorwaarden` letterlijk "geëxploiteerd door **[JOUW NAAM]**, KVK-nummer
-**[INVULLEN]**". De positie is daarom niet "kansloos naast SnelStart" en ook niet "we hebben
-een moat" — het is: **één ongewoon goed stuk techniek zonder bedrijf eromheen, en zonder één
-gesprek met een koper.**
+> **One afternoon of work replaces a hundred pages of desk research:** open the pricing pages of
+> Moneybird, e-Boekhouden, SnelStart, Reeleezee, Basecone, TriFact365 and Yuki yourself. Note the
+> date you consulted them and whether the amount is inclusive or exclusive of btw. Do that before
+> a single pricing decision.
 
 ---
 
-## 2. Wat je goed ziet, en waar je je vergist
+## 1. The honest answer in five sentences
 
-### Waar je gelijk hebt — harder gelijk dan je denkt
+As an **accounting package**, BoekBrug loses every comparison on row one of the feature table —
+no filing to the Belastingdienst, no XAF audit file, no RGS, and per `src/lib/ubl-export.ts:7`
+the UBL export is deliberately not SI-UBL/Peppol BIS — and that is not a gap you can close but
+a wrong category. _(The original sentence opened with "no PSD2"; a full bank connection has
+since been built — see the re-verification block.)_ At the same time, that same repo holds
+something no Dutch party in the € 0–25 segment has: a **triple reconciliation of card revenue**
+(till Z-report versus terminal settlement versus net bank payout) that books the difference as
+acquirer commission instead of letting it vanish into a tolerance. So the founder is right about
+the surface of his product and wrong about its depth: what he lists as differentiators
+(invoicing, scanning, letting the boekhouder look along) really is commodity, and what does
+differentiate appears on no feature list — including his own. But that differentiator is proven
+on **one shop, one acquirer format, two days**, the SnelStart connection is **not live** (it is
+waiting on a subscription key the counterparty still has to issue), and there is **no legal
+entity yet** — the KvK registration is still open, though the placeholder leak this sentence
+originally cited has been fixed. The position is therefore neither "hopeless next to SnelStart"
+nor "we have a moat" — it is: **one unusually good piece of engineering with no company around
+it, and without a single conversation with a buyer.**
 
-**Facturen maken is dood als onderscheid.** Niet alleen omdat minstens zes NL-pakketten een
-gratis of langdurig gratis instap hebben (Moneybird, Jortt, Tellow, Rompslomp, Fiskr,
-MoneyMonk) [ongetoetst], maar omdat de zoekterm zelf verloren is: de bovenkant van "factuur
-maken" is Canva, Adobe Express en invoice-generator.com — geen Nederlandse boekhoudsoftware.
-Het groeiplan in de repo zet daar nog wel op in. Die inzet moet weg.
+---
 
-**AI-bonnen scannen is een vinkje.** Dat staat al in je eigen `SNELSTART_CAPABILITY_MAP.md`:
-bij SnelStart zit het "in élk pakket". Wat je erómheen doet — rekencontrole (excl+btw=incl),
-bytehash- én semantische duplicaatdetectie, weigeren in plaats van invullen — is wél anders,
-en dát verkoop je nergens. Je verkoopt de scan. Je zou de **weigering** moeten verkopen.
+## 2. What you see correctly, and where you are wrong
 
-**"Je boekhouder kijkt gratis mee" is tafelinzet.** Alles wat je accountantmodule waard is,
-zit in wat erbovenop komt: het werkbord over álle klanten, deadlinebewaking, gereedheidsscore,
-schrijfsloten. Dat is praktijkbeheer, geen leestoegang — en zo heet het nu niet.
+### Where you are right — more right than you think
 
-**Geen PSD2 is fataal — in de generieke categorie.** Moneybird prijst zijn abonnementen op het
-aantal automatisch verwerkte banktransacties [ongetoetst]. Jouw bestandsimport is in dat
-prijsmodel de gratis variant.
+**Making invoices is dead as a differentiator.** Not only because at least six NL packages have
+a free or long-free entry tier (Moneybird, Jortt, Tellow, Rompslomp, Fiskr, MoneyMonk)
+[untested], but because the search term itself is lost: the top of "factuur maken" is Canva,
+Adobe Express and invoice-generator.com — not Dutch accounting software. The growth plan in the
+repo still bets on it. That bet has to go.
 
-**De kennisbank als acquisitiemotor is te zwaar belast.** De koptermen zijn bezet door ~20
-affiliate-vergelijkers die per lead betaald krijgen [ongetoetst]. Een team zonder kapitaal kan
-dat per definitie niet overbieden.
+**AI receipt scanning is a checkbox.** Your own `SNELSTART_CAPABILITY_MAP.md` says so: at
+SnelStart it is in "every package". What you do *around* it — arithmetic checking
+(excl+btw=incl), byte-hash *and* semantic duplicate detection, refusing instead of filling in —
+is genuinely different, and you sell that nowhere. You sell the scan. You should be selling the
+**refusal**.
 
-### Waar je je vergist
+**"Your boekhouder looks along for free" is table stakes.** Everything your accountant module is
+worth sits in what comes on top of that: the work board across *all* clients, deadline tracking,
+readiness score, write locks. That is practice management, not read access — and that is not
+what it is called today.
 
-**"Wat ons onderscheidt is niets."** Dat is een vergelijking van featurelijsten, en daar heb je
-gelijk. Maar het ding dat je gebouwd hebt staat op geen featurelijst. Uit `card-reconcile.ts`,
-als commentaar bij je eigen code:
+**No PSD2 is fatal — in the generic category.** Moneybird prices its subscriptions on the number
+of automatically processed bank transactions [untested]. In that pricing model your file import
+is the free variant. _(A bank connection has since been built; see the re-verification block.
+The argument stands for the period before it is switched on.)_
+
+**The knowledge base as an acquisition engine is carrying too much weight.** The head terms are
+held by ~20 affiliate comparison sites paid per lead [untested]. A team without capital cannot,
+by definition, outbid that.
+
+### Where you are wrong
+
+**"What sets us apart is nothing."** That is a comparison of feature lists, and there you are
+right. But the thing you built is on no feature list. From `card-reconcile.ts`, as a comment on
+your own code (quoted in the original Dutch):
 
 > _"de oude reconcileDay vergeleek bruto-kassa direct met netto-bank en slikte, om een
 > dagelijkse valse breuk te vermijden, het verschil in een tolerantie — waarmee de
 > acquirer-commissie stilzwijgend verdween (winst overschat)."_
 
-Dat is geen kasboekje. Dat is Been A (`kassa-PIN bruto == EFT bruto` — een breuk hier is een
-échte discrepantie: ontbrekende bon, terminalfout, diefstal) en Been B (`EFT bruto − bank netto
-= commissie` — een kostenpost die vandaag bij veel winkels nergens geboekt staat), met een
-afwikkelingsvenster T+0..T+5 dat twee motoren moeten delen omdat ze anders ruzie krijgen over
-welke dag een uitbetaling toebehoort. Zes pure modules, ~135 tests, gecontroleerd op echte
-bestanden van een echte winkel.
+That is not a cash book. That is Leg A (`till PIN gross == EFT gross` — a break here is a *real*
+discrepancy: a missing receipt, a terminal error, theft) and Leg B (`EFT gross − bank net =
+commission` — a cost line that today sits nowhere in many shops' books), with a T+0..T+5
+settlement window two engines have to share because otherwise they fight over which day a payout
+belongs to. Six pure modules, ~135 tests, checked against real files from a real shop.
 
-**Je onderschat wat dat is, en overschat tegelijk hoe ver het staat.** Het is één winkel, één
-acquirerformaat (Equens CTAP), twee dagen. Dat is een sterk signaal en geen bewijs.
+**You underestimate what that is, and simultaneously overestimate how far along it is.** It is
+one shop, one acquirer format (Equens CTAP), two days. That is a strong signal, not proof.
 
-**Je denkt dat SnelStarts breedte een voorsprong is.** Voor een kaart- en kasgedreven microzaak
-is het merendeel van die breedte dood gewicht — dat heeft je eigen §6 goed. Het probleem is
-niet dat SnelStart méér kan. Het probleem is dat SnelStart er al **staat**, bij het kantoor.
-Dat is een distributieprobleem, geen productprobleem, en die twee vragen totaal verschillende
-oplossingen.
+**You think SnelStart's breadth is an advantage.** For a card- and cash-driven micro business
+most of that breadth is dead weight — your own §6 has that right. The problem is not that
+SnelStart can do more. The problem is that SnelStart is already **there**, at the office. That is
+a distribution problem, not a product problem, and those two require completely different
+solutions.
 
-**En één gevaarlijke:** je eigen instap-analyse zegt dat SnelStarts inStap-trede (± € 14,50)
-"exact onze doelgroep en exact onze belofte" is — mét PSD2 en scan & herken inbegrepen. Zolang
-BoekBrug zich als goedkoop compleet pakket positioneert, is dat geen partner maar de directe
-concurrent, en dan verlies je op prijs én op functies tegelijk.
+**And one dangerous one:** your own entry-tier analysis says SnelStart's inStap tier (± € 14.50)
+is "exactly our target group and exactly our promise" — with PSD2 and scan & recognise included.
+As long as BoekBrug positions itself as a cheap complete package, that is not a partner but the
+direct competitor, and then you lose on price *and* on features at once.
 
 ---
 
-## 3. Het landschap
+## 3. The landscape
 
-Betrouwbaarheid: **[V]** meervoudig bevestigd · **[O]** ongetoetst, secundaire bron ·
-**[T–]** door de toetsing gegaan en teruggekomen als *onbevestigd*.
+Reliability: **[V]** confirmed multiple times · **[O]** untested, secondary source ·
+**[T–]** went through verification and came back *unconfirmed*.
 
-| Speler | Doelgroep | Prijs/mnd | Waar BoekBrug tegenaan loopt |
+| Player | Target group | Price/mo | What BoekBrug runs into |
 |---|---|---|---|
-| **SnelStart** | Kleine handelaren + hun kantoor | inStap ± € 14,50 [O] | Hun instaptrede ís jouw propositie, mét PSD2 en scan & herken. En het kantoor draait er al op |
-| **Moneybird** | ZZP-dienstverlener | € 0 / 15 / 28 / 39 [T–] | Prijsdifferentiatie zit óp automatische banktransacties. NL/EN/DE-interface [O] — de "Engelse flank" is niet onverdedigd |
-| **e-Boekhouden** | ZZP + MKB, prijsvechter | € 7,95 / 13,90 / 24 [T–] | Sinds 2003, telefonische support; zou een dagomzetscherm hebben dat kas én PIN boekt [T–] |
-| **Jortt / Tellow / Rompslomp / Fiskr / MoneyMonk** | ZZP, gratis instap | € 0 → 20–33 [O] | Zes gratis tiers. Een betaald generiek instapproduct is dood bij aankomst |
-| **Reeleezee** | Retail/horeca mét kassa | € 29–89, bronnen spreken elkaar tegen [O] | De dichtstbijzijnde positionering die bestaat — duur, en mét kassa en voorraad |
-| **Exact Online** | Via het kantoor | vanaf € 49 [O] | Meest gebruikte pakket in de NL-accountancy [O]. Elke serieuze voorbewerkingspartij koppelt ermee. Jij niet |
-| **Basecone** (Wolters Kluwer) | Kantoren, voorbewerking | ± € 7,50/administratie [O, deels 2017–2021] | Geen zichtbare onvredegolf om op mee te liften |
-| **TriFact365** | Kantoren, voorbewerking | € 2,50 → 0,99/administratie [O]; 11 koppelingen | Het bewijs dat toetreden kán — en de reden dat die wig al geslagen is |
-| **Zenvoices** | Kantoren, conversie | ± € 0,09/factuur [O] | Documentherkenning wordt in centen per stuk afgerekend |
-| **Winkelboekhouding.nl / Mplus / Lightspeed-connectors** | Winkel/horeca | ± € 15/mnd koppeling [O] | **De echte tegenstander van weg A.** Zij boeken dagstaten mét betaalwijzesplitsing door |
-| **A2X / Link My Books / Synder** (internationaal) | E-commerce | vanaf ± $ 25–29 per kanaal/mnd, oplopend tot $ 1.039 [V, juli 2026] | Dezelfde vorm — settlement → grootboek, fee als aparte kostenregel — maar voor webshops, niet voor fysieke terminals |
+| **SnelStart** | Small traders + their office | inStap ± € 14.50 [O] | Their entry tier *is* your proposition, with PSD2 and scan & recognise. And the office already runs on it |
+| **Moneybird** | zzp service providers | € 0 / 15 / 28 / 39 [T–] | Price differentiation sits *on* automatic bank transactions. NL/EN/DE interface [O] — the "English flank" is not undefended |
+| **e-Boekhouden** | zzp + SME, price fighter | € 7.95 / 13.90 / 24 [T–] | Since 2003, phone support; reportedly has a daily-revenue screen that books cash *and* PIN [T–] |
+| **Jortt / Tellow / Rompslomp / Fiskr / MoneyMonk** | zzp, free entry | € 0 → 20–33 [O] | Six free tiers. A paid generic entry product is dead on arrival |
+| **Reeleezee** | Retail/hospitality *with* a till | € 29–89, sources contradict each other [O] | The closest positioning that exists — expensive, and with till and inventory |
+| **Exact Online** | Via the office | from € 49 [O] | Most-used package in NL accountancy [O]. Every serious pre-processing party integrates with it. You do not |
+| **Basecone** (Wolters Kluwer) | Offices, pre-processing | ± € 7.50/administratie [O, partly 2017–2021] | No visible wave of dissatisfaction to ride |
+| **TriFact365** | Offices, pre-processing | € 2.50 → 0.99/administratie [O]; 11 integrations | Proof that entering *is* possible — and the reason that wedge is already driven |
+| **Zenvoices** | Offices, conversion | ± € 0.09/invoice [O] | Document recognition is settled in cents per item |
+| **Winkelboekhouding.nl / Mplus / Lightspeed connectors** | Retail/hospitality | ± € 15/mo per connection [O] | **The real opponent of route A.** They push daily statements through *with* payment-method splits |
+| **A2X / Link My Books / Synder** (international) | E-commerce | from ± $ 25–29 per channel/mo, up to $ 1,039 [V, July 2026] | The same shape — settlement → ledger, fee as a separate cost line — but for webshops, not physical terminals |
 
-**Wat deze tabel niet bevat, en dat is het belangrijkste eraan:** geen marktaandelen, geen
-betalende-klantaantallen, geen churn, geen CAC. Die bestaan niet publiek voor deze markt. Elk
-plan dat op marktaandeel steunt, steunt op niets.
-
----
-
-## 4. De categorie-vraag
-
-BoekBrug zit vandaag in **drie** categorieën tegelijk, en in twee ervan verliest het per
-ongeluk van partijen die honderd keer zoveel geld hebben.
-
-**Categorie 1 — boekhoudpakket voor ZZP (€ 0–25).** Vijftien tot dertig actieve spelers, zes
-gratis tiers, PSD2 als tafelinzet, en een zoekpagina die eigendom is van affiliates. Je verliest
-niet op product; je verliest op rij één van de tabel en op advertentiebudget.
-
-**Categorie 2 — publieke rekentools en "factuur maken".** Hier is je tegenstander Adobe en
-Canva. Dat is geen moeilijke strijd, dat is een verkeerde strijd.
-
-**Categorie 3 — voorbewerking richting het grootboek van het kantoor.** De prijsvloer is
-€ 2–3 per administratie [O] en het toegangscriterium is het **aantal koppelingen**, niet de
-herkenkwaliteit: TriFact365 heeft er elf. Jij hebt er één, en die is nog niet aan.
-
-**De kleinste categorie die BoekBrug kan wínnen in plaats van meedoen:**
-
-> **De dagafsluiting van een kaart- en kasgedreven winkel of horecazaak, aangeleverd als
-> kloppende boeking in het pakket waar zijn boekhouder al in werkt.**
-
-Niet "boekhouden". Niet "bonnen scannen". Het afsluiten van een dag waarvan drie bronnen — de
-kassa, de terminal, de bank — verschillende bedragen noemen, en het aanwijzen wélke van de drie
-liegt.
-
-**Twee nuchterheden daarbij.** De internationale spelers (A2X, Link My Books, Synder) doen
-precies deze vorm voor webshops, geverifieerd, vanaf ± $ 29 per kanaal per maand. Dat is
-tegelijk goed nieuws — **de betalingsbereidheid voor settlement-afletting is bewezen, en tien
-keer hoger dan een prijs van € 2–5 per administratie** — en slecht nieuws: je slotgracht is
-lokalisatie naar Nederlandse fysieke terminals, geen uitvinding. En de standaardoplossing van
-de markt bestaat al: de betaalwijze op een **tussenrekening** boeken en die periodiek
-controleren (zo legt Jortt het zelf uit) [V]. Het verschil tussen "een tussenrekening die
-niemand narekent" en "een dag die klopt" is precies jouw product — en precies wat je bij tien
-kantoren moet toetsen voordat je er iets op bouwt.
+**What this table does not contain, and that is the most important thing about it:** no market
+shares, no paying-customer counts, no churn, no CAC. Those do not exist publicly for this market.
+Any plan resting on market share rests on nothing.
 
 ---
 
-## 5. Het oorspronkelijke idee, opnieuw gewogen
+## 4. The category question
+
+BoekBrug sits in **three** categories at once today, and in two of them it accidentally loses to
+parties with a hundred times the money.
+
+**Category 1 — accounting package for zzp (€ 0–25).** Fifteen to thirty active players, six free
+tiers, PSD2 as table stakes, and a search page owned by affiliates. You do not lose on product;
+you lose on row one of the table and on ad budget.
+
+**Category 2 — public calculators and "factuur maken".** Here your opponent is Adobe and Canva.
+That is not a hard fight, it is the wrong fight.
+
+**Category 3 — pre-processing towards the office's ledger.** The price floor is € 2–3 per
+administratie [O] and the entry criterion is the **number of integrations**, not recognition
+quality: TriFact365 has eleven. You have one, and it is not switched on yet.
+
+**The smallest category BoekBrug can *win* rather than merely compete in:**
+
+> **The daily close of a card- and cash-driven shop or hospitality business, delivered as a
+> correct booking in the package its boekhouder already works in.**
+
+Not "accounting". Not "scanning receipts". Closing a day where three sources — the till, the
+terminal, the bank — name different amounts, and pointing at which of the three is lying.
+
+**Two sobering notes.** The international players (A2X, Link My Books, Synder) do exactly this
+shape for webshops, verified, from ± $ 29 per channel per month. That is good news at the same
+time — **willingness to pay for settlement reconciliation is proven, and ten times higher than a
+€ 2–5 per administratie price** — and bad news: your moat is localisation to Dutch physical
+terminals, not invention. And the market's standard answer already exists: book the payment
+method to a **suspense account** and review it periodically (that is how Jortt explains it
+themselves) [V]. The difference between "a suspense account nobody reconciles" and "a day that
+is correct" is precisely your product — and precisely what you have to test with ten offices
+before building anything on it.
+
+---
+
+## 5. The original idea, weighed again
 
 > _"De kleine klant maakt een factuur, ontvangt een factuur, en die bereikt de boekhouder."_
 
-Alle drie de schakels zijn in 2026 gratis onderdeel van andermans product. Als bedrijf op
-zichzelf is deze keten **geen bedrijf meer** — het is een functie in het product van iemand
-anders, en die iemand geeft hem weg om er iets anders mee te verkopen.
+All three links are, in 2026, a free part of somebody else's product. As a business in its own
+right this chain is **no longer a business** — it is a feature in someone else's product, and
+that someone gives it away to sell something else with it.
 
-Maar er zit één woord in dat van betekenis is veranderd: **"bereikt"**.
+But one word in it has changed meaning: **"reaches"**.
 
-Toen betekende het: de boekhouder krijgt het bestand. Daarmee concurreer je met een gedeelde map
-en een e-mail, en dat verlies je. Nu betekent het: **het staat als kloppende boeking in het
-pakket waar hij in werkt.** Dat is een andere belofte, en het is precies de belofte die
-`snelstart-mapping.ts` waarmaakt — mits de sleutel er komt.
+Back then it meant: the boekhouder gets the file. That puts you in competition with a shared
+folder and an e-mail, and you lose that. Now it means: **it sits as a correct booking in the
+package he works in.** That is a different promise, and it is exactly the promise
+`snelstart-mapping.ts` delivers — provided the key arrives.
 
-Dus: het idee overleeft, maar met een ander werkwoord, en dan is het geen keten meer maar een
-**bewijs**. Wat de winkelier niet kan en zijn boekhouder uren kost, is niet het máken van de
-factuur. Het is aantonen dat een periode klopt terwijl kassa, terminal en bank drie
-verschillende getallen roepen.
+So: the idea survives, but with a different verb, and then it is no longer a chain but a
+**proof**. What the shopkeeper cannot do and what costs his boekhouder hours is not *making* the
+invoice. It is demonstrating that a period is correct while till, terminal and bank shout three
+different numbers.
 
-**En één cijfer dat je waarschijnlijk verkeerd leest.** Contant was in 2025 nog 17% van de
-toonbankbetalingen; 83% ging per kaart [V, DNB/Betaalvereniging]. Dat lijkt het einde van een
-"kas"-positionering. Het is het omgekeerde: jouw driehoek is een **kaart**driehoek. Been B — de
-commissie — bestaat alleen omdát er met kaarten betaald wordt. Elke euro die van kas naar kaart
-schuift maakt dat probleem **groter**.
+**And one figure you are probably reading wrong.** Cash was still 17% of point-of-sale payments
+in 2025; 83% went by card [V, DNB/Betaalvereniging]. That looks like the end of a "cash"
+positioning. It is the opposite: your triangle is a **card** triangle. Leg B — the commission —
+exists only *because* people pay by card. Every euro that shifts from cash to card makes that
+problem **bigger**.
 
-**Maar met een harde randvoorwaarde die de eerste versie van dit stuk miste:** dit geldt alleen
-bij **netto-afrekening**, waar de acquirer de commissie van de uitbetaling aftrekt. Rekent de
-acquirer bruto uit en factureert hij de kosten apart (je eigen code anticipeert daarop met
-`netCommissionToBook` en `ACQUIRER_VENDOR_RE`), dan is Been B nul en valt er niets te vinden.
-Je markt is dus niet "kaartzware winkels" maar "kaartzware winkels **op een
-netto-afrekencontract**" — een onbekende deelverzameling van een al onbekende verzameling.
+**But with a hard precondition the first version of this document missed:** this only holds under
+**net settlement**, where the acquirer deducts the commission from the payout. If the acquirer
+settles gross and invoices the costs separately (your own code anticipates this with
+`netCommissionToBook` and `ACQUIRER_VENDOR_RE`), then Leg B is zero and there is nothing to find.
+So your market is not "card-heavy shops" but "card-heavy shops **on a net settlement contract**"
+— an unknown subset of an already unknown set.
 
-**En over de btw op die commissie: het argument is zwakker dan de repo beweert.** Twee plekken
-in je eigen code zeggen "a real cost + reclaimable BTW" (`eft-parser.ts:12`,
-`RECONCILIATION_TRIANGLE.md:12`), terwijl regel 55 van diezelfde notitie zegt "commission has no
-BTW". Het fiscale beeld: betalingsverkeer is in beginsel btw-**vrijgesteld** (art. 11 lid 1 sub
-j Wet OB) — geen btw om terug te vragen — maar terminalhuur is dat níét, en een uitspraak uit
-2023 oordeelde dat puur technisch-administratieve verwerkingsdiensten buiten de vrijstelling
-vallen [V]. Het antwoord hangt dus af van wat er precies op de acquirerfactuur staat. **Leid je
-verkoopgesprek daarom met "je winst is overschat", niet met "je laat btw liggen"** — en zoek
-het uit op één echte acquirerfactuur voordat het in een pitch komt.
-
----
-
-## 6. De wegen — vier, niet drie
-
-### Weg A — De dagafsluiting, verkocht aan het kantoor _(richting: goed)_
-
-**Klant.** Het administratiekantoor met 10–40 winkel- en horecaklanten. Het kantoor betaalt,
-niet de winkelier.
-
-**Belofte.** "Je krijgt de dagstaat kloppend aangeleverd. Kassa, terminalafslag en
-bankuitbetaling zijn tegen elkaar afgezet, de commissie is geboekt in plaats van weggetolereerd,
-en wat niet klopt staat als uitzondering op één lijstje."
-
-**Wat het echt vraagt** (de eerste versie van dit stuk had dit te rooskleurig):
-- Breedte in de import: de EFT-parser kent één acquirerformaat. Mplus, Lightspeed, CCV,
-  Worldline, unTill moeten erbij.
-- **Wél een bankbestand per klant per maand.** De eerste versie schreef "geen PSD2 nodig"; dat
-  is half waar. `card-reconcile.ts` zegt zelf dat de netto bankuitbetaling optioneel is — maar
-  zonder die regel bestaat Been B niet, en Been B ís het verkoopargument. Bij 40 klanten is dat
-  40 handmatige uploads per maand. Onderzoek eerst of SnelStarts eigen API bankmutaties
-  teruggeeft; dan is die getuige gratis. Eén middag in hun documentatie beslist dit.
-- Multi-tenant onboarding is **geen opsommingsteken maar een datamodelwijziging**:
-  `accountant-access.ts` koppelt per `zzper_id`, elke winkelier heeft een eigen account nodig,
-  en de maatwerksleutel geldt per administratie. De betaler is niet de accounthouder.
-- Twee onbeantwoorde vragen: mag een administratie die bij een kantoor in beheer is een
-  maatwerksleutel afgeven, en zit Maatwerk/B2B überhaupt in de inStap-trede? Als het antwoord
-  "vanaf inKaart" is, kost jouw oplossing de winkelier eerst een duurder SnelStart-abonnement.
-
-**Verdedigbaarheid.** Redelijk — maar niet door intellectueel eigendom. Door vieze details
-(afwikkelingsvertraging, DAT-datum uit de bankomschrijving, commissie-attributie naar de juiste
-dag, splitsing per kaartschema) en door iets wat je nergens verkoopt: **het systeem doet liever
-niets dan iets onwaars** (blokkade bij onbekend btw-tarief, `detect-file.ts`, `import-health.ts`,
-schrijfsloten, centgrens van twee cent). Het kantoor draagt de aansprakelijkheid. Dát is de
-verkoopreden. De echte slotgracht is verder desinteresse: dit segment is te klein voor de
-aandacht van een grote speler — een echte slotgracht en een slecht compliment tegelijk.
-
-### Weg B — Brede voorbewerking voor kantoren (de TriFact365-route) _(afraden)_
-
-Vereist Exact Online, daarna Twinfield en AFAS, plus XAF 3.2-auditfile en RGS-mapping —
-`grep` op `xaf`, `auditfile` en `rgs` levert **nul** treffers in `src/`. Maanden werk voordat je
-mag meedoen, tegen een prijsvloer van € 2–3 [O], zonder onvredegolf om op mee te liften.
-
-### Weg C — Goedkoop compleet ZZP-pakket (de huidige koers) _(afraden)_
-
-Vraagt PSD2 (AISP-partij, terugkerende kosten), btw-indiening (Digipoort of
-fiscale-dienstverlenerstatus), een Peppol-toegangspunt (ISO 27001 vereist in NL [O], instapprijs
-nergens te vinden) en Engels in de applicatie zelf — vandaag staat `lang="nl"` hard in
-`layout.tsx`, bestaat Engels alleen voor de publieke tools en de blog, en zijn `'ar'` en `'tr'`
-in `preferred_language` een databasekolom die door **geen enkele regel code** wordt gelezen. Je
-concurreert tegen zes gratis tiers. Verdedigbaarheid: nul.
-
-### Weg D — Weg A, maar eerst als dienst _(de uitvoerbare vorm — dit ontbrak volledig)_
-
-Verkoop de dagafsluiting als **betaalde dienst** aan 3–5 kantoren, met de code als jouw interne
-gereedschap. Self-service pas daarna.
-
-- Geen abonnementsincasso nodig: KvK, factuur, IBAN. Je product kán al factureren.
-- Geen multi-tenant onboarding nodig.
-- **Geen subscription key nodig om te beginnen** — een exportbestand volstaat. Daarmee verdwijnt
-  je grootste enkelvoudige afhankelijkheid uit het kritieke pad, en wordt de SnelStart-koppeling
-  een margeverbetering in plaats van een blokkade.
-- Het risico "elke winkel is maatwerk" draait om van kostenpost naar omzet: elke nieuwe
-  kassa/terminal die je met de hand verwerkt is een klant die betaalt terwijl jij de parser
-  schrijft.
-- Het levert het enige ontbrekende getal: wat kost een dagafsluiting werkelijk, en wat wil een
-  kantoor ervoor betalen.
-
-Ja, dit is consultancy en het schaalt slecht. Dat is niet de faalmodus — **het is de goedkoopste
-manier om te ontdekken of het product bestaat.**
-
-### Weg E — De motor licentiëren _(minstens één telefoontje waard)_
-
-TriFact365, Zenvoices, een kassaleverancier, een acquirer, of SnelStart zelf. Zij hebben
-distributie en geen begrip van kas/PIN; jij het omgekeerde. Als het segment klein genoeg is om
-hun aandacht niet te trekken, is het ook klein genoeg om te licentiëren in plaats van na te
-bouwen. Het is de enige weg waarvan de uitkomst niet afhangt van jouw verkoopvaardigheid als
-eenpitter.
+**And on the btw over that commission: the argument is weaker than the repo claims.** Two places
+in your own code say "a real cost + reclaimable BTW" (`eft-parser.ts:12`,
+`RECONCILIATION_TRIANGLE.md:12`), while line 55 of that same note says "commission has no BTW".
+The tax picture: payment services are in principle btw-**exempt** (art. 11(1)(j) Wet OB) — no btw
+to reclaim — but terminal rental is not, and a 2023 ruling held that purely technical and
+administrative processing services fall outside the exemption [V]. So the answer depends on what
+exactly appears on the acquirer invoice. **Lead your sales conversation with "your profit is
+overstated", not with "you are leaving btw on the table"** — and work it out on one real acquirer
+invoice before it goes into a pitch.
 
 ---
 
-## 7. Aanbeveling
+## 6. The routes — four, not three
 
-**Richting A, vorm D, met E als parallel telefoontje.**
+### Route A — The daily close, sold to the office _(direction: good)_
 
-Niet omdat de markt groot is — hij is klein en niemand weet hoe klein — maar omdat het de enige
-richting is waar het gebouwde vóórsprong is in plaats van achterstand.
+**Customer.** The administratiekantoor with 10–40 retail and hospitality clients. The office
+pays, not the shopkeeper.
 
-Hernoem het product in je hoofd van "boekhouding voor kleine ondernemers" naar **"dagafsluiting
-voor kaartgedreven zaken, geleverd aan hun kantoor"**. Verkoop niet aan winkeliers maar aan
-kantoren. En prijs **niet per administratie**: € 2–5 per administratie is een gesprek dat je
-niet wint. Test € 150 per kantoor per maand, of per vestiging zoals de internationale spelers —
-dat is hetzelfde bedrag en een veel makkelijker gesprek.
+**Promise.** "You get the daily statement delivered correct. Till, terminal settlement and bank
+payout are set against each other, the commission is booked instead of tolerated away, and
+whatever does not add up is on one exceptions list."
 
-**De tegenwerpingen, en ik kan ze niet wegnemen:**
+**What it actually demands** (the first version of this document was too rosy here):
+- Breadth in the import: the EFT parser knows one acquirer format. Mplus, Lightspeed, CCV,
+  Worldline and unTill have to be added.
+- **You do need a bank file per client per month.** The first version wrote "no PSD2 needed";
+  that is half true. `card-reconcile.ts` says itself that the net bank payout is optional — but
+  without that line Leg B does not exist, and Leg B *is* the sales argument. At 40 clients that
+  is 40 manual uploads a month. First find out whether SnelStart's own API returns bank
+  transactions; then that witness is free. One afternoon in their documentation settles this.
+  _(Since this was written, the Enable Banking connection makes this a live-data question rather
+  than an upload question — re-decide it before building.)_
+- Multi-tenant onboarding is **not a bullet point but a data-model change**:
+  `accountant-access.ts` links per `zzper_id`, every shopkeeper needs their own account, and the
+  maatwerk key applies per administratie. The payer is not the account holder.
+- Two unanswered questions: may an administratie managed by an office issue a maatwerk key, and
+  is Maatwerk/B2B in the inStap tier at all? If the answer is "from inKaart upwards", your
+  solution first costs the shopkeeper a more expensive SnelStart subscription.
 
-1. Ik beveel de enige weg aan waarvan de markt **niet te meten** is. Het aantal kaartzware
-   microzaken mét externe boekhouder, zónder integreerbare kassa, óp een netto-afrekencontract
-   is nergens vastgesteld. Weg C heeft een meetbare markt van 1,2–1,8 miljoen — en daarin
-   verlies je aantoonbaar. Ik kies een onmeetbare markt boven een meetbaar verlies. Wie zegt
-   dat dat geen gok is, liegt.
-2. Het dossier spreekt zichzelf tegen over wie de software kiest: 16% via de boekhouder tegen
-   49,3% via eigen Google-onderzoek [O], terwijl een ander spoor precies het omgekeerde beweert.
-   De hele kanaalstrategie hangt hieraan. Mijn vermoeden — dienstverlenende ZZP'ers googelen,
-   winkeliers met een schoenendoos volgen hun kantoor — is redenering, geen bevinding.
-3. **De grootste ontbrekende aanname ben jij.** De git-historie toont één menselijke auteur
-   (`mofwim`, 80 commits) naast AI-assistentie (131 commits). Nergens in dit hele onderzoek
-   staat hoeveel tijd je hebt, of je inkomen hebt, en hoelang je zonder omzet kunt. "Eerste
-   betalend kantoor in 3–6 maanden" (realistischer 6–9: kantoren beslissen niet tijdens
-   aangifteperiodes) is onbeslisbaar zonder die twee getallen. En reken de uitkomst kaal door:
-   10 kantoren × 25 administraties × € 4 = **€ 1.000 per maand, na 12–18 maanden**.
+**Defensibility.** Reasonable — but not through intellectual property. Through dirty details
+(settlement delay, DAT date from the bank description, commission attribution to the right day,
+splitting per card scheme) and through something you sell nowhere: **the system would rather do
+nothing than something untrue** (blocking on an unknown btw rate, `detect-file.ts`,
+`import-health.ts`, write locks, a two-cent boundary). The office carries the liability. *That*
+is the reason to buy. The real moat beyond that is disinterest: this segment is too small for a
+large player's attention — a real moat and a poor compliment at once.
+
+### Route B — Broad pre-processing for offices (the TriFact365 route) _(advise against)_
+
+Requires Exact Online, then Twinfield and AFAS, plus an XAF 3.2 audit file and RGS mapping —
+`grep` for `xaf`, `auditfile` and `rgs` returns **zero** hits in `src/`. _(Re-checked 14 Aug
+2026: still zero.)_ Months of work before you are allowed to compete, against a price floor of
+€ 2–3 [O], with no wave of dissatisfaction to ride.
+
+### Route C — Cheap complete zzp package (the current course) _(advise against)_
+
+Requires PSD2 (an AISP party, recurring costs), btw filing (Digipoort or fiscal service provider
+status), a Peppol access point (ISO 27001 required in NL [O], entry price findable nowhere) and
+English in the application itself. You are competing against six free tiers. Defensibility: zero.
+
+_On the language part, re-checked 14 Aug 2026: `src/lib/i18n/` now carries a full translation
+layer in nl/en/ar/tr reaching the dashboard, so "English exists only for the public tools and the
+blog" no longer holds. The two specifics still do: `lang="nl"` is hard-coded in `layout.tsx:90`,
+and `preferred_language` on `profiles` is read by no line of code — now by design, since the
+locale lives in a cookie and deliberately not in a profiles column (`use-locale.ts:6`)._
+
+### Route D — Route A, but as a service first _(the executable form — this was missing entirely)_
+
+Sell the daily close as a **paid service** to 3–5 offices, with the code as your internal tooling.
+Self-service only after that.
+
+- No subscription billing needed: KvK, an invoice, an iban. Your product can already invoice.
+- No multi-tenant onboarding needed.
+- **No subscription key needed to start** — an export file is enough. That removes your single
+  largest dependency from the critical path, and turns the SnelStart connection into a margin
+  improvement instead of a blocker.
+- The "every shop is bespoke" risk flips from cost to revenue: every new till/terminal you handle
+  by hand is a client paying while you write the parser.
+- It produces the one missing number: what a daily close actually costs, and what an office is
+  willing to pay for it.
+
+Yes, this is consultancy and it scales badly. That is not the failure mode — **it is the cheapest
+way to find out whether the product exists.**
+
+### Route E — License the engine _(worth at least one phone call)_
+
+TriFact365, Zenvoices, a till vendor, an acquirer, or SnelStart itself. They have distribution
+and no understanding of cash/PIN; you have the reverse. If the segment is small enough not to
+attract their attention, it is also small enough to license rather than rebuild. It is the only
+route whose outcome does not depend on your sales ability as a one-person business.
 
 ---
 
-## 8. Stoppunten — meetbaar, met volgorde
+## 7. Recommendation
 
-| # | Binnen | Waarneming | Als dit gebeurt |
+**Direction A, form D, with E as a parallel phone call.**
+
+Not because the market is large — it is small and nobody knows how small — but because it is the
+only direction where what is built is a *lead* instead of a deficit.
+
+Rename the product in your own head from "accounting for small entrepreneurs" to **"daily close
+for card-driven businesses, delivered to their office"**. Do not sell to shopkeepers, sell to
+offices. And do **not** price per administratie: € 2–5 per administratie is a conversation you do
+not win. Test € 150 per office per month, or per location like the international players — that
+is the same amount and a far easier conversation.
+
+**The objections, and I cannot remove them:**
+
+1. I am recommending the one route whose market **cannot be measured**. The number of card-heavy
+   micro businesses *with* an external boekhouder, *without* an integrable till, *on* a net
+   settlement contract has been established nowhere. Route C has a measurable market of 1.2–1.8
+   million — and in it you demonstrably lose. I am choosing an unmeasurable market over a
+   measurable loss. Anyone who says that is not a gamble is lying.
+2. The file contradicts itself about who chooses the software: 16% via the boekhouder versus
+   49.3% via the entrepreneur's own Google research [O], while another track claims exactly the
+   reverse. The entire channel strategy hangs on this. My hunch — service zzp'ers google,
+   shopkeepers with a shoebox follow their office — is reasoning, not a finding.
+3. **The biggest missing assumption is you.** The git history shows one human author (`mofwim`,
+   80 commits) alongside AI assistance (131 commits). _(Unverifiable in the current working copy
+   — see the re-verification block.)_ Nowhere in this entire study is it written how much time
+   you have, whether you have an income, and how long you can go without revenue. "First paying
+   office in 3–6 months" (more realistically 6–9: offices do not decide during aangifte season)
+   is undecidable without those two numbers. And run the outcome bare: 10 offices × 25
+   administraties × € 4 = **€ 1,000 per month, after 12–18 months**.
+
+---
+
+## 8. Stop points — measurable, in order
+
+| # | Within | Observation | If this happens |
 |---|---|---|---|
-| **0** | 14 dagen | **Geen rechtspersoon.** `/voorwaarden` en `/privacy` staan live met `[JOUW NAAM]` en `KVK-nummer [INVULLEN]`. Geen kantoor tekent een verwerkersovereenkomst met een placeholder; Stripe/Mollie-KYC vraagt een KvK-nummer; art. 3:15d BW eist identificatie | Blokkeert **alle** wegen. Kost een middag. Doe dit eerst |
-| **0b** | 14 dagen | **De gepubliceerde prijslijst spreekt de strategie tegen.** De AV §5.1 noemt Pro € 25 en Pro+ € 45 "inclusief bankkoppeling (PSD2 — binnenkort beschikbaar)"; die PSD2 bestaat niet en vereist een AISP-partij. En de database kent een ánder viertrapsmodel (`free/pro/boekhouder/boekhouder_pro`) dan de AV | Corrigeer of verwijder vóór het eerste kantoorgesprek |
-| **1** | 30 dagen | **Eén handmatig gefactureerde en ontvangen euro.** Niet: een werkende Stripe-integratie. Stripe komt na klant 3 | Zonder dit is alles theorie — maar bouw geen incasso vóór klant 1 |
-| **2** | 30 dagen | **Wordt het probleem gevoeld?** Spreek 10 kantoren met winkel-/horecaklanten: hoeveel uur per kwartaal kost zo'n dagafsluiting, en wie betaalt die uren? Minder dan 3 van de 10 noemt het een terugkerende kostenpost | Weg A vervalt. Het gat bestaat technisch, niet economisch |
-| **3** | 30 dagen | **Subscription key aangevraagd én toegekend** voor dit gebruik | Zo nee: weg A draait op export, koppeling terug naar de bijlage |
-| **4** | 60 dagen | **Netto of bruto?** Van 10 winkels: hoeveel hebben een netto-afrekencontract? | Onder de 5: Been B is geen product |
-| **5** | 60 dagen | **Zit er geld in?** Reken in 10 administraties uit hoeveel commissie er níét geboekt is. Mediaan onder ± € 250/jaar. Splits apart: ís die commissie btw-belast? | Zonder bedrag is het een technische fijnigheid, geen verkoopreden |
-| **6** | 60 dagen | **Import-maatwerkhel.** Verzamel 10 echte Z-rapporten en 10 terminalafslagen uit 10 zaken. Minder dan 6 parsen zonder nieuwe code — én tel de OCR-faalgevallen apart | Dan is dit een dienst (weg D), geen product. Dat is een keuze, geen ramp |
-| **7** | 90 dagen | **Is het al opgelost?** 3 of meer van de 10 kantoren zeggen "dat doet onze kassakoppeling al". Bel ook Lightspeed/Mplus/unTill: nemen zij de **acquirerafrekening** mee? | Het onderscheid bestaat niet. Terug naar de tekentafel, niet naar meer bouwen |
-| **8** | 90 dagen | **Prijstest.** Geen enkel kantoor wil ≥ € 150/maand (of ≥ € 5/administratie) toezeggen | Bij € 2–3 met een handmatige verkoopbeweging sluit de rekensom niet |
+| **0** ✅ | — | ~~**No legal entity.** `/voorwaarden` and `/privacy` are live with `[JOUW NAAM]` and `KVK-nummer [INVULLEN]`~~ **RESOLVED in code, 14 Aug 2026.** The legal identity renders from `NEXT_PUBLIC_COMPANY_*` with unfinished-by-design fallbacks, guarded by `company.test.ts`. **What remains is not code:** register with the KvK and set the five env vars in Vercel. No office signs a verwerkersovereenkomst without a real entity; Stripe/Mollie KYC asks for a KvK number; art. 3:15d BW requires identification | Still blocks **all** routes until the KvK registration exists. Costs an afternoon. Do this first |
+| **0b** ✅ | — | ~~**The published price list contradicts the strategy.** Terms §5.1 quotes Pro € 25 and Pro+ € 45 "including bank connection (PSD2 — coming soon)"; the database knows a different four-tier model~~ **RESOLVED, 14 Aug 2026.** Terms §5.1 now reads Gratis € 0 / Plus € 12,99 / Boekhouder € 0, no PSD2 promise in any legal document, and `database.sql:436` matches at `free/plus/boekhouder` | Nothing to do. Re-check if the pricing changes again |
+| **1** | 30 days | **One euro invoiced and received by hand.** Not: a working Stripe integration. Stripe comes after client 3 | Without this everything is theory — but do not build billing before client 1 |
+| **2** | 30 days | **Is the problem felt?** Speak to 10 offices with retail/hospitality clients: how many hours per quarter does such a daily close cost, and who pays those hours? Fewer than 3 out of 10 call it a recurring cost | Route A lapses. The gap exists technically, not economically |
+| **3** | 30 days | **Subscription key requested *and* granted** for this use | If not: route A runs on export, integration goes back to being a nice-to-have |
+| **4** | 60 days | **Net or gross?** Of 10 shops: how many are on a net settlement contract? | Under 5: Leg B is not a product |
+| **5** | 60 days | **Is there money in it?** Work out across 10 administraties how much commission went unbooked. Median under ± € 250/year. Separately: *is* that commission btw-taxed? | Without an amount it is a technical nicety, not a reason to buy |
+| **6** | 60 days | **Bespoke-import hell.** Collect 10 real Z-reports and 10 terminal settlements from 10 businesses. Fewer than 6 parse without new code — and count the OCR failures separately | Then this is a service (route D), not a product. That is a choice, not a disaster |
+| **7** | 90 days | **Is it already solved?** 3 or more of the 10 offices say "our till integration already does that". Also call Lightspeed/Mplus/unTill: do they include the **acquirer settlement**? | The differentiator does not exist. Back to the drawing board, not to more building |
+| **8** | 90 days | **Price test.** No office at all will commit to ≥ € 150/month (or ≥ € 5/administratie) | At € 2–3 with a manual sales motion the arithmetic does not close |
 
 ---
 
-## 9. Kanalen die nergens genoemd werden
+## 9. Channels nobody mentioned
 
-- **NOAB / SRA / Fiscount.** Koepels van administratie- en belastingadvieskantoren, met
-  nieuwsbrieven, bijeenkomsten en softwarevoorkeuren. **Eén bijeenkomst is meer kantoorcontact
-  dan een jaar SEO** — en het is de goedkoopste uitvoering van stoppunt 2.
-- **De acquirer en de kassaleverancier.** CCV, Worldline, Rabo SmartPin, SumUp en de
-  kassabouwers hebben de lijst van "kaartzwaar, geen integreerbare kassa" en verkopen al aan
-  jouw doelgroep, zonder boekhoudproduct. Je noemt dit zelf een distributieprobleem en noemde
-  vervolgens geen enkele distributiepartner.
-- **De longtail van de kóper, niet van de gebruiker.** Je kennisbank mikt op "boekhoudpakket
-  zzp" — bezet door affiliates. De zoektermen van je koper zijn "pinomzet klopt niet met kassa",
+- **NOAB / SRA / Fiscount.** Umbrella bodies for administration and tax advisory offices, with
+  newsletters, meetings and software preferences. **One meeting is more office contact than a
+  year of SEO** — and it is the cheapest way to execute stop point 2.
+- **The acquirer and the till vendor.** CCV, Worldline, Rabo SmartPin, SumUp and the till builders
+  have the list of "card-heavy, no integrable till" and already sell to your target group, without
+  an accounting product. You call this a distribution problem yourself and then named not a single
+  distribution partner.
+- **The long tail of the *buyer*, not the user.** Your knowledge base aims at "boekhoudpakket zzp"
+  — held by affiliates. Your buyer's search terms are "pinomzet klopt niet met kassa",
   "afrekening Worldline boeken", "acquirerkosten boeken btw", "dagstaat horeca boeken",
-  "kasverschil verklaren Belastingdienst". Dat is longtail die niemand monetiseert, gezocht dóór
-  een boekhouder mét het probleem. Dat is wél een kanaal, en het is het enige goedkope dat je hebt.
+  "kasverschil verklaren Belastingdienst". That is long tail nobody monetises, searched *by* a
+  boekhouder *with* the problem. That is a real channel, and the only cheap one you have.
 
 ---
 
-## 10. Kosten die in geen enkel scenario stonden
+## 10. Costs that appeared in no scenario
 
-Claude-API per document (`ai.ts` draait op Haiku 4.5; EFT-bonnen lopen via transcriptie) — bij
-€ 2–5 per administratie is dat een marge-eter zodra een winkel 200+ documenten per maand
-aanlevert. Zeven jaar bewaren zoals je privacyverklaring belooft — opslag die dóórloopt na
-opzegging, per klant, én juridisch discutabel omdat de fiscale bewaarplicht op de ondernemer
-rust, niet op jou. Supabase, Vercel, Resend, Sentry, domein. Aansprakelijkheidsverzekering: je
-schrijft boekingen in de administratie van een derde en je AV beperkt aansprakelijkheid tot
-€ 1.000 — een kantoor accepteert dat niet zonder gesprek. Plus het papierwerk dat je wél hebt
-ook zonder AISP/Digipoort/ISO: verwerkersovereenkomst als subverwerker van het kantoor, de vraag
-"gaan onze klantgegevens naar een Amerikaans AI-model?" (die krijg je in élk gesprek), en een
-securityvragenlijst bij grotere kantoren.
-
----
-
-## 11. Wat we niet weten
-
-**Fouten die in de eerste versie van deze studie stonden en hier gecorrigeerd zijn:** dat de
-SnelStart-koppeling live is (nee — hij wacht op een sleutel), dat er geen betaalcode of
-prijslijst bestaat (er ís een gepubliceerde prijslijst met € 25/€ 45 en een `subscription_stripe_id`
-in het datamodel), dat de commissie terugvorderbare btw draagt (waarschijnlijk niet, en de repo
-spreekt zichzelf tegen), dat weg A geen bankregel nodig heeft (nodig voor Been B), en dat "geen
-enkele partij dit doet" (internationaal bestaat de categorie wél).
-
-**Wat het onderzoek expliciet niet vond:** marktaandelen, betalende-klantaantallen, churn, ARPU
-of CAC voor NL-boekhoudsoftware (bestaan niet publiek). De prijs van reseller- of
-white-labeltoegang tot een Peppol-toegangspunt. De omvang van het kaart/kas-zware
-microsegment. Of kantoren software doorbelasten en met welke marge. Een actuele officiële
-Basecone-prijs. De doorlooptijd van een softwarebeslissing bij een klein kantoor. Enige
-betalingsbereidheid voor taal als zodanig — geen onderzoek, geen data, geen prijspremie.
-
-**Interne tegenspraken die niemand oploste:** het aantal ZZP'ers (1,167 mln CBS hoofdbaan Q4-2025
-/ "bijna 1,5 mln" CBS Q1-2026 / 1,805 mln KVK 30-6-2026 — drie tellingen, drie definities); of
-de ondernemer of de boekhouder kiest; en of e-Boekhoudens dagomzetscherm bestaat (de claim die
-je nis zou doden kwam onbevestigd terug — maak zelf een proefaccount aan).
-
-**Eén ding dat je nooit in een pitch moet zetten:** er is **geen** Nederlandse
-e-facturatieverplichtingsdatum. Meerdere hoog scorende blogs presenteren 1-1-2027 en 1-1-2028
-als Nederlandse wet; dat zijn Duitse data. (Daar ligt wel een gratis kans: één accurate,
-gedateerde, bronvermeldende pagina in een markt waar de bestaande content aantoonbaar fout is.)
-
-### De drie vragen die alleen een gesprek beantwoordt
-
-1. **Aan een kantoor met winkelklanten:** hoeveel uur per kwartaal gaat er in de dagafsluiting
-   van zo'n klant, en eet het kantoor die uren of factureert het ze door? Dit is het enige getal
-   dat je prijs bepaalt en het staat in geen enkele bron.
-2. **Aan datzelfde kantoor:** wat doe je vandaag als de PIN-uitbetaling niet klopt met de kassa?
-   Is het antwoord "we zetten het op een tussenrekening en kijken niet om", dan bestaat het
-   probleem wel maar is er geen koper.
-3. **Aan tien winkeliers:** wie koos je software — jij of je boekhouder?
+Claude API per document (`ai.ts` runs on Haiku 4.5; EFT receipts go through transcription) — at
+€ 2–5 per administratie that eats the margin as soon as a shop delivers 200+ documents a month.
+Seven years of retention as your privacy statement promises — storage that keeps running after
+cancellation, per client, *and* legally debatable because the fiscal retention duty rests on the
+entrepreneur, not on you. Supabase, Vercel, Resend, Sentry, the domain. Liability insurance: you
+write bookings into a third party's administratie and your terms cap liability at € 1,000 — an
+office will not accept that without a conversation. Plus the paperwork you have even without
+AISP/Digipoort/ISO: a verwerkersovereenkomst as the office's sub-processor, the question "do our
+client records go to an American AI model?" (you will get that in *every* conversation), and a
+security questionnaire at larger offices.
 
 ---
 
-**Slotsom.** Je vroeg waar BoekBrug staat. Antwoord: als generiek boekhoudpakket sta je nergens
-en is er geen weg terug in die richting. Als leverancier van één bewijsbaar kloppende
-dagafsluiting sta je op iets wat geen Nederlandse concurrent heeft — bewezen op één winkel, nog
-niet verkocht aan één klant, gebouwd door één persoon, zonder rechtspersoon eronder. Dat is geen
-groot bedrijf en ook geen mislukking. Het is een hypothese die tien telefoongesprekken en één
-middag notariswerk verwijderd is van "waar" of "onwaar" — en er is geen enkele reden om die tien
-gesprekken nog langer uit te stellen voor meer code.
+## 11. What we do not know
+
+**Errors that were in the first version of this study and are corrected here:** that the SnelStart
+connection is live (no — it waits on a key), that no billing code or price list exists (there *is*
+a published price list and a `subscription_stripe_id` in the data model), that the commission
+carries reclaimable btw (probably not, and the repo contradicts itself), that route A needs no
+bank line (it does, for Leg B), and that "no party does this" (internationally the category does
+exist).
+
+**What the research explicitly did not find:** market shares, paying-customer counts, churn, ARPU
+or CAC for NL accounting software (these do not exist publicly). The price of reseller or
+white-label access to a Peppol access point. The size of the card/cash-heavy micro segment.
+Whether offices pass software costs on and at what margin. A current official Basecone price. The
+decision lead time for software at a small office. Any willingness to pay for language as such —
+no research, no data, no price premium.
+
+**Internal contradictions nobody resolved:** the number of zzp'ers (1.167m CBS main job Q4-2025 /
+"nearly 1.5m" CBS Q1-2026 / 1.805m KVK 30-6-2026 — three counts, three definitions); whether the
+entrepreneur or the boekhouder chooses; and whether e-Boekhouden's daily-revenue screen exists
+(the claim that would kill your niche came back unconfirmed — open a trial account yourself).
+
+**One thing you must never put in a pitch:** there is **no** Dutch e-invoicing mandate date.
+Several high-ranking blogs present 1-1-2027 and 1-1-2028 as Dutch law; those are German dates.
+(There is a free opportunity in that: one accurate, dated, sourced page in a market where the
+existing content is demonstrably wrong.)
+
+### The three questions only a conversation answers
+
+1. **To an office with retail clients:** how many hours per quarter go into such a client's daily
+   close, and does the office absorb those hours or bill them on? This is the single number that
+   sets your price and it is in no source.
+2. **To that same office:** what do you do today when the PIN payout does not match the till? If
+   the answer is "we put it on a suspense account and never look back", then the problem exists
+   but there is no buyer.
+3. **To ten shopkeepers:** who chose your software — you or your boekhouder?
+
+---
+
+**Bottom line.** You asked where BoekBrug stands. Answer: as a generic accounting package you
+stand nowhere, and there is no way back in that direction. As the supplier of one demonstrably
+correct daily close you stand on something no Dutch competitor has — proven on one shop, not yet
+sold to a single client, built by one person, with no legal entity underneath it. That is not a
+big company and it is not a failure either. It is a hypothesis that is ten phone calls and one
+afternoon of registration away from "true" or "false" — and there is no reason at all to keep
+postponing those ten conversations for more code.
