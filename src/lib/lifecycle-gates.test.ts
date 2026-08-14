@@ -8964,3 +8964,35 @@ test("[OFFERTE-OPVOLGING] Vandaag cannot say 'niets te doen' while quotes go col
   assert.match(client, /zichtbareOffertes\.length === 0;/,
     "the empty state must count the quotes too, or the screen reassures while work sits there");
 });
+
+test("[DEEL-KORTING] a line's own fixed discount scales with the part being credited", () => {
+  // Two features landed on main within hours of each other, from different sessions: a discount per
+  // invoice LINE, and a creditnota for PART of a line. Neither is wrong on its own. Together, a
+  // fixed line discount was subtracted in FULL from a partial credit — measured on 10 × € 50 with
+  // € 25 off, where the customer paid € 47,50 per unit:
+  //
+  //     fair credit for 3 units   3 × 47,50 = € 142,50
+  //     what was credited         150 − 25  = € 125,00      € 17,50 too little
+  //
+  // The same function already scaled a fixed DOCUMENT discount pro rata, with the argument written
+  // out. The argument applies one level down and had not been made there.
+  const mod = code("src/lib/partial-credit.ts");
+  assert.match(
+    mod, /eigen && eigen\.type === "amount"\s*\n\s*\? \{ discount_type: "amount", discount_value: round2\(eigen\.value \* deel\) \}/,
+    "a fixed line discount must scale by the credited share",
+  );
+  assert.match(mod, /const deel = geheel === 0 \? 0 : Math\.abs\(quantity\) \/ Math\.abs\(geheel\);/,
+    "…by the share of THAT line, not of the document");
+  // The scaled amount has to travel with the line. The e-factuur recomputes quantity × price −
+  // allowance (PEPPOL-EN16931-R120) and compares it to the line amount, so a scaled total beside
+  // an unscaled discount is a refused file — the half-fix is worse than the defect.
+  assert.match(mod, /const regel = \{ \.\.\.l, \.\.\.geschaald, quantity \};/,
+    "the scaled discount must be ON the credited line, not only in its total");
+
+  const spec = readFileSync("src/lib/partial-credit.test.ts", "utf8");
+  assert.match(spec, /a fixed line discount scales with the part being credited/);
+  assert.match(spec, /a percentage needs no scaling, and must not get any/,
+    "a percentage is already pro rata — scaling it twice is the mirror-image defect");
+  assert.match(spec, /a FULL credit is unchanged, to the cent/,
+    "every creditnota this app has ever made took that path");
+});

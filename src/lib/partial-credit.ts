@@ -162,16 +162,44 @@ export function buildCreditSelection(input: CreditSelectionInput): CreditSelecti
   //
   // Bij een VOLLEDIGE creditnota levert lineNetEx exact het opgeslagen bedrag op — dezelfde
   // afronding, dezelfde regelkorting — dus daar verandert er niets.
-  const metBedrag = (l: CreditableLine, quantity: number): SelectedCreditLine => ({
-    ...l,
-    quantity,
-    line_total: lineNetEx({
-      quantity,
-      unit_price: l.unit_price,
-      discount_type: l.discount_type,
-      discount_value: l.discount_value,
-    }),
-  });
+  // [DEEL-KORTING] En de EIGEN korting van de regel schaalt mee, precies zoals de documentkorting
+  // onderaan meeschaalt — om hetzelfde argument, dat hier alleen niet was gemaakt.
+  //
+  // Een percentage is al pro rata: 10% van drie stuks is 10% van drie stuks. Een VAST bedrag hoort
+  // bij de HELE regel. Werd dat bedrag onverkort van een deelcreditering afgetrokken, dan kreeg de
+  // klant te weinig terug — gemeten op 10 × € 50 met € 25 korting, waar de klant € 47,50 per stuk
+  // betaalde:
+  //
+  //     eerlijk voor 3 stuks   3 × 47,50 = € 142,50
+  //     wat er werd gecrediteerd   150 − 25 = € 125,00        € 17,50 te weinig
+  //
+  // Bij één stuk is het bijna de helft, en bij een korting groter dan het deelbedrag klemt
+  // lineDiscountEx hem op het bedrag zelf: een creditregel van € 0,00 op een levering die wél
+  // terugging.
+  //
+  // Het geschaalde bedrag reist ook MEE naar de creditregel (het wordt hier in de regel gezet, en
+  // creditnota-lines.ts kopieert de kortingvelden). Dat moet ook: de e-factuur rekent
+  // aantal × prijs − korting na (PEPPOL-EN16931-R120) en vergelijkt het met het regelbedrag, dus
+  // een geschaald bedrag naast een ongeschaalde korting is een geweigerd bestand.
+  const metBedrag = (l: CreditableLine, quantity: number): SelectedCreditLine => {
+    const geheel = qtyOf(l);
+    const deel = geheel === 0 ? 0 : Math.abs(quantity) / Math.abs(geheel);
+    const eigen = parseDiscount(l.discount_type, l.discount_value);
+    const geschaald =
+      eigen && eigen.type === "amount"
+        ? { discount_type: "amount", discount_value: round2(eigen.value * deel) }
+        : {};
+    const regel = { ...l, ...geschaald, quantity };
+    return {
+      ...regel,
+      line_total: lineNetEx({
+        quantity,
+        unit_price: regel.unit_price,
+        discount_type: regel.discount_type,
+        discount_value: regel.discount_value,
+      }),
+    };
+  };
 
   const gekozen: SelectedCreditLine[] = alles
     ? input.lines.map((l) => metBedrag(l, qtyOf(l)))
