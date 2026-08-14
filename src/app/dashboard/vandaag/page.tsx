@@ -27,6 +27,9 @@ import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 import { fullyCreditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 // [AUTO-INCASSO] The same normalized supplier key the registry stores — see src/lib/auto-incasso.ts.
 import { supplierNameKey } from "@/lib/supplier-registry";
+// [OFFERTE-OPVOLGING] Welke offerte vandaag aandacht vraagt — één regel, zie dat bestand.
+import { quotesNeedingFollowup } from "@/lib/offerte-followup";
+import { amsterdamToday } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +74,27 @@ export default async function VandaagPage() {
     .eq("sender_id", user.id)
     .eq("direction", "outgoing")
     .in("status", ["sent", "overdue"])
+    .not("due_date", "is", null)
+    .order("due_date", { ascending: true })
+    .limit(100);
+
+  // [OFFERTE-OPVOLGING] List 3 — offertes die verlopen.
+  //
+  // "Geldig tot" staat op elke offerte-PDF en niets in de app wist ervan: geen badge, geen filter,
+  // geen signaal, en de herinneringscron sluit offertes uit. Een offerte die stil verloopt is
+  // omzet die nooit is opgehaald — en het is de goedkoopste omzet die er is, want het werk om
+  // hem te winnen is al gedaan.
+  //
+  // Alleen VERSTUURDE offertes: een concept is nooit de deur uit geweest. Welke van deze rijen
+  // vandaag aandacht vragen, beslist offerte-followup.ts — hier wordt niets gefilterd op datum,
+  // zodat de regel op één plek staat en niet half in een query.
+  const { data: offertesRaw, error: offertesErr } = await supabase
+    .from("invoices")
+    .select(SELECT)
+    .eq("sender_id", user.id)
+    .eq("direction", "outgoing")
+    .in("invoice_type", ["pro_forma", "offerte"])
+    .eq("status", "sent")
     .not("due_date", "is", null)
     .order("due_date", { ascending: true })
     .limit(100);
@@ -171,7 +195,14 @@ export default async function VandaagPage() {
   // instead of the reassuring checkmark. (Locked constraint #3: no false reassurance.)
   // Fold the count-query errors in too: a lone count failure must not silently coerce to 0 and show
   // a false "all clear" (a dateless payable / a verify-queue item could be hidden). No false calm.
-  const loadFailed = !!payableErr || !!remindErr || !!toVerifyErr || !!datelessErr;
+  const loadFailed = !!payableErr || !!remindErr || !!toVerifyErr || !!datelessErr || !!offertesErr;
 
-  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} />;
+  // [OFFERTE-OPVOLGING] De beslissing staat in de pure regel, niet hier: welke offerte aandacht
+  // vraagt hangt af van vandaag, en die datum hoort één keer te worden vastgesteld.
+  const offertes = quotesNeedingFollowup(
+    (offertesRaw ?? []) as unknown as VandaagInvoice[],
+    amsterdamToday(),
+  ).map((r) => ({ ...r.quote, followupState: r.state, followupDays: r.days }));
+
+  return <VandaagClient payable={payable} remind={remind} offertes={offertes} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} />;
 }

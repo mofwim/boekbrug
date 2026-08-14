@@ -8994,3 +8994,49 @@ test("[KAS-ZACHT] every reader of the cash book asks only for the movements that
     "a second concurrent removal may not overwrite the first one's timestamp",
   );
 });
+
+// ─── [OFFERTE-OPVOLGING] Een offerte die stil verloopt ────────────────────────
+//
+// "Geldig tot" staat op elke offerte-PDF en de app wist er niets van: geen badge, geen filter,
+// geen signaal, en de herinneringscron sluit offertes met zoveel woorden uit. Een offerte die
+// stil verloopt is omzet die nooit is opgehaald, en het is de goedkoopste omzet die er is — het
+// werk om hem te winnen is al gedaan.
+test("[OFFERTE-OPVOLGING] the app notices, and never acts for the owner", () => {
+  const regel = code("src/lib/offerte-followup.ts");
+
+  // Alleen een VERSTUURDE offerte kan verlopen: een concept is nooit de deur uit geweest.
+  assert.match(regel, /return quote\.status === "sent";/,
+    "a draft quote has no 'Geldig tot' on anyone's desk");
+  // Geen datum = geen termijn. Er zelf een verzinnen stelt een deadline die nooit is afgesproken.
+  assert.match(regel, /if \(dagen === null\) return null;/);
+
+  // En het allerbelangrijkste: dit verandert NOOIT iets. Geen status, geen bericht aan de klant.
+  assert.doesNotMatch(regel, /\.from\(|update\(|insert\(|fetch\(/,
+    "the rule is pure — a quote that lapsed is a date that passed, not an event to book");
+  assert.doesNotMatch(regel, /sendInvoice|sendMail|resend|email/i,
+    "nothing goes to the customer by itself: following up a quote is a sales conversation, and " +
+      "the app does everything except the last tap (the same line recurring.ts draws)");
+});
+
+test("[OFFERTE-OPVOLGING] a lapsed quote is never dressed up as a late payment", () => {
+  // A sent quote whose 'Geldig tot' has passed fell straight through the overdue test — status
+  // 'sent', date in the past — so the list put a red "Te laat" on it. Urgent, and about money
+  // nobody owes: the customer has not done anything wrong, they simply have not answered yet.
+  const row = code("src/components/invoice/InvoiceRow.tsx");
+  assert.match(row, /const OFFERTE_TYPES = new Set\(\['pro_forma', 'offerte'\]\)/);
+  assert.match(row, /if \(OFFERTE_TYPES\.has\(String\(invoice\.invoice_type \?\? ''\)\)\) return false/,
+    "isOverdue must exempt a quote — its due_date is a validity date, not a payment term");
+});
+
+test("[OFFERTE-OPVOLGING] Vandaag cannot say 'niets te doen' while quotes go cold", () => {
+  // This page's own rule is that a failed or incomplete read may never masquerade as a calm
+  // all-clear. A third list that the empty-state does not know about is exactly that.
+  const page = code("src/app/dashboard/vandaag/page.tsx");
+  assert.match(page, /\.in\("invoice_type", \["pro_forma", "offerte"\]\)/, "the quotes must be read");
+  assert.match(page, /quotesNeedingFollowup\(/, "…and judged by the shared rule, not by the query");
+  assert.match(page, /offertesErr/, "…and a failed read must reach loadFailed like the others");
+
+  const client = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+  assert.match(client, /zichtbareOffertes\.length === 0;/,
+    "the empty state must count the quotes too, or the screen reassures while work sits there");
+});

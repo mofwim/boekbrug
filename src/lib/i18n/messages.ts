@@ -656,6 +656,20 @@ export const MESSAGES = {
 
   // ─── [VANDAAG] De takenlijst van vandaag ────────────────────────────────────────────────────
 
+  // ── [OFFERTE-OPVOLGING] Offertes die verlopen ────────────────────────────────
+  'vandaag.offertes': { nl: 'Offertes die verlopen', ar: 'عروض أسعار توشك أن تنتهي', en: 'Quotes about to lapse' },
+  'vandaag.offertesUitleg': {
+    nl: 'Nog geen antwoord — één belletje is vaak genoeg',
+    ar: 'ما من ردّ بعد — اتصال واحد يكفي غالباً',
+    en: 'No answer yet — one call is often enough',
+  },
+  'vandaag.offerteEen': { nl: '1 offerte', ar: 'عرض سعر واحد', en: '1 quote' },
+  'vandaag.offerteMeer': { nl: '{n} offertes', ar: '{n} عرض سعر', en: '{n} quotes' },
+  'vandaag.offerteVandaag': { nl: 'Verloopt vandaag', ar: 'ينتهي اليوم', en: 'Lapses today' },
+  'vandaag.offerteMorgen': { nl: 'Verloopt morgen', ar: 'ينتهي غداً', en: 'Lapses tomorrow' },
+  'vandaag.offerteOver': { nl: 'Verloopt over {n} dagen', ar: 'ينتهي بعد {n} أيام', en: 'Lapses in {n} days' },
+  'vandaag.offerteVerlopenEen': { nl: 'Gisteren verlopen', ar: 'انتهى أمس', en: 'Lapsed yesterday' },
+  'vandaag.offerteVerlopenMeer': { nl: '{n} dagen verlopen', ar: 'انتهى منذ {n} يوماً', en: 'Lapsed {n} days ago' },
   'vandaag.aandacht': { nl: 'Dit heeft vandaag je aandacht nodig.', ar: 'هذا ما يحتاج انتباهك اليوم.', en: 'This needs your attention today.' },
   'vandaag.nietsNodig': { nl: 'Niets dat nu je aandacht nodig heeft', ar: 'لا شيء يحتاج انتباهك الآن', en: 'Nothing needs your attention right now' },
   'vandaag.geenVervallen': { nl: 'Geen facturen die binnen 3 dagen vervallen of te laat zijn.', ar: 'لا فواتير تستحق خلال 3 أيام أو متأخرة.', en: 'No invoices due within 3 days or overdue.' },

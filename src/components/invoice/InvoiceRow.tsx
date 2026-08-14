@@ -95,12 +95,26 @@ export interface InvoiceRowProps {
 //
 // 'archived' hoort in dezelfde uitzondering als 'paid'/'draft': een verwijderde factuur wordt
 // niet aangemaand, dus die als te laat bestempelen is een aansporing tot niets.
-export function isOverdue(invoice: { status: string; due_date: string | null }): boolean {
+//
+// [OFFERTE-OPVOLGING] En een OFFERTE is nooit te laat, hoe lang de datum ook voorbij is.
+//
+// Op een offerte is due_date de datum achter "Geldig tot" — geen betaaltermijn, want er is niets
+// afgesproken om te betalen. Toch viel een verstuurde offerte precies door de test hierboven: de
+// status is 'sent', de datum is voorbij, dus de lijst zette er "Te laat" bij. Rood, dringend, en
+// over een bedrag dat niemand verschuldigd is. De klant heeft niets fout gedaan; hij heeft alleen
+// nog niet geantwoord — en dat is een verkoopgesprek, geen aanmaning.
+//
+// Wat er wél moet gebeuren staat op Vandaag, in de woorden die er horen ("verloopt over 3 dagen",
+// "5 dagen verlopen"). Zie offerte-followup.ts.
+const OFFERTE_TYPES = new Set(['pro_forma', 'offerte'])
+
+export function isOverdue(invoice: { status: string; due_date: string | null; invoice_type?: string | null }): boolean {
   if (invoice.status === 'paid' || invoice.status === 'draft' || invoice.status === 'archived') return false
+  if (OFFERTE_TYPES.has(String(invoice.invoice_type ?? ''))) return false
   return overdueDays(invoice.due_date, amsterdamToday()) !== null
 }
 
-export function getDisplayStatus(invoice: { status: string; due_date: string | null }): string {
+export function getDisplayStatus(invoice: { status: string; due_date: string | null; invoice_type?: string | null }): string {
   return isOverdue(invoice) ? 'overdue' : invoice.status
 }
 
