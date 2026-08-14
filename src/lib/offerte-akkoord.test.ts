@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   answerRefusal,
@@ -146,4 +147,50 @@ test("[OFFERTE-AKKOORD] anything that is not a sent quote renders nothing at all
       `${JSON.stringify(over)} must not be public`,
     );
   }
+});
+
+// ─── [AKKOORD-VERLOPEN] The fact that was computed and never told ──────────────────────────────
+//
+// answeredAfterExpiry was implemented, documented as "de ondernemer ziet het en beslist", covered
+// by the tests above — and called from nowhere in the app. So the owner never saw it: a quote
+// valid until 30 June, accepted on 14 August, arrived as a plain "Offerte geaccepteerd — zet hem
+// om in een factuur wanneer je wilt", on the screen whose next button issues that invoice at
+// March's price. The app still refuses nothing; the answer is valid and the decision is the
+// owner's. It just stops being invisible.
+
+test("[AKKOORD-VERLOPEN] the answer is still valid — nothing is refused for being late", () => {
+  const laat = {
+    invoice_type: "pro_forma", status: "sent", due_date: "2026-06-30",
+    offerte_response: null, offerte_responded_at: null,
+  };
+  assert.equal(canAnswer(laat), true, "an expired quote may still be answered");
+  assert.equal(answerRefusal(laat), null, "…and the route must not turn it away");
+});
+
+test("[AKKOORD-VERLOPEN] …and the lateness is a fact the owner is handed", () => {
+  const beantwoord = {
+    invoice_type: "pro_forma", status: "sent", due_date: "2026-06-30",
+    offerte_response: "accepted", offerte_responded_at: "2026-08-14T09:00:00Z",
+  };
+  assert.equal(answeredAfterExpiry(beantwoord), true);
+  // Same day is not late: a quote valid "until 30 June" is valid on 30 June.
+  assert.equal(
+    answeredAfterExpiry({ ...beantwoord, offerte_responded_at: "2026-06-30T23:59:00Z" }), false,
+    "the last day of validity is a day of validity",
+  );
+});
+
+test("[AKKOORD-VERLOPEN] it reaches the two places the owner decides", () => {
+  // A pure module can be right and still change nothing — this one was, for as long as it existed.
+  // The route's notification is what reaches them at the moment it happens; the detail screen is
+  // where the button that issues the invoice sits.
+  const route = readFileSync("src/app/api/offerte/[token]/route.ts", "utf8");
+  assert.match(route, /const teLaat = answeredAfterExpiry\(/, "the route must ask");
+  assert.match(route, /Let op: dit kwam ná de geldigheidsdatum/, "…and say so in the notification");
+  const detail = readFileSync("src/app/dashboard/invoice/[id]/page.tsx", "utf8");
+  assert.match(detail, /answeredAfterExpiry\(\{/, "the detail screen must ask too");
+  assert.match(detail, /detail\.offerte\.naVervaldatum/, "…in the owner's language");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'detail\.offerte\.naVervaldatum'/);
+  assert.match(messages, /Controleer of je prijs nog klopt/, "…and name what to check");
 });

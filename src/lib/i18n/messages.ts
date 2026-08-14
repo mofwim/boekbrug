@@ -3897,6 +3897,15 @@ export const MESSAGES = {
   'detail.offerte.afgewezen': { nl: 'De klant gaat niet akkoord', ar: 'لم يوافق العميل', en: 'The customer declined' },
   'detail.offerte.doorOp': { nl: 'Door {naam}, op {datum}', ar: 'بواسطة {naam}، بتاريخ {datum}', en: 'By {naam}, on {datum}' },
   'detail.offerte.op': { nl: 'Op {datum}', ar: 'بتاريخ {datum}', en: 'On {datum}' },
+  // [AKKOORD-VERLOPEN] Het akkoord kwam ná de geldigheidsdatum. Alleen gemeld, nooit geweigerd:
+  // het antwoord is geldig, en of de prijs van toen nog geldt is een beslissing van de ondernemer.
+  // Zonder deze regel leest het scherm als een gewoon akkoord en wordt er omgezet tegen een prijs
+  // die maanden geleden is ingetrokken.
+  'detail.offerte.naVervaldatum': {
+    nl: 'Let op: dit akkoord kwam ná de geldigheidsdatum van {datum}. Controleer of je prijs nog klopt voordat je de factuur maakt.',
+    ar: 'تنبيه: وصلت هذه الموافقة بعد تاريخ سريان العرض ({datum}). تأكّد أن سعرك ما زال صالحاً قبل إصدار الفاتورة.',
+    en: 'Note: this acceptance arrived after the quote expired on {datum}. Check that your price still holds before you invoice it.',
+  },
   'detail.gecrediteerdVia': {
     nl: 'Gecrediteerd via {number}',
     ar: 'عُكست عبر الإشعار الدائن {number}',
