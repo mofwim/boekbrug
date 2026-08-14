@@ -9,7 +9,10 @@
 //   - Parsing is BEST-EFFORT. An unparseable format (bank CSV/PDF) yields 0 transactions
 //     but the raw file is STILL stored for the accountant — never rejected.
 //   - The raw passthrough copy is stored regardless of the transaction count, deduped by
-//     byte-hash so the same file is never stored twice.
+//     byte-hash so the same file is never stored twice. ONE exception, and it is deliberate:
+//     a file detected as a spreadsheet is not stored at all — see [SHEET-NIET-OPSLAAN] below.
+//     Storing it would claim its content_hash and lock it out of the importer we just told the
+//     owner to use.
 //   - Transaction insert is best-effort (the raw file is the safety net); parseWarnings
 //     (lines the parser could not read) travel back so the caller can surface them.
 
@@ -68,8 +71,9 @@ export async function importBankStatement(args: {
   // [DETECT] A bank statement is MT940 (text) or CAMT.053 (XML). A spreadsheet (xlsx/xls)
   // is a binary ZIP/OLE2 container — decoding it as UTF-8 and running parseBankFile yields
   // ZERO transactions while looking successful (the old false-green trap). Detect the
-  // binary up front, skip the fake parse, and tell the caller the truth. The raw file is
-  // still stored below so the accountant always has it.
+  // binary up front, skip the fake parse, and tell the caller the truth. The file is NOT stored
+  // on this path ([SHEET-NIET-OPSLAAN] below): it belongs to Dagomzet or the kas side, and
+  // claiming its hash here is what stops it ever arriving there.
   let parsed: ReturnType<typeof parseBankFile> | null = null;
   let nonBankSpreadsheet = false;
   const extraWarnings: string[] = [];
@@ -288,10 +292,28 @@ export async function importBankStatement(args: {
   let statementStored = false;
   let statementDocId: string | null = null; // [BANK-TX-STATEMENT-LINK] the statement this import created/reused
   try {
+    // [SHEET-NIET-OPSLAAN] A spreadsheet is not a bank statement, and this path already knows it:
+    // the warning above tells the owner, by name, to import it via Dagomzet or the kas side. Storing
+    // it anyway did three things wrong at once, and the third is the one that bites.
+    //
+    //   1. doc_type "bankafschrift" on a Z-report — mis-filed in Mijn Bestanden.
+    //   2. shared: true — the boekhouder sees a kassa export sitting in the bank section of /brug.
+    //   3. content_hash on a file that never became transactions — and THAT is what makes this
+    //      more than cosmetic. The owner follows our advice, opens Dagomzet, uploads the same
+    //      bytes, and the byte-hash dedup rejects it as already seen. The app sends them to the
+    //      right door and then locks it. The failure looks like "my Z-report is gone", the file is
+    //      filed as something it is not, and the day's turnover silently never arrives.
+    //
+    // So: no storage row, no hash claimed, nothing shared. The warning is the whole response, and
+    // the correct importer stays reachable with the same file. Transactions are unaffected —
+    // there were none, which is exactly why we are here.
+    //
     // [BANK-TX-SOURCE-ID] The hash and the lookup already happened above, where they could still
     // prevent work. Reusing them here keeps ONE answer to "have we seen this file?" — two lookups
     // could disagree, and the one that decided the import is the one that must decide the storage.
-    if (priorDocId) {
+    if (nonBankSpreadsheet) {
+      statementStored = false;
+    } else if (priorDocId) {
       statementStored = true;
       statementDocId = priorDocId;
     } else {
