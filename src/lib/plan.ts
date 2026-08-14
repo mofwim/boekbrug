@@ -25,9 +25,11 @@
 //     precies het gedrag waar dit product zich van wil onderscheiden.
 //   • Geen betaalmuur. Overschrijding pauzeert alleen de handeling die geld kost.
 //   • Het boekhoudersportaal is gratis tot en met ACCOUNTANT_FREE_CLIENTS gekoppelde klanten
-//     (fair-use.ts), en daarboven geldt een tarief per klant dat NOG NIET is vastgesteld —
-//     zolang het niet is aangekondigd is het portaal in zijn geheel kosteloos (voorwaarden
-//     §5.8). Geen klok, geen proefperiode: de grens loopt over KLANTEN, niet over tijd.
+//     (fair-use.ts). Daarboven geldt een STAFFEL per kantoor (accountant-pricing.ts), die is
+//     voorbereid maar NIET actief: zolang zij niet is aangekondigd is het portaal in zijn
+//     geheel kosteloos, ook boven de grens (voorwaarden §5.8.1). Geen klok, geen proefperiode:
+//     de grens loopt over KLANTEN, niet over tijd. Er is bewust geen bedrag van die staffel in
+//     dit bestand overgetypt — wie het nodig heeft, leest accountant-pricing.ts.
 
 import { PLUS_PRICE_EUR, fairUseLimit, formatLimit } from "@/lib/fair-use";
 import {
