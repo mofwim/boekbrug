@@ -25,6 +25,8 @@ import { needsDocument } from "@/lib/bank-identity";
 // [BANK-SALDO] Het getal dat het scherm nooit toonde terwijl het al in de database stond.
 import { bankBalanceOf } from "@/lib/bank-balance";
 import { computeDrawerBalance } from "@/lib/cash";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 // [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows. The
 // home totals promise EXACT stored sums ("a wrong number breaks trust"), and a
 // busy account's bank_transactions easily exceed 1000 — lastBankDate and the
@@ -317,11 +319,13 @@ export async function GET() {
   // [PAGINATION] cash_entries / daily_turnover also page past the ~1000-row cap
   // (a cash-heavy shop exceeds it) — a truncated sum here showed a wrong drawer
   // saldo that disagreed with the Kas page.
+  const liveCash = await liveCashEntries(pipeline);
   const [cashRows, tillRows, { data: kasProf, error: kasProfErr }] = await Promise.all([
-    fetchAllRows((from, to) => pipeline
+    fetchAllRows((from, to) => liveCash.only(pipeline
       // [KAS-DUBBELTELLING] entry_date + category: het saldo moet een omzetregel kunnen overslaan op
       // een dag die de kassa al telde, anders staat dezelfde euro er twee keer in.
-      .from("cash_entries").select("direction, amount, entry_date, category").eq("user_id", user.id)
+      // [KAS-ZACHT] …en een verwijderde boeking hoort in geen enkel saldo, ook niet in deze tegel.
+      .from("cash_entries").select("direction, amount, entry_date, category").eq("user_id", user.id))
       .order("id", { ascending: true }).range(from, to)
     ).catch(() => null),
     fetchAllRows((from, to) => pipeline

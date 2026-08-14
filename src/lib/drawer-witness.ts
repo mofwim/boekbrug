@@ -21,6 +21,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "./supabase-paginate";
+// [KAS-ZACHT] One definition of "the movements that still count" — see cash-live.ts.
+import { liveCashEntries } from "./cash-live";
 import {
   buildKasboek,
   openingBalanceForQuarter,
@@ -68,15 +70,18 @@ export async function loadDrawerWitness(args: {
       .range(from, to),
   )) as KasTurnoverDay[];
 
+  // [KAS-ZACHT] Removed movements count nowhere, and least of all here: this witness is what
+  // REFUSES a filing. A line the owner took out of the books may not keep a quarter blocked.
+  const cash = await liveCashEntries(client);
   const entries = (await fetchAllRows<{
     entry_date: string | null; direction: string; amount: number | null;
     category: string | null; description: string | null;
   }>((from, to) =>
-    client
+    cash.only(client
       .from("cash_entries")
       .select("entry_date, direction, amount, category, description")
       .eq("user_id", ownerId)
-      .lte("entry_date", end)
+      .lte("entry_date", end))
       // [PAGE-KEY] id, never entry_date: several entries on one day is ordinary, Postgres
       // defines no order among ties, and a row served twice (or skipped) across .range()
       // windows shifts every eindsaldo after it.

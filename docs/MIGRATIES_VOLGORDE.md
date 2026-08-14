@@ -299,6 +299,16 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 8 | `retention_purge.sql` | AVG-verwijdering; blijft dry run |
 | 9 | `snelstart_connection.sql` | pas nodig met een subscription key |
 | 10 | `kluis_subscriptions.sql` | **vóór de eerste Bewaarkluis-betaling** |
+| 11 | `cash_entry_soft_delete.sql` | zet zachte verwijdering in het kasboek AAN; tot dan blijft een kasboeking hard verwijderd |
+
+**Over 11.** Deze mag op elk moment, ook los van de rest, en er zit geen haast bij: de app werkt er
+volledig zonder. De code PROBEERT de kolom (`src/lib/cash-live.ts`) en gedraagt zich zonder hem
+precies zoals de dag ervoor — een verwijderde kasboeking wordt dan echt verwijderd, met alleen het
+auditspoor als bewijs. Zodra deze SQL staat, gaat zachte verwijdering vanzelf aan: een verwijderde
+regel telt nergens meer mee (saldo, kasboek, resultaat, aangifte, readiness, de blokkade op indienen,
+zoeken, het pakket voor de boekhouder) maar blijft leesbaar en omkeerbaar. Draai hem NA
+`cash_settlement_invoice_link.sql` en `cash_settlement_per_instalment.sql`: onderin wordt hún unieke
+index opnieuw gebouwd, en die noemt `invoice_id` en `settlement_id`.
 
 Na afloop staat onderaan elk bestand een **CONTROLE**-blok. Draai dat — het is per migratie
 één query en het is het verschil tussen "toegepast" en "toegepast en gecontroleerd".

@@ -21,6 +21,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 import { createNotification } from "@/lib/notifications";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
@@ -61,6 +63,7 @@ export async function GET(req: NextRequest) {
   // `.catch(() => [[], [], []])` turned a DB outage into `{ok:true, users:0}` — a silent full
   // no-op that status-code monitoring reads as healthy, hour after hour. Fail loudly (500 + Sentry)
   // so alerting fires and the scheduler retries; the whole reconcile is idempotent, so a retry is safe.
+  const liveCash = await liveCashEntries(pipeline);
   let pendingTx: { user_id: string | null }[];
   let kasInv: { sender_id: string | null; receiver_id: string | null }[];
   let betaling: { user_id: string | null }[];
@@ -76,7 +79,9 @@ export async function GET(req: NextRequest) {
           .eq("status", "paid").eq("payment_method", "kas")
           .order("id", { ascending: true }).range(from, to)),
       fetchAllRows<{ user_id: string | null }>((from, to) =>
-        pipeline.from("cash_entries").select("user_id").eq("category", "betaling")
+        // [KAS-ZACHT] A REMOVED settlement is not a reason to reconcile a user: the reconcile reads
+        // live rows only, so a deleted 'betaling' row would nominate its owner on every run forever.
+        liveCash.only(pipeline.from("cash_entries").select("user_id").eq("category", "betaling"))
           .order("id", { ascending: true }).range(from, to)),
     ]);
   } catch (e) {

@@ -13,6 +13,8 @@ import { buildAangifte, privegebruikNote, type AangifteCompleteness } from "@/li
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
+import { liveCashEntries } from "@/lib/cash-live";
 // [DEPLOY-SAFE] "that table isn't there yet" vs "the read failed" — see pg-missing.ts
 import { isMissingRelation } from "@/lib/pg-missing";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
@@ -114,10 +116,12 @@ export async function GET(req: NextRequest) {
   // same covered-day witness rule (incl. an acquirer payout the owner mis-tapped as 'omzet').
   const bankTx: ResultBankTx[] = bankRows.map(toResultBankTx);
 
-  const cashRows = await fetchAllRows((from, to) => pipeline
+  // [KAS-ZACHT] A removed movement is not turnover, not a cost and not voorbelasting.
+  const cash = await liveCashEntries(pipeline);
+  const cashRows = await fetchAllRows((from, to) => cash.only(pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date, document_id")
-    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end)
+    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end))
     .order("id", { ascending: true }).range(from, to));
   const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
