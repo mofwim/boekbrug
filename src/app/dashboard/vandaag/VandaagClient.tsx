@@ -53,6 +53,13 @@ import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reaso
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/** [OFFERTE-OPVOLGING] Een offerte met het oordeel van de pure regel erbij. */
+export interface VandaagOfferte extends VandaagInvoice {
+  followupState: "verloopt-binnenkort" | "verlopen";
+  /** Dagen tot "Geldig tot". Negatief = al verlopen. */
+  followupDays: number;
+}
+
 export interface VandaagInvoice {
   id: string;
   client_name: string | null;
@@ -68,6 +75,9 @@ export interface VandaagInvoice {
 interface Props {
   payable: VandaagInvoice[]; // List 1 — incoming, status='received'
   remind: VandaagInvoice[]; // List 2 — outgoing, status IN ('sent','overdue')
+  // [OFFERTE-OPVOLGING] List 3 — verstuurde offertes die bijna of al verlopen zijn. Alleen de
+  // rijen die volgens offerte-followup.ts aandacht vragen; de rest komt hier niet eens aan.
+  offertes?: VandaagOfferte[];
   loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
   toVerifyCount?: number; // [P1-STUCK-PROCESSING] incoming invoices stuck in the verify queue
   datelessPayableCount?: number; // [DATELESS-TASK] confirmed incoming bills with no due date (else invisible)
@@ -141,7 +151,7 @@ const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
+export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
   const t = translator(useLocale())
   const router = useRouter();
 
@@ -248,8 +258,12 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
     [remind, dismissed, sortBy]
   );
 
+  // [OFFERTE-OPVOLGING] Een offerte die verloopt is óók iets te doen. Zonder dit zou het scherm
+  // "niets te doen" zeggen terwijl er drie offertes koud staan te worden — precies de valse
+  // geruststelling die deze pagina nergens mag geven.
+  const zichtbareOffertes = offertes.filter((o) => !dismissed.has(o.id));
   const nothingToDo =
-    visiblePayable.length === 0 && visibleRemind.length === 0;
+    visiblePayable.length === 0 && visibleRemind.length === 0 && zichtbareOffertes.length === 0;
 
   // [SEARCH] In-page live filter. Smart: while searching it WIDENS beyond today's
   // 3-day window to the full payable/remind sets (minus dismissed), so you can find
@@ -449,6 +463,13 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             onConfirmPaid={null}
             onDismiss={dismiss}
           />
+          {/* [OFFERTE-OPVOLGING] Een eigen sectie, en met opzet geen InvoiceCard: die kaart gaat
+              helemaal over betalen — "te laat", een Betalen-knop, een openstaand bedrag. Op een
+              offerte klopt geen van die woorden. Hier gaat het om één ding: hier ligt werk dat je
+              nog kunt winnen, en de tijd loopt. */}
+          {zichtbareOffertes.length > 0 && (
+            <OfferteSection offertes={zichtbareOffertes} onOpen={open} onDismiss={dismiss} />
+          )}
         </>
       )}
     </div>
@@ -473,6 +494,98 @@ function filterWindow(
 
 // ─── List section ─────────────────────────────────────────────────────────────
 // [TODAY-UX-CLARITY] header shows a count; one flat list in the chosen order.
+
+/**
+ * [OFFERTE-OPVOLGING] De offertes die aandacht vragen.
+ *
+ * Bewust kaal: naam, nummer, bedrag, en hoeveel tijd er nog is. Geen bedrag-openstaand, geen
+ * betaalknop, geen "te laat" — een offerte is geen schuld en die woorden zouden er een van maken
+ * op het scherm waar de ondernemer zijn dag mee begint.
+ *
+ * En geen enkele knop die iets AAN de klant doet. Opvolgen is een verkoopgesprek; de app wijst
+ * aan, de mens belt. Zie de kop van offerte-followup.ts.
+ */
+function OfferteSection({
+  offertes,
+  onOpen,
+  onDismiss,
+}: {
+  offertes: VandaagOfferte[];
+  // Dezelfde open() als de andere secties: hij wil de richting erbij om de juiste pagina te kiezen.
+  onOpen: (id: string, direction: string) => void;
+  onDismiss: (id: string) => void;
+}) {
+  const t = translator(useLocale())
+  const telling =
+    offertes.length === 1 ? t('vandaag.offerteEen') : t('vandaag.offerteMeer', { n: offertes.length });
+
+  /** Hoeveel tijd er nog is, in woorden die bij een offerte horen. */
+  function termijn(o: VandaagOfferte): string {
+    if (o.followupState === 'verlopen') {
+      const dagen = Math.abs(o.followupDays);
+      return dagen === 1 ? t('vandaag.offerteVerlopenEen') : t('vandaag.offerteVerlopenMeer', { n: dagen });
+    }
+    if (o.followupDays === 0) return t('vandaag.offerteVandaag');
+    if (o.followupDays === 1) return t('vandaag.offerteMorgen');
+    return t('vandaag.offerteOver', { n: o.followupDays });
+  }
+
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <header style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: 17, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+          {t('vandaag.offertes')}
+        </h2>
+        <p style={{ fontSize: 13.5, color: M3.onSurfaceVariant, margin: '2px 0 0' }}>
+          {t('vandaag.offertesUitleg')} · {telling}
+        </p>
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {offertes.map((o) => {
+          const verlopen = o.followupState === 'verlopen';
+          return (
+            <div
+              key={o.id}
+              style={{
+                background: M3.surface, borderRadius: 14, padding: '12px 14px',
+                border: `1px solid ${verlopen ? '#F9DEDC' : M3.outlineVariant}`,
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 15, fontWeight: 500, color: M3.onSurface, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {o.client_name?.trim() || t('vandaag.onbekendePartij')}
+                </p>
+                <p style={{ fontSize: 12.5, color: verlopen ? '#B3261E' : M3.onSurfaceVariant, margin: '2px 0 0' }}>
+                  {termijn(o)}
+                  {o.invoice_number ? ` · ${o.invoice_number}` : ''}
+                </p>
+              </div>
+              {/* Het bedrag is het OPGESLAGEN totaal, net als op de rest van deze pagina: een
+                  eerlijke lezing, nooit een som die hier wordt gemaakt. */}
+              <span style={{ fontSize: 14, color: M3.onSurfaceVariant, fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>
+                {formatEuroNL(Math.abs(o.total_inc_btw ?? 0))}
+              </span>
+              <button
+                onClick={() => onOpen(o.id, o.direction)}
+                style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: M3.primary, color: 'white', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                {t('vandaag.bekijken')}
+              </button>
+              <button
+                onClick={() => onDismiss(o.id)}
+                aria-label={t('vandaag.verbergenVandaag')}
+                style={{ background: 'none', border: 'none', color: M3.onSurfaceVariant, fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: 0 }}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 function ListSection({
   title,
