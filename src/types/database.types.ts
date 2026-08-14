@@ -1544,6 +1544,10 @@ export type Database = {
           invoice_type: string | null
           marked_paid_at: string | null
           offerte_converted_to: string | null
+          offerte_token: string | null
+          offerte_response: string | null
+          offerte_responded_at: string | null
+          offerte_response_name: string | null
           original_invoice_id: string | null
           payment_date: string | null
           payment_method: string | null
@@ -1603,6 +1607,10 @@ export type Database = {
           invoice_type?: string | null
           marked_paid_at?: string | null
           offerte_converted_to?: string | null
+          offerte_token?: string | null
+          offerte_response?: string | null
+          offerte_responded_at?: string | null
+          offerte_response_name?: string | null
           original_invoice_id?: string | null
           payment_date?: string | null
           payment_method?: string | null
@@ -1661,6 +1669,10 @@ export type Database = {
           invoice_type?: string | null
           marked_paid_at?: string | null
           offerte_converted_to?: string | null
+          offerte_token?: string | null
+          offerte_response?: string | null
+          offerte_responded_at?: string | null
+          offerte_response_name?: string | null
           original_invoice_id?: string | null
           payment_date?: string | null
           payment_method?: string | null

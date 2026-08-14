@@ -50,6 +50,12 @@ export type AuditAction =
   // later blijkt dát er een voorstel de deur uit is gegaan en wanneer: de offerte zelf draagt geen
   // nummer en geen verzendspoor, en bij een geschil over "wat is er aangeboden" is dit het bewijs.
   | 'offerte.sent'
+  // [OFFERTE-AKKOORD] De KLANT heeft ja of nee gezegd, via de link in de offertemail. De enige
+  // regel in dit logboek die niet door de ondernemer of de app is gezet maar door iemand buiten
+  // het bedrijf — en daarom precies de regel die bewijst wat er is afgesproken en wanneer. De
+  // ingetypte naam gaat mee: die is niet te verifiëren, en dat is een reden om hem VAST te leggen
+  // zoals hij is getypt, niet om hem weg te laten.
+  | 'offerte.answered'
   | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
   | 'invoice.auto_paid'               // ← [BON-AUTO] app settled a kassabon whose PAPER printed the tender line ("Kontant"/"Bankpas")
   // [TWEEDE-KANS] The owner asked the app to read a stored file again — one it had kept because it

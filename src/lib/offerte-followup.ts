@@ -50,10 +50,19 @@ export interface FollowupQuote {
   status?: string | null;
   /** "Geldig tot" — op een offerte is dit de geldigheidsdatum, niet een vervaldag voor betaling. */
   due_date?: string | null;
+  /** [OFFERTE-AKKOORD] Wat de klant antwoordde, als hij antwoordde. */
+  offerte_response?: string | null;
 }
 
-/** Wat er met deze offerte aan de hand is. Null = niets, en dat is verreweg het vaakst. */
-export type QuoteFollowupState = "verloopt-binnenkort" | "verlopen";
+/**
+ * Wat er met deze offerte aan de hand is. Null = niets, en dat is verreweg het vaakst.
+ *
+ * [OFFERTE-AKKOORD] 'geaccepteerd' staat vooraan omdat het het dringendst is en het leukst: de
+ * klant heeft ja gezegd en er ligt werk klaar om gefactureerd te worden. De app maakt die factuur
+ * niet zelf — nummeren is de tik van de ondernemer (Art. 35) — dus zonder deze regel zou een
+ * akkoord in een notificatie hangen en verder nergens meer opduiken.
+ */
+export type QuoteFollowupState = "geaccepteerd" | "verloopt-binnenkort" | "verlopen";
 
 /** De typen waaronder een offerte wordt opgeslagen. 'pro_forma' is wat de app schrijft. */
 const QUOTE_TYPES = new Set(["pro_forma", "offerte"]);
@@ -106,6 +115,19 @@ export function quoteFollowupState(
   soonDays: number = DEFAULT_SOON_DAYS,
 ): QuoteFollowupState | null {
   if (!isOpenQuote(quote)) return null;
+
+  // [OFFERTE-AKKOORD] Het antwoord van de klant gaat vóór elke datum.
+  //
+  // JA is het dringendst wat er op deze lijst kan staan: er ligt getekend werk dat nog niet is
+  // gefactureerd, en de factuur komt er alleen als de ondernemer hem maakt. Dat een geaccepteerde
+  // offerte ook nog verloopt is dan niet meer interessant — hij is niet blijven liggen, hij is
+  // GEWONNEN.
+  //
+  // NEE haalt hem juist van de lijst. Blijven porren over een offerte waarvan de klant al heeft
+  // gezegd dat het niet doorgaat, is de ondernemer werk geven dat er niet is.
+  if (quote.offerte_response === "accepted") return "geaccepteerd";
+  if (quote.offerte_response === "declined") return null;
+
   const dagen = daysUntilExpiry(quote, todayIso);
   if (dagen === null) return null;
   if (dagen < 0) return "verlopen";
@@ -128,8 +150,12 @@ export function quotesNeedingFollowup<T extends FollowupQuote>(
     const state = quoteFollowupState(q, todayIso, soonDays);
     if (!state) continue;
     const days = daysUntilExpiry(q, todayIso);
-    if (days === null) continue;
-    out.push({ quote: q, state, days });
+    // Een geaccepteerde offerte hoort op de lijst, ook zonder geldigheidsdatum: het antwoord is
+    // wat hem daar zet, niet de datum.
+    if (days === null && state !== "geaccepteerd") continue;
+    out.push({ quote: q, state, days: days ?? 0 });
   }
-  return out.sort((a, b) => a.days - b.days);
+  // Geaccepteerd bovenaan — dat is werk dat klaarligt, en de rest is werk dat wegloopt.
+  const rang = (s: QuoteFollowupState) => (s === "geaccepteerd" ? 0 : 1);
+  return out.sort((a, b) => rang(a.state) - rang(b.state) || a.days - b.days);
 }
