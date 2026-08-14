@@ -23,6 +23,8 @@ import {
 import { detectSheetKind } from "@/lib/detect-file";
 // [TURNOVER-ARITHMETIC] The write gate — daily_turnover feeds rubriek 1a/1b directly.
 import { checkTurnoverArithmetic, type DailyTurnover } from "@/lib/turnover";
+// [TURNOVER-CENTEN] Cents at the door — see the note above the coercers in the commit branch.
+import { round2 } from "@/lib/invoice-totals";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
@@ -49,8 +51,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `te veel rijen in één keer (max ${MAX_ROWS})` }, { status: 400 });
     }
 
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-    const nullableNum = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    // [TURNOVER-CENTEN] Rounded to cents at the door, not merely coerced.
+    //
+    // The columns are unconstrained `numeric`, and these figures are not display values: btw_9 and
+    // btw_21 go straight into rubriek 1a/1b as tax OWED, and cash_amount is summed over all time
+    // into the drawer balance the filing gate compares against zero. The parser already rounds
+    // every field it derives (r2 throughout turnover-import.ts), so a clean file is unaffected —
+    // this closes the JSON commit door, which accepts whatever a caller sends and stored it
+    // verbatim. Rounding happens BEFORE the arithmetic gate below, so the numbers that are checked
+    // are the numbers that get written. Same rule the cash drawer applies to a movement.
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? round2(v) : 0);
+    const nullableNum = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? round2(v) : null);
     const today = amsterdamToday();
     const records = [];
     for (const r of rows) {

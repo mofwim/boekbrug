@@ -100,7 +100,7 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
     // aankomt; "er is niets" is daar de duurste zin die hij kan tonen als hij het niet weet.
     if (notifErr) {
       console.error('[HOME] meldingen ophalen mislukt:', notifErr.message)
-      setNotifError('We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.')
+      setNotifError(t('start.meldingenFout'))
     } else {
       setNotifError(null)
       setNotifications(notifData ?? [])

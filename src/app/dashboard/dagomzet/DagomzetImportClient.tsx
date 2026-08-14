@@ -16,6 +16,7 @@ import TurnoverInsights from './TurnoverInsights'
 import { M3, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -36,7 +37,12 @@ interface Preview { rows: TurnoverRow[]; warnings: Warning[]; count: number }
 // /api/ledger/import when the Z-report parser recognises it as a ledger.
 interface LedgerRow { ledger_date: string; received: number; spent: number }
 interface LedgerPreview { kind: string; accountNr: string | null; title: string | null; rows: LedgerRow[]; warnings: { code: string; message: string }[]; count: number }
-const LEDGER_KIND_NL: Record<string, string> = { pin: 'PIN-grootboek (kaartbetalingen)', cash: 'Kas-grootboek (contant)', bank: 'Bank-grootboek', other: 'Grootboek' }
+// Labels are message keys, rendered through t() — the module holds no language of its own.
+const LEDGER_KIND_KEY: Record<string, MessageKey> = { pin: 'dzi.ledger.pin', cash: 'dzi.ledger.cash', bank: 'dzi.ledger.bank', other: 'dzi.ledger.other' }
+// One full sentence per ledger kind (singular/plural), because a noun inside a sentence is
+// not a parameter — see AGENTS.md [TAAL].
+const LEDGER_DONE_ONE: Record<string, MessageKey> = { pin: 'dzi.klaarPinEen', cash: 'dzi.klaarKasEen', bank: 'dzi.klaarBankEen', other: 'dzi.klaarGrootboekEen' }
+const LEDGER_DONE_MANY: Record<string, MessageKey> = { pin: 'dzi.klaarPin', cash: 'dzi.klaarKas', bank: 'dzi.klaarBank', other: 'dzi.klaarGrootboek' }
 
 const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
@@ -66,7 +72,7 @@ export default function DagomzetImportClient() {
       if (json?.wrongKind === 'ledger') { await previewLedger(file); return }
       // Clear the remembered name on a failed read: the upload label reads
       // "Ander bestand kiezen (x.xls)" off it, which claimed a file was loaded when none was.
-      if (!res.ok) { setFileName(null); setError(json.detail ?? json.error ?? 'Kon het bestand niet lezen'); return }
+      if (!res.ok) { setFileName(null); setError(json.detail ?? json.error ?? t('dzi.konNietLezen')); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError(t('dzi.fout.bestand'))
@@ -79,7 +85,7 @@ export default function DagomzetImportClient() {
       fd.append('file', file)
       const res = await fetch('/api/ledger/import', { method: 'POST', body: fd })
       const json = await res.json()
-      if (!res.ok || !json.ok) { setError(json.detail ?? json.error ?? 'Kon het grootboek niet lezen'); return }
+      if (!res.ok || !json.ok) { setError(json.detail ?? json.error ?? t('dzi.konGrootboekNietLezen')); return }
       setLedgerPreview({ kind: json.kind, accountNr: json.accountNr ?? null, title: json.title ?? null, rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError(t('dzi.fout.grootboek'))
@@ -95,7 +101,7 @@ export default function DagomzetImportClient() {
         body: JSON.stringify({ kind: ledgerPreview.kind, accountNr: ledgerPreview.accountNr, rows: ledgerPreview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.detail ?? json.error ?? 'Opslaan mislukt'); return }
+      if (!res.ok) { setError(json.detail ?? json.error ?? t('dzi.fout.opslaan')); return }
       setDone({ committed: json.committed ?? ledgerPreview.rows.length, ledger: ledgerPreview.kind })
       setLedgerPreview(null); setFileName(null)
     } catch {
@@ -113,7 +119,7 @@ export default function DagomzetImportClient() {
         body: JSON.stringify({ rows: preview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.detail ?? json.error ?? 'Opslaan mislukt'); return }
+      if (!res.ok) { setError(json.detail ?? json.error ?? t('dzi.fout.opslaan')); return }
       setDone({ committed: json.committed ?? preview.rows.length })
       setPreview(null); setFileName(null); setRefreshTick((t) => t + 1)
     } catch {
@@ -139,10 +145,8 @@ export default function DagomzetImportClient() {
         {/* [HEADER-SYSTEM] Title "Dagomzet" + back live in the shared sub-page bar;
             the in-body h1 was removed. The descriptive intro stays. */}
         <p style={{ fontSize: 14, color: M3.neutral, margin: '16px 0 20px', lineHeight: 1.5 }}>
-          Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —
-          er wordt niets opgeslagen tot je op <b>{t('dzi.goedkeuren')}</b> klikt. Upload je een grootboek-overzicht
-          (OVERZICHT/KASBOEK van de boekhouder), dan wordt dat automatisch herkend en als <b>controle</b>
-          op je kassa bewaard — niet als omzet.
+          {t('dzi.intro1')} <b>{t('dzi.goedkeuren')}</b>{t('dzi.intro2')} <b>{t('dzi.controle')}</b>{' '}
+          {t('dzi.intro3')}
         </p>
 
         {/* [COHERENCE-DAGOMZET] Booked-omzet insights first (KPI's, trend, BTW/betaalwijzen),
@@ -158,7 +162,7 @@ export default function DagomzetImportClient() {
         }}>
           <input type="file" accept=".xls,.xlsx,.csv" onChange={(e) => void handleFile(e)} disabled={busy} style={{ display: 'none' }} />
           <div style={{ fontSize: 15, fontWeight: 600, color: M3.primary }}>
-            {busy && !preview ? 'Bezig met lezen…' : fileName ? `Ander bestand kiezen (${fileName})` : 'Kies een Z-rapport'}
+            {busy && !preview ? t('dzi.bezigLezen') : fileName ? t('dzi.anderBestand', { name: fileName }) : t('dzi.kiesZ')}
           </div>
           <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 4 }}>xls · xlsx · csv</div>
         </label>
@@ -172,8 +176,12 @@ export default function DagomzetImportClient() {
         {done && (
           <div style={{ background: '#E6F4EA', color: M3.success, borderRadius: 10, padding: '14px 16px', fontSize: 14.5, fontWeight: 600 }}>
             {done.ledger
-              ? `✓ ${done.committed} ${done.committed === 1 ? 'dag' : 'dagen'} ${LEDGER_KIND_NL[done.ledger] ?? 'grootboek'} opgeslagen als controle (telt niet mee als omzet).`
-              : `✓ ${done.committed} ${done.committed === 1 ? 'dag' : 'dagen'} dagomzet opgeslagen.`}
+              ? t(
+                  (done.committed === 1 ? LEDGER_DONE_ONE[done.ledger] : LEDGER_DONE_MANY[done.ledger])
+                    ?? (done.committed === 1 ? 'dzi.klaarGrootboekEen' : 'dzi.klaarGrootboek'),
+                  { n: done.committed },
+                )
+              : t(done.committed === 1 ? 'dzi.klaarOmzetEen' : 'dzi.klaarOmzet', { n: done.committed })}
           </div>
         )}
 
@@ -183,22 +191,22 @@ export default function DagomzetImportClient() {
           <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
             <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}` }}>
               <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
-                Grootboek-controle uit {fileName}
+                {t('dzi.grootboekUit', { name: fileName ?? '' })}
               </div>
               <div style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface }}>
-                {LEDGER_KIND_NL[ledgerPreview.kind] ?? 'Grootboek'}{ledgerPreview.accountNr ? ` · rekening ${ledgerPreview.accountNr}` : ''}
+                {t(LEDGER_KIND_KEY[ledgerPreview.kind] ?? 'dzi.ledger.other')}{ledgerPreview.accountNr ? ` · ${t('dzi.rekening', { nr: ledgerPreview.accountNr })}` : ''}
               </div>
               <div style={{ fontSize: 13, color: M3.neutral, marginTop: 6, lineHeight: 1.5 }}>
-                {ledgerPreview.count} {ledgerPreview.count === 1 ? 'dag' : 'dagen'} · totaal ontvangen{' '}
+                {t(ledgerPreview.count === 1 ? 'dzi.dagTotaal' : 'dzi.dagenTotaal', { n: ledgerPreview.count })}{' '}
                 <b style={{ fontFamily: FONT_NUM, color: M3.onSurface }}>{eur.format(ledgerPreview.rows.reduce((s, r) => s + (r.received || 0), 0))}</b>.
-                Dit is een <b>controle</b> tegen je kassa (PIN/contant) — het wordt <b>niet</b> als omzet geteld en verandert je resultaat niet.
+                {' '}{t('dzi.ditIsEen')} <b>{t('dzi.controle')}</b> {t('dzi.tegenKassa')} <b>{t('dzi.nietWoord')}</b> {t('dzi.alsOmzetGeteld')}
               </div>
             </div>
 
             {ledgerPreview.warnings.length > 0 && (
               <div style={{ padding: '14px 18px', background: M3.warningContainer, borderBottom: `1px solid ${M3.outlineVariant}` }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: M3.warning, marginBottom: 6 }}>
-                  ⚠ {ledgerPreview.warnings.length} {ledgerPreview.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
+                  ⚠ {t(ledgerPreview.warnings.length === 1 ? 'dzi.aandachtspuntEen' : 'dzi.aandachtspunten', { n: ledgerPreview.warnings.length })}
                 </div>
                 <ul style={{ margin: 0, paddingInlineStart: 18 }}>
                   {ledgerPreview.warnings.map((w, i) => (
@@ -234,7 +242,7 @@ export default function DagomzetImportClient() {
                 style={{ flex: 1, background: ledgerPreview.count === 0 ? M3.outlineVariant : M3.primary, color: M3.onPrimary,
                   border: 'none', borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 600,
                   cursor: busy || ledgerPreview.count === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
-                {busy ? 'Bezig…' : 'Opslaan als controle'}
+                {busy ? t('act.bezig') : t('dzi.opslaanControle')}
               </button>
               <button onClick={reject} disabled={busy}
                 style={{ background: 'transparent', color: M3.neutral, border: `1px solid ${M3.outlineVariant}`,
@@ -250,16 +258,16 @@ export default function DagomzetImportClient() {
           <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
             <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}` }}>
               <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>
-                Gelezen uit {fileName}
+                {t('dzi.gelezenUit', { name: fileName ?? '' })}
               </div>
               {preview.count === 0 ? (
                 <div style={{ fontSize: 14, color: M3.warning }}>{t('dzi.geenDagen')}</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <Stat label={t('dzi.dagen')} value={String(preview.count)} sub={dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : undefined} />
-                  <Stat label={t('dzi.totaleOmzet')} value={eur.format(totalTurnover)} sub={`netto ${eur.format(netOmzet)}`} />
-                  <Stat label="BTW gedetecteerd" value={eur.format(btw9 + btw21)} sub={`9%: ${eur.format(btw9)} · 21%: ${eur.format(btw21)}`} />
-                  <Stat label={t('dz.betaalwijzen')} value={`PIN ${eur.format(pin)}`} sub={`contant ${eur.format(cash)}`} />
+                  <Stat label={t('dzi.totaleOmzet')} value={eur.format(totalTurnover)} sub={t('dzi.netto', { amount: eur.format(netOmzet) })} />
+                  <Stat label={t('dzi.btwGedetecteerd')} value={eur.format(btw9 + btw21)} sub={`9%: ${eur.format(btw9)} · 21%: ${eur.format(btw21)}`} />
+                  <Stat label={t('dz.betaalwijzen')} value={`PIN ${eur.format(pin)}`} sub={t('dzi.contant', { amount: eur.format(cash) })} />
                 </div>
               )}
             </div>
@@ -268,7 +276,7 @@ export default function DagomzetImportClient() {
             {preview.warnings.length > 0 && (
               <div style={{ padding: '14px 18px', background: M3.warningContainer, borderBottom: `1px solid ${M3.outlineVariant}` }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: M3.warning, marginBottom: 6 }}>
-                  ⚠ {preview.warnings.length} {preview.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
+                  ⚠ {t(preview.warnings.length === 1 ? 'dzi.aandachtspuntEen' : 'dzi.aandachtspunten', { n: preview.warnings.length })}
                 </div>
                 <ul style={{ margin: 0, paddingInlineStart: 18 }}>
                   {preview.warnings.map((w, i) => (
@@ -311,7 +319,7 @@ export default function DagomzetImportClient() {
                 style={{ flex: 1, background: preview.count === 0 ? M3.outlineVariant : M3.primary, color: M3.onPrimary,
                   border: 'none', borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 600,
                   cursor: busy || preview.count === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
-                {busy ? 'Bezig…' : 'Goedkeuren en opslaan'}
+                {busy ? t('act.bezig') : t('dzi.goedkeurenOpslaan')}
               </button>
               <button onClick={reject} disabled={busy}
                 style={{ background: 'transparent', color: M3.neutral, border: `1px solid ${M3.outlineVariant}`,

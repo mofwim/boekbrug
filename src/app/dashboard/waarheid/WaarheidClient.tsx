@@ -115,12 +115,13 @@ interface TruthResponse {
   schemeSince: string | null;
 }
 
-const LENSES: { key: Lens; label: string }[] = [
-  { key: "this-quarter", label: "Dit kwartaal" },
-  { key: "last-quarter", label: "Vorig kwartaal" },
-  { key: "ytd", label: "Dit jaar" },
-  { key: "all", label: "Alles" },
-];
+// [TAAL] Labels live in the catalogue; the table keeps only the keys.
+const LENSES = [
+  { key: "this-quarter", labelKey: "wh.lens.ditKwartaal" },
+  { key: "last-quarter", labelKey: "wh.lens.vorigKwartaal" },
+  { key: "ytd", labelKey: "wh.lens.ditJaar" },
+  { key: "all", labelKey: "filter.all" },
+] as const satisfies ReadonlyArray<{ key: Lens; labelKey: string }>;
 
 /** The period the screen is looking at: a relative lens, or an explicit quarter from the picker. */
 interface Period { lens: Lens; year?: number; quarter?: number }
@@ -246,25 +247,25 @@ export default function WaarheidClient() {
           const res = await post(flags);
           if (res.ok) { filedOk = true; break; }
           if (res.status !== 409) {
-            toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" });
+            toast(t('wh.filed.mislukt'), { tone: "error" });
             return;
           }
           const j = await res.json().catch(() => ({}));
           // [FILING-WINDOW] A quarter that has not ended yet is NOT the owner's judgement call —
           // there is no aangifte to have filed. Say so and stop; do not offer to override.
           if (j?.error === "quarter_not_ended") {
-            toast(j?.reason ?? "Dit kwartaal loopt nog — je kunt het pas na afloop als ingediend markeren.", { tone: "error" });
+            toast(j?.reason ?? t('wh.filed.looptNog'), { tone: "error" });
             return;
           }
           // [FILING-NO-OVERWRITE] Replacing a filing destroys the record of what was declared —
           // the very thing the divergence banner on this page is computed from. So the dialog
           // states the two figures rather than asking an abstract "weet je het zeker?".
           if (j?.error === "already_filed") {
-            if (flags.replace) { toast(j?.reason ?? "Opnieuw indienen is niet gelukt.", { tone: "error" }); return; }
+            if (flags.replace) { toast(j?.reason ?? t('wh.filed.opnieuwMislukt'), { tone: "error" }); return; }
             const proceed = await dialog.confirm({
-              title: "Vervang je eerdere indiening?",
-              message: j?.reason ?? "Dit kwartaal staat al als ingediend. Opnieuw indienen vervangt die vastgelegde cijfers.",
-              confirmLabel: "Ja, vervang",
+              title: t('wh.filed.vervangVraag'),
+              message: j?.reason ?? t('wh.filed.vervangUitleg'),
+              confirmLabel: t('wh.filed.vervangBevestig'),
               danger: true,
             });
             if (!proceed) return;
@@ -275,18 +276,18 @@ export default function WaarheidClient() {
           // app — the owner is declaring a quarter finished while the server
           // says it is not. It deserves the app's own dialog, with the server's
           // reason as the body rather than glued onto the question with \n\n.
-          if (flags.acknowledge) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
+          if (flags.acknowledge) { toast(t('wh.filed.mislukt'), { tone: "error" }); return; }
           const proceed = await dialog.confirm({
-            title: "Toch als ingediend markeren?",
-            message: j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd.",
-            confirmLabel: "Ja, markeer als ingediend",
+            title: t('wh.filed.tochVraag'),
+            message: j?.reason ?? t('wh.filed.nietGecontroleerd'),
+            confirmLabel: t('wh.filed.tochBevestig'),
             danger: true,
           });
           if (!proceed) return;
           flags.acknowledge = true;
         }
         // A loop that ran out of passes never wrote anything — never let that look like success.
-        if (!filedOk) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
+        if (!filedOk) { toast(t('wh.filed.mislukt'), { tone: "error" }); return; }
       } else {
         // [UNFILE-FEEDBACK] The response used to be discarded, so a failed unlock looked exactly
         // like a successful one: the reload simply re-rendered the still-filed quarter and the
@@ -299,7 +300,7 @@ export default function WaarheidClient() {
           toast(
             typeof j?.reason === "string" && j.reason.trim()
               ? j.reason.trim()
-              : "Indiening ongedaan maken is niet gelukt — probeer het opnieuw.",
+              : t('wh.filed.ongedaanMislukt'),
             { tone: "error" },
           );
           return;
@@ -329,30 +330,36 @@ export default function WaarheidClient() {
     if ((r.cashOmzetZonderBtw ?? 0) > 0) {
       const bank = (r.omzetZonderBtwNonCash ?? 0) > 0;
       todos.push({
-        text: `${eur.format(r.cashOmzetZonderBtw ?? 0)} omzet heeft nog geen BTW-tarief. Daardoor is de BTW hierboven te laag.`,
+        text: t('wh.todo.zonderTarief', { bedrag: eur.format(r.cashOmzetZonderBtw ?? 0) }),
         href: bank ? "/dashboard/dagomzet" : "/dashboard/kas",
-        cta: bank ? "Naar Dagomzet" : "Naar Kas",
+        cta: bank ? t('wh.todo.naarDagomzet') : t('wh.todo.naarKas'),
       });
     }
     if (data.unconfirmedIncomingCount > 0) {
       todos.push({
-        text: `${data.unconfirmedIncomingCount} inkoopfactu${data.unconfirmedIncomingCount === 1 ? "ur is" : "ren zijn"} nog niet gecontroleerd. ${data.unconfirmedIncomingCount === 1 ? "Het bedrag telt" : "Die bedragen tellen"} nog niet mee in je kosten en BTW.`,
+        text: data.unconfirmedIncomingCount === 1
+          ? t('wh.todo.ongecontroleerdEen')
+          : t('wh.todo.ongecontroleerdMeer', { n: data.unconfirmedIncomingCount }),
         href: "/dashboard/incoming",
-        cta: "Controleren",
+        cta: t('wh.todo.controleren'),
       });
     }
     if (data.datelessVerifiedCount > 0) {
       todos.push({
-        text: `${data.datelessVerifiedCount} factu${data.datelessVerifiedCount === 1 ? "ur heeft" : "ren hebben"} geen datum, dus ${data.datelessVerifiedCount === 1 ? "die telt" : "die tellen"} in geen enkele periode mee.`,
+        text: data.datelessVerifiedCount === 1
+          ? t('wh.todo.geenDatumEen')
+          : t('wh.todo.geenDatumMeer', { n: data.datelessVerifiedCount }),
         href: "/dashboard/facturen",
-        cta: "Datum invullen",
+        cta: t('wh.todo.datumInvullen'),
       });
     }
     if (data.undatedPaidCount > 0) {
       todos.push({
-        text: `${data.undatedPaidCount} betaalde factu${data.undatedPaidCount === 1 ? "ur mist" : "ren missen"} een betaaldatum. Onder kasstelsel kan die BTW nog niet in de juiste periode worden geplaatst.`,
+        text: data.undatedPaidCount === 1
+          ? t('wh.todo.betaaldatumEen')
+          : t('wh.todo.betaaldatumMeer', { n: data.undatedPaidCount }),
         href: "/dashboard/bank",
-        cta: "Koppelen",
+        cta: t('wh.todo.koppelen'),
       });
     }
     // [VRAAGPOST] Bankgeld dat nog geen categorie heeft telt NIET mee in de cijfers hierboven —
@@ -367,13 +374,13 @@ export default function WaarheidClient() {
     const vraagUit = r.ongecategoriseerdBankUit ?? 0;
     if (vraagIn + vraagUit > 0) {
       const delen = [
-        vraagIn > 0 ? `${eur.format(vraagIn)} erbij` : null,
-        vraagUit > 0 ? `${eur.format(vraagUit)} eraf` : null,
-      ].filter(Boolean).join(" en ");
+        vraagIn > 0 ? t('wh.todo.erbij', { bedrag: eur.format(vraagIn) }) : null,
+        vraagUit > 0 ? t('wh.todo.eraf', { bedrag: eur.format(vraagUit) }) : null,
+      ].filter(Boolean).join(` ${t('wh.todo.en')} `);
       todos.push({
-        text: `${delen} aan bankmutaties heeft nog geen categorie. Die tellen niet mee in de cijfers hierboven — pas als je ze codeert, kloppen omzet en kosten.`,
+        text: t('wh.todo.bankZonderCategorie', { delen }),
         href: "/dashboard/bank",
-        cta: "Categoriseren",
+        cta: t('wh.todo.categoriseren'),
       });
     }
   }
@@ -384,7 +391,7 @@ export default function WaarheidClient() {
           sub-page bar (DashboardChrome/STATIC_TITLES). The old in-body h1 that
           repeated it was removed; this descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: M.muted, margin: "0 0 16px", lineHeight: 1.5 }}>
-        Eén doorlopend beeld, live berekend uit je facturen, bank en kas. Kies een periode.
+        {t('wh.intro')}
       </p>
 
       {/* Time lens */}
@@ -400,7 +407,7 @@ export default function WaarheidClient() {
               color: period.lens === l.key ? "#fff" : "#3c4043",
             }}
           >
-            {l.label}
+            {t(l.labelKey)}
           </button>
         ))}
         {/* [NAMED-QUARTER] The explicit quarter — absorbed from /dashboard/resultaat, which was the
@@ -415,7 +422,7 @@ export default function WaarheidClient() {
             color: period.lens === "quarter" ? "#fff" : "#3c4043",
           }}
         >
-          {period.lens === "quarter" ? `Q${period.quarter} ${period.year}` : "Ander kwartaal"} ▾
+          {period.lens === "quarter" ? `Q${period.quarter} ${period.year}` : t('wh.anderKwartaal')} ▾
         </button>
       </div>
 
@@ -479,18 +486,18 @@ export default function WaarheidClient() {
             <span style={{ fontSize: 15, fontWeight: 700 }}>{data.label}</span>
             {data.filed ? (
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#3730a3", background: "#e8eaf6", borderRadius: 980, padding: "2px 10px" }}>
-                🔒 Ingediend · definitief
+                {t('wh.chip.ingediend')}
               </span>
             ) : data.filedUnknown ? (
               /* [FILING-NO-OVERWRITE] Not "loopt nog" and not "afgesloten": both are claims about a
                  period whose state we could not read. */
               <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>
-                indienstatus onbekend
+                {t('wh.chip.onbekend')}
               </span>
             ) : data.isLiveWindow ? (
-              <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>loopt nog</span>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>{t('wh.chip.looptNog')}</span>
             ) : (
-              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#137333", background: M.goodBg, borderRadius: 980, padding: "2px 10px" }}>afgesloten periode</span>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#137333", background: M.goodBg, borderRadius: 980, padding: "2px 10px" }}>{t('wh.chip.afgesloten')}</span>
             )}
           </div>
 
@@ -504,7 +511,7 @@ export default function WaarheidClient() {
               borderRadius: 14, padding: "12px 14px", marginBottom: 14,
             }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: div.needsSuppletie ? "#a50e0e" : M.warnFg, marginBottom: 4 }}>
-                {div.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd"}
+                {div.needsSuppletie ? t('kw.suppletieNodig') : t('wh.div.gewijzigd')}
               </div>
               {/* [DIVERGENCE-SPLIT] Two independent stories, each told only when it is true.
                   The banner used to fire on `changed` (ANY of five deltas) and then narrate the BTW
@@ -514,11 +521,11 @@ export default function WaarheidClient() {
               <div style={{ fontSize: 12.5, color: div.needsSuppletie ? "#7a1c1c" : M.warnFg, lineHeight: 1.5 }}>
                 {div.btwChanged && (
                   <>
-                    {t('wh.sindsIndiening')} <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta > 0 ? "gestegen" : "gedaald"}
-                    {" "}(je {div.btwSaldoDelta > 0 ? "moet meer betalen" : "krijgt meer terug"}).{" "}
+                    {t('wh.sindsIndiening')} <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta > 0 ? t('kw.gestegen') : t('kw.gedaald')}
+                    {" "}({div.btwSaldoDelta > 0 ? t('wh.div.meerBetalen') : t('wh.div.meerTerug')}).{" "}
                     {div.needsSuppletie
-                      ? "Dat is meer dan €1.000 — dien een suppletie in bij de Belastingdienst."
-                      : "Onder €1.000 mag je dit verwerken in je volgende aangifte."}
+                      ? t('wh.div.suppletieMeer')
+                      : t('wh.div.suppletieOnder')}
                   </>
                 )}
                 {/* The profit moved without the BTW moving: nothing to correct at the Belastingdienst
@@ -527,15 +534,15 @@ export default function WaarheidClient() {
                 {div.resultaatChanged && (
                   <>
                     {div.btwChanged && <br />}
-                    Je resultaat over dit kwartaal is met <strong>{eur.format(Math.abs(div.resultaatDelta))}</strong>{" "}
-                    {div.resultaatDelta > 0 ? "gestegen" : "gedaald"}
-                    {div.btwChanged ? "." : " terwijl de BTW gelijk bleef — er is dus niets te corrigeren bij de Belastingdienst, maar je winst voor de inkomstenbelasting is veranderd."}
+                    {t('wh.div.resultaatMet')} <strong>{eur.format(Math.abs(div.resultaatDelta))}</strong>{" "}
+                    {div.resultaatDelta > 0 ? t('kw.gestegen') : t('kw.gedaald')}
+                    {div.btwChanged ? "." : ` ${t('wh.div.terwijlGelijk')}`}
                   </>
                 )}
                 {/* Something moved that is neither: omzet and kosten shifted by the same amount, or
                     only a BTW component did. Never claim a euro figure we are not showing. */}
                 {!div.btwChanged && !div.resultaatChanged && (
-                  <>De cijfers van dit kwartaal zijn veranderd sinds je indiening, maar het BTW-saldo en je resultaat zijn gelijk gebleven. Controleer de onderliggende posten.</>
+                  <>{t('wh.div.onderliggend')}</>
                 )}
               </div>
             </div>
@@ -546,13 +553,13 @@ export default function WaarheidClient() {
               accountant's vocabulary is still learnable from the screen. */}
           <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
             <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>{t('wh.overhouden')}</div>
-            <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>omzet − kosten · je winst</div>
+            <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>{t('wh.sub.resultaat')}</div>
             <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5, color: r.resultaat >= 0 ? "#137333" : "#c5221f" }}>
               {eur.format(r.resultaat)}
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
-              <Stat label={t('wh.omzet')} value={eur.format(r.omzet)} sub="wat je verdiende" />
-              <Stat label={t('wh.kosten')} value={eur.format(r.kosten)} sub="wat je uitgaf" />
+              <Stat label={t('wh.omzet')} value={eur.format(r.omzet)} sub={t('wh.sub.omzet')} />
+              <Stat label={t('wh.kosten')} value={eur.format(r.kosten)} sub={t('wh.sub.kosten')} />
             </div>
           </div>
 
@@ -572,13 +579,13 @@ export default function WaarheidClient() {
           }}>
             <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>
               {certainty.level === "sign-could-flip"
-                ? "BTW — nog niet te zeggen"
-                : r.btwSaldo >= 0 ? "BTW die je moet betalen" : "BTW die je terugkrijgt"}
+                ? t('wh.btw.nogNiet')
+                : r.btwSaldo >= 0 ? t('wh.btw.moetBetalen') : t('wh.btw.terug')}
             </div>
             <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 6 }}>
               {certainty.level === "sign-could-flip"
-                ? "eerst tarieven toekennen"
-                : r.btwSaldo >= 0 ? "aan de Belastingdienst, over deze periode" : "van de Belastingdienst, over deze periode"}
+                ? t('wh.btw.eerstTarieven')
+                : r.btwSaldo >= 0 ? t('wh.btw.aanBd') : t('wh.btw.vanBd')}
             </div>
             <div style={{
               fontSize: 26, fontWeight: 800,
@@ -588,7 +595,7 @@ export default function WaarheidClient() {
             }}>
               {eur.format(Math.abs(r.btwSaldo))}
               {certainty.level === "sign-could-flip" && (
-                <span style={{ fontSize: 13, fontWeight: 600, color: M.muted }}> voorlopig</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: M.muted }}> {t('wh.btw.voorlopig')}</span>
               )}
             </div>
 
@@ -596,22 +603,20 @@ export default function WaarheidClient() {
                 same card, never further down the page. */}
             {certainty.level === "sign-could-flip" && (
               <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 12, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
-                {t('wh.geldTerugMaar')} <strong>{eur.format(certainty.unrated)}</strong> van je omzet heeft nog geen
-                BTW-tarief. Zodra je die tarieven toekent, wordt dit waarschijnlijk een bedrag dat je
-                juist moet <strong>betalen</strong>. Reken er dus nog niet op.
+                {t('wh.geldTerugMaar')} <strong>{eur.format(certainty.unrated)}</strong> {t('wh.btw.zonderTariefRest')}
               </div>
             )}
             {certainty.level === "incomplete" && (
               <div style={{ fontSize: 12.5, color: M.warnFg, marginTop: 10, lineHeight: 1.5 }}>
-                Nog niet compleet: {eur.format(certainty.unrated)} omzet heeft geen BTW-tarief, dus dit bedrag is te laag.
+                {t('wh.btw.incompleet', { bedrag: eur.format(certainty.unrated) })}
               </div>
             )}
 
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
               {/* Plain meaning as the label, the aangifte's own word underneath — the owner can
                   follow the screen AND recognise the term when the accountant uses it. */}
-              <Stat label={t('wh.overOmzet')} value={eur.format(r.btwVerschuldigd)} sub="verschuldigd" />
-              <Stat label={t('wh.overInkopen')} value={eur.format(r.btwVoorbelasting)} sub="voorbelasting" />
+              <Stat label={t('wh.overOmzet')} value={eur.format(r.btwVerschuldigd)} sub={t('wh.sub.verschuldigd')} />
+              <Stat label={t('wh.overInkopen')} value={eur.format(r.btwVoorbelasting)} sub={t('wh.sub.voorbelasting')} />
             </div>
             {/* Quarter lens → the aangifte for this exact period is one tap away (same numbers). */}
             {data.quarter && data.year && (
@@ -646,7 +651,7 @@ export default function WaarheidClient() {
                 {t('wh.pinGecontroleerd')}
               </div>
               <div style={{ fontSize: 11.5, color: M.muted, marginBottom: 10 }}>
-                kassa · terminal · bank moeten hetzelfde zeggen
+                {t('wh.pin.sub')}
               </div>
               {/* [NO-ZERO-LEAD] Two stats reading "€ 0,00" and "0" were the first thing a shop with
                   nothing uploaded yet saw — a confident answer to a question nobody had been able to
@@ -661,32 +666,32 @@ export default function WaarheidClient() {
                       only the booked figure next to the flat claim "de commissie is verwerkt in het
                       resultaat hierboven" — so a kasstelsel shop read "€ 0,00" on a control surface
                       that had in fact measured a real cost. */}
-                  <Stat label={t('wh.kostenAutomaat')} value={eur.format(data.reconciliation.totalCommission)} sub="gemeten commissie" />
-                  <Stat label={t('wh.afrekeningen')} value={String(data.reconciliation.eftSettlements)} sub="van de terminal" />
+                  <Stat label={t('wh.kostenAutomaat')} value={eur.format(data.reconciliation.totalCommission)} sub={t('wh.pin.gemeten')} />
+                  <Stat label={t('wh.afrekeningen')} value={String(data.reconciliation.eftSettlements)} sub={t('wh.pin.vanTerminal')} />
                 </div>
               )}
               <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: 0 }}>
                 {data.scheme === "kas"
-                  ? "Onder kasstelsel wordt deze commissie niet automatisch als kosten geboekt: ze is aftrekbaar op het moment dat je de factuur van de acquirer betaalt. Boek die factuur, dan telt de commissie in de juiste periode mee."
+                  ? t('wh.pin.kasUitleg')
                   : data.reconciliation.commissionBooked > 0
-                    ? `Hiervan is ${eur.format(data.reconciliation.commissionBooked)} als kosten verwerkt in het resultaat hierboven — BTW-vrij (vrijstelling betalingsverkeer).${data.reconciliation.acquirerFeeInvoices > 0 ? ` De overige ${eur.format(data.reconciliation.acquirerFeeInvoices)} stond al op een factuur van de acquirer en is dus niet nog eens geboekt.` : ""}`
+                    ? `${t('wh.pin.geboekt', { bedrag: eur.format(data.reconciliation.commissionBooked) })}${data.reconciliation.acquirerFeeInvoices > 0 ? ` ${t('wh.pin.overige', { bedrag: eur.format(data.reconciliation.acquirerFeeInvoices) })}` : ""}`
                     : data.reconciliation.acquirerFeeInvoices > 0
-                      ? `Deze commissie stond al op een factuur van de acquirer (${eur.format(data.reconciliation.acquirerFeeInvoices)}) en is daar al als kosten geboekt — hier dus alleen ter controle.`
-                      : "Zodra de bank-uitbetaling én de terminal-afrekening er allebei zijn, boeken we het verschil als betaalkosten."}
+                      ? t('wh.pin.acquirer', { bedrag: eur.format(data.reconciliation.acquirerFeeInvoices) })
+                      : t('wh.pin.zodra')}
               </p>
               {data.reconciliation.grossMismatchDays > 0 && (
                 <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 10, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
-                  {data.reconciliation.grossMismatchDays} dag(en) waar de kassa-PIN ≠ de terminal-afrekening. Beide zijn bruto, dus dit is een echt verschil (ontbrekende bon of terminalstoring) — geen commissie. Controleer die dagen.
+                  {t('wh.pin.mismatch', { n: data.reconciliation.grossMismatchDays })}
                 </div>
               )}
               {data.reconciliation.commissionIssueDays > 0 && (
                 <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 10, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
-                  {data.reconciliation.commissionIssueDays} dag(en) waar de bank-uitbetaling niet bij de kaartomzet van die dag past. Daar is geen commissie geboekt — de uitbetaling hoort waarschijnlijk (deels) bij een andere dag.
+                  {t('wh.pin.commissieDagen', { n: data.reconciliation.commissionIssueDays })}
                 </div>
               )}
               {data.reconciliation.incompleteDays > 0 && (
                 <p style={{ fontSize: 12.5, color: M.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
-                  {data.reconciliation.incompleteDays} dag(en) nog niet compleet — upload de terminal-afrekening of het bankafschrift voor een volledige controle.
+                  {t('wh.pin.incompleteDagen', { n: data.reconciliation.incompleteDays })}
                 </p>
               )}
             </div>
@@ -720,22 +725,22 @@ export default function WaarheidClient() {
                 figures is the one thing this screen cannot afford. */}
             <p style={{ margin: "0 0 6px" }}>
               {data.scheme === "kas"
-                ? "Kasstelsel — op basis van betaaldatum: een onbetaalde factuur telt pas mee zodra hij betaald is."
-                : "Op basis van factuurdatum, niet betaaldatum. Dit is dus je fiscale winst, niet wat er op je rekening staat."}
+                ? t('wh.voet.kas')
+                : t('wh.voet.factuur')}
             </p>
             {/* [SCHEME-SPAN] A window that crosses the factuur→kas switch has no single correct
                 basis; say which one was used rather than let two lenses disagree in silence. */}
             {data.spansSchemeChange && (
               <p style={{ margin: "0 0 6px", color: M.warnFg }}>
-                Deze periode loopt door je overstap naar het kasstelsel heen{data.schemeSince ? ` (per ${data.schemeSince})` : ""}.
-                Alles hierboven is op {data.scheme === "kas" ? "kasstelsel" : "factuurstelsel"} berekend. Bekijk per kwartaal
-                voor de cijfers zoals je ze aangeeft.
+                {data.schemeSince ? t('wh.voet.overstapPer', { datum: data.schemeSince }) : t('wh.voet.overstap')}{" "}
+                {data.scheme === "kas" ? t('wh.voet.berekendKas') : t('wh.voet.berekendFactuur')}
               </p>
             )}
             {data.estimatedPortionCount > 0 && (
               <p style={{ margin: "0 0 6px" }}>
-                Bij {data.estimatedPortionCount} betaling{data.estimatedPortionCount === 1 ? "" : "en"} is de betaaldatum een schatting
-                (handmatig op betaald gezet) — controleer of de periode klopt.
+                {data.estimatedPortionCount === 1
+                  ? t('wh.voet.schattingEen')
+                  : t('wh.voet.schattingMeer', { n: data.estimatedPortionCount })}
               </p>
             )}
             {/* [EXCEPTION-COUNT] The one-line "N kassadagen nog niet gereconcilieerd" that used to
@@ -745,7 +750,7 @@ export default function WaarheidClient() {
             {/* [LEDGER-READ] Never present a check that did not run as a check that passed. */}
             {data.reconciliation.pinLedgerAvailable === false && (
               <p style={{ margin: "0 0 6px" }}>
-                De controle tegen je PIN-grootboek kon niet worden uitgevoerd — verschillen tussen kassa en grootboek zijn hierboven dus niet meegewogen.
+                {t('wh.voet.grootboek')}
               </p>
             )}
           </div>
@@ -761,14 +766,14 @@ export default function WaarheidClient() {
                       own zone, so a filing stamped near midnight showed a different day depending
                       on where the phone was. On a legal record the date is the record. */}
                   <span style={{ fontSize: 12.5, color: M.muted }}>
-                    Ingediend op {formatDateNL(data.filed.filedAt)}
+                    {t('wh.filed.ingediendOp', { datum: formatDateNL(data.filed.filedAt) })}
                   </span>
                   <button
                     onClick={() => setFiled(false)}
                     disabled={filing}
                     style={{ background: "none", border: "none", color: M.muted, fontSize: 12.5, fontWeight: 600, cursor: filing ? "default" : "pointer", textDecoration: "underline", padding: 0 }}
                   >
-                    {filing ? "Bezig…" : "Indiening ongedaan maken"}
+                    {filing ? t('act.bezig') : t('wh.filed.ongedaan')}
                   </button>
                 </div>
               ) : (
@@ -793,15 +798,15 @@ export default function WaarheidClient() {
                     cursor: filing || data.quarterEnded === false || data.filedUnknown ? "default" : "pointer",
                   }}
                 >
-                  {filing ? "Bezig…" : "Markeer als ingediend bij de Belastingdienst"}
+                  {filing ? t('act.bezig') : t('wh.filed.markeer')}
                 </button>
               )}
               <p style={{ fontSize: 11.5, color: M.muted, margin: "8px 2px 0", lineHeight: 1.5 }}>
                 {data.filedUnknown
-                  ? "We konden niet controleren of dit kwartaal al is ingediend, dus we laten je het nu niet vastleggen — anders zou je een eerdere indiening kunnen overschrijven. Ververs de pagina."
+                  ? t('wh.filed.uitlegOnbekend')
                   : !data.filed && data.quarterEnded === false
-                    ? "Dit kwartaal loopt nog. Zodra het is afgelopen kun je het hier als ingediend markeren en leggen we de cijfers vast."
-                    : "Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan zien we het verschil en zeggen we of een suppletie nodig is."}
+                    ? t('wh.filed.uitlegLooptNog')
+                    : t('wh.filed.uitlegVastleggen')}
               </p>
             </div>
           )}

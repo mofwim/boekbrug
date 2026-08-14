@@ -412,7 +412,7 @@ export function InvoiceRowItem({
                 borderRadius: 9999, padding: '4px 12px',
                 fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap',
               }}>
-                Creditnota
+                {t('status.credit')}
               </span>
             ) : (
               <StatusChip status={displayStatus} mode="zzp" />

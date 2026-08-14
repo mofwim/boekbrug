@@ -16,7 +16,9 @@ import { amsterdamToday } from "@/lib/format-nl";
 import { paymentDateOutOfWindow, PAYMENT_DATE_REFUSAL } from "@/lib/payment-date";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { reconcileCashSettlements, cashInstalmentsSupported } from "@/lib/cash-settle";
+// [CASH-RETRY] The retry wrapper moved to cash-settle.ts so every door that turns a cash payment
+// into a drawer movement uses the same one — see its header for the four that did not.
+import { reconcileCashWithRetry, cashInstalmentsSupported } from "@/lib/cash-settle";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
@@ -54,29 +56,6 @@ type LinkRow = {
   client_key: string | null;
 };
 
-/**
- * [CASH-RETRY] Reconcile the kasboek, and if the pass reported it bailed, ask exactly once more.
- *
- * One retry, not a loop: the failure this covers is a transient read (a chunked invoice fetch that
- * errored), and a pass that fails twice is a real outage the hourly cron and the Kas page load are
- * there for. Still best-effort by contract — the invoice write already succeeded and must never be
- * undone over a drawer entry that will heal by itself.
- */
-async function reconcileCashWithRetry(
-  client: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  userId: string,
-): Promise<void> {
-  try {
-    const first = await reconcileCashSettlements(client, userId);
-    if (first.ok) return;
-    console.warn("[CASH-RETRY] kasboek reconcile bailed — retrying once", { userId });
-    const second = await reconcileCashSettlements(client, userId);
-    if (!second.ok) console.error("[CASH-RETRY] kasboek reconcile bailed twice — the cron/Kas load will heal it", { userId });
-  } catch (e) {
-    // Documented as never-throwing, but a contract is not a guarantee: a payment must not fail here.
-    console.error("[CASH-RETRY] kasboek reconcile threw (non-fatal)", e);
-  }
-}
 
 export async function POST(req: NextRequest) {
   // [ACTING-FOR] Alleen de eigenaar — zie src/lib/owner-only.ts. Een medewerker hier

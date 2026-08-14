@@ -37,6 +37,8 @@ import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
+import { SHARED_FOLDER_NAME } from "@/lib/bestanden-shared";
 
 // [BESTANDEN-SMART] Virtual, cross-folder listings — the Drive/OneDrive left-nav.
 // These replace the folder view with a flat file list filtered by a virtual axis.
@@ -44,15 +46,16 @@ type SmartView = "recent" | "starred" | "shared";
 
 // [BESTANDEN-SMART] Metadata for each smart view: sidebar label, icon, and the
 // empty-state copy. Kept in one place so the sidebar and the content header agree.
-const SMART_VIEWS: Record<SmartView, { label: string; icon: string; empty: string }> = {
-  recent:  { label: "Recent",     icon: "schedule",     empty: "Recent geopende of toegevoegde bestanden verschijnen hier" },
-  starred: { label: "Favorieten", icon: "star",         empty: "Markeer bestanden met een ster om ze hier terug te vinden" },
-  shared:  { label: "Gedeeld",    icon: "group",        empty: "Bestanden die je met je boekhouder deelt verschijnen hier" },
+// Label/empty are message keys, rendered through t() — the module holds no language of its own.
+const SMART_VIEWS: Record<SmartView, { label: MessageKey; icon: string; empty: MessageKey }> = {
+  recent:  { label: "zb.recent",      icon: "schedule", empty: "best.smart.recentLeeg" },
+  starred: { label: "best.favorieten", icon: "star",    empty: "best.smart.sterLeeg" },
+  shared:  { label: "best.gedeeld",   icon: "group",    empty: "best.smart.gedeeldLeeg" },
 };
 
-// [BESTANDEN-SORT] Client-side sort axes for file listings.
+// [BESTANDEN-SORT] Client-side sort axes for file listings. Labels are message keys.
 type SortField = "name" | "date" | "size";
-const SORT_LABELS: Record<SortField, string> = { name: "Naam", date: "Datum", size: "Grootte" };
+const SORT_LABELS: Record<SortField, MessageKey> = { name: "inkoop.naam", date: "kas.datum", size: "best.grootte" };
 
 // [BESTANDEN-SORT] Pure sorter — never mutates the input. Folders and smart views
 // both run their document arrays through this before rendering.
@@ -121,7 +124,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
   const [hovered, setHovered] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const isActive = activeFolderId === node.id;
-  const isShared = node.name === "Gedeeld met boekhouder";
+  const isShared = node.name === SHARED_FOLDER_NAME;
   // [BOEK-033] System folders: blue icon, no edit/delete
   const isSystem = node.is_system;
   const iconColor = isSystem ? T.primary : folderColor(node.color);
@@ -419,8 +422,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       if (seq !== loadSeqRef.current) return; // a newer load started — drop this stale result
       // [BOEK-033] Gedeeld met boekhouder always first
       const folders = (json.folders ?? []).sort((a, b) => {
-        if (a.name === "Gedeeld met boekhouder") return -1;
-        if (b.name === "Gedeeld met boekhouder") return 1;
+        if (a.name === SHARED_FOLDER_NAME) return -1;
+        if (b.name === SHARED_FOLDER_NAME) return 1;
         return a.name.localeCompare(b.name, "nl");
       });
       setSubFolders(folders);
@@ -437,8 +440,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setAllFolders(data);
     // [BOEK-033] Gedeeld met boekhouder always first in sidebar tree
     const sorted = [...data].sort((a, b) => {
-      if (a.name === "Gedeeld met boekhouder") return -1;
-      if (b.name === "Gedeeld met boekhouder") return 1;
+      if (a.name === SHARED_FOLDER_NAME) return -1;
+      if (b.name === SHARED_FOLDER_NAME) return 1;
       return 0;
     });
     setFolderTree(buildTree(sorted, null));
@@ -615,10 +618,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           setSelectedIds(new Set());
           refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
           toast(
-            trashed.length === 1 ? "Bestand naar prullenbak" : `${trashed.length} bestanden naar prullenbak`,
+            trashed.length === 1 ? t('best.naarPrullenbakEen') : t('best.naarPrullenbakMeer', { n: trashed.length }),
             {
               action: {
-                label: "Ongedaan maken",
+                label: t('best.ongedaan'),
                 onClick: () => {
                   void Promise.all(trashed.map(id =>
                     fetch(`/api/bestanden/trash?id=${id}`, {
@@ -697,7 +700,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, parent_id: currentFolderId }),
       });
-      if (!res.ok) { flashToast("Map aanmaken mislukt"); return; }
+      if (!res.ok) { flashToast(t('best.fout.mapAanmaken')); return; }
       const json = await res.json() as FolderRow;
       if (json.id) { setSubFolders(p => [...p, json]); setAllFolders(p => [...p, json]); }
     } finally {
@@ -717,7 +720,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { flashToast("Hernoemen mislukt"); return; } // don't show a name that didn't save
+    if (!res.ok) { flashToast(t('best.fout.hernoemen')); return; } // don't show a name that didn't save
     if (target.type === "folder") {
       setSubFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
       setAllFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
@@ -731,14 +734,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     const folder = subFolders.find(f => f.id === id) ?? allFolders.find(f => f.id === id);
     if (folder?.is_system) return;
     const ok = await dialog.confirm({
-      title: `Map "${folder?.name ?? ''}" verwijderen?`,
-      message: 'De bestanden erin blijven bestaan — die verhuizen naar je hoofdmap.',
-      confirmLabel: 'Map verwijderen',
+      title: t('best.mapVerwijderenTitel', { name: folder?.name ?? '' }),
+      message: t('best.mapVerwijderenUitleg'),
+      confirmLabel: t('best.mapVerwijderenKnop'),
       danger: true,
     });
     if (!ok) return;
     const res = await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
-    if (!res.ok) { flashToast("Map verwijderen mislukt"); return; } // no optimistic removal on failure
+    if (!res.ok) { flashToast(t('best.fout.mapVerwijderen')); return; } // no optimistic removal on failure
     setSubFolders(p => p.filter(f => f.id !== id));
     setAllFolders(p => p.filter(f => f.id !== id));
     setFolderTree(p => p.filter(n => n.id !== id));
@@ -753,7 +756,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trashed: true }),
     });
-    if (!res.ok) { flashToast("Verwijderen mislukt"); return; }
+    if (!res.ok) { flashToast(t('best.fout.verwijderen')); return; }
     setDocs(p => p.filter(d => d.id !== id));
     setSmartDocs(p => p.filter(d => d.id !== id)); // [BESTANDEN-SMART] drop from smart view
     refreshStorage();
@@ -767,7 +770,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       body: JSON.stringify(body),
     });
     setMoveTarget(null);
-    if (!res.ok) { flashToast("Verplaatsen mislukt"); return; } // don't remove a row that didn't move
+    if (!res.ok) { flashToast(t('best.fout.verplaatsen')); return; } // don't remove a row that didn't move
     if (type === "folder") {
       setSubFolders(p => p.filter(f => f.id !== id));
       loadAllFolders();
@@ -783,7 +786,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ starred: !current }),
     });
-    if (!res.ok) { flashToast("Actie mislukt"); return; }
+    if (!res.ok) { flashToast(t('best.fout.actie')); return; }
     if (type === "file") {
       setDocs(p => p.map(d => d.id === id ? { ...d, starred: !current } : d));
       setSmartDocs(p =>
@@ -819,7 +822,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     // [share-truth] If the write failed we must NOT flip the badge or claim success —
     // otherwise the owner believes the accountant can see a doc that never got shared.
     if (!res.ok) {
-      flashToast(next ? "Delen mislukt — probeer opnieuw" : "Stoppen met delen mislukt");
+      flashToast(next ? t('best.fout.delen') : t('best.fout.stoppenDelen'));
       return;
     }
     setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
@@ -829,7 +832,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         ? p.filter(d => d.id !== docId)
         : p.map(d => d.id === docId ? { ...d, shared: next } : d),
     );
-    flashToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
+    flashToast(next ? t('best.gedeeldMet') : t('best.delenGestopt'));
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
@@ -855,11 +858,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   const handleBulkDelete = async () => {
     const ok = await dialog.confirm({
-      title: `${selectedIds.size} item(s) verwijderen?`,
+      title: t('best.itemsVerwijderen', { n: selectedIds.size }),
       message: selectedFolderIds.length > 0
-        ? 'Bestanden gaan naar de prullenbak en kun je terughalen. Geselecteerde mappen worden verwijderd; de bestanden daaruit verhuizen naar je hoofdmap.'
-        : 'De bestanden gaan naar de prullenbak. Je kunt ze daar terughalen.',
-      confirmLabel: 'Verwijderen',
+        ? t('best.bulkVerwijderenMappen')
+        : t('best.bulkVerwijderen'),
+      confirmLabel: t('lijst.verwijderen'),
       danger: true,
     });
     if (!ok) return;
@@ -871,7 +874,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
       ]);
       setSelectedIds(new Set());
-      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verwijderd — opnieuw geladen"); reloadTruth(); return; }
+      if (results.some(r => !r.ok)) { flashToast(t('best.fout.sommigeVerwijderd')); reloadTruth(); return; }
       setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
       setSmartDocs(p => p.filter(d => !selectedFileIds.includes(d.id))); // [BESTANDEN-SMART]
       setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
@@ -890,7 +893,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parent_id: folderId }) })),
       ]);
       setSelectedIds(new Set()); setBulkMoveOpen(false);
-      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verplaatst — opnieuw geladen"); reloadTruth(); return; }
+      if (results.some(r => !r.ok)) { flashToast(t('best.fout.sommigeVerplaatst')); reloadTruth(); return; }
       setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
       setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
       loadAllFolders();
@@ -902,7 +905,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
   // current quarter. Writes shared=true (+ period/year) so the accountant sees the
-  // files; also moves them into "Gedeeld met boekhouder" for visual organization.
+  // files; also moves them into SHARED_FOLDER_NAME for visual organization.
   // [BRUG-FILES-SHARED] Bulk share = move selected files into the shared folder;
   // the PATCH route auto-shares them (shared=true + current quarter).
   // [BRUG-FILES-SHARED] Bulk share IN PLACE — set shared=true on the selected files
@@ -918,7 +921,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       })));
       setSelectedIds(new Set());
       // [share-truth] Never claim a bulk share succeeded if any write failed.
-      if (results.some(r => !r.ok)) { flashToast("Sommige bestanden niet gedeeld — opnieuw geladen"); reloadTruth(); return; }
+      if (results.some(r => !r.ok)) { flashToast(t('best.fout.sommigeGedeeld')); reloadTruth(); return; }
       setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
       setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d)); // [BESTANDEN-SMART]
       bumpSmart();
@@ -936,7 +939,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
       ]);
       setSelectedIds(new Set());
-      if (results.some(r => !r.ok)) { flashToast("Sommige items niet aangepast — opnieuw geladen"); reloadTruth(); return; }
+      if (results.some(r => !r.ok)) { flashToast(t('best.fout.sommigeAangepast')); reloadTruth(); return; }
       setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
       setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d)); // [BESTANDEN-SMART]
       setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
@@ -951,28 +954,28 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setContextMenu({
       x: e.clientX, y: e.clientY,
       items: [
-        { label: "Bekijken", icon: "visibility", onClick: () => setPreview(doc) },
-        { label: "Downloaden", icon: "download", onClick: () => downloadFile(doc.id, doc.file_name) },
-        { label: "Naam wijzigen", icon: "edit", onClick: () => setRenameTarget({ id: doc.id, name: doc.file_name, type: "file" }) },
-        { label: "Verplaatsen", icon: "drive_file_move", onClick: () => setMoveTarget({ id: doc.id, type: "file" }) },
-        { label: doc.starred ? "Ster verwijderen" : "Markeren met ster", icon: "star", onClick: () => handleStar(doc.id, "file", !!doc.starred) },
-        { label: doc.shared ? "Niet meer delen" : "Delen met boekhouder", icon: "share", onClick: () => handleToggleShare(doc.id, !!doc.shared) },
-        { label: "Naar prullenbak", icon: "delete", onClick: () => handleDelete(doc.id), danger: true, divider: true },
+        { label: t('best.bekijken'), icon: "visibility", onClick: () => setPreview(doc) },
+        { label: t('best.downloaden'), icon: "download", onClick: () => downloadFile(doc.id, doc.file_name) },
+        { label: t('best.naamWijzigen'), icon: "edit", onClick: () => setRenameTarget({ id: doc.id, name: doc.file_name, type: "file" }) },
+        { label: t('best.verplaatsen'), icon: "drive_file_move", onClick: () => setMoveTarget({ id: doc.id, type: "file" }) },
+        { label: doc.starred ? t('best.sterVerwijderen') : t('best.sterMarkeren'), icon: "star", onClick: () => handleStar(doc.id, "file", !!doc.starred) },
+        { label: doc.shared ? t('best.nietMeerDelen') : t('best.delenBoekhouder'), icon: "share", onClick: () => handleToggleShare(doc.id, !!doc.shared) },
+        { label: t('best.naarPrullenbakActie'), icon: "delete", onClick: () => handleDelete(doc.id), danger: true, divider: true },
       ],
     });
   };
 
   const openFolderContextMenu = (e: React.MouseEvent, folder: FolderRow) => {
-    const isShared = folder.name === "Gedeeld met boekhouder";
+    const isShared = folder.name === SHARED_FOLDER_NAME;
     setContextMenu({
       x: e.clientX, y: e.clientY,
       items: [
-        { label: "Openen", icon: "folder_open", onClick: () => navigateTo(folder.id) },
-        { label: folder.starred ? "Ster verwijderen" : "Markeren met ster", icon: "star", onClick: () => handleStar(folder.id, "folder", !!folder.starred) },
+        { label: t('lijst.openen'), icon: "folder_open", onClick: () => navigateTo(folder.id) },
+        { label: folder.starred ? t('best.sterVerwijderen') : t('best.sterMarkeren'), icon: "star", onClick: () => handleStar(folder.id, "folder", !!folder.starred) },
         ...(!isShared ? [
-          { label: "Naam wijzigen", icon: "edit", onClick: () => setRenameTarget({ id: folder.id, name: folder.name, type: "folder" as const }) },
-          { label: "Verplaatsen", icon: "drive_file_move", onClick: () => setMoveTarget({ id: folder.id, type: "folder" as const, excludeId: folder.id }) },
-          { label: "Verwijderen", icon: "delete", onClick: () => handleDeleteFolder(folder.id), danger: true, divider: true },
+          { label: t('best.naamWijzigen'), icon: "edit", onClick: () => setRenameTarget({ id: folder.id, name: folder.name, type: "folder" as const }) },
+          { label: t('best.verplaatsen'), icon: "drive_file_move", onClick: () => setMoveTarget({ id: folder.id, type: "folder" as const, excludeId: folder.id }) },
+          { label: t('lijst.verwijderen'), icon: "delete", onClick: () => handleDeleteFolder(folder.id), danger: true, divider: true },
         ] : []),
       ],
     });
@@ -1020,7 +1023,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parent_id: targetFolderId }),
       });
-      if (!res.ok) { flashToast("Verplaatsen mislukt"); setDraggedId(null); setDraggedType(null); return; }
+      if (!res.ok) { flashToast(t('best.fout.verplaatsen')); setDraggedId(null); setDraggedType(null); return; }
       setSubFolders(p => p.filter(f => f.id !== id));
       loadAllFolders();
     } else {
@@ -1028,7 +1031,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder_id: targetFolderId }),
       });
-      if (!res.ok) { flashToast("Verplaatsen mislukt"); setDraggedId(null); setDraggedType(null); return; }
+      if (!res.ok) { flashToast(t('best.fout.verplaatsen')); setDraggedId(null); setDraggedType(null); return; }
       setDocs(p => p.filter(d => d.id !== id));
     }
 
@@ -1067,7 +1070,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               method: "PATCH", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ folder_id: folderId }),
             });
-            if (!res.ok) { flashToast("Verplaatsen mislukt — het bestand staat nog hier"); return; }
+            if (!res.ok) { flashToast(t('best.fout.verplaatstNogHier')); return; }
             setDocs(p => p.filter(d => d.id !== docId));
           }}
           onChooseManually={() => {
@@ -1091,7 +1094,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           fontSize: 13, whiteSpace: "nowrap",
         }}>
           <Icon name={clipboardDisplay.op === "cut" ? "content_cut" : "content_copy"} size={16} color="white" />
-          {clipboardDisplay.count} item{clipboardDisplay.count > 1 ? "s" : ""} {clipboardDisplay.op === "cut" ? "geknipt" : "gekopieerd"} — Ctrl+V om te plakken
+          {clipboardDisplay.op === "cut"
+            ? t(clipboardDisplay.count > 1 ? 'best.geknipt' : 'best.geknipt1', { n: clipboardDisplay.count })
+            : t(clipboardDisplay.count > 1 ? 'best.gekopieerd' : 'best.gekopieerd1', { n: clipboardDisplay.count })}
           <button onClick={() => { clipboardRef.current = null; setClipboardDisplay(null); }}
             aria-label={t('lijst.sluiten')}
             style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0 }}>
@@ -1157,7 +1162,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
             <Icon name="search" size={18} color={T.outline} style={{ position: "absolute", insetInlineStart: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Zoeken..."
+              placeholder={t('best.zoeken')}
               style={{
                 width: "100%", paddingInlineStart: 38, paddingInlineEnd: search ? 32 : 10,
                 paddingTop: 8, paddingBottom: 8,
@@ -1196,7 +1201,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               }}
             >
               <Icon name="sort" size={18} color={T.outline} />
-              <span className="hidden sm:inline" style={{ fontSize: 13 }}>{SORT_LABELS[sortField]}</span>
+              <span className="hidden sm:inline" style={{ fontSize: 13 }}>{t(SORT_LABELS[sortField])}</span>
               <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={14} color={T.outline} />
             </button>
             {showSortMenu && (
@@ -1223,7 +1228,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       {sortField === field
                         ? <Icon name="check" size={16} color={T.primary} />
                         : <span style={{ width: 16, display: "inline-block", flexShrink: 0 }} />}
-                      {SORT_LABELS[field]}
+                      {t(SORT_LABELS[field])}
                     </button>
                   ))}
                   <div style={{ height: 1, background: T.surfaceVariant, margin: "4px 0" }} />
@@ -1238,7 +1243,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                   >
                     <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={16} color={T.outline} />
-                    {sortDir === "asc" ? "Oplopend" : "Aflopend"}
+                    {sortDir === "asc" ? t('best.oplopend') : t('best.aflopend')}
                   </button>
                 </div>
                 )}
@@ -1247,7 +1252,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           {/* View toggle */}
           <div style={{ display: "flex", background: "#F1F3F4", borderRadius: T.md, padding: 3, flexShrink: 0 }}>
             {(["grid", "list"] as ViewMode[]).map(mode => (
-              <button key={mode} onClick={() => setViewMode(mode)} aria-label={mode === "grid" ? "Rasterweergave" : "Lijstweergave"} style={{
+              <button key={mode} onClick={() => setViewMode(mode)} aria-label={mode === "grid" ? t('best.raster') : t('best.lijstweergave')} style={{
                 width: 32, height: 32, border: "none", cursor: "pointer",
                 borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center",
                 background: viewMode === mode ? "white" : "transparent",
@@ -1291,7 +1296,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     // If so, that IS the share action: PATCH folder_id=shared so the
                     // route auto-shares (shared=true + current quarter). Skip AI
                     // re-placement, which would otherwise move it out of the folder.
-                    const sharedFolder = allFolders.find(f => f.name === "Gedeeld met boekhouder");
+                    const sharedFolder = allFolders.find(f => f.name === SHARED_FOLDER_NAME);
                     const uploadedIntoShared = !!sharedFolder && currentFolderId === sharedFolder.id;
 
                     if (uploadedIntoShared) {
@@ -1322,7 +1327,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                               docId: j.id,
                               fileName: file.name,
                               folderId: result.folderId,
-                              path: result.folderPath || "Aanbevolen map",
+                              path: result.folderPath || t('best.aanbevolenMap'),
                             });
                           }
                         }
@@ -1488,7 +1493,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
                 >
                   <Icon name={meta.icon} size={18} color={active ? T.primary : T.outline} />
-                  {meta.label}
+                  {t(meta.label)}
                 </button>
               );
             })}
@@ -1521,7 +1526,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     if (e.key === "Escape") { setNewFolderInline(false); setNewFolderName(""); }
                   }}
                   onBlur={handleCreateFolder}
-                  placeholder="Mapnaam..."
+                  placeholder={t('best.mapnaam')}
                   style={{ flex: 1, fontSize: 14, padding: "4px 8px", border: `2px solid ${T.primary}`, borderRadius: T.sm, outline: "none", color: T.onSurface }}
                 />
               </div>
@@ -1575,10 +1580,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 <Icon name="cloud" size={18} color={T.outline} style={{ flexShrink: 0 }} />
                 <div style={{ minWidth: 0 }}>
                   <p style={{ fontSize: 13, fontWeight: 500, color: T.onSurface, margin: 0 }}>
-                    {storage ? formatSize(storage.bytes) : "—"} gebruikt
+                    {t('best.gebruikt', { size: storage ? formatSize(storage.bytes) : "—" })}
                   </p>
                   <p style={{ fontSize: 11, color: T.outline, margin: "1px 0 0" }}>
-                    {storage ? `${storage.count} bestand${storage.count === 1 ? "" : "en"}` : "Berekenen…"}
+                    {storage ? t(storage.count === 1 ? 'best.aantalBestandEen' : 'best.aantalBestanden', { n: storage.count }) : t('best.berekenen')}
                   </p>
                 </div>
               </div>
@@ -1645,11 +1650,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
                   <Icon name={SMART_VIEWS[smartView].icon} size={22} color={T.primary} />
                   <h2 style={{ fontSize: 18, fontWeight: 600, color: T.onSurface, margin: 0 }}>
-                    {SMART_VIEWS[smartView].label}
+                    {t(SMART_VIEWS[smartView].label)}
                   </h2>
                   {!smartLoading && smartDocs.length > 0 && (
                     <span style={{ fontSize: 13, color: T.outline }}>
-                      {smartDocs.length} bestand{smartDocs.length === 1 ? "" : "en"}
+                      {t(smartDocs.length === 1 ? 'best.aantalBestandEen' : 'best.aantalBestanden', { n: smartDocs.length })}
                     </span>
                   )}
                 </div>
@@ -1662,7 +1667,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       <Icon name={SMART_VIEWS[smartView].icon} size={40} color={T.primary} />
                     </div>
                     <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>{t('best.nogNiets')}</p>
-                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{SMART_VIEWS[smartView].empty}</p>
+                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{t(SMART_VIEWS[smartView].empty)}</p>
                   </div>
                 ) : viewMode === "grid" ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
@@ -1697,7 +1702,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                             onContextMenu={e => openFileContextMenu(e, doc)}
                             onDragStart={e => handleDocDragStart(e, doc.id)}
                             onToggleShare={handleToggleShare}
-                            folderLabel={folderName ?? "Mijn bestanden"}
+                            folderLabel={folderName ?? t('best.mijn')}
                             onOpenLocation={() => navigateTo(doc.folder_id ?? null)}
                           />
                         </div>
@@ -1710,7 +1715,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               /* ── Search results ── */
               <div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 16px" }}>
-                  {searchLoading ? "Zoeken..." : `${(searchResults?.length ?? 0) + folderResults.length} resultaten voor "${search}"`}
+                  {searchLoading ? t('best.zoeken') : t('best.resultatenVoor', { n: (searchResults?.length ?? 0) + folderResults.length, query: search })}
                 </p>
                 {searchLoading ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
@@ -1841,7 +1846,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                                   if (e.key === "Escape") { setNewFolderInline(false); setNewFolderName(""); }
                                 }}
                                 onBlur={handleCreateFolder}
-                                placeholder="Mapnaam..."
+                                placeholder={t('best.mapnaam')}
                                 autoFocus
                                 style={{
                                   width: "100%", fontSize: 12, padding: "4px 8px", textAlign: "center",
@@ -1860,7 +1865,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     {docs.length > 0 && (
                       <div>
                         <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 12px" }}>
-                          Bestanden — {docs.length}
+                          {t('best.bestandenAantal', { n: docs.length })}
                         </p>
                         {viewMode === "grid" ? (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>

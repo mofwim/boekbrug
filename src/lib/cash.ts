@@ -20,6 +20,49 @@ export function isCashCategory(v: unknown): v is CashCategory {
   return typeof v === "string" && (CASH_CATEGORIES as readonly string[]).includes(v);
 }
 
+/**
+ * [KAS-VOCABULAIRE] The categories an OWNER may write into their own drawer.
+ *
+ * The vocabulary above has eight entries and the add form offers five. That gap is not an oversight
+ * to be closed by widening the form — the three that are missing are missing for three different
+ * reasons, and this is where they are written down so nobody has to guess:
+ *
+ *   · 'betaling' is SYSTEM-MANAGED. It is the derived drawer movement of an invoice paid in cash,
+ *     created, healed and reversed only by reconcileCashSettlements and keyed to its invoice. A
+ *     hand-written one has no invoice_id: nothing reconciles it, and the delete guard refuses it on
+ *     its label — an unremovable line in a cash administration.
+ *
+ *   · 'tax' and 'fee' are CLOSED, and the reason is in the P&L, not in the form. The cash loop in
+ *     financial-result.ts handles omzet, kosten and salaris; anything else falls out of the chain and
+ *     is excluded from the result entirely. On the BANK side 'fee' maps to 'kosten' via PNL_ROLE — a
+ *     deductible cost. So the same bank charge would book as a cost when the bank shows it and as
+ *     NOTHING when it left the till, which is a silent hole in the cost side rather than a category
+ *     the owner is missing. Offering them would create rows the engine does not count.
+ *
+ *     Opening them later is a two-part job and this is the order: teach the cash loop what they are,
+ *     THEN offer them. Not the other way around, which is how the hole gets filled with real money.
+ *
+ * The vocabulary itself keeps all eight, deliberately: a row already stored as 'tax' or 'fee' must
+ * still READ and still be recognised as a cash category. Closing a door is not the same as denying
+ * that anyone walked through it — and rewriting how an existing row books would move a cost inside a
+ * quarter that may already be filed.
+ */
+export const OWNER_CASH_CATEGORIES = ["omzet", "kosten", "salaris", "prive", "transfer"] as const;
+export type OwnerCashCategory = (typeof OWNER_CASH_CATEGORIES)[number];
+
+export function isOwnerWritableCashCategory(v: unknown): v is OwnerCashCategory {
+  return typeof v === "string" && (OWNER_CASH_CATEGORIES as readonly string[]).includes(v);
+}
+
+/** Why a category is not the owner's to write. One value per closed category, so the door can say
+ *  which of the three reasons applies instead of one flat refusal. */
+export type ClosedCashCategoryReason = "system_managed" | "not_in_result";
+
+export function closedCashCategoryReason(v: CashCategory): ClosedCashCategoryReason | null {
+  if (isOwnerWritableCashCategory(v)) return null;
+  return v === "betaling" ? "system_managed" : "not_in_result";
+}
+
 // ─── [CASH-SETTLE] Invoice ↔ kasboek settlement (mirror of the bank circle) ────────────
 // Paying an incoming invoice in cash must (a) move the kas balance and (b) NOT re-book the cost.
 // So we create a linked 'betaling' entry: direction 'out', amount = the GROSS the owner handed

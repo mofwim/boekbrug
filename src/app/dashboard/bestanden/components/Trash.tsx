@@ -59,9 +59,9 @@ export function Trash({ onBack }: TrashProps) {
     // most irreversible thing a user can do here — it deserves the app's own
     // dialog rather than the browser's, with the consequence spelled out.
     const ok = await dialog.confirm({
-      title: ids.length === 1 ? 'Bestand permanent verwijderen?' : `${ids.length} bestanden permanent verwijderen?`,
-      message: 'Dit kan niet ongedaan worden gemaakt. Denk aan de bewaarplicht: de Belastingdienst verwacht dat je administratie zeven jaar bewaard blijft.',
-      confirmLabel: 'Permanent verwijderen',
+      title: ids.length === 1 ? t('prul.verwijderVraagEen') : t('prul.verwijderVraagMeer', { count: ids.length }),
+      message: t('prul.nietOngedaan'),
+      confirmLabel: t('prul.permanent'),
       danger: true,
     });
     if (!ok) return;
@@ -82,7 +82,7 @@ export function Trash({ onBack }: TrashProps) {
     if (deletedIds.length > 0) setItems(p => p.filter(d => !deletedIds.includes(d.id)));
     setSelected(new Set());
     if (failed > 0) {
-      toast(`${failed} bestand(en) konden niet worden verwijderd. Ze staan nog in de prullenbak.`, { tone: 'error' });
+      toast(t('prul.verwijderMislukt', { count: failed }), { tone: 'error' });
     }
   };
 
@@ -132,7 +132,7 @@ export function Trash({ onBack }: TrashProps) {
       }}>
         <Icon name="info" size={18} color={T.warning} />
         <p style={{ fontSize: 13, color: T.onSurface, margin: 0 }}>
-          Bestanden in de prullenbak worden na 30 dagen automatisch permanent verwijderd.
+          {t('prul.autoVerwijderd')}
         </p>
       </div>
 
@@ -144,7 +144,7 @@ export function Trash({ onBack }: TrashProps) {
           borderRadius: T.md, marginBottom: 16,
         }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: T.primary, flex: 1 }}>
-            {selected.size} geselecteerd
+            {t('bank.geselecteerd', { count: selected.size })}
           </span>
           <button onClick={() => restore([...selected])} style={{
             display: "flex", alignItems: "center", gap: 6,
@@ -233,7 +233,7 @@ export function Trash({ onBack }: TrashProps) {
                     {doc.file_name}
                   </p>
                   <p style={{ fontSize: 12, color: T.outline, margin: 0 }}>
-                    {formatSize(doc.file_size)} · Verwijderd op {doc.trashed_at ? formatDate(doc.trashed_at) : "–"}
+                    {formatSize(doc.file_size)} · {t('prul.verwijderdOp', { date: doc.trashed_at ? formatDate(doc.trashed_at) : "–" })}
                   </p>
                 </div>
 

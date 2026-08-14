@@ -18,6 +18,10 @@
 
 import type { BankTransaction } from "./bank-parser";
 import { round2 } from "./invoice-totals";
+// [GESTRUCTUREERD] The references a bank routes on, checksum and all — see structured-reference.ts.
+import { structuredReferenceMatches } from "./structured-reference";
+// [GEHEUGEN] The owner's own confirmations, read back as identity — see match-memory.ts.
+import { remembersParty, type MatchMemory } from "./match-memory";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -66,7 +70,46 @@ export type MatchSignal =
   | "reference" | "amount" | "date" | "counterpart" | "iban" | "prepared"
   // [SUPPLIER-IBAN] The account this supplier is KNOWN to bill from, taken from the supplier
   // registry rather than from this invoice's own document — see the block in scorePair.
-  | "supplier_iban";
+  | "supplier_iban"
+  // [BIJNA-BEDRAG] Not the amount, but close to it, on a counterparty this payment identifies —
+  // see the block in scorePair. Listed for the owner to allocate; never enough to book.
+  | "near_amount"
+  // [GEHEUGEN] The owner has confirmed a payment from this counterpart against this party before.
+  // Their own answer, read back — see match-memory.ts.
+  | "memory";
+
+// [BIJNA-BEDRAG] How far a payment may sit from an open balance and still be worth showing.
+//
+// A bank statement rarely disagrees with an invoice by a random amount. It disagrees by bank
+// costs on a foreign transfer, by a betalingskorting the customer took, or by a rounding a person
+// did in their head. Each of those is small and proportional; a payment for a DIFFERENT invoice is
+// not. So the band is both relative and absolute, and whichever is tighter wins.
+export const NEAR_AMOUNT_PERCENT = 0.02; // 2% — the usual payment discount, and then some
+export const NEAR_AMOUNT_MAX = 25;       // never more than this, whatever the invoice is worth
+export const NEAR_AMOUNT_FLOOR = 0.05;   // …and always at least a nickel, for pure rounding
+
+/**
+ * Is this payment close enough to the balance to be worth offering, without being it?
+ *
+ * Deliberately excludes an exact match (that is the `amount` signal's job) and anything at or
+ * beyond the band. Returns the difference in euros when it qualifies, else null — the caller shows
+ * that number, because "close" without saying how close is not something to decide money on.
+ */
+export function nearAmountDifference(
+  txAmount: number,
+  target: number | null,
+  epsilon: number,
+): number | null {
+  if (target == null || !Number.isFinite(target) || !Number.isFinite(txAmount)) return null;
+  const paid = Math.abs(txAmount);
+  const owed = Math.abs(target);
+  if (owed <= 0) return null;
+  // [CENT] round2, not a second definition of it — see the gate in lifecycle-gates.test.ts.
+  const diff = round2(Math.abs(paid - owed));
+  if (diff <= epsilon) return null; // that is an exact match, not a near one
+  const band = Math.max(NEAR_AMOUNT_FLOOR, Math.min(owed * NEAR_AMOUNT_PERCENT, NEAR_AMOUNT_MAX));
+  return diff <= band ? diff : null;
+}
 
 // [PAY-INTENT] How long after the owner opened the pay sheet a debit may still be that payment.
 // A SEPA transfer settles the same day or the next; ten days is generous enough for a payment
@@ -168,6 +211,13 @@ export interface MatchOptions {
   autoConfidence: number; // min top confidence to consider 'auto'
   autoMargin: number; // top must beat 2nd by this to be 'auto'
   maxCandidates: number; // cap the candidate list shown to the user
+  /**
+   * [GEHEUGEN] What the owner has already confirmed, derived from the link rows. Absent means the
+   * matcher reasons purely from the payment, exactly as it did before — the caller degrades to
+   * that when the read fails, because a memory that could not be loaded is not a reason to show
+   * the owner a worse answer than yesterday's.
+   */
+  memory?: MatchMemory | null;
 }
 
 export const DEFAULT_OPTIONS: MatchOptions = {
@@ -178,6 +228,7 @@ export const DEFAULT_OPTIONS: MatchOptions = {
   autoConfidence: 0.7,
   autoMargin: 0.15,
   maxCandidates: 5,
+  memory: null,
 };
 
 // [BANK-MATCH-VERIFY] Statuses that must NEVER be offered as a bank-match candidate:
@@ -229,6 +280,14 @@ export function referenceMatches(
   invoiceNumber: string | null
 ): boolean {
   if (!invoiceNumber) return false;
+  // [GESTRUCTUREERD] A structured creditor reference is identity with a checksum on it, and it is
+  // printed in groups — "RF18 5390 0754 7034". The scan below keeps spaces as token boundaries on
+  // purpose (fusing them would let a short number match a slice of a long one), so the reference
+  // as the bank prints it did not match the reference as the invoice stores it. Asked first,
+  // because when it answers yes there is nothing left to weigh. See structured-reference.ts.
+  if (structuredReferenceMatches(`${tx.reference ?? ""} ${tx.description ?? ""}`, invoiceNumber)) {
+    return true;
+  }
   const needle = normalizeRef(invoiceNumber);
   if (needle.length < 4) return false; // too short → unsafe
   // [TRUST-MATCH-YEAR] A needle that IS a bare calendar year can whole-token match the year in any
@@ -653,6 +712,27 @@ export function scorePair(
     //
     // Direction and order matter: a payment cannot precede the intent that produced it, so a debit
     // dated before the stamp is not this payment however well the amount fits.
+    // [GEHEUGEN] The owner has settled a payment from this counterpart against this party before.
+    //
+    // Every other signal here is inference about a line the app is seeing for the first time. This
+    // one is not inference at all: it is the owner's own answer, given by confirming, and until now
+    // it was written to bank_tx_invoices and never read again. A supplier whose statement line the
+    // bank mangles — "SUMUP *JANSEN" against an invoice from "Jansen Bouw B.V." — fails
+    // isStrongNameIdentity every month by design (one shared token is the asymmetric surname shape
+    // that rule exists to reject), so the same payment was identified by hand every month.
+    //
+    // Weighted like [SUPPLIER-IBAN] and for the same reason: it identifies the PARTY, not the bill,
+    // and it rests on one more link than the document itself (which confirmation, made when). It
+    // also does not open a door that was shut — memory + an exact amount lands on the same 0.95
+    // coincidence ceiling that amount + name + date already reached, so nothing books unattended
+    // that did not before. What it changes is which invoice is on top when several could be, and
+    // whether a counterparty is IDENTIFIED at all — which is what [BIJNA-BEDRAG] above needs.
+    const rememberedOk = remembersParty(opts.memory, tx, inv.client_name);
+    if (rememberedOk) {
+      confidence += 0.30;
+      signals.push("memory");
+      reasons.push(`je hebt eerder een betaling van deze tegenpartij aan ${inv.client_name ?? "deze partij"} gekoppeld`);
+    }
     if (preparedOk) {
       // Weighted like the other identity-ish signals rather than as a tie-break, and measured:
       // with a token nudge a declared payment scored 0.6994 against an autoConfidence of 0.70 —
@@ -676,7 +756,38 @@ export function scorePair(
     }
     // Without an exact amount and without a reference, a pair stays weak — even a matching IBAN,
     // because the same supplier can have several invoices of different amounts.
-    if (!amtOk) confidence = Math.min(confidence, 0.35);
+    //
+    // [BIJNA-BEDRAG] 0.35 is below choiceThreshold (0.5), so such a pair was not weak — it was
+    // INVISIBLE. Measured: a € 100 invoice from a strongly identified counterparty, paid € 99,50
+    // because the bank took its costs off, produced `outcome: none, candidates: 0`. The owner saw
+    // "Geen factuur" over a line whose invoice was sitting right there, and their only tool was to
+    // search by hand. The same for a 2% betalingskorting and for a customer who rounded up.
+    //
+    // A real reconciliation screen does the opposite: it shows the counterparty's open items and
+    // names the difference. So a pair that IS identified and is close gets past the listing floor
+    // — and stops well below autoConfidence (0.7), because a difference is exactly what a human
+    // has to look at. Confirming one books a deelbetaling with the remainder stated
+    // (/api/bank/confirm), which is the honest outcome and was already built.
+    //
+    // Identity is required and is not the name: a name resemblance plus a nearby amount is the
+    // coincidence this file spends its length guarding against. The account, the registry's
+    // account, or the owner's own declaration that they were about to pay this bill.
+    const nearDiff = amtOk ? null : nearAmountDifference(tx.amount, amountTarget, opts.amountEpsilon);
+    const identified = ibanOk || supplierIbanOk || rememberedOk || isStrongNameIdentity(tx.counterpartName, inv.client_name);
+    const nearOk = nearDiff != null && identified;
+    if (nearOk) {
+      // A bonus BEFORE the cap, not a raised cap. Math.min only ever lowers, so a cap of 0.55 on a
+      // pair scoring 0.45 changes nothing — the same silent no-op [PAY-INTENT] documents two
+      // blocks up, and it is worth writing down twice because it costs a feature every time.
+      confidence += 0.35;
+      signals.push("near_amount");
+      reasons.push(
+        `€${nearDiff.toFixed(2)} ${Math.abs(tx.amount) < Math.abs(amountTarget ?? 0) ? "minder" : "meer"} dan het openstaande bedrag — controleer of dit deze factuur is`,
+      );
+    }
+    // 0.55: above the listing floor (0.5), below the booking bar (0.7), and below every exact
+    // match in the hierarchy above. A difference is precisely what a person has to look at.
+    if (!amtOk) confidence = Math.min(confidence, nearOk ? 0.55 : 0.35);
     // [BANK-IDENTITY-OUTRANKS] A pair with NO identity signal (no printed number, no matching
     // IBAN) is capped strictly BELOW the reference+amount score (0.97). Before this cap,
     // amount (0.5) + date (≤0.25) + name (≤0.3) could sum to a full 1.0 — so a COINCIDENCE

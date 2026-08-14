@@ -1,5 +1,5 @@
 // [CASH-LEDGER] Pure node test — run: npx tsx src/lib/cash.test.ts
-import { computeCashBalance, computeDrawerBalance, isCashCategory, buildCashSettlement, buildCashSettlements, computeCashSettlementSync, settlementGross } from "./cash";
+import { computeCashBalance, computeDrawerBalance, isCashCategory, isOwnerWritableCashCategory, closedCashCategoryReason, CASH_CATEGORIES, OWNER_CASH_CATEGORIES, buildCashSettlement, buildCashSettlements, computeCashSettlementSync, settlementGross, type CashCategory } from "./cash";
 
 let passed = 0;
 let failed = 0;
@@ -462,6 +462,36 @@ console.log("\n— [KAS-DUBBELTELLING] dezelfde kasomzet uit twee bronnen —");
       tillDays: [],
     }) === 500,
   );
+}
+
+// ── [KAS-VOCABULAIRE] Which of the eight categories is the owner's to write ─────────────────────
+// The vocabulary has eight entries and the add form offers five. The three that are closed are
+// closed for three different reasons (argued at OWNER_CASH_CATEGORIES), and this is what keeps the
+// door and the reasons from drifting apart.
+console.log("\n— [KAS-VOCABULAIRE] the owner writes five of the eight —");
+{
+  for (const c of ["omzet", "kosten", "salaris", "prive", "transfer"]) {
+    check(`${c} is the owner's to write`, isOwnerWritableCashCategory(c) && closedCashCategoryReason(c as CashCategory) === null);
+  }
+  // 'betaling' is derived from an invoice; a hand-written one is reconcilable by nothing and
+  // removable by nothing.
+  check("betaling is system-managed", closedCashCategoryReason("betaling") === "system_managed");
+  // 'tax' / 'fee' fall out of the cash loop in financial-result, so a row would sit in the drawer
+  // and in no cost total — while the BANK side books a 'fee' as a deductible cost.
+  check("tax is closed because the result engine does not count it", closedCashCategoryReason("tax") === "not_in_result");
+  check("fee is closed for the same reason", closedCashCategoryReason("fee") === "not_in_result");
+
+  // The anti-drift check, and the reason these lists are next to each other: a ninth category added
+  // to the vocabulary must be CLASSIFIED, not silently inherit "closed" (invisible to the form) or
+  // "open" (a row the engine may not count). This test is where that decision gets asked for.
+  check("every category in the vocabulary is either owner-writable or has a stated reason",
+    CASH_CATEGORIES.every((c) => isOwnerWritableCashCategory(c) !== (closedCashCategoryReason(c) !== null)));
+  check("the owner's list is a strict subset of the vocabulary",
+    OWNER_CASH_CATEGORIES.every((c) => isCashCategory(c)) && OWNER_CASH_CATEGORIES.length < CASH_CATEGORIES.length);
+  // Closing a door is not denying that anyone walked through it: a row already stored as 'tax' must
+  // still READ as a cash category, or a legacy drawer stops being a drawer.
+  check("a closed category is still a valid category for reading", isCashCategory("tax") && isCashCategory("fee") && isCashCategory("betaling"));
+  check("a word outside the vocabulary is neither", !isCashCategory("loon") && !isOwnerWritableCashCategory("loon"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -77,9 +77,21 @@ export function round2(n: number): number {
   return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100);
 }
 
-/** Eén factuurregel, zoals beide routes hem aanleveren. */
+/**
+ * Eén factuurregel, zoals beide routes hem aanleveren.
+ *
+ * [REGEL-KORTING] `line_total` is het NETTO bedrag — aantal × prijs MIN de korting die op de regel
+ * zelf zit (invoice_line_discount.sql). Dat is de afspraak van de kolom, en hij is met opzet zo
+ * gekozen: een lezer die van regelkortingen nooit heeft gehoord telt line_total op en komt op het
+ * juiste bedrag uit. Deze functie is zo'n lezer.
+ *
+ * Daarom trekt de terugval hieronder GEEN korting af, en daarom moet elke aanroeper die met
+ * kortingen te maken kan hebben `line_total` meesturen. Wie een korting wél door de som heen wil
+ * laten rekenen gebruikt applyDiscount uit invoice-discount.ts; dat is de enige plek waar een
+ * korting wordt AFGETROKKEN, precies één keer.
+ */
 export interface TotalsLine {
-  /** Het opgeslagen regeltotaal (excl. BTW). Ontbreekt het, dan aantal × prijs. */
+  /** Het opgeslagen regeltotaal (excl. BTW), al NETTO. Ontbreekt het, dan aantal × prijs. */
   line_total?: number | null;
   quantity?: number | null;
   unit_price?: number | null;

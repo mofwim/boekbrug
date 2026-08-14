@@ -23,6 +23,9 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+// [MIN-REGEL] What a READING means by a quantity and a price — including a credit line, which the
+// guard here used to turn into a charge. See read-line.ts.
+import { readLineAmounts } from '@/lib/read-line'
 import { round2 } from '@/lib/invoice-totals'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import KennisbankLinks from '@/components/KennisbankLinks'
@@ -333,21 +336,19 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
         }
         const carried = (h.line_items ?? [])
           .map((li) => {
-            // A scan may give quantity+unit_price, or only a line total. When it
-            // is only a total, treat it as 1 × total so the arithmetic still adds
-            // up to what the paper said.
-            const qty = typeof li.quantity === 'number' && li.quantity > 0 ? li.quantity : 1
-            const unit =
-              typeof li.unit_price === 'number' && li.unit_price > 0
-                ? li.unit_price
-                : typeof li.amount === 'number'
-                  ? li.amount / qty
-                  : null
-            if (unit === null || !Number.isFinite(unit)) return null
+            // [MIN-REGEL] A scan may give quantity+unit_price, or only a line total. When it is
+            // only a total, treat it as 1 × total so the arithmetic still adds up to what the
+            // paper said — and keep a NEGATIVE quantity, which is a credit line and not an
+            // unreadable one. The guard here was `quantity > 0 ? quantity : 1`, which turned
+            // -3 × € 23,95 = € -71,85 into 1 × € 23,95: € 95,80 of swing on one row, towards
+            // charging the customer, with nothing on the screen saying a number had changed.
+            // read-line.ts also moves a minus out of the price, where it may not be issued.
+            const read = readLineAmounts(li)
+            if (read === null) return null
             return {
               description: (li.description ?? '').trim(),
-              quantity: String(qty),
-              unit_price: unit.toFixed(2).replace('.', ','),
+              quantity: String(read.quantity),
+              unit_price: read.unit_price.toFixed(2).replace('.', ','),
               btw_rate: 21,
             } as Line
           })

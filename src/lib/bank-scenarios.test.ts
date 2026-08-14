@@ -187,7 +187,9 @@ console.log("\n— S11/S17-S20: creditnota's and refunds, both directions —");
     [inv({ invoice_number: "CR-2026-014", total_inc_btw: -150, direction: "outgoing", status: "sent" })],
   ).matches[0];
   check("S20 customer refund ↔ outgoing creditnota matches", ourRefund.outcome === "auto");
-  // A creditnota inside an automatic BATCH stays human (magnitude-tie risk).
+  // [CREDIT-VERREKEN] S11 A creditnota inside an automatic BATCH is now booked WITH the invoice it
+  // was deducted from — 300 − 200 = 100, both numbers on the payment, cents-exact. That is the
+  // shape Dutch wholesale uses, and reconcileBatch has netted the sign since [BATCH-SIGN].
   const cnBatch = planBatchAutoConfirm({
     reference: "26302050, CR26009",
     description: "facturen 26302050 en CR26009",
@@ -197,7 +199,19 @@ console.log("\n— S11/S17-S20: creditnota's and refunds, both directions —");
       { id: "cn", invoice_number: "CR26009", total_inc_btw: -200, client_name: "X", direction: "incoming", status: "received" },
     ],
   });
-  check("S11 a net-of-credit batch is NEVER auto-booked", cnBatch === null);
+  check("S11 a net-of-credit batch is booked as one settlement", cnBatch?.invoiceIds.length === 2);
+  // And the magnitude tie that guard was really protecting against — 300 + |−200| = 500 — is not
+  // what these documents come to, so a €500 debit still finds nothing here.
+  const cnMagnitude = planBatchAutoConfirm({
+    reference: "26302050, CR26009",
+    description: "facturen 26302050 en CR26009",
+    bankAmount: -500,
+    invoices: [
+      { id: "a", invoice_number: "26302050", total_inc_btw: 300, client_name: "X", direction: "incoming", status: "received" },
+      { id: "cn", invoice_number: "CR26009", total_inc_btw: -200, client_name: "X", direction: "incoming", status: "received" },
+    ],
+  });
+  check("S11b …while the magnitude tie at 500 is still refused", cnMagnitude === null);
   check("S11 …but reconcileBatch still nets it correctly for the UI (300 − 200 = 100)",
     reconcileBatch([
       { refNum: "26302050", amount: 300, isConfirmed: false },

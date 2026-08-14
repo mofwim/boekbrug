@@ -87,12 +87,11 @@ export interface SearchResult extends BestandRow {
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
-export const SHARED_FOLDER_NAME = "Gedeeld met boekhouder";
-
-// [BOEK-033 Phase 1] Fallback folder for files that cannot be classified
-// (no date, invalid date, low confidence). BOEK-011 imports land here when
-// a path cannot be resolved — never in the root, never folder_id null.
-export const IMPORTED_FOLDER_NAME = "Geïmporteerde bestanden";
+// The names themselves live in bestanden-shared.ts so Client Components can compare
+// against them without importing this server-only module; re-exported here so every
+// existing server-side import keeps working unchanged.
+import { SHARED_FOLDER_NAME, IMPORTED_FOLDER_NAME } from "./bestanden-shared";
+export { SHARED_FOLDER_NAME, IMPORTED_FOLDER_NAME };
 
 const NL_MONTHS: Record<number, string> = {
   1: "januari", 2: "februari", 3: "maart",

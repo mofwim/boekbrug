@@ -86,7 +86,7 @@ export default function DateFieldNL({
   // Only complain about an unparseable date once it is as long as a date. Flashing an error at
   // someone mid-keystroke teaches them to ignore the line that is supposed to catch a real error.
   const shape = touched && typed.length >= DUTCH_DATE_PLACEHOLDER.length && !iso
-    ? 'Dat is geen bestaande datum — gebruik dd-mm-jjjj.'
+    ? t('datum.geenBestaande')
     : null
   const problem = shape ?? rangeProblem
 

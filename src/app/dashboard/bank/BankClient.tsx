@@ -159,7 +159,9 @@ interface Suggestion {
   // [BANK-SUM-SUGGEST] Server-computed: this payment is EXACTLY the sum of these 2..4 open
   // invoices of THIS counterparty (unique tie, cents-exact) — a suggestion for the "Geen
   // factuur" card. Booking still runs invoice-by-invoice through the normal confirm.
-  sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number } | null
+  // [CREDIT-VERREKEN] `amounts` is signed per member, so the card can print the subtraction it
+  // is claiming. Optional: an older cached response has none, and then it reads as it always did.
+  sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number; amounts?: number[] } | null
 }
 interface MatchResponse {
   ok: boolean
@@ -353,7 +355,7 @@ export default function BankClient() {
       // the cheerful confirmation.
       if (res.ok) {
         await runMatch()
-        showToast(json.balanceWarning ? String(json.balanceWarning) : 'Koppeling ongedaan gemaakt.')
+        showToast(json.balanceWarning ? String(json.balanceWarning) : t('bank.koppelingOngedaan'))
       }
       else if (json.error === 'verwerkt') showToast(t('bank.fout.verwerkt'))
       else if (json.error === 'multi_invoice_unlink_unsupported') showToast(t('bank.fout.groep'))
@@ -403,7 +405,7 @@ export default function BankClient() {
       if (!res.ok) {
         // Includes the honest "this payment is split over several invoices" answer — ambiguous
         // here by nature, and better named than silently resolved to one of them.
-        showToast(json?.detail || 'Betalingen ophalen mislukt.')
+        showToast(json?.detail || t('bank.fout.betalingenOphalen'))
         return
       }
       const payments = (json?.payments ?? []) as MovePayment[]
@@ -424,11 +426,11 @@ export default function BankClient() {
       if (!res.ok) {
         // The move is atomic, so a refusal means nothing changed — and the server's sentence says
         // which reason it was. Never our guess.
-        showToast(json?.detail || 'Verplaatsen mislukt — er is niets gewijzigd.')
+        showToast(json?.detail || t('bank.fout.verplaatsen'))
         return
       }
       await runMatch()
-      showToast(`Betaling verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}.`)
+      showToast(target.invoice_number ? t('bank.verplaatstNaarFactuur', { number: target.invoice_number }) : t('bank.verplaatstNaarGekozen'))
     } catch { showToast(t('bank.fout.offlineNiets')) }
   }, [runMatch, showToast, t])
 
@@ -548,7 +550,7 @@ export default function BankClient() {
       const up = await fetch('/api/bank/upload', { method: 'POST', body: form })
       const upJson = await up.json()
       if (!up.ok) {
-        showToast(upJson?.error === 'no_transactions' ? 'Geen transacties gevonden in dit bestand.' : 'Uploaden mislukt.')
+        showToast(upJson?.error === 'no_transactions' ? t('bank.fout.geenTransacties') : t('bank.fout.uploaden'))
         setBusy(false)
         return
       }
@@ -567,7 +569,7 @@ export default function BankClient() {
       // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
       // them — the money moved silently on the server; a toast makes the automatic work visible.
       if ((upJson.autoBooked ?? 0) > 0) {
-        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Bevestigd"`)
+        showToast(upJson.autoBooked === 1 ? t('bank.autoGeboektEen') : t('bank.autoGeboekt', { count: upJson.autoBooked }))
       }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
@@ -682,7 +684,7 @@ export default function BankClient() {
         const remainingOpen = typeof json?.remaining === 'number' ? json.remaining : null
         showToast(
           json?.warning === 'transaction_link_failed'
-            ? 'Factuur betaald (koppeling volgt later).'
+            ? t('bank.betaaldKoppelingLater')
             // [LINKS-WRITE-HONEST] De factuur IS betaald — maar de regel waaruit de bankpagina
             // afleest of deze banktransactie klaar is, is niet weggeschreven. Zonder die regel valt
             // /api/bank/match terug op het tellen van factuurnummers in de omschrijving, en een
@@ -692,14 +694,14 @@ export default function BankClient() {
             // Zeggen dat het gelukt is en de ondernemer die lus in laten lopen, is het ergste van
             // de twee: hij tikt dan tien keer op een knop die niets meer kan doen.
             : json?.warning === 'payment_link_not_recorded'
-              ? 'Betaald ✓ — maar deze bankregel is niet volledig vastgelegd. Blijft hij terugkomen, ververs de pagina; lukt dat niet, gebruik Negeren.'
+              ? t('bank.betaaldNietVastgelegd')
               : isPartial
               ? (remainingOpen != null
-                  ? `Deelbetaling geboekt · nog ${eur.format(remainingOpen)} open`
-                  : 'Deelbetaling geboekt · factuur blijft openstaan')
+                  ? t('bank.deelGeboektOpen', { amount: eur.format(remainingOpen) })
+                  : t('bank.deelGeboektBlijft'))
               : allCovered
-                ? 'Bevestigd en gemarkeerd als betaald ✓'
-                : 'Factuur betaald ✓ · nog een factuur open'
+                ? t('bank.bevestigdBetaald')
+                : t('bank.betaaldNogEenOpen')
         )
         // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
         // the candidate list and any remaining open number is re-evaluated. Without
@@ -721,7 +723,7 @@ export default function BankClient() {
         })
       } else if (json?.error === 'bad_allocation') {
         // [BANK-SPLIT] The stated amount does not fit. The server names which ceiling it hit.
-        showToast(String(json.detail ?? 'Dat bedrag past niet op deze betaling.'))
+        showToast(String(json.detail ?? t('bank.fout.bedragPastNiet')))
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && json?.error === 'payment_fully_applied') {
@@ -772,8 +774,8 @@ export default function BankClient() {
       }
       showToast(
         failed === 0
-          ? `${ok} facturen samen gekoppeld aan deze betaling ✓`
-          : `${ok} gekoppeld · ${failed} mislukt — controleer de lijst`,
+          ? t('bank.samenGekoppeld', { count: ok })
+          : t('bank.samenDeels', { ok, failed }),
       )
       await runMatch()
     } finally {
@@ -861,9 +863,9 @@ export default function BankClient() {
       }
       showToast(
         (failed === 0
-          ? `${ok} factuur/facturen bevestigd ✓`
-          : `${ok} bevestigd · ${failed} mislukt`) +
-        (refreshed ? '' : ' · vernieuw de pagina voor de bijgewerkte lijst'),
+          ? t('bank.batchBevestigd', { count: ok })
+          : t('bank.batchDeels', { ok, failed })) +
+        (refreshed ? '' : ` · ${t('bank.vernieuwLijst')}`),
       )
     }
   }
@@ -891,8 +893,8 @@ export default function BankClient() {
       if (res.ok && json?.ok) {
         showToast(
           json.updated > 0
-            ? `${json.updated} ${json.updated === 1 ? 'naam' : 'namen'} bijgewerkt ✓`
-            : 'Alle namen waren al up-to-date.'
+            ? (json.updated === 1 ? t('bank.namenBijgewerktEen') : t('bank.namenBijgewerkt', { count: json.updated }))
+            : t('bank.namenUpToDate')
         )
         await runMatch()
       } else {
@@ -932,14 +934,14 @@ export default function BankClient() {
       }
       setRematchInfo({ restored: json.restored ?? 0, booked: json.booked ?? 0, ambiguous: json.ambiguous ?? 0, examined: json.examined ?? 0 })
       const parts: string[] = []
-      if (json.restored > 0) parts.push(`${json.restored} ${json.restored === 1 ? 'regel' : 'regels'} terug in de lijst`)
-      if (json.booked > 0) parts.push(`${json.booked} automatisch gekoppeld`)
+      if (json.restored > 0) parts.push(json.restored === 1 ? t('bank.rematch.terugEen') : t('bank.rematch.terug', { count: json.restored }))
+      if (json.booked > 0) parts.push(t('bank.rematch.gekoppeld', { count: json.booked }))
       showToast(
         parts.length > 0
           ? `${parts.join(' · ')} ✓`
           : json.ambiguous > 0
-            ? `Niets zeker genoeg om zelf te doen — ${json.ambiguous} genegeerde ${json.ambiguous === 1 ? 'regel heeft' : 'regels hebben'} wel een mogelijke factuur. Kijk bij "Genegeerd".`
-            : `Alles opnieuw bekeken (${json.examined}) — er was niets nieuws te koppelen.`,
+            ? (json.ambiguous === 1 ? t('bank.rematch.zwakEen') : t('bank.rematch.zwak', { count: json.ambiguous }))
+            : t('bank.rematch.niets', { count: json.examined }),
       )
       await runMatch()
       await loadIgnored()
@@ -997,7 +999,7 @@ export default function BankClient() {
         else window.open(json.url, '_blank')
       } else {
         if (tab) tab.close()
-        showToast(json?.detail || json?.error === 'no_file' ? 'Deze factuur heeft geen bestand.' : 'Kon de factuur niet openen.')
+        showToast(json?.detail || json?.error === 'no_file' ? t('bank.fout.geenBestand') : t('bank.fout.factuurOpenen'))
       }
     } catch {
       if (tab) tab.close()
@@ -1013,12 +1015,12 @@ export default function BankClient() {
       const res = await fetch(`/api/invoice/${invoiceId}/amounts`)
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
-        showToast(typeof json.error === 'string' ? json.error : 'Deze factuur kon niet worden opgehaald.')
+        showToast(typeof json.error === 'string' ? json.error : t('bank.fout.factuurNietOpgehaald'))
         return
       }
       if (!json.editable) {
         // The server already phrased the way out; repeating it verbatim keeps one explanation.
-        showToast(String(json.reason ?? 'Deze factuur kan nu niet worden gecorrigeerd.'))
+        showToast(String(json.reason ?? t('bank.fout.nietCorrigeren')))
         return
       }
       setCorrectFor(json.invoice as CorrectableInvoice)
@@ -1050,14 +1052,14 @@ export default function BankClient() {
       })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok) {
-        showToast(typeof json?.error === 'string' ? json.error : 'Toevoegen mislukt — er is niets opgeslagen.')
+        showToast(typeof json?.error === 'string' ? json.error : t('bank.fout.toevoegenNiets'))
         return
       }
       const landedAsInvoice = json.destination === 'invoice' || json.destination === 'receipt'
       if (!landedAsInvoice) {
         // A statement, or a document we could not read as an invoice. Say what it became rather
         // than implying the payment can now be split.
-        showToast('Bestand opgeslagen, maar het is niet als factuur herkend. Controleer het bij Mijn Bestanden.')
+        showToast(t('bank.bestandNietHerkend'))
         return
       }
       if (json.auto_verified) {
@@ -1066,7 +1068,7 @@ export default function BankClient() {
         showToast(t('bank.toegevoegdGeboekt'))
       } else {
         // In the verify queue. Do NOT pretend it is ready: the split cannot reach it yet.
-        showToast('Factuur toegevoegd. Bevestig hem eerst in de controlewachtrij, daarna kun je de betaling verdelen.')
+        showToast(t('bank.toegevoegdWachtrij'))
       }
     } catch {
       showToast(t('bank.fout.toevoegen'))
@@ -1108,30 +1110,30 @@ export default function BankClient() {
           // Here the detail is the body and the question is the title, so the
           // owner reads WHY before deciding.
           const proceed = await dialog.confirm({
-            title: 'Toch koppelen?',
-            message: json?.detail || json?.error || 'Deze factuur lijkt al eerder gekoppeld te zijn.',
-            confirmLabel: 'Ja, toch koppelen',
-            cancelLabel: 'Overslaan',
+            title: t('bank.tochKoppelenVraag'),
+            message: json?.detail || json?.error || t('bank.lijktDubbel'),
+            confirmLabel: t('bank.jaTochKoppelen'),
+            cancelLabel: t('bank.overslaan'),
             danger: true,
           })
-          if (!proceed) { lastMsg = 'Overgeslagen (mogelijk dubbel).'; continue }
+          if (!proceed) { lastMsg = t('bank.overgeslagenDubbel'); continue }
           ;({ r: res, j: json } = await postAttach(true))
         }
         if (res.ok) {
           ok++
-          if (json?.amountWarning) lastMsg = 'Let op: controleer het bedrag.'
+          if (json?.amountWarning) lastMsg = t('bank.controleerBedrag')
         } else {
-          lastMsg = json?.error || 'Koppelen mislukt.'
+          lastMsg = json?.error || t('bank.fout.koppelen')
         }
       }
       if (ok > 0) {
         showToast(
           ok === files.length
-            ? `${ok === 1 ? 'Factuur' : `${ok} facturen`} gekoppeld ✓${lastMsg ? ` ${lastMsg}` : ''}`
-            : `${ok}/${files.length} gekoppeld. ${lastMsg}`
+            ? `${ok === 1 ? t('bank.gekoppeldEen') : t('bank.gekoppeldMeer', { count: ok })}${lastMsg ? ` ${lastMsg}` : ''}`
+            : `${t('bank.gekoppeldDeels', { ok, total: files.length })} ${lastMsg}`
         )
       } else {
-        showToast(lastMsg || 'Koppelen mislukt.')
+        showToast(lastMsg || t('bank.fout.koppelen'))
       }
       await runMatch() // refresh: tx leaves "Geen factuur" only if fully accounted
     } catch {
@@ -1308,11 +1310,11 @@ export default function BankClient() {
   const safeAutoCount = toConfirm.filter((s) => isServerAutoBookable(s)).length
 
   const tabs = [
-    { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
-    { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
-    { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
-    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
-    { key: 'done' as const, label: 'Bevestigd', icon: 'link', count: confirmedList.length },
+    { key: 'confirm' as const, label: t('bank.tab.teBevestigen'), icon: 'fact_check', count: toConfirm.length },
+    { key: 'none' as const, label: t('bank.tab.geenFactuur'), icon: 'help', count: noMatch.length },
+    { key: 'pin' as const, label: t('bank.tab.pin'), icon: 'point_of_sale', count: posList.length },
+    { key: 'ignored' as const, label: t('bank.genegeerd'), icon: 'visibility_off', count: ignoredInQ.length },
+    { key: 'done' as const, label: t('bank.tab.bevestigd'), icon: 'link', count: confirmedList.length },
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
@@ -1373,7 +1375,7 @@ export default function BankClient() {
     bankConnectHandledRef.current = true
 
     if (outcome === 'fout') {
-      showToast(searchParams.get('reden') ?? 'Koppelen mislukt.')
+      showToast(searchParams.get('reden') ?? t('bkc.koppelenMislukt'))
       return
     }
     if (outcome !== 'gekoppeld') return
@@ -1381,8 +1383,8 @@ export default function BankClient() {
     const accounts = Number(searchParams.get('rekeningen') ?? '0')
     showToast(
       accounts === 1
-        ? 'Je bank is gekoppeld. We halen je transacties op…'
-        : `Je bank is gekoppeld (${accounts} rekeningen). We halen je transacties op…`,
+        ? t('bank.bankGekoppeld')
+        : t('bank.bankGekoppeldMeer', { count: accounts }),
     )
     void (async () => {
       try {
@@ -1392,16 +1394,18 @@ export default function BankClient() {
           body: JSON.stringify({}),
         })
         const json = await res.json()
-        if (!res.ok) { showToast(failureText(res.status, json, 'Ophalen mislukt.')); return }
+        if (!res.ok) { showToast(failureText(res.status, json, t('bank.fout.ophalen'))); return }
         const inserted = Number(json.inserted ?? 0)
         const unread = Array.isArray(json.warnings) ? json.warnings.length : 0
         // Nooit stil een transactie kwijtraken — dezelfde regel als bij een upload.
         showToast(
           unread > 0
-            ? `${inserted} transacties opgehaald · ${unread} regel${unread === 1 ? '' : 's'} kon${unread === 1 ? '' : 'den'} niet gelezen worden.`
+            ? (unread === 1
+                ? t('bank.opgehaaldOnleesbaarEen', { inserted })
+                : t('bank.opgehaaldOnleesbaar', { inserted, count: unread }))
             : inserted > 0
-              ? `${inserted} transacties opgehaald.`
-              : 'Nog geen transacties bij je bank gevonden.',
+              ? t('bank.opgehaaldAantal', { count: inserted })
+              : t('bank.geenTransactiesBank'),
         )
         if (inserted > 0) { await runMatch(); await loadStatements() }
       } catch {
@@ -1432,47 +1436,50 @@ export default function BankClient() {
               {t('bank.betalingVerplaatsen')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 18px' }}>
-              Deze betaling staat nu op {moveCtx.source.invoice_number ? `factuur ${moveCtx.source.invoice_number}` : 'een factuur'}
-              {moveCtx.source.client_name ? ` van ${moveCtx.source.client_name}` : ''}. Kies de factuur waar hij bij hoort —
-              het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.
+              {moveCtx.source.invoice_number
+                ? (moveCtx.source.client_name
+                    ? t('bank.verplaats.opFactuurVan', { number: moveCtx.source.invoice_number, name: moveCtx.source.client_name })
+                    : t('bank.verplaats.opFactuur', { number: moveCtx.source.invoice_number }))
+                : (moveCtx.source.client_name
+                    ? t('bank.verplaats.opEenFactuurVan', { name: moveCtx.source.client_name })
+                    : t('bank.verplaats.opEenFactuur'))}{' '}
+              {t('bank.verplaats.kies')}
             </p>
 
             {moveCtx.payments.map(pm => (
               <div key={pm.id} style={{ marginBottom: 18 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
                   {eur.format(pm.amount_applied)}
-                  {pm.method === 'kas' ? ' · Contant' : pm.transaction_id ? ' · Bank' : ''}
+                  {pm.method === 'kas' ? ` · ${t('lijst.contant')}` : pm.transaction_id ? ` · ${t('lijst.bank')}` : ''}
                 </div>
                 {!pm.movable ? (
                   <p style={{ fontSize: 13, color: '#9a5b00', background: '#fff4e5', border: '1px solid #ffd9a8', borderRadius: R.sm, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
-                    Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Ontkoppel hem
-                    en boek hem opnieuw op de juiste factuur.
+                    {t('bank.verplaats.geenBedrag')}
                   </p>
                 ) : pm.targets.length === 0 ? (
                   <p style={{ fontSize: 13, color: '#5F6368', background: '#F8F9FA', borderRadius: R.sm, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
-                    Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling
-                    ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {eur.format(pm.amount_applied)} op open staat.
+                    {t('bank.verplaats.geenDoel', { amount: eur.format(pm.amount_applied) })}
                   </p>
                 ) : (
-                  pm.targets.map(t => {
+                  pm.targets.map(tgt => {
                     // [OPEN-TOTAL] De zesde plek die openstaand zelf uitrekende. Dezelfde som,
                     // maar openAmount rondt op centen af én laat de status beslissen — en dat
                     // laatste is waarom deze regel de gedeelde functie moet gebruiken en niet
                     // openBalanceFromAmounts: MoveTarget draagt vandaag geen status, dus beide
                     // geven nu hetzelfde getal. Krijgt hij er ooit één, dan klopt deze regel
                     // vanzelf mee, terwijl de losse som stil verkeerd zou blijven.
-                    const open = openAmount(t)
+                    const open = openAmount(tgt)
                     return (
                       <button
-                        key={t.id}
-                        onClick={() => doMove(pm.id, t)}
+                        key={tgt.id}
+                        onClick={() => doMove(pm.id, tgt)}
                         style={{ width: '100%', textAlign: 'start', marginBottom: 8, padding: '12px 14px', borderRadius: R.sm, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', cursor: 'pointer', fontFamily: FONT, display: 'block' }}
                       >
                         <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
-                          {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
+                          {tgt.invoice_number || t('bank.geenNummer')} · {tgt.client_name || '—'}
                         </div>
                         <div style={{ fontSize: 12.5, color: '#5F6368', marginTop: 2 }}>
-                          {eur.format(Math.abs(Number(t.total_inc_btw ?? 0)))} · nog {eur.format(open)} open
+                          {eur.format(Math.abs(Number(tgt.total_inc_btw ?? 0)))} · {t('bank.nogOpenBedrag', { amount: eur.format(open) })}
                         </div>
                       </button>
                     )
@@ -1494,7 +1501,7 @@ export default function BankClient() {
           (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
           removed. The descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
-        Koppel je bank of upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
+        {t('bank.intro')}
       </p>
 
       {/* [ENABLEBANKING] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
@@ -1518,10 +1525,10 @@ export default function BankClient() {
           <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#B06000' }}>label_important</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
-              {uncatCount === 1 ? '1 banktransactie nog niet gecategoriseerd' : `${uncatCount} banktransacties nog niet gecategoriseerd`}
+              {uncatCount === 1 ? t('bank.uncatEen') : t('bank.uncat', { count: uncatCount })}
             </span>
             <span style={{ display: 'block', fontSize: 12, color: '#7A4F00', marginTop: 1 }}>
-              Dit geld telt nog niet mee in je winst &amp; verlies en BTW. Geef het een categorie →
+              {t('bank.uncatUitleg')}
             </span>
           </span>
         </Link>
@@ -1546,9 +1553,9 @@ export default function BankClient() {
           {busy ? 'hourglass_empty' : 'upload_file'}
         </span>
         <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onPrimaryContainer }}>
-          {busy ? 'Bezig…' : dragActive ? 'Laat los om te uploaden' : 'Kies bankafschrift'}
+          {busy ? t('bank.bezig') : dragActive ? t('bank.laatLos') : t('bank.kiesAfschrift')}
         </span>
-        <span style={{ fontSize: 12, color: '#41618a' }}>CAMT.053 (.xml) of MT940 (.940 / .sta / .txt)</span>
+        <span style={{ fontSize: 12, color: '#41618a' }}>{t('bank.formaten')}</span>
         {/* [BANK-DND] Tell the owner drag-and-drop is available. */}
         {!busy && !dragActive && (
           <span style={{ fontSize: 11.5, color: '#5b7aa8' }}>{t('bank.upload.sleep')}</span>
@@ -1559,13 +1566,13 @@ export default function BankClient() {
       {/* Upload summary */}
       {uploadInfo && (
         <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: R.md, background: M3.surface, boxShadow: EL1, fontSize: 13, color: '#3c4043' }}>
-          <strong>{uploadInfo.format}</strong> · {uploadInfo.parsed} transacties gelezen ·{' '}
-          {uploadInfo.inserted} nieuw{uploadInfo.skipped > 0 ? ` · ${uploadInfo.skipped} dubbel overgeslagen` : ''}
+          <strong>{uploadInfo.format}</strong> · {t('bank.upload.gelezen', { parsed: uploadInfo.parsed, inserted: uploadInfo.inserted })}
+          {uploadInfo.skipped > 0 ? ` · ${t('bank.upload.dubbel', { count: uploadInfo.skipped })}` : ''}
           {/* [R2] Never silently short a transaction: if lines couldn't be read, say so —
               they're in the stored file for the accountant, but not in this overview. */}
           {uploadInfo.unreadable > 0 && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: R.sm, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, fontWeight: 600 }}>
-              ⚠ {uploadInfo.unreadable} regel{uploadInfo.unreadable === 1 ? '' : 's'} kon{uploadInfo.unreadable === 1 ? '' : 'den'} niet gelezen worden en {uploadInfo.unreadable === 1 ? 'staat' : 'staan'} niet in je overzicht. Het originele bestand is wél bewaard voor je boekhouder — controleer die regel{uploadInfo.unreadable === 1 ? '' : 's'}.
+              ⚠ {uploadInfo.unreadable === 1 ? t('bank.upload.onleesbaarEen') : t('bank.upload.onleesbaar', { count: uploadInfo.unreadable })}
             </div>
           )}
           {/* [BANK-BALANCE §2.6] The statement doesn't tie out to its own begin/eindsaldo → a bank
@@ -1585,7 +1592,7 @@ export default function BankClient() {
               die je ook hoort als hij slaagt, is een bewijs. */}
           {!uploadInfo.balanceWarning && uploadInfo.balanceReconciliation?.checkable && uploadInfo.balanceReconciliation.ok && (
             <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: R.sm, background: '#E6F4EA', color: '#1E6C33', fontSize: 12.5, fontWeight: 600, lineHeight: 1.45 }}>
-              ✓ Dit afschrift sluit aan, tot op de cent: beginsaldo {eur.format(uploadInfo.balanceReconciliation.opening ?? 0)} plus {uploadInfo.balanceReconciliation.txCount} mutaties komt uit op eindsaldo {eur.format(uploadInfo.balanceReconciliation.closing ?? 0)}. Er ontbreekt geen regel.
+              ✓ {t('bank.saldoSluit', { opening: eur.format(uploadInfo.balanceReconciliation.opening ?? 0), count: uploadInfo.balanceReconciliation.txCount, closing: eur.format(uploadInfo.balanceReconciliation.closing ?? 0) })}
             </div>
           )}
           {/* [STATEMENT-CONTINUITY] Het gat TUSSEN twee afschriften: een ontbrekende periode of
@@ -1618,7 +1625,7 @@ export default function BankClient() {
               <button
                 onClick={forceRematch}
                 disabled={rematching}
-                title="Kijkt opnieuw naar alle regels — ook de genegeerde — en koppelt wat inmiddels zeker is"
+                title={t('bank.rematch.titel')}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${M3.surfaceVariant}`,
                   background: '#fff', borderRadius: R.full, padding: '5px 11px', cursor: rematching ? 'default' : 'pointer',
@@ -1628,7 +1635,7 @@ export default function BankClient() {
                 <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
                   {rematching ? 'hourglass_empty' : 'restart_alt'}
                 </span>
-                {rematching ? 'Bezig…' : 'Opnieuw matchen'}
+                {rematching ? t('bank.bezig') : t('bank.opnieuwMatchen')}
               </button>
               <button
                 onClick={refreshNames}
@@ -1642,7 +1649,7 @@ export default function BankClient() {
                 <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
                   {refreshingNames ? 'hourglass_empty' : 'refresh'}
                 </span>
-                {refreshingNames ? 'Bezig…' : 'Namen bijwerken'}
+                {refreshingNames ? t('bank.bezig') : t('bank.namenBijwerken')}
               </button>
             </div>
           </div>
@@ -1653,13 +1660,13 @@ export default function BankClient() {
           {rematchInfo && (
             <div style={{ padding: '10px 14px', borderBottom: '1px solid #F0F0F0', background: '#F8F9FA', fontSize: 12.5, color: '#3c4043', lineHeight: 1.5 }}>
               {rematchInfo.restored === 0 && rematchInfo.booked === 0 && rematchInfo.ambiguous === 0 ? (
-                <>Alle {rematchInfo.examined} regels opnieuw bekeken — er was niets nieuws te koppelen.</>
+                <>{t('bank.rematch.alles', { count: rematchInfo.examined })}</>
               ) : (
                 <>
-                  {rematchInfo.restored > 0 && <><strong>{rematchInfo.restored}</strong> genegeerde {rematchInfo.restored === 1 ? 'regel staat' : 'regels staan'} weer in de lijst. </>}
-                  {rematchInfo.booked > 0 && <><strong>{rematchInfo.booked}</strong> {rematchInfo.booked === 1 ? 'betaling is' : 'betalingen zijn'} automatisch gekoppeld. </>}
+                  {rematchInfo.restored > 0 && <><strong>{rematchInfo.restored}</strong> {rematchInfo.restored === 1 ? t('bank.rematch.hersteldEen') : t('bank.rematch.hersteld')} </>}
+                  {rematchInfo.booked > 0 && <><strong>{rematchInfo.booked}</strong> {rematchInfo.booked === 1 ? t('bank.rematch.geboektEen') : t('bank.rematch.geboekt')} </>}
                   {rematchInfo.ambiguous > 0 && (
-                    <>Bij <strong>{rematchInfo.ambiguous}</strong> genegeerde {rematchInfo.ambiguous === 1 ? 'regel past' : 'regels passen'} nu wel een factuur, maar niet één duidelijke — die {rematchInfo.ambiguous === 1 ? 'laat ik' : 'laat ik'} met rust. Kijk bij <strong>{t('bank.genegeerd')}</strong> als je ze zelf wilt koppelen.</>
+                    <>{rematchInfo.ambiguous === 1 ? t('bank.rematch.ambiguEen') : t('bank.rematch.ambigu', { count: rematchInfo.ambiguous })}</>
                   )}
                 </>
               )}
@@ -1711,12 +1718,12 @@ export default function BankClient() {
             <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>bolt</span>
             <div style={{ fontSize: 15, fontWeight: 700, color: M3.onPrimaryContainer }}>
               {autoRunning
-                ? `Ik handel ${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} voor je af…`
-                : `${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} klaar om af te handelen`}
+                ? (safeAutoCount === 1 ? t('bank.auto.bezigEen') : t('bank.auto.bezig', { count: safeAutoCount }))
+                : (safeAutoCount === 1 ? t('bank.auto.klaarEen') : t('bank.auto.klaar', { count: safeAutoCount }))}
             </div>
           </div>
           <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 12px', lineHeight: 1.5 }}>
-            Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.
+            {t('bank.auto.uitleg')}
           </div>
           {/* [BANK-AUTO-RUN] The app already books these on load; this button is only a manual
               re-trigger if the automatic pass was interrupted (e.g. a network hiccup). */}
@@ -1731,7 +1738,7 @@ export default function BankClient() {
             }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
-            {autoRunning ? 'Bezig…' : 'Nu afhandelen'}
+            {autoRunning ? t('bank.bezig') : t('bank.nuAfhandelen')}
           </button>
         </div>
       )}
@@ -1739,7 +1746,7 @@ export default function BankClient() {
         <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.successContainer, padding: '14px 16px' }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: M3.success, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>task_alt</span>
-            Ik heb {autoDoneCount} {autoDoneCount === 1 ? 'betaling' : 'betalingen'} automatisch afgehandeld
+            {autoDoneCount === 1 ? t('bank.auto.gedaanEen') : t('bank.auto.gedaan', { count: autoDoneCount })}
           </div>
           <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>{t('bank.rustig')}</div>
         </div>
@@ -1754,8 +1761,8 @@ export default function BankClient() {
               per quarter so it's obvious no data was deleted — only filtered. */}
           {quarters.length >= 2 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18, alignItems: 'center' }}>
-              <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 700 }}>Kwartaal:</span>
-              {([{ key: 'all', label: 'Alle', count: null as number | null }, ...quarters.map((q) => ({ key: q.key, label: quarterLabelOf(q.key), count: q.count }))]).map((q) => {
+              <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 700 }}>{t('bank.kwartaal')}</span>
+              {([{ key: 'all', label: t('bank.alle'), count: null as number | null }, ...quarters.map((q) => ({ key: q.key, label: quarterLabelOf(q.key), count: q.count }))]).map((q) => {
                 const active = q.key === 'all' ? quarterSel === 'all' : effectiveQuarter === q.key
                 return (
                   <button
@@ -1815,11 +1822,11 @@ export default function BankClient() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B26A00' }}>receipt_long</span>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#7A4B00' }}>
-                  {missingPurchaseDebits.length} {missingPurchaseDebits.length === 1 ? 'betaling' : 'betalingen'} zonder inkoopfactuur
+                  {missingPurchaseDebits.length === 1 ? t('bank.zonderInkoopEen') : t('bank.zonderInkoop', { count: missingPurchaseDebits.length })}
                 </div>
               </div>
               <div style={{ fontSize: 12.5, color: '#7A4B00', margin: '6px 0 12px', lineHeight: 1.5 }}>
-                Je hebt betaald, maar we hebben de factuur nog niet. Zonder factuur mis je de BTW-aftrek (voorbelasting) op deze kosten. Voeg de factuur toe, of haal je e-mail opnieuw op — dan koppelen we hem automatisch.
+                {t('bank.zonderInkoopUitleg')}
               </div>
               <Link
                 href="/dashboard/incoming"
@@ -1839,7 +1846,7 @@ export default function BankClient() {
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
           {bankTab === 'none' && noMatch.length > 0 && (
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
-              Leveranciers zonder gevonden factuur. Koppel het bestand, of negeer de transactie als er geen factuur bij hoort (zoals huur of een lening).
+              {t('bank.geenFactuurUitleg')}
             </p>
           )}
 
@@ -1901,13 +1908,13 @@ export default function BankClient() {
           {/* Empty-filter hint — any tab */}
           {filterText.trim() && activeListRaw.length > 0 && activeList.length === 0 && (
             <p style={{ fontSize: 13, color: '#70757a', margin: '14px 2px 0' }}>
-              Geen transacties gevonden voor “{filterText.trim()}”.
+              {t('bank.zoekLeeg', { query: filterText.trim() })}
             </p>
           )}
 
           {bankTab === 'pin' && posList.length > 0 && (
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
-              Pinontvangsten via de betaalautomaat (ING DD&C). Deze hebben geen factuur — ze staan hier zodat ze je openstaande werk niet in de weg zitten.
+              {t('bank.pinUitleg')}
             </p>
           )}
 
@@ -1930,11 +1937,11 @@ export default function BankClient() {
                 background: '#FEF7E0', border: '1px solid #FCE8B2', fontFamily: FONT,
                 fontSize: 12.5, color: '#7C5800', lineHeight: 1.5,
               }}>
-                {ignoredInQ.length === 1 ? '1 genegeerde regel' : `${ignoredInQ.length} genegeerde regels`}
-                {' '}van samen {eur.format(total)}
-                {big > 0 && <>, waarvan {big === 1 ? 'één' : big} boven de € 500</>}.
-                {' '}Deze staan in geen enkel cijfer en je boekhouder ziet ze niet — loop ze nog
-                even na voordat je het kwartaal afsluit.
+                {ignoredInQ.length === 1
+                  ? t('bank.genegeerdSomEen', { total: eur.format(total) })
+                  : t('bank.genegeerdSom', { count: ignoredInQ.length, total: eur.format(total) })}
+                {big > 0 && <>{big === 1 ? t('bank.genegeerdGrootEen') : t('bank.genegeerdGroot', { count: big })}</>}.
+                {' '}{t('bank.genegeerdNaloop')}
               </div>
             )
           })()}
@@ -1956,11 +1963,11 @@ export default function BankClient() {
                   style={{ border: 'none', background: 'none', cursor: batchRunning ? 'default' : 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, color: M3.primary, padding: 0 }}
                 >
                   {batchEligibleList.every((s) => selectedForBatch.has(s.transactionId)) && batchSelectedCount > 0
-                    ? 'Selectie wissen'
-                    : `Selecteer alle (${batchEligibleList.length})`}
+                    ? t('bank.selectieWissen')
+                    : t('bank.selecteerAlle', { count: batchEligibleList.length })}
                 </button>
                 <span style={{ fontSize: 12.5, color: '#5F6368', marginInlineStart: 'auto' }}>
-                  {batchSelectedCount > 0 ? `${batchSelectedCount} geselecteerd` : 'Vink sterke matches aan'}
+                  {batchSelectedCount > 0 ? t('bank.geselecteerd', { count: batchSelectedCount }) : t('bank.vinkAan')}
                 </span>
                 <button
                   onClick={confirmBatch}
@@ -1971,7 +1978,7 @@ export default function BankClient() {
                     background: batchSelectedCount === 0 || batchRunning ? '#dadce0' : M3.primary, color: '#fff',
                   }}
                 >
-                  {batchRunning ? 'Bezig…' : `Bevestig betaling (${batchSelectedCount})`}
+                  {batchRunning ? t('bank.bezig') : t('bank.bevestigAantal', { count: batchSelectedCount })}
                 </button>
               </div>
             )}
@@ -2009,11 +2016,11 @@ export default function BankClient() {
             ))}
             {activeList.length === 0 && (
               <div style={{ textAlign: 'center', padding: '32px 20px', color: '#70757a', fontSize: 13.5 }}>
-                {bankTab === 'confirm' ? 'Niets te bevestigen.'
-                  : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
-                  : bankTab === 'pin' ? 'Geen pinontvangsten.'
-                  : bankTab === 'ignored' ? 'Niets genegeerd.'
-                  : 'Nog niets gekoppeld.'}
+                {bankTab === 'confirm' ? t('bank.leeg.confirm')
+                  : bankTab === 'none' ? t('bank.leeg.none')
+                  : bankTab === 'pin' ? t('bank.leeg.pin')
+                  : bankTab === 'ignored' ? t('bank.leeg.ignored')
+                  : t('bank.leeg.done')}
               </div>
             )}
           </div>
@@ -2057,7 +2064,7 @@ export default function BankClient() {
             <p style={{ fontSize: 13, color: '#5F6368', margin: '8px 0 16px', lineHeight: 1.5 }}>{splitCtx.detail}</p>
 
             <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 6 }}>
-              Welk deel hoort op {splitCtx.invoiceNumber ?? 'deze factuur'}?
+              {splitCtx.invoiceNumber ? t('bank.welkDeelNummer', { number: splitCtx.invoiceNumber }) : t('bank.welkDeelFactuur')}
             </label>
             <input
               inputMode="decimal"
@@ -2067,8 +2074,7 @@ export default function BankClient() {
               style={{ width: '100%', boxSizing: 'border-box', padding: '13px 14px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 16, fontFamily: FONT_NUM, marginBottom: 6 }}
             />
             <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 16px', lineHeight: 1.45 }}>
-              De rest blijft op deze betaling staan, zodat je hem koppelt zodra de andere factuur
-              binnen is.
+              {t('bank.restBlijft')}
             </p>
 
             <button
@@ -2117,8 +2123,8 @@ export default function BankClient() {
             >
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>upload_file</span>
               {addingMissing
-                ? 'Bezig met inlezen…'
-                : `Voeg ${splitCtx.missingNumbers.length === 1 ? 'die factuur' : 'die facturen'} nu toe`}
+                ? t('bank.inlezen')
+                : splitCtx.missingNumbers.length === 1 ? t('bank.voegFactuurToe') : t('bank.voegFacturenToe')}
             </button>
             <button
               onClick={() => { setSplitCtx(null); setSplitAmount('') }}
@@ -2137,7 +2143,7 @@ export default function BankClient() {
           <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>{t('lijst.verwerkt')}</h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
-              De boekhouder heeft factuur {verwerktCtx.number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je deze koppelt.
+              {t('bank.verwerktUitleg', { number: verwerktCtx.number })}
             </p>
             <button
               onClick={() => setVerwerktCtx(null)}
@@ -2169,7 +2175,7 @@ export default function BankClient() {
               <strong style={{ color: '#3c4043' }}>{statementToDelete.name}</strong>
             </p>
             <p style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
-              Zorg dat je de juiste versie hebt geüpload. Dit kan niet ongedaan worden gemaakt. Je transacties blijven behouden.
+              {t('bank.afschrift.verwijderenUitleg')}
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button
@@ -2219,10 +2225,10 @@ export default function BankClient() {
               <strong style={{ color: '#3c4043' }}>{formatNotice.name}</strong>
             </p>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 10px' }}>
-              Dit bestand is bewaard voor je boekhouder, maar de transacties konden niet worden uitgelezen voor het overzicht.
+              {t('bank.formaat.bewaard')}
             </p>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
-              {t('bank.upload.als')} <strong style={{ color: '#3c4043' }}>CAMT.053 (.xml)</strong> of <strong style={{ color: '#3c4043' }}>MT940 (.940 / .sta / .txt)</strong> om de transacties te koppelen. CSV en PDF kunnen niet worden uitgelezen.
+              {t('bank.upload.als')} <strong style={{ color: '#3c4043' }}>CAMT.053 (.xml)</strong> {t('bank.of')} <strong style={{ color: '#3c4043' }}>MT940 (.940 / .sta / .txt)</strong> {t('bank.formaat.omTeKoppelen')}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button
@@ -2246,10 +2252,11 @@ export default function BankClient() {
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 function Empty({ done }: { done: boolean }) {
+  const t = translator(useLocale())
   return (
     <div style={{ marginTop: 28, textAlign: 'center', color: '#9aa0a6' }}>
       <span className="material-symbols-outlined" style={{ fontSize: 40 }}>{done ? 'done_all' : 'inbox'}</span>
-      <p style={{ fontSize: 13.5, marginTop: 6 }}>{done ? 'Alles afgehandeld.' : 'Nog geen transacties om te koppelen.'}</p>
+      <p style={{ fontSize: 13.5, marginTop: 6 }}>{done ? t('bank.leeg.klaar') : t('bank.leeg.geen')}</p>
     </div>
   )
 }
@@ -2414,10 +2421,10 @@ function TxCard({
   const refLabel =
     slotNumbers.length === 0
       ? (isDoneTab && doneNumbers.length > 0
-          ? (doneNumbers.length === 1 ? doneNumbers[0] : `${doneNumbers.length} facturen`)
+          ? (doneNumbers.length === 1 ? doneNumbers[0] : t('bank.nFacturen', { count: doneNumbers.length }))
           : null)
       : slotNumbers.length === 1 ? slotNumbers[0]
-      : `${slotNumbers.length} facturen`
+      : t('bank.nFacturen', { count: slotNumbers.length })
   const slots = wasMulti
     ? slotNumbers.map((refNum) => {
         const key = normRef(refNum)
@@ -2476,7 +2483,7 @@ function TxCard({
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
-            {processing ? 'Bezig…' : 'Ontkoppelen'}
+            {processing ? t('bank.bezig') : t('bank.ontkoppelen')}
           </button>
           {/* [MOVE-PAYMENT] The other answer, and a different question from Ontkoppelen. That one
               says "this booking should not exist" and leaves the line unmatched; this one says
@@ -2506,7 +2513,7 @@ function TxCard({
           <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000', flexShrink: 0 }}>rule</span>
           <div style={{ minWidth: 0, flex: 1 }}>
             <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
-              {t('bank.automatischOp')} <strong>bedrag + naam</strong> (geen factuurnummer in het afschrift). Even controleren of dit de juiste factuur is.
+              {t('bank.automatischOp')} <strong>{t('bank.bedragNaam')}</strong> {t('bank.automatischOpRest')}
             </span>
             {/* [KAS-AUTO-BOOK] The warning had one answer — "Ontkoppelen" above — and the other
                 answer, "I looked and it is right", had no button at all. That gap is what makes a
@@ -2528,7 +2535,7 @@ function TxCard({
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
-                Klopt, gecontroleerd
+                {t('bank.kloptGecontroleerd')}
               </button>
             )}
           </div>
@@ -2551,7 +2558,7 @@ function TxCard({
           )}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {s.counterpart || 'Onbekende tegenpartij'}
+              {s.counterpart || t('verd.onbekendeTegenpartij')}
             </div>
           <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span>{s.date}</span>
@@ -2616,7 +2623,7 @@ function TxCard({
           fontFamily: FONT, border: '1px solid #EEE',
         }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, color: '#70757a', marginBottom: 3, letterSpacing: 0.4 }}>
-            OMSCHRIJVING
+            {t('bank.omschrijvingKop')}
           </div>
           {cleanBankDescription(s.description)}
         </div>
@@ -2642,8 +2649,10 @@ function TxCard({
           <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#1A73E8', flexShrink: 0, marginTop: 1 }}>history</span>
           <span>
             {s.history.topCount === s.history.count
-              ? <>Eerder {s.history.count === 1 ? 'één keer' : `${s.history.count} keer`} van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'}, {s.history.count === 1 ? 'geboekt' : 'steeds geboekt'} als <b>{categoryLabel(s.history.topCategory)}</b>.</>
-              : <>Eerder {s.history.count} keer van {s.history.matchedBy === 'iban' ? 'deze tegenrekening' : 'deze naam'} — {s.history.topCount}× als <b>{categoryLabel(s.history.topCategory)}</b>, de rest anders.</>}
+              ? (s.history.count === 1
+                  ? t(s.history.matchedBy === 'iban' ? 'bank.historie.eenIban' : 'bank.historie.eenNaam', { category: categoryLabel(s.history.topCategory) })
+                  : t(s.history.matchedBy === 'iban' ? 'bank.historie.steedsIban' : 'bank.historie.steedsNaam', { count: s.history.count, category: categoryLabel(s.history.topCategory) }))
+              : t(s.history.matchedBy === 'iban' ? 'bank.historie.meestIban' : 'bank.historie.meestNaam', { count: s.history.count, topCount: s.history.topCount, category: categoryLabel(s.history.topCategory) })}
           </span>
         </div>
       )}
@@ -2697,10 +2706,10 @@ function TxCard({
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
               {openCount === 0 ? 'task_alt' : 'receipt_long'}
             </span>
-            {slots.length - openCount}/{slots.length} bevestigd
+            {t('bank.slotsBevestigd', { done: slots.length - openCount, total: slots.length })}
             {openCount > 0 && (
               <span style={{ fontWeight: 500, opacity: 0.9 }}>
-                · Nog open: {slots.filter((sl) => !sl.isConfirmed).map((sl) => sl.refNum).join(', ')}
+                · {t('bank.nogOpenLijst', { numbers: slots.filter((sl) => !sl.isConfirmed).map((sl) => sl.refNum).join(', ') })}
               </span>
             )}
             {/* [BANK-ONE-PAYMENT-MANY-INVOICES] What is still UNASSIGNED of this payment. The
@@ -2708,7 +2717,7 @@ function TxCard({
                 plainly, and they are what the owner is actually looking for. */}
             {unassignedAmount != null && unassignedAmount > 0.01 && (
               <span style={{ fontWeight: 500, opacity: 0.9, width: '100%' }}>
-                {eur.format(s.appliedAmount ?? 0)} van {eur.format(Math.abs(s.amount))} geboekt · nog {eur.format(unassignedAmount)} toe te wijzen
+                {t('bank.toeTeWijzen', { applied: eur.format(s.appliedAmount ?? 0), total: eur.format(Math.abs(s.amount)), open: eur.format(unassignedAmount) })}
               </span>
             )}
           </div>
@@ -2724,10 +2733,20 @@ function TxCard({
             }}>
               <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
-                Dit bedrag is precies de som van {s.sumMatch.invoiceIds.length} openstaande facturen
+                {(s.sumMatch.amounts ?? []).some(a => a < 0)
+                  ? t('bank.som.kopVerrekend')
+                  : t('bank.som.kop', { count: s.sumMatch.invoiceIds.length })}
               </div>
               <div style={{ margin: '4px 0 8px' }}>
-                {s.sumMatch.invoiceNumbers.filter(Boolean).join(' + ')} = {eur.format(s.sumMatch.total)} — zelfde {s.amount < 0 ? 'leverancier' : 'klant'}, geen nummer in de omschrijving. Controleer en koppel ze samen.
+                {/* [CREDIT-VERREKEN] Each number with the sign of what it does to the payment. A
+                    creditnota joined by " + " would print "1.764,76 + 52,38 = 1.712,38" — an
+                    arithmetic that fails in front of the owner on the screen asking them to
+                    confirm it. Falls back to the old join when the response carries no amounts. */}
+                {s.sumMatch.invoiceNumbers
+                  .map((n, i) => ({ n, a: s.sumMatch?.amounts?.[i] ?? 0 }))
+                  .filter(x => !!x.n)
+                  .map((x, i) => `${i === 0 ? '' : x.a < 0 ? ' − ' : ' + '}${x.n}`)
+                  .join('')} = {eur.format(s.sumMatch.total)} {t(s.amount < 0 ? 'bank.som.leverancier' : 'bank.som.klant')}
               </div>
               <button
                 onClick={onConfirmSum}
@@ -2740,7 +2759,7 @@ function TxCard({
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{processing ? 'hourglass_empty' : 'link'}</span>
-                {processing ? 'Bezig…' : `Koppel deze ${s.sumMatch.invoiceIds.length} facturen`}
+                {processing ? t('bank.bezig') : t('bank.som.koppel', { count: s.sumMatch.invoiceIds.length })}
               </button>
             </div>
           )}
@@ -2763,11 +2782,13 @@ function TxCard({
               <span>
                 {batch.status === 'ties'
                   ? (batch.matchedCount >= 2
-                      ? <><strong>Samen {eur.format(batch.total)}</strong> — precies gelijk aan de afschrijving. Alle {batch.slotCount} factuurnummers staan in je bankafschrift.</>
-                      : <><strong>{eur.format(batch.total)}</strong> en het factuurnummer staan in je bankafschrift.</>)
+                      ? t('bank.batch.ties', { amount: eur.format(batch.total), count: batch.slotCount })
+                      : t('bank.batch.tiesEen', { amount: eur.format(batch.total) }))
                   : batch.status === 'mismatch'
-                    ? <>{batch.matchedCount >= 2 ? 'Samen ' : ''}<strong>{eur.format(batch.total)}</strong>, maar er is {eur.format(batch.bankAmount)} afgeschreven (verschil {eur.format(Math.abs(batch.diff))}). Controleer welke {batch.matchedCount >= 2 ? 'facturen' : 'factuur'} bij deze betaling {batch.matchedCount >= 2 ? 'horen' : 'hoort'}.</>
-                    : <>{batch.matchedCount} van {batch.slotCount} facturen staan in je administratie. De factuurnummers staan in je bankafschrift — koppel de ontbrekende.</>}
+                    ? (batch.matchedCount >= 2
+                        ? t('bank.batch.mismatch', { total: eur.format(batch.total), bank: eur.format(batch.bankAmount), diff: eur.format(Math.abs(batch.diff)) })
+                        : t('bank.batch.mismatchEen', { total: eur.format(batch.total), bank: eur.format(batch.bankAmount), diff: eur.format(Math.abs(batch.diff)) }))
+                    : t('bank.batch.ontbreekt', { matched: batch.matchedCount, total: batch.slotCount })}
               </span>
             </div>
           )}
@@ -2919,8 +2940,7 @@ function TxCard({
               background: '#F8F9FA', border: '1px solid #EEE', fontFamily: FONT,
             }}>
               <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 8px', lineHeight: 1.45 }}>
-                Waarom heeft deze regel geen factuur nodig? Dit is alleen een aantekening — je
-                boekhouder ziet hem terug bij het kwartaal.
+                {t('bank.redenVraag')}
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {BANK_IGNORE_REASONS.map((r) => (
@@ -2994,7 +3014,7 @@ function TxCard({
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
                   {processing ? 'hourglass_empty' : 'undo'}
                 </span>
-                {processing ? 'Bezig…' : 'Terugzetten'}
+                {processing ? t('bank.bezig') : t('bank.terugzetten')}
               </button>
             </>
           ) : (
@@ -3032,8 +3052,8 @@ function TxCard({
                   {processing ? 'hourglass_empty' : 'attach_file'}
                 </span>
                 {processing
-                  ? 'Verwerken…'
-                  : slotNumbers.length > 1 ? `Facturen koppelen (${slotNumbers.length})` : 'Factuur koppelen'}
+                  ? t('bank.verwerken')
+                  : slotNumbers.length > 1 ? t('bank.facturenKoppelen', { count: slotNumbers.length }) : t('bank.factuurKoppelen')}
               </label>
               {/* [BETAALPLAN] De derde uitweg, die er niet was.
                   Er waren er twee: koppel een BESTAND, of negeer de regel. Beide gaan uit van de
@@ -3082,8 +3102,7 @@ function TxCard({
                 background: '#F8F9FA', border: '1px solid #EEE', fontFamily: FONT,
               }}>
                 <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 8px', lineHeight: 1.45 }}>
-                  Waarom heeft deze regel geen factuur nodig? Dit is alleen een aantekening — je
-                  boekhouder ziet hem terug bij het kwartaal.
+                  {t('bank.redenVraag')}
                 </p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {BANK_IGNORE_REASONS.map((r) => (
@@ -3131,7 +3150,7 @@ function TxCard({
               fit. Comparing bedrag + datum is how the owner picks the right one — the old
               bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
-            {t('bank.vergelijk')} <strong>bedrag</strong> en <strong>datum</strong> en kies de juiste.
+            {t('bank.vergelijk')} <strong>{t('bank.vergelijkBedrag')}</strong> {t('bank.vergelijkEn')} <strong>{t('bank.vergelijkDatum')}</strong> {t('bank.vergelijkKies')}
           </div>
           {s.candidates.map((c) => {
             const isSel = selectedInvoiceId === c.invoiceId
@@ -3189,14 +3208,14 @@ function TxCard({
             </span>
             <span>
               {over ? (
-                <>{t('bank.maximaal')} <strong>{eur.format(remaining)}</strong> op deze factuur geboekt.{' '}
-                  <strong>{eur.format(txAbs - remaining)}</strong> blijft over en wordt niet geboekt — controleer of dit de juiste factuur is.</>
+                <>{t('bank.maximaal')} <strong>{eur.format(remaining)}</strong> {t('bank.maximaalGeboekt')}{' '}
+                  <strong>{eur.format(txAbs - remaining)}</strong> {t('bank.blijftOver')}</>
               ) : under ? (
-                <>Deelbetaling: <strong>{eur.format(txAbs)}</strong> wordt geboekt.{' '}
-                  {hasPartial && <>Er was al {eur.format(paidAlready)} betaald. </>}
-                  Daarna staat nog <strong>{eur.format(remaining - txAbs)}</strong> open.</>
+                <>{t('bank.deel.geboekt', { amount: eur.format(txAbs) })}{' '}
+                  {hasPartial && <>{t('bank.deel.alBetaald', { amount: eur.format(paidAlready) })} </>}
+                  {t('bank.deel.daarnaOpen', { amount: eur.format(remaining - txAbs) })}</>
               ) : (
-                <><strong>{eur.format(paidAlready)}</strong> al betaald · <strong>{eur.format(remaining)}</strong> restant — hiermee is de factuur volledig betaald.</>
+                <>{t('bank.deel.voltooid', { paid: eur.format(paidAlready), remaining: eur.format(remaining) })}</>
               )}
             </span>
           </div>
@@ -3234,14 +3253,15 @@ function fmtInvoiceDate(iso: string | null): string {
   if (!m) return ''
   return `${Number(m[3])} ${NL_MONTHS[Number(m[2]) - 1]} ${m[1]}`
 }
-// [BANK-CHOICE-CLARITY] Plain-Dutch reason a candidate is offered, from the engine's own
+// [BANK-CHOICE-CLARITY] Plain-language reason a candidate is offered, from the engine's own
 // match signals — so "why is this here?" is answered instead of a bare invoice number.
-const WHY_LABEL: Record<string, string> = {
-  amount: 'bedrag komt overeen',
-  counterpart: 'zelfde tegenpartij',
-  date: 'datum dichtbij',
-  reference: 'nummer in omschrijving',
-}
+// [TAAL] Keys, not sentences: the module is shared, the language belongs to the caller's `t`.
+const WHY_KEY = {
+  amount: 'bank.why.amount',
+  counterpart: 'bank.why.counterpart',
+  date: 'bank.why.date',
+  reference: 'bank.why.reference',
+} as const
 
 function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void }) {
   const t = translator(useLocale())
@@ -3249,14 +3269,17 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
   // invoice's total equals the bank amount — the strongest hint, so highlight it.
   const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
   const why = Array.isArray(cand.signals)
-    ? cand.signals.map((s) => WHY_LABEL[s]).filter(Boolean)
+    ? cand.signals
+        .map((s) => WHY_KEY[s as keyof typeof WHY_KEY])
+        .filter((k): k is (typeof WHY_KEY)[keyof typeof WHY_KEY] => Boolean(k))
+        .map((k) => t(k))
     : []
   return (
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginInlineEnd: 4 }}>task_alt</span>}
-          Factuur {cand.invoiceNumber ?? '—'}
+          {t('bank.factuurNummer', { number: cand.invoiceNumber ?? '—' })}
         </span>
         {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
             when picking between candidates. Green + check when it equals the debit. */}
@@ -3328,8 +3351,8 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
                   match (a PSP/order payment) has NO invoice number in the statement, so we
                   say only that the amount matches — never invent a reference that isn't there. */}
               {Array.isArray(cand.signals) && cand.signals.includes('reference')
-                ? 'Dit bedrag en factuurnummer staan in je bankafschrift'
-                : 'Dit bedrag komt overeen met je bankafschrift'}
+                ? t('bank.proof.metNummer')
+                : t('bank.proof.bedrag')}
             </span>
           )}
           {/* [BANK-INVOICE-FILE] Open the actual invoice PDF before confirming. */}

@@ -21,6 +21,8 @@
 //   · best-effort per schedule: one failure never stops the rest.
 
 import { NextRequest, NextResponse } from "next/server";
+// [REGEL-KOPIE] One definition of "the content of an invoice line" — see invoice-line-copy.ts.
+import { copiedLinesFor } from "@/lib/invoice-line-copy";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
@@ -241,30 +243,13 @@ export async function GET(req: NextRequest) {
         continue;
       }
       if (lines && lines.length > 0) {
+        // [REGEL-KOPIE] Same module as /duplicate and the creditnota mirror. This list was typed
+        // by hand, and [REGEL-KORTING] never reached it: a recurring invoice with a line discount
+        // kept its discounted line_total beside an undiscounted price, and the first save put the
+        // full amount back — € 121,00 where the schedule was set up to bill € 108,90, every month,
+        // on a document nobody re-reads. See invoice-line-copy.ts.
         const { error: lineErr } = await pipeline.from("invoice_lines").insert(
-          // [UNIT] A recurring invoice is a COPY of the same delivery, so the unit travels with
-          // it. Fields are typed over explicitly — a spread would carry the original line's id.
-          lines.map((l) => ({
-            invoice_id: draft.id as string,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            btw_rate: l.btw_rate,
-            line_total: l.line_total,
-            ...(l.unit !== undefined ? { unit: l.unit ?? null } : {}),
-            // [VRIJGESTELD-KOPIE] En de vrijstellingsvlag reist mee, om precies dezelfde reden als
-            // de eenheid — maar met een duurder gevolg als hij dat niet doet.
-            //
-            // Zonder haar wordt een gekopieerde vrijgestelde regel geclassificeerd als BELASTE omzet
-            // tegen 0%. Bij een creditnota betekent dat dat de correctie het origineel niet opheft:
-            // het origineel blijft +EUR 1.000 vrijgestelde omzet en de creditnota landt als -EUR 1.000
-            // in de 0%/verlegd-rubriek. Twee rubrieken tegelijk fout, en 5a/5b blijven kloppen — dus
-            // geen enkel scherm laat het zien.
-            //
-            // Dezelfde harding als overal waar deze vlag wordt geschreven: alleen de letterlijke
-            // waarde 'exempt' telt. Een onbekende waarde wordt NULL, nooit een vrijstelling.
-            ...(l.vat_treatment !== undefined ? { vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null } : {}),
-          })),
+          copiedLinesFor(lines as never, draft.id as string) as never,
         );
         if (lineErr) {
           await pipeline.from("invoices").delete().eq("id", draft.id as string);

@@ -86,8 +86,8 @@ export default function ArtikelenClient() {
         body: JSON.stringify(payload),
       })
       const json = await res.json()
-      if (!res.ok) { setError(failureText(res.status, json, 'Kon niet opslaan.')); return }
-      setShowForm(false); setToast(editingId ? 'Artikel bijgewerkt' : 'Artikel toegevoegd')
+      if (!res.ok) { setError(failureText(res.status, json, t('art.fout.opslaan'))); return }
+      setShowForm(false); setToast(editingId ? t('art.bijgewerkt') : t('art.toegevoegd'))
       await load()
     } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }
   }
@@ -102,17 +102,17 @@ export default function ArtikelenClient() {
 
   async function remove(id: string) {
     const ok = await dialog.confirm({
-      title: 'Dit artikel verwijderen?',
-      message: 'Facturen waarop dit artikel al staat, blijven ongewijzigd.',
-      confirmLabel: 'Verwijderen',
+      title: t('art.verwijderVraag'),
+      message: t('art.verwijderUitleg'),
+      confirmLabel: t('lijst.verwijderen'),
       danger: true,
     })
     if (!ok) return
     try {
       const res = await fetch(`/api/articles/${id}`, { method: 'DELETE' })
-      if (!res.ok) { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
-      setToast('Artikel verwijderd')
-    } catch { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
+      if (!res.ok) { setToast(t('art.fout.verwijderen')); return }
+      setToast(t('art.verwijderd'))
+    } catch { setToast(t('art.fout.verwijderen')); return }
     finally { await load() }
   }
 
@@ -130,12 +130,12 @@ export default function ArtikelenClient() {
   async function removeAll() {
     const used = articles.filter((a) => a.usage_count > 0).length
     const ok = await dialog.confirm({
-      title: `Alle ${articles.length} artikelen verwijderen?`,
+      title: t('art.alles.titel', { n: articles.length }),
       message:
-        'Je facturen veranderen hier niet van — een artikel is een sjabloon, de tekst en het bedrag staan al op de factuur zelf.'
-        + (used > 0 ? ` ${used} van deze artikelen heb je eerder op een factuur gebruikt.` : '')
-        + ' De lijst zelf is daarna weg en komt niet terug.',
-      confirmLabel: 'Alles verwijderen',
+        t('art.alles.uitleg')
+        + (used > 0 ? ` ${t('art.alles.gebruikt', { n: used })}` : '')
+        + ` ${t('art.alles.weg')}`,
+      confirmLabel: t('art.alles.bevestig'),
       danger: true,
     })
     if (!ok) return
@@ -148,9 +148,9 @@ export default function ArtikelenClient() {
         body: JSON.stringify({ confirm: 'ALLES' }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok || !json.ok) { setToast(typeof json.error === 'string' ? json.error : 'Leegmaken mislukt — er is niets verwijderd.'); return }
-      setToast(json.deleted === 1 ? '1 artikel verwijderd' : `${json.deleted} artikelen verwijderd`)
-    } catch { setToast('Leegmaken mislukt — controleer je verbinding'); return }
+      if (!res.ok || !json.ok) { setToast(typeof json.error === 'string' ? json.error : t('art.fout.leegmaken')); return }
+      setToast(json.deleted === 1 ? t('art.verwijderdEen') : t('art.verwijderdMeer', { n: json.deleted }))
+    } catch { setToast(t('art.fout.leegmakenVerbinding')); return }
     finally { await load() }
   }
 
@@ -176,7 +176,7 @@ export default function ArtikelenClient() {
                 style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
             )}
           </div>
-          <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuw</button>
+          <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>{t('art.nieuw')}</button>
         </div>
 
         {/* [ARTIKELEN-WIPE] Only when there is something to empty, and deliberately quiet: a
@@ -188,23 +188,23 @@ export default function ArtikelenClient() {
               onClick={removeAll}
               style={{ background: 'transparent', border: 'none', color: M3.error, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, padding: '4px 2px' }}
             >
-              Alle {articles.length} artikelen verwijderen
+              {t('art.alles.knop', { n: articles.length })}
             </button>
           </div>
         )}
 
         {showForm && (
           <div style={{ background: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 18, marginBottom: 16 }}>
-            <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, margin: '0 0 14px' }}>{editingId ? 'Artikel bewerken' : 'Nieuw artikel'}</p>
+            <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, margin: '0 0 14px' }}>{editingId ? t('art.bewerken') : t('art.nieuwArtikel')}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Field label="Omschrijving *" value={form.description} onChange={(v) => setForm((p) => ({ ...p, description: v }))} placeholder={t('art.voorbeeld')} />
+              <Field label={t('art.omschrijving')} value={form.description} onChange={(v) => setForm((p) => ({ ...p, description: v }))} placeholder={t('art.voorbeeld')} />
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ width: 110 }}><Field label={t('art.code')} value={form.code} onChange={(v) => setForm((p) => ({ ...p, code: v }))} placeholder="22" /></div>
-                <div style={{ flex: 1 }}><Field label="Prijs (excl. BTW)" value={form.unit_price} onChange={(v) => setForm((p) => ({ ...p, unit_price: v }))} placeholder="45,00" inputMode="decimal" /></div>
+                <div style={{ flex: 1 }}><Field label={t('art.prijsExcl')} value={form.unit_price} onChange={(v) => setForm((p) => ({ ...p, unit_price: v }))} placeholder="45,00" inputMode="decimal" /></div>
                 <div style={{ width: 90 }}><Field label={t('art.eenheid')} value={form.unit} onChange={(v) => setForm((p) => ({ ...p, unit: v }))} placeholder="stuk" /></div>
               </div>
               <div>
-                <div style={{ fontSize: 12, color: M3.neutral, marginBottom: 6 }}>BTW-tarief</div>
+                <div style={{ fontSize: 12, color: M3.neutral, marginBottom: 6 }}>{t('art.btwTarief')}</div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {RATES.map((r) => (
                     <button key={r} onClick={() => setForm((p) => ({ ...p, btw_rate: r }))} style={{ flex: 1, padding: '9px 0', borderRadius: R.sm, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, border: `1px solid ${form.btw_rate === r ? M3.primary : M3.outline}`, background: form.btw_rate === r ? M3.primary : M3.surface, color: form.btw_rate === r ? '#fff' : M3.onSurface, fontFamily: FONT }}>{r}%</button>
@@ -214,7 +214,7 @@ export default function ArtikelenClient() {
               {error && <div style={{ color: M3.error, fontSize: 13 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                 <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>{t('lijst.annuleren')}</button>
-                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
+                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? t('corr.opslaanBezig') : t('art.opslaan')}</button>
               </div>
             </div>
           </div>
@@ -224,7 +224,7 @@ export default function ArtikelenClient() {
           <div style={{ height: 160, borderRadius: R.lg, background: '#f1f3f4' }} />
         ) : shown.length === 0 ? (
           <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '40px 0' }}>
-            {search ? 'Geen artikel gevonden.' : 'Nog geen artikelen. Voeg je eerste vaste factuurregel toe.'}
+            {search ? t('art.geenGevonden') : t('art.leeg')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -232,13 +232,13 @@ export default function ArtikelenClient() {
               <div key={a.id} style={{ background: M3.surface, borderRadius: R.md, boxShadow: EL1, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, opacity: a.active ? 1 : 0.55 }}>
                 {a.code && <span style={{ fontFamily: FONT_NUM, fontSize: 13, fontWeight: 700, color: M3.primary, background: M3.primaryContainer, borderRadius: R.sm, padding: '3px 8px', minWidth: 30, textAlign: 'center' }}>{a.code}</span>}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.description}{!a.active && ' · gearchiveerd'}</div>
-                  <div style={{ fontSize: 12.5, color: M3.neutral }}>{a.btw_rate}% BTW{a.unit ? ` · per ${a.unit}` : ''}{a.usage_count > 0 ? ` · ${a.usage_count}× gebruikt` : ''}</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.description}{!a.active && ` · ${t('art.gearchiveerd')}`}</div>
+                  <div style={{ fontSize: 12.5, color: M3.neutral }}>{t('art.btwLabel', { rate: a.btw_rate })}{a.unit ? ` · ${t('art.perEenheid', { unit: a.unit })}` : ''}{a.usage_count > 0 ? ` · ${t('art.keerGebruikt', { n: a.usage_count })}` : ''}</div>
                 </div>
                 <span style={{ fontFamily: FONT_NUM, fontSize: 14, fontWeight: 700, color: M3.onSurface }}>{eur.format(a.unit_price)}</span>
                 <div style={{ display: 'flex', gap: 4 }}>
                   <IconBtn label={t('art.bewerk')} onClick={() => openEdit(a)}>✎</IconBtn>
-                  <IconBtn label={a.active ? 'Archiveer' : 'Herstel'} onClick={() => toggleArchive(a)}>{a.active ? '⌫' : '↩'}</IconBtn>
+                  <IconBtn label={a.active ? t('art.archiveer') : t('art.herstel')} onClick={() => toggleArchive(a)}>{a.active ? '⌫' : '↩'}</IconBtn>
                   <IconBtn label={t('art.verwijder')} onClick={() => remove(a.id)} danger>🗑</IconBtn>
                 </div>
               </div>

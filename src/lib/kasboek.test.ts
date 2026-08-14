@@ -1,6 +1,6 @@
 // [KASBOEK] Pure node test — run: npx tsx src/lib/kasboek.test.ts
 // Validated against the store's REAL "Kiwi 1ste kw 2026" cash book numbers.
-import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry } from "./kasboek";
+import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, kasboekToMatrix, removedInQuarter, type KasTurnoverDay, type KasEntry, type RemovedKasEntry } from "./kasboek";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -47,6 +47,93 @@ console.log("\n— opening balance carries across quarters (Q2 opens where Q1 cl
   check("Q2 opening = Q1 net cash", near(q2open, (120.25 + 242.65 + 78.25 + 92.45) - 1306.36));
   const startBal = openingBalanceForQuarter({ turnover: [], entries: [], year: 2026, quarter: 2, startingBalance: 500 });
   check("configured starting balance respected", near(startBal, 500));
+}
+
+// ── [KAS-DUBBELTELLING] The same takings, counted from two sources ────────────────────────────
+// A till shop's cash revenue reaches the drawer twice by design of the data model: as
+// daily_turnover.cash_amount AND as a cash_entries 'omzet' row (the Kas page's default category).
+// buildKasboek skipped the entry on a covered day; openingBalanceForQuarter did NOT — so the
+// suppression only held for the quarter being looked at, and every earlier quarter's double count
+// walked back in through the carry-in. These lock BOTH halves of the rule to one predicate.
+console.log("\n— [KAS-DUBBELTELLING] a till-counted cash sale is not counted twice —");
+{
+  const till: KasTurnoverDay[] = [{ turnover_date: "2026-01-05", cash_amount: 500 }];
+  // The owner wrote the same counted drawer down as a cash sale — the natural thing to do.
+  const sameMoney: KasEntry[] = [
+    { entry_date: "2026-01-05", direction: "in", amount: 500, category: "omzet", description: "kassa" },
+  ];
+
+  const q1 = buildKasboek({ turnover: till, entries: sameMoney, year: 2026, quarter: 1, openingBalance: 0 });
+  check("in-quarter: the day counts €500 once, not €1000", near(q1.closingBalance, 500));
+
+  const q2open = openingBalanceForQuarter({ turnover: till, entries: sameMoney, year: 2026, quarter: 2 });
+  check("carry-in: Q2 opens at €500, not €1000", near(q2open, 500));
+
+  // The carry-in feeds every eindsaldo of the next quarter AND lowestDrawerPoint's seed, so an
+  // inflated one masks exactly the negative drawer the filing gate refuses on. True drawer:
+  // 500 in − 700 out = −200. Inflated: 1000 − 700 = +300 → no banner, no blocked aangifte.
+  const q2 = buildKasboek({
+    turnover: till,
+    entries: [...sameMoney, { entry_date: "2026-04-10", direction: "out", amount: 700, category: "kosten", description: "inkoop" }],
+    year: 2026, quarter: 2, openingBalance: q2open,
+  });
+  check("the masked dip is visible again: Q2 closes at −200", near(q2.closingBalance, -200));
+  const masked = lowestDrawerPoint(q2);
+  check("...and lowestDrawerPoint (the filing gate's witness) reports it", masked !== null && near(masked.balance, -200));
+
+  // Only 'omzet' IN is the same money. Everything else on that day is a separate movement.
+  const otherKinds = openingBalanceForQuarter({
+    turnover: till,
+    entries: [
+      ...sameMoney,
+      { entry_date: "2026-01-05", direction: "out", amount: 60, category: "kosten", description: "bloemen" },
+      { entry_date: "2026-01-05", direction: "out", amount: 100, category: "transfer", description: "storting" },
+      { entry_date: "2026-01-05", direction: "in", amount: 40, category: "betaling", description: "contant ontvangen" },
+    ],
+    year: 2026, quarter: 2,
+  });
+  check("a cost / storting / settlement on a covered day still counts", near(otherKinds, 500 - 60 - 100 + 40));
+
+  // A day the till did NOT count cash for must never suppress a real cash sale.
+  const uncovered = openingBalanceForQuarter({
+    turnover: [{ turnover_date: "2026-01-05", cash_amount: 0 }],
+    entries: [{ entry_date: "2026-01-05", direction: "in", amount: 500, category: "omzet", description: null }],
+    year: 2026, quarter: 2,
+  });
+  check("a zero-cash turnover day suppresses nothing (ZZP / card-only day)", near(uncovered, 500));
+
+  // The two halves must agree, whichever quarter you ask about — that is the whole point.
+  const carriedThenBuilt = buildKasboek({ turnover: till, entries: sameMoney, year: 2026, quarter: 2, openingBalance: q2open });
+  check("Q2 opens where Q1 closed (carry-in and rows use one rule)", near(carriedThenBuilt.openingBalance, q1.closingBalance));
+}
+
+// ── [KAS-NEGATIEVE-DAG] A day whose till cash is NEGATIVE ─────────────────────────────────────
+// turnover-import keeps the sign of "(1.234,56)" / "-1.234,56" on purpose: a day with more cash
+// refunded than rung up is real. It belongs in Uitgaven, not in Ontvangsten as a negative — the
+// balance was right either way, but the screen hides an `ontvangsten > 0 &&` column and the .xlsx
+// showed money leaving inside the receipts column.
+console.log("\n— [KAS-NEGATIEVE-DAG] a net-refund till day is an uitgave, not a negative receipt —");
+{
+  const kb = buildKasboek({
+    turnover: [{ turnover_date: "2026-02-10", cash_amount: 300 }, { turnover_date: "2026-02-11", cash_amount: -50 }],
+    entries: [], year: 2026, quarter: 1, openingBalance: 0,
+  });
+  const rows = kb.months.find((m) => m.key === "2026-02")!.rows;
+  const refundDay = rows.find((r) => r.date === "2026-02-11")!;
+  check("the refund day books €50 as uitgaven", near(refundDay.uitgaven, 50));
+  check("...and nothing as ontvangsten", near(refundDay.ontvangsten, 0));
+  check("the row shows an amount at all (both columns render only when > 0)", refundDay.uitgaven > 0 || refundDay.ontvangsten > 0);
+  check("the balance is unchanged by the move: 300 − 50", near(kb.closingBalance, 250));
+  const feb = kb.months.find((m) => m.key === "2026-02")!;
+  check("month totals keep receipts and payments apart", near(feb.totalIn, 300) && near(feb.totalOut, 50));
+  // A negative day still counts as "the till counted this day", so a cash 'omzet' entry on it is
+  // the same money and stays suppressed — the rule does not care about the sign.
+  const withEntry = buildKasboek({
+    turnover: [{ turnover_date: "2026-02-11", cash_amount: -50 }],
+    entries: [{ entry_date: "2026-02-11", direction: "in", amount: 50, category: "omzet", description: null }],
+    year: 2026, quarter: 1, openingBalance: 100,
+  });
+  check("a cash 'omzet' entry on a negative till day is still the same money", near(withEntry.closingBalance, 50));
 }
 
 console.log("\n— pure / safe: no P&L notion, only balance —");
@@ -142,6 +229,44 @@ console.log("\n— [PAGE-KEY] a duplicated / dropped row is a wrong RUNNING bala
   });
   check("dropping a same-day RECEIPT fabricates a negative day", lowestDrawerPoint(dropped) !== null);
   check("…which the complete read does not have", lowestDrawerPoint(complete) === null);
+}
+
+// ── [KAS-SPOOR] What was REMOVED from a quarter's cash book ────────────────────────────────────
+// A cash_entries delete is a hard delete, so the audit trail is the only place the movement still
+// exists. These rows go BELOW the eindsaldo and are in none of the totals — they were removed, so
+// the balance is correct without them — but an accountant reconciling a till against this sheet is
+// entitled to know that lines were taken out of the period.
+console.log("\n— [KAS-SPOOR] removed movements are disclosed, never counted —");
+{
+  const removed: RemovedKasEntry[] = [
+    { date: "2026-02-14", direction: "out", amount: 90, category: "kosten", description: "bloemen", removedOn: "2026-04-02" },
+    { date: "2026-05-01", direction: "out", amount: 500, category: "kosten", description: "buiten dit kwartaal", removedOn: "2026-05-02" },
+    { date: "2026-01-09", direction: "in", amount: 40, category: "omzet", description: null, removedOn: null },
+  ];
+  const inQ1 = removedInQuarter(removed, 2026, 1);
+  check("only the quarter's own movements, oldest first", inQ1.length === 2 && inQ1[0].date === "2026-01-09" && inQ1[1].date === "2026-02-14");
+  check("a movement dated outside the quarter is not disclosed under it", !inQ1.some((r) => r.date === "2026-05-01"));
+
+  const kb = buildKasboek({
+    turnover: [{ turnover_date: "2026-01-05", cash_amount: 200 }],
+    entries: [], year: 2026, quarter: 1, openingBalance: 0,
+  });
+  const plain = kasboekToMatrix(kb);
+  const withRemoved = kasboekToMatrix(kb, removed);
+  check("the sheet is unchanged when nothing was removed", JSON.stringify(kasboekToMatrix(kb, [])) === JSON.stringify(plain));
+  check("the disclosure is APPENDED — every row of the original sheet is untouched",
+    JSON.stringify(withRemoved.slice(0, plain.length)) === JSON.stringify(plain));
+
+  const flat = withRemoved.map((r) => r.join("|"));
+  const eindIdx = flat.findIndex((r) => r.startsWith("Eindsaldo kwartaal"));
+  const blockIdx = flat.findIndex((r) => r.startsWith("Verwijderd uit dit kwartaal"));
+  check("the block sits BELOW the eindsaldo, never inside it", eindIdx >= 0 && blockIdx > eindIdx);
+  check("…and says so, so nobody wonders whether the saldo includes it", flat.some((r) => /NIET in de saldi/.test(r)));
+  check("a removed 'out' carries a negative amount and an 'in' a positive one",
+    flat.some((r) => r.startsWith("14-02-2026|-90")) && flat.some((r) => r.startsWith("09-01-2026|40")));
+  check("the day it was removed travels with it, and an unknown one is blank, never invented",
+    flat.some((r) => r.endsWith("|02-04-2026")) && flat.some((r) => r.startsWith("09-01-2026") && r.endsWith("|")));
+  check("the eindsaldo itself did not move", kb.closingBalance === 200);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -14,7 +14,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
 // [CASH-SETTLE] keep the kasboek in sync when an invoice is paid/undone in cash
-import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { reconcileCashWithRetry } from "@/lib/cash-settle";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
@@ -392,7 +392,11 @@ export async function POST(
   // The kasboek settlement is UNCONDITIONAL and stays that way: it is what turns a
   // `payment_method: 'kas'` confirmation into a drawer movement, and the pay path has nothing else
   // that would do it. Only the bank scan below is skippable.
-  await reconcileCashSettlements(supabase, user.id);
+  // [CASH-RETRY] With the retry, because of what the paragraph above claims: this call is the only
+  // thing that turns a payment_method 'kas' confirmation into a drawer movement. A bailed pass here
+  // left the owner told their invoice was paid in cash while the drawer never moved — healed later by
+  // the cron or the next Kas load, but this door had the strongest claim and the weakest handling.
+  await reconcileCashWithRetry(supabase, user.id);
   // [BANK-LINK] A just-verified invoice may already have its payment sitting in an imported bank
   // statement — including as part of a multi-invoice batch. Run the SAME safe engine the cron runs
   // (only books provably-exact reference+amount / iban+amount / exact-batch matches), inline, so

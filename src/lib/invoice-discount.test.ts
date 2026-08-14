@@ -7,8 +7,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyDiscount, parseDiscount, discountLabel } from "./invoice-discount";
-import { computeInvoiceTotals } from "./invoice-totals";
+import { applyDiscount, parseDiscount, discountLabel, lineGrossEx, lineDiscountEx, lineNetEx } from "./invoice-discount";
+import { computeInvoiceTotals, round2 } from "./invoice-totals";
 
 const line = (ex: number, rate: number) => ({ line_total: ex, btw_rate: rate });
 
@@ -173,10 +173,6 @@ test("the label says which kind it was", () => {
   assert.equal(discountLabel(null), null);
 });
 
-function round2(n: number): number {
-  return Math.round(n * 100 + 1e-9) / 100;
-}
-
 // ── The UBL shape, end to end. A discount in the wrong place is not a cosmetic problem: the
 // receiving access point rejects the file and the invoice never arrives. ──
 
@@ -247,4 +243,91 @@ test("[KORTING] without a discount the UBL is byte-identical to before the featu
   const none = build({});
   assert.equal(none, build({ discount_type: null, discount_value: null }));
   assert.doesNotMatch(none, /AllowanceCharge|AllowanceTotalAmount/, "no discount, no allowance elements");
+});
+
+// ─── [REGEL-KORTING] The discount that belongs to ONE line ────────────────────
+//
+// The invariant these guard is the storage contract: line_total is the NET amount. Break it in
+// either direction and the damage is silent — subtract twice and the customer is undercharged,
+// subtract nowhere and every reader that missed the columns overcharges them.
+
+
+test("[REGEL-KORTING] a percentage comes off the line, and the gross stays readable", () => {
+  const l = { quantity: 10, unit_price: 12.5, btw_rate: 21, discount_type: "percent", discount_value: 20 };
+  assert.equal(lineGrossEx(l), 125);
+  assert.equal(lineDiscountEx(lineGrossEx(l), parseDiscount(l.discount_type, l.discount_value)), 25);
+  assert.equal(lineNetEx(l), 100);
+});
+
+test("[REGEL-KORTING] a fixed amount comes off the line", () => {
+  const l = { quantity: 2, unit_price: 75, btw_rate: 21, discount_type: "amount", discount_value: 12.5 };
+  assert.equal(lineNetEx(l), 137.5);
+});
+
+test("[REGEL-KORTING] no discount is exactly quantity x price — the feature is invisible when off", () => {
+  const l = { quantity: 1.5, unit_price: 33.33, btw_rate: 21 };
+  assert.equal(lineNetEx(l), 50); // round2(49.995), the same amount the routes have always stored
+  assert.equal(lineNetEx({ ...l, discount_type: null, discount_value: null }), 50);
+  assert.equal(lineNetEx({ ...l, discount_type: "percent", discount_value: 0 }), 50); // zero is not a discount
+});
+
+test("[REGEL-KORTING] a discount bigger than the line is capped, never flipped", () => {
+  // EUR 80 off a EUR 50 line is a typo. Turning the line negative would invent a credit inside a
+  // delivery — a different document entirely (negative-line.ts).
+  const l = { quantity: 1, unit_price: 50, btw_rate: 21, discount_type: "amount", discount_value: 80 };
+  assert.equal(lineNetEx(l), 0);
+  assert.equal(lineDiscountEx(50, { type: "amount", value: 80 }), 50);
+});
+
+test("[REGEL-KORTING] a credit line mirrors its discount, so a creditnota reproduces the invoice", () => {
+  // The invoice line and the creditnota line that reverses it must differ in sign and nothing else.
+  const invoiceLine = { quantity: 4, unit_price: 25, btw_rate: 21, discount_type: "percent", discount_value: 10 };
+  const creditLine = { ...invoiceLine, quantity: -4 };
+  assert.equal(lineNetEx(invoiceLine), 90);
+  assert.equal(lineNetEx(creditLine), -90, "the mirror is exact — anything else leaves a residue in the books");
+});
+
+test("[REGEL-KORTING] a stored line_total is already net and is never discounted twice", () => {
+  // The one mistake that costs money quietly. A row read back from the database carries the net
+  // amount AND the columns it was computed from; a summation that applies them again undercharges.
+  const stored = { line_total: 100, quantity: 10, unit_price: 12.5, btw_rate: 21,
+    discount_type: "percent", discount_value: 20 };
+  const d = applyDiscount([stored], null);
+  assert.equal(d.subtotal_ex_btw, 100, "the stored net is taken as it stands");
+  assert.equal(d.total_inc_btw, 121);
+});
+
+test("[REGEL-KORTING] the document discount works on the line-discounted amounts, in that order", () => {
+  // EN 16931: a line allowance (BG-27) lowers BT-131, and the document allowance (BG-20) works on
+  // the sum of those lowered amounts. The other order gives a different, wrong, total.
+  const lines = [
+    { quantity: 10, unit_price: 12.5, btw_rate: 21, discount_type: "percent", discount_value: 20 }, // 125 → 100
+    { quantity: 1, unit_price: 100, btw_rate: 21 },                                                 // 100
+  ];
+  const d = applyDiscount(lines, { type: "percent", value: 10 });
+  assert.equal(d.subtotal_ex_btw, 200, "the subtotal is the sum of the NET line amounts");
+  assert.equal(d.discount_ex_btw, 20, "10% of 200, not of the 225 gross");
+  assert.equal(d.total_ex_btw, 180);
+  assert.equal(d.btw_amount, 37.8);
+});
+
+test("[REGEL-KORTING] a discounted line pays BTW over the reduced amount, per rate", () => {
+  const lines = [
+    { quantity: 1, unit_price: 1000, btw_rate: 21, discount_type: "percent", discount_value: 50 }, // 500
+    { quantity: 1, unit_price: 1000, btw_rate: 9 },                                                // 1000
+  ];
+  const d = applyDiscount(lines, null);
+  assert.equal(d.total_ex_btw, 1500);
+  assert.equal(d.btw_amount, round2(105 + 90), "21% over 500 and 9% over 1000 — not a blended rate");
+});
+
+test("[REGEL-KORTING] an unusable discount is no discount, never a crash", () => {
+  for (const bad of [{ discount_type: "korting", discount_value: 10 },
+                     { discount_type: "percent", discount_value: 101 },
+                     { discount_type: "percent", discount_value: -5 },
+                     { discount_type: "amount", discount_value: Number.NaN },
+                     { discount_type: "percent", discount_value: null }]) {
+    assert.equal(lineNetEx({ quantity: 1, unit_price: 100, btw_rate: 21, ...bad }), 100,
+      `${JSON.stringify(bad)} must leave the line alone`);
+  }
 });

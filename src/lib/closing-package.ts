@@ -41,7 +41,7 @@ import { formatEuroNL } from "./format-nl";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
-import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, type KasEntry, type KasTurnoverDay, type Quarter as KasQuarter } from "./kasboek";
+import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, removedInQuarter, type KasEntry, type KasTurnoverDay, type RemovedKasEntry, type Quarter as KasQuarter } from "./kasboek";
 import { matrixToXlsxBytes } from "./xlsx-adapter";
 import type { EftSettlement } from "./eft-parser";
 import {
@@ -2029,9 +2029,57 @@ export async function buildClosingPackageZip(args: {
     turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
     openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
   });
+  // [KAS-SPOOR] The movements this quarter's cash book HELD and no longer holds, appended below the
+  // eindsaldo and inside none of the totals.
+  //
+  // It belongs in THIS copy of the sheet more than in the screen's: a cash_entries delete is a hard
+  // delete, so nothing in the rows the accountant receives says a line was ever taken out — and this
+  // is the document they reconcile a till against. The live /api/kasboek shows the same block, and
+  // the two must not disagree about a period; that is the whole reason both call one generator.
+  //
+  // A failed read does NOT suppress the sheet, unlike the three sources above. Those DECIDE the
+  // saldi, so half of them is a wrong number presented as a right one; this is a disclosure
+  // alongside them and the balances are complete without it. The warning says what is missing
+  // instead, so the accountant is never left thinking a quiet list means nothing was removed.
+  const { data: kasTrail, error: kasTrailErr } = await supabase
+    .from("audit_logs")
+    .select("old_value, created_at")
+    .eq("user_id", ownerId)
+    .eq("action", "cash.entry_removed")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (kasTrailErr) console.error("[KAS-SPOOR] closing-package removed-entry trail unreadable", { ownerId, error: kasTrailErr.message });
+  const kasRemoved: RemovedKasEntry[] = removedInQuarter(
+    (kasTrail ?? []).flatMap((r) => {
+      const o = (r as { old_value?: Record<string, unknown> | null }).old_value ?? null;
+      const date = o && typeof o.entry_date === "string" ? o.entry_date.slice(0, 10) : null;
+      const amount = Math.abs(Number(o?.amount) || 0);
+      if (!o || !date || amount === 0) return [];
+      return [{
+        date,
+        direction: o.direction === "in" ? ("in" as const) : ("out" as const),
+        amount,
+        category: typeof o.category === "string" ? o.category : null,
+        description: typeof o.description === "string" ? o.description : null,
+        removedOn: typeof (r as { created_at?: string | null }).created_at === "string"
+          ? (r as { created_at: string }).created_at.slice(0, 10)
+          : null,
+      }];
+    }),
+    year,
+    quarter as KasQuarter,
+  );
+  if (kasTrailErr || (kasTrail ?? []).length >= 500) {
+    warnings.push({
+      code: "kasboek_removals_incomplete",
+      message:
+        "In het kasboek staat onderaan welke kasboekingen uit dit kwartaal zijn verwijderd. Die lijst konden we nu niet volledig nalezen, dus hij kan onvolledig zijn. De saldi in het blad zijn wel compleet — verwijderde regels tellen daar niet in mee.",
+    });
+  }
+
   const kasboekXlsx: Uint8Array | null =
     !kasboekReadFailed && (kb.months.length > 0 || kb.openingBalance !== 0)
-      ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
+      ? matrixToXlsxBytes(kasboekToMatrix(kb, kasRemoved), `Kasboek Q${quarter} ${year}`)
       : null;
   if (kasboekReadFailed) {
     warnings.push({

@@ -52,13 +52,13 @@ export default function TeamClient() {
       if (!res.ok) {
         // Meestal: de migratie staat er nog niet. Dat is iets anders dan "je hebt geen team",
         // en die twee moeten niet op elkaar lijken.
-        return { ok: false, fout: json?.error || 'Kon het team niet laden' }
+        return { ok: false, fout: json?.error || t('team.laadMislukt') }
       }
       return { ok: true, leden: json.leden ?? [], open: json.uitnodigingen ?? [], beschikbaar: json.beschikbaar !== false }
     } catch {
-      return { ok: false, fout: 'Kon het team niet laden' }
+      return { ok: false, fout: t('team.laadMislukt') }
     }
-  }, [])
+  }, [t])
 
   const toon = useCallback((r: Awaited<ReturnType<typeof haal>>) => {
     if (r.ok) { setLeden(r.leden); setOpen(r.open); setBeschikbaar(r.beschikbaar) } else { setFout(r.fout) }
@@ -85,12 +85,12 @@ export default function TeamClient() {
         body: JSON.stringify({ email }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) { setFout(json?.error || 'Uitnodigen mislukt'); return }
-      setGelukt(`Uitnodiging verstuurd naar ${email}`)
+      if (!res.ok) { setFout(json?.error || t('team.uitnodigenMislukt')); return }
+      setGelukt(t('inst.uitnodigingVerstuurd', { email }))
       setEmail('')
       await laad()
     } catch {
-      setFout('Uitnodigen mislukt')
+      setFout(t('team.uitnodigenMislukt'))
     } finally {
       setBezig(false)
     }
@@ -104,10 +104,10 @@ export default function TeamClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      if (!res.ok) { setFout('Intrekken mislukt'); return }
+      if (!res.ok) { setFout(t('team.intrekkenMislukt')); return }
       await laad()
     } catch {
-      setFout('Intrekken mislukt')
+      setFout(t('team.intrekkenMislukt'))
     }
   }
 
@@ -121,9 +121,7 @@ export default function TeamClient() {
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px 48px' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>{t('team.titel')}</h1>
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.6 }}>
-          Iemand die je hier toevoegt kan verkoopfacturen maken en versturen die uitgaan op
-          jouw naam en BTW-nummer, met jouw doorlopende factuurnummers. Hij ziet <strong>alleen
-          wat hij zelf aanmaakt</strong> — niet je bank, niet je omzet, niet je andere facturen.
+          {t('team.introVoor')} <strong>{t('team.introNadruk')}</strong> {t('team.introNa')}
         </p>
 
         {fout && (
@@ -138,10 +136,9 @@ export default function TeamClient() {
              werken. De eigenaar kan hier zelf iets aan doen, dus staat er wat hij moet doen. */
           <div style={{ ...kaart, borderColor: M3.warning, background: M3.warnContainer }}>
             <p style={{ fontSize: 14.5, color: M3.onSurface, margin: 0, lineHeight: 1.6 }}>
-              <strong>{t('team.nietAan')}</strong> De databasemigratie
+              <strong>{t('team.nietAan')}</strong> {t('team.migratieVoor')}
               <code style={{ fontSize: 13 }}> company_members_sales_role.sql </code>
-              moet nog worden toegepast. Zolang dat niet is gebeurd kun je niemand uitnodigen —
-              en verandert er verder niets: je facturen, je bank en je aangifte werken gewoon door.
+              {t('team.migratieNa')}
             </p>
           </div>
         )}
@@ -173,12 +170,11 @@ export default function TeamClient() {
                 cursor: bezig ? 'default' : 'pointer', fontFamily: FONT,
               }}
             >
-              {bezig ? 'Bezig…' : 'Uitnodigen'}
+              {bezig ? t('act.bezig') : t('inst.uitnodigen')}
             </button>
           </div>
           <p style={{ fontSize: 12.5, color: M3.mutedText, margin: '10px 0 0', lineHeight: 1.6 }}>
-            Hij krijgt een e-mail met wat hij aanneemt. Accepteren kan alleen met dít adres — een
-            doorgestuurde link werkt niet. De uitnodiging verloopt na 14 dagen.
+            {t('team.uitnodigingUitleg')}
           </p>
         </form>
         )}
@@ -194,7 +190,7 @@ export default function TeamClient() {
                   <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0' }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 14.5, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.email}</div>
-                      <div style={{ fontSize: 12.5, color: M3.mutedText }}>verloopt {datum(u.expires_at)}</div>
+                      <div style={{ fontSize: 12.5, color: M3.mutedText }}>{t('team.verloopt', { date: datum(u.expires_at) })}</div>
                     </div>
                     <button
                       onClick={() => trekIn({ inviteId: u.id })}
@@ -221,7 +217,7 @@ export default function TeamClient() {
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{l.naam}</div>
                       <div style={{ fontSize: 12.5, color: M3.mutedText }}>
-                        {l.email ? `${l.email} · ` : ''}sinds {datum(l.sinds)}
+                        {l.email ? `${l.email} · ` : ''}{t('team.sinds', { date: datum(l.sinds) })}
                       </div>
                     </div>
                     <button
@@ -241,12 +237,11 @@ export default function TeamClient() {
                 {/* Ingetrokken leden blijven staan, en dat is geen slordigheid: de facturen die
                     zij maakten bestaan nog en moeten toewijsbaar blijven aan een mens. */}
                 <p style={{ fontSize: 12.5, color: M3.mutedText, margin: '0 0 10px', lineHeight: 1.6 }}>
-                  Deze mensen kunnen niets meer. Ze blijven in de lijst staan omdat de facturen die
-                  ze maakten nog bestaan en op naam moeten blijven.
+                  {t('team.eerderUitleg')}
                 </p>
                 {leden.filter((l) => l.ingetrokken).map((l) => (
                   <div key={l.id} style={{ fontSize: 14, color: M3.neutral, padding: '5px 0' }}>
-                    {l.naam} — ingetrokken op {datum(l.ingetrokken!)}
+                    {t('team.ingetrokkenOp', { name: l.naam, date: datum(l.ingetrokken!) })}
                   </div>
                 ))}
               </div>
@@ -255,8 +250,7 @@ export default function TeamClient() {
         )}
 
         <p style={{ fontSize: 12.5, color: M3.mutedText, lineHeight: 1.6, marginTop: 4 }}>
-          Intrekken werkt onmiddellijk: bij zijn volgende klik kan hij niets meer. Facturen die hij
-          al verstuurde blijven staan — die hebben een wettelijk nummer en horen bij je boekhouding.
+          {t('team.uitlegOnderaan')}
         </p>
       </div>
     </div>

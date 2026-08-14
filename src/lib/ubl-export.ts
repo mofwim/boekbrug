@@ -101,6 +101,19 @@ export interface UblInvoiceLine {
    * column has not been added yet, which then behaves exactly as before.
    */
   vat_treatment?: string | null;
+  /**
+   * [REGEL-KORTING] De korting op DEZE regel. `line_total` hierboven is er al mee verlaagd — dat
+   * is de afspraak van de kolom — dus deze twee veranderen geen enkel bedrag in dit bestand. Wat
+   * ze doen is het VERSCHIL verklaren: zonder hen zou de e-factuur een stuksprijs moeten
+   * verzinnen die het verlaagde regelbedrag oplevert, en dan staat er een prijs op die de
+   * ondernemer nooit heeft afgesproken. Met hen staat er wat er is: de prijs, en de korting
+   * eronder (EN 16931 BG-27).
+   *
+   * Optioneel, en afwezig op een installatie waar invoice_line_discount.sql nog open staat: het
+   * bestand is dan precies wat het altijd was.
+   */
+  discount_type?: string | null;
+  discount_value?: number | null;
 }
 
 // ─── Errors (stable codes — UI/route maps to Dutch copy) ───────────────────────
@@ -276,10 +289,25 @@ function supplierName(s: UblSupplier): string | null {
  * Resolve the lines to use for the UBL.
  * If the invoice has real line items, use them. If it has none (e.g. a scanned /
  * imported invoice where only header totals were extracted) but it does have a
- * positive ex-BTW total, synthesize ONE summary line from the header totals so
+ * usable ex-BTW total, synthesize ONE summary line from the header totals so
  * the invoice is still exportable. Amounts stay faithful to the stored totals;
  * any rounding gap is surfaced as a warning by buildInvoiceUbl().
  * Returns [] only when there is neither line detail nor a usable total.
+ *
+ * [CREDIT-SIGN] `ex > 0` and not `ex !== 0`, for as long as this function existed — and a
+ * creditnota's ex total is NEGATIVE. So a creditnota of an invoice that has no lines got no
+ * synthesized line either, validateUblInputs answered NO_LINES, and buildInvoiceUbl threw: the
+ * e-factuur could not be produced at all. The very same document as a factuur exported fine.
+ *
+ * It is reachable with ordinary data: invoices without lines are why this function exists (the
+ * warning above says so), and the creditnota route copies the lines of the invoice it corrects —
+ * no lines in, no lines out.
+ *
+ * The synthesized line follows the STORED convention rather than the printed one: a creditnota is
+ * stored negative ([CREDIT-SIGN]), so its summary line is -1 x |ex|. buildInvoiceUbl flips that
+ * back to +1 x |ex| for the file, which is what UBL wants and what PEPPOL-EN16931-R120 checks. A
+ * synthesized `quantity: 1` would come out of that flip as -1 against a positive amount, and the
+ * access point would refuse the file for a different reason than before.
  */
 export function effectiveLines(
   header: UblInvoiceHeader,
@@ -287,14 +315,15 @@ export function effectiveLines(
 ): UblInvoiceLine[] {
   if (lines && lines.length > 0) return lines;
   const ex = Number(header.total_ex_btw ?? 0);
-  if (ex > 0) {
+  if (Number.isFinite(ex) && ex !== 0) {
     const btw = Number(header.btw_amount ?? 0);
+    // Both signs divide out to the same rate: -21 / -100 is 21%, as it should be.
     const rate = Math.round((btw / ex) * 100);
     return [
       {
         description: "Factuurbedrag",
-        quantity: 1,
-        unit_price: ex,
+        quantity: ex < 0 ? -1 : 1,
+        unit_price: Math.abs(ex),
         btw_rate: rate,
         line_total: ex,
       },
@@ -416,17 +445,40 @@ export function buildInvoiceUbl(
   if (lines.length === 0 && effLinesRaw.length > 0) {
     warnings.push("No invoice_lines — synthesized a single summary line from header totals.");
   }
-  // [UBL-CREDIT] A creditnota (UBL type 381) must carry POSITIVE amounts; the
-  // stored line/header values are negative, so normalize every amount to its
-  // magnitude. All downstream totals/tax groups derive from effLines, so this
-  // single normalization makes the whole document positive and consistent.
+  // [UBL-CREDIT] A creditnota (UBL type 381) carries POSITIVE amounts: UBL conveys the direction
+  // with the type code, and this app stores a creditnota negative ([CREDIT-SIGN]). So the document
+  // is flipped once here, and every total and tax group below derives from the result.
+  //
+  // [MIN-REGEL] FLIPPED, not made absolute — and that distinction is worth EUR 143,70 on the
+  // invoice this was found with.
+  //
+  // Math.abs() is the same thing as a negation only while every line has the same sign. A
+  // creditnota of an invoice that contained a RETURN does not: crediting the whole invoice
+  // un-returns that line, so it sits in the creditnota as a positive amount among negative ones
+  // (see creditnota-lines.ts). Math.abs() then turned that line the wrong way and the file credited
+  // the customer for it a second time:
+  //
+  //     stored creditnota   -123,85  -174,31  -150,00  +71,85   =  -376,31
+  //     Math.abs()           123,85   174,31   150,00   71,85   =   520,01   what was sent
+  //     negation             123,85   174,31   150,00  -71,85   =   376,31   what the header says
+  //
+  // Nothing caught it: the XML was internally consistent per line, the PDF was right, and the
+  // header/line mismatch only reaches a server log. It predates the credit-line feature — an
+  // invoice with a statiegeld or emballage line has always produced one.
+  //
+  // The unit PRICE stays a magnitude, because a price is one: BR-27 forbids a negative
+  // cbc:PriceAmount, and the sign belongs in the quantity (negative-line.ts).
   const isCredit = header.invoice_type === "creditnota";
   const effLines = isCredit
     ? effLinesRaw.map((l) => ({
         ...l,
-        quantity: Math.abs(Number(l.quantity ?? 1)),
+        // A line with NO quantity means "one of this thing", and on a credit note that is 1 — the
+        // value the absolute used to produce. Negating the default instead would emit -1 against a
+        // positive line amount, and (-1 ÷ 1) x price is not that amount: PEPPOL-EN16931-R120 then
+        // refuses the file. The `?? 1` was doing real work; only the sign of the REAL values moves.
+        quantity: l.quantity == null ? 1 : -Number(l.quantity),
         unit_price: Math.abs(Number(l.unit_price ?? 0)),
-        line_total: Math.abs(Number(l.line_total ?? 0)),
+        line_total: -Number(l.line_total ?? 0),
       }))
     : effLinesRaw;
 
@@ -642,6 +694,43 @@ export function buildInvoiceUbl(
     const stuksprijs = Math.abs(storedPrice);
     line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
+
+    // [REGEL-KORTING] Wat de regel kostte VOORDAT haar eigen korting eraf ging.
+    //
+    // Gerekend met de volle opgeslagen prijs, niet met de afgeronde stuksprijs hieronder: dit is
+    // het bedrag dat de schrijfroute als bruto hanteerde, en de korting moet het verschil met het
+    // opgeslagen regeltotaal exact overbruggen. Zonder korting is dit letterlijk `ex` en verandert
+    // er niets aan het bestand dat deze factuur altijd al opleverde.
+    const brutoRegel = round2(aantal * Math.abs(Number(l.unit_price ?? 0)));
+    const regelKorting = parseDiscount(l.discount_type, l.discount_value);
+    // Afgeleid uit de OPGESLAGEN getallen, niet opnieuw uitgerekend uit het percentage. Wijkt een
+    // oude rij een cent af, dan telt dit bestand nog steeds op — en optellen is hier geen
+    // schoonheid maar de voorwaarde om afgeleverd te worden (PEPPOL-EN16931-R120 rekent
+    // aantal × prijs − korting na en vergelijkt het met het regelbedrag).
+    const kortingBedrag = regelKorting ? round2(brutoRegel - ex) : 0;
+
+    if (kortingBedrag !== 0) {
+      // BG-27, en de plek is niet vrij: in UBL 2.1 staat cac:AllowanceCharge NA
+      // LineExtensionAmount en VÓÓR cac:Item. Op een andere plek is het bestand niet
+      // schemavalide en komt het niet door de eerste poort heen.
+      //
+      // Géén cac:TaxCategory hier, anders dan bij de documentkorting: een regelkorting erft het
+      // tarief van de regel waar hij op staat (ClassifiedTaxCategory hieronder). EN 16931 kent
+      // BG-27 dan ook geen eigen btw-categorie toe.
+      const ac = line.ele(NS.cac, "AllowanceCharge");
+      ac.ele(NS.cbc, "ChargeIndicator").txt("false"); // false = korting, true = toeslag
+      ac.ele(NS.cbc, "AllowanceChargeReason").txt("Korting");
+      if (regelKorting?.type === "percent") {
+        // BT-138. Alleen bij een percentage: bij een vast bedrag zou elk getal hier een
+        // percentage suggereren dat niemand heeft afgesproken.
+        ac.ele(NS.cbc, "MultiplierFactorNumeric").txt(String(regelKorting.value));
+      }
+      ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(kortingBedrag));
+      // BT-137 — waar de korting overheen gaat. Samen met Amount is de regel naleesbaar zonder
+      // dat iemand hem hoeft terug te rekenen.
+      ac.ele(NS.cbc, "BaseAmount", { currencyID: EUR }).txt(money(round2(ex + kortingBedrag)));
+    }
+
     const item = line.ele(NS.cac, "Item");
     const desc = l.description?.trim() || "Artikel";
     item.ele(NS.cbc, "Description").txt(desc);
@@ -685,11 +774,31 @@ export function buildInvoiceUbl(
     // magnitudes: the sign is already in InvoicedQuantity, and (quantity ÷ BaseQuantity) × price
     // hands the signed line total back. PEPPOL-EN16931-R121 also requires BaseQuantity itself to
     // be a positive number, which is the same abs().
+    //
+    // [REGEL-KORTING] De vermenigvuldiging die de validator narekent gaat over het BRUTObedrag.
+    //
+    // R120 luidt voluit: regelbedrag = aantal × prijs ÷ basisaantal + toeslagen − kortingen. De
+    // korting staat hierboven als AllowanceCharge, dus de prijs moet het bedrag VÓÓR die korting
+    // opleveren — en dat is precies de prijs die de ondernemer met zijn klant afsprak. De vorige
+    // versie vergeleek met `ex` (nu het NETTO bedrag), en dat zou op elke gekorte regel de
+    // uitwijkvorm hieronder hebben gekozen: een verzonnen stuksprijs die het verlaagde bedrag
+    // oplevert, met de korting er nog eens naast. Twee keer korting in één regel, en een prijs op
+    // de e-factuur die nergens is overeengekomen.
+    //
+    // Het bedrag dat de prijs moet OPLEVEREN is dus het regelbedrag plus de korting die we
+    // hierboven al apart hebben gezet — niet het bruto dat uit aantal × prijs volgt. Dat verschil
+    // is het vangnet: is er een regel waarvan het opgeslagen totaal om wat voor reden dan ook niet
+    // gelijk is aan aantal × prijs, en staat er GEEN korting bij die het verklaart, dan valt hij
+    // hieronder terug op de vorm die per definitie klopt. Zo bleef dit bestand altijd al
+    // aflevernaar, en dat mag een nieuwe kolom niet ongedaan maken.
+    //
+    // Zonder korting is dit letterlijk `ex` en staat hier exact de test die er altijd stond.
+    const teReproduceren = round2(ex + kortingBedrag);
     const price = line.ele(NS.cac, "Price");
-    if (round2(aantal * stuksprijs) === ex) {
+    if (round2(aantal * stuksprijs) === teReproduceren) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
-      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(ex)));
+      price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(teReproduceren)));
       // Zelfde eenheidscode als InvoicedQuantity — anders vergelijkt de validator appels met peren.
       price.ele(NS.cbc, "BaseQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(Math.abs(aantal)));
     }

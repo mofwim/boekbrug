@@ -1463,6 +1463,8 @@ export type Database = {
         Row: {
           btw_rate: number | null
           description: string | null
+          discount_type: string | null
+          discount_value: number | null
           id: string
           invoice_id: string | null
           line_total: number | null
@@ -1474,6 +1476,8 @@ export type Database = {
         Insert: {
           btw_rate?: number | null
           description?: string | null
+          discount_type?: string | null
+          discount_value?: number | null
           id?: string
           invoice_id?: string | null
           line_total?: number | null
@@ -1485,6 +1489,8 @@ export type Database = {
         Update: {
           btw_rate?: number | null
           description?: string | null
+          discount_type?: string | null
+          discount_value?: number | null
           id?: string
           invoice_id?: string | null
           line_total?: number | null

@@ -4730,12 +4730,11 @@ export async function syncUserEmails(
   // staat de betaling wel op de factuur maar niet in het kasboek, en dan klopt het kassaldo dat de
   // boekhouder leest niet met de facturen eronder. Eén keer per run, na alle bonnen.
   if (cashSettledThisRun) {
-    try {
-      const { reconcileCashSettlements } = await import('@/lib/cash-settle')
-      await reconcileCashSettlements(createPipelineClient(), userId)
-    } catch (e) {
-      console.error('[BON-AUTO] kasboek reconcile after auto-settle failed (non-fatal)', e)
-    }
+    // [CASH-RETRY] Through the shared retry, like every other door that turns a cash payment into a
+    // drawer movement: a bailed pass here leaves the payment on the invoice and nothing in the
+    // kasboek, which is precisely the mismatch the paragraph above is about.
+    const { reconcileCashWithRetry } = await import('@/lib/cash-settle')
+    await reconcileCashWithRetry(createPipelineClient(), userId)
   }
 
   // [BOEK-011 + BOEK-SECURITY Phase 2.5] Notify the user about imported invoices.

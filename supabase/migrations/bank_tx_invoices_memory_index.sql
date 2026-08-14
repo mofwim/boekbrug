@@ -1,0 +1,50 @@
+-- supabase/migrations/bank_tx_invoices_memory_index.sql
+-- [GEHEUGEN] A covering index for the confirmed-match memory read.
+--
+-- OPTIONAL. Nothing is broken without it and no code path depends on it — loadMatchMemory returns
+-- the same rows either way. This migration only changes how many pages Postgres touches to find
+-- them, and it exists because that number grows with the owner's history while nothing else on the
+-- bank page does.
+--
+-- THE QUERY (src/lib/match-memory-server.ts):
+--
+--     select transaction_id, invoice_id
+--       from bank_tx_invoices
+--      where user_id = $1
+--      order by created_at desc
+--      limit 400
+--
+-- MEASURED, on Postgres 16, 400.000 link rows interleaved across 400 owners the way production
+-- interleaves them — everyone confirms payments over the same years, so one owner's rows are
+-- scattered one per page:
+--
+--   owner's confirmations   today: index on (user_id)      with this index
+--   ─────────────────────   ────────────────────────────   ──────────────────────────
+--   200                     0,23 ms ·    9 buffers         0,13 ms · 1 buffer
+--   1.000                   5,73 ms · 1007 buffers         0,24 ms · 1 buffer
+--   10.000                 10,0  ms · 2485 buffers         0,3  ms · 1 buffer
+--
+-- The plan changes shape twice. Today it is a Bitmap Heap Scan of EVERY link the owner has ever
+-- confirmed, followed by a top-N sort — so the work is proportional to their whole history in
+-- order to return the most recent 400 of it. A plain (user_id, created_at) index removes the sort
+-- but still fetches 400 heap rows (400 buffers, measured). Adding the two payload columns with
+-- INCLUDE makes it an Index Only Scan: one buffer, whatever the history.
+--
+-- COST: about 73 bytes per row (29 MB per 400.000 rows in the measurement), and one more index to
+-- maintain on a table that is written a handful of times a day per owner. Both are small; the
+-- second is the one that actually matters, and a link row is written once when a payment is
+-- confirmed and never updated.
+--
+-- WHY IT IS WORTH IT ANYWAY: not the milliseconds — five of them are invisible on a page that
+-- renders a whole bank statement. It is that today's cost is linear in how long someone has used
+-- the app. An owner in year five pays for every confirmation they ever made, on every load of the
+-- bank screen, to answer a question whose answer is 400 rows.
+--
+-- CONCURRENTLY: this table is live and this index is not needed for correctness, so there is no
+-- reason to hold a write lock on it. That also means this statement CANNOT run inside a
+-- transaction block — run it on its own (the Supabase SQL editor does that by default). If it ever
+-- fails halfway it leaves an INVALID index behind; drop it and run it again.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_bank_tx_invoices_user_recent
+  ON public.bank_tx_invoices (user_id, created_at DESC)
+  INCLUDE (transaction_id, invoice_id);

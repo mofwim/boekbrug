@@ -7,6 +7,8 @@ import { T } from "../../tokens";
 import { Icon } from "../ui/Icon";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 interface RenameModalProps {
   currentName: string;
@@ -16,6 +18,7 @@ interface RenameModalProps {
 }
 
 export function RenameModal({ currentName, type, onConfirm, onClose }: RenameModalProps) {
+  const t = translator(useLocale())
   const [name, setName] = useState(currentName);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -66,7 +69,7 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
             <Icon name={type === "folder" ? "drive_file_rename_outline" : "edit"} size={22} color={T.primary} />
           </div>
           <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: 0 }}>
-            {type === "folder" ? "Map hernoemen" : "Bestand hernoemen"}
+            {type === "folder" ? t('best.mapHernoemen') : t('best.bestandHernoemen')}
           </p>
         </div>
 
@@ -89,14 +92,14 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
             color: T.onSurface, border: "none", borderRadius: T.full,
             fontSize: 14, fontWeight: 500, cursor: "pointer",
           }}>
-            Annuleren
+            {t('lijst.annuleren')}
           </button>
           <button onClick={handleSubmit} style={{
             flex: 1, padding: "10px", background: T.primary,
             color: T.onPrimary, border: "none", borderRadius: T.full,
             fontSize: 14, fontWeight: 500, cursor: "pointer",
           }}>
-            Opslaan
+            {t('best.opslaan')}
           </button>
         </div>
       </div>

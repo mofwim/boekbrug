@@ -138,7 +138,7 @@ export default function IntakeButton({
       } else {
         // [UI-HONESTY] 409 = hij staat niet (meer) in Genegeerd. Nooit een succes tonen dat er niet was.
         const data = await res.json().catch(() => ({}))
-        showToast(failureText(res.status, data, 'Terugzetten mislukt — ververs de pagina'))
+        showToast(failureText(res.status, data, t('int.terugzettenVervers')))
       }
     } catch {
       showToast(t('int.fout.terugzetten'))
@@ -162,7 +162,7 @@ export default function IntakeButton({
     const merged = [...mpPages, ...imgs]
     const capped = merged.length > MAX_PAGES
     setMpPages(capped ? merged.slice(0, MAX_PAGES) : merged)
-    if (capped) showToast(`Maximaal ${MAX_PAGES} pagina’s per factuur`)
+    if (capped) showToast(t('int.maxPaginas', { n: MAX_PAGES }))
   }
   function closeMultiPage() { setMpMode(false); setMpPages([]) }
   async function combineAndUpload() {
@@ -183,7 +183,7 @@ export default function IntakeButton({
       // Combine failure names either the failing page ("Pagina 2 kon niet…") or the reason the
       // set cannot fit one upload ("Deze 20 pagina's passen samen niet…"). Both are actionable
       // and specific, so surface them as-is; only a truly unknown error gets the generic line.
-      showToast(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe')
+      showToast(e instanceof Error && /^(Pagina|Deze \d+ pagina)/.test(e.message) ? e.message : t('int.combinerenMislukt'))
     } finally {
       setCombining(false)
     }
@@ -276,8 +276,8 @@ export default function IntakeButton({
           // [INTAKE-QUEUE] Deze modal ONDERBREEKT met opzet, ook tijdens een reeks: hij draagt een
           // beslissing ("Toch toevoegen") die alleen de eigenaar kan nemen, en hem wegstoppen in een
           // samenvatting zou betekenen dat een factuur stil buiten de boeken blijft.
-          noteLanded(file.name, 'mogelijk dubbel — jouw keuze')
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
+          noteLanded(file.name, t('int.landed.mogelijkDubbel'))
+          setDupModal({ message: data.error || t('int.bestaatAl'), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
@@ -285,19 +285,19 @@ export default function IntakeButton({
           // wordt hij daarom een melding — maar de regel in de samenvatting moet zeggen dat dit
           // bestand NIET is toegevoegd. Een afwijzing die alleen als "verwerkt" in het lijstje
           // staat, is precies de stille verdwijning waar deze app tegen is gebouwd.
-          noteLanded(file.name, 'dubbel — niet toegevoegd')
+          noteLanded(file.name, t('int.landed.dubbel'))
           if (mayNavigate()) setDestModal({
             fileName: file.name,
-            message: data.error || 'Dit bestand is al toegevoegd',
+            message: data.error || t('int.bestandBestaatAl'),
             folderName: data.existing.folder_name ?? null,
             folderId: data.existing.folder_id ?? null,
             documentId: data.existing.id,
             isDuplicate: true,
           })
-          else showToast(data.message || 'Toegevoegd ✓')
+          else showToast(data.message || t('int.toegevoegd'))
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
+          setDupModal({ message: data.error || t('int.bestaatAl'), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else {
           // [UPLOAD-ERRORS] Dezelfde vertaler als /dashboard/upload. `data.error || 'Toevoegen
@@ -325,7 +325,7 @@ export default function IntakeButton({
 
       // Route the owner to where the item landed, so they can confirm/see it.
       if (data.destination === 'invoice' || data.destination === 'receipt') {
-        showToast(data.message || 'Toegevoegd ✓')
+        showToast(data.message || t('int.toegevoegd'))
         // [AUTO-ADVANCE-HONESTY] An auto-verified invoice is booked ('received') and so
         // is NOT in the verify queue. Sending the owner to /dashboard/incoming — as this
         // did for every invoice — landed them on a queue that does not contain the file
@@ -334,11 +334,11 @@ export default function IntakeButton({
         const target = data.auto_verified && data.invoice_id
           ? `/dashboard/incoming/manage?focus=${data.invoice_id}`
           : '/dashboard/incoming'
-        noteLanded(file.name, data.destination === 'receipt' ? 'bon → Inkoopfacturen' : 'factuur → Inkoopfacturen')
+        noteLanded(file.name, data.destination === 'receipt' ? t('int.landed.bon') : t('int.landed.factuur'))
         if (mayNavigate()) setTimeout(() => router.push(target), 600)
       } else if (data.destination === 'bank') {
-        showToast(data.message || 'Toegevoegd ✓')
-        noteLanded(file.name, 'bankafschrift → Bank')
+        showToast(data.message || t('int.toegevoegd'))
+        noteLanded(file.name, t('int.landed.bank'))
         if (mayNavigate()) setTimeout(() => router.push('/dashboard/bank'), 600)
       } else if (data.destination === 'statement') {
         // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt maar vergeleken:
@@ -347,15 +347,15 @@ export default function IntakeButton({
         // die toont de boodschap én de link naar het bestand in Mijn bestanden.
         // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen; tijdens een reeks komt
         // de zin in de samenvatting te staan.
-        noteLanded(file.name, 'rekeningoverzicht → gecontroleerd')
+        noteLanded(file.name, t('int.landed.overzicht'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
-          message: data.message || 'Rekeningoverzicht gecontroleerd',
+          message: data.message || t('int.overzichtGecontroleerd'),
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
         })
-        else showToast(data.message || 'Toegevoegd ✓')
+        else showToast(data.message || t('int.toegevoegd'))
       } else if (data.destination === 'turnover') {
         // [INTAKE-DEST-OMZET] Een kassabestand is GEBOEKTE OMZET — /api/intake schrijft de dagen
         // meteen in daily_turnover en zegt in zijn eigen boodschap "Controleer in Dagomzet".
@@ -364,8 +364,8 @@ export default function IntakeButton({
         // router.refresh(), dus de eigenaar bleef staan waar hij stond, zonder weg naar de
         // pagina die hij net gevraagd werd te controleren. Elke andere bestemming brengt hem
         // wél naar waar zijn bestand landde; deze hoort dat als eerste te doen.
-        showToast(data.message || 'Dagomzet geboekt ✓')
-        noteLanded(file.name, 'dagomzet → Dagomzet')
+        showToast(data.message || t('int.dagomzetGeboekt'))
+        noteLanded(file.name, t('int.landed.dagomzet'))
         if (mayNavigate()) setTimeout(() => router.push('/dashboard/dagomzet'), 600)
       } else if (data.destination === 'ledger') {
         // [INTAKE-DEST-CHECK] Een grootboek-/controlebestand is NADRUKKELIJK GEEN geld: het telt
@@ -374,15 +374,15 @@ export default function IntakeButton({
         // controle-check"), geen plaats. Precies zoals bij een leveranciersoverzicht mag die zin
         // niet in een toast verdwijnen: dezelfde blijvende modal, met de link naar het bestand.
         // [INTAKE-QUEUE] Zie hierboven: tijdens een reeks een melding, met de zin in de samenvatting.
-        noteLanded(file.name, 'controle-check → ingelezen')
+        noteLanded(file.name, t('int.landed.controle'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
-          message: data.message || 'Ingelezen als controle-check',
+          message: data.message || t('int.ingelezenControle'),
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
         })
-        else showToast(data.message || 'Toegevoegd ✓')
+        else showToast(data.message || t('int.toegevoegd'))
       } else if (data.destination === 'document') {
         // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
         // went. Show a persistent modal with the destination + a deep-link that
@@ -390,10 +390,10 @@ export default function IntakeButton({
         // decides whether to open it (tap the link) or stay (tap "Klaar").
         // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen. Alleen tonen als
         // deze upload de enige was; anders melden en in de samenvatting opnemen.
-        noteLanded(file.name, 'bestand → Mijn bestanden')
+        noteLanded(file.name, t('int.landed.bestand'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
-          message: data.message || 'Opgeslagen in je bestanden',
+          message: data.message || t('int.opgeslagen'),
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
@@ -402,12 +402,12 @@ export default function IntakeButton({
           // welke van de twee het is; dit scherm las dat veld niet.
           couldNotRead: data.could_not_read === true,
         })
-        else showToast(data.message || 'Toegevoegd ✓')
+        else showToast(data.message || t('int.toegevoegd'))
       } else {
         // Restbak. Sinds hierboven alle zeven bestemmingen van /api/intake een eigen tak hebben,
         // komt hier alleen nog een antwoord ZONDER destination — een oudere of onvolledige
         // response. Dan is de boodschap van de server het enige eerlijke dat we hebben.
-        showToast(data.message || 'Toegevoegd ✓')
+        showToast(data.message || t('int.toegevoegd'))
         router.refresh()
       }
       return 'ok'
@@ -455,7 +455,7 @@ export default function IntakeButton({
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
           {busy ? 'hourglass_empty' : 'add_a_photo'}
         </span>
-        Bon/factuur
+        {t('int.bonFactuur')}
       </button>
     ) : variant === 'compact' ? (
       <button
@@ -498,8 +498,8 @@ export default function IntakeButton({
               De regel zegt daarom wat er loopt in plaats van dat je moet wachten. */}
           <p style={{ fontSize: 13, color: '#5F6368' }}>
             {busy
-              ? `${inFlight} wordt gelezen — je kunt gewoon doorgaan`
-              : 'Maak een foto of upload — AI sorteert het'}
+              ? t('int.wordtGelezen', { n: inFlight })
+              : t('int.maakFotoUpload')}
           </p>
         </div>
         <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
@@ -562,7 +562,7 @@ export default function IntakeButton({
               <>
                 <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>{t('ink.toevoegen')}</p>
                 <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
-                  Maak een foto of kies een bestand. De AI herkent en sorteert het automatisch.
+                  {t('int.sheetUitleg')}
                 </p>
 
                 <button
@@ -600,7 +600,7 @@ export default function IntakeButton({
                 </button>
 
                 <p style={{ fontSize: 11.5, color: '#8e8e93', textAlign: 'center', margin: '12px 4px 0', lineHeight: 1.45 }}>
-                  Eén PDF = één factuur. Meerdere verschillende facturen? Voeg ze los toe.
+                  {t('int.eenPdfUitleg')}
                 </p>
 
                 <button onClick={() => { setOpen(false); closeMultiPage() }} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
@@ -612,14 +612,14 @@ export default function IntakeButton({
               <>
                 <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>{t('ink.eenFactuurMeerPaginas')}</p>
                 <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
-                  Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één factuur.
+                  {t('int.mpUitleg')}
                 </p>
 
                 {mpPages.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14, maxHeight: '32vh', overflowY: 'auto' }}>
                     {mpPages.map((f, i) => (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#F1F3F4', borderRadius: 10 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 700, color: M3.primary, minWidth: 62 }}>Pagina {i + 1}</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 700, color: M3.primary, minWidth: 62 }}>{t('int.pagina', { n: i + 1 })}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                         <button onClick={() => setMpPages((prev) => prev.filter((_, j) => j !== i))} disabled={combining} aria-label={t('ink.verwijderPagina')}
                           style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: combining ? 'default' : 'pointer', lineHeight: 1 }}>×</button>
@@ -631,11 +631,11 @@ export default function IntakeButton({
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
                     style={{ flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontWeight: 600, fontSize: 13.5, cursor: combining ? 'default' : 'pointer', fontFamily: FONT }}>
-                    📷 Pagina fotograferen
+                    📷 {t('int.paginaFotograferen')}
                   </button>
                   <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
                     style={{ flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontWeight: 600, fontSize: 13.5, cursor: combining ? 'default' : 'pointer', fontFamily: FONT }}>
-                    🖼️ Pagina&apos;s kiezen
+                    🖼️ {t('int.paginasKiezen')}
                   </button>
                 </div>
 
@@ -643,7 +643,7 @@ export default function IntakeButton({
                   style={{ width: '100%', padding: '15px', borderRadius: R.lg, border: 'none', fontWeight: 700, fontSize: 15, fontFamily: FONT,
                     background: combining || mpPages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff',
                     cursor: combining || mpPages.length === 0 ? 'default' : 'pointer' }}>
-                  {combining ? 'Bezig…' : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? '' : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
+                  {combining ? t('act.bezig') : mpPages.length > 0 ? (mpPages.length === 1 ? t('int.combineerEen') : t('int.combineer', { n: mpPages.length })) : t('int.voegEerstToe')}
                 </button>
 
                 <button onClick={closeMultiPage} disabled={combining}
@@ -671,7 +671,7 @@ export default function IntakeButton({
             </div>
             <p style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
               {/* [DUP-ARCHIVED] Genegeerd is een ándere situatie dan "bestaat al" — de kop zegt welke. */}
-              {dupModal.archived ? 'Deze factuur staat in Genegeerd' : 'Deze factuur bestaat al'}
+              {dupModal.archived ? t('int.staatGenegeerd') : t('int.bestaatAl')}
             </p>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 24, lineHeight: 1.5 }}>{dupModal.message}</p>
 
@@ -683,7 +683,7 @@ export default function IntakeButton({
                 disabled={restoring}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: restoring ? 'default' : 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10, opacity: restoring ? 0.6 : 1 }}
               >
-                {restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
+                {restoring ? t('act.bezig') : t('int.terugzettenGenegeerd')}
                 {!restoring && <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>}
               </button>
             )}
@@ -740,10 +740,10 @@ export default function IntakeButton({
             style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '22px 20px', paddingBottom: sheetPaddingBottom(22), width: '100%', maxWidth: 460, maxHeight: '80vh', overflowY: 'auto' }}
           >
             <p style={{ fontSize: 17, fontWeight: 700, color: '#202124', margin: 0 }}>
-              {batchSummary.length} verwerkt
+              {t('int.nVerwerkt', { n: batchSummary.length })}
             </p>
             <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 14px', lineHeight: 1.45 }}>
-              Je kon doorgaan met fotograferen terwijl deze werden gelezen. Dit is waar ze terecht zijn gekomen.
+              {t('int.batchUitleg')}
             </p>
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {batchSummary.map((r, i) => (
@@ -780,14 +780,14 @@ export default function IntakeButton({
                 lezen: er is niets van geboekt, en dit is juist het bestand waar de eigenaar nog iets
                 mee moet. De kop zegt dat nu. */}
             <div style={{ fontWeight: 700, fontSize: 19, color: '#202124', marginBottom: 4 }}>
-              {destModal.isDuplicate ? 'Dit bestand bestaat al'
-                : destModal.couldNotRead ? 'Bewaard, maar niet gelezen'
-                : 'Bestand toegevoegd'}
+              {destModal.isDuplicate ? t('int.kop.bestaatAl')
+                : destModal.couldNotRead ? t('int.kop.nietGelezen')
+                : t('int.kop.toegevoegd')}
             </div>
             <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
-              {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:'
-                : destModal.couldNotRead ? 'Het bestand is veilig opgeslagen, maar we konden er niets uit lezen:'
-                : 'Dit is er met je bestand gebeurd:'}
+              {destModal.isDuplicate ? t('int.alEerder')
+                : destModal.couldNotRead ? t('int.veiligNietGelezen')
+                : t('int.gebeurd')}
             </div>
 
             <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: destModal.couldNotRead ? '#FEF7E0' : '#f8f9fa', marginBottom: 20 }}>
@@ -806,12 +806,12 @@ export default function IntakeButton({
                   <>
                     <p style={{ fontSize: 12, color: '#8A5A00', margin: 0, lineHeight: 1.45 }}>{destModal.message}</p>
                     {destModal.folderName && (
-                      <p style={{ fontSize: 12, color: '#1a73e8', margin: '4px 0 0' }}>Het staat in: {destModal.folderName}</p>
+                      <p style={{ fontSize: 12, color: '#1a73e8', margin: '4px 0 0' }}>{t('int.staatIn', { folder: destModal.folderName })}</p>
                     )}
                   </>
                 ) : (
                   <p style={{ fontSize: 12, color: '#1a73e8', margin: 0 }}>
-                    {destModal.folderName ? `Dit bestand staat in: ${destModal.folderName}` : destModal.message}
+                    {destModal.folderName ? t('int.bestandStaatIn', { folder: destModal.folderName }) : destModal.message}
                   </p>
                 )}
                 {destModal.documentId && (

@@ -72,14 +72,15 @@ function todayDayNumber(): number {
 function daysUntilDue(dueIso: string): number {
   return dayNumberFromIso(dueIso) - todayDayNumber()
 }
-function dueLabel(dueIso: string): string {
+// [TAAL] Takes the caller's translator; each count band has its own key (same keys as Vandaag).
+function dueLabel(dueIso: string, t: ReturnType<typeof translator>): string {
   const d = daysUntilDue(dueIso)
   // [OWNER-DECISION] Every overdue invoice shows the real day count, red —
   // matches Vandaag (no calm 30+-day tier anywhere).
-  if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
-  if (d === 0) return 'Vervalt vandaag'
-  if (d === 1) return 'Vervalt morgen'
-  return `Vervalt over ${d} dagen`
+  if (d < 0) return Math.abs(d) === 1 ? t('vandaag.telaatEen') : t('vandaag.telaatMeer', { n: Math.abs(d) })
+  if (d === 0) return t('vandaag.vervaltVandaag')
+  if (d === 1) return t('vandaag.vervaltMorgen')
+  return t('vandaag.vervaltOver', { n: d })
 }
 function dueAccent(dueIso: string): string {
   // Red for ANY overdue row, amber for soon-due — a 30+-days-late invoice must
@@ -133,7 +134,7 @@ export default function DailyTruth() {
     return (
       <div style={{ marginBottom: 20, fontFamily: FONT, background: '#FFF4E5', borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#7a4f00' }}>{t('waarheid.laadfout')}</div>
-        <div style={{ fontSize: 12.5, color: '#7a4f00', margin: '4px 0 10px' }}>Dit is géén &quot;alles is bij&quot; — we konden je cijfers even niet ophalen.</div>
+        <div style={{ fontSize: 12.5, color: '#7a4f00', margin: '4px 0 10px' }}>{t('waarheid.geenAllesBij')}</div>
         <button onClick={retry} style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>{t('waarheid.opnieuw')}</button>
       </div>
     )
@@ -164,10 +165,10 @@ export default function DailyTruth() {
       {/* ── Layer A: WAAR JE STAAT (certain totals) ── */}
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '0 2px 10px' }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>
-          WAAR JE STAAT
+          {t('waarheid.waarJeStaat')}
         </span>
         {lastDate && (
-          <span style={{ fontSize: 11.5, color: '#70757a' }}>bank bijgewerkt tot {lastDate}</span>
+          <span style={{ fontSize: 11.5, color: '#70757a' }}>{t('waarheid.bankBijgewerkt', { datum: lastDate })}</span>
         )}
       </div>
 
@@ -254,10 +255,10 @@ export default function DailyTruth() {
               {(data.bank.accounts ?? 1) > 1 ? t('waarheid.bankMeerdere', { n: data.bank.accounts ?? 0 }) : t('waarheid.bank')}
             </div>
             <div style={{ fontSize: 11.5, color: '#70757a', marginTop: 2, lineHeight: 1.45 }}>
-              saldo op {formatDate(data.bank.balanceAsOf ?? null)}
+              {t('waarheid.saldoOp', { datum: formatDate(data.bank.balanceAsOf ?? null) ?? '' })}
               {/* Een deeltotaal dat als het geheel leest, is dezelfde fout als een nul — alleen
                   stiller: je leest minder geld dan je hebt en kunt niet zien waarom. */}
-              {data.bank.partial && ' · van één rekening is geen saldo bekend'}
+              {data.bank.partial && ` · ${t('waarheid.saldoDeels')}`}
             </div>
           </div>
           <span style={{ fontFamily: FONT_NUM, fontSize: 18, fontWeight: 700, color: data.bank.balance < 0 ? '#B3261E' : M3.onSurface, flexShrink: 0 }}>
@@ -289,7 +290,7 @@ export default function DailyTruth() {
         <div style={{ marginTop: 22 }}>
           <div style={{ margin: '0 2px 10px' }}>
             <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>
-              DIT HEEFT JE AANDACHT NODIG
+              {t('waarheid.aandachtNodig')}
             </span>
           </div>
 
@@ -368,7 +369,7 @@ function AttentionRow({ item, onClick, divider }: {
   // never has to wonder "is this a bill I owe or an invoice owed to me?".
   const kind = isCredit ? t('waarheid.creditnota') : item.direction === 'incoming' ? t('waarheid.teBetalen') : t('waarheid.teOntvangen')
   const kindColor = item.direction === 'incoming' ? '#8A4B00' : M3.primary
-  const dueText = !isCredit && item.dueDate ? dueLabel(item.dueDate) : ''
+  const dueText = !isCredit && item.dueDate ? dueLabel(item.dueDate, t) : ''
 
   return (
     <button
@@ -382,7 +383,7 @@ function AttentionRow({ item, onClick, divider }: {
     >
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {item.party?.trim() || 'Onbekende partij'}
+          {item.party?.trim() || t('vandaag.onbekendePartij')}
         </div>
         <div style={{ fontSize: 12.5, marginTop: 2 }}>
           <span style={{ color: kindColor, fontWeight: 600 }}>{kind}</span>

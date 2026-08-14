@@ -1,5 +1,6 @@
 // [BOEK-016] Pure node test for bank-matching.ts — run: npx tsx bank-matching.test.ts
 import type { BankTransaction } from "./bank-parser";
+import { buildMatchMemory } from "./match-memory";
 import {
   matchTransactions,
   nameSimilarity,
@@ -988,6 +989,181 @@ console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is
     !referenceMatches({ reference: "Huur juli 2026", description: "" }, "2026"));
   check("a too-short kenmerk is refused", !referenceMatches({ reference: "12 ", description: "" }, "12"));
 }
+
+// ─── [BIJNA-BEDRAG] A payment that is close, on a counterparty we can identify ──────────────────
+//
+// Measured before this existed: a €100 invoice from a strongly identified counterparty, paid
+// €99,50 because the bank took its costs off, produced `outcome: none, candidates: 0`. The owner
+// saw "Geen factuur" over a line whose invoice was sitting right there. Same for a 2%
+// betalingskorting and for a customer who rounded up. 0.35 is below the 0.5 listing floor, so an
+// identified pair without an exact amount was not weak — it was invisible.
+
+{
+  const nearInv = {
+    id: "n1", invoice_number: "2026-0044", total_inc_btw: 100, amount_paid: 0,
+    client_name: "Jansen Bouw B.V.", direction: "outgoing" as const, status: "sent",
+    invoice_date: "2026-07-01", due_date: "2026-07-31", accountant_status: null,
+  };
+  const nearTx = (over: Record<string, unknown> = {}) => ({
+    date: "2026-07-20", amount: 100, description: "SEPA Overboeking Jansen Bouw B.V.",
+    reference: null, counterpartName: "Jansen Bouw B.V.", counterpartIban: "NL91ABNA0417164300",
+    transactionId: "t1", ...over,
+  });
+  const outcomeOf = (amount: number, inv = nearInv) =>
+    matchTransactions([nearTx({ amount })] as never, [inv] as never).matches[0];
+
+  check("[BIJNA-BEDRAG] 50 cents of bank costs is listed, not hidden", (() => {
+    const m = outcomeOf(99.5);
+    return m.outcome === "choice" && m.candidates.length === 1
+      && (m.candidates[0].signals ?? []).includes("near_amount");
+  })());
+  check("[BIJNA-BEDRAG] …and the reason names the difference in euros", (() => {
+    const m = outcomeOf(99.5);
+    return /€0\.50 minder/.test(m.candidates[0].reason ?? "");
+  })());
+  check("[BIJNA-BEDRAG] a 2% betalingskorting is listed", outcomeOf(98).outcome === "choice");
+  check("[BIJNA-BEDRAG] and a customer who rounded UP", (() => {
+    const m = outcomeOf(100.05);
+    return m.outcome === "choice" && /€0\.05 meer/.test(m.candidates[0].reason ?? "");
+  })());
+
+  // The bar that makes it safe: close is never certain. A difference is what a human must look at,
+  // and confirming one books a deelbetaling with the remainder stated (/api/bank/confirm).
+  check("[BIJNA-BEDRAG] a near amount is NEVER auto-booked", (() => {
+    for (const amt of [99.5, 98, 100.05]) {
+      if (matchTransactions([nearTx({ amount: amt })] as never, [nearInv] as never).matches[0].outcome === "auto") return false;
+    }
+    return matchTransactions([nearTx({ amount: 100 })] as never, [nearInv] as never).matches[0].outcome === "auto";
+  })());
+  check("[BIJNA-BEDRAG] one cent is still an EXACT match, by policy and not by accident", (() => {
+    // amountEpsilon is 0.01 — [BANK-CENTS-EXACT] says why: an OCR'd or xlsx-imported total is
+    // legitimately a rounding tick off. So €99,99 books as before; this feature begins where that
+    // tolerance ends, and the two must not be confused for one another.
+    const m = matchTransactions([nearTx({ amount: 99.99 })] as never, [nearInv] as never).matches[0];
+    return m.outcome === "auto" && (m.best?.signals ?? []).includes("amount")
+      && !(m.best?.signals ?? []).includes("near_amount");
+  })());
+
+  // Bounded on both sides: 2% of the balance, never more than €25, never less than 5 cents.
+  check("[BIJNA-BEDRAG] a 20% difference is another invoice, not this one", outcomeOf(80).outcome === "none");
+  check("[BIJNA-BEDRAG] the absolute cap holds on a big invoice", (() => {
+    const big = { ...nearInv, total_inc_btw: 10000 }; // 2% would be €200; the cap is €25
+    return matchTransactions([nearTx({ amount: 9950 })] as never, [big] as never).matches[0].outcome === "none";
+  })());
+
+  // Identity is required, and a resemblance is not identity. This is the coincidence the whole
+  // file guards against: a nearby amount plus a name that looks a bit like another one.
+  check("[BIJNA-BEDRAG] a mere name resemblance does not open the door", (() => {
+    const other = { ...nearInv, client_name: "Jansen Holding" }; // shares one meaningful token
+    return matchTransactions([nearTx({ amount: 99.5 })] as never, [other] as never).matches[0].outcome === "none";
+  })());
+  check("[BIJNA-BEDRAG] …while the invoice's own IBAN is", (() => {
+    const viaIban = { ...nearInv, client_name: "ONLEESBAAR", vendor_iban: "NL91ABNA0417164300" };
+    const m = matchTransactions([nearTx({ amount: 99.5, counterpartName: "ONBEKEND" })] as never, [viaIban] as never).matches[0];
+    return m.outcome === "choice" && (m.candidates[0].signals ?? []).includes("near_amount");
+  })());
+}
+
+// ─── [GESTRUCTUREERD] The reference a bank routes on ───────────────────────────────────────────
+
+{
+  const rfInv = {
+    id: "r1", invoice_number: "2026-0044", payment_reference: "RF18539007547034",
+    total_inc_btw: 77, amount_paid: 0, client_name: "Groothandel", direction: "outgoing" as const,
+    status: "sent", invoice_date: "2026-07-01", due_date: "2026-07-31", accountant_status: null,
+  };
+  const rfTx = (description: string) => ({
+    date: "2026-07-20", amount: 77, description, reference: null,
+    counterpartName: "Groothandel", counterpartIban: null, transactionId: "t9",
+  });
+
+  check("[GESTRUCTUREERD] an RF reference printed in groups is recognised", (() => {
+    // The way every bank prints it — and the way the space-preserving scan could not see it.
+    const m = matchTransactions([rfTx("Betaling RF18 5390 0754 7034")] as never, [rfInv] as never).matches[0];
+    return m.outcome === "auto" && (m.best?.signals ?? []).includes("reference");
+  })());
+  check("[GESTRUCTUREERD] a different valid RF reference does not match", (() => {
+    const m = matchTransactions([rfTx("Betaling RF71 2348 231")] as never, [rfInv] as never).matches[0];
+    return !(m.best?.signals ?? []).includes("reference");
+  })());
+  check("[GESTRUCTUREERD] one wrong character and it is not this invoice", (() => {
+    const m = matchTransactions([rfTx("Betaling RF18 5390 0754 7035")] as never, [rfInv] as never).matches[0];
+    return !(m.best?.signals ?? []).includes("reference");
+  })());
+}
+
+// ─── [GEHEUGEN] The owner's own confirmations, read back ───────────────────────────────────────
+//
+// Every other signal is inference about a line the app is seeing for the first time. This one is
+// the owner's answer, given by confirming — written to bank_tx_invoices and, until now, never read
+// again. The supplier below is the case it exists for: the bank writes "SUMUP *JANSEN" and the
+// invoice says "Jansen Bouw B.V.", which isStrongNameIdentity rejects on purpose (one shared token
+// is the asymmetric surname shape). So the same payment was identified by hand every month.
+
+{
+  const memInv = {
+    id: "m1", invoice_number: "2026-0044", total_inc_btw: 100, amount_paid: 0,
+    client_name: "Jansen Bouw B.V.", direction: "outgoing" as const, status: "sent",
+    invoice_date: "2026-07-01", due_date: "2026-07-31", accountant_status: null,
+  };
+  const memTx = (amount: number) => ({
+    date: "2026-07-20", amount, description: "SEPA", reference: null,
+    counterpartName: "SUMUP *JANSEN", counterpartIban: null, transactionId: "t1",
+  });
+  const remembered = buildMatchMemory([
+    { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Jansen Bouw B.V." },
+  ]);
+  const run = (amount: number, memory: ReturnType<typeof buildMatchMemory> | null) =>
+    matchTransactions([memTx(amount)] as never, [memInv] as never, { memory }).matches[0];
+
+  check("[GEHEUGEN] a remembered counterpart identifies the party", (() => {
+    const m = run(100, remembered);
+    return (m.best?.signals ?? []).includes("memory");
+  })());
+  check("[GEHEUGEN] …and says so, naming who", (() => {
+    const m = run(100, remembered);
+    return /eerder een betaling van deze tegenpartij aan Jansen Bouw B\.V\. gekoppeld/.test(m.best?.reason ?? "");
+  })());
+
+  // What it is FOR: a near amount needs identity, and this counterparty had none the token rules
+  // would accept. Without memory the line is not merely weak — it is absent.
+  check("[GEHEUGEN] it turns an invisible near-amount line into an offer", (() => {
+    const without = run(99.5, null);
+    const withMem = run(99.5, remembered);
+    return without.outcome === "none" && without.candidates.length === 0
+      && withMem.outcome === "choice" && (withMem.candidates[0].signals ?? []).includes("near_amount");
+  })());
+
+  // What it is NOT for: it must not book anything that did not book before. Memory identifies the
+  // PARTY, never the bill, and it lands under the same coincidence ceiling as amount+name+date.
+  check("[GEHEUGEN] it opens no new door to an unattended booking", (() => {
+    const exact = run(100, remembered);
+    const exactWithout = run(100, null);
+    return exact.outcome === exactWithout.outcome
+      && (exact.best?.confidence ?? 0) === (exactWithout.best?.confidence ?? 0);
+  })());
+  check("[GEHEUGEN] a near amount stays a choice, remembered or not", run(99.5, remembered).outcome === "choice");
+
+  // The rule that makes one mistaken confirmation self-limiting.
+  check("[GEHEUGEN] a counterpart that settled two parties stops speaking", (() => {
+    const channel = buildMatchMemory([
+      { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Jansen Bouw B.V." },
+      { counterpartName: "SUMUP *JANSEN", counterpartIban: null, partyName: "Iemand Anders" },
+    ]);
+    return !(run(100, channel).best?.signals ?? []).includes("memory")
+      && run(99.5, channel).outcome === "none";
+  })());
+
+  // A printed invoice number is still the strongest thing on the page. Memory ranks; it never
+  // outranks the document naming the bill.
+  check("[GEHEUGEN] a printed number still outranks a remembered counterparty", (() => {
+    const other = { ...memInv, id: "m2", invoice_number: "2026-0099", client_name: "Iemand Anders" };
+    const tx = { ...memTx(100), description: "Factuur 2026-0099" };
+    const m = matchTransactions([tx] as never, [memInv, other] as never, { memory: remembered }).matches[0];
+    return m.best?.invoiceNumber === "2026-0099";
+  })());
+}
+
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

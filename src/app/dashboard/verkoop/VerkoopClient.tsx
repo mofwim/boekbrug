@@ -67,13 +67,13 @@ export default function VerkoopClient({
       const res = await fetch(`/api/invoice/${id}/reminder`, { method: 'POST' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setMelding({ tekst: json?.error || 'Herinneren lukte niet', goed: false })
+        setMelding({ tekst: json?.error || vert('vk.herinnerenMislukt'), goed: false })
         return
       }
-      setMelding({ tekst: 'Herinnering verstuurd ✓', goed: true })
+      setMelding({ tekst: vert('vk.herinneringVerstuurd'), goed: true })
       router.refresh()
     } catch {
-      setMelding({ tekst: 'Herinneren lukte niet — controleer je verbinding', goed: false })
+      setMelding({ tekst: vert('vk.herinnerenMisluktVerbinding'), goed: false })
     } finally {
       setBezig(null)
     }
@@ -130,7 +130,7 @@ export default function VerkoopClient({
                   {vert('status.draft', undefined)}
                 </div>
                 <div style={{ fontSize: 24, fontWeight: 700, color: M3.warning, marginTop: 2 }}>{t.drafts}</div>
-                <div style={{ fontSize: 12.5, color: M3.mutedText }}>nog niet verstuurd</div>
+                <div style={{ fontSize: 12.5, color: M3.mutedText }}>{vert('vkp.nogNietVerstuurd')}</div>
               </div>
             )}
         </div>
@@ -185,7 +185,7 @@ export default function VerkoopClient({
                         style={{ minWidth: 0, textDecoration: 'none', color: 'inherit', flex: 1 }}
                       >
                         <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {f.client_name || 'Zonder klant'}
+                          {f.client_name || vert('vk.zonderKlant')}
                         </div>
                         <div style={{ fontSize: 12.5, color: M3.mutedText, marginTop: 2 }}>
                           {/* Een concept heeft nog GEEN nummer, en dat is geen ontbrekend gegeven
@@ -224,7 +224,7 @@ export default function VerkoopClient({
                               cursor: bezig === f.id ? 'default' : 'pointer', fontFamily: FONT,
                             }}
                           >
-                            {bezig === f.id ? 'Bezig…' : 'Herinnering sturen'}
+                            {bezig === f.id ? vert('lijst.bezig') : vert('vk.herinneringSturen')}
                           </button>
                         ) : (
                           <p style={{ fontSize: 12.5, color: M3.mutedText, margin: 0, lineHeight: 1.5 }}>

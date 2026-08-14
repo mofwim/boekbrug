@@ -5,7 +5,10 @@
 // Cash sales (in) and cash expenses (out); deposits/withdrawals to the bank are
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// [TAAL] useCallback/useMemo are gone from this file on purpose — see catLabel and filteredEntries
+// below: the React Compiler memoizes the component, and a manual memo whose dependency it cannot
+// prove stable is refused anyway.
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
@@ -15,6 +18,13 @@ import { rowMatchesQuery } from '@/lib/search'
 import { sendWithFit } from '@/lib/upload-fit'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [PARSE-NL] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts. This screen
+// used `Number(x.replace(',', '.'))`, which reads the two ordinary Dutch ways of writing money
+// wrongly and in opposite directions: "1.306,36" became NaN (refused with "bedrag moet groter dan
+// 0" over an amount that is plainly valid), and "1.250" became 1.25 — a cash sale booked at a
+// thousandth of itself, into the drawer, the BTW and the kasboek an inspector reads, with nothing
+// on screen to suggest anything was misread.
+import { parseAmountNL } from '@/lib/parse-nl'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -29,12 +39,25 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
-const CATS: { key: string; label: string }[] = [
-  { key: 'omzet', label: 'Omzet' },
-  { key: 'kosten', label: 'Kost' },
-  { key: 'prive', label: 'Privé' },
-  { key: 'transfer', label: 'Naar/van bank' },
-]
+// [TAAL] The keys are DATABASE values and stay Dutch; only the labels travel through the
+// catalogue (rendered via the component's translator).
+const CATS = [
+  { key: 'omzet', labelKey: 'kas.cat.omzet' },
+  { key: 'kosten', labelKey: 'kas.cat.kosten' },
+  // [KAS-LOON] Cash-paid wages. The vocabulary has carried 'salaris' from the beginning and the
+  // result engine has always booked it distinctly — a cost that NEVER carries any BTW, rate-free by
+  // construction — and the form did not offer it. So the one thing an owner could not record
+  // truthfully in this drawer was a wage: their only option was 'Kost', which is the category where
+  // a bon plus a rate DOES produce voorbelasting, and which puts a payroll obligation inside a
+  // general cost total where an accountant will not see it.
+  //
+  // Offered in BOTH directions on purpose. Out is the wage paid; in is a wage repaid into the till,
+  // which financial-result already handles explicitly (it reduces the cost). Hiding the rare one is
+  // how a rare event gets booked as something it is not — the same reasoning as this entry itself.
+  { key: 'salaris', labelKey: 'kas.cat.salaris' },
+  { key: 'prive', labelKey: 'kas.cat.prive' },
+  { key: 'transfer', labelKey: 'kas.cat.transfer' },
+] as const
 
 interface Entry {
   id: string
@@ -53,6 +76,16 @@ interface Kasboek {
   year: number; quarter: number; openingBalance: number; closingBalance: number
   months: KasMonth[]; totalIn: number; totalOut: number
 }
+// [KAS-SPOOR] A movement this quarter's cash book HELD and no longer holds. Reconstructed from the
+// audit trail by /api/kasboek, because a cash_entries delete is a hard delete — the trail is the
+// only place the movement still exists. Never part of any saldo; see the panel at the bottom.
+interface RemovedEntry {
+  date: string; direction: 'in' | 'out'; amount: number
+  category: string | null; description: string | null; removedOn: string | null
+}
+// [KAS-BRUG] Cash that left the BANK and never arrived in the cash book as an opname. Computed by
+// /api/kasboek only when the drawer went below zero — see cash-transfer-match.ts.
+interface UnrecordedWithdrawal { date: string; amount: number; description: string | null }
 
 // Previous quarter for the ◀ selector (Q1 → Q4 of the prior year).
 function prevQuarter(y: number, q: number): { year: number; quarter: number } {
@@ -70,6 +103,21 @@ function currentQuarter(): { year: number; quarter: number } {
 }
 function isAtOrAfter(a: { year: number; quarter: number }, b: { year: number; quarter: number }): boolean {
   return a.year > b.year || (a.year === b.year && a.quarter >= b.quarter)
+}
+/**
+ * "Q1 2026" for the quarter the readiness gate blocks on — the one the negative-drawer banner is
+ * about.
+ *
+ * DERIVED, not read from alertPeriodRef: a ref may not be read during render (the label would not
+ * re-render when it changed), and it does not need to be. The unparameterised /api/kasboek call
+ * defaults through quarterFromParams to lastCompletedQuarter, which is exactly
+ * prevQuarter(currentQuarter()) on the same Amsterdam day this file already pins — the identical
+ * definition, so the label cannot drift from the quarter it names.
+ */
+function readinessQuarterLabel(): string {
+  const now = currentQuarter()
+  const p = prevQuarter(now.year, now.quarter)
+  return `Q${p.quarter} ${p.year}`
 }
 
 function formatDate(iso: string | null): string {
@@ -92,8 +140,8 @@ export default function KasClient() {
   const findParam = searchParams.get('find') ?? ''
   const [search, setSearch] = useState(findParam)
   useEffect(() => {
-    const t = setTimeout(() => setSearch(findParam), 0)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setSearch(findParam), 0)
+    return () => clearTimeout(timer)
   }, [findParam])
   const [balance, setBalance] = useState(0)
   // [KAS-OPENING] the drawer's starting float (beginsaldo) — a config value the owner sets once.
@@ -121,6 +169,9 @@ export default function KasClient() {
   // the last completed quarter and tells us which one it picked (kb.year/kb.quarter).
   const [kbOpen, setKbOpen] = useState(false)
   const [kb, setKb] = useState<Kasboek | null>(null)
+  // [KAS-SPOOR] Travels with the loaded quarter, so browsing to another quarter shows ITS removals
+  // and not the ones from the quarter before it.
+  const [kbRemoved, setKbRemoved] = useState<{ rows: RemovedEntry[]; unknown: boolean }>({ rows: [], unknown: false })
   const [kbLoading, setKbLoading] = useState(false)
   const [kbPeriod, setKbPeriod] = useState<{ year: number; quarter: number } | null>(null)
   // [KAS-NEGATIEF] The day this quarter's drawer went below zero, if it ever did. A negative
@@ -142,6 +193,24 @@ export default function KasClient() {
   // unreadable). Not the same as "your drawer is fine", and this screen must not let the two
   // look alike — the absence of the banner is the only thing the owner has to go on.
   const [lowestPointUnknown, setLowestPointUnknown] = useState(false)
+  // [KAS-NEGATIEF-NU] The dip in the quarter that is STILL OPEN — the one nobody was told about.
+  //
+  // Everything above is about the readiness quarter (the last completed one), because that is what
+  // the filing gate blocks on. So a drawer that goes below zero TODAY had exactly one witness on
+  // this screen: the headline saldo turning red — and only if it is STILL negative right now. A dip
+  // that recovered before today (a cash purchase booked before the takings that paid for it, the
+  // single most common shape of this error) showed nothing at all, in the one place it is cheap to
+  // fix: this quarter is not filed, the days are days old, and the owner still remembers them.
+  //
+  // Then the quarter closes, and the same dip arrives as a blocked aangifte with three months of
+  // hindsight to reconstruct. The information existed the whole time — /api/kasboek answers for any
+  // quarter you ask it about, and nobody was asking about this one.
+  const [openDip, setOpenDip] = useState<{ date: string; balance: number } | null>(null)
+  // [KAS-BRUG] Cash withdrawn from the bank in the blocking quarter that no opname in the cash book
+  // accounts for — the fourth cause of a negative drawer, and in a shop the most ordinary of all.
+  // The endpoint only computes it when the drawer is actually negative, so this is empty unless
+  // there is an accusation for it to explain. Kept per quarter, like the dip it belongs to.
+  const [bridgeGaps, setBridgeGaps] = useState<{ blocking: UnrecordedWithdrawal[]; open: UnrecordedWithdrawal[] }>({ blocking: [], open: [] })
 
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
@@ -152,6 +221,9 @@ export default function KasClient() {
       if (res.ok && json.kasboek) {
         setKb(json.kasboek as Kasboek)
         setKbPeriod({ year: json.kasboek.year, quarter: json.kasboek.quarter })
+        // [KAS-SPOOR] Set from the SAME answer as the book itself, so the two can never describe
+        // different quarters.
+        setKbRemoved({ rows: (json.removed ?? []) as RemovedEntry[], unknown: !!json.removedUnknown })
         // The first load (no explicit period) IS the readiness quarter — remember it.
         if (!period) alertPeriodRef.current = { year: json.kasboek.year, quarter: json.kasboek.quarter }
         // [SHADOW] Named alertQ, not alert: a local `alert` shadows window.alert for the whole
@@ -179,6 +251,69 @@ export default function KasClient() {
     if (!kb) void loadKasboek(null)
   }
 
+  // [KAS-NEGATIEF] Re-ask the readiness quarter's drawer whether it ever dipped below zero.
+  //
+  // Its own quarter only — the unparameterised call, which IS the quarter the readiness gate blocks
+  // on (see alertPeriodRef) — and deliberately WITHOUT touching kb/kbPeriod: the owner may be
+  // browsing another quarter in the panel, and refreshing a warning must not walk them out of it.
+  //
+  // Called after every write, not only on mount. That is the fix: the banner is a VERDICT over a
+  // whole quarter, and the three remedies it names — book the missing bon, correct a date, record
+  // the opname from the bank — are all carried out on THIS screen, usually with the panel closed.
+  // Fetched once at mount it then went stale in both directions, and both are worse than a stale
+  // list would be:
+  //   · the owner books exactly what the banner asked for and the red banner stays, so the fix
+  //     reads as ineffective and the blocked aangifte stays unexplained;
+  //   · or they backdate a cash expense into that quarter, push the drawer under zero, and the
+  //     screen says nothing at all until someone happens to reload — while the filing gate, which
+  //     re-reads this same witness per request, has already started refusing.
+  // A page that keeps a money verdict from before the money moved is the one thing this screen
+  // exists to prevent.
+  // [KAS-NEGATIEF-NU] …and the same question about the quarter we are IN, asked in the same breath.
+  // Two quarters, two answers, and they cannot be folded into one call: the endpoint reports the
+  // lowest point of the period it was asked about, and these are always different periods (the
+  // readiness quarter is by definition the one BEFORE the current one). Run together so asking twice
+  // costs one wait rather than two.
+  async function refreshDrawerAlert(isCancelled: () => boolean = () => false) {
+    const cur = currentQuarter()
+    const ask = async (qs: string) => {
+      const res = await fetch(`/api/kasboek${qs}`)
+      const json = await res.json()
+      return { ok: res.ok && !!json.kasboek, json }
+    }
+    try {
+      const [blocking, open] = await Promise.all([
+        ask(''),
+        ask(`?year=${cur.year}&quarter=${cur.quarter}`),
+      ])
+      if (isCancelled()) return
+      if (blocking.ok) {
+        // This unparameterised answer owns the banner, and pins which quarter may update it later.
+        alertPeriodRef.current = { year: blocking.json.kasboek.year, quarter: blocking.json.kasboek.quarter }
+        setLowestPoint((blocking.json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        setLowestPointUnknown(false)
+        // [KAS-BRUG] Set from the same answer as the dip, so a cause can never be shown under a
+        // banner about a different quarter.
+        setBridgeGaps((g) => ({ ...g, blocking: (blocking.json.unrecordedWithdrawals ?? []) as UnrecordedWithdrawal[] }))
+      } else {
+        // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which on
+        // this screen is indistinguishable from "your drawer never went negative".
+        setLowestPointUnknown(true)
+      }
+      if (open.ok) {
+        setOpenDip((open.json.lowestPoint ?? null) as { date: string; balance: number } | null)
+        setBridgeGaps((g) => ({ ...g, open: (open.json.unrecordedWithdrawals ?? []) as UnrecordedWithdrawal[] }))
+      } else {
+        // Same rule for this half: an unanswered question must not render as a clean drawer. It
+        // shares the one "could not check" banner rather than raising a second — the sentence is
+        // already exactly right for both, and two of them would only be noise.
+        setLowestPointUnknown(true)
+      }
+    } catch {
+      if (!isCancelled()) setLowestPointUnknown(true)
+    }
+  }
+
   async function load() {
     try {
       const res = await fetch('/api/cash')
@@ -190,7 +325,11 @@ export default function KasClient() {
 
   // [KAS-OPENING] Persist the starting float, then reload so the saldo reflects it immediately.
   async function saveOpeningBalance() {
-    const val = Number((openingInput || '').replace(',', '.'))
+    // [PARSE-NL] A float is typed the way a Dutch owner writes money ("1.000", "1.000,50").
+    // parseAmountNL answers 0 for anything it cannot read, which on THIS field would silently
+    // store €0,00 over a typo — so the digit test comes first and keeps that an error.
+    const raw = (openingInput || '').trim()
+    const val = /\d/.test(raw) ? parseAmountNL(raw) : NaN
     if (!Number.isFinite(val) || val < 0) { setError(t('kas.beginsaldoNegatief')); return }
     setOpeningSaving(true)
     try {
@@ -200,7 +339,7 @@ export default function KasClient() {
       })
       if (res.ok) { setOpeningEdit(false); await load() }
       // [SERVER-ZIN] `j.error` showed opening_balance_lookup_failed in the kasboek.
-      else { const j = await res.json().catch(() => ({})); setError(failureText(res.status, j, 'Kon beginsaldo niet opslaan')) }
+      else { const j = await res.json().catch(() => ({})); setError(failureText(res.status, j, t('kas.fout.beginsaldoOpslaan'))) }
     } catch { setError(t('kas.fout.verbinding')) } finally { setOpeningSaving(false) }
   }
   // Initial load — inline async IIFE so no setState runs synchronously in the effect.
@@ -220,22 +359,8 @@ export default function KasClient() {
       // dipped below zero. A dip can happen mid-quarter and recover — the headline saldo would
       // look perfectly healthy while the kasboek an inspector reads does not. Failure here is
       // silent on purpose: it is a warning channel, never a reason to break the page.
-      try {
-        const kbRes = await fetch('/api/kasboek')
-        const kbJson = await kbRes.json()
-        if (cancelled) return
-        if (kbRes.ok && kbJson.kasboek) {
-          // [KAS-NEGATIEF] This unparameterised call IS the readiness quarter, so it owns the
-          // banner — and pins which quarter may update it later (see alertPeriodRef).
-          alertPeriodRef.current = { year: kbJson.kasboek.year, quarter: kbJson.kasboek.quarter }
-          setLowestPoint((kbJson.lowestPoint ?? null) as { date: string; balance: number } | null)
-          setLowestPointUnknown(false)
-        } else {
-          // [NO-EMPTY-LEDGER] The check could not run. Say so instead of showing nothing, which
-          // on this screen is indistinguishable from "your drawer never went negative".
-          setLowestPointUnknown(true)
-        }
-      } catch { if (!cancelled) setLowestPointUnknown(true) }
+      // One implementation, shared with every write on this screen — see refreshDrawerAlert.
+      await refreshDrawerAlert(() => cancelled)
     })()
     return () => { cancelled = true }
   }, [])
@@ -247,7 +372,9 @@ export default function KasClient() {
   }
 
   async function add() {
-    const val = Number(amount.replace(',', '.'))
+    // [PARSE-NL] "1.306,36" is a valid amount and "1.250" means twelve hundred and fifty — see the
+    // import. An unreadable amount parses to 0 and is caught by the same test as before.
+    const val = parseAmountNL(amount)
     if (!Number.isFinite(val) || val <= 0) { setError(t('kas.fout.bedragNul')); return }
     setSaving(true); setError('')
     try {
@@ -255,13 +382,22 @@ export default function KasClient() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_date: date, direction, amount: val, category, description, btw_rate: category === 'omzet' ? btwRate : undefined }),
       })
-      if (res.ok) { setAmount(''); setDescription(''); setError(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
+      if (res.ok) {
+        setAmount(''); setDescription(''); setError('')
+        await load()
+        if (kbOpen) void loadKasboek(kbPeriod)
+        // [KAS-NEGATIEF] The boeking may have pushed the readiness quarter's drawer under zero — or
+        // been the very receipt that lifts it back over. Either way the banner's verdict is now
+        // older than the money it describes. Backdating INTO that quarter is not an edge case: it
+        // is the fix the banner itself asks for.
+        void refreshDrawerAlert()
+      }
       else {
         // [CASH-ADD-HONEST] The route answers with the actual reason ("ongeldige categorie",
         // "beginsaldo moet 0 of hoger zijn", …). Replacing it with "probeer opnieuw" told the
         // owner to repeat the one thing that cannot work.
         const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
-        setError(json?.detail || json?.error || 'Kon de boeking niet opslaan. Probeer opnieuw.')
+        setError(json?.detail || json?.error || t('kas.fout.boekingOpslaan'))
       }
     } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }
   }
@@ -276,15 +412,19 @@ export default function KasClient() {
       const res = await fetch(`/api/cash?id=${id}`, { method: 'DELETE' })
       if (!res.ok) {
         const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
-        setError(json?.detail || json?.error || 'Kon de boeking niet verwijderen.')
+        setError(json?.detail || json?.error || t('kas.fout.boekingVerwijderen'))
       } else {
         setError('')
       }
       await load()
       if (kbOpen) void loadKasboek(kbPeriod)
+      // [KAS-NEGATIEF] Removing a receipt is the ordinary way a drawer goes negative — the money
+      // that covered the day's expenses is the thing that just disappeared. Re-ask the witness.
+      void refreshDrawerAlert()
     } catch {
       setError(t('kas.fout.verwijderd'))
       await load()
+      void refreshDrawerAlert()
     }
   }
 
@@ -324,22 +464,22 @@ export default function KasClient() {
         // be booked. Surface the server's honest message + a link to where it actually is.
         setCashUploadMsg({
           kind: 'warn',
-          text: json?.message || 'We konden dit document niet lezen. Het staat in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is.',
-          link: { href: `/dashboard/bestanden${json?.folder_id ? `?folder=${json.folder_id}` : ''}`, label: 'Ga naar Mijn bestanden →' },
+          text: json?.message || t('kas.upload.nietLezen'),
+          link: { href: `/dashboard/bestanden${json?.folder_id ? `?folder=${json.folder_id}` : ''}`, label: t('kas.upload.naarBestanden') },
         })
       } else if (res.ok) {
         setCashUploadMsg({
           kind: 'ok',
-          text: 'Bon toegevoegd. Bevestig ‘contant betaald’ in Te verifiëren — daarna staat de betaling automatisch in je kasboek.',
-          link: { href: '/dashboard/incoming', label: 'Ga naar Te verifiëren →' },
+          text: t('kas.upload.toegevoegd'),
+          link: { href: '/dashboard/incoming', label: t('kas.upload.naarVerifieren') },
         })
       } else if (json?.duplicate) {
-        setCashUploadMsg({ kind: 'err', text: 'Deze bon staat er al — hij is eerder toegevoegd.' })
+        setCashUploadMsg({ kind: 'err', text: t('kas.upload.dubbel') })
       } else {
-        setCashUploadMsg({ kind: 'err', text: json?.error || 'Uploaden mislukt — probeer het opnieuw.' })
+        setCashUploadMsg({ kind: 'err', text: json?.error || t('kas.upload.mislukt') })
       }
     } catch {
-      setCashUploadMsg({ kind: 'err', text: 'Er ging iets mis bij het uploaden.' })
+      setCashUploadMsg({ kind: 'err', text: t('kas.upload.misging') })
     } finally {
       setCashUploading(false)
       if (cashFileRef.current) cashFileRef.current.value = ''
@@ -353,26 +493,28 @@ export default function KasClient() {
   // the drawer to the bank = storting, cash INTO the drawer from the bank = opname.
   // [PERF] useCallback houdt catLabel stabiel (hij hangt alleen van de constante CATS af),
   // zodat de gememoïseerde filter hieronder een vaste dependency heeft.
-  const catLabel = useCallback((k: string, dir?: 'in' | 'out') => {
-    if (k === 'betaling') return 'Factuurbetaling (contant)'
-    if (k === 'transfer') return dir === 'in' ? 'Opname (van bank)' : dir === 'out' ? 'Storting (naar bank)' : 'Naar/van bank'
-    return CATS.find((c) => c.key === k)?.label ?? k
-  }, [])
+  // [TAAL] Plain function, no manual useCallback: `t` comes from translator(useLocale()) —
+  // stable per locale by its own cache, but the React Compiler cannot see that cache and
+  // refuses to preserve a manual memo whose dependency it cannot prove stable. The compiler
+  // memoizes this whole component itself, which is the better half of the bargain anyway.
+  const catLabel = (k: string, dir?: 'in' | 'out') => {
+    if (k === 'betaling') return t('kas.cat.betaling')
+    if (k === 'transfer') return dir === 'in' ? t('kas.cat.opname') : dir === 'out' ? t('kas.cat.storting') : t('kas.cat.transfer')
+    const key = CATS.find((c) => c.key === k)?.labelKey
+    return key ? t(key) : k
+  }
 
   // [SEARCH] In-page live filter over the cash ledger (omschrijving / categorie / bedrag).
   // [SMART-FILTER] shared matcher — decimaal- én duizendtal-bewust (src/lib/search.ts)
   // [PERF] useMemo: alleen herberekenen als de zoekterm of de boekingen wijzigen —
   // niet bij elke render (typen in het add-formulier raakt dit filter niet).
   const rawK = search.trim()
-  const filteredEntries = useMemo(
-    () =>
-      rawK
-        ? entries.filter((e) =>
-            rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
-          )
-        : entries,
-    [rawK, entries, catLabel]
-  )
+  // [TAAL] Same trade as catLabel above: the compiler memoizes this, we stop promising.
+  const filteredEntries = rawK
+    ? entries.filter((e) =>
+        rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
+      )
+    : entries
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -398,7 +540,7 @@ export default function KasClient() {
 
         {/* Balance */}
         <div style={{ margin: '16px 0 20px' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KAS — SALDO IN KASSA</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>{t('kas.titelSaldo')}</div>
           <div style={{ fontFamily: FONT_NUM, fontSize: 34, fontWeight: 700, color: loadError ? M3.neutral : balance < 0 ? M3.error : M3.onSurface, marginTop: 4 }}>
             {loadError ? '—' : eur.format(balance)}
           </div>
@@ -415,7 +557,7 @@ export default function KasClient() {
               onClick={() => { setOpeningInput(openingBalance ? String(openingBalance).replace('.', ',') : ''); setOpeningEdit(true); setError('') }}
               style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'start' }}
             >
-              {t('kas.beginsaldoKort')} <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
+              {t('kas.beginsaldoKort')} <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · {t('kas.wijzigen')}
             </button>
           ) : (
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -427,7 +569,7 @@ export default function KasClient() {
               />
               <button type="button" onClick={saveOpeningBalance} disabled={openingSaving}
                 style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                {openingSaving ? 'Bezig…' : 'Opslaan'}
+                {openingSaving ? t('act.bezig') : t('kas.opslaan')}
               </button>
               <button type="button" onClick={() => { setOpeningEdit(false); setError('') }}
                 style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, background: 'none', fontSize: 13, cursor: 'pointer', color: M3.neutral }}>
@@ -457,26 +599,34 @@ export default function KasClient() {
         )}
 
         {lowestPoint && (
-          <div style={{ margin: '0 0 20px', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error }}>error</span>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>
-                Je kas stond op {formatDate(lowestPoint.date)} op {eur.format(lowestPoint.balance)}
-              </div>
-            </div>
-            <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>
-              Een kas kan niet onder nul komen — je kunt geen geld uitgeven dat er niet was. Voor de
-              Belastingdienst is dit het duidelijkste signaal dat er iets ontbreekt. Meestal is het één van deze drie:
-            </div>
-            <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
-              <li>het <strong>beginsaldo</strong> staat te laag (het geld dat al in de kassa lag)</li>
-              <li>een <strong>contante ontvangst</strong> is nog niet geboekt</li>
-              <li>een uitgave staat op de <strong>verkeerde datum</strong> — vóór het geld binnenkwam</li>
-            </ul>
-            <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>
-              Zolang dit openstaat, blokkeert de app je BTW-aangifte — juist om te voorkomen dat je iets indient wat niet kan kloppen.
-            </div>
-          </div>
+          <DrawerDipNotice
+            tone="blocking"
+            heading={t('kas.negatief.titel', { datum: formatDate(lowestPoint.date), bedrag: eur.format(lowestPoint.balance) })}
+            period={readinessQuarterLabel()}
+            explanation={t('kas.negatief.uitleg')}
+            reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
+            closing={t('kas.negatief.blokkeert')}
+            bridge={{ title: t('kas.brug.titel'), explanation: t('kas.brug.uitleg'), rows: bridgeGaps.blocking }}
+          />
+        )}
+
+        {/* [KAS-NEGATIEF-NU] The same dip in the quarter that is still OPEN — see the openDip state.
+            Amber, not red, and it says something different: nothing is being blocked yet, and this is
+            the cheap moment. Claiming a blocked aangifte here would simply be false.
+            Its own panel rather than a variant of the one above, because both can be true at once:
+            two quarters can each hold a dip, and collapsing them would hide one. The period is named
+            on both for that reason — two near-identical red blocks with no quarter on them is how an
+            owner fixes the wrong one. */}
+        {openDip && (
+          <DrawerDipNotice
+            tone="open"
+            heading={t('kas.negatief.titel', { datum: formatDate(openDip.date), bedrag: eur.format(openDip.balance) })}
+            period={`Q${currentQuarter().quarter} ${currentQuarter().year}`}
+            explanation={t('kas.negatief.uitleg')}
+            reasons={[t('kas.negatief.reden1'), t('kas.negatief.reden2'), t('kas.negatief.reden3')]}
+            closing={t('kas.negatief.nogNietIngediend')}
+            bridge={{ title: t('kas.brug.titel'), explanation: t('kas.brug.uitleg'), rows: bridgeGaps.open }}
+          />
         )}
 
         {/* [KAS-UPLOAD] Add a cash-paid invoice/receipt (photo or PDF). It goes to the verify queue
@@ -485,7 +635,7 @@ export default function KasClient() {
         <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 16, marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, marginBottom: 4 }}>{t('kas.contantToevoegen')}</div>
           <div style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 12, lineHeight: 1.45 }}>
-            Foto of PDF van een bon die je contant hebt betaald. We lezen hem uit en zetten hem klaar als ‘contant betaald’ — jij bevestigt, daarna staat de betaling automatisch in je kasboek en blijft de BTW aftrekbaar.
+            {t('kas.upload.uitleg')}
           </div>
           <input
             ref={cashFileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
@@ -495,7 +645,7 @@ export default function KasClient() {
             onClick={() => cashFileRef.current?.click()} disabled={cashUploading}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 16px', borderRadius: 12, border: 'none', cursor: cashUploading ? 'default' : 'pointer', background: M3.primary, color: M3.onPrimary, fontFamily: FONT, fontSize: 14, fontWeight: 600, opacity: cashUploading ? 0.6 : 1 }}
           >
-            {cashUploading ? 'Bezig met uploaden…' : '📄 Bon uploaden'}
+            {cashUploading ? t('kas.upload.bezig') : t('kas.upload.knop')}
           </button>
           {cashUploadMsg && (
             <div style={{ marginTop: 10, fontSize: 12.5, color: cashUploadMsg.kind === 'ok' ? M3.success : cashUploadMsg.kind === 'warn' ? M3.warning : M3.error, lineHeight: 1.45 }}>
@@ -532,7 +682,7 @@ export default function KasClient() {
                   style={{ padding: '7px 12px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: FONT,
                     background: active ? M3.primaryContainer : '#F1F3F4', color: active ? '#041E49' : M3.neutral,
                     border: active ? `1px solid ${M3.primary}` : '1px solid transparent' }}>
-                  {c.key === 'transfer' ? (direction === 'in' ? 'Opname (van bank)' : 'Storting (naar bank)') : c.label}
+                  {c.key === 'transfer' ? (direction === 'in' ? t('kas.cat.opname') : t('kas.cat.storting')) : t(c.labelKey)}
                 </button>
               )
             })}
@@ -541,7 +691,7 @@ export default function KasClient() {
           {/* BTW rate — only for a cash sale, so verschuldigde BTW is exact. */}
           {category === 'omzet' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <span style={{ fontSize: 13, color: M3.neutral }}>BTW:</span>
+              <span style={{ fontSize: 13, color: M3.neutral }}>{t('kas.btw')}</span>
               {[21, 9, 0].map((r) => {
                 const active = btwRate === r
                 return (
@@ -556,8 +706,19 @@ export default function KasClient() {
             </div>
           )}
 
+          {/* [KAS-LOON] Said here, at the moment 'Loon' is chosen, and not in a help page: someone
+              who has just booked a cash wage must not be left thinking that is the whole obligation.
+              The app records the cash movement and the cost; the loonaangifte and loonheffingen are
+              not handled anywhere in it. It also explains the missing BTW row above rather than
+              leaving its absence to be guessed at. */}
+          {category === 'salaris' && (
+            <div style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 12, lineHeight: 1.45 }}>
+              {t('kas.loon.uitleg')}
+            </div>
+          )}
+
           <input
-            value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Omschrijving (optioneel)"
+            value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('kas.omschrijvingOptioneel')}
             style={{ width: '100%', padding: '12px 14px', fontSize: 16, borderRadius: 12, border: `1.5px solid ${M3.outlineVariant}`, fontFamily: FONT, boxSizing: 'border-box', marginBottom: 12 }}
           />
 
@@ -565,12 +726,12 @@ export default function KasClient() {
 
           <button onClick={add} disabled={saving}
             style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#dadce0' : M3.primary, color: M3.onPrimary, fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
-            {saving ? 'Bezig…' : 'Toevoegen'}
+            {saving ? t('act.bezig') : t('ink.toevoegen')}
           </button>
         </div>
 
         {/* Ledger */}
-        <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>BOEKINGEN</div>
+        <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>{t('kas.boekingen')}</div>
 
         {/* [SEARCH] In-page live filter over the ledger */}
         {!loading && !loadError && entries.length > 0 && (
@@ -598,11 +759,11 @@ export default function KasClient() {
           </div>
         ) : entries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
-            Nog geen kasboekingen. Voeg je eerste contante ontvangst of uitgave toe.
+            {t('kas.ledgerLeeg')}
           </div>
         ) : filteredEntries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
-            Geen boekingen gevonden voor &ldquo;{search.trim()}&rdquo;.
+            {t('kas.geenGevonden', { query: search.trim() })}
           </div>
         ) : (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, overflow: 'hidden' }}>
@@ -618,7 +779,7 @@ export default function KasClient() {
                   {e.direction === 'in' ? '+' : '−'}{eur.format(e.amount)}
                 </div>
                 {e.category === 'betaling' ? (
-                  <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
+                  <span title={t('kas.betalingAutomatisch')}
                     style={{ flexShrink: 0, color: '#70757a', fontSize: 16, lineHeight: 1 }}>🔗</span>
                 ) : (
                   <button onClick={() => remove(e.id)} aria-label={t('lijst.verwijderen')}
@@ -635,13 +796,13 @@ export default function KasClient() {
           {!kbOpen ? (
             <button onClick={openKasboek}
               style={{ width: '100%', padding: '13px 16px', borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface, fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textAlign: 'start', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>📗 Kasboek per kwartaal — voor de boekhouder</span>
+              <span>{t('kas.kasboekKnop')}</span>
               <span style={{ color: M3.primary, fontSize: 20, lineHeight: 1 }}>＋</span>
             </button>
           ) : (
             <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KASBOEK — KWARTAAL</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>{t('kas.kasboekTitel')}</div>
                 <button onClick={() => setKbOpen(false)} aria-label={t('lijst.sluiten')}
                   style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
               </div>
@@ -699,7 +860,7 @@ export default function KasClient() {
                           <div key={r.date} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 10px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none', fontSize: 13 }}>
                             <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(r.date)}</span>
                             <span style={{ flex: 1, minWidth: 0, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {r.descriptions.length ? r.descriptions.join(' · ') : (r.ontvangsten > 0 ? 'Kasontvangsten' : 'Kasuitgave')}
+                              {r.descriptions.length ? r.descriptions.join(' · ') : (r.ontvangsten > 0 ? t('kas.ontvangstenLabel') : t('kas.uitgaveLabel'))}
                             </span>
                             {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap', flexShrink: 0 }}>+{eur.format(r.ontvangsten)}</span>}
                             {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap', flexShrink: 0 }}>−{eur.format(r.uitgaven)}</span>}
@@ -707,7 +868,7 @@ export default function KasClient() {
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', borderTop: `1px solid ${M3.outlineVariant}`, background: '#FAFAFA', fontSize: 12.5, fontWeight: 600, color: M3.neutral }}>
-                          <span>Totaal {m.label}</span>
+                          <span>{t('kas.totaalMaand', { maand: m.label })}</span>
                           <span style={{ fontFamily: FONT_NUM }}>+{eur.format(m.totalIn)} · −{eur.format(m.totalOut)}</span>
                         </div>
                           </div>
@@ -721,15 +882,55 @@ export default function KasClient() {
                     <span style={{ fontFamily: FONT_NUM, color: kb.closingBalance < 0 ? M3.error : M3.onSurface }}>{eur.format(kb.closingBalance)}</span>
                   </div>
 
+                  {/* [KAS-SPOOR] What this quarter held and no longer holds. BELOW the eindsaldo and
+                      outside every total above it — the balances are complete without these rows,
+                      because they were removed. It is here for the reason the sentence gives: a cash
+                      book whose lines can disappear unnoticed cannot be checked, by the owner or by
+                      anyone they hand it to. The same block is appended to the .xlsx.
+                      The list is skipped entirely when nothing was removed, which is the normal
+                      case — an empty "Verwijderd" heading on every quarter would read as a defect. */}
+                  {(kbRemoved.rows.length > 0 || kbRemoved.unknown) && (
+                    <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${M3.outlineVariant}` }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>{t('kas.verwijderd.titel')}</div>
+                      <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 4, lineHeight: 1.45 }}>{t('kas.verwijderd.uitleg')}</div>
+                      {kbRemoved.unknown && (
+                        <div style={{ fontSize: 11.5, color: '#7A4F00', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 8, padding: '6px 8px', marginTop: 6, lineHeight: 1.45 }}>
+                          {t('kas.verwijderd.onbekend')}
+                        </div>
+                      )}
+                      {kbRemoved.rows.map((r, i) => (
+                        <div key={`${r.date}-${r.amount}-${i}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 2px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none', fontSize: 12.5 }}>
+                          <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(r.date)}</span>
+                          <span style={{ flex: 1, minWidth: 0, color: M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'line-through' }}>
+                            {r.description?.trim() || catLabel(r.category ?? '', r.direction)}
+                          </span>
+                          <span style={{ fontFamily: FONT_NUM, color: M3.neutral, whiteSpace: 'nowrap', flexShrink: 0, textDecoration: 'line-through' }}>
+                            {r.direction === 'in' ? '+' : '−'}{eur.format(r.amount)}
+                          </span>
+                        </div>
+                      ))}
+                      {/* The day of the deletion, per row, in words — a second date column would
+                          crowd a phone and this is read rarely. */}
+                      {kbRemoved.rows.some((r) => r.removedOn) && (
+                        <div style={{ fontSize: 11, color: M3.neutral, marginTop: 6, lineHeight: 1.5 }}>
+                          {kbRemoved.rows.filter((r) => r.removedOn).map((r, i) => (
+                            <div key={`${r.date}-${r.removedOn}-${i}`}>
+                              {formatDate(r.date)} · {t('kas.verwijderd.op', { datum: formatDate(r.removedOn!) })}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {kbPeriod && (
                     <a href={`/api/kasboek?year=${kbPeriod.year}&quarter=${kbPeriod.quarter}&format=xlsx`}
                       style={{ display: 'block', marginTop: 14, padding: '11px', borderRadius: 12, background: M3.primaryContainer, color: '#041E49', fontSize: 14, fontWeight: 600, textAlign: 'center', textDecoration: 'none', fontFamily: FONT }}>
-                      ⬇︎ Download voor boekhouder (.xlsx)
+                      {t('kas.downloadXlsx')}
                     </a>
                   )}
                   <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 8, lineHeight: 1.4 }}>
-                    Dit kasboek wordt live berekend uit je dagelijkse contante omzet en je kasboekingen.
-                    De omzet is al één keer geteld in je resultaat — dit overzicht toont alleen het kassaldo, dus niets wordt dubbel geboekt.
+                    {t('kas.kasboekUitleg')}
                   </div>
                 </>
               )}
@@ -737,6 +938,82 @@ export default function KasClient() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * [KAS-NEGATIEF] A drawer that went below zero, in one quarter, said once.
+ *
+ * Two callers, two tones, and the difference between them is a fact about the quarter rather than a
+ * decoration: a dip in the quarter the filing gate is refusing right now is red and says the aangifte
+ * is blocked; the same dip in the quarter still open is amber and says it is not blocked yet. The
+ * copy for both is handed in — [TAAL] this component holds no language of its own, so it cannot be
+ * the place a Dutch sentence survives a translation pass.
+ */
+function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing, bridge }: {
+  tone: 'blocking' | 'open'
+  heading: string
+  /** "Q2 2026" — a period label, identical in every language. Named on BOTH panels so that when
+   *  they appear together the owner can tell which quarter each one is about. */
+  period: string | null
+  explanation: string
+  reasons: string[]
+  closing: string
+  /**
+   * [KAS-BRUG] The fourth cause, when the app can actually point at it: cash withdrawn from the bank
+   * in this quarter that no opname accounts for. Not one of `reasons` above, because those are three
+   * possibilities to consider and this is a fact with a date and an amount on it — a list the owner
+   * can check off. Absent → the three possibilities stand alone, exactly as before.
+   */
+  bridge?: { title: string; explanation: string; rows: UnrecordedWithdrawal[] }
+}) {
+  const blocking = tone === 'blocking'
+  const accent = blocking ? M3.error : '#B06000'
+  return (
+    <div style={{
+      margin: '0 0 20px', background: blocking ? '#FCECEA' : '#FEF7E0',
+      border: `1px solid ${blocking ? M3.error : '#FBBC04'}`, borderRadius: 14, padding: '14px 16px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent }}>
+          {blocking ? 'error' : 'warning'}
+        </span>
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: accent }}>{heading}</div>
+        {period && (
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: accent, border: `1px solid ${accent}`, borderRadius: 999, padding: '1px 8px', fontFamily: FONT_NUM }}>
+            {period}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>{explanation}</div>
+      {/* [TAAL] The mid-sentence <strong> tags were dropped: emphasis cannot travel through a
+          translated sentence whose word order changes (see messages.ts rule 1). */}
+      <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingInlineStart: 18, lineHeight: 1.6 }}>
+        {reasons.map((r) => <li key={r}>{r}</li>)}
+      </ul>
+      {/* [KAS-BRUG] Set apart from the three possibilities above, and deliberately: those ask the
+          owner to go and look, this one has already looked. A dated, amounted list of cash that left
+          the bank and never reached the cash book — the most ordinary cause of a negative drawer in a
+          shop, and the app was holding the evidence for it the whole time. */}
+      {bridge && bridge.rows.length > 0 && (
+        <div style={{ marginTop: 10, background: '#fff', border: `1px solid ${blocking ? '#F3B8B0' : '#F0D488'}`, borderRadius: 10, padding: '10px 12px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface }}>{bridge.title}</div>
+          <div style={{ margin: '6px 0 0' }}>
+            {bridge.rows.map((w, i) => (
+              <div key={`${w.date}-${w.amount}-${i}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12.5, padding: '3px 0' }}>
+                <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(w.date)}</span>
+                <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>{eur.format(w.amount)}</span>
+                {w.description && (
+                  <span style={{ flex: 1, minWidth: 0, color: M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 6, lineHeight: 1.45 }}>{bridge.explanation}</div>
+        </div>
+      )}
+      <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>{closing}</div>
     </div>
   )
 }

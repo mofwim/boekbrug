@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 
 import {
   findMoneyViolations,
+  findDrawerViolations,
   moneyAuditHeadline,
   type InvoiceRow,
   type LinkRow,
@@ -310,4 +311,123 @@ test("[GELD-INVARIANT] the biggest euros come first, and the headline names the 
   assert.equal(v[0].entityId, "huge", "€3.100 too much outranks €1 still open");
   for (let i = 1; i < v.length; i++) assert.ok(v[i - 1].euros >= v[i].euros);
   assert.match(moneyAuditHeadline(v), /verschillen gevonden, samen/);
+});
+
+// ── [GELD-INVARIANT-KAS] The drawer, checked backwards ───────────────────────────────
+//
+// Same pairing rule as everything above: each violation next to the innocent case that looks like
+// it. The drawer earns the extra scrutiny — cash-settle.ts NAMES the three states it can leave
+// behind ("the kas balance is now too high", "…too low", "half-healed") and nothing ever looked
+// again, while that same drawer decides whether a quarter may be filed.
+
+test("[GELD-INVARIANT-KAS] a cash payment with no drawer movement: the balance stands too HIGH", () => {
+  const v = findDrawerViolations({
+    settlementEntries: [],
+    sync: {
+      toCreate: [{ invoice_id: "inv-1", amount: 250, description: "Betaling factuur 2026-014 — Bakker" }],
+      toUpdate: [], toDeleteIds: [],
+    },
+  });
+  assert.equal(v.length, 1);
+  assert.equal(v[0].kind, "drawer_settlement_missing");
+  assert.equal(v[0].entityId, "inv-1");
+  assert.equal(v[0].euros, 250);
+  assert.match(v[0].message, /HOGER/, "it must say WHICH WAY the drawer is wrong — that decides what to do");
+});
+
+test("[GELD-INVARIANT-KAS] a movement belonging to no cash payment: the balance stands too LOW", () => {
+  const v = findDrawerViolations({
+    settlementEntries: [{ id: "e1", invoice_id: "inv-9", amount: 80, entry_date: "2026-05-03" }],
+    sync: { toCreate: [], toUpdate: [], toDeleteIds: ["e1"] },
+  });
+  assert.equal(v.length, 1);
+  assert.equal(v[0].kind, "drawer_settlement_orphan");
+  assert.equal(v[0].euros, 80);
+  assert.equal(v[0].entityId, "inv-9", "it names the INVOICE, so the finding is actionable");
+  assert.match(v[0].message, /LAGER/);
+  assert.match(v[0].message, /2026-05-03/, "the day matters: a running balance is wrong from there on");
+});
+
+test("[GELD-INVARIANT-KAS] a corrected invoice the drawer did not follow reports only the DELTA", () => {
+  const v = findDrawerViolations({
+    settlementEntries: [{ id: "e1", invoice_id: "inv-2", amount: 100, entry_date: "2026-05-01" }],
+    sync: {
+      toCreate: [], toDeleteIds: [],
+      toUpdate: [{ id: "e1", row: { invoice_id: "inv-2", amount: 121, entry_date: "2026-05-01", description: "Betaling factuur 7" } }],
+    },
+  });
+  assert.equal(v[0].kind, "drawer_settlement_stale");
+  assert.equal(v[0].euros, 21, "€21 is at stake, not the €121 that is mostly right");
+  assert.match(v[0].message, /100,00[\s\S]*121,00/, "both figures, so nobody has to look them up");
+});
+
+test("[GELD-INVARIANT-KAS] a right amount on the wrong DAY is still a finding, at €0", () => {
+  // The day is not cosmetic in a running balance: every eindsaldo after it is wrong, which is what
+  // the kasboek an inspector reads is made of. But no euro is missing, so the urgency is honest.
+  const v = findDrawerViolations({
+    settlementEntries: [{ id: "e1", invoice_id: "inv-3", amount: 60, entry_date: "2026-04-30" }],
+    sync: {
+      toCreate: [], toDeleteIds: [],
+      toUpdate: [{ id: "e1", row: { invoice_id: "inv-3", amount: 60, entry_date: "2026-05-02", description: "Betaling factuur 8" } }],
+    },
+  });
+  assert.equal(v[0].kind, "drawer_settlement_stale");
+  assert.equal(v[0].euros, 0);
+  assert.match(v[0].message, /2026-04-30[\s\S]*2026-05-02/);
+});
+
+test("[GELD-INVARIANT-KAS] a drawer in step reports nothing at all", () => {
+  // The reconcile wants no change — which is what it wants in every healthy administration, because
+  // it runs on every kasboek read and hourly. Silence here is the whole point of the check.
+  assert.deepEqual(
+    findDrawerViolations({
+      settlementEntries: [{ id: "e1", invoice_id: "inv-1", amount: 250, entry_date: "2026-05-01" }],
+      sync: { toCreate: [], toUpdate: [], toDeleteIds: [] },
+      lowestPoint: null,
+    }),
+    [],
+  );
+});
+
+test("[GELD-INVARIANT-KAS] a negative drawer day is reported; a positive one is not", () => {
+  const bad = findDrawerViolations({
+    settlementEntries: [], sync: { toCreate: [], toUpdate: [], toDeleteIds: [] },
+    lowestPoint: { date: "2026-05-12", balance: -340 },
+  });
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].kind, "drawer_negative");
+  assert.equal(bad[0].euros, 340);
+  assert.equal(bad[0].entityId, "2026-05-12", "the DAY is the entity — that is what you go and look at");
+  assert.match(bad[0].message, /blokkeert de BTW-aangifte/, "the consequence belongs in the sentence");
+
+  // A drawer that never went below zero, and one that touched exactly zero, are both fine. A till
+  // legitimately ends a day empty, and a false fraud flag is the most expensive kind here.
+  for (const lowestPoint of [{ date: "2026-05-12", balance: 0 }, { date: "2026-05-12", balance: 12.5 }]) {
+    assert.deepEqual(
+      findDrawerViolations({ settlementEntries: [], sync: { toCreate: [], toUpdate: [], toDeleteIds: [] }, lowestPoint }),
+      [],
+    );
+  }
+});
+
+test("[GELD-INVARIANT-KAS] an unchecked drawer is never reported as a clean one", () => {
+  // No lowestPoint passed = the witness could not be computed (a failed read, an owner with no
+  // drawer). The same rule the transaction check follows above: a check that did not run must not
+  // read as one that passed.
+  assert.deepEqual(
+    findDrawerViolations({ settlementEntries: [], sync: { toCreate: [], toUpdate: [], toDeleteIds: [] } }),
+    [],
+  );
+});
+
+test("[GELD-INVARIANT-KAS] the biggest euros come first here too", () => {
+  const v = findDrawerViolations({
+    settlementEntries: [{ id: "e1", invoice_id: "inv-9", amount: 15 }],
+    sync: {
+      toCreate: [{ invoice_id: "inv-1", amount: 900, description: "Betaling factuur 1" }],
+      toUpdate: [], toDeleteIds: ["e1"],
+    },
+    lowestPoint: { date: "2026-05-12", balance: -50 },
+  });
+  assert.deepEqual(v.map((x) => x.euros), [900, 50, 15]);
 });

@@ -299,14 +299,25 @@ export function planBatchAutoConfirm(args: {
     if (!cands || cands.length !== 1) return null; // ambiguous number → not auto-safe
     const inv = cands[0];
     if (inv.total_inc_btw == null || !Number.isFinite(inv.total_inc_btw)) return null;
-    // A credit note (negative gross) must never enter the automatic path: reconcileBatch sums by
-    // MAGNITUDE, so a credit could satisfy a tie for the wrong (magnitude) amount. A net-of-credit
-    // batch is genuinely ambiguous — leave it for the human. (≤ 0 covers creditnota + any junk.)
-    if (inv.total_inc_btw <= 0) return null;
+    // [CREDIT-VERREKEN] A credit note MAY be part of an automatic batch now, and the reason it
+    // could not is worth stating: this guard read "reconcileBatch sums by MAGNITUDE, so a credit
+    // could satisfy a tie for the wrong amount". That was true when it was written and stopped
+    // being true when [BATCH-SIGN] made reconcileBatch a NET sum — the arithmetic it protected
+    // against no longer exists, and the guard went on refusing the one shape this trade uses:
+    // an invoice paid short by a credit the supplier sent, both numbers on the transfer.
+    //
+    // Measured on the reported payment: invoice 26709711 € 1.764,76, creditnota 2671141810155
+    // € 52,38, one debit of € 1.712,38. reconcileBatch already answered "ties"; this line alone
+    // held the automatic booking back, so the owner reconciled it by hand every time.
+    //
+    // What replaces it is below the loop — at least one real invoice, and a net that runs the way
+    // the money did. A batch of nothing but credit notes is not a payment.
+    //
     // [PARTIAL-PAY] Nothing left to settle → this invoice cannot be part of what the bank paid.
     // Booking it would settle it for €0 and let the rest of the batch tie on a short amount.
+    // Zero, not "≤ 0": a credit note's open balance is legitimately negative.
     const open = settleableAmount(inv.total_inc_btw, inv.amount_paid);
-    if (open == null || open <= 0) return null;
+    if (open == null || open === 0) return null;
     if (usedIds.has(inv.id)) return null; // the same invoice can't satisfy two references
     usedIds.add(inv.id);
     picked.push(inv);
@@ -337,6 +348,22 @@ export function planBatchAutoConfirm(args: {
     amount: settleableAmount(p.total_inc_btw, p.amount_paid),
     isConfirmed: false,
   }));
+
+  // [CREDIT-VERREKEN] The guard that takes the place of "no credit notes here".
+  //
+  // The net must be something OWED. reconcileBatch compares MAGNITUDES, so a net of −€ 280 — the
+  // credits outweighing the invoices — ties just as neatly against a −€ 280 debit, and booking
+  // that would settle invoices out of a payment whose own arithmetic says the money should have
+  // run the other way. Positive in both directions: settleableAmount is positive for a bill and
+  // negative for a credit note whether the document is a purchase or a sale.
+  //
+  // It also covers "a batch of nothing but credit notes", which was written here as a second rule
+  // until a negative control showed it could never fire on its own: every member negative means
+  // the net is negative, so this line has already refused. One rule that can fire beats two where
+  // one is decoration — a guard that cannot fail reads as protection and is none.
+  const net = slots.reduce((sum, s) => sum + (s.amount ?? 0), 0);
+  if (net <= 0) return null;
+
   if (reconcileBatch(slots, bankAmount).status !== "ties") return null;
 
   return { invoiceIds: picked.map((p) => p.id) };
@@ -357,8 +384,8 @@ export function planBatchAutoConfirm(args: {
 // each invoice through the normal guarded path:
 //   · the counterparty must IDENTIFY: strong name identity or the invoice's own IBAN — a bare
 //     amount coincidence across suppliers never enters the pool;
-//   · only fully-usable open balances (positive; a creditnota in the mix makes the arithmetic
-//     ambiguous by sign);
+//   · only balances that still move money (a creditnota carries its own NEGATIVE sign and
+//     REDUCES the sum — see [CREDIT-VERREKEN] in the pool below; a settled invoice is out);
 //   · subsets of 2..4 invoices, pool capped at 12 — beyond that the tie proves nothing;
 //   · the tie must be UNIQUE: two different subsets summing to the same payment → no suggestion
 //     (which one would it be?);
@@ -374,6 +401,16 @@ export interface SupplierSumMatch {
   invoiceNumbers: (string | null)[];
   /** Σ open balances of the members = the payment, absolute euros. */
   total: number;
+  /**
+   * [CREDIT-VERREKEN] The signed open balance of each member, in the order of invoiceNumbers — a
+   * creditnota is negative.
+   *
+   * Carried because the card prints the arithmetic: "A + B = € 1.100" is honest for two invoices
+   * and a lie the moment one of them is a credit note, where the same screen would show
+   * "1.764,76 + 52,38 = 1.712,38". A screen that does not add up in front of the owner is the
+   * defect this whole file keeps closing; the sign has to travel with the numbers.
+   */
+  amounts: number[];
 }
 
 const SUM_POOL_MAX = 12;
@@ -395,6 +432,13 @@ export function findSupplierSumMatch(args: {
 
   // The identified, usable pool. Identity is per-invoice: a strong NAME identity with the
   // payment's counterpart, or the invoice's own vendor IBAN equal to the payment's.
+  //
+  // [CREDIT-VERREKEN] Credit notes belong in this pool, with their SIGN. The header above used to
+  // say "a creditnota in the mix makes the arithmetic ambiguous by sign" and kept them out with
+  // `openCents > 0` — but the ambiguity was in the old positive-only walk, not in the money. A
+  // wholesaler's credit is settled by deducting it from the next payment (bundel-betaling.ts), so
+  // the everyday shape of a supplier debit is invoice − credit, and refusing to see it left the
+  // one line the owner could not reconcile at all: "Geen factuur", nothing offered.
   const pool = invoices
     .filter((i) => (i.status ?? "") !== "paid")
     .filter((i) => (i.direction ?? "") === wantDirection)
@@ -404,22 +448,31 @@ export function findSupplierSumMatch(args: {
         ibanMatches(counterpartIban, i.vendor_iban),
     )
     .map((i) => ({ inv: i, openCents: Math.round((settleableAmount(i.total_inc_btw, i.amount_paid) ?? 0) * 100) }))
-    .filter((x) => x.openCents > 0);
+    .filter((x) => x.openCents !== 0);
 
   if (pool.length < 2 || pool.length > SUM_POOL_MAX) return null;
 
   // Exhaustive subset walk, sizes 2..SUM_SUBSET_MAX, integer cents. The pool cap bounds this to
   // C(12,2)+C(12,3)+C(12,4) ≈ 1.081 combinaties — trivial. Collect up to TWO ties: one is a
   // suggestion, two is an ambiguity (→ null), more is irrelevant.
+  //
+  // [CREDIT-VERREKEN] No arithmetic pruning any more. `sum >= targetCents` was a valid cut only
+  // while every member was positive; with a credit in the pool a running sum may legitimately
+  // overshoot and come back down, and pruning there would silently MISS the netted answer — the
+  // worst kind of failure here, because it looks exactly like "no match". The cap on subset size
+  // and pool size is what bounds the search, and it always was: the walk visits at most
+  // C(12,2)+C(12,3)+C(12,4) sets either way.
   const ties: number[][] = [];
   const idxs = pool.map((_, i) => i);
   const walk = (start: number, chosen: number[], sum: number): void => {
     if (ties.length >= 2) return;
     if (chosen.length >= 2 && sum === targetCents) {
       ties.push([...chosen]);
-      return; // a superset of an exact tie would overshoot anyway (all positive)
+      // Deliberately NOT returning: with a credit in the pool a superset can tie as well (add an
+      // invoice and a credit that cancel), and that is a genuine ambiguity this must SEE rather
+      // than hide. Two ties → no suggestion.
     }
-    if (chosen.length >= SUM_SUBSET_MAX || sum >= targetCents) return;
+    if (chosen.length >= SUM_SUBSET_MAX) return;
     for (let i = start; i < idxs.length; i++) {
       chosen.push(i);
       walk(i + 1, chosen, sum + pool[i].openCents);
@@ -430,10 +483,20 @@ export function findSupplierSumMatch(args: {
 
   if (ties.length !== 1) return null; // nothing, or ambiguous — either way: no suggestion
   const members = ties[0].map((i) => pool[i]);
+  // [CREDIT-VERREKEN] No sign guard here, and that is a statement rather than an omission: the
+  // walk compares the running sum to targetCents, which is |amount| — a POSITIVE number. A set of
+  // nothing but credit notes sums negative and can never equal it, and neither can any set that
+  // owes money the other way. The tie is sign-safe by construction.
+  //
+  // The automatic batch path above does need such a guard, because reconcileBatch compares
+  // MAGNITUDES (|net| against |bank|) and a net of −€ 280 ties a −€ 280 debit there. Two ways of
+  // asking the same question, and only one of them is one-sided; both are written down so the
+  // next reader does not copy the wrong half.
   return {
     invoiceIds: members.map((m) => m.inv.id),
     invoiceNumbers: members.map((m) => m.inv.invoice_number),
-    total: Math.round(members.reduce((t, m) => t + m.openCents, 0)) / 100,
+    total: members.reduce((t, m) => t + m.openCents, 0) / 100,
+    amounts: members.map((m) => m.openCents / 100),
   };
 }
 

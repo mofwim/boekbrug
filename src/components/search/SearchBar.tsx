@@ -713,7 +713,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
 
   const desktopInputProps: SearchInputProps = {
     inputRef, query, open, loading, activeId,
-    placeholder: "Zoeken…",
+    placeholder: t('zoek.kort'),
     onChange: onInputChange,
     onFocus: () => setOpen(true),
     onKeyDown: handleKeyDown,
@@ -725,7 +725,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     // [SMART-FILTER] De API matcht ook bedragen — noem dat, anders raadt niemand
     // dat "670,09" werkt. De desktop-placeholder blijft kort ("Zoeken…"): dat
     // vakje is max. 320px breed en zou een langere tekst afkappen.
-    placeholder: "Zoeken naar facturen, bedragen, bestanden…",
+    placeholder: t('zoek.uitgebreid'),
     fontSize: 16,
     onChange: onInputChange,
     onKeyDown: handleKeyDown,

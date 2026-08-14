@@ -16,12 +16,19 @@ import {
   buildKasboek,
   openingBalanceForQuarter,
   kasboekToMatrix,
+  removedInQuarter,
+  quarterRange,
   type KasTurnoverDay,
   type KasEntry,
+  type RemovedKasEntry,
   lowestDrawerPoint,
   type Quarter,
 } from "@/lib/kasboek";
 import { matrixToXlsxBytes } from "@/lib/xlsx-adapter";
+// [KAS-BRUG] The fourth reason a drawer goes below zero — a bank cash withdrawal the cash book never
+// heard about. The bank half is recognised by the classifier's own patterns, never a copy of them.
+import { findUnrecordedCashWithdrawals } from "@/lib/cash-transfer-match";
+import { isCashTransferDescription } from "@/lib/bank-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -118,8 +125,64 @@ export async function GET(req: NextRequest) {
   const opening = openingBalanceForQuarter({ turnover, entries, year, quarter: quarter as Quarter, startingBalance });
   const kb = buildKasboek({ turnover, entries, year, quarter: quarter as Quarter, openingBalance: opening });
 
+  // ── [KAS-SPOOR] What this quarter's cash book HELD and no longer holds ───────────────────────
+  //
+  // A cash_entries delete is a hard delete: the row is gone, and the audit trail is the only place
+  // the movement still exists. So this is the one question the cash book cannot answer from its own
+  // rows, and it is a question both the owner and their accountant are entitled to ask about a
+  // period — a cash administration where lines can disappear without trace is exactly the shape an
+  // inspector treats as unreliable.
+  //
+  // Read with the OWNER's session (audit_logs has a "Users see own logs" SELECT policy), so this
+  // discloses nobody else's trail and cannot widen what anyone sees.
+  //
+  // A failure here does NOT refuse the cash book, unlike the three source reads above. That is a
+  // deliberate difference in kind: those three DECIDE the saldi, so half of them produces a wrong
+  // number presented as a right one. This one is a disclosure ALONGSIDE the saldi — the balances are
+  // complete without it — so refusing the whole book over it would trade a real answer for no
+  // answer. It says it could not look instead, and the panel says so too.
+  let removed: RemovedKasEntry[] = [];
+  let removedUnknown = false;
+  {
+    const { data: trail, error: trailErr } = await supabase
+      .from("audit_logs")
+      .select("old_value, created_at")
+      .eq("user_id", user.id)
+      .eq("action", "cash.entry_removed")
+      .order("created_at", { ascending: false })
+      // A ceiling, and it is DISCLOSED rather than silent: beyond this many removals the list is
+      // the newest ones and removedUnknown says the rest were not read. A silent slice here would
+      // be a cash book quietly claiming that nothing else was ever taken out of it.
+      .limit(500);
+    if (trailErr) {
+      console.error("[KAS-SPOOR] removed-entry trail unreadable — the kasboek is served without it", { userId: user.id, error: trailErr.message });
+      removedUnknown = true;
+    } else {
+      const rows = trail ?? [];
+      removedUnknown = rows.length >= 500;
+      const all: RemovedKasEntry[] = rows.flatMap((r) => {
+        const o = (r as { old_value?: Record<string, unknown> | null }).old_value ?? null;
+        if (!o) return [];
+        const date = typeof o.entry_date === "string" ? o.entry_date.slice(0, 10) : null;
+        const amount = Math.abs(Number(o.amount) || 0);
+        if (!date || amount === 0) return [];
+        return [{
+          date,
+          direction: o.direction === "in" ? "in" as const : "out" as const,
+          amount,
+          category: typeof o.category === "string" ? o.category : null,
+          description: typeof o.description === "string" ? o.description : null,
+          removedOn: typeof (r as { created_at?: string | null }).created_at === "string"
+            ? (r as { created_at: string }).created_at.slice(0, 10)
+            : null,
+        }];
+      });
+      removed = removedInQuarter(all, year, quarter as Quarter);
+    }
+  }
+
   if (format === "xlsx") {
-    const bytes = matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`);
+    const bytes = matrixToXlsxBytes(kasboekToMatrix(kb, removed), `Kasboek Q${quarter} ${year}`);
     return new NextResponse(Buffer.from(bytes) as BodyInit, {
       status: 200,
       headers: {
@@ -135,5 +198,69 @@ export async function GET(req: NextRequest) {
   // gate can never tell the owner two different stories. A negative kassaldo is physically
   // impossible (you cannot pay out cash you never had) and is the single strongest signal the
   // Belastingdienst uses to reject a cash administration. Null when it never goes below zero.
-  return NextResponse.json({ ok: true, kasboek: kb, lowestPoint: lowestDrawerPoint(kb) });
+  // ── [KAS-BRUG] The fourth reason, looked up only when there is something to explain ───────────
+  //
+  // The drawer went below zero, so the app is refusing this quarter's aangifte and the Kas screen is
+  // about to name three possible causes. There is a fourth and in a shop it is the most ordinary of
+  // all: cash was taken out of the bank and the opname was never written in the cash book. The
+  // withdrawal is on a statement this app has already imported and already classified.
+  //
+  // Naming it is not a nicety. A gate that refuses a filing over a number while holding the most
+  // likely innocent explanation for that number in its own database is accusing someone with the
+  // evidence in its pocket.
+  //
+  // Read ONLY when the drawer is actually negative. Two reasons: the answer is worthless otherwise
+  // (an unrecorded withdrawal in a healthy drawer is a bookkeeping tidiness matter, not a blocker,
+  // and nagging about it here would be noise under no banner at all), and this endpoint is on the
+  // page's load path — it must not grow a bank read for every owner who has no problem.
+  const dip = lowestDrawerPoint(kb);
+  let unrecordedWithdrawals: Array<{ date: string; amount: number; description: string | null }> = [];
+  if (dip) {
+    // The shared range — June has 30 days, and a hand-rolled "-31" is a cast error on a `date`
+    // column rather than an empty result. See quarterRange.
+    const { start: qStart, end: qEnd } = quarterRange(year, quarter as Quarter);
+    // A failed read leaves the list empty and the three original causes standing. It must NOT fail
+    // the kasboek: this is an explanation offered alongside an accusation, and losing it costs the
+    // owner a hint, while refusing the whole book would cost them the cash administration itself.
+    const { data: bankRows, error: bankErr } = await supabase
+      .from("bank_transactions")
+      .select("id, date, amount, description, counterpart_name")
+      .eq("user_id", user.id)
+      .eq("category", "transfer")
+      .gte("date", qStart)
+      .lte("date", qEnd)
+      .order("date", { ascending: true });
+    if (bankErr) {
+      console.error("[KAS-BRUG] bank cash-transfer read failed — the drawer warning keeps its three causes", { userId: user.id, error: bankErr.message });
+    } else {
+      const cashLines = (bankRows ?? []).filter((r) =>
+        isCashTransferDescription(r.description, (r as { counterpart_name?: string | null }).counterpart_name ?? null),
+      );
+      unrecordedWithdrawals = findUnrecordedCashWithdrawals({
+        bankLines: cashLines.map((r) => ({
+          id: r.id, date: r.date, amount: r.amount, description: r.description,
+          counterpartName: (r as { counterpart_name?: string | null }).counterpart_name ?? null,
+        })),
+        // The drawer's own transfers, from the rows this route already read — no second query, and
+        // no chance of the two halves describing different periods.
+        drawerTransfers: entries
+          .filter((e) => (e.category ?? "") === "transfer")
+          .map((e) => ({ date: e.entry_date, direction: e.direction, amount: e.amount })),
+      }).map((w) => ({ date: w.date, amount: w.amount, description: w.description }));
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    kasboek: kb,
+    lowestPoint: dip,
+    // [KAS-BRUG] Cash withdrawals from the bank that no opname in this quarter accounts for. Empty
+    // unless the drawer went negative — the question is only asked when it has to be answered.
+    unrecordedWithdrawals,
+    // [KAS-SPOOR] Alongside the saldi, never inside them — the movements this quarter no longer
+    // holds. `removedUnknown` is the honest half: the trail could not be read, or there is more of
+    // it than one read returns.
+    removed,
+    removedUnknown,
+  });
 }

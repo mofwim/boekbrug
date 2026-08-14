@@ -379,7 +379,8 @@ test("[INCASSO-CONFIRM] the switch sits after the sentence, and IS the whole con
   // card, and that gate renders the collapsed list — an assertion there would match nothing and
   // pass forever, which is the shape of half the defects in this file.
   const src = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
-  const label = src.indexOf("schrijft automatisch af");
+  // [TAAL] Anchored on the key, not the Dutch sentence.
+  const label = src.indexOf("t('ink.schrijftAf'");
   const toggle = src.indexOf('role="switch"');
   assert.ok(label > 0 && toggle > 0, "both the label and the switch must still be there");
   assert.ok(label < toggle, "the switch renders after its label, not in front of it");
@@ -799,7 +800,8 @@ test("[KAS-AUTO-BOOK] the flag the booking leaves behind can be answered both wa
   // The button must live INSIDE the amount-only warning: a "Klopt, gecontroleerd" anywhere else
   // answers a question nobody asked.
   const warn = client.indexOf("amount_only");
-  const btn = client.indexOf("Klopt, gecontroleerd");
+  // [TAAL] Anchored on the key, not the Dutch label.
+  const btn = client.indexOf("t('bank.kloptGecontroleerd')");
   assert.ok(warn > 0 && btn > warn, "the confirm sits inside the flag it answers");
   const route = code("src/app/api/bank/match-checked/route.ts");
   assert.match(route, /auto_match_reason: null/, "which is what clearing it means");
@@ -1300,7 +1302,8 @@ test("[NAREKENEN] the audit is reachable, and looks like what it is", () => {
 
   // Not a primary button. It changes nothing, and a control that looks like an action is read as
   // one that fixes things — on a screen where nothing here fixes anything.
-  const btn = src.slice(src.indexOf("runBooksAudit()"), src.indexOf("Reken mijn boeken na"));
+  // [TAAL] The end anchor is the key of the button label.
+  const btn = src.slice(src.indexOf("runBooksAudit()"), src.indexOf("t('ink.rekenBoekenNa')"));
   assert.doesNotMatch(
     btn, /background: M3\.primary/,
     "the audit button is styled as a primary action — it only reports, and looking like it acts " +
@@ -1627,15 +1630,25 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
     email, /settlePlan\.method === 'kas'\) cashSettledThisRun = true/,
     "the e-mail loop must remember it settled cash",
   );
+  // [CASH-RETRY] Either the reconcile itself or the shared retry wrapper around it — what this gate
+  // is about is that the kasboek is brought in step once the loop has settled cash, not which of the
+  // two names does it. The wrapper is the stronger form: it reads the pass's verdict and asks again.
   assert.match(
-    email, /if \(cashSettledThisRun\)[\s\S]{0,220}?reconcileCashSettlements\(/,
+    email, /if \(cashSettledThisRun\)[\s\S]{0,320}?reconcileCash(?:Settlements|WithRetry)\(/,
     "and reconcile the kasboek once after the loop",
   );
   // The camera door reconciles in its existing side-effect block — the settlement must come FIRST,
   // or the drawer is a pass behind.
   const intake = code("src/app/api/intake/route.ts");
   const settleAt = intake.indexOf("apply_manual_payment");
-  const reconcileAt = intake.indexOf("reconcileCashSettlements(pipeline");
+  // [CASH-RETRY] Anchored on the shared wrapper OR the bare pass, for the same reason as the
+  // assertion above: what is being held here is the ORDER, and a needle pinned to one function name
+  // reports a rename as a broken ordering. This gate did exactly that when the four pay doors were
+  // moved onto reconcileCashWithRetry — the settle still came first, and the search found nothing.
+  const reconcileAt = Math.max(
+    intake.indexOf("reconcileCashWithRetry(pipeline"),
+    intake.indexOf("reconcileCashSettlements(pipeline"),
+  );
   assert.ok(settleAt > 0 && reconcileAt > settleAt, "intake must settle before it reconciles");
 
   // The other consequence: a card bon becomes 'paid', which hides it from the matcher — and a
@@ -2668,7 +2681,7 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
   assert.match(api, /\.is\('invoice_id', null\)/, "only files still waiting are offered");
   const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
   assert.match(ui, /\/api\/documents\/\$\{docId\}\/read-as-invoice/, "the panel must call it");
-  assert.match(ui, /Lees opnieuw/, "and offer it in words");
+  assert.match(ui, /t\('ink\.reread\.knop'\)/, "and offer it in words"); // [TAAL] key, not sentence
   // The answer is always a sentence. A silent button on the one panel whose purpose is honesty
   // about what went missing would be the wrong thing twice over.
   assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
@@ -2690,10 +2703,33 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
 //
 // This is a CLASS test on purpose. Fixing four sites does not stop the fifth.
 test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_treatment", () => {
+  // [CREDIT-SIGN] The creditnota route is not in this list any more: its per-line mirror moved to
+  // creditnota-lines.ts, where the rule is the same and can finally be tested without a database.
+  // The gate follows it there rather than being relaxed — the route must reach the module, and the
+  // module must harden exactly as the inline copies do.
+  const credit = code("src/app/api/invoice/creditnota/route.ts");
+  // [DEEL-CREDIT] The lines now come from the validated SELECTION rather than from a second read
+  // of the invoice — same mirror, and the amounts the ceiling was checked against.
+  assert.match(credit, /creditLinesFor\(keuze\.lines, creditnota\.id, reason\)/,
+    "the creditnota route must build its lines with the shared mirror");
+  // [REGEL-KOPIE] The hardening moved with the other optional columns into the module all three
+  // copiers share. Followed there, not relaxed: this assertion is the one that must survive.
+  assert.match(code("src/lib/creditnota-lines.ts"), /\.\.\.optionalLineFields\(line\)/,
+    "…and that mirror must take its optional columns from the shared copier");
+  assert.match(
+    code("src/lib/invoice-line-copy.ts"),
+    /vat_treatment === "exempt" \? "exempt" : null/,
+    "…which must harden vat_treatment like every other writer",
+  );
+
+  // [REGEL-KOPIE] /duplicate and the recurring cron copy LINES, and both now do it through the
+  // shared module — where the hardening lives and is asserted above. The gate follows them there
+  // instead of demanding an inline copy that is exactly what drifted three times.
+  for (const path of ["src/app/api/cron/recurring/route.ts", "src/app/api/invoice/[id]/duplicate/route.ts"]) {
+    assert.match(code(path), /copiedLinesFor\(/, `${path} must copy lines through the shared module`);
+  }
+  // The PUT route is not a copier: it writes what the edit screen sent, so it hardens its own.
   const copiers = [
-    "src/app/api/invoice/creditnota/route.ts",
-    "src/app/api/cron/recurring/route.ts",
-    "src/app/api/invoice/[id]/duplicate/route.ts",
     "src/app/api/invoice/[id]/route.ts",
   ];
   for (const path of copiers) {
@@ -2726,11 +2762,25 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
 // rounds per line. Two routes to one document with two totals.
 test("[REGEL-AFRONDING] the draft route rounds line_total, like the PUT route does", () => {
   const draft = code("src/app/api/invoice/draft/route.ts");
-  assert.match(
-    draft,
-    /line_total: round2\(/,
-    "the draft route must round line_total — an unrounded value is stored verbatim and the document stops adding up",
-  );
+  // [REGEL-KORTING] The rounding moved INSIDE lineNetEx, which is now the one definition of what a
+  // line is worth — quantity x price, minus the line's own discount, rounded once. The property the
+  // gate is here for is unchanged and now stronger: the amount is not computed inline at all, so
+  // there is no second expression that could round differently. Every writer calls this function.
+  for (const [path, src] of [
+    ["src/app/api/invoice/draft/route.ts", draft],
+    ["src/app/api/invoice/[id]/route.ts", code("src/app/api/invoice/[id]/route.ts")],
+  ] as const) {
+    assert.match(
+      src,
+      /line_total: lineNetEx\(/,
+      `${path} must take line_total from lineNetEx — an unrounded value is stored verbatim and the document stops adding up`,
+    );
+    assert.doesNotMatch(
+      src,
+      /line_total: (?!lineNetEx)[^,\n]*quantity \* [^,\n]*unit_price/,
+      `${path} is computing a line total inline again — that is the second opinion this gate exists to prevent`,
+    );
+  }
 });
 
 // ── [CI-PARITEIT] CI must run the gates it claims to run ─────────────────────
@@ -2995,14 +3045,21 @@ test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually hon
   // situations now have their own answers, and the backfill keeps only the one it can serve.
   assert.match(
     ui,
-    /Die bijlage halen wij niet nog een keer op/,
+    /t\('ink\.email\.echteFactuur'\)/, // [TAAL] the sentence lives in the catalogue now
     "the panel must say plainly that a listed attachment will not be fetched again — that is the " +
       "fact the old advice contradicted",
   );
   assert.match(
     ui,
-    /niet<\/em> tussen staat\? Gebruik dan &ldquo;Oudere e-mails opnieuw ophalen/,
+    /t\('ink\.email\.misFactuur'\)\} \{t\('ink\.email\.nietTussen'\)/, // [TAAL] catalogued now
     "…and keep the backfill only for the case it can serve: an invoice that is NOT in this list",
+  );
+  // The sentence moved into the catalogue, so the wording check follows it there. The word
+  // "niet" IS the advice — a key split once dropped it and told the owner the exact opposite.
+  assert.match(
+    code("src/lib/i18n/messages.ts"),
+    /'ink\.email\.misFactuur':[^\n]*niet tussen staat\?/,
+    "the catalogue sentence must keep 'niet': the backfill only serves invoices NOT in the list",
   );
 
   // The date, because "open de e-mail" is advice an owner can only follow if they can find it.
@@ -3282,7 +3339,7 @@ test("[LINKS-WRITE-HONEST] a lost payment link is logged, returned, and said out
     "the bank screen must handle the warning",
   );
   assert.match(
-    ui, /niet volledig vastgelegd/,
+    ui, /t\('bank\.betaaldNietVastgelegd'/, // [TAAL] key, not sentence
     "…and tell the owner in Dutch, with something to do about it — telling them 'Bevestigd ✓' and " +
       "letting them walk into the loop is the worse of the two failures",
   );
@@ -3428,13 +3485,13 @@ test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered do
   // its confirm promised to send "de factuur" — while sending a quote CONVERTS it into a numbered
   // invoice (send route, isConversion). One tap, irreversible, and the word offerte never appeared.
   assert.match(edit, /setInvoiceType\(invoice\.invoice_type/, "the screen must load the type");
-  assert.match(edit, /quote \? 'Offerte bewerken'/, "…and title itself honestly");
+  assert.match(edit, /quote \? t\('bewerk\.titel\.offerte'\)/, "…and title itself honestly"); // [TAAL]
   assert.match(
-    edit, /hiermee wordt deze offerte een OFFICIËLE FACTUUR/,
+    edit, /t\('bewerk\.omzetWaarschuwing'\)/, // [TAAL] key, not sentence
     "…and the confirm must say that sending a quote issues an invoice number, before it happens",
   );
   assert.match(
-    edit, /quote \? '✉ Omzetten naar factuur en versturen'/,
+    edit, /quote \? `✉ \$\{t\('bewerk\.omzettenVersturen'\)\}`/,
     "…and the button must be labelled with what it does",
   );
 });
@@ -3800,7 +3857,7 @@ test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion
   );
 
   assert.match(
-    list, /wordt omgezet naar een officiële factuur met een nieuw factuurnummer/,
+    list, /t\('lijst\.send\.proForma'/, // [TAAL] key, not sentence
     "the confirm must still say what happens, in full",
   );
 });
@@ -3935,7 +3992,7 @@ test("[OFFERTE-VERSTUREN] the quote door cannot mint a number, and says so if th
   );
   assert.match(list, /send-offerte/, "…and calls the quote door, not the send route");
   assert.match(
-    list, /Offerte versturen/,
+    list, /t\('lijst\.offerte\.versturen'\)/, // [TAAL] key, not label
     "…labelled as what it is — which only became an honest label once the button existed",
   );
 });
@@ -3962,12 +4019,23 @@ test("[KORTING-KOPIE] the creditnota, the duplicate and the recurring cron all c
     ["src/app/api/cron/recurring/route.ts", "src"],
   ] as const) {
     const src = code(file);
+    // [DEEL-CREDIT] The creditnota does not COPY the discount any more, it carries the one that
+    // belongs to what is being credited: a percentage unchanged, a fixed amount SCALED to the
+    // credited share. Copying a fixed discount onto a partial credit gives back less than was
+    // charged for those lines — see the header of partial-credit.ts. The property the gate
+    // protects is unchanged: the header's discount and its lines must describe one document.
+    const verwacht = file.includes("creditnota")
+      ? /discount_type: keuze\.discount\?\.type \?\? null/
+      : new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`);
     assert.match(
-      src, new RegExp(`discount_type: ${indent}\\.discount_type \\?\\? null`),
+      src, verwacht,
       `${file} copies the header totals, so it must copy the discount that produced them — ` +
         "otherwise its lines contradict its own stored amounts",
     );
-    assert.match(src, new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`), `${file}: and its value`);
+    const verwachtWaarde = file.includes("creditnota")
+      ? /discount_value: keuze\.discount\?\.value \?\? null/
+      : new RegExp(`discount_value: ${indent}\\.discount_value \\?\\? null`);
+    assert.match(src, verwachtWaarde, `${file}: and its value`);
   }
 
   // The recurring cron reads its source explicitly — a column it does not SELECT is a column it
@@ -4063,11 +4131,15 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
 test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STORED, never raw", () => {
   const totals = code("src/lib/draft-totals.ts");
 
+  // [REGEL-KORTING] One function, called by all of them: lineNetEx. It IS round2(quantity x price)
+  // when there is no discount, and it is the discounted amount when there is — and the create route
+  // inserts exactly what it returns. Pinning the shared call is a stronger version of pinning the
+  // shared expression: two copies of one formula can drift, one function cannot.
   assert.match(
     totals,
-    /line_total: round2\(sign \* l\.quantity \* l\.unit_price\),/,
-    "computeDraftTotals must build its lines with the SAME expression the create route inserts — " +
-      "round2(sign * quantity * unit_price). Anything else is a second opinion about one number",
+    /line_total: lineNetEx\(\{ quantity: sign \* l\.quantity/,
+    "computeDraftTotals must build its lines with the SAME function the create route inserts — " +
+      "lineNetEx. Anything else is a second opinion about one number",
   );
   // The two raw reducers that used to be the whole function. Paired with the match above, so a
   // file that somehow read empty cannot make this pass vacuously.
@@ -4092,9 +4164,16 @@ test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STOR
     const page = code(path);
     assert.match(
       page,
-      /line_total: round2\(l\.quantity \* l\.unit_price\), btw_rate: l\.btw_rate/,
-      `${path} must total the rounded line amounts — unrounded, this screen showed EUR 395,00 ` +
-        "while EUR 394,99 was stored",
+      /line_total: regelNetto\(l\), btw_rate: l\.btw_rate/,
+      `${path} must total the same amounts the server stores — unrounded, this screen showed ` +
+        "EUR 395,00 while EUR 394,99 was stored",
+    );
+    // …and `regelNetto` must be the shared function, not a local re-derivation of it.
+    assert.match(
+      page,
+      /const regelNetto = \(l: InvoiceLine\) => lineNetEx\(\{/,
+      `${path} must define regelNetto as lineNetEx — a screen that re-implements the line amount ` +
+        "is how the concept and the issued invoice come apart by a cent",
     );
     assert.doesNotMatch(
       page,
@@ -4109,8 +4188,9 @@ test("[REGEL-AFRONDING-KOP] a total is summed from line amounts as they are STOR
   const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
   assert.match(
     nieuw,
-    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ round2\(l\.quantity \* l\.unit_price\)/,
-    "the on-screen BTW-per-rate breakdown must use the rounded line amounts too",
+    /exByRate\[rate\] = \(exByRate\[rate\] \?\? 0\) \+ regelNetto\(l\)/,
+    "the on-screen BTW-per-rate breakdown must use the same line amounts the total does — beside " +
+      "each other on one card, two different answers about one invoice",
   );
   // [KORTING] And it must subtract the korting that applyDiscount assigned to each rate. This
   // assertion used to pin a one-liner that summed `round2(line) * rate/100` straight into
@@ -4418,7 +4498,11 @@ test("[PRIJS-KOLOM] the PDF and the screen format a unit price the same way", ()
     assert.match(src, importLine, `${path} must take the price column from the shared module`);
     assert.match(
       src,
-      /formatUnitPriceNL\(line\.unit_price, line\.quantity, line(Total|\.line_total)\)/,
+      // [REGEL-KORTING] The PDF passes `prijsBasis`: the line total, or the GROSS amount when the
+      // line carries its own discount. Handing it the discounted total would send
+      // unitPriceDecimals hunting for a precision that reconciles with an amount the price does
+      // not belong to — six decimals of a unit price nobody agreed.
+      /formatUnitPriceNL\(line\.unit_price, line\.quantity, (prijsBasis|line(Total|\.line_total))\)/,
       `${path} must pass the quantity AND the line total — the needed precision depends on both, ` +
         "so a formatter given only the price cannot know how many decimals make the row true",
     );
@@ -5967,8 +6051,19 @@ test("[PRIJSVELD-CENT] the price field is told the quantity, so it can show enou
   // The edit screen must also READ the stored line total — it is the number the field has to
   // reconcile with, and it was not in the select at all.
   const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
-  assert.match(edit, /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, line_total'\)/);
-  assert.match(edit, /priceFieldValue\([^)]*line_total/, "…and pass it to the field");
+  // [REGEL-KORTING] The column list became `*`, and that is the point rather than a shortcut: this
+  // screen PUTs back what it READS, and a name in the list that the database does not have makes
+  // the query fail silently — linesData is null, the screen keeps its one empty starter line, and
+  // Saving replaces every real line with it. A list that can be wrong sits one typo away from
+  // emptying an invoice. Reading everything cannot be wrong, and a column added later travels free.
+  assert.match(edit, /\.select\('\*'\)/,
+    "the edit screen must read the whole line row — a partial list is how a column falls off and a " +
+      "wrong name empties the invoice");
+  assert.match(edit, /priceFieldValue\([^;]{0,240}?line_total/, "…and pass the stored total to the field");
+  // And the field must reconcile against the GROSS on a discounted line, for the same reason the
+  // PDF does: the net total is not the amount this price belongs to.
+  assert.match(edit, /line\.discount_type \? lineGrossEx\(line\)/,
+    "a discounted line must hand the price field its gross amount");
 
   // step="0.01" makes the BROWSER refuse a third decimal, whatever the value says.
   assert.doesNotMatch(edit, /type="number" value=\{priceFieldValue[\s\S]{0,200}?step="0\.01"/,
@@ -6489,9 +6584,24 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
         "is never attacker-supplied",
     },
     {
-      file: "src/app/api/pay/[token]/route.ts", table: "invoices", must: ".in(",
-      why: "the ids come from a bundle already found BY the pay_token, and the route rejects " +
-        "anything that is not a uuid before touching the database",
+      file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines",
+      must: ".delete().eq('invoice_id', factuur.id)",
+      why: "[REGEL-KORTING] the rollback of that same insert, against that same just-created id. " +
+        "It runs when a line discount was asked for on a database where the columns do not exist " +
+        "yet: the lines are removed and the invoice with them, rather than leaving a total whose " +
+        "reason is gone. The id is this request's own and is never attacker-supplied",
+    },
+    {
+      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
+      // [DEEL-CREDIT] Was `.in(`. The query grew a column and the excerpt this gate matches is
+      // truncated, so `.in(` fell past the cut and the entry stopped matching anything — which the
+      // stale-exception half of this gate caught immediately. Pinned on the select instead: it is
+      // distinctive, and it sits at the front where the excerpt cannot lose it.
+      must: ".select('original_invoice_id, total_inc_btw')",
+      why: "the bundle's credit lookup, scoped by .in() to the ids of the bundle the pay_token " +
+        "itself resolved, and the route rejects anything that is not a uuid before touching the " +
+        "database. Reads only what each credit gave back, so it can lower the amount the page " +
+        "asks for, never raise it",
     },
     {
       file: "src/app/api/invoice/[id]/archive/route.ts", table: "pay_bundle_invoices",
@@ -6503,9 +6613,9 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
     {
       file: "src/app/api/pay/[token]/route.ts", table: "invoices",
       must: ".eq('original_invoice_id', invoiceId)",
-      why: "isCredited(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
-        "credential. Returns a boolean from a `select('id')`, and treats its own read error as " +
-        "'credited' — the fail-closed direction, since the other side is a customer transferring " +
+      why: "creditedOn(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
+        "credential. Returns how much was credited back, and treats its own read error as null — " +
+        "the fail-closed direction, since the other side is a customer transferring " +
         "money that is not owed",
     },
     {
@@ -6656,16 +6766,46 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
   const patterns = [
     // A text node: >Some Dutch words<
     /> *([A-ZÉ][^<>{}\n]{3,70}?) *</g,
+    // [TAAL-BLIND] A text node that starts on its OWN line. The pattern above requires the text
+    // on the same line as the `>`, and prettier-formatted JSX rarely does that — which is how a
+    // paragraph of Dutch sat untranslated inside screens this gate called clean. Found by the
+    // owner, on the screen, in Arabic: the worst reviewer to leave it to.
+    />\s*\n\s+([A-ZÉ][^<>{}]{3,150}?)\s*\n\s*[<{]/g,
+    // [TAAL-BLIND] A string inside a JSX expression — {saving ? 'Opslaan…' : 'Wijzigingen
+    // opslaan'} — is rendered text as much as a text node is. Second blind spot, same discovery.
+    /'([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''—-]+){1,12}[.?…]?)'/g,
+    // [TAAL-BLIND] The same string double-quoted. Half the screens quote the other way, and the
+    // wizard's every error message sat in one of these while this gate called the file clean.
+    /"([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''""—;:()-]+){1,16}[.?!…:]?)"/g,
+    // [TAAL-BLIND] A template literal that talks — `Bijna klaar, ${firstName}!` — is a sentence
+    // with a hole in it, which is exactly what a catalogue key with a {param} is for.
+    /`([A-ZÉ][a-zéë]+[^`]{2,120})`/g,
+    // [TAAL-BLIND] A lowercase fragment between tags is a SPLIT sentence — the halves around a
+    // <strong> — and a split cannot survive a language with another word order.
+    /> *([a-zéë]+(?: [a-zéë]+){1,6}[.,]?) *</g,
     // An attribute a user reads.
-    /(?:label|placeholder|title|aria-label)="([^"]{3,70})"/g,
+    /(?:label|placeholder|title|aria-label|desc)="([^"]{3,70})"/g,
     // A message handed to the owner when something goes wrong.
     /(?:setError|setCodeError|showToast)\( *'([^']{4,90})'/g,
   ];
   for (const screen of SCREENS) {
   const page = code(screen);
+  // [TAAL-DB] Dutch that is DATA, not screen text — a notification title stored in the
+  // database, message content for the boekhouder. Marked on its own line in the RAW source
+  // (code() strips comments, so the marker must be read before stripping), and the exemption
+  // covers only the quoted strings on marked lines: nothing unmarked slips through with them.
+  const raw = readFileSync(screen, "utf8");
+  const dbExempt = new Set<string>();
+  for (const line of raw.split("\n")) {
+    if (!line.includes("[TAAL-DB]")) continue;
+    for (const q of line.matchAll(/'([^']{3,90})'/g)) dbExempt.add(q[1].trim());
+    for (const q of line.matchAll(/"([^"]{3,90})"/g)) dbExempt.add(q[1].trim());
+    for (const q of line.matchAll(/`([^`]{3,120})`/g)) dbExempt.add(q[1].trim());
+  }
   for (const re of patterns) {
     for (const m of page.matchAll(re)) {
       const text = m[1].trim();
+      if (dbExempt.has(text)) continue;
       // Two Dutch-looking words, or one capitalised Dutch word on its own.
       if (!/[a-zé] [a-zé]|^[A-Z][a-zé]{3,}$/.test(text)) continue;
       if (text.includes("/") || text.includes("http")) continue;
@@ -7826,9 +7966,15 @@ test("[MIN-REGEL] the e-factuur can never carry a negative price", () => {
   assert.match(ubl, /const stuksprijs = Math\.abs\(storedPrice\)/, "…leaving the price a magnitude");
   assert.match(ubl, /"InvoicedQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(aantal\)\)/,
     "the emitted quantity must be the normalized one, or the two fields disagree");
-  // The fallback branch: PriceAmount = the line total, which on a credit line is negative.
-  assert.match(ubl, /"PriceAmount", \{ currencyID: EUR \}\)\.txt\(money\(Math\.abs\(ex\)\)\)/,
+  // The fallback branch: PriceAmount is expressed per LINE, and on a credit line that amount is
+  // negative. [REGEL-KORTING] renamed what it reproduces — `ex` is the net line total, and the
+  // per-line price has to reproduce the amount BEFORE the allowance that is now emitted beside it
+  // — but the rule this gate is here for is untouched: whatever goes in that element is an abs().
+  assert.match(ubl, /"PriceAmount", \{ currencyID: EUR \}\)\.txt\(money\(Math\.abs\(teReproduceren\)\)\)/,
     "the per-line price form must be a magnitude too");
+  assert.match(ubl, /const teReproduceren = round2\(ex \+ kortingBedrag\)/,
+    "…and it must reproduce the line amount plus whatever the allowance took off, or " +
+      "PEPPOL-EN16931-R120 fails and the file is refused");
   assert.match(ubl, /"BaseQuantity", \{ unitCode: toUnitCode\(l\.unit\) \}\)\.txt\(qty\(Math\.abs\(aantal\)\)\)/,
     "PEPPOL-EN16931-R121: the base quantity must be a positive number");
 
@@ -7876,4 +8022,899 @@ test("[MIN-REGEL] the two invoice forms allow and refuse the same things", () =>
   // And the screen renders at all — the gate that the other five cannot give.
   const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
   assert.match(render, /src\/app\/dashboard\/invoice\/\[id\]\/edit\/page/, "the edit screen must be on the render line");
+});
+
+// ─── [LEVENSLOOP] One invoice, every station ────────────────────────────────────────────────────
+//
+// Every station in this app is tested where it lives and each is right on its own. The defects
+// that keep being found are BETWEEN two of them, where neither side can see: the e-factuur that
+// stated a cent less BTW than the PDF, the price column that printed EUR 0,83 beside a line total
+// of EUR 123,85, the creditnota that credited a returned crate twice. invoice-lifecycle.test.ts
+// carries ONE document — fractional prices, two rates and a credit line — through the totals, the
+// PDF, the e-factuur, the creditnota and that creditnota's own PDF and e-factuur, and asks each
+// station for the same figures.
+
+test("[LEVENSLOOP] the end-to-end check covers every station, with hand-worked figures", () => {
+  const spec = readFileSync("src/lib/invoice-lifecycle.test.ts", "utf8");
+  // Each station must actually be called. A lifecycle test that quietly stopped rendering the PDF
+  // would still pass, and would still be named the same thing.
+  for (const station of ["computeInvoiceTotals", "renderInvoicePdf", "buildInvoiceUbl", "creditLinesFor", "rateSharesFromLines", "buildAangifte"]) {
+    assert.match(spec, new RegExp(`\\b${station}\\(`), `${station} must be exercised end to end`);
+  }
+  // The figures are worked out from the lines by hand. A test that asked the code for the answer
+  // would agree with any answer it gave.
+  assert.match(spec, /const EX = 376\.31/, "the excl total");
+  assert.match(spec, /const BTW = 43\.24/, "the btw, per rate and then added");
+  assert.match(spec, /const INC = 419\.55/, "and the amount due");
+  // The two properties that make it a lifecycle test rather than six unit tests.
+  assert.match(spec, /invoice and creditnota cancel to zero at every station/,
+    "the correction must leave nothing behind, or a rubriek keeps a remainder forever");
+  assert.match(spec, /-3, unit_price: 23\.95/, "…and a credit line must be on the document");
+  // The last station is the only one whose reader is neither the owner nor the customer.
+  assert.match(spec, /verschuldigd, 43/, "5a must be the same btw the other stations named");
+  assert.match(spec, /verschuldigd, -43/, "…and the creditnota must take exactly that back down");
+});
+
+test("[LEVENSLOOP] the creditnota flip is a negation, not a magnitude", () => {
+  // The defect the lifecycle test found within minutes of existing: Math.abs() per line turned the
+  // un-returned line the wrong way, and the file credited the customer 143,70 too much against a
+  // header that said otherwise. Only the PRICE is a magnitude — that one is BR-27.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /quantity: l\.quantity == null \? 1 : -Number\(l\.quantity\)/,
+    "the quantity is negated, with the ?? 1 default kept — negating THAT emits -1 against a positive line");
+  assert.match(ubl, /line_total: -Number\(l\.line_total \?\? 0\)/, "and so is the amount");
+  assert.match(ubl, /unit_price: Math\.abs\(Number\(l\.unit_price \?\? 0\)\)/,
+    "the price stays a magnitude — a negative cbc:PriceAmount is refused by the access point");
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /a creditnota is FLIPPED, not made absolute/, "covered where the exporter lives too");
+  assert.match(spec, /a creditnota line with no quantity still multiplies out/, "including the default");
+});
+
+test("[MIN-REGEL] a reading may not turn a credit line into a charge", () => {
+  // Two places turn a READING into an editable line — the free invoice tool carrying a scanned
+  // document, and generateInvoiceFromPrompt turning "drie kratten retour" into a row. Both wrote
+  // `quantity > 0 ? quantity : 1`, which does two jobs with one test: it rejects a quantity that
+  // cannot be read (right, and 1 is the right answer) and a NEGATIVE one, which is a credit line.
+  // On the ATAPACK row that is -3 x EUR 23,95 = EUR -71,85 carried in as 1 x EUR 23,95: EUR 95,80
+  // of swing towards charging the customer, with nothing on the screen saying so.
+  for (const path of ["src/app/factuur-maken/GratisFactuur.tsx", "src/lib/ai.ts"]) {
+    const src = code(path);
+    assert.doesNotMatch(
+      src, /quantity === 'number' && \w*\.?\w*quantity > 0 \? /,
+      `${path} still refuses a credit line from a reading`,
+    );
+    assert.match(src, /readQuantity|readLineAmounts/, `${path} must ask read-line.ts what a quantity is`);
+  }
+  const mod = code("src/lib/read-line.ts");
+  assert.match(mod, /usable\(value\) && value !== 0 \? value : fallback/,
+    "unreadable ⇒ 1, and a negative quantity is kept");
+  assert.match(mod, /return \{ quantity: -quantity, unit_price: -unitPrice \}/,
+    "…and the minus is moved out of the price, where BR-27 forbids it");
+});
+
+test("[CREDIT-SIGN] a creditnota without lines can still be sent as an e-factuur", () => {
+  // effectiveLines synthesizes a summary line for an invoice that has none — a scanned or legacy
+  // one — and did so only when `ex > 0`. A creditnota's ex total is negative, so crediting such an
+  // invoice produced NO_LINES and the export THREW. The same document as a factuur exported fine,
+  // and the creditnota route copies the lines of the invoice it corrects: no lines in, none out.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /if \(Number\.isFinite\(ex\) && ex !== 0\) \{/,
+    "a usable total is a non-zero one, in either direction");
+  // And the synthesized line must follow the STORED convention, or the creditnota flip turns its
+  // quantity into -1 against a positive amount and PEPPOL-EN16931-R120 refuses the file.
+  assert.match(ubl, /quantity: ex < 0 \? -1 : 1/, "stored negative, flipped positive for the file");
+  assert.match(ubl, /unit_price: Math\.abs\(ex\)/, "…with the price a magnitude, as BR-27 requires");
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /a creditnota with no lines is exportable/, "proven by a document");
+  assert.match(spec, /a factuur without lines is synthesized exactly as it always was/,
+    "…and the case that already worked must be untouched");
+});
+
+// ─── [REGEL-KORTING] A discount that belongs to ONE line ──────────────────────
+//
+// The invariant the whole feature rests on is a STORAGE CONTRACT: invoice_lines.line_total holds
+// the NET amount — quantity x price minus the line's own discount. It is chosen deliberately as
+// the direction in which a mistake costs nothing: a reader that never learns the two new columns
+// sums line_total and gets the right money. The other direction (store gross, let readers
+// subtract) means every reader that misses them overcharges the customer on a numbered document.
+//
+// Two ways that contract can break silently, and neither shows on any screen:
+//   · subtract the discount AGAIN somewhere that already reads line_total → the customer is
+//     undercharged, on exactly the lines that were meant to be cheaper;
+//   · write the GROSS into line_total → the customer is overcharged and the discount is a lie.
+test("[REGEL-KORTING] the stored line total is net, and is never discounted twice", () => {
+  const discount = code("src/lib/invoice-discount.ts");
+
+  // One definition of what a line is worth. negative-line.ts had its own copy of this expression —
+  // identical until a line could carry a discount, and it is the module that decides whether a
+  // document is a factuur or a creditnota, so the cheaper definition would have won that argument
+  // by accident.
+  assert.match(discount, /export function lineNetEx\(l: DiscountLine\): number \{/,
+    "the line amount has one home");
+  assert.match(code("src/lib/negative-line.ts"), /import \{ lineNetEx \} from '\.\/invoice-discount'/,
+    "negative-line must USE it rather than keep a second copy");
+
+  // The double-subtraction guard, in the one function every summation goes through.
+  assert.match(
+    discount,
+    /function lineEx\(l: DiscountLine\): number \{\s*return typeof l\.line_total === "number" \? l\.line_total : lineNetEx\(l\);/,
+    "a stored line_total is taken AS IS — it is already net, and taking the discount off it again " +
+      "undercharges the customer on precisely the discounted lines",
+  );
+
+  // And the cap, which is what keeps a typo from inventing a credit inside a delivery.
+  assert.match(discount, /Math\.min\(wanted, magnitude\)/,
+    "a discount larger than the line is capped at the line, never turned into a negative line");
+});
+
+test("[REGEL-KORTING] the migration exists and constrains what may be stored", () => {
+  const path = "supabase/migrations/invoice_line_discount.sql";
+  assert.ok(existsSync(path), `${path} must exist — the columns are what make the discount reproducible`);
+  const sql = readFileSync(path, "utf8");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS discount_type text/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS discount_value numeric/);
+  assert.match(sql, /discount_type IN \('percent', 'amount'\)/,
+    "a third spelling would be accepted by a route and guessed at by every reader");
+  assert.match(sql, /discount_value > 0/, "zero is not a discount — it would print 'Korting 0%' on a customer's invoice");
+  assert.match(sql, /discount_value <= 100/, "over 100% is not a big discount, it is a negative line with a friendly word in front");
+});
+
+test("[REGEL-KORTING] the e-factuur explains the difference instead of inventing a price", () => {
+  const ubl = code("src/lib/ubl-export.ts");
+  // BG-27. The placement is not free: UBL 2.1 puts cac:AllowanceCharge after LineExtensionAmount
+  // and before cac:Item, and elsewhere the file is not schema-valid — refused before any business
+  // rule is even reached.
+  // Anchored on CODE, not on a comment: code() strips comments, so a comment anchor silently
+  // becomes -1 and every assertion below it passes against the wrong slice of the file.
+  const lineLoopAt = ubl.indexOf("effLines.forEach(");
+  assert.ok(lineLoopAt > 0, "the InvoiceLine loop must be findable");
+  const lineBlock = ubl.slice(lineLoopAt);
+  const allowanceAt = lineBlock.indexOf('line.ele(NS.cac, "AllowanceCharge")');
+  const itemAt = lineBlock.indexOf('const item = line.ele(NS.cac, "Item")');
+  const amountAt = lineBlock.indexOf('"LineExtensionAmount"');
+  assert.ok(allowanceAt > 0, "a line-level allowance must be emitted at all");
+  assert.ok(allowanceAt > amountAt, "…after LineExtensionAmount");
+  assert.ok(allowanceAt < itemAt, "…and before Item");
+
+  // A line allowance inherits the line's tax category; EN 16931 gives BG-27 none of its own, and
+  // the document-level allowance right above DOES carry one — so the two must not be copied from
+  // each other by a later hand.
+  const allowanceBlock = lineBlock.slice(allowanceAt, itemAt);
+  assert.doesNotMatch(allowanceBlock, /TaxCategory/,
+    "a line allowance must not carry a tax category of its own");
+  assert.match(allowanceBlock, /MultiplierFactorNumeric/,
+    "a percentage discount states its percentage (BT-138)");
+  assert.match(allowanceBlock, /BaseAmount/, "…and what it came off (BT-137)");
+});
+
+test("[REGEL-KORTING] a creditnota reproduces the invoice it reverses, discount included", () => {
+  // [REGEL-KOPIE] The rule moved to the module all three copiers now share — following it there
+  // rather than relaxing the gate, because this is the exact assertion that was true of the
+  // creditnota and false of /duplicate and the recurring cron at the same time.
+  const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/, "the mirror asks the shared copier");
+  const copy = code("src/lib/invoice-line-copy.ts");
+  // Not decoration. line_total is net and HAS been flipped, so a credit line without these two
+  // says -10 x EUR 12,50 = EUR -100; the access point redoes that multiplication
+  // (PEPPOL-EN16931-R120), finds -125, and refuses the file while the PDF looks perfect.
+  assert.match(copy, /discount_type: line\.discount_type \?\? null/,
+    "the discount travels to the credit note");
+  assert.match(copy, /line\.discount_type \? \(line\.discount_value \?\? null\) : null/,
+    "…and a value without a type is not a discount");
+  // Conditional, like `unit` and the exemption flag: a column the database does not have must not
+  // appear in the INSERT, or the creditnota loses its lines after its number is already spent.
+  assert.match(copy, /\.\.\.\(line\.discount_type !== undefined/,
+    "absent from the source row means absent from the copy");
+});
+
+test("[REGEL-KORTING] a discount the app will not honour is refused, never dropped", () => {
+  // Dropping it silently issues the invoice at the FULL price while the owner believes they gave a
+  // discount — the surprise lands on a numbered document that cannot be taken back.
+  const totals = code("src/lib/draft-totals.ts");
+  assert.match(totals, /const wantsDiscount = filled\(row\.discount_type\) \|\| filled\(row\.discount_value\)/,
+    "a half-filled discount has to be recognised as an attempt");
+  assert.match(totals, /if \(wantsDiscount && !discount\) \{/, "…and refused");
+  assert.match(totals, /field: "discount_value"/, "…on the field the owner can fix");
+  // Clearing one is an ordinary edit and must stay one.
+  assert.match(totals, /discount_type: discount\?\.type \?\? null/,
+    "what was validated is what gets stored — never raw input the CHECK would have to catch");
+});
+
+test("[REGEL-KORTING] a creditnota carries no discount of its own, on either screen", () => {
+  // A discount on a correction is arithmetic nobody can check by eye — the same rule the document
+  // discount already follows. The credit note gets its discount by COPY, never by typing.
+  for (const path of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+  ]) {
+    const page = code(path);
+    const at = page.indexOf("t('nieuw.regelKorting')");
+    assert.ok(at > 0, `${path} must offer a line discount`);
+    // The control sits inside a creditnota guard — look back from it for the condition.
+    assert.match(page.slice(Math.max(0, at - 3000), at), /invoiceType !== \(?'creditnota'/,
+      `${path} must not offer a line discount on a creditnota`);
+  }
+});
+// ─── [CREDIT-VERREKEN] A supplier credit is settled by deducting it ──────────────────────────────
+//
+// Reported with the screen open on it: an invoice of € 1.764,76 and a creditnota of € 52,38 from
+// the same supplier, selected together on Crediteuren, refused with "haal hem uit de selectie".
+// That refusal was right about the arithmetic — the credit would have been ADDED, so the owner paid
+// twice its value too much — and wrong as an answer. Deducting a credit from the next payment and
+// naming both documents in the description is how this trade settles a return.
+
+test("[CREDIT-VERREKEN] the credit subtracts, and only from the supplier it belongs to", () => {
+  const mod = code("src/lib/bundel-betaling.ts");
+  assert.match(mod, /const amount = round2\(debtTotal - creditTotal\)/, "it comes OFF the transfer");
+  // Only a row whose sign and type agree. A 'conflict' is the app contradicting itself and a
+  // 'suspected' is a guess; netting on either pays the wrong amount for an invisible reason.
+  assert.match(mod, /if \(stance === "credit"\) \{ credits\.push\(inv\); continue; \}/,
+    "only a confirmed credit may be deducted");
+  assert.match(mod, /stance === "conflict"/, "a positive creditnota is refused, not netted");
+  assert.match(mod, /bevestig/i, "…and an unconfirmed one is refused by name");
+  // Same supplier: the IBAN when the credit has one, the shared counterpart key when it does not.
+  assert.match(mod, /normalizeIban\(cn\.vendor_iban\) !== iban/, "another IBAN is another supplier");
+  assert.match(mod, /counterpartKey\(cn\.client_name \?\? null\)/,
+    "a creditnota without an IBAN must match on the name, or it is refused");
+  // No transfer of nothing, and both numbers on the payment.
+  assert.match(mod, /if \(amount <= 0\)/, "a credit bigger than the bill is an answer, not a € 0,00 QR");
+  assert.match(mod, /\$\{debtRefs\} -\/- \$\{creditRefs\}/, "the kenmerk names the credits after -/-");
+});
+
+test("[CREDIT-VERREKEN] the screen shows the net, and settles the credit with the payment", () => {
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // The bar read "2 geselecteerd · € 1.817,14" over a payment of € 1.712,38: it added the credit.
+  assert.match(client, /selectedRows\.reduce\(\(s, r\) => s \+ openAmountSigned\(r\), 0\)/,
+    "the selection total must net the credit, like the list total below it already does");
+  // The builder cannot see a credit note booked as a debt without the supplier's other numbers,
+  // and this screen is the side that has them.
+  assert.match(client, /buildBundelBetaling\(selectedRows, bundleVendorNumbers\)/,
+    "the evidence for the 'suspected' state must travel with the selection");
+  // The sheet has to explain the subtraction where the money is confirmed.
+  assert.match(client, /built\.creditTotal != null &&/, "the netting is spelled out on the sheet");
+  assert.match(client, /aan creditnota&apos;s/, "…naming what came off");
+  // And the settle step closes the credit too, or it is deducted again next month. The sentence
+  // lives in the catalogue ([TAAL]), so the gate follows it there: the screen must CHOOSE that key
+  // on a batch containing a credit, and the key must exist in every language the panel carries.
+  assert.match(
+    client, /\? 'ink\.bundelMarkerenCredit'\s*\n\s*: 'ink\.bundelMarkerenUitleg'/,
+    "the confirm sheet must say what happens to the creditnota",
+  );
+  assert.match(client, /bundlePayRows\.some\(r => \(r\.total_inc_btw \?\? 0\) < 0\)/,
+    "…and choose it by looking for one");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'ink\.bundelMarkerenCredit'/, "the key must exist");
+  assert.match(messages, /verrekend en gaan mee dicht/, "…and say that the credit closes with the payment");
+});
+
+test("[CREDIT-VERREKEN] the bank recognises a netted payment, both ways in", () => {
+  const mod = code("src/lib/bank-batch-reconcile.ts");
+  // The AUTOMATIC path, when the transfer quotes both numbers (our own bundle writes them).
+  // It refused because "reconcileBatch sums by MAGNITUDE" — true when written, false since
+  // [BATCH-SIGN] made it a net sum. The guard outlived its reason and blocked the everyday case.
+  assert.doesNotMatch(mod, /if \(inv\.total_inc_btw <= 0\) return null;/,
+    "a creditnota must be allowed into an automatic batch");
+  assert.match(mod, /if \(open == null \|\| open === 0\) return null;/,
+    "…while a settled document, whatever its sign, still cannot be part of one");
+  // What replaces it: the net must be money OWED, because reconcileBatch ties on magnitudes.
+  assert.match(mod, /const net = slots\.reduce\(\(sum, s\) => sum \+ \(s\.amount \?\? 0\), 0\);\s*\n\s*if \(net <= 0\) return null;/,
+    "a net running the other way ties just as neatly and must not be booked");
+
+  // The SUGGESTION path, when nothing is quoted: the subset-sum walk takes credits with their sign.
+  assert.match(mod, /\.filter\(\(x\) => x\.openCents !== 0\);/, "credits belong in the pool");
+  assert.doesNotMatch(mod, /if \(chosen\.length >= SUM_SUBSET_MAX \|\| sum >= targetCents\) return;/,
+    "the positive-only pruning would MISS a netted answer that overshoots on the way");
+  assert.match(mod, /amounts: members\.map\(\(m\) => m\.openCents \/ 100\)/,
+    "the per-member signs must travel, or the card cannot print the subtraction");
+
+  // And the card prints arithmetic that adds up.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /x\.a < 0 \? ' − ' : ' \+ '/, "a creditnota is joined with a minus, never a plus");
+  assert.match(bank, /\(s\.sumMatch\.amounts \?\? \[\]\)\.some\(a => a < 0\)/, "…and the heading says what it is");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'bank\.som\.kopVerrekend'/, "in the owner's language");
+});
+
+// ─── [BIJNA-BEDRAG] / [GESTRUCTUREERD] What a bank's own matcher does ───────────────────────────
+//
+// Two capabilities a real reconciliation engine has and this one did not, both measured before
+// they were built:
+//
+//   · a payment that is CLOSE — bank costs taken off a foreign transfer, a betalingskorting, a
+//     customer who rounded — produced `outcome: none, candidates: 0`. Not a weak suggestion: none
+//     at all, because an identified pair without an exact amount is capped at 0.35 under a 0.5
+//     listing floor. The owner saw "Geen factuur" over a line whose invoice was in the list.
+//   · an ISO 11649 creditor reference printed the way every bank prints it — "RF18 5390 0754
+//     7034" — did not match the invoice storing it unspaced. The scan keeps spaces as token
+//     boundaries on purpose, and that is exactly what hid the one reference that carries its own
+//     checksum.
+
+test("[BIJNA-BEDRAG] a close payment is offered with the difference named, and never booked", () => {
+  const mod = code("src/lib/bank-matching.ts");
+  // Bounded on three sides: proportional, absolutely capped, and with a floor for pure rounding.
+  assert.match(mod, /NEAR_AMOUNT_PERCENT = 0\.02/, "2% — the usual betalingskorting");
+  assert.match(mod, /NEAR_AMOUNT_MAX = 25/, "…and never more than € 25, whatever the invoice is worth");
+  assert.match(mod, /NEAR_AMOUNT_FLOOR = 0\.05/, "…always at least a nickel, for a rounded payment");
+  // A bonus BEFORE the cap. Math.min only lowers, so a raised cap alone changes nothing — the
+  // silent no-op this file's neighbours document twice over.
+  assert.match(mod, /confidence \+= 0\.35;\s*\n\s*signals\.push\("near_amount"\)/,
+    "the pair must be lifted over the listing floor, not merely allowed to reach it");
+  assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \? 0\.55 : 0\.35\);/,
+    "0.55: above the 0.5 listing floor and below the 0.7 booking bar");
+  // Identity is required, and a name resemblance is not identity.
+  // [GEHEUGEN] added `rememberedOk` to this line, which is the point of it — so the gate asks for
+  // the terms that must be there rather than for one exact composition.
+  const identityLine = /const identified = ([^;]+);/.exec(mod)?.[1] ?? "";
+  for (const term of ["ibanOk", "supplierIbanOk", "isStrongNameIdentity("]) {
+    assert.ok(identityLine.includes(term), `identity must include ${term}: ${identityLine}`);
+  }
+  assert.ok(!/nameSim|cpBonus|sim >=/.test(identityLine),
+    `a similarity score is not identity — that is the coincidence this file guards against: ${identityLine}`);
+  assert.match(mod, /const nearOk = nearDiff != null && identified;/);
+  // And the owner is told how far off it is, in euros.
+  assert.match(mod, /minder" : "meer"\} dan het openstaande bedrag/, "the difference must be on the card");
+});
+
+test("[GESTRUCTUREERD] the reference a bank routes on is read the way a bank reads it", () => {
+  const mod = code("src/lib/structured-reference.ts");
+  // ISO 7064 mod-97-10 on both formats — the checksum is what makes matching on this safe.
+  assert.match(mod, /mod97\(ref\.slice\(4\) \+ ref\.slice\(0, 4\)\) === 1/, "ISO 11649");
+  assert.match(mod, /body % 97 === 0 \? 97 : body % 97/, "the Belgian 0 → 97 rule");
+  // Whole groups, not arbitrary prefixes: twenty candidates against mod-97 invents a reference out
+  // of RF-shaped junk about one time in five.
+  assert.match(mod, /const groups = run\.trim\(\)\.split\(\/\\s\+\/\)\.filter\(Boolean\);/,
+    "the walk must step by printed groups");
+  assert.doesNotMatch(mod, /for \(let len = Math\.min\(compact\.length, 25\); len >= 5; len--\)/,
+    "…never character by character");
+  // A twelve-digit window inside a longer number is a customer number, not a mededeling.
+  assert.match(mod, /if \(\/\[0-9\]\/\.test\(before\) \|\| \/\[0-9\]\/\.test\(after\)\) continue;/);
+
+  // Wired in front of the ordinary scan, which keeps spaces and therefore could not see it.
+  const matcher = code("src/lib/bank-matching.ts");
+  assert.match(matcher, /if \(structuredReferenceMatches\(`\$\{tx\.reference \?\? ""\} \$\{tx\.description \?\? ""\}`, invoiceNumber\)\) \{/,
+    "referenceMatches must ask it first");
+});
+
+// ─── [DEEL-CREDIT] Een factuur crediteren in DELEN ────────────────────────────
+//
+// Twee dingen kunnen hier stilletjes kapot, en allebei zijn ze geld:
+//
+//   · TE VEEL TERUGGEVEN. De som van de creditnota's mag de factuur nooit passeren. Erover heen
+//     betekent btw terugvragen die nooit is afgedragen en de klant een tegoed geven dat nergens
+//     vandaan komt — op twee documenten die los van elkaar volstrekt normaal zijn.
+//   · STOPPEN MET VRAGEN. Een DEEL crediteren is geen intrekking. Wie de rest niet meer int,
+//     krijgt hem nooit — en de factuur houdt gewoon zijn status en zijn volle bedrag, dus er is
+//     geen scherm waarop het opvalt.
+test("[DEEL-CREDIT] the ceiling stands in all three places", () => {
+  // De applicatie, zodat het scherm het kan tonen.
+  const pure = code("src/lib/partial-credit.ts");
+  assert.match(pure, /export function creditableRemaining\(/);
+  assert.match(pure, /export function fitsWithinOriginal\(/);
+
+  // De route, zodat een client die het scherm overslaat wordt geweigerd — en VOOR het nummer,
+  // want een geweigerde creditnota mag geen nummer uit de reeks hebben verbruikt (Art. 35).
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /if \(!fitsWithinOriginal\(original\.total_inc_btw, alGecrediteerd, keuze\.totalIncBtw\)\)/,
+    "the route must refuse a credit that would pass the invoice");
+  const plafondAt = route.indexOf("fitsWithinOriginal");
+  const nummerAt = route.indexOf("generateInvoiceNumber(supabase");
+  assert.ok(plafondAt > 0 && nummerAt > 0 && plafondAt < nummerAt,
+    "the ceiling must be checked BEFORE a number is minted — a refused creditnota may not burn one");
+
+  // De database, zodat twee gelijktijdige verzoeken elkaar niet passeren.
+  const sql = readFileSync("supabase/migrations/creditnota_partial.sql", "utf8");
+  assert.match(sql, /DROP INDEX IF EXISTS invoices_one_creditnota_per_original/,
+    "the one-per-invoice index has to go for partial credits to exist at all");
+  assert.match(sql, /FOR UPDATE/,
+    "…and its TOCTOU protection has to be replaced, not simply removed: the original is locked");
+  assert.match(sql, /RAISE EXCEPTION/, "…and the sum is refused when it would pass the invoice");
+  assert.match(sql, /CREATE TRIGGER trg_assert_credit_within_original/);
+});
+
+test("[DEEL-CREDIT] a partial credit is still money owed, everywhere it is asked", () => {
+  // The rule itself: the set means FULLY credited now.
+  const rule = code("src/lib/credited-invoices.ts");
+  assert.match(rule, /export function fullyCreditedIdsFrom\(/);
+  assert.match(rule, /export function openAfterCredit\(/);
+
+  // And every surface that used to read it as a yes/no. Each of these decides whether a customer
+  // is asked for money, so a stale one is either a demand that should not go out or an invoice
+  // that is never collected.
+  for (const [file, needle] of [
+    ["src/app/api/cron/reminders/route.ts", /openAfterCredit\(inv\.total_inc_btw, 0, creditedByInvoice/],
+    ["src/app/api/daily-truth/route.ts", /fullyCreditedIdsFrom\(creditRows, recvAll\)/],
+    ["src/app/dashboard/vandaag/page.tsx", /fullyCreditedIdsFrom\(creditRows, remindAll\)/],
+    ["src/app/dashboard/accountant/debiteuren/page.tsx", /fullyCreditedIdsFrom\(/],
+    ["src/modules/accountant/work-queues.ts", /fullyCreditedIdsFrom\(/],
+    ["src/app/api/pay/[token]/route.ts", /fullyCreditedIdsFrom\(/],
+    ["src/app/api/invoice/betaalverzoek-bundel/route.ts", /fullyCreditedIdsFrom\(/],
+  ] as const) {
+    assert.match(code(file), needle,
+      `${file} must judge COVERAGE, not the mere existence of a creditnota`);
+  }
+
+  // The reminder must also name the reduced amount. Asking for the full total on a partly
+  // credited invoice demands money the owner put in writing was not owed.
+  assert.match(
+    code("src/app/api/cron/reminders/route.ts"),
+    /openAfterCredit\(inv\.total_inc_btw, inv\.amount_paid, gecrediteerd\)/,
+    "the amount in the reminder must have the credit taken off it",
+  );
+
+  // And so must every public payment surface, through the one function that decides them all.
+  assert.match(
+    code("src/lib/betaalverzoek.ts"),
+    /const credited = Math\.max\(0, invoice\.credited_inc_btw \?\? 0\);/,
+    "the payable amount must subtract what was credited — a live link asking for the full total " +
+      "after a partial credit is a customer transferring money that is not owed",
+  );
+});
+
+test("[DEEL-CREDIT] a FULL credit is byte-for-byte the document it always was", () => {
+  // Every creditnota this app has ever produced took the no-selection path. It must keep producing
+  // exactly the same one, or a cent of drift lands in documents already in customers' hands.
+  const pure = code("src/lib/partial-credit.ts");
+  assert.match(pure, /const alles = !input\.selection \|\| input\.selection\.length === 0;/,
+    "no selection means the whole invoice");
+  // The screen sends NO lines key at all when everything is credited, so the request is literally
+  // the request of before.
+  assert.match(
+    code("src/app/dashboard/invoice/[id]/page.tsx"),
+    /\.\.\.\(creditSelection \? \{ lines: creditSelection \} : \{\}\)/,
+    "crediting everything must send the same request it always sent",
+  );
+});
+
+test("[DEEL-CREDIT] the amount of a partial line is recomputed, never copied", () => {
+  // creditnota-lines flips line_total. The stored one belongs to the FULL quantity, so a credit
+  // for 3 of 10 would say "-3" beside the amount of ten — three times too much back, on a document
+  // where neither number looks wrong by itself.
+  assert.match(
+    code("src/lib/partial-credit.ts"),
+    /line_total: lineNetEx\(\{\s*quantity,/,
+    "the line amount must follow the chosen quantity",
+  );
+  // And the header follows the lines, rather than being copied from the original.
+  assert.match(
+    code("src/app/api/invoice/creditnota/route.ts"),
+    /total_inc_btw: -keuze\.totalIncBtw/,
+    "the creditnota's total must be the total of what is actually being credited",
+  );
+});
+
+test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
+  // Every other signal in the matcher is inference about a line it is seeing for the first time.
+  // A confirmation is not inference — and it was written to bank_tx_invoices and never read again.
+  const mod = code("src/lib/match-memory.ts");
+  // Derived, not stored: no table, no migration, and it cannot drift from what happened.
+  assert.doesNotMatch(mod, /insert|upsert|from\(/, "the memory is derived from the link rows, never written");
+  // The rule that makes one mistaken confirmation self-limiting.
+  assert.match(mod, /parties != null && parties\.size === 1 && parties\.has\(party\)/,
+    "a counterpart that settled TWO parties is a channel, not an identity");
+  assert.match(mod, /MATCH_MEMORY_LIMIT = 400/, "bounded: a memory older than the relationship is not one");
+
+  const matcher = code("src/lib/bank-matching.ts");
+  assert.match(matcher, /const rememberedOk = remembersParty\(opts\.memory, tx, inv\.client_name\);/);
+  assert.match(matcher, /confidence \+= 0\.30;\s*\n\s*signals\.push\("memory"\)/,
+    "weighted like the supplier registry — it identifies the party, not the bill");
+  // It must count as identity for the near-amount offer, which is what it is FOR: the counterparty
+  // whose name the bank mangles had no identity the token rules would accept.
+  assert.match(matcher, /const identified = ibanOk \|\| supplierIbanOk \|\| rememberedOk \|\|/);
+
+  // The read degrades to nothing rather than to a guess, and the route says so out loud.
+  const server = code("src/lib/match-memory-server.ts");
+  assert.match(server, /if \(error \|\| !linkRows \|\| linkRows\.length === 0\) return buildMatchMemory\(\[\]\);/);
+  assert.match(server, /if \(!tx \|\| !inv\) continue;/, "a half-read link must teach nothing");
+  const route = code("src/app/api/bank/match/route.ts");
+  assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
+  assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
+});
+
+// ─── [REGEL-KOPIE] The class this has now been, three times ─────────────────────────────────────
+//
+// Three routes copy invoice lines: the creditnota mirrors them, /duplicate repeats them, and the
+// recurring cron re-issues them monthly. Each typed the columns over by hand, so every column ADDED
+// to invoice_lines had to be chased into three places by someone who knew all three existed.
+//
+//   unit                              chased, after "-2 uur" became "-2 stuks" on a correction
+//   vat_treatment                     chased, after a copied exempt line booked as taxed 0%
+//   discount_type / discount_value    reached the mirror and BOTH write routes — and neither copier
+//
+// The third one was live when this gate was written. The copiers write line_total, which is already
+// discounted, so a duplicated or recurring invoice looked right until it was opened and saved:
+// computeDraftTotals then recomputed the line from quantity x unit_price with no discount to apply,
+// and a EUR 108,90 monthly invoice billed EUR 121,00. Before that save it did not even add up with
+// itself — quantity x unit_price is what PEPPOL-EN16931-R120 recomputes.
+
+test("[REGEL-KOPIE] every per-line column reaches the copiers, including the next one", () => {
+  // Read the columns from the generated database types, so a column added tomorrow fails this
+  // gate rather than a customer's invoice. That is the whole difference between a gate that
+  // catches the class and one that catches the last instance of it.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  const block = /invoice_lines: \{\s*Row: \{([\s\S]*?)\}\s*Insert:/.exec(types);
+  assert.ok(block, "the invoice_lines Row block must be findable in the generated types");
+  const columns = [...block![1].matchAll(/^\s{10}([a-z_]+):/gm)].map((m) => m[1]);
+  assert.ok(columns.length >= 8, `expected the real column list, got: ${columns.join(", ")}`);
+
+  // `id` is identity, never copied: a spread of the source row carries a primary key that exists.
+  // `invoice_id` is the destination, supplied by the caller.
+  const IDENTITY = new Set(["id", "invoice_id"]);
+  // The FUNCTION BODIES, not the file. A negative control caught this gate passing on a column that
+  // had been removed from the spread but still appeared in the interface above it — a mention where
+  // the wiring should be, which is the defect shape this whole file exists to refuse. The bodies
+  // are what runs.
+  const copier = code("src/lib/invoice-line-copy.ts");
+  const bodies = [...copier.matchAll(/export function (?:optionalLineFields|copiedLineFor)[\s\S]*?\n\}/g)]
+    .map((m) => m[0])
+    .join("\n");
+  assert.ok(bodies.length > 200, "the copier's function bodies must be findable, or this gate reads a hole");
+  const missing = columns.filter((c) => !IDENTITY.has(c) && !bodies.includes(c));
+  assert.deepEqual(
+    missing, [],
+    `invoice_lines has columns the copier never carries: ${missing.join(", ")}. ` +
+      "A copy that silently drops one is a document that differs from the one it was copied from.",
+  );
+});
+
+test("[REGEL-KOPIE] the copiers ask the module instead of listing columns themselves", () => {
+  for (const path of [
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+  ]) {
+    const src = code(path);
+    assert.match(src, /copiedLinesFor\(/, `${path} must copy through the shared module`);
+    // And it must not keep a hand-typed list beside it — that is the shape that drifted.
+    assert.doesNotMatch(
+      src, /invoice_lines"\)\.insert\(\s*\n?\s*\w+\.map\(\(l\) => \(\{/,
+      `${path} still types the columns over by hand`,
+    );
+  }
+  // The creditnota mirror keeps its own sign and prefix rules and shares only the column list.
+  const credit = code("src/lib/creditnota-lines.ts");
+  assert.match(credit, /\.\.\.optionalLineFields\(line\)/);
+  assert.match(credit, /quantity: flip\(line\.quantity\)/, "…and still flips, which a copy must not");
+});
+
+test("[REGEL-KOPIE] a copy is verbatim, and a missing column stays missing", () => {
+  const mod = code("src/lib/invoice-line-copy.ts");
+  // Conditional spreads: a database without the migration returns rows without the key, and
+  // sending it fails the whole INSERT with 42703 — on the creditnota path that is a correction
+  // whose number is already spent and which ends up with no lines at all.
+  for (const col of ["unit", "vat_treatment", "discount_type"]) {
+    assert.ok(
+      new RegExp(`\\.\\.\\.\\(line\\.${col} !== undefined`).test(mod),
+      `${col} must be absent from the copy when it is absent from the source row`,
+    );
+  }
+  assert.doesNotMatch(mod, /\bid:/, "a copy carries content, never the source line's identity");
+});
+
+test("[KAS-SPOOR] the cash drawer's three doors all leave a trail", () => {
+  // The drawer was the only money ledger in this app writing no audit row, and it is the worst one
+  // to leave untraced: the only ledger the owner writes by hand with no bank line and no document
+  // behind it, deleted HARD (cash_entries keeps no reversal row), and gated on — readiness.ts and
+  // /api/btw/file both refuse a filing on a negative drawer. Accusing on a number nobody can trace
+  // is half a gate, and the honest owner had no way to show they were honest either.
+  //
+  // Source-level for the same reason as every other gate here: what is being locked is that the
+  // call is PRESENT at each of the three doors, which no return value can express.
+  const cash = code("src/app/api/cash/route.ts");
+  for (const action of ["cash.entry_added", "cash.entry_removed", "cash.opening_balance_set"]) {
+    assert.match(
+      cash, new RegExp(`action: ['"]${action.replace(".", "\\.")}['"]`),
+      `/api/cash must record ${action} — every other money write in the app does`,
+    );
+  }
+
+  // The removal's trail carries the MOVEMENT, not just the fact of a removal. This is a hard
+  // delete, so this row is the only place that will ever say the line existed; "a cash entry was
+  // removed" without its date and amount answers nothing anyone would ask.
+  const removal = cash.slice(cash.indexOf("cash.entry_removed"));
+  for (const field of ["entry_date", "amount", "category", "description"]) {
+    assert.match(removal, new RegExp(`${field}:`), `the removal trail must carry ${field}`);
+  }
+
+  // …and the float's trail carries what it WAS. This single number shifts every eindsaldo in the
+  // owner's whole history, filed quarters included, and it seeds the witness lowestDrawerPoint
+  // compares against zero — so "set to 2000" with no previous value is not an answer.
+  assert.match(
+    cash, /oldValue:[\s\S]{0,400}?kas_opening_balance/,
+    "the opening-balance trail must record the value it replaced",
+  );
+  // The read that fetches it may fail, and then the row must say so rather than assert €0 — an
+  // audit line claiming a change that never happened is worse than a gap in the trail.
+  assert.match(cash, /previous_value_unknown/, "a failed read of the old float must be admitted, not guessed as 0");
+});
+
+test("[KAS-SPOOR] both copies of the kasboek disclose what was removed from the quarter", () => {
+  // A cash_entries delete is a HARD delete, so nothing in the rows of a cash book says a line was
+  // ever taken out of it. Two documents are built from those rows — the live panel and the .xlsx in
+  // the accountant's quarterly package — and they are generated by ONE function precisely so they
+  // cannot describe a period differently. A disclosure added to one of them and not the other is
+  // that same divergence, arriving through the newer surface.
+  for (const f of ["src/app/api/kasboek/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(f);
+    assert.match(src, /action['"]?\s*,\s*['"]cash\.entry_removed['"]/, `${f} must read the removal trail`);
+    assert.match(
+      src, /kasboekToMatrix\(kb, \w+\)/,
+      `${f} must hand those removals to the sheet — the accountant reconciles a till against it`,
+    );
+    // The trail is a DISCLOSURE, not a source of the saldi. Refusing the whole book over it would
+    // trade a real answer for none; staying silent about a failed read would be worse still.
+    assert.match(src, /removals_incomplete|removedUnknown/, `${f} must say when that list could not be read in full`);
+  }
+
+  // The eindsaldo may never include a removed row: they were removed, so the balance is right
+  // without them. The pure builder appends them BELOW it — locked in kasboek.test.ts — and the panel
+  // renders them outside every total for the same reason.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(ui, /kas\.verwijderd\.uitleg/, "the panel must say the removed rows are not in the saldi");
+  assert.match(
+    ui, /kbRemoved\.rows\.length > 0 \|\| kbRemoved\.unknown/,
+    "and show nothing at all in the normal case, where nothing was removed",
+  );
+});
+
+test("[KAS-NEGATIEF-NU] the open quarter is warned about, and never told its aangifte is blocked", () => {
+  // Two banners on one screen, and the difference between them is a FACT about the quarter, not a
+  // shade of red: the readiness quarter's dip is blocking a filing right now; the open quarter's is
+  // not blocking anything yet. The failure this holds is the cheap one — someone copies the red
+  // panel for the open quarter and leaves 'kas.negatief.blokkeert' on it, and the app then tells an
+  // owner their aangifte is blocked over a quarter that cannot be filed yet at all.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+
+  // The open quarter is asked about at all. It was not: /api/kasboek answers for any quarter, and
+  // this screen only ever asked about the one the gate blocks on.
+  assert.match(
+    ui, /year=\$\{cur\.year\}&quarter=\$\{cur\.quarter\}/,
+    "the screen must ask about the quarter the owner is IN, not only the last completed one",
+  );
+  assert.match(ui, /setOpenDip/, "…and keep that answer apart from the blocking one");
+
+  // Each sentence stays on its own panel.
+  const openPanel = ui.slice(ui.indexOf("{openDip &&"));
+  assert.match(openPanel, /kas\.negatief\.nogNietIngediend/, "the open quarter gets the not-yet-filed sentence");
+  assert.doesNotMatch(
+    openPanel.slice(0, openPanel.indexOf("</div>")), /kas\.negatief\.blokkeert/,
+    "the open quarter may never claim a blocked aangifte — nothing is being blocked yet",
+  );
+  const blockingPanel = ui.slice(ui.indexOf("{lowestPoint && ("), ui.indexOf("{openDip &&"));
+  assert.match(blockingPanel, /kas\.negatief\.blokkeert/, "the readiness quarter keeps saying what IS happening");
+  assert.doesNotMatch(blockingPanel, /nogNietIngediend/);
+
+  // Both name their quarter. Two near-identical panels with no period on them is how an owner goes
+  // and fixes the wrong quarter.
+  assert.match(blockingPanel, /period=/);
+  assert.match(openPanel.slice(0, openPanel.indexOf("/>")), /period=/);
+
+  // A ref read during render would not re-render when it changed, so the label is derived from the
+  // same definition the endpoint defaults to (see readinessQuarterLabel).
+  assert.doesNotMatch(
+    blockingPanel, /alertPeriodRef\.current/,
+    "the banner's period label must not be read from a ref during render",
+  );
+
+  // And the check that could not RUN still may not read as a clean drawer — the rule this screen
+  // states outright for its saldo, applied to the second question as well.
+  const refresh = ui.slice(ui.indexOf("async function refreshDrawerAlert"));
+  assert.equal(
+    (refresh.slice(0, refresh.indexOf("async function load(")).match(/setLowestPointUnknown\(true\)/g) ?? []).length,
+    3,
+    "each unanswered half (blocking, open, and a thrown fetch) must set the 'could not check' state",
+  );
+});
+
+
+test("[KAS-LOON] a cash wage is bookable, and never carries BTW", () => {
+  // The vocabulary has carried 'salaris' from the start and financial-result has always booked it
+  // distinctly — a cost that NEVER carries voorbelasting, rate-free by construction — while the add
+  // form offered four categories and not this one. So the one movement an owner could not record
+  // truthfully in their own drawer was a wage, and their only option was 'Kost': the category where
+  // a bon plus a rate DOES produce voorbelasting, and which hides a payroll obligation inside a
+  // general cost total.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(ui, /key: 'salaris', labelKey: 'kas\.cat\.salaris'/, "the add form must offer a cash wage");
+
+  // The BTW row stays bound to a cash SALE. A rate on a wage is a deduction on money that carries
+  // none — and the route forces it null regardless, so the two sides must not disagree.
+  assert.match(ui, /\{category === 'omzet' && \(/, "the rate selector belongs to 'omzet' alone");
+  assert.match(
+    ui, /category === 'salaris' &&[\s\S]{0,200}?kas\.loon\.uitleg/,
+    "choosing 'Loon' must say that the loonaangifte is not handled here — nobody may think the booking finished it",
+  );
+
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(
+    route, /category === "omzet" \|\| \(category === "kosten" && documentId !== null\)/,
+    "the server keeps a rate to a cash sale, or a cash cost with an owned bon — never a wage",
+  );
+});
+
+test("[KAS-VOCABULAIRE] the closed categories are refused at the door, by the shared list", () => {
+  // Three of the eight categories are not the owner's to write, for three different reasons. The
+  // list lives in cash.ts (tested there); the door asserts against it rather than re-spelling it,
+  // because an inline string check is what drifts once a ninth category appears.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(route, /closedCashCategoryReason/, "the door must ask the shared rule, not its own copy");
+  assert.doesNotMatch(
+    route, /category === "tax"|category === "fee"/,
+    "…and must not re-list the closed categories inline",
+  );
+  // Two distinct sentences, because the two reasons are different facts about the app: one is
+  // system-managed, the other is not counted by the result engine at all.
+  assert.match(route, /settlement_category/);
+  assert.match(route, /category_not_counted/);
+  // The vocabulary itself keeps all eight: a row already stored as 'tax' must still read as a cash
+  // category. Closing a door is not denying that anyone walked through it.
+  const cash = code("src/lib/cash.ts");
+  assert.match(
+    cash, /CASH_CATEGORIES = \["omzet", "kosten", "salaris", "prive", "transfer", "tax", "fee", "betaling"\]/,
+    "the reading vocabulary must stay complete",
+  );
+});
+
+
+test("[KAS-BRUG] the drawer warning names the withdrawal the app can already see", () => {
+  // The app refuses a BTW-aangifte over a negative drawer and names three possible causes. There is a
+  // fourth, and in a shop it is the most ordinary of all: cash was taken out of the bank and the
+  // opname was never written in the cash book. That withdrawal is on a statement this app has already
+  // imported AND already classified. A gate that refuses a filing over a number while holding the
+  // likeliest innocent explanation for it in its own database is accusing someone with the evidence
+  // in its pocket.
+  const route = code("src/app/api/kasboek/route.ts");
+  assert.match(route, /findUnrecordedCashWithdrawals/, "the endpoint must look for it");
+  // Only when there is something to explain: an unrecorded withdrawal under no banner is tidiness,
+  // not a blocker, and this endpoint sits on the page's load path for every owner.
+  assert.match(
+    route, /const dip = lowestDrawerPoint\(kb\);[\s\S]{0,400}?if \(dip\) \{/,
+    "the bank read must be gated on the drawer actually being negative",
+  );
+  // Losing the hint may never cost the cash book itself.
+  assert.match(
+    route, /bankErr[\s\S]{0,300}?console\.error/,
+    "a failed bank read leaves the three original causes standing, it does not fail the kasboek",
+  );
+
+  // The bank half is recognised by the classifier's OWN patterns. A second copy of ATM_RE would drift
+  // and then disagree with the classifier about the same line — and the stored category cannot answer
+  // it, because savings transfers and cash machines both land on 'transfer'.
+  assert.match(route, /isCashTransferDescription/);
+  const identity = code("src/lib/bank-identity.ts");
+  // The predicate must REFERENCE the classifier's regex, not restate its patterns. (Counting the
+  // word "geldautomaat" would not say this: KEY_NOISE holds it too, for an unrelated purpose —
+  // building a counterpart memory key. A gate has to match the thing it means.)
+  assert.equal((identity.match(/const ATM_RE = /g) ?? []).length, 1, "one cash-machine pattern in the file");
+  assert.match(
+    identity, /export function isCashTransferDescription[\s\S]{0,200}?return ATM_RE\.test\(/,
+    "the exported predicate must reuse ATM_RE — a second copy would drift from the classifier and then disagree with it about the same line",
+  );
+
+  // The quarter's range has ONE definition. The hand-rolled `${quarter * 3}-31` is wrong for June and
+  // September, and a Postgres date column answers an invalid date with an error, not an empty result.
+  assert.match(route, /quarterRange\(year, quarter as Quarter\)/);
+  // The invariant is that this route does no quarter-month arithmetic of its own — not that the
+  // string "-31" never appears (the year-end bound above it is `${year}-12-31`, and December really
+  // does have 31 days). What must not come back is a quarter END derived by hand.
+  assert.doesNotMatch(
+    route, /quarter \* 3|\(quarter - 1\) \* 3/,
+    "the quarter's months come from quarterRange, never from arithmetic repeated here",
+  );
+
+  // On screen it is set apart from the three possibilities: those ask the owner to look, this one has
+  // already looked and carries a date and an amount.
+  const ui = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(ui, /bridge=\{\{ title: t\('kas\.brug\.titel'\)/);
+  assert.equal(
+    (ui.match(/bridge=\{\{/g) ?? []).length, 2,
+    "both the blocking and the open quarter's banner must offer it — a dip is a dip in either",
+  );
+});
+
+
+// ── [KAS-SAMENHANG] The rules that must hold in MORE THAN ONE place ────────────────────────────
+//
+// Almost every defect found in the cash line this session had one shape: a rule written, argued for
+// at length in its own comment, and then applied in one place while a sibling path was left out.
+// Not carelessness — asymmetry. openingBalanceForQuarter did not apply the double-count suppression
+// its own two neighbours did. The negative-drawer banner knew one quarter. Cents were rounded at one
+// door. The kasboek's removed-entry disclosure could have gone to the screen and not the accountant's
+// sheet. Four of the five pay doors dropped the reconcile's verdict that the fifth retried on.
+//
+// Individually those are bugs. Together they are a pattern, and a pattern is mechanically checkable.
+// This is that check: not "is the code correct" but "is each of these rules applied everywhere it has
+// to be". A new surface that combines the same sources, or a new door that writes the same money,
+// turns this red on the day it is written rather than the day someone reads a wrong balance.
+
+test("[KAS-SAMENHANG] every reader that combines the drawer's two sources suppresses the double count", () => {
+  // A till shop's cash revenue exists twice by design: daily_turnover.cash_amount AND a cash_entries
+  // 'omzet' row. Any function that adds those two together must skip the entry on a covered day, or
+  // the drawer is overstated by a quarter's takings — and the negative-drawer gate is then computed
+  // on a number that is too high, which is the direction that lets a bad quarter be filed.
+  //
+  // Three combine them, and each must carry the rule: the pure projection (both halves), and the
+  // headline balance.
+  const kasboek = code("src/lib/kasboek.ts");
+  assert.match(kasboek, /function isTillCountedOmzet/, "the predicate must exist once, shared");
+  assert.equal(
+    (kasboek.match(/isTillCountedOmzet\(/g) ?? []).length, 3,
+    "declared once and applied in BOTH combining functions — the carry-in and the in-quarter rows",
+  );
+  const cash = code("src/lib/cash.ts");
+  assert.match(
+    cash, /coveredDays[\s\S]{0,600}?\(e\.category \?\? ""\) !== "omzet"/,
+    "computeDrawerBalance (the headline saldo) must apply the same rule",
+  );
+  // And the P&L side, which has known it longest — if that one ever stops, the drawer and the result
+  // disagree about the same euro.
+  assert.match(
+    code("src/lib/financial-result.ts"), /c\.date \? covered\.has\(c\.date\) : covered\.size > 0/,
+    "computeResult must keep skipping a covered-day cash omzet",
+  );
+});
+
+test("[KAS-SAMENHANG] every door that writes drawer money rounds to cents and leaves a trail", () => {
+  // cash_entries.amount and the daily_turnover columns are unconstrained `numeric`: whatever arrives
+  // is stored. Sub-cent dust then rides a RUNNING balance through every following day, into the sheet
+  // the accountant reads and into the eindsaldo the filing gate compares against zero.
+  const cashRoute = code("src/app/api/cash/route.ts");
+  assert.match(cashRoute, /const amount = round2\(rawAmount\)/, "a movement is rounded at the door");
+  assert.match(cashRoute, /const opening = round2\(val\)/, "so is the opening float");
+  assert.match(
+    code("src/app/api/turnover/import/route.ts"), /Number\.isFinite\(v\) \? round2\(v\) : /,
+    "and every committed turnover figure — btw_9/btw_21 go into rubriek 1a/1b as tax owed",
+  );
+
+  // Every write door leaves an audit row. The drawer is the ledger where that matters most: it is the
+  // only one the owner writes by hand, and its delete is a hard delete.
+  for (const action of ["cash.entry_added", "cash.entry_removed", "cash.opening_balance_set"]) {
+    assert.match(cashRoute, new RegExp(`action: ['"]${action.replace(".", "\\.")}['"]`), `${action} must be recorded`);
+  }
+});
+
+test("[KAS-SAMENHANG] every door that books a cash payment goes through the same retry", () => {
+  // Five doors turn a payment_method 'kas' into a drawer movement. One of them read the reconcile's
+  // verdict and asked again on a bail; the other four dropped it — including the verify-queue confirm,
+  // whose own comment states it is the ONLY thing that would move the drawer for that payment.
+  //
+  // The three that merely REPORT the pass are deliberately not on this list: they read the summary
+  // themselves (the Kas load logs a stale drawer, /api/cash/settle answers with it, the on-demand
+  // matcher shows the numbers). And the hourly cron does not retry because it IS the retry.
+  const payDoors = [
+    "src/app/api/invoice/pay-toggle/route.ts",
+    "src/app/api/email/confirm/[id]/route.ts",
+    "src/app/api/invoice/payment/move/route.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  for (const f of payDoors) {
+    const src = code(f);
+    assert.match(src, /reconcileCashWithRetry/, `${f} must book the drawer through the shared retry`);
+    assert.doesNotMatch(
+      src, /await reconcileCashSettlements\(/,
+      `${f} must not call the bare pass — its verdict would be dropped on the floor`,
+    );
+  }
+  // The wrapper lives next to what it wraps, and reports through the channel this file's own
+  // [KAS-STIL] rule requires: a route writing to stdout is the same as writing nothing.
+  const settle = code("src/lib/cash-settle.ts");
+  assert.match(settle, /export async function reconcileCashWithRetry/, "one wrapper, in the money module");
+  assert.match(
+    settle, /reconcileCashWithRetry[\s\S]{0,1200}?reportHandledFailure\(\{/,
+    "a pass that bails twice right after a payment must reach the reporter",
+  );
+});
+
+test("[KAS-SAMENHANG] both documents built from the cash book are built by one generator", () => {
+  // The live panel and the .xlsx in the accountant's quarterly package are the same cash book, and
+  // they are generated by one function precisely so they cannot describe a period differently. Every
+  // addition to that sheet has to reach both — the removed-entry disclosure was the first one that
+  // could have reached only the screen.
+  for (const f of ["src/app/api/kasboek/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(f);
+    assert.match(src, /kasboekToMatrix\(kb, \w+\)/, `${f} must build the sheet from the shared generator, with its removals`);
+    assert.match(src, /openingBalanceForQuarter\(/, `${f} must carry the balance in from prior periods the shared way`);
+  }
+  // Nobody may hand-roll the quarter's months: `${quarter * 3}-31` is not a date in June or September,
+  // and a Postgres date column answers an invalid cast with an error rather than an empty result.
+  assert.match(code("src/lib/kasboek.ts"), /export function quarterRange/, "one definition of the quarter's range");
 });

@@ -116,6 +116,28 @@ export type AuditAction =
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
+  // [KAS-SPOOR] The cash drawer's three doors, which landed no audit row at all.
+  //
+  // Every other money write in this app is on this list — the bank confirm, the pay-toggle, an
+  // amount correction, an imported turnover day AND its removal, a filed quarter, a deleted bank
+  // statement. The drawer was the one ledger missing, and it is the one where that is least
+  // defensible:
+  //   · it is the only ledger the owner writes BY HAND, with no bank statement and no supplier
+  //     document standing behind the row — the audit row is the only witness there is;
+  //   · a delete is a HARD delete (cash_entries keeps no reversal row), so once the line is gone
+  //     nothing anywhere says it existed. Removing a turnover day has had its own action since
+  //     [DAGOMZET-AUDIT] for exactly this reason, and a cash movement is the same kind of money;
+  //   · and the beginsaldo is an input to EVERY eindsaldo in the owner's whole history, including
+  //     quarters already filed. It is changed from a small link on the Kas screen, and moving it is
+  //     enough to turn a drawer the negative-cash gate refuses a filing on into one it passes.
+  //
+  // That last one is why these are Level 1. The app BLOCKS a BTW-aangifte on this drawer
+  // (readiness.ts, and /api/btw/file via loadDrawerWitness). Accusing an owner on the strength of a
+  // number that anyone could move without leaving a trace is half a gate; and the owner who did
+  // nothing wrong had no way to show that either.
+  | 'cash.entry_added'                 // ← [KAS-SPOOR] a manual cash movement (sale, expense, storting/opname, prive)
+  | 'cash.entry_removed'               // ← [KAS-SPOOR] a cash movement deleted; oldValue is the only record that it existed
+  | 'cash.opening_balance_set'         // ← [KAS-SPOOR] the drawer's starting float changed; oldValue carries what it was
   | 'turnover.auto_imported'           // ← [SHEET-INTAKE] app booked a clean kassa Z-report into daily_turnover from the upload page
   // [DAGOMZET-AUDIT] Removing a booked day is a REVERSAL out of the BTW-authoritative table, not
   // an import. It shared 'turnover.auto_imported' with the write that creates the day, so the

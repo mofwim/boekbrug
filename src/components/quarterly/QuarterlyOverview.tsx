@@ -188,7 +188,7 @@ function ZzpView({ role }: { role: Role }) {
       const params = new URLSearchParams({ year: String(year), quarter: String(quarter) });
       const res = await fetch(`/api/closing-package?${params}`);
       if (!res.ok) {
-        toast("Pakket genereren mislukt — probeer opnieuw", { tone: "error" });
+        toast(t('kw.pakketMislukt'), { tone: "error" });
         return;
       }
       const blob = await res.blob();
@@ -199,7 +199,7 @@ function ZzpView({ role }: { role: Role }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      toast("Pakket genereren mislukt — controleer je verbinding", { tone: "error" });
+      toast(t('kw.pakketVerbinding'), { tone: "error" });
     } finally {
       setPackaging(false);
     }
@@ -217,7 +217,7 @@ function ZzpView({ role }: { role: Role }) {
     }
   }
 
-  const quarterLabel = ["", "Januari – Maart", "April – Juni", "Juli – September", "Oktober – December"][quarter];
+  const quarterLabel = ['', t('kw.periode1'), t('kw.periode2'), t('kw.periode3'), t('kw.periode4')][quarter];
 
   return (
     <div className="space-y-4 pb-8">
@@ -264,26 +264,26 @@ function ZzpView({ role }: { role: Role }) {
           <button
             onClick={handleExport}
             disabled={exporting || !data}
-            title="Alleen de facturen (CSV). Voor de volledige BTW-cijfers incl. pin & contant: gebruik het Kwartaalpakket."
+            title={t('kw.exportTitel')}
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border hover:bg-muted disabled:opacity-40 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            {exporting ? "…" : "Facturen"}
+            {exporting ? "…" : t('nav.invoices')}
           </button>
 
           {/* [CLOSING-PACKAGE] Full quarterly package (ZIP) for the accountant */}
           <button
             onClick={handlePackageExport}
             disabled={packaging || !data}
-            title="Download alle facturen, bonnen en het bankafschrift als één ZIP voor je boekhouder"
+            title={t('kw.pakketTitel')}
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
             </svg>
-            {packaging ? "Pakket maken…" : "Kwartaalpakket"}
+            {packaging ? t('klr.pakketBezig') : t('kw.kwartaalpakket')}
           </button>
         </div>
       </div>
@@ -306,10 +306,10 @@ function ZzpView({ role }: { role: Role }) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
             )}
-            Betaald
+            {t('lijst.betaald')}
           </span>
           <span className={`block text-xs font-normal mt-1 ${mode === "paid" ? "text-emerald-100" : "text-muted-foreground"}`}>
-            Ontvangen & betaald
+            {t('kw.ontvangenBetaald')}
           </span>
         </button>
 
@@ -328,10 +328,10 @@ function ZzpView({ role }: { role: Role }) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
             )}
-            Alles
+            {t('filter.all')}
           </span>
           <span className={`block text-xs font-normal mt-1 ${mode === "all" ? "text-blue-100" : "text-muted-foreground"}`}>
-            Incl. uitstaand
+            {t('kw.inclUitstaand')}
           </span>
         </button>
 
@@ -352,14 +352,14 @@ function ZzpView({ role }: { role: Role }) {
               is what you actually file. The facturen tables below are a subset for reference. */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-background border-2 border-emerald-400 rounded-2xl p-4 shadow-sm">
-              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Omzet (excl. BTW)</p>
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">{t('kw.omzetExcl')}</p>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none mt-1.5">{recon ? formatEur(recon.omzet) : "…"}</p>
-              <p className="text-[11px] text-muted-foreground mt-1.5">incl. pin & contant</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">{t('kw.inclPin')}</p>
             </div>
             <div className="bg-background border-2 border-blue-400 rounded-2xl p-4 shadow-sm">
               <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">{t('kw.teBetalen5g')}</p>
               <p className="text-2xl font-bold tabular-nums text-blue-700 leading-none mt-1.5">{recon ? formatEur(recon.saldo) : "…"}</p>
-              <p className="text-[11px] text-muted-foreground mt-1.5">na voorbelasting</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">{t('kw.naVoorbelasting')}</p>
             </div>
           </div>
 
@@ -368,24 +368,24 @@ function ZzpView({ role }: { role: Role }) {
           {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
             <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
               <div className="px-4 py-3 border-b">
-                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
+                <h3 className="text-sm font-semibold">{t('kw.conceptAangifte', { q: quarter, jaar: year })}</h3>
               </div>
               <div className="divide-y">
                 {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
                   <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
                     <div>
-                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
+                      <p className="text-sm font-medium">{t('kw.verschuldigdTarief', { rate: b.rate })}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t('kw.overBedrag', { bedrag: formatEur(b.omzet) })}</p>
                     </div>
                     <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
                   </div>
                 ))}
                 <div className="flex items-center justify-between px-4 py-3.5">
-                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-medium">{t('kw.verschuldigd5a')}</p>
                   <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5">
-                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-medium">{t('kw.voorbelasting5b')}</p>
                   <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
@@ -401,17 +401,14 @@ function ZzpView({ role }: { role: Role }) {
               verified invoice is dropped from the quarter entirely. */}
           {recon && recon.cashOmzetZonderBtw > 0 && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
-              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
-              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet
-              voor een compleet BTW-cijfer.
+              {t('kw.zonderTarief', { bedrag: formatEur(recon.cashOmzetZonderBtw) })}
             </div>
           )}
           {recon && recon.datelessVerifiedCount > 0 && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
               {recon.datelessVerifiedCount === 1
-                ? "1 geverifieerde factuur heeft geen datum"
-                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
-              kwartaal. Vul de factuurdatum in, anders is je omzet of BTW-aftrek te laag.
+                ? t('kw.geenDatumEen')
+                : t('kw.geenDatumMeer', { n: recon.datelessVerifiedCount })}
             </div>
           )}
 
@@ -427,13 +424,13 @@ function ZzpView({ role }: { role: Role }) {
                   borderRadius: 12, padding: "12px 14px", marginBottom: 10,
                 }}>
                   <p style={{ fontSize: 13.5, fontWeight: 700, margin: 0, color: filed.divergence.needsSuppletie ? "#a50e0e" : "#7a4f00" }}>
-                    {filed.divergence.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd sinds indiening"}
+                    {filed.divergence.needsSuppletie ? t('kw.suppletieNodig') : t('kw.gewijzigdSindsIndiening')}
                   </p>
                   <p style={{ fontSize: 12.5, margin: "4px 0 0", lineHeight: 1.5, color: filed.divergence.needsSuppletie ? "#7a1c1c" : "#7a4f00" }}>
-                    {t('kw.btwMet')} <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}.{" "}
+                    {t('kw.btwMet')} <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? t('kw.gestegen') : t('kw.gedaald')}.{" "}
                     {filed.divergence.needsSuppletie
-                      ? "Meer dan €1.000 — dien een suppletie in."
-                      : "Onder €1.000 — verwerk dit in je volgende aangifte."}
+                      ? t('kw.suppletieMeer')
+                      : t('kw.suppletieOnder')}
                   </p>
                 </div>
               )}
@@ -451,11 +448,11 @@ function ZzpView({ role }: { role: Role }) {
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 {filed ? (
                   <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
-                    🔒 Ingediend op {formatDateNL(filed.filedAt)} · definitief
+                    {t('kw.ingediendOp', { datum: formatDateNL(filed.filedAt) })}
                   </span>
                 ) : filedUnknown ? (
                   <p style={{ fontSize: 12.5 }} className="text-muted-foreground">
-                    We konden niet controleren of dit kwartaal al is ingediend. Ververs de pagina.
+                    {t('kw.indieningOnbekend')}
                   </p>
                 ) : (
                   <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
@@ -469,7 +466,7 @@ function ZzpView({ role }: { role: Role }) {
                   className="text-xs font-semibold underline"
                   style={{ color: "#1a73e8" }}
                 >
-                  {filed ? "Beheer je indiening op Waarheid" : "Markeer als ingediend op Waarheid"}
+                  {filed ? t('kw.beheerIndiening') : t('kw.markeerIngediend')}
                 </Link>
               </div>
             </div>
@@ -480,8 +477,8 @@ function ZzpView({ role }: { role: Role }) {
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Facturen — inkomsten (alleen betaald)"
-                : "Facturen — inkomsten (betaald én uitstaand)"}
+                ? t('kw.inkomstenBetaald')
+                : t('kw.inkomstenAlles')}
             </p>
             <div className="bg-background border-2 border-emerald-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-emerald-100 border-b border-emerald-100 bg-emerald-50">
@@ -492,7 +489,7 @@ function ZzpView({ role }: { role: Role }) {
                 </div>
                 <div className="px-4 py-2.5">
                   <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">
-                    BTW
+                    {t('corr.btw')}
                   </p>
                 </div>
               </div>
@@ -518,8 +515,8 @@ function ZzpView({ role }: { role: Role }) {
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Facturen — uitgaven (alleen betaald)"
-                : "Facturen — uitgaven (betaald én uitstaand)"}
+                ? t('kw.uitgavenBetaald')
+                : t('kw.uitgavenAlles')}
             </p>
             <div className="bg-background border-2 border-red-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-red-100 border-b border-red-100 bg-red-50">
@@ -530,7 +527,7 @@ function ZzpView({ role }: { role: Role }) {
                 </div>
                 <div className="px-4 py-2.5">
                   <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
-                    BTW
+                    {t('corr.btw')}
                   </p>
                 </div>
               </div>
@@ -679,7 +676,7 @@ function AccountantView({ role }: { role: Role }) {
       });
       const res = await fetch(`/api/closing-package?${params}`);
       if (!res.ok) {
-        toast("Pakket genereren mislukt — probeer opnieuw", { tone: "error" });
+        toast(t('kw.pakketMislukt'), { tone: "error" });
         return;
       }
       const blob = await res.blob();
@@ -690,7 +687,7 @@ function AccountantView({ role }: { role: Role }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      toast("Pakket genereren mislukt — controleer je verbinding", { tone: "error" });
+      toast(t('kw.pakketVerbinding'), { tone: "error" });
     } finally {
       setPackaging(false);
     }
@@ -739,7 +736,7 @@ function AccountantView({ role }: { role: Role }) {
           >
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.company_name ?? c.full_name ?? "Onbekend"}
+                {c.company_name ?? c.full_name ?? t('ber.onbekend')}
               </option>
             ))}
           </select>
@@ -783,13 +780,13 @@ function AccountantView({ role }: { role: Role }) {
           <button
             onClick={handlePackageExport}
             disabled={packaging || !data || !selectedClientId}
-            title="Download alle facturen, bonnen en het bankafschrift van deze klant als één ZIP"
+            title={t('kw.pakketTitelKlant')}
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
             </svg>
-            {packaging ? "Pakket maken…" : "Kwartaalpakket"}
+            {packaging ? t('klr.pakketBezig') : t('kw.kwartaalpakket')}
           </button>
         </div>
       </div>
@@ -800,14 +797,14 @@ function AccountantView({ role }: { role: Role }) {
         <>
           <div className="grid grid-cols-2 gap-3">
             {/* [TRUST-ACCOUNTANT] Reconciled omzet + BTW-saldo (5g), not invoices-only. */}
-            <SummaryCard label="Omzet (excl. BTW)" value={recon ? formatEur(recon.omzet) : "…"} accent="default" />
+            <SummaryCard label={t('kw.omzetExcl')} value={recon ? formatEur(recon.omzet) : "…"} accent="default" />
             <SummaryCard label={t('kw.teBetalen5g')} value={recon ? formatEur(recon.saldo) : "…"} accent="default" />
             <SummaryCard label={t('lijst.betaald')} value={formatEur(data.paid)} accent="green" />
             <SummaryCard
               label={t('kw.openstaand')}
               value={formatEur((data.outstanding ?? 0) + (data.overdue ?? 0))}
               accent={(data.overdue ?? 0) > 0 ? "red" : "default"}
-              sub={(data.overdue ?? 0) > 0 ? `${formatEur(data.overdue)} te laat` : undefined}
+              sub={(data.overdue ?? 0) > 0 ? t('kw.teLaat', { bedrag: formatEur(data.overdue) }) : undefined}
             />
           </div>
 
@@ -817,24 +814,24 @@ function AccountantView({ role }: { role: Role }) {
           {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
             <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
               <div className="px-4 py-3 border-b">
-                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
+                <h3 className="text-sm font-semibold">{t('kw.conceptAangifte', { q: quarter, jaar: year })}</h3>
               </div>
               <div className="divide-y">
                 {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
                   <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
                     <div>
-                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
+                      <p className="text-sm font-medium">{t('kw.verschuldigdTarief', { rate: b.rate })}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t('kw.overBedrag', { bedrag: formatEur(b.omzet) })}</p>
                     </div>
                     <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
                   </div>
                 ))}
                 <div className="flex items-center justify-between px-4 py-3.5">
-                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-medium">{t('kw.verschuldigd5a')}</p>
                   <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5">
-                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-medium">{t('kw.voorbelasting5b')}</p>
                   <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
@@ -848,16 +845,14 @@ function AccountantView({ role }: { role: Role }) {
           {/* [HONESTY] Surface the same incompleteness signals to the accountant before handover. */}
           {recon && recon.cashOmzetZonderBtw > 0 && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
-              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
-              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet.
+              {t('kw.zonderTariefAcc', { bedrag: formatEur(recon.cashOmzetZonderBtw) })}
             </div>
           )}
           {recon && recon.datelessVerifiedCount > 0 && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
               {recon.datelessVerifiedCount === 1
-                ? "1 geverifieerde factuur heeft geen datum"
-                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
-              kwartaal — vul de factuurdatum in, anders is de omzet of BTW-aftrek te laag.
+                ? t('kw.geenDatumEenAcc')
+                : t('kw.geenDatumMeerAcc', { n: recon.datelessVerifiedCount })}
             </div>
           )}
 
@@ -870,7 +865,7 @@ function AccountantView({ role }: { role: Role }) {
             </div>
             {(data.invoices?.length ?? 0) === 0 ? (
               <div className="py-12 text-center">
-                <p className="text-sm text-muted-foreground">Geen facturen in Q{quarter} {year}</p>
+                <p className="text-sm text-muted-foreground">{t('kw.geenFacturenIn', { q: quarter, jaar: year })}</p>
               </div>
             ) : (
               <div className="divide-y">

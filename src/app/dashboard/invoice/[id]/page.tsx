@@ -19,6 +19,9 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [DEEL-CREDIT] Hoeveel er is gecrediteerd en hoeveel er nog kan — dezelfde regels als de route.
+import { creditedTotalsFrom } from '@/lib/credited-invoices'
+import { creditableRemaining, buildCreditSelection, type LineSelection } from '@/lib/partial-credit'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -78,8 +81,11 @@ export default function InvoiceDetailPage() {
   // [CREDITNOTA-REF] The invoice THIS creditnota corrects (null unless this is a creditnota).
   const [correctedInvoice, setCorrectedInvoice] =
     useState<{ invoice_number: string | null; invoice_date: string | null } | null>(null)
-  const [linkedCreditnota, setLinkedCreditnota] =
-    useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at'> | null>(null)
+  // [DEEL-CREDIT] A LIST. There used to be at most one creditnota per invoice and this held it;
+  // now an invoice can be credited in parts, and the query below would have thrown on the second
+  // one (maybeSingle → PGRST116) rather than showing it.
+  const [linkedCreditnotas, setLinkedCreditnotas] =
+    useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at' | 'total_inc_btw'>[]>([])
 
   // [COHERENCE-CREDITNOTA] The dedicated creditnota action. It POSTs to
   // /api/invoice/creditnota — the ONE route that copies the original's lines
@@ -90,6 +96,10 @@ export default function InvoiceDetailPage() {
   // creditnota with original_invoice_id=null — an orphan that severed the link and
   // allowed unlimited duplicate legal credits. This dialog calls the route directly.
   const [showCreditDialog, setShowCreditDialog] = useState(false)
+  // [DEEL-CREDIT] Per regel-id het aantal dat wordt gecrediteerd. Leeg = de hele factuur, en dat
+  // is de STAND waarin de dialoog opent: het gewone geval blijft één klik.
+  const [creditQty, setCreditQty] = useState<Record<string, number>>({})
+  const [creditPartial, setCreditPartial] = useState(false)
   useCloseOnBack(!!showCreditDialog, () => { if (!creatingCredit) setShowCreditDialog(false) })
   // …and it obeys the same refusal the backdrop does: while the creditnota is being minted
   // there is a number in flight, and dismissing would leave the owner not knowing whether it
@@ -166,7 +176,7 @@ export default function InvoiceDetailPage() {
       if (!url) throw new Error('no url')
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
-      setSendError('Origineel PDF kon niet worden geopend')
+      setSendError(t('detail.fout.origineelPdf'))
     } finally {
       setLoadingOriginal(false)
     }
@@ -184,7 +194,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || 'Opnieuw versturen mislukt')
+      setSendError(data.error || t('detail.fout.opnieuwVersturen'))
       setResending(false)
       return
     }
@@ -261,12 +271,14 @@ export default function InvoiceDetailPage() {
       if (CREDITABLE_STATUSES.includes(invoiceData.status) && invoiceData.invoice_type === 'factuur') {
         const { data: creditnota } = await supabase
           .from('invoices')
-          .select('id, invoice_number, status, created_at')
+          // [DEEL-CREDIT] With the amount, and as a list: what matters is no longer whether one
+          // exists but how much of the invoice they cover together.
+          .select('id, invoice_number, status, created_at, total_inc_btw')
           .eq('original_invoice_id', invoiceId)
           .eq('invoice_type', 'creditnota')
-          .maybeSingle()
+          .order('created_at', { ascending: true })
 
-        if (creditnota) setLinkedCreditnota(creditnota)
+        if (creditnota) setLinkedCreditnotas(creditnota)
       }
 
       // [CREDITNOTA-REF] The other direction: when THIS invoice is a creditnota, resolve the
@@ -303,7 +315,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || 'Verzenden mislukt')
+      setSendError(data.error || t('bewerk.fout.verzenden'))
       setSending(false)
       return
     }
@@ -321,7 +333,7 @@ export default function InvoiceDetailPage() {
     // [SEND-PDF-HONEST] pdf_failed = the number was issued but the PDF/email did NOT go out. Don't
     // silently close as if delivered — keep the modal open with an honest resend prompt.
     if (responseData.warning === 'pdf_failed' || responseData.delivered === false) {
-      setSendError('De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.')
+      setSendError(t('detail.fout.pdfNietGemaakt'))
       setSending(false)
       return
     }
@@ -342,11 +354,18 @@ export default function InvoiceDetailPage() {
       const res = await fetch('/api/invoice/creditnota', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ original_invoice_id: invoiceId, reason: creditReason.trim() }),
+        body: JSON.stringify({
+          original_invoice_id: invoiceId,
+          reason: creditReason.trim(),
+          // [DEEL-CREDIT] Alleen meesturen als er ECHT een deel is gekozen. Laat het veld weg en
+          // de route doet precies wat hij altijd deed: de hele factuur. Zo is "alles crediteren"
+          // niet een selectie die toevallig alles bevat, maar letterlijk hetzelfde verzoek.
+          ...(creditSelection ? { lines: creditSelection } : {}),
+        }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setCreditError(data.error || 'Creditnota aanmaken mislukt — probeer opnieuw')
+        setCreditError(data.error || t('detail.fout.creditnota'))
         setCreatingCredit(false)
         return
       }
@@ -371,13 +390,41 @@ export default function InvoiceDetailPage() {
   // Identity-based, not query-param based: cannot be spoofed or absent.
   const isOwner = !!invoice && viewerProfile?.id === invoice.sender_id
 
+  // [DEEL-CREDIT] Hoeveel er al is teruggegeven, en hoeveel er nog terug KAN. Dezelfde functies
+  // die de route en de database gebruiken — één plafond, drie plekken die het bewaken.
+  const alGecrediteerd = creditedTotalsFrom(
+    linkedCreditnotas.map((c) => ({ original_invoice_id: invoiceId, total_inc_btw: c.total_inc_btw })),
+  ).get(invoiceId) ?? 0
+  const nogTeCrediteren = creditableRemaining(invoice?.total_inc_btw, alGecrediteerd)
+  const volledigGecrediteerd = alGecrediteerd > 0 && nogTeCrediteren <= 0
+
+  // [DEEL-CREDIT] Wat er nu gekozen staat, en wat dat kost. `null` betekent "de hele factuur" en
+  // reist als een verzoek zonder selectie — precies het verzoek van voor deze functie.
+  const creditSelection: LineSelection[] | null = !creditPartial
+    ? null
+    : lines
+        .map((l) => ({ id: String(l.id), quantity: creditQty[String(l.id)] ?? 0 }))
+        .filter((r) => Math.abs(r.quantity) > 0)
+  // Dezelfde functie die de route gebruikt om het echte bedrag uit te rekenen, dus wat hier staat
+  // is wat er straks op de creditnota komt — en niet een tweede schatting ernaast.
+  const creditPreview = buildCreditSelection({
+    lines: lines.map((l) => ({ ...l, id: String(l.id) })),
+    selection: creditSelection,
+    discountType: invoice?.discount_type,
+    discountValue: invoice?.discount_value,
+  })
+  const creditPast = creditPreview.totalIncBtw <= nogTeCrediteren + 0.005
+  const creditLeeg = creditPartial && (creditSelection?.length ?? 0) === 0
+
   const canCreateCreditnota =
     invoice &&
     isOwner && // [ACC-INVOICE-DETAIL] creditnota is an owner-only action, never the accountant
     invoice.invoice_type !== 'creditnota' &&
     invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
     !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&
-    !linkedCreditnota
+    // [DEEL-CREDIT] Zolang er nog iets te crediteren valt. Vroeger stond hier "en er is er nog
+    // geen" — de aanname dat een creditnota altijd de hele factuur is.
+    nogTeCrediteren > 0
 
   // [HERSTEL] A sent invoice is fully editable while nothing is attached to it — the market
   // rule, with the locks in invoice-editable.ts. This screen shows the button only for what it
@@ -390,7 +437,11 @@ export default function InvoiceDetailPage() {
     invoice.invoice_type === 'factuur' &&
     invoice.direction !== 'incoming' &&
     (invoice.status === 'sent' || invoice.status === 'overdue') &&
-    !linkedCreditnota &&
+    // [DEEL-CREDIT] ANY credit blocks the edit, partial included — and that is not the same
+    // question as "may it still be credited". A creditnota refers to the invoice AS IT WAS;
+    // rewriting the invoice underneath it leaves a correction that corrects something that no
+    // longer exists. The PUT route refuses this too (sentEditBlockers); this only hides the button.
+    linkedCreditnotas.length === 0 &&
     !((invoice.amount_paid ?? 0) > 0)
 
   // [ACC-INVOICE-VIEW] Direction is the single source of truth. Only an explicit
@@ -460,7 +511,7 @@ export default function InvoiceDetailPage() {
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
-                  {invoice?.invoice_number || 'Concept'}
+                  {invoice?.invoice_number || t('status.draft')}
                 </h1>
                 {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
                   <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
@@ -472,7 +523,7 @@ export default function InvoiceDetailPage() {
                     anders was — anders is het ruis op elke eigen factuur. */}
                 {makerNaam && (
                   <span
-                    title={`Aangemaakt door ${makerNaam}`}
+                    title={t('detail.aangemaaktDoor', { name: makerNaam })}
                     style={{ fontSize: 11, fontWeight: 500, borderRadius: 9999, padding: '3px 10px', background: '#F3E5F5', color: '#6A1B9A', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>person</span>
@@ -537,7 +588,7 @@ export default function InvoiceDetailPage() {
                         cursor: 'pointer',
                         transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                       }}>
-                        {pdfLoading ? 'Laden...' : '↓ PDF'}
+                        {pdfLoading ? t('nieuw.actie.laden') : '↓ PDF'}
                       </button>
                     )}
                   </PDFDownloadLink>
@@ -559,7 +610,7 @@ export default function InvoiceDetailPage() {
                       transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                     }}
                   >
-                    {loadingOriginal ? 'Laden...' : '↓ Origineel PDF'}
+                    {loadingOriginal ? t('nieuw.actie.laden') : `↓ ${t('detail.origineelPdf')}`}
                   </button>
                 )}
               </>
@@ -585,8 +636,8 @@ export default function InvoiceDetailPage() {
                   </p>
                   <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
                     {deliveryWarning === 'pdf_failed'
-                      ? 'De PDF kon niet worden gegenereerd. Het factuurnummer is wel definitief.'
-                      : 'De e-mail kon niet worden afgeleverd. Het factuurnummer is wel definitief.'}
+                      ? t('detail.bezorging.pdf')
+                      : t('detail.bezorging.email')}
                   </p>
                 </div>
               </div>
@@ -595,7 +646,7 @@ export default function InvoiceDetailPage() {
                 disabled={resending}
                 style={{ flexShrink: 0, backgroundColor: '#F9AB00', color: '#202124', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: resending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: resending ? 0.6 : 1 }}
               >
-                {resending ? 'Verzenden...' : '↻ Opnieuw versturen'}
+                {resending ? t('bewerk.verzendenBezig') : `↻ ${t('lijst.opnieuwVersturen')}`}
               </button>
             </div>
           )}
@@ -604,7 +655,7 @@ export default function InvoiceDetailPage() {
           {resendSuccess && (
             <div style={{ backgroundColor: '#E6F4EA', borderRadius: 16, padding: '10px 16px' }}>
               <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
-                ✓ De factuur is opnieuw verzonden.
+                ✓ {t('detail.opnieuwVerzonden')}
               </p>
             </div>
           )}
@@ -631,7 +682,7 @@ export default function InvoiceDetailPage() {
                 disabled={sending}
                 style={{ flexShrink: 0, marginInlineStart: 12, backgroundColor: '#1A73E8', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: sending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: sending ? 0.6 : 1 }}
               >
-                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+                {sending ? t('bewerk.verzendenBezig') : `✉ ${t('bewerk.verstuurFactuur')}`}
               </button>
             </div>
           )}
@@ -643,20 +694,37 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
-          {/* [DS] Creditnota banner — al een creditnota gekoppeld */}
-          {linkedCreditnota && (
-            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {/* [DS] Creditnota banner — al een creditnota gekoppeld
+              [DEEL-CREDIT] Er kunnen er meer zijn, en dan is de vraag niet WELKE maar HOEVEEL er
+              samen van de factuur af is. Een factuur die deels is gecrediteerd staat nog open voor
+              de rest — dat moet erbij staan, anders leest deze balk als "afgehandeld". */}
+          {linkedCreditnotas.map((cn) => (
+            <div key={cn.id} style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#B3261E' }}>↩</span>
                 <div>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>Gecrediteerd via {linkedCreditnota.invoice_number}</p>
-                  <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>{t('detail.geannuleerd')}</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>{t('detail.gecrediteerdVia', { number: cn.invoice_number ?? '' })}</p>
+                  <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>
+                    {NL_NUMBER.format(Math.abs(cn.total_inc_btw ?? 0))}
+                  </p>
                 </div>
               </div>
-              <button onClick={() => router.push(`/dashboard/invoice/${linkedCreditnota.id}`)}
+              <button onClick={() => router.push(`/dashboard/invoice/${cn.id}`)}
                 style={{ fontSize: 12, fontWeight: 500, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                Bekijken →
+                {t('detail.bekijken')} →
               </button>
+            </div>
+          ))}
+          {linkedCreditnotas.length > 0 && (
+            <div style={{ backgroundColor: volledigGecrediteerd ? '#F9DEDC' : '#FEF7E0', borderRadius: 16, padding: '12px 16px' }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: volledigGecrediteerd ? '#B3261E' : '#EA8600', margin: 0 }}>
+                {volledigGecrediteerd
+                  ? t('detail.geannuleerd')
+                  : t('detail.deelsGecrediteerd', {
+                      credited: NL_NUMBER.format(alGecrediteerd),
+                      open: NL_NUMBER.format(nogTeCrediteren),
+                    })}
+              </p>
             </div>
           )}
 
@@ -682,7 +750,7 @@ export default function InvoiceDetailPage() {
                 <button
                   onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
                   style={{ backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
-                >↩ Creditnota</button>
+                >↩ {t('status.credit')}</button>
               </div>
             </div>
           )}
@@ -692,22 +760,22 @@ export default function InvoiceDetailPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
               {[
                 {
-                  title: 'Van',
+                  title: t('nieuw.klant.van'),
                   lines: vanBlock.lines,
                 },
                 {
-                  title: 'Aan',
+                  title: t('nieuw.klant.aan'),
                   lines: aanBlock.lines,
                 },
                 {
-                  title: 'Details',
+                  title: t('bank.details'),
                   lines: [
-                    `Nummer: ${invoice?.invoice_number || '—'}`,
-                    `Datum: ${invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—'}`,
-                    `Vervaldatum: ${invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—'}`,
+                    t('detail.rij.nummer', { value: invoice?.invoice_number || '—' }),
+                    t('detail.rij.datum', { value: invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—' }),
+                    t('detail.rij.vervaldatum', { value: invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—' }),
                     // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
                     // "when did this get paid" is answered on the invoice itself.
-                    invoice?.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice?.payment_date))}` : '',
+                    invoice?.payment_date ? t('detail.rij.betaaldOp', { value: NL_DATE.format(new Date(invoice?.payment_date)) }) : '',
                   ]
                 },
               ].map(section => (
@@ -729,7 +797,7 @@ export default function InvoiceDetailPage() {
                 <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
                   <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
-                    <strong>Betaald in {xq.paidQuarterLabel}.</strong> Voor de btw telt deze factuur mee in {xq.bookedQuarterLabel} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.
+                    <strong>{t('detail.kwartaal.betaaldIn', { quarter: xq.paidQuarterLabel })}</strong> {t('detail.kwartaal.uitleg', { quarter: xq.bookedQuarterLabel })}
                   </div>
                 </div>
               )
@@ -745,7 +813,7 @@ export default function InvoiceDetailPage() {
                 (.inv-lines-*), niet inline: anders wint de inline style van de
                 media query en houdt de telefoon het brede raster. */}
             <div className="inv-lines-head" style={{ padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
-              {['Omschrijving','Aantal','Prijs','BTW','Totaal'].map((h, i) => (
+              {[t('nieuw.regel.omschrijving'), t('nieuw.regel.aantal'), t('detail.kolom.prijs'), 'BTW', t('ink.totaal')].map((h, i) => (
                 <p key={h} className={i === 0 ? 'inv-lines-desc' : 'inv-lines-total'} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>{h}</p>
               ))}
             </div>
@@ -785,9 +853,9 @@ export default function InvoiceDetailPage() {
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{t('nieuw.betaalinfo')}</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
-                Gelieve te betalen op{' '}
+                {t('detail.betaal.op')}{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
-                o.v.v. <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
+                {t('detail.betaal.ovv')} <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
               </p>
             </div>
           )}
@@ -804,23 +872,23 @@ export default function InvoiceDetailPage() {
           <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
-              Versturen naar {invoice.client_name}?
+              {t('bewerk.versturenNaar', { name: invoice.client_name ?? '' })}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
               {t('detail.bevestig')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.nummer')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>
-                {invoice.invoice_number || 'Wordt toegekend bij verzending'}
+                {invoice.invoice_number || t('bewerk.modal.nummerBijVerzending')}
               </dd>
-              <dt style={{ color: '#5F6368', margin: 0 }}>E-mail:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.email')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_email}</dd>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Bedrag:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.bedrag')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>€{(invoice.total_inc_btw ?? 0).toFixed(2)}</dd>
             </dl>
             <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
-              ⚠ Na verzending kun je deze factuur niet meer wijzigen. Voor correcties maak je een creditnota.
+              ⚠ {t('bewerk.modal.waarschuwing')}
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
@@ -831,7 +899,7 @@ export default function InvoiceDetailPage() {
               <button onClick={handleSendInvoice}
                 disabled={sending}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.6 : 1 }}>
-                {sending ? 'Verzenden...' : 'Versturen'}
+                {sending ? t('bewerk.verzendenBezig') : t('lijst.versturen')}
               </button>
             </div>
           </div>
@@ -847,23 +915,97 @@ export default function InvoiceDetailPage() {
           <div className="sheet-scroll" onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
-              Creditnota maken voor {invoice.invoice_number || 'deze factuur'}?
+              {invoice.invoice_number ? t('detail.credit.titel', { number: invoice.invoice_number }) : t('detail.credit.titelZonder')}
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
-              We maken automatisch een creditnota met dezelfde regels als negatieve bedragen.
-              De originele factuur blijft staan en wordt gemarkeerd als gecrediteerd. Je hoeft
-              niets over te typen.
+              {t('detail.credit.uitleg')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
-              <dt style={{ color: '#5F6368', margin: 0 }}>Klant:</dt>
+              <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.credit.klant')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_name}</dd>
               <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.teCrediteren')}</dt>
               <dd style={{ color: '#B3261E', fontWeight: 600, margin: 0 }}>
-                −{NL_NUMBER.format(Math.abs(invoice.total_inc_btw ?? 0))}
+                −{NL_NUMBER.format(creditPreview.totalIncBtw)}
               </dd>
+              {alGecrediteerd > 0 && (
+                <>
+                  <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.credit.alGecrediteerd')}</dt>
+                  <dd style={{ color: '#5F6368', margin: 0 }}>{NL_NUMBER.format(alGecrediteerd)}</dd>
+                  <dt style={{ color: '#5F6368', margin: 0 }}>{t('detail.credit.nogMogelijk')}</dt>
+                  <dd style={{ color: '#5F6368', margin: 0 }}>{NL_NUMBER.format(nogTeCrediteren)}</dd>
+                </>
+              )}
             </dl>
+
+            {/* [DEEL-CREDIT] Alles of een deel. De dialoog opent op ALLES, want dat is verreweg het
+                gewone geval en dat mag geen klik duurder worden. Wie een deel kiest, kiest per
+                regel hoeveel — en ziet het bedrag meelopen, uitgerekend met dezelfde functie die
+                de route straks gebruikt. */}
+            {lines.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'inline-flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden', marginBottom: 10 }}>
+                  {[false, true].map((deel) => (
+                    <button
+                      key={String(deel)}
+                      type="button"
+                      onClick={() => {
+                        setCreditPartial(deel)
+                        // Openen op "alles gekozen" — een lijst met overal nul is een lege dialoog
+                        // waarin de knop niets doet en niemand ziet waarom.
+                        if (deel) {
+                          setCreditQty(Object.fromEntries(lines.map((l) => [String(l.id), Number(l.quantity ?? 0)])))
+                        }
+                      }}
+                      style={{
+                        fontSize: 13, fontWeight: 500, padding: '7px 14px', border: 'none', cursor: 'pointer',
+                        backgroundColor: creditPartial === deel ? '#1A73E8' : 'white',
+                        color: creditPartial === deel ? 'white' : '#5F6368',
+                      }}
+                    >
+                      {deel ? t('detail.credit.deel') : t('detail.credit.alles')}
+                    </button>
+                  ))}
+                </div>
+                {creditPartial && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {lines.map((l) => {
+                      const id = String(l.id)
+                      const max = Number(l.quantity ?? 0)
+                      return (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                          <span style={{ flex: 1, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {l.description}
+                          </span>
+                          <span style={{ color: '#5F6368', fontSize: 12 }}>
+                            {t('detail.credit.van', { max: String(max) })}
+                          </span>
+                          <input
+                            type="number"
+                            step="any"
+                            value={creditQty[id] ?? 0}
+                            onChange={(e) => {
+                              const typed = parseFloat(e.target.value)
+                              // Begrensd op wat er geleverd is, in de richting van de regel: een
+                              // creditregel ([MIN-REGEL]) is negatief en blijft dat.
+                              const veilig = !Number.isFinite(typed)
+                                ? 0
+                                : Math.sign(typed) !== 0 && Math.sign(typed) !== Math.sign(max)
+                                  ? 0
+                                  : Math.abs(typed) > Math.abs(max) ? max : typed
+                              setCreditQty((prev) => ({ ...prev, [id]: veilig }))
+                            }}
+                            aria-label={t('detail.credit.aantal')}
+                            style={{ width: 76, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 8px', fontSize: 14 }}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#5F6368', marginBottom: 6 }}>
-              Reden (optioneel)
+              {t('detail.credit.reden')}
             </label>
             <input
               type="text"
@@ -873,6 +1015,15 @@ export default function InvoiceDetailPage() {
               disabled={creatingCredit}
               style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, color: '#202124', boxSizing: 'border-box', marginBottom: 16, fontFamily: 'inherit' }}
             />
+            {/* Een knop die uit staat zonder te zeggen waarom is een doodlopende weg. */}
+            {creditLeeg && (
+              <p style={{ fontSize: 12, color: '#EA8600', marginBottom: 16 }}>{t('detail.credit.kiesRegel')}</p>
+            )}
+            {!creditPast && !creditLeeg && (
+              <p style={{ fontSize: 12, color: '#B3261E', marginBottom: 16 }}>
+                {t('detail.credit.teVeel', { max: NL_NUMBER.format(nogTeCrediteren) })}
+              </p>
+            )}
             {creditError && (
               <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
                 {creditError}
@@ -885,9 +1036,9 @@ export default function InvoiceDetailPage() {
                 {t('nieuw.actie.annuleren')}
               </button>
               <button onClick={createCreditnota}
-                disabled={creatingCredit}
-                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit ? 'default' : 'pointer', opacity: creatingCredit ? 0.6 : 1 }}>
-                {creatingCredit ? 'Bezig…' : '↩ Creditnota maken'}
+                disabled={creatingCredit || creditLeeg || !creditPast}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit || creditLeeg || !creditPast ? 'default' : 'pointer', opacity: creatingCredit || creditLeeg || !creditPast ? 0.6 : 1 }}>
+                {creatingCredit ? t('detail.credit.bezig') : `↩ ${t('detail.credit.maken')}`}
               </button>
             </div>
           </div>

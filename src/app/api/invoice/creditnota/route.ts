@@ -47,6 +47,18 @@ import { reportHandledFailure } from '@/lib/report-handled'
 // [KLANT-EXTRA] De twee vrije klantregels reizen mee naar het nieuwe document — in een
 // aparte, mislukbare schrijfbeurt. Zie de kop van dat bestand.
 import { copyExtraLinesOnto } from '@/lib/client-extra-lines-write'
+// [CREDIT-SIGN] The per-line mirror: which fields flip, which travel, which are hardened.
+import { creditLinesFor } from '@/lib/creditnota-lines'
+// [DEEL-CREDIT] Welke regels, hoeveel ervan, en het plafond dat nooit mag schuiven.
+import {
+  buildCreditSelection,
+  checkCreditSelection,
+  creditableRemaining,
+  fitsWithinOriginal,
+  overCreditReason,
+  type LineSelection,
+} from '@/lib/partial-credit'
+import { creditedTotalsFrom } from '@/lib/credited-invoices'
 
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
@@ -68,6 +80,17 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { original_invoice_id, reason } = body
+    // [DEEL-CREDIT] Optioneel, en dat is de hele migratiestrategie: laat een client hem weg, dan
+    // is dit letterlijk het verzoek van hiervoor — de HELE factuur — en komt er tot op de cent
+    // uit wat er altijd uitkwam.
+    const selectie: LineSelection[] | null = Array.isArray(body?.lines)
+      ? (body.lines as unknown[])
+          .map((r) => {
+            const row = (r ?? {}) as Record<string, unknown>
+            return { id: String(row.id ?? ''), quantity: Number(row.quantity) }
+          })
+          .filter((r) => r.id !== '')
+      : null
 
     if (!original_invoice_id) {
       return NextResponse.json(
@@ -136,31 +159,86 @@ export async function POST(request: NextRequest) {
     // route mints a creditnota number — Art. 35, forward-only, "once committed, no rollback". A
     // duplicate created here does not just double the credit, it burns a number in the legal
     // sequence to do it. So the refusal has to come BEFORE the number, which is where it now is.
-    const { data: existingCreditnota, error: existingErr } = await supabase
+    const { data: existingCreditnotas, error: existingErr } = await supabase
       .from('invoices')
-      .select('id, invoice_number')
+      .select('id, invoice_number, total_inc_btw')
       .eq('sender_id', ownerId)
       .eq('invoice_type', 'creditnota')
       .eq('original_invoice_id', original_invoice_id)
-      .maybeSingle()
 
     if (existingErr) {
       reportHandledFailure({
         tag: 'CREDITNOTA-GUARD',
-        message: 'duplicate-creditnota check failed — refusing to create',
+        message: 'existing-creditnota check failed — refusing to create',
         severity: 'gate-unavailable',
         context: { ownerId, originalInvoiceId: original_invoice_id, error: existingErr.message },
       })
       return NextResponse.json(
-        { error: 'We konden niet nakijken of er al een creditnota voor deze factuur bestaat. Er is niets aangemaakt — probeer het zo meteen opnieuw.' },
+        { error: 'We konden niet nakijken wat er al van deze factuur is gecrediteerd. Er is niets aangemaakt — probeer het zo meteen opnieuw.' },
         { status: 503 },
       )
     }
 
-    if (existingCreditnota) {
+    // ── [DEEL-CREDIT] De regels van het origineel, en wat er van gecrediteerd wordt ──
+    //
+    // Dit staat VÓÓR het nummer, en dat is dezelfde les als bij de oude dubbelcheck: een creditnota
+    // die hier wordt geweigerd heeft nog geen nummer verbruikt. Art. 35 kent geen weg terug.
+    const { data: originalLines, error: linesErr } = await supabase
+      .from('invoice_lines')
+      // [UNIT] '*' zodat elke kolom meekomt zonder tweede lijst; de INSERT typt hieronder over.
+      .select('*')
+      .eq('invoice_id', original_invoice_id)
+
+    if (linesErr) {
+      reportHandledFailure({
+        tag: 'DEEL-CREDIT',
+        message: 'invoice lines read failed — refusing to credit',
+        severity: 'gate-unavailable',
+        context: { ownerId, originalInvoiceId: original_invoice_id, error: linesErr.message },
+      })
       return NextResponse.json(
-        { error: 'Er bestaat al een creditnota voor deze factuur' },
-        { status: 409 }
+        { error: 'We konden de regels van deze factuur niet lezen. Er is niets aangemaakt — probeer het zo meteen opnieuw.' },
+        { status: 503 },
+      )
+    }
+
+    const bronRegels = (originalLines ?? []) as Parameters<typeof buildCreditSelection>[0]['lines']
+    const selectieFout = checkCreditSelection(bronRegels, selectie)
+    if (selectieFout) {
+      const uitleg: Record<string, string> = {
+        no_lines: 'Deze factuur heeft geen regels om te crediteren.',
+        nothing_selected: 'Kies minstens één regel om te crediteren.',
+        unknown_line: 'Een van de gekozen regels hoort niet bij deze factuur.',
+        quantity_exceeds_line: 'Je kunt niet meer crediteren dan er op de factuur staat.',
+        quantity_negative: 'Het aantal om te crediteren klopt niet.',
+      }
+      return NextResponse.json({ error: uitleg[selectieFout] ?? 'De selectie klopt niet.' }, { status: 400 })
+    }
+
+    const keuze = buildCreditSelection({
+      lines: bronRegels,
+      selection: selectie,
+      discountType: original.discount_type,
+      discountValue: original.discount_value,
+    })
+
+    // ── Het plafond ──
+    //
+    // Meer teruggeven dan er ooit in rekening is gebracht betekent btw terugvragen die nooit is
+    // afgedragen, en een tegoed voor de klant dat nergens vandaan komt. De database bewaakt
+    // dezelfde regel (creditnota_partial.sql, met een vergrendeling tegen gelijktijdigheid); dit
+    // is de weigering die de ondernemer kan LEZEN, vóór er een nummer wordt verbruikt.
+    const alGecrediteerd = creditedTotalsFrom(
+      (existingCreditnotas ?? []).map((c) => ({
+        original_invoice_id,
+        total_inc_btw: (c as { total_inc_btw: number | null }).total_inc_btw,
+      })),
+    ).get(original_invoice_id) ?? 0
+
+    if (!fitsWithinOriginal(original.total_inc_btw, alGecrediteerd, keuze.totalIncBtw)) {
+      return NextResponse.json(
+        { error: overCreditReason(creditableRemaining(original.total_inc_btw, alGecrediteerd)) },
+        { status: 409 },
       )
     }
 
@@ -195,9 +273,13 @@ export async function POST(request: NextRequest) {
         invoice_type: 'creditnota',
         direction: original.direction,
         // [BOEK-031] Negatieve bedragen — annulering
-        total_ex_btw: -(original.total_ex_btw || 0),
-        btw_amount: -(original.btw_amount || 0),
-        total_inc_btw: -(original.total_inc_btw || 0),
+        // [DEEL-CREDIT] Uit de SELECTIE, niet uit het origineel. Bij een volledige creditnota is
+        // dat tot op de cent hetzelfde bedrag (buildCreditSelection rekent met dezelfde functies
+        // die de factuur zelf hebben opgeteld); bij een deelcreditnota is het het enige juiste,
+        // en het kopiëren van het origineel zou het hele document een leugen maken.
+        total_ex_btw: -keuze.totalExBtw,
+        btw_amount: -keuze.btwAmount,
+        total_inc_btw: -keuze.totalIncBtw,
         // [KORTING-KOPIE] De korting reist mee met de bedragen. Deze route kopieert de TOTALEN van
         // het origineel maar bouwt de REGELS opnieuw op — en zonder de korting spraken die twee
         // elkaar tegen: de kop droeg het verlaagde bedrag, de regels het volle. Elke afgeleide
@@ -206,8 +288,12 @@ export async function POST(request: NextRequest) {
         // Op een creditnota spiegelt applyDiscount de korting mee (negatief document, negatieve
         // toeslag), dus de regels reproduceren de kop precies — regel voor regel te vergelijken
         // met de factuur die hij terugdraait, wat de vorm is die een boekhouder kan controleren.
-        discount_type: original.discount_type ?? null,
-        discount_value: original.discount_value ?? null,
+        // [DEEL-CREDIT] En de korting zoals hij bij DEZE selectie hoort: een percentage reist
+        // ongewijzigd mee, een vast bedrag is naar het gecrediteerde aandeel geschaald. Zonder die
+        // schaling geeft een deelcreditnota met een vaste korting minder terug dan er voor die
+        // regels is betaald — zie de kop van partial-credit.ts.
+        discount_type: keuze.discount?.type ?? null,
+        discount_value: keuze.discount?.value ?? null,
         // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         source: 'created',
         client_name: original.client_name,
@@ -234,16 +320,21 @@ export async function POST(request: NextRequest) {
     )
 
     if (insertError || !creditnota) {
-      // [IN1] The DB partial-unique index (invoices_one_creditnota_per_original) is the real
-      // guard against the SELECT-then-INSERT race above: a concurrent second creditnota for
-      // the same invoice fails with SQLSTATE 23505. Surface that as the same clean 409 the
-      // pre-check returns, not a generic 500 — a double credit is a legal filing error.
-      const isDuplicate =
-        (insertError as { code?: string } | null)?.code === '23505' ||
-        (typeof insertError?.message === 'string' && /duplicate key value|unique constraint/i.test(insertError.message))
-      if (isDuplicate) {
+      // [IN1] / [DEEL-CREDIT] The database is the real guard against the SELECT-then-INSERT race
+      // above. It used to be a unique index ("one creditnota per invoice", SQLSTATE 23505); it is
+      // now a trigger that locks the original and refuses anything that would take the credits
+      // past the invoice (creditnota_partial.sql, raised as check_violation / 23514). Both are
+      // surfaced as the same clean 409 the pre-check returns, because both mean the same thing to
+      // the owner: another credit got there first and this one no longer fits.
+      const code = (insertError as { code?: string } | null)?.code
+      const raceLost =
+        code === '23505' ||
+        code === '23514' ||
+        (typeof insertError?.message === 'string' &&
+          /duplicate key value|unique constraint|exceeds original invoice/i.test(insertError.message))
+      if (raceLost) {
         return NextResponse.json(
-          { error: 'Er bestaat al een creditnota voor deze factuur' },
+          { error: 'Er is inmiddels een andere creditnota op deze factuur gemaakt — kijk even wat er nog openstaat en probeer het opnieuw.' },
           { status: 409 }
         )
       }
@@ -260,39 +351,20 @@ export async function POST(request: NextRequest) {
       { original: original_invoice_id, creditnota: creditnota.id },
     )
 
-    // [BOEK-031] Haal originele regels op en kopieer ze negatief
-    const { data: originalLines } = await supabase
-      .from('invoice_lines')
-      // [UNIT] '*' zodat de eenheid meekomt zonder tweede kolommenlijst; de INSERT typt
-      // hieronder expliciet over, dus het id van de bronregel gaat NIET mee.
-      .select('*')
-      .eq('invoice_id', original_invoice_id)
-
-    if (originalLines && originalLines.length > 0) {
+    // [BOEK-031] Kopieer de gekozen regels negatief.
+    // [DEEL-CREDIT] Uit `keuze`, niet uit een tweede lezing van de factuur: dat zijn de regels
+    // waarmee het plafond hierboven is gecontroleerd én waarmee de totalen zijn uitgerekend. Ze
+    // nog eens ophalen zou betekenen dat de bedragen op de kop uit de ene lezing komen en de
+    // regels eronder uit de andere — en tussen die twee kan een bewerking hebben gezeten.
+    if (keuze.lines.length > 0) {
+      // [CREDIT-SIGN] The mirror lives in creditnota-lines.ts, with every rule it applies and the
+      // reason for it: which fields flip (the quantity and the line total, never the price — that
+      // is BR-27 and [MIN-REGEL]), which travel (the unit, so "-2 uur" does not become "-2 stuks",
+      // and the exemption flag, whose absence puts the correction in a different rubriek than the
+      // invoice it undoes), and which are hardened. It sat here as an object literal inside a
+      // .map(), where none of it could be checked without a database.
       await supabase.from('invoice_lines').insert(
-        // [UNIT] A credit note corrects the SAME delivery, so it carries the same unit:
-        // "-2 uur", not "-2 stuks".
-        originalLines.map((line) => ({
-          invoice_id: creditnota.id,
-          description: `[Creditnota] ${line.description}${reason ? ` — ${reason}` : ''}`,
-          quantity: -(line.quantity || 0), // negatief aantal
-          unit_price: line.unit_price,
-          btw_rate: line.btw_rate,
-          line_total: -(line.line_total || 0),
-          ...(line.unit !== undefined ? { unit: line.unit ?? null } : {}),
-          // [VRIJGESTELD-KOPIE] En de vrijstellingsvlag reist mee, om precies dezelfde reden als
-          // de eenheid — maar met een duurder gevolg als hij dat niet doet.
-          //
-          // Zonder haar wordt een gekopieerde vrijgestelde regel geclassificeerd als BELASTE omzet
-          // tegen 0%. Bij een creditnota betekent dat dat de correctie het origineel niet opheft:
-          // het origineel blijft +EUR 1.000 vrijgestelde omzet en de creditnota landt als -EUR 1.000
-          // in de 0%/verlegd-rubriek. Twee rubrieken tegelijk fout, en 5a/5b blijven kloppen — dus
-          // geen enkel scherm laat het zien.
-          //
-          // Dezelfde harding als overal waar deze vlag wordt geschreven: alleen de letterlijke
-          // waarde 'exempt' telt. Een onbekende waarde wordt NULL, nooit een vrijstelling.
-          ...(line.vat_treatment !== undefined ? { vat_treatment: line.vat_treatment === 'exempt' ? 'exempt' : null } : {}),
-        })),
+        creditLinesFor(keuze.lines, creditnota.id, reason) as never,
       )
     }
 
@@ -306,6 +378,14 @@ export async function POST(request: NextRequest) {
         creditnota_number: creditnota.invoice_number,
         original_invoice_id,
         original_invoice_number: original.invoice_number,
+        // [DEEL-CREDIT] Of dit de hele factuur was of een deel, en welk deel. Een deelcreditnota
+        // is niet af te leiden uit het bedrag alleen — daarvoor moet je weten wat de factuur was
+        // en wat er al eerder van is gecrediteerd. Dat hoort in het spoor te staan, niet in een
+        // reconstructie achteraf.
+        partial: !keuze.isFull,
+        credited_inc_btw: keuze.totalIncBtw,
+        already_credited_before: alGecrediteerd,
+        credited_line_count: keuze.lines.length,
       },
       ipAddress: getClientIP(request),
     })
@@ -449,6 +529,12 @@ export async function POST(request: NextRequest) {
       success: true,
       creditnota_id: creditnota.id,
       creditnota_number: creditnota.invoice_number,
+      // [DEEL-CREDIT] Wat er is gecrediteerd en wat er van de factuur overblijft, zodat het scherm
+      // het meteen kan tonen zonder de factuur opnieuw op te halen — en zodat een tweede
+      // deelcreditnota begint met het juiste plafond in beeld.
+      partial: !keuze.isFull,
+      credited_inc_btw: keuze.totalIncBtw,
+      remaining_creditable: creditableRemaining(original.total_inc_btw, alGecrediteerd + keuze.totalIncBtw),
       ...(warning ? { warning } : {}),
     })
 

@@ -7,6 +7,8 @@ import { sheetPaddingBottom } from "@/lib/design/tokens";
 import { Icon } from "../ui/Icon";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
 
 interface AiSuggestionModalProps {
   fileName: string;
@@ -22,6 +24,7 @@ interface AiSuggestionModalProps {
 export function AiSuggestionModal({
   fileName, suggestedPath, onAccept, onChooseManually, onDismiss,
 }: AiSuggestionModalProps) {
+  const t = translator(useLocale())
   // [BACK-CLOSES] Back means "not now", which is the harmless one of the three outcomes: nothing
   // moves and the file is still in the root where the owner can find it.
   useCloseOnBack(true, onDismiss)
@@ -60,10 +63,10 @@ export function AiSuggestionModal({
             </div>
             <div>
               <p style={{ fontSize: 13, fontWeight: 600, color: T.primary, margin: 0 }}>
-                AI stelt voor
+                {t('best.aiSteltVoor')}
               </p>
               <p style={{ fontSize: 12, color: T.outline, margin: 0 }}>
-                Gebaseerd op inhoud van het bestand
+                {t('best.aiGebaseerd')}
               </p>
             </div>
           </div>
@@ -90,7 +93,7 @@ export function AiSuggestionModal({
         {/* Suggested path */}
         <div style={{ padding: "12px 24px 0" }}>
           <p style={{ fontSize: 12, color: T.outline, margin: "0 0 6px", fontWeight: 500 }}>
-            Aanbevolen locatie:
+            {t('best.aanbevolenLocatie')}
           </p>
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -118,7 +121,7 @@ export function AiSuggestionModal({
             onMouseDown={e => (e.currentTarget.style.opacity = "0.85")}
             onMouseUp={e => (e.currentTarget.style.opacity = "1")}
           >
-            Ja, hier plaatsen
+            {t('best.jaHier')}
           </button>
           <button
             onClick={onChooseManually}
@@ -128,7 +131,7 @@ export function AiSuggestionModal({
               fontSize: 15, fontWeight: 500, cursor: "pointer",
             }}
           >
-            Kies zelf een map
+            {t('best.kiesZelfMap')}
           </button>
         </div>
       </div>

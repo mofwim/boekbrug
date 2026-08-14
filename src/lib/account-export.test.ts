@@ -261,3 +261,62 @@ test("an unreadable btw_filings ledger ships a note, never an empty overview", a
   assert.equal(manifest.aantal_btw_aangiftes, 0);
   assert.equal(manifest.btw_aangiftes_gelezen, false);
 });
+test("[KAS-SPOOR] the exported cash book carries the movements that were removed from it", async () => {
+  // Every other ledger in this ZIP keeps its own history: an archived invoice is still a row, a bank
+  // line is never destroyed, a removed turnover day can be re-imported from its Z-report. A
+  // cash_entries delete is a HARD delete and a cash movement has no source document to re-read — the
+  // owner typed it. So kas.json without this trail hands someone a cash book that cannot answer what
+  // the app answers on screen and in the accountant's quarterly sheet: what did this period hold that
+  // it no longer holds.
+  const { zipBytes, summary } = await assembleAccountExportZip({
+    userId: "u9",
+    profile: { id: "u9", kas_opening_balance: 250 },
+    invoices: [],
+    files: [],
+    cashEntries: [{ id: "c1", amount: 40, direction: "in", category: "omzet" }],
+    cashTrail: [
+      { action: "cash.entry_removed", created_at: "2026-04-02T09:00:00Z", old_value: { entry_date: "2026-02-14", direction: "out", amount: 90, category: "kosten", description: "bloemen" } },
+      { action: "cash.opening_balance_set", created_at: "2026-04-03T09:00:00Z", old_value: { kas_opening_balance: 0 }, new_value: { kas_opening_balance: 250 } },
+    ],
+  });
+
+  const zip = await JSZip.loadAsync(zipBytes);
+  const trail = JSON.parse(await zip.file("kas-spoor.json")!.async("string"));
+  assert.equal(trail.length, 2);
+
+  // The removed movement survives with the two things that make it a movement: its day and its
+  // amount. Without those the row records that something was deleted and nothing more.
+  const removed = trail.find((r: { action: string }) => r.action === "cash.entry_removed");
+  assert.equal(removed.old_value.amount, 90);
+  assert.equal(removed.old_value.entry_date, "2026-02-14");
+  assert.equal(removed.old_value.description, "bloemen");
+
+  // And the beginsaldo's history, which profiel.json cannot carry: it holds the CURRENT float, while
+  // this one number shifts every eindsaldo in the owner's entire history, filed quarters included.
+  const float = trail.find((r: { action: string }) => r.action === "cash.opening_balance_set");
+  assert.equal(float.old_value.kas_opening_balance, 0);
+  assert.equal(float.new_value.kas_opening_balance, 250);
+
+  // Separate from kas.json, never merged into it: these are not cash entries, they are the record of
+  // what happened to them. Anything else would put a deleted movement back into the ledger.
+  const entries = JSON.parse(await zip.file("kas.json")!.async("string"));
+  assert.equal(entries.length, 1);
+
+  // The manifest counts it, so whoever opens this ZIP in 2032 knows the trail is in here at all.
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.equal(manifest.aantal_kas_spoorregels, 2);
+  assert.equal(summary.cashTrailCount, 2);
+  assert.match(manifest.beschrijving, /verwijderde kasboekingen/);
+});
+
+test("[KAS-SPOOR] an account that never removed anything still gets the file, empty", async () => {
+  // A MISSING file and a dropped ledger look identical to whoever opens this ZIP later — the same
+  // reasoning the filed-aangiftes CSV is built on. An empty list here is a real answer: nothing was
+  // ever taken out of this cash book.
+  const { zipBytes, summary } = await assembleAccountExportZip({
+    userId: "u10", profile: { id: "u10" }, invoices: [], files: [],
+  });
+  const zip = await JSZip.loadAsync(zipBytes);
+  assert.deepEqual(JSON.parse(await zip.file("kas-spoor.json")!.async("string")), []);
+  assert.equal(summary.cashTrailCount, 0);
+});

@@ -22,11 +22,11 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // send groepeert per TARIEF en rondt per tarief af (de methode van de PDF en de UBL-export).
 // Op een factuur met gemengde tarieven scheelde dat een cent, dus het bedrag dat de ondernemer
 // opsloeg was niet het bedrag dat hij verstuurde. Zie invoice-totals.ts.
-import { computeInvoiceTotals, round2 } from '@/lib/invoice-totals'
+import { computeInvoiceTotals } from '@/lib/invoice-totals'
 // [REGEL-PARITEIT] Dezelfde regelkeuring als /api/invoice/draft — één definitie van wat een
 // factuurregel mag zijn, voor allebei de schrijvers op invoice_lines.
 import { validateDraftLines } from '@/lib/draft-totals'
-import { applyDiscount, parseDiscount } from '@/lib/invoice-discount'
+import { applyDiscount, parseDiscount, lineNetEx } from '@/lib/invoice-discount'
 import { checkInvoiceDates } from '@/lib/invoice-dates'
 // [ACTING-FOR] Deze route is OMGEBOUWD in plaats van dichtgezet: een verkoopmedewerker moet zijn
 // eigen concept kunnen openen, bijwerken en weggooien — anders is "facturen maken" half werk en
@@ -72,6 +72,13 @@ type NormLine = {
   vat_treatment?: string | null
   /** [UNIT] Alleen een eenheid die de app kent, of null. */
   unit: string | null
+  /**
+   * [REGEL-KORTING] De korting op DEZE regel, al geparseerd. `line_total` hierboven is er al mee
+   * verlaagd; deze twee bewaren waarom, zodat het bewerkscherm de korting terugvindt en de PDF en
+   * de e-factuur hem kunnen tonen in plaats van een onverklaarbaar lager bedrag.
+   */
+  discount_type?: string | null
+  discount_value?: number | null
 }
 
 function schoonRegel(invoiceId: string, l: NormLine): Record<string, unknown> {
@@ -100,6 +107,18 @@ function schoonRegel(invoiceId: string, l: NormLine): Record<string, unknown> {
   // al het andere wordt NULL. Een onbekende waarde mag nooit als vrijstelling gelden.
   if (l.vat_treatment !== undefined) {
     regel.vat_treatment = l.vat_treatment === 'exempt' ? 'exempt' : null
+  }
+  // [REGEL-KORTING] Alleen meesturen als er een korting IS.
+  //
+  // Zo verandert er niets aan een regel zonder korting — de insert heeft exact de vorm van
+  // hiervoor, ook op een database waar invoice_line_discount.sql nog open staat. En gebruikt
+  // iemand de korting wél op zo'n database, dan faalt de insert luidruchtig en draait
+  // [EDIT-LINES-SAFE] de oude regels én de oude totalen terug. Dat is de goede kant om op te
+  // vallen: liever een bewerking die niet doorgaat dan een verlaagd bedrag waarvan de reden
+  // nergens staat en dat bij de volgende bewerking weer omhoog springt.
+  if (l.discount_type) {
+    regel.discount_type = l.discount_type
+    regel.discount_value = l.discount_value
   }
   return regel
 }
@@ -301,12 +320,20 @@ export async function PUT(
   const lines: NormLine[] = rawLines.map((l: any): NormLine => {
     const quantity = Number(l.quantity) || 0
     const unit_price = Number(l.unit_price) || 0
+    // [REGEL-KORTING] validateDraftLines hierboven heeft deze twee al geweigerd als ze onleesbaar
+    // waren, dus wat hier binnenkomt parseert. Toch opnieuw door parseDiscount: dit is de waarde
+    // die de database in gaat, en die hoort genormaliseerd te zijn (een "12,50" uit een formulier
+    // is 12.5), niet ruwe invoer die de CHECK-constraint moet opvangen.
+    const regelKorting = parseDiscount(l.discount_type, l.discount_value)
     return {
       description: String(l.description ?? ''),
       quantity,
       unit_price,
       btw_rate: Number(l.btw_rate),
-      line_total: round2(quantity * unit_price),
+      // NETTO — de korting van de regel is er al af. Zie invoice_line_discount.sql.
+      line_total: lineNetEx({ quantity, unit_price, discount_type: l.discount_type, discount_value: l.discount_value }),
+      discount_type: regelKorting?.type ?? null,
+      discount_value: regelKorting?.value ?? null,
       // [UNIT] Alleen een eenheid die de app KENT. Vrije tekst uit een verzoek hoort niet op
       // een regel die straks een e-factuur wordt; onbekend wordt null, en dat komt in de export
       // neer op C62 — precies het gedrag van vóór dit veld.
@@ -516,21 +543,20 @@ export async function PUT(
     // exists — the same mismatch, just harder to notice.
     if (previousLines && previousLines.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any)
-        .from('invoice_lines')
-        .insert(previousLines.map((l) => {
-          const bron = l as unknown as { unit?: string | null }
-          const regel: Record<string, unknown> = {
-            invoice_id: id,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            btw_rate: l.btw_rate,
-            line_total: l.line_total,
-          }
-          if (bron.unit !== undefined) regel.unit = bron.unit ?? null
-          return regel
-        }))
+      // [EDIT-LINES-SAFE] The rows go back AS THEY CAME, not rebuilt from a field list.
+      //
+      // This used to name the columns one by one, and the list was already one short: it carried
+      // `unit` and not `vat_treatment`, so a save that failed restored the lines with the
+      // exemption flag stripped. Undoing a change by making a different one — and the amounts
+      // looked untouched, so nothing pointed at it. The flag decides which rubriek the turnover
+      // lands in ([VRIJGESTELD-ROUNDTRIP]); [REGEL-KORTING] would have been the next column to
+      // fall off the same list.
+      //
+      // They were read with select('*') from this very table and deleted a moment ago, so they
+      // are insertable exactly as they are. A column added later travels for free, which is the
+      // property a restore path needs most: it is the code nobody looks at again.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from('invoice_lines').insert(previousLines)
     }
     await supabase
       .from('invoices')

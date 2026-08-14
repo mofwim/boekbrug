@@ -10,6 +10,7 @@ import { folderColor } from "../helpers";
 // [TAAL] A component holds no language of its own.
 import { useLocale } from "@/lib/i18n/use-locale";
 import { translator } from "@/lib/i18n/t";
+import { SHARED_FOLDER_NAME } from "@/lib/bestanden-shared";
 
 interface FolderCardProps {
   folder: FolderRow;
@@ -32,7 +33,7 @@ export function FolderCard({
   const t = translator(useLocale());
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const isShared = folder.name === "Gedeeld met boekhouder";
+  const isShared = folder.name === SHARED_FOLDER_NAME;
 
   const bg = isDragOver
     ? T.primaryContainer
@@ -139,7 +140,7 @@ export function FolderCard({
           fontSize: 10, fontWeight: 600, padding: "2px 8px",
           background: T.primaryContainer, color: T.primary, borderRadius: T.full,
         }}>
-          Gedeeld
+          {t("best.gedeeld")}
         </span>
       )}
       {folder.starred && (

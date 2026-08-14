@@ -239,6 +239,15 @@ console.log("\n— [DATE-WINDOW] a slipped digit in the year is refused, not boo
   const { warnings } = normalizeTurnoverSheet([H, FUTURE], { today: TODAY });
   // Shown BEFORE the owner approves, so the commit route's refusal is never a surprise.
   check("the preview warns about the impossible year", warnings.some((w) => w.code === "date_out_of_window"));
+  // …and it describes the refusal the route actually performs. The old sentence said "deze dag
+  // wordt niet opgeslagen" — a partial import, which the route has no mode for: it refuses the
+  // whole payload ("Er is niets opgeslagen"). So the owner read that one row would be skipped,
+  // pressed Goedkeuren, and hit a hard failure on a file they had been told was otherwise fine.
+  const windowWarning = warnings.find((w) => w.code === "date_out_of_window")!;
+  check("the warning says the WHOLE file is refused, matching the commit route",
+    /hele bestand/.test(windowWarning.message) && !/deze dag wordt niet opgeslagen/.test(windowWarning.message));
+  check("…and it still names the day and points at the year to fix",
+    windowWarning.message.includes("2062-07-31") && /jaartal/.test(windowWarning.message));
 }
 
 console.log("\n— [NO-NETTO] a legacy sheet without a Netto column: gross or net? —");

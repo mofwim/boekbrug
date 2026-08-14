@@ -18,6 +18,12 @@
 //
 // NO I/O. The caller supplies the set of invoice ids that have a creditnota against them.
 
+// [CENT] The app's one rounding. Writing `Math.round(x * 100) / 100` here instead was caught by
+// the gate on the first run, and rightly: this file now produces an AMOUNT — what is still owed
+// after a partial credit — and that amount is printed in a reminder to a customer. Two roundings
+// disagree on exactly the half cents that end up in a demand for payment.
+import { round2 } from "./invoice-totals";
+
 /** The fields the receivable rule reads. A subset of the invoices row. */
 export interface CreditableInvoiceRow {
   id: string;
@@ -38,15 +44,23 @@ export function isCreditnota(row: CreditableInvoiceRow): boolean {
  * been withdrawn by one. Everything else is unchanged — this never looks at amounts or dates, so
  * it cannot alter a normal invoice's treatment.
  *
- * @param creditedIds ids of invoices that HAVE a creditnota against them
- *                    (i.e. the original_invoice_id values of the owner's creditnotas).
+ * [DEEL-CREDIT] The set now means FULLY credited, and the distinction is the whole point of
+ * partial credits. An invoice of € 500 with a € 50 creditnota against it has NOT been withdrawn:
+ * € 450 is still owed, still due, and still has to be chased. Treating any credit as a withdrawal
+ * would have meant that the moment an owner credited a single disputed line, the app stopped
+ * asking for the rest — quietly, on an invoice that stays 'sent' with its full total. The owner
+ * would simply never be paid, and nothing on any screen would say why.
+ *
+ * @param fullyCreditedIds ids of invoices whose creditnotas together cover the WHOLE invoice.
+ *                         Build it with fullyCreditedIdsFrom, never from the credit rows alone —
+ *                         a credit row does not know how big the invoice it credits is.
  */
 export function isOpenReceivable(
   row: CreditableInvoiceRow,
-  creditedIds: ReadonlySet<string>
+  fullyCreditedIds: ReadonlySet<string>
 ): boolean {
   if (isCreditnota(row)) return false;
-  return !creditedIds.has(row.id);
+  return !fullyCreditedIds.has(row.id);
 }
 
 /** Keep only the rows that are genuinely still owed. Order preserved. */
@@ -57,17 +71,78 @@ export function filterOpenReceivables<T extends CreditableInvoiceRow>(
   return rows.filter((r) => isOpenReceivable(r, creditedIds));
 }
 
+/** A creditnota row, as the coverage rule reads it. */
+export interface CreditnotaRow {
+  original_invoice_id?: string | null;
+  total_inc_btw?: number | null;
+}
+
 /**
- * Build the credited-ids set from the owner's creditnota rows.
- * Tolerates nulls so a caller can pass a raw query result straight in.
+ * [DEEL-CREDIT] How much has been credited against each invoice, incl. btw, as a POSITIVE amount.
+ *
+ * Magnitudes, because a creditnota is stored negative ([CREDIT-SIGN]) and the question here is
+ * "how much came back", not "in which direction". Several credits against one invoice add up —
+ * that is the case this map exists for.
  */
-export function creditedIdsFrom(
-  creditnotaRows: readonly { original_invoice_id?: string | null }[] | null | undefined
-): Set<string> {
-  const out = new Set<string>();
+export function creditedTotalsFrom(
+  creditnotaRows: readonly CreditnotaRow[] | null | undefined
+): Map<string, number> {
+  const out = new Map<string, number>();
   for (const r of creditnotaRows ?? []) {
     const id = r?.original_invoice_id;
-    if (id) out.add(id);
+    if (!id) continue;
+    const amount = Math.abs(Number(r?.total_inc_btw) || 0);
+    out.set(id, (out.get(id) ?? 0) + amount);
   }
   return out;
+}
+
+/** Half a cent — the same margin the rest of the app uses for "this amount is settled". */
+const EPSILON = 0.005;
+
+/**
+ * [DEEL-CREDIT] The ids of invoices that have been credited IN FULL.
+ *
+ * Needs both sides, and that is not an inconvenience but the fact itself: a credit row carries
+ * what it gives back, and only the invoice knows how much there was to give. The old version took
+ * the credit rows alone and called any of them a withdrawal — correct while a credit could only
+ * ever be the whole invoice, and wrong the moment it could be a part.
+ *
+ * An invoice with no total (never seen in practice, but a null column is always possible) counts
+ * as fully credited once anything at all is credited against it: with nothing to compare to, the
+ * safe answer is to stop chasing rather than to keep demanding money on an unknown balance.
+ */
+export function fullyCreditedIdsFrom(
+  creditnotaRows: readonly CreditnotaRow[] | null | undefined,
+  originals: readonly CreditableInvoiceRow[] | null | undefined
+): Set<string> {
+  const credited = creditedTotalsFrom(creditnotaRows);
+  const out = new Set<string>();
+  for (const row of originals ?? []) {
+    const gecrediteerd = credited.get(row.id);
+    if (!gecrediteerd) continue;
+    const totaal = Math.abs(Number(row.total_inc_btw) || 0);
+    if (totaal === 0 || gecrediteerd + EPSILON >= totaal) out.add(row.id);
+  }
+  return out;
+}
+
+/**
+ * What is still owed on one invoice: the total, minus what was paid, minus what was credited.
+ *
+ * This is the amount a reminder must name. Naming the full total on a partly credited invoice
+ * asks the customer for money that was given back in writing — the fastest way to lose the trust
+ * the reminder needs to work at all.
+ */
+export function openAfterCredit(
+  totalIncBtw: number | null | undefined,
+  amountPaid: number | null | undefined,
+  creditedAmount: number
+): number {
+  const totaal = Math.abs(Number(totalIncBtw) || 0);
+  const betaald = Number(amountPaid) > 0 ? Number(amountPaid) : 0;
+  const gecrediteerd = Math.abs(Number(creditedAmount) || 0);
+  const rest = totaal - betaald - gecrediteerd;
+  if (rest <= 0) return 0;
+  return round2(rest);
 }
