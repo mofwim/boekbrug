@@ -329,6 +329,11 @@ gaat niets van kapot; `service_role` wordt in de migratie expliciet opnieuw gema
 > EXECUTE, en de zes functies die het scherm aanroept houden `authenticated`. De linter noemt onder
 > `anon` alleen nog de vijf leeshulpjes die met opzet buiten deze migratie bleven — zie hieronder.
 
+> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** 17 is TOEGEPAST. Alle negen
+> tonen `search_path=public, pg_catalog, pg_temp`; nul staan er nog los. Daarna een UPDATE op
+> `invoices` binnen een teruggedraaide transactie: de hele triggerketen liep zonder fout, dus elke
+> functie vindt haar namen onder het nieuwe pad. Er is niets geschreven.
+
 **Over 17.** Alleen metadata: `ALTER FUNCTION … SET search_path`, geen functie wordt herschreven.
 Er is **geen haast**, en dat staat er expliciet bij omdat de vorige regel wél haast had. Op de
 productiedatabase nagemeten: geen van de negen is `SECURITY DEFINER`, en noch `anon` noch
@@ -377,6 +382,14 @@ in plaats van het bestaande stuk te maken:
   (`send-offerte`). De offerte zelf verstuurt gewoon.
 - **15** — de bijlage kan per verzending worden meegegeven maar wordt niet op de factuur onthouden.
   De weigering blijft vóór het factuurnummer staan, dus er ontstaat nooit een gat in de reeks.
+
+> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** 11 is als ENIGE nog OPEN.
+> `cash_entries.deleted_at` bestaat niet. De twee voorwaarden ervoor staan er wél — `invoice_id` en
+> `settlement_id` zijn aanwezig, en `cash_entries_one_settlement_per_instalment` staat er nog in
+> zijn OUDE vorm (`WHERE invoice_id IS NOT NULL`, zonder `deleted_at`), precies de index die deze
+> migratie opnieuw opbouwt. De tabel telt 14 rijen; de DROP/CREATE is een kwestie van niets.
+> Nagekeken vóór toepassing, want dit bestand faalt halverwege — ná de geslaagde ALTER — op een
+> database waar die twee kolommen ontbreken.
 
 **Over 11.** Deze mag op elk moment, ook los van de rest, en er zit geen haast bij: de app werkt er
 volledig zonder. De code PROBEERT de kolom (`src/lib/cash-live.ts`) en gedraagt zich zonder hem
