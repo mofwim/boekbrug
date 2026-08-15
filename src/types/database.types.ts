@@ -1518,6 +1518,7 @@ export type Database = {
           amount_paid: number
           archive_reason: string | null
           archived_at: string | null
+          attachment_document_id: string | null
           btw_amount: number | null
           client_address: string | null
           client_btw_number: string | null
@@ -1581,6 +1582,7 @@ export type Database = {
           amount_paid?: number
           archive_reason?: string | null
           archived_at?: string | null
+          attachment_document_id?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
@@ -1643,6 +1645,7 @@ export type Database = {
           amount_paid?: number
           archive_reason?: string | null
           archived_at?: string | null
+          attachment_document_id?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null

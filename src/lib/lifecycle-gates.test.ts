@@ -8961,17 +8961,33 @@ test("[KAS-ZACHT] every reader of the cash book asks only for the movements that
   const PROBE_MARKERS = ['select("settlement_id")', 'select("deleted_at")'];
   const WRAPPERS = ["liveCash.only(", "cash.only(", "live.only(", "liveForDelete.only("];
 
+  // ── Waar het venster WEL en NIET mag kijken ──
+  //
+  // Een wrapper opent VÓÓR `.from(` — `liveCash.only(client.from("cash_entries")…)` — dus daarvoor
+  // moet er achteruit gekeken worden, en met ruimte, want tussen de twee staan lange commentaren.
+  //
+  // Voor een WRITE geldt het omgekeerde, en dat verschil is hier het hele punt. `.insert(` en
+  // `.update(` komen ná `.from(`, in dezelfde keten. Zou een write ook ACHTERUIT mogen tellen, dan
+  // vrijwaart een insert een leesquery die er toevallig vlakbij staat — en juist in dit bestand
+  // staan lezen en schrijven dicht op elkaar: /api/cash doet er allebei binnen enkele regels.
+  // Deze poort zou dan groen blijven op een lezing die verwijderde boekingen meetelt, en dat is
+  // precies de stille fout waar hij tegen is geschreven.
+  //
+  // Gemeten toen dit werd aangescherpt: alle 24 aanroepen vielen al aan de goede kant — 18 door een
+  // wrapper, 5 doordat de aanroep ZELF een write is, 1 probe. Nul die alleen door een buurman werd
+  // vrijgesteld. De aanscherping verandert vandaag dus geen enkel oordeel; ze zorgt dat dat morgen
+  // ook nog zo is in plaats van toevallig.
   const unfiltered: string[] = [];
   for (const f of files) {
     if (EXEMPT_FILES.has(f)) continue;
     const src = readFileSync(f, "utf8");
     for (const m of src.matchAll(/from\((?:"|')cash_entries(?:"|')\)/g)) {
-      // A generous window: the wrapper opens before `.from(` and the write/probe marker follows it,
-      // and real call sites carry long comments between the two.
-      const window = src.slice(Math.max(0, m.index - 700), m.index + 700);
-      if (WRAPPERS.some((w) => window.includes(w))) continue;
-      if (WRITE_MARKERS.some((w) => window.includes(w))) continue;
-      if (PROBE_MARKERS.some((w) => window.includes(w))) continue;
+      const before = src.slice(Math.max(0, m.index - 700), m.index);
+      const statement = src.slice(m.index, m.index + 700);
+      if (WRAPPERS.some((w) => before.includes(w))) continue;
+      // Alleen vooruit: de write moet aan DEZE keten hangen, niet ergens in de buurt staan.
+      if (WRITE_MARKERS.some((w) => statement.includes(w))) continue;
+      if (PROBE_MARKERS.some((w) => statement.includes(w))) continue;
       unfiltered.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
   }
@@ -9115,6 +9131,50 @@ test("[OFFERTE-AKKOORD] an answered quote changes what Vandaag asks for", () => 
   assert.match(regel, /if \(quote\.offerte_response === "declined"\) return null;/);
 });
 
+// ─── [FACTUUR-BIJLAGE] Een eigen bestand met de factuurmail mee ───────────────
+test("[FACTUUR-BIJLAGE] the attachment is resolved BEFORE a number is minted", () => {
+  // Dit is de hele reden dat deze regels bestaan. Een paar regels na het ophalen wordt een nummer
+  // gemunt uit de doorlopende reeks (Art. 35 — onomkeerbaar). Blijkt de bijlage pas dáárna
+  // onleesbaar, dan zijn er twee slechte uitkomsten en geen goede: versturen zonder het bestand
+  // dat de ondernemer er bewust bij zette, of afbreken met een nummer dat al weg is.
+  const send = code("src/app/api/invoice/send/route.ts");
+  const bijlageAt = send.indexOf("const bijlageId =");
+  const nummerAt = send.indexOf("generateInvoiceNumber(supabase");
+  assert.ok(bijlageAt > 0, "the send route must resolve the attachment");
+  assert.ok(nummerAt > 0);
+  assert.ok(bijlageAt < nummerAt,
+    "the attachment must be fetched and judged before a number exists — after it, no outcome is good");
+
+  // En het downloaden zelf ook, niet alleen de keuring.
+  const downloadAt = send.indexOf(".storage.from('documents').download(");
+  assert.ok(downloadAt > 0 && downloadAt < nummerAt, "the bytes must be in hand before the number");
+});
+
+test("[FACTUUR-BIJLAGE] a file that cannot go along stops the send, and says why", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /attachmentRefusal\(/, "the rule decides, not the route");
+  assert.match(send, /attachmentRefusalText\(weigering\)/, "…and the owner reads the reason");
+  // Een leesfout is niet hetzelfde als "de bijlage deugt niet": het eerste is tijdelijk.
+  assert.match(send, /Er is nog niets verstuurd/,
+    "a failed read must say that nothing was issued — the owner may safely retry");
+
+  const regel = code("src/lib/invoice-attachment.ts");
+  // Andermans bestand gaat nooit naar een derde.
+  assert.match(regel, /if \(!doc\.user_id \|\| doc\.user_id !== ownerId\) return "not_owned";/);
+  // En de grens gaat over de mailbox van de KLANT, niet over onze opslag.
+  assert.match(regel, /BASE64_FACTOR/, "base64 makes a file a third bigger in transit");
+  assert.match(regel, /RESERVED_FOR_INVOICE_BYTES/, "…and the invoice PDF has to fit beside it");
+});
+
+test("[FACTUUR-BIJLAGE] the invoice PDF stays the first attachment", () => {
+  // De klant opent de eerste bijlage, en dat hoort het document te zijn waar de mail over gaat.
+  const email = code("src/lib/email.ts");
+  const block = email.slice(email.indexOf("...(pdfBuffer || extraAttachment"));
+  const pdfAt = block.indexOf("filename: `${invoiceNumber}.pdf`");
+  const extraAt = block.indexOf("extraAttachment ? [extraAttachment]");
+  assert.ok(pdfAt > 0 && extraAt > 0 && pdfAt < extraAt, "the legal document comes first");
+});
+
 test("[DEEL-KORTING] a line's own fixed discount scales with the part being credited", () => {
   // Two features landed on main within hours of each other, from different sessions: a discount per
   // invoice LINE, and a creditnota for PART of a line. Neither is wrong on its own. Together, a
@@ -9145,6 +9205,321 @@ test("[DEEL-KORTING] a line's own fixed discount scales with the part being cred
     "a percentage is already pro rata — scaling it twice is the mirror-image defect");
   assert.match(spec, /a FULL credit is unchanged, to the cent/,
     "every creditnota this app has ever made took that path");
+});
+
+// ─── [DEEL-CREDIT] De twee handmatige knoppen die nog ja/nee vroegen ──────────
+//
+// De migratie creditnota_partial.sql maakte een creditnota voor een DEEL van een factuur mogelijk.
+// Zes oppervlakken werden toen omgezet van "is er een creditnota?" naar "hoeveel is er nog open?".
+// Twee bleven staan, en het zijn precies de HANDMATIGE varianten van flows waarvan de automatische
+// broer al was omgezet: de knop "Herinner" naast de automatische herinneringscron, en het
+// betaalverzoek voor één factuur naast dat voor een bundel.
+//
+// Het gevolg was in beide gevallen hetzelfde en het kostte de ondernemer geld: crediteer één
+// betwiste regel van vijf, en de app weigerde vanaf dat moment nog te vorderen voor de andere vier
+// — op een factuur die haar status 'sent' en haar volle totaal houdt, zonder dat enig scherm zei
+// waarom.
+
+test("[DEEL-CREDIT] a reminder stops only when NOTHING is left to claim", () => {
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  // Het oordeel gaat over een BEDRAG. Een enkele rij vinden is geen antwoord meer.
+  assert.match(route, /openAfterCredit\(inv\.total_inc_btw, \(inv as any\)\.amount_paid, gecrediteerd\)/,
+    "the refusal must weigh the amounts, not count the creditnotas");
+  assert.match(route, /if \(gecrediteerd > 0 && nogOpen <= 0\)/,
+    "…and refuse only when the credits (plus payments) cover the whole invoice");
+  assert.doesNotMatch(route, /if \(tegenCreditnota\)/,
+    "the old yes/no refusal must be gone, not merely bypassed");
+
+  // En het bedrag in de mail is diezelfde uitkomst. Het volle totaal noemen op een deels
+  // gecrediteerde factuur vraagt de klant om geld dat hij zwart-op-wit heeft teruggekregen.
+  assert.match(route, /openstaand: nogOpen,/,
+    "the reminder must name what is still owed, never the full total");
+  assert.doesNotMatch(route, /openstaand: outstandingAmount\(/,
+    "outstandingAmount knows nothing about creditnotas");
+});
+
+test("[DEEL-CREDIT] a payment link is refused only for a fully credited invoice", () => {
+  const route = code("src/app/api/invoice/[id]/betaalverzoek/route.ts");
+  // De betaalpagina zelf is al deelcredit-bewust en int de rest. Deze route weigerde de link te
+  // munten die diezelfde pagina klaarstond te bedienen.
+  assert.match(route, /fullyCreditedIdsFrom\(creditRowList, \[invoice as \{ id: string; total_inc_btw\?: number \| null \}\]\)\.has\(id\)/,
+    "only a FULLY credited invoice may be refused a payment link");
+  assert.doesNotMatch(route, /if \(\(creditRows \?\? \[\]\)\.length > 0\)/,
+    "the old count-based refusal must be gone");
+
+  // …en het bedrag op de QR is de rest, niet het volle totaal. Anders toont de betaalpagina achter
+  // de link een ander bedrag dan de modal waaruit hij gekopieerd werd.
+  assert.match(route, /credited_inc_btw: gecrediteerd/,
+    "the reduction must reach buildBetaalverzoek, which subtracts it in openAmount");
+
+  // De leesfout blijft een APARTE uitkomst: "we konden niet nakijken" is niet "er is een creditnota".
+  assert.match(route, /We konden niet nakijken of er een creditnota/,
+    "a failed check must still fail closed, and say so in its own words");
+});
+
+// ─── [FACTUUR-BIJLAGE] De bijlage die op de factuur stond en nergens te zien was ───
+//
+// De kolom werd geschreven en nergens teruggelezen. De verstuurroute viel altijd terug op wat er
+// op de factuur stond, dus het bestand ging gewoon mee — alleen zag de ondernemer daar niets van,
+// en kon hij het er niet af halen. Belandde dat bestand later in de prullenbak, dan weigerde élke
+// nieuwe verzending met "kies een ander bestand", op een scherm zonder enige manier om dat te doen.
+// De factuur was daarmee niet meer te versturen.
+
+test("[FACTUUR-BIJLAGE] the send route knows THREE states, not two", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  // Sleutel afwezig = zwijgen = neem wat er op de factuur staat. Alleen zo kunnen de cron, het
+  // bewerkscherm en elke andere aanroeper die van bijlagen niets weet er niets aan veranderen.
+  assert.match(send, /const bijlageMeegestuurd = !!body && typeof body === 'object' && 'attachment_document_id' in body/,
+    "the KEY's presence decides, not its value");
+  assert.match(send, /const bijlageId = bijlageMeegestuurd\s*\n\s*\? gevraagdeBijlage\s*\n\s*: \(\(invoice as/,
+    "an explicit null must mean NO attachment, not 'fall back to the stored one'");
+  // …en dat wist ook de kolom, anders geldt "Weghalen" voor één mail en nergens anders.
+  assert.match(send, /\.\.\.\(bijlageMeegestuurd && 'attachment_document_id' in invoice\s*\n\s*\? \{ attachment_document_id: gevraagdeBijlage \}/,
+    "removing an attachment must clear the column, or the next send re-attaches it");
+});
+
+test("[FACTUUR-BIJLAGE] a resend can change the attachment, and remembers it", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  // Het is juist bij OPNIEUW versturen dat een bijlage wisselt of vervalt, en dat pad slaat de
+  // gewone commit-update over (die zet nummer en status vast — bij een resend is er niets vast te
+  // zetten). Dus staat de bijlagekolom daar apart, en alleen die.
+  assert.match(send, /if \(resend && bijlageMeegestuurd && 'attachment_document_id' in invoice\)/,
+    "a resend must be able to persist a changed attachment");
+  assert.match(send, /bijlagekeuze niet vastgelegd bij opnieuw versturen/,
+    "…and a failure to remember must not stop the mail that is already assembled");
+});
+
+test("[FACTUUR-BIJLAGE] the screen reads the attachment back, and stays silent when it cannot", () => {
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(scherm, /const bijlageId = \(invoiceData as \{ attachment_document_id\?: string \| null \}\)\.attachment_document_id/,
+    "the invoice's own attachment must be read back — a column written and never read is a lie on screen");
+  // De prullenbak-stand wordt NIET weggefilterd: dat is juist het geval waarin de ondernemer moet
+  // ingrijpen, en het scherm zegt wat eraan te doen is.
+  assert.match(scherm, /\.select\('id, file_name, file_size, trashed'\)/,
+    "a trashed attachment must be visible, because that is the one that blocks sending");
+  assert.match(scherm, /t\('bijlage\.inPrullenbak'\)/);
+
+  // En bij twijfel zwijgt het scherm. Zou het `null` sturen wanneer het de documentrij niet kón
+  // lezen, dan wist een verkoopmedewerker — die de bestanden van zijn werkgever via RLS niet mag
+  // zien — de bijlage van zijn baas door alleen maar op Versturen te drukken.
+  const stuurt = scherm.match(/\.\.\.\(bijlageBekend \? \{ attachment_document_id: bijlage\?\.id \?\? null \} : \{\}\)/g) ?? [];
+  assert.equal(stuurt.length, 2,
+    "both send paths (first send and resend) must speak only when the screen knows the truth");
+});
+
+// ─── [SHEET-NIET-OPSLAAN] The app sent the owner to the right door, then locked it ───────────────
+
+test("[SHEET-NIET-OPSLAAN] a spreadsheet on the bank endpoint claims no content_hash", () => {
+  // RECONCILIATION_TRIANGLE.md carried this as "latent": a spreadsheet dropped on the bank importer
+  // was still stored with doc_type "bankafschrift" and a content_hash.
+  //
+  // Mis-filing was the visible half. The half that costs a day's turnover is the hash: importBankStatement
+  // already DETECTS the spreadsheet and warns, by name, "importeer het via Dagomzet". The owner follows
+  // that advice, uploads the same bytes there, and byte-hash dedup rejects them as already seen. We
+  // point at the right door and lock it on the way. Nothing errors; the day's turnover just never arrives.
+  //
+  // A source gate, not a unit test, because importBankStatement is 440 lines of I/O over the Supabase
+  // pipeline — there is no pure seam to assert against. What it pins is the ONE structural fact that
+  // makes the bug impossible: the passthrough insert is not reachable while nonBankSpreadsheet is true.
+  const mod = code("src/lib/bank-ingest.ts");
+
+  // The guard exists and is the first branch of the passthrough store.
+  assert.match(mod, /if \(nonBankSpreadsheet\) \{\s*statementStored = false;\s*\} else if \(priorDocId\)/,
+    "the spreadsheet branch must short-circuit the passthrough store before priorDocId/insert");
+
+  // The insert that carries doc_type + content_hash + shared must sit in the else-branch, i.e. AFTER
+  // that guard. If a later edit moves it above, this fails while the branch above still reads fine.
+  const guardAt = mod.indexOf("if (nonBankSpreadsheet)");
+  const insertAt = mod.indexOf('doc_type: "bankafschrift"');
+  assert.ok(guardAt > 0 && insertAt > 0, "both the guard and the bankafschrift insert must exist");
+  assert.ok(guardAt < insertAt,
+    "the nonBankSpreadsheet guard must come BEFORE the bankafschrift insert, or the hash is claimed anyway");
+
+  // The detection that feeds the guard must still be wired — a guard on a flag nobody sets is not a guard.
+  assert.match(mod, /nonBankSpreadsheet = true/,
+    "looksLikeSpreadsheetBinary must still set the flag the guard reads");
+});
+
+// ─── [ANON-RPC] De guard die aannam dat "geen uid" hetzelfde is als "de server" ───
+//
+// Een reeks SECURITY DEFINER-functies bewaakt zichzelf met
+//
+//     IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN RAISE …
+//
+// waarvan de eigen toelichting zegt: met de sessieclient is auth.uid() de aanroeper, met
+// service_role is hij NULL. Dat tweede klopt — en `anon` is óók NULL. Anon is niet "niemand" maar
+// de rol achter de publieke sleutel die in elke browserbundel meegaat, en PostgREST zet elke
+// functie in het public-schema op /rest/v1/rpc/. Gemeten op de productiedatabase:
+//
+//     SET LOCAL ROLE anon; SELECT auth.uid() IS NULL   →  true
+//     has_function_privilege('anon', …, 'EXECUTE')     →  true
+//
+// Het zwaarste geval is niet het grootste bedrag maar het onomkeerbare: seed_invoice_counter is
+// alleen-vooruit (GREATEST), dus verlagen kan niet — maar wie de teller van een vreemde op
+// 999999999 zet, heeft diens Art. 35-nummerreeks permanent stuk, en daar bestaat geen herstel voor.
+
+test("[ANON-RPC] every state-changing RPC is revoked from anon", () => {
+  const sql = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+  for (const fn of [
+    "seed_invoice_counter", "next_invoice_seq", "apply_manual_payment", "apply_bank_payment",
+    "allocate_bank_payment", "confirm_bank_payment", "book_bank_batch", "move_invoice_payment",
+    "recompute_invoice_amount_paid", "fair_use_consume", "fair_use_release",
+    "handle_new_user", "assert_credit_within_original",
+  ]) {
+    assert.ok(sql.includes(`'${fn}'`), `${fn} must be in the revoke list`);
+  }
+  assert.match(sql, /REVOKE ALL ON FUNCTION %s FROM anon/);
+  // REVOKE … FROM PUBLIC haalt ook impliciete rechten weg, dus de server moet expliciet terug —
+  // anders zet deze migratie de app zelf buiten de deur.
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION %s TO service_role/,
+    "the pipeline uses every one of these; without this grant the app locks itself out");
+  // Op handtekening, niet op naam: een overladen functie laat anders één variant openstaan.
+  assert.match(sql, /pg_get_function_identity_arguments/,
+    "an overloaded function needs every signature revoked, not just the first");
+});
+
+test("[ANON-RPC] the server-only RPCs really are server-only", () => {
+  // De tweede lijst in de migratie trekt óók `authenticated` in. Dat mag alleen als geen enkel
+  // scherm ze via de sessieclient aanroept — anders zet deze migratie een knop stil. Deze poort
+  // is de reden dat de lijst later niet stilletjes fout kan worden: voegt iemand een aanroep met
+  // de sessieclient toe, dan faalt hij hier en niet bij een gebruiker.
+  const SERVER_ONLY = [
+    "seed_invoice_counter", "recompute_invoice_amount_paid",
+    "fair_use_consume", "fair_use_release", "confirm_bank_payment",
+  ];
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !p.endsWith(".test.ts")) out.push(p);
+    }
+    return out;
+  };
+  const bronnen = walk("src");
+  for (const fn of SERVER_ONLY) {
+    for (const file of bronnen) {
+      const src = readFileSync(file, "utf8");
+      for (const regel of src.split("\n")) {
+        if (!regel.includes(`rpc("${fn}"`) && !regel.includes(`rpc('${fn}'`)) continue;
+        assert.match(regel, /(pipeline|insertPipeline|pipelineForConfirm)\s*(as any\s*)?\)?\.rpc/,
+          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client (${file})`);
+      }
+    }
+  }
+});
+
+// ─── [ZOEKPAD] Een vast zoekpad op de negen eigen functies ────────────────────
+//
+// Hygiëne, geen gat, en dat verschil staat er met opzet bij: een migratie die zich voordoet als
+// noodreparatie maakt de volgende noodreparatie ongeloofwaardig. Op de productiedatabase gemeten
+// staat geen van de negen op SECURITY DEFINER, en heeft anon noch authenticated CREATE op enig
+// schema — twee onafhankelijke redenen waarom er vandaag niets te kapen valt.
+//
+// Het wordt toch vastgezet omdat die twee redenen OMSTANDIGHEDEN zijn, geen afspraken. Wie morgen
+// één van deze bewakers SECURITY DEFINER maakt — een volstrekt normale wijziging — erft anders
+// stilzwijgend een echte kwetsbaarheid, en niets zou daarop wijzen.
+
+test("[ZOEKPAD] every own function is pinned, and pg_temp comes last", () => {
+  const sql = readFileSync("supabase/migrations/function_search_path.sql", "utf8");
+  for (const fn of [
+    // De vier bewakers eerst — die hebben het meest te verliezen.
+    "prevent_billing_self_grant", "prevent_accountant_amount_changes",
+    "prevent_verwerkt_invoice_changes", "guard_paid_when_verwerkt",
+    "invoices_search_vector_update", "documents_search_vector_update",
+    "set_updated_at", "touch_updated_at", "get_accountant_for_zzper",
+  ]) {
+    assert.ok(sql.includes(`'${fn}'`), `${fn} must get a pinned search_path`);
+  }
+  // pg_temp ACHTERAAN. Laat je het weg, dan zet Postgres het impliciet vooraan, en dan is het
+  // tijdelijke schema van de aanroeper juist wél weer een plek om een naam te kapen — precies wat
+  // deze migratie afsluit. Een half toegepast idee is hier erger dan geen idee.
+  assert.match(sql, /SET search_path = public, pg_catalog, pg_temp/,
+    "pg_temp must be named explicitly and LAST, or the fix reopens what it closes");
+  assert.ok(!/search_path = pg_temp/.test(sql), "pg_temp must never come first");
+  // `public` moet erin, want get_accountant_for_zzper noemt accountant_clients zonder schema.
+  assert.match(sql, /accountant_clients/,
+    "the one unqualified table reference is why the path cannot be empty — say so");
+  // En de migratie moet zeggen dat dit GEEN gat was. Zie de kop hierboven.
+  assert.match(sql, /HYGIËNE, geen gat/,
+    "a migration that poses as an emergency spends credibility the next emergency needs");
+});
+
+test("[FACTUUR-BIJLAGE] a copied invoice does not inherit the attachment", () => {
+  // Twee routes maken een nieuwe factuur uit een bestaande. Zou de bijlage meereizen, dan krijgt de
+  // klant bij élke maandelijkse factuur de werkbon van de eerste maand, en bij elk duplicaat een
+  // document dat over ander werk gaat — een verkeerd document bij een derde, zonder dat er iets
+  // misgaat waar iemand op kan wijzen.
+  //
+  // Allebei de routes bouwen hun rij uit een EXPLICIETE kolommenlijst, dus vandaag klopt het
+  // vanzelf. Deze poort maakt van dat toeval een afspraak: wie de kolom later toevoegt — een
+  // volstrekt plausibele "verbetering" — krijgt hier rood in plaats van een verstuurde mail.
+  for (const f of [
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+  ]) {
+    assert.ok(
+      !code(f).includes("attachment_document_id"),
+      `${f} must not carry the attachment into a copy — an attachment is evidence about ONE job`,
+    );
+  }
+  // En de reden staat op de plek waar iemand hem zoekt, niet alleen hier. readFileSync en niet
+  // code(): de uitleg IS commentaar, en code() is precies de helper die commentaar weghaalt.
+  assert.match(readFileSync("src/lib/invoice-attachment.ts", "utf8"), /EEN KOPIE KRIJGT DE BIJLAGE NIET MEE/,
+    "the decision must be written where the feature is explained, or it reads as an omission");
+});
+
+// ─── [MIGRATIE-JOURNAAL] De inventarisvraag mag niet achterlopen op de map ────
+//
+// docs/WELKE_MIGRATIES_STAAN_ER.sql beantwoordt "wat staat er ÉCHT in de database?". De vorige
+// versie stelde die vraag met een lijst die iemand met de hand bijhield, en schreef zelf op wat
+// daar mis mee is:
+//
+//     "Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de hand in. Een migratie
+//      die er niet in staat, kan dit bestand ook niet 'OPEN' noemen."
+//
+// Dat ging twee keer mis. Eén keer dekte de lijst 17 van de 71 migraties en gaf een schoon "alles
+// toegepast" terug — met de vier waar de hele betaalkant op leunt er niet in. Bij de laatste
+// telling dekte hij er 28 van de 104.
+//
+// Het bestand wordt nu GEGENEREERD uit supabase/migrations/. Deze poort is wat die generatie waard
+// maakt: hij faalt zodra de map en het bestand uit elkaar lopen. Een nieuwe migratie zonder
+// regenereren is dan een rode poort in plaats van een lijst die stilletjes te weinig vraagt.
+
+test("[MIGRATIE-JOURNAAL] the inventory query covers every migration on disk", () => {
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const opSchijf = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
+
+  // Elke migratie komt óf als probe voor, óf staat expliciet bij "niet vast te stellen". Zwijgen
+  // is de enige uitkomst die niet mag: dat is precies hoe de vorige versie te weinig vroeg.
+  const ontbreekt = opSchijf.filter((f) => !sql.includes(f));
+  assert.deepEqual(ontbreekt, [],
+    "these migrations are on disk but absent from the inventory — regenerate with\n" +
+    "  npx tsx scripts/migration-inventory.ts > docs/WELKE_MIGRATIES_STAAN_ER.sql\n  " +
+    ontbreekt.join("\n  "));
+
+  // …en andersom: een regel over een migratie die niet meer bestaat, vraagt naar niets.
+  for (const m of sql.matchAll(/^ {2}\('([^']+\.sql)'/gm)) {
+    assert.ok(opSchijf.includes(m[1]), `${m[1]} is probed but no longer exists in supabase/migrations/`);
+  }
+
+  // Met de hand bijwerken is de fout die dit alles veroorzaakte, dus dat moet er ook op staan.
+  assert.match(sql, /automatisch gegenereerd, NIET met de hand bijwerken/);
+  assert.match(sql, /scripts\/migration-inventory\.ts/, "the file must name the script that makes it");
+});
+
+test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guessed at", () => {
+  // Een migratie die alleen intrekt (rpc_anon_revoke), alleen wijzigt (function_search_path) of
+  // alleen data verplaatst (supplier_backfill) heeft geen object waarvan het BESTAAN iets bewijst.
+  // Daar een vingerafdruk voor verzinnen zou een verkeerd antwoord geven in plaats van geen — en
+  // een lijst die zwijgt over wat ze niet weet is de lijst waar dit bestand tegen is geschreven.
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const blok = sql.slice(sql.indexOf("NIET VAST TE STELLEN"));
+  for (const f of ["rpc_anon_revoke.sql", "function_search_path.sql", "supplier_backfill.sql"]) {
+    assert.ok(blok.includes(f), `${f} creates nothing and must be listed as undeterminable`);
+    // …en dus NIET als probe, want dan zou hij voor eeuwig 'OPEN' heten.
+    assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
+  }
 });
 
 test("[FOCUS-NAZICHT] a deep-linked row is checked after it lands, not only aimed", () => {

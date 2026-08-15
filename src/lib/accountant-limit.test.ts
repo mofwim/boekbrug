@@ -15,6 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { ACCOUNTANT_PRICING_ACTIVE } from "./accountant-pricing";
 import { ACCOUNTANT_FREE_CLIENTS } from "./fair-use";
 import voorwaarden from "../content/legal/algemene-voorwaarden";
 import eerlijkGebruik from "../content/legal/eerlijk-gebruik";
@@ -40,12 +41,21 @@ test("the old unconditional promise is gone from both texts", () => {
   }
 });
 
-test("no rate is published while none is set", () => {
-  // §5.8.1 is the whole reason a number can be published without a price: the limit binds us,
-  // the rate follows §5.6's route. If a euro amount ever appears next to the portal, it must be
-  // a deliberate act with 30 days' notice — not something that slipped in.
-  assert.match(voorwaarden, /Het tarief is nog niet vastgesteld/);
+test("a published rate is always labelled as not yet charging", () => {
+  // This test used to assert that NO rate was published at all. In August 2026 a prepared band
+  // table was published on purpose (docs/PRICING_DECISION_2026-08.md), so the guard moved rather
+  // than disappeared — its point was never "no numbers", it was "no number that slipped in".
+  //
+  // The invariant now: while the price is not active, the euro amounts on the page must be
+  // accompanied by the words that say they do not charge yet, and by the 30-day notice route. A
+  // rewrite that drops the label while leaving the table is exactly the silent activation this
+  // has always been here to prevent — it would leave an office reading a live-looking price that
+  // nobody agreed to.
   assert.match(voorwaarden, /minstens \*\*30 dagen vooraf\*\*/);
+  if (!ACCOUNTANT_PRICING_ACTIVE) {
+    assert.match(voorwaarden, /Deze staffel is voorbereid, niet actief/);
+    assert.match(voorwaarden, /is het portaal in zijn geheel kosteloos, ook boven de 10/);
+  }
 });
 
 test("exceeding the limit never touches existing clients", () => {

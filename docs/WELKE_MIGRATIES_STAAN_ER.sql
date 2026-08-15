@@ -1,290 +1,417 @@
 -- =====================================================================
 -- WELKE MIGRATIES STAAN ER ÉCHT? — één query, het echte antwoord.
--- BoekBrug · juli 2026
+-- BoekBrug · automatisch gegenereerd, NIET met de hand bijwerken.
 -- =====================================================================
--- WAAROM DIT BESTAAT
 --
--- docs/MIGRATIES_VOLGORDE.md was een handmatig bijgehouden lijst van "wat staat er nog open".
--- Zo'n lijst is per definitie een BEWERING over een database die niemand meer had bekeken, en hij
--- loopt achter zodra iemand een migratie draait zonder de markdown bij te werken — of zodra een
--- tweede tak er een migratie bij zet. Een lijst die het mis heeft over de veiligheid van je
--- boekhouding is erger dan geen lijst.
+-- GEGENEREERD DOOR: scripts/migration-inventory.ts
+--   npx tsx scripts/migration-inventory.ts > docs/WELKE_MIGRATIES_STAAN_ER.sql
 --
--- Dit bestand vraagt het gewoon aan de database. Draai het in de Supabase SQL-editor (het leest
--- alleen de catalogus, dus het werkt als service_role en verandert niets).
+-- Handmatige wijzigingen gaan bij de eerstvolgende run verloren, en een poort in
+-- lifecycle-gates.test.ts faalt zodra dit bestand niet meer overeenkomt met de map.
 --
--- TOEGEPAST = het object dat de migratie aanmaakt, bestaat. Dat is geen bewijs dat de migratie
--- FOUTLOOS liep — daarvoor is het CONTROLE-blok onderaan het migratiebestand zelf — maar het is
--- wel het verschil tussen "ik denk het" en "ik zie het".
+-- ── WAAROM GEGENEREERD ──
 --
--- DE GRENS VAN DIT BESTAND, EERLIJK GEZEGD
--- Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de hand in. Een migratie die
--- via een andere tak in main belandt, staat dus niet vanzelf in de lijst hieronder — en een
--- migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen. Dat is precies wat er
--- met #23 gebeurde, en in augustus 2026 opnieuw: de lijst gaf een schoon "alles toegepast" terug
--- terwijl hij over 17 van de 71 migraties op schijf ging, en de vier waar de hele betaalkant op
--- leunt — apply_bank_payment, bank_tx_invoices, daily_turnover, btw_filings — er niet eens in
--- stonden. Ze staan er nu in (#27 t/m #30). Vier van de 71 erbij is geen volledigheid: een schone
--- tabel hieronder betekent "de gestelde vragen zijn beantwoord", nooit "de database is compleet".
+-- De vorige versie stelde de goede vraag met een lijst die iemand met de hand bijhield, en
+-- zei daar zelf over: "Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de
+-- hand in. Een migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen." Dat is
+-- twee keer misgegaan — één keer dekte de lijst 17 van 71 migraties en gaf een schoon "alles
+-- toegepast" terug, met de vier waar de betaalkant op leunt er niet in.
 --
--- Voeg daarom een regel toe zodra je een migratie schrijft waar code op leunt, en zeker als die
--- code fail-soft is: juist dán zwijgt de app als de tabel ontbreekt.
--- Tegen elkaar leggen: `ls supabase/migrations/` naast de lijst hieronder.
+-- Nu wordt de vraag AFGELEID uit supabase/migrations/, en kan hij niet achterlopen op de map.
+--
+-- ── WAT DE UITKOMST BETEKENT ──
+--
+--   TOEGEPAST     elk object dat deze migratie aanmaakt, bestaat.
+--   GEDEELTELIJK  sommige wel, sommige niet. Dit is het gevaarlijke geval: de migratie is
+--                 halverwege gestopt. Lees het CONTROLE-blok onderaan dát migratiebestand.
+--   OPEN          geen enkel object bestaat.
+--
+-- "TOEGEPAST" bewijst dat de migratie GEDRAAID heeft, niet dat ze FOUTLOOS liep. Daarvoor is
+-- het CONTROLE-blok onderaan het migratiebestand zelf.
+--
+-- Leest alleen de catalogus. Verandert niets. Draai hem als service_role in de SQL-editor.
 -- =====================================================================
 
-with verwacht(nr, bestand, waarom, soort, object) as (values
-  -- ── De grens tussen eigenaar en boekhouder ──────────────────────────────────────────────
-  (11, 'accountant_write_holes.sql',
-       'Twee schrijfgaten in de boekhoudersgrens + de vier ontbrekende invoices-indexen',
-       'policy', 'acc_status_owner_write'),
-  (12, 'invoice_lines_accountant_gate.sql',
-       'De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset',
-       'policy', 'invoice_lines_select_accountant'),
-
-  -- ── Geld dat binnenkomt, en de bewaarplicht ─────────────────────────────────────────────
-  (5,  'account_purpose_archief.sql',
-       'profiles.account_purpose + de handle_new_user() die hem leest. Vier plekken in de aanmelding lezen deze kolom FAIL-SOFT, dus zonder de migratie zwijgt de app: wie via /bewaarplicht komt om zijn gestopte zaak weg te zetten, loopt gewoon de wizard over facturen versturen in. Staat de kolom er wél maar draaide de trigger-helft niet, dan gebeurt hetzelfde bij registratie mét e-mailbevestiging — controleer dat apart met de query onderaan dit bestand',
-       'column', 'profiles.account_purpose'),
-  (10, 'kluis_subscriptions.sql',
-       'Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast',
-       'table', 'kluis_subscriptions'),
-
-  -- ── De inkoop-poorten ───────────────────────────────────────────────────────────────────
-  (13, 'invoice_archive_reason.sql',
-       'Het Genegeerd-tabblad kan de reden pas tonen als archive_reason bestaat (code valt nu terug op archiveren zonder notitie)',
-       'column', 'invoices.archive_reason'),
-  (14, 'email_sender_rules.sql',
-       'De tabel voor "altijd negeren van deze afzender" — zonder deze migratie doet die knop niets',
-       'table', 'email_sender_rules'),
-
-  -- ── SnelStart: het slot vóór de onomkeerbare boeking ────────────────────────────────────
-  (15, 'snelstart_claim_before_push.sql',
-       'Het idempotentie-slot moest VÓÓR de POST kunnen sluiten; zonder dit kan een tweede tabblad dezelfde factuur dubbel boeken',
-       'index', 'snelstart_exports_user_invoice_claim_uidx'),
-
-  -- ── Uit andere takken bij gekomen ───────────────────────────────────────────────────────
-  (16, 'cash_settlement_per_instalment.sql',
-       'Kasboek-regels per termijn (cash_entries.settlement_id). Code probeert de kolom eerst en valt zonder terug op één regel per factuur',
-       'column', 'cash_entries.settlement_id'),
-  (17, 'invoice_schedules.sql',
-       'Terugkerende facturen',
-       'table', 'invoice_schedules'),
-  (18, 'search_engine_clients_kvk_city.sql',
-       'Zoeken op KVK-nummer en plaats van een klant',
-       'index', 'clients_kvk_number_trgm'),
-
-  -- ── De bestandsbeveiliging ──────────────────────────────────────────────────────────────
-  -- Deze twee stonden er eerder NIET in, en dat was een gat in precies het verkeerde ding: de
-  -- vraag "is de bescherming van mijn bestanden live?" kon dit bestand niet beantwoorden. De
-  -- policy-tak hieronder keek namelijk hard naar schemaname='public', terwijl storage-policies
-  -- in schemaname='storage' wonen — het gereedschap was blind voor de bucket, per constructie.
-  (19, 'documents_shared_and_storage_policies.sql',
-       'De policies op storage.objects — zonder deze kan iedere ingelogde gebruiker bij andermans bestanden',
-       'storage_policy', 'documents_read'),
-  (20, 'storage_bucket_hardening.sql',
-       'Legt vast dat de documents-bucket privé is (stond alleen als vinkje in een dashboard)',
-       'bucket_private', 'documents'),
-
-  -- ── De ontdubbeling van documenten ──────────────────────────────────────────────────────
-  -- LET OP bij deze: als hij "toegepast" is, kan dat de OUDE versie zijn geweest, met een te
-  -- ruime DELETE. Zie het PRE-CHECK-blok in het migratiebestand zelf, en vooral de sluitende
-  -- test op cash_entries die daar staat.
-  (21, 'documents_content_hash_unique.sql',
-       'Race-veilige ontdubbeling op bytehash — LEES het bestand voordat je hem (opnieuw) draait',
-       'index', 'uq_documents_user_content_hash'),
-
-  -- ── Zicht op de machine ─────────────────────────────────────────────────────────────────
-  (22, 'cron_runs.sql',
-       'Legt vast DAT een cron draaide. Zonder deze tabel is niet te zien of de zes crons leven — en /api/health kan het dan ook niet zeggen',
-       'table', 'cron_runs'),
-
-  -- ── Het ontbrekende bankafschrift ───────────────────────────────────────────────────────
-  -- Deze stond hier NIET in, en dat was de blinde vlek waar dit bestand nu juist tegen moest
-  -- beschermen: hij kwam via een andere tak (#201) mee in main nadat de lijst hierboven al was
-  -- geschreven. Beide lezers (bank-ingest.ts en /api/readiness) zijn keurig fail-soft — bestaat
-  -- de tabel niet, dan vervalt de controle ZONDER foutmelding. Precies daarom hoort hij hier:
-  -- anders is "merkt de app dat er een maand bankgeschiedenis ontbreekt?" een vraag die niemand
-  -- kan beantwoorden, ook niet door goed te kijken.
-  (23, 'bank_statement_periods.sql',
-       'Onthoudt welke PERIODE elk bankafschrift beslaat. Zonder deze tabel wordt een ontbrekende maand nooit opgemerkt: januari en maart kloppen allebei intern, en februari mist stil',
-       'table', 'bank_statement_periods'),
-
-  -- ── De verkoopmedewerker ────────────────────────────────────────────────────────────────
-  -- Zonder deze migratie bestaat de ROL niet — uitnodigen mislukt en /dashboard/verkoop is
-  -- onbereikbaar — maar voor de eigenaar verandert er niets: facturen maken, bewerken,
-  -- versturen, dupliceren en crediteren werken gewoon door.
-  --
-  -- Dat laatste was even NIET zo, en het is de scherpste les van deze migratie: de code die
-  -- created_by schrijft stond op main met een `as any` erbij, omdat de gegenereerde types de
-  -- kolom nog niet kennen. Die cast zwijgt de typecontrole, niet de database — PostgREST
-  -- antwoordde met PGRST204 en het hele verzoek faalde, dus kon er op een niet-gemigreerde
-  -- installatie GEEN FACTUUR MEER WORDEN AANGEMAAKT. tsc schoon, tests groen, build compleet;
-  -- geen van drieën kijkt naar een echte database. Nu valt elke schrijfactie terug op "zonder
-  -- spoor" (src/lib/created-by.ts) en bewaakt acting-for-gates.test.ts dat dat zo blijft.
-  (24, 'company_members_sales_role.sql',
-       'De ene extra rol: een medewerker die facturen maakt NAMENS de eigenaar. Eén nummerreeks per bedrijf (Art. 35), en created_by als leesgrens — hij ziet alleen wat hij zelf maakte',
-       'table', 'company_members'),
-
-  -- ── De eenheid op een factuurregel ──────────────────────────────────────────────────────
-  -- Zonder deze kolom werkt alles gewoon door: een regel zonder eenheid komt in de e-factuur
-  -- neer op C62 (stuk), precies zoals het jarenlang was. Wat je zonder hem mist is de JUISTE
-  -- code op nieuwe facturen — "2 uur" gaat dan nog steeds de deur uit als "2 stuks", en dat is
-  -- wat Peppol BIS Billing 3.0 met UN/ECE Rec 20 nu juist wil voorkomen.
-  (25, 'invoice_line_unit.sql',
-       'De eenheid van een factuurregel (uur, m², km). De catalogus had hem al; op de factuur viel hij eraf — dus stond er op de PDF "2" waar "2 uur" hoort, en in de e-factuur "2 stuks"',
-       'column', 'invoice_lines.unit'),
-
-  -- ── Vrijgestelde omzet en het aftrekrecht ───────────────────────────────────────────────
-  -- Precies het geval waar de kop van dit bestand voor waarschuwt: ELKE lezing van deze vier
-  -- kolommen is fail-soft (een ontbrekende kolom degradeert naar "niet vrijgesteld", de select
-  -- in btw-rate-split-fetch.ts vraagt vat_treatment niet eens op). Dus zonder deze regel zwijgt
-  -- de app volledig: de tandarts zet het vinkje in Instellingen, het slaat niet op, en zijn
-  -- aangifte trekt gewoon alle voorbelasting af alsof er niets is verklaard.
-  --
-  -- Gecontroleerd op de kolom die de HELE keten aanzet. Staat die er, maar mist een van de
-  -- andere drie, dan faalt het opslaan van een factuurregel zichtbaar — niet stil.
-  -- ── De geldmotor zelf ───────────────────────────────────────────────────────────────────
-  -- Deze vier stonden er niet in, en dat is precies het gat dat dit bestand over zichzelf
-  -- toegeeft: "een migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen".
-  -- Het antwoord "alles toegepast" ging dus over 17 van de 71 migraties op schijf, terwijl de
-  -- vier waar de betaalkant écht op leunt niet eens werden gevraagd.
-  (27, 'invoice_partial_payments.sql',
-       'apply_bank_payment() en recompute_invoice_amount_paid(): de deelbetaling zelf. Zonder deze functies kan één bankregel niet over meerdere facturen worden verdeeld — de tweede factuur blijft openstaan terwijl haar geld al weg is. Gecontroleerd op de FUNCTIE, niet op een kolom: de kolommen zetten de bak neer, de functie IS de regel (rijslot, clamp op het openstaande bedrag, weigering om een betaalde factuur nog eens te betalen)',
-       'function', 'apply_bank_payment'),
-  (28, 'bank_tx_invoices.sql',
-       'De koppeltabel tussen een bankregel en de facturen die hij betaalt, met amount_applied per koppeling. Dit is waar amount_paid uit wordt herleid; zonder deze tabel is er geen enkele plek die weet welk deel van een betaling waar naartoe ging',
-       'table', 'bank_tx_invoices'),
-  (29, 'daily_turnover.sql',
-       'De kassa-omzet per dag. Deze tabel is BTW-bepalend: /api/aangifte leest btw_9 en btw_21 er rechtstreeks uit naar rubriek 1a/1b als verschuldigde belasting',
-       'table', 'daily_turnover'),
-  (30, 'btw_filings.sql',
-       'Welke kwartalen zijn INGEDIEND. Zonder deze tabel kan de app het verschil niet zien tussen een correctie en een correctie op een al ingediende aangifte — de schermen degraderen netjes (ze zeggen dat ze het niet konden nagaan), maar de vraag blijft onbeantwoord',
-       'table', 'btw_filings'),
-
-  (26, 'vat_exemption.sql',
-       'Vrijgestelde omzet (art. 11 Wet OB) bestond niet in de data, alleen in de commentaren. Zonder deze migratie belandt zorg-/onderwijsomzet als "0%" in rubriek 1e én wordt de voorbelasting op ALLE inkoop voor 100% teruggevraagd, terwijl bij vrijstelling geen aftrekrecht bestaat — op één kwartaal gewone kosten duizenden euro''s die worden nageheven',
-       'column', 'profiles.vat_exempt_activity'),
-
-  -- ── De bankkoppeling (PSD2, Enable Banking) ─────────────────────────────────────────────
-  (31, 'bank_connections.sql',
-       'De twee tabellen achter de bankkoppeling. Zonder deze migratie verbergt de kaart zichzelf en antwoorden de routes 503 — zichtbaar, dus niet gevaarlijk. Let op de tweede helft: bank_connection_accounts moet identification_hash hebben, want dáárop staat de unieke sleutel. Keyed op de uid maakte een herkoppeling na het verlopen van de consent een TWEEDE rij voor dezelfde rekening',
-       'table', 'bank_connection_accounts'),
-  (32, 'bank_tx_source_identity.sql',
-       'DE FAIL-SOFT REGEL WAAR DIT BESTAND VOOR BESTAAT. bank_transactions.source + external_id, met een UNIQUE erop: de exacte laag van de ontdubbeling. De import vangt 42703 (kolommen ontbreken) en 42P10 (index ontbreekt) op en draait dan verder op alleen de vingerafdruk — geen foutmelding, geen logregel, alleen een beveiliging die er niet is. Precies het geval waarin de app zwijgt: draait deze migratie niet, dan importeert een afschrift dat na een parserwijziging opnieuw wordt geüpload zijn regels een TWEEDE keer',
-       'index', 'uniq_bank_tx_source_identity'),
-  (33, 'bank_connections_updated_at.sql',
-       'BEFORE UPDATE-trigger op beide banktabellen. Vandaag zet de applicatie updated_at bij elke schrijfactie zelf, dus er is niets stuk; dit is de vangnet-helft voor de zevende schrijver die dat vergeet (een routepatch, een reparatiescript, een psql-sessie tijdens een storing). Kost geen geld als hij ontbreekt — kost het antwoord op "wanneer wijzigde deze consent voor het laatst"',
-       'function', 'set_updated_at'),
-
-  -- ── Automatische incasso ────────────────────────────────────────────────────────────────
-  (34, 'auto_incasso.sql',
-       'Welke leveranciers zelf afschrijven (huur, energie, verzekering). Ontbreekt hij, dan is de functie eerlijk UIT: elke lezer behandelt de ontbrekende kolom als "niemand staat op incasso" en de route antwoordt 503 in het Nederlands — precies het gedrag van vóór deze migratie. Wat hij kost zolang hij open staat: de facturen die je bank al heeft afgeschreven blijven "te laat" heten en houden hun betaalknop, en die knop is bij een al geïncasseerde factuur een TWEEDE betaling',
-       'column', 'suppliers.auto_incasso'),
-  (35, 'bank_tx_direct_debit.sql',
-       'Wat het BANKAFSCHRIFT zelf zegt over de betaalwijze: type_code, mandate_id en creditor_id op bank_transactions, plus suppliers.incasso_suggested_at. Ontbreekt hij, dan draait de import ongewijzigd door (bank-ingest vangt 42703 op en laat de drie kolommen weg) en stelt de app alleen niks meer uit zichzelf voor — de eigenaar moet dan zelf weten welke leverancier automatisch afschrijft. Wat hij oplevert zodra hij staat: MT940 NDDT, CAMT <MndtId>/<CdtrSchmeId>, de ING-kolom "Code" met IC en de twee Rabobank-kolommen worden bewaard, en na twee incasso''s vraagt de app of hij die leverancier zo mag onthouden',
-       'column', 'bank_transactions.mandate_id'),
-  (36, 'supplier_aliases.sql',
-       'Wat een gecorrigeerde leveranciersnaam BETEKENT: de spelling zoals hij op het papier staat, gekoppeld aan de leverancier die de eigenaar bedoelde. Zonder deze tabel wordt de correctie op één factuurregel gezet en verder nergens — de lezer maakt volgende maand dezelfde leesfout en de eigenaar corrigeert opnieuw. Erger: invoices.client_name is de identiteitssleutel van de IBAN-controle, de incasso-machtiging, het creditnota-signaal en het leesgeheugen, dus een gecorrigeerde naam die de registratie niet bereikt haalt de factuur stilletjes uit de geschiedenis van zijn leverancier — en dan antwoordt de fraudecontrole "geen IBAN bekend". De code draait er zonder gewoon doorheen (de correctie slaat op, er wordt alleen niets geleerd)',
-       'table', 'supplier_aliases')
+with probe(bestand, soort, object, tabel) as (values
+  ('account_purpose_archief.sql', 'column', 'account_purpose', 'profiles'),
+  ('account_purpose_archief.sql', 'constraint', 'profiles_account_purpose_check', null),
+  ('account_purpose_archief.sql', 'function', 'handle_new_user', null),
+  ('accountant_confirm_mandate.sql', 'column', 'confirmed_by', 'invoices'),
+  ('accountant_confirm_mandate.sql', 'column', 'kind', 'accountant_invoice_mandates'),
+  ('accountant_confirm_mandate.sql', 'constraint', 'accountant_invoice_mandates_kind_check', null),
+  ('accountant_confirm_mandate.sql', 'function', 'has_active_confirm_mandate', null),
+  ('accountant_confirm_mandate.sql', 'function', 'has_active_invoice_mandate', null),
+  ('accountant_confirm_mandate.sql', 'function', 'prevent_accountant_amount_changes', null),
+  ('accountant_invoice_mandate.sql', 'function', 'has_active_invoice_mandate', null),
+  ('accountant_invoice_mandate.sql', 'function', 'next_invoice_seq', null),
+  ('accountant_invoice_mandate.sql', 'function', 'prevent_accountant_amount_changes', null),
+  ('accountant_invoice_mandate.sql', 'index', 'accountant_invoice_mandates_accountant', null),
+  ('accountant_invoice_mandate.sql', 'policy', 'accountant_invoice_mandates_select', null),
+  ('accountant_invoice_mandate.sql', 'policy', 'invoice_lines_mandate_read', null),
+  ('accountant_subject_status.sql', 'index', 'accountant_subject_status_unique', null),
+  ('accountant_subject_status.sql', 'policy', 'acc_status_client_read_document', null),
+  ('accountant_subject_status.sql', 'table', 'accountant_subject_status', null),
+  ('accountant_write_guard_fix.sql', 'function', 'prevent_accountant_amount_changes', null),
+  ('accountant_write_holes.sql', 'function', 'prevent_accountant_amount_changes', null),
+  ('accountant_write_holes.sql', 'index', 'idx_invoices_invoice_date', null),
+  ('accountant_write_holes.sql', 'index', 'idx_invoices_receiver_id', null),
+  ('accountant_write_holes.sql', 'index', 'idx_invoices_sender_id', null),
+  ('accountant_write_holes.sql', 'index', 'idx_invoices_shared', null),
+  ('accountant_write_holes.sql', 'policy', 'acc_status_owner_read', null),
+  ('ai_budget_settle.sql', 'function', 'ai_budget_settle', null),
+  ('ai_spend_guard.sql', 'column', 'bucket_key', 'rate_limits'),
+  ('ai_spend_guard.sql', 'constraint', 'rate_limits_one_identity', null),
+  ('ai_spend_guard.sql', 'function', 'ai_budget_consume', null),
+  ('ai_spend_guard.sql', 'function', 'check_rate_limit_key', null),
+  ('ai_spend_guard.sql', 'index', 'accountant_clients_accountant_idx', null),
+  ('ai_spend_guard.sql', 'index', 'rate_limits_bucket_endpoint_key', null),
+  ('allocate_bank_payment.sql', 'function', 'allocate_bank_payment', null),
+  ('articles.sql', 'index', 'idx_articles_user_active', null),
+  ('articles.sql', 'index', 'idx_articles_user_code', null),
+  ('articles.sql', 'policy', 'articles_delete_own', null),
+  ('articles.sql', 'policy', 'articles_insert_own', null),
+  ('articles.sql', 'policy', 'articles_select_own', null),
+  ('articles.sql', 'policy', 'articles_update_own', null),
+  ('audit_logs_client_read.sql', 'function', 'audit_row_is_about_me', null),
+  ('audit_logs_client_read.sql', 'policy', 'audit_logs_about_me', null),
+  ('auto_incasso.sql', 'column', 'auto_incasso', 'suppliers'),
+  ('auto_incasso.sql', 'column', 'auto_incasso_since', 'suppliers'),
+  ('auto_incasso.sql', 'index', 'idx_suppliers_auto_incasso', null),
+  ('bank_auto_match_reason.sql', 'column', 'auto_match_reason', 'bank_transactions'),
+  ('bank_confirm_atomic.sql', 'function', 'book_bank_batch', null),
+  ('bank_confirm_atomic.sql', 'function', 'confirm_bank_payment', null),
+  ('bank_connections.sql', 'index', 'bank_connection_accounts_connection_idx', null),
+  ('bank_connections.sql', 'index', 'bank_connection_accounts_due_idx', null),
+  ('bank_connections.sql', 'index', 'bank_connections_reference_uidx', null),
+  ('bank_connections.sql', 'index', 'bank_connections_user_created_idx', null),
+  ('bank_connections.sql', 'policy', 'bank_connection_accounts_select_own', null),
+  ('bank_connections.sql', 'policy', 'bank_connections_select_own', null),
+  ('bank_connections_updated_at.sql', 'function', 'set_updated_at', null),
+  ('bank_identity.sql', 'column', 'category', 'bank_transactions'),
+  ('bank_identity.sql', 'column', 'category_confirmed', 'bank_transactions'),
+  ('bank_identity.sql', 'column', 'category_source', 'bank_transactions'),
+  ('bank_identity.sql', 'index', 'idx_counterpart_memory_lookup', null),
+  ('bank_identity.sql', 'policy', 'counterpart_memory_delete_own', null),
+  ('bank_identity.sql', 'policy', 'counterpart_memory_insert_own', null),
+  ('bank_ignore_reason.sql', 'column', 'ignore_reason', 'bank_transactions'),
+  ('bank_ignore_reason.sql', 'constraint', 'bank_transactions_ignore_reason_check', null),
+  ('bank_ignore_reason.sql', 'index', 'idx_bank_tx_ignore_reason', null),
+  ('bank_statement_periods.sql', 'index', 'idx_bsp_user_iban_start', null),
+  ('bank_statement_periods.sql', 'policy', 'bsp_owner_read', null),
+  ('bank_statement_periods.sql', 'table', 'bank_statement_periods', null),
+  ('bank_tx_counterpart_iban.sql', 'column', 'counterpart_iban', 'bank_transactions'),
+  ('bank_tx_counterpart_iban.sql', 'index', 'idx_bank_transactions_counterpart_iban', null),
+  ('bank_tx_direct_debit.sql', 'column', 'creditor_id', 'bank_transactions'),
+  ('bank_tx_direct_debit.sql', 'column', 'incasso_suggested_at', 'suppliers'),
+  ('bank_tx_direct_debit.sql', 'column', 'mandate_id', 'bank_transactions'),
+  ('bank_tx_direct_debit.sql', 'column', 'type_code', 'bank_transactions'),
+  ('bank_tx_direct_debit.sql', 'index', 'idx_bank_tx_direct_debit', null),
+  ('bank_tx_invoices.sql', 'index', 'bank_tx_invoices_unique_pair', null),
+  ('bank_tx_invoices.sql', 'index', 'idx_bank_tx_invoices_inv', null),
+  ('bank_tx_invoices.sql', 'index', 'idx_bank_tx_invoices_tx', null),
+  ('bank_tx_invoices.sql', 'index', 'idx_bank_tx_invoices_user', null),
+  ('bank_tx_invoices.sql', 'policy', 'bank_tx_invoices_delete_own', null),
+  ('bank_tx_invoices.sql', 'policy', 'bank_tx_invoices_insert_own', null),
+  ('bank_tx_invoices_memory_index.sql', 'index', 'idx_bank_tx_invoices_user_recent', null),
+  ('bank_tx_source_identity.sql', 'column', 'external_id', 'bank_transactions'),
+  ('bank_tx_source_identity.sql', 'column', 'source', 'bank_transactions'),
+  ('bank_tx_source_identity.sql', 'index', 'uniq_bank_tx_source_identity', null),
+  ('bank_tx_statement_link.sql', 'column', 'statement_document_id', 'bank_transactions'),
+  ('bank_tx_statement_link.sql', 'index', 'idx_bank_transactions_statement_doc', null),
+  ('betaalverzoek.sql', 'column', 'pay_token', 'invoices'),
+  ('betaalverzoek.sql', 'index', 'idx_invoices_pay_token', null),
+  ('billing_subscription.sql', 'column', 'current_period_end', 'profiles'),
+  ('billing_subscription.sql', 'column', 'stripe_customer_id', 'profiles'),
+  ('billing_subscription.sql', 'column', 'subscription_status', 'profiles'),
+  ('billing_subscription.sql', 'constraint', 'profiles_subscription_status_check', null),
+  ('billing_subscription.sql', 'function', 'prevent_billing_self_grant', null),
+  ('billing_subscription.sql', 'index', 'profiles_stripe_customer_id_key', null),
+  ('book_bank_batch_atomic.sql', 'function', 'book_bank_batch', null),
+  ('bookkeeping_date_sane.sql', 'function', 'assert_bookkeeping_date_sane', null),
+  ('btw_filings.sql', 'index', 'btw_filings_user_period_idx', null),
+  ('btw_filings.sql', 'policy', 'btw_filings own rows', null),
+  ('btw_filings.sql', 'table', 'btw_filings', null),
+  ('cash_entry_soft_delete.sql', 'column', 'deleted_at', 'cash_entries'),
+  ('cash_entry_soft_delete.sql', 'index', 'cash_entries_one_settlement_per_instalment', null),
+  ('cash_entry_soft_delete.sql', 'index', 'idx_cash_entries_user_date_live', null),
+  ('cash_ledger.sql', 'index', 'idx_cash_entries_user_date', null),
+  ('cash_ledger.sql', 'policy', 'cash_entries_delete_own', null),
+  ('cash_ledger.sql', 'policy', 'cash_entries_insert_own', null),
+  ('cash_ledger.sql', 'policy', 'cash_entries_select_own', null),
+  ('cash_ledger.sql', 'policy', 'cash_entries_update_own', null),
+  ('cash_ledger.sql', 'table', 'cash_entries', null),
+  ('cash_settlement_invoice_link.sql', 'column', 'invoice_id', 'cash_entries'),
+  ('cash_settlement_per_instalment.sql', 'column', 'settlement_id', 'cash_entries'),
+  ('cash_settlement_per_instalment.sql', 'index', 'cash_entries_one_settlement_per_instalment', null),
+  ('cash_settlement_per_instalment.sql', 'index', 'idx_cash_entries_settlement', null),
+  ('circle_integrity_and_indexes.sql', 'column', 'content_hash', 'documents'),
+  ('circle_integrity_and_indexes.sql', 'column', 'last_synced_email_at', 'email_connections'),
+  ('circle_integrity_and_indexes.sql', 'column', 'needs_reauth', 'email_connections'),
+  ('circle_integrity_and_indexes.sql', 'column', 'shared', 'documents'),
+  ('circle_integrity_and_indexes.sql', 'constraint', 'invoices_document_id_fkey', null),
+  ('circle_integrity_and_indexes.sql', 'index', 'idx_bank_transactions_invoice_id', null),
+  ('client_extra_lines.sql', 'column', 'client_extra_line1', 'invoices'),
+  ('client_extra_lines.sql', 'column', 'client_extra_line2', 'invoices'),
+  ('client_extra_lines.sql', 'column', 'client_extra_line3', 'invoices'),
+  ('client_extra_lines.sql', 'column', 'client_extra_line4', 'invoices'),
+  ('company_members_sales_role.sql', 'column', 'created_by', 'invoices'),
+  ('company_members_sales_role.sql', 'column', 'created_by', 'clients'),
+  ('company_members_sales_role.sql', 'function', 'acting_for_owner', null),
+  ('company_members_sales_role.sql', 'function', 'next_invoice_seq', null),
+  ('company_members_sales_role.sql', 'index', 'clients_created_by_idx', null),
+  ('company_members_sales_role.sql', 'index', 'company_member_invites_owner_idx', null),
+  ('creditnota_partial.sql', 'function', 'assert_credit_within_original', null),
+  ('crm_backbone.sql', 'column', 'client_id', 'invoices'),
+  ('crm_backbone.sql', 'column', 'notes', 'clients'),
+  ('crm_backbone.sql', 'index', 'idx_invoices_client_id', null),
+  ('cron_runs.sql', 'index', 'cron_runs_job_started_idx', null),
+  ('cron_runs.sql', 'table', 'cron_runs', null),
+  ('daily_turnover.sql', 'index', 'idx_daily_turnover_user_date', null),
+  ('daily_turnover.sql', 'policy', 'daily_turnover_delete_own', null),
+  ('daily_turnover.sql', 'policy', 'daily_turnover_insert_own', null),
+  ('daily_turnover.sql', 'policy', 'daily_turnover_select_own', null),
+  ('daily_turnover.sql', 'policy', 'daily_turnover_update_own', null),
+  ('daily_turnover.sql', 'table', 'daily_turnover', null),
+  ('deletion_request_purge_warning.sql', 'column', 'purge_warning_sent_at', 'deletion_requests'),
+  ('deletion_request_purge_warning.sql', 'index', 'deletion_requests_unwarned_idx', null),
+  ('documents_accountant_read_policy.sql', 'policy', 'documents_accountant_read', null),
+  ('documents_content_hash_unique.sql', 'function', 'document_is_referenced', null),
+  ('documents_content_hash_unique.sql', 'index', 'uq_documents_user_content_hash', null),
+  ('documents_shared_and_storage_policies.sql', 'column', 'content_hash', 'documents'),
+  ('documents_shared_and_storage_policies.sql', 'column', 'shared', 'documents'),
+  ('documents_shared_and_storage_policies.sql', 'index', 'idx_documents_user_content_hash', null),
+  ('documents_shared_and_storage_policies.sql', 'policy', 'documents_delete', null),
+  ('documents_shared_and_storage_policies.sql', 'policy', 'documents_read', null),
+  ('documents_shared_and_storage_policies.sql', 'policy', 'documents_upload', null),
+  ('eft_settlements.sql', 'index', 'idx_eft_settlements_user_date', null),
+  ('eft_settlements.sql', 'policy', 'eft_settlements_delete_own', null),
+  ('eft_settlements.sql', 'policy', 'eft_settlements_insert_own', null),
+  ('eft_settlements.sql', 'policy', 'eft_settlements_select_own', null),
+  ('eft_settlements.sql', 'policy', 'eft_settlements_update_own', null),
+  ('eft_settlements.sql', 'table', 'eft_settlements', null),
+  ('email_failed_attempts.sql', 'index', 'email_failed_attempts_user_msg_uidx', null),
+  ('email_failed_attempts.sql', 'policy', 'email_failed_attempts_select_own', null),
+  ('email_failed_attempts.sql', 'table', 'email_failed_attempts', null),
+  ('email_sender_rules.sql', 'index', 'email_sender_rules_user_email_uidx', null),
+  ('email_sender_rules.sql', 'policy', 'email_sender_rules_delete_own', null),
+  ('email_sender_rules.sql', 'policy', 'email_sender_rules_insert_own', null),
+  ('email_sender_rules.sql', 'policy', 'email_sender_rules_select_own', null),
+  ('email_sender_rules.sql', 'policy', 'email_sender_rules_update_own', null),
+  ('email_sender_rules.sql', 'table', 'email_sender_rules', null),
+  ('factuur_b_numbering.sql', 'column', 'invoice_number_padding', 'profiles'),
+  ('factuur_b_numbering.sql', 'column', 'invoice_number_template', 'profiles'),
+  ('factuur_b_numbering.sql', 'constraint', 'invoices_sender_invoice_number_key', null),
+  ('factuur_b_numbering.sql', 'function', 'next_invoice_seq', null),
+  ('factuur_b_numbering.sql', 'policy', 'invoice_counters_select_own', null),
+  ('factuur_b_numbering.sql', 'table', 'invoice_counters', null),
+  ('fair_use_usage.sql', 'function', 'fair_use_consume', null),
+  ('fair_use_usage.sql', 'function', 'fair_use_release', null),
+  ('fair_use_usage.sql', 'index', 'usage_counters_period_idx', null),
+  ('fair_use_usage.sql', 'policy', 'usage_counters_select_own', null),
+  ('fair_use_usage.sql', 'table', 'usage_counters', null),
+  ('feedback.sql', 'index', 'feedback_user_created_idx', null),
+  ('feedback.sql', 'policy', 'feedback_insert_own', null),
+  ('feedback.sql', 'policy', 'feedback_select_own', null),
+  ('feedback.sql', 'table', 'feedback', null),
+  ('folders_accountant_read.sql', 'policy', 'folders_accountant_read', null),
+  ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', null),
+  ('invoice_accountant_write_guard.sql', 'function', 'prevent_accountant_amount_changes', null),
+  ('invoice_accountant_write_guard.sql', 'function', 'prevent_verwerkt_invoice_changes', null),
+  ('invoice_archive_reason.sql', 'column', 'archive_reason', 'invoices'),
+  ('invoice_archive_reason.sql', 'column', 'archived_at', 'invoices'),
+  ('invoice_archive_reason.sql', 'constraint', 'invoices_archive_reason_check', null),
+  ('invoice_archive_reason.sql', 'index', 'idx_invoices_archived_reason', null),
+  ('invoice_bijlage.sql', 'column', 'attachment_document_id', 'invoices'),
+  ('invoice_bijlage.sql', 'constraint', 'invoices_attachment_document_id_fkey', null),
+  ('invoice_bijlage.sql', 'index', 'invoices_attachment_document_id_idx', null),
+  ('invoice_corrected_at.sql', 'column', 'corrected_at', 'invoices'),
+  ('invoice_discount.sql', 'column', 'discount_type', 'invoices'),
+  ('invoice_discount.sql', 'column', 'discount_value', 'invoices'),
+  ('invoice_discount.sql', 'constraint', 'invoices_discount_pair_check', null),
+  ('invoice_discount.sql', 'constraint', 'invoices_discount_type_check', null),
+  ('invoice_discount.sql', 'constraint', 'invoices_discount_value_check', null),
+  ('invoice_line_discount.sql', 'column', 'discount_type', 'invoice_lines'),
+  ('invoice_line_discount.sql', 'column', 'discount_value', 'invoice_lines'),
+  ('invoice_line_discount.sql', 'constraint', 'invoice_lines_discount_type_check', null),
+  ('invoice_line_discount.sql', 'constraint', 'invoice_lines_discount_value_check', null),
+  ('invoice_line_unit.sql', 'column', 'unit', 'invoice_lines'),
+  ('invoice_lines_accountant_gate.sql', 'policy', 'invoice_lines_select_accountant', null),
+  ('invoice_manual_payment_idempotency_scope.sql', 'function', 'apply_manual_payment', null),
+  ('invoice_manual_payments.sql', 'column', 'client_key', 'bank_tx_invoices'),
+  ('invoice_manual_payments.sql', 'column', 'method', 'bank_tx_invoices'),
+  ('invoice_manual_payments.sql', 'column', 'paid_on', 'bank_tx_invoices'),
+  ('invoice_manual_payments.sql', 'constraint', 'bank_tx_invoices_method_check', null),
+  ('invoice_manual_payments.sql', 'constraint', 'bank_tx_invoices_origin_check', null),
+  ('invoice_manual_payments.sql', 'function', 'apply_manual_payment', null),
+  ('invoice_move_payment.sql', 'function', 'move_invoice_payment', null),
+  ('invoice_move_payment_creditnota_guard.sql', 'function', 'move_invoice_payment', null),
+  ('invoice_partial_payments.sql', 'column', 'amount_applied', 'bank_tx_invoices'),
+  ('invoice_partial_payments.sql', 'column', 'amount_paid', 'invoices'),
+  ('invoice_partial_payments.sql', 'function', 'apply_bank_payment', null),
+  ('invoice_partial_payments.sql', 'function', 'recompute_invoice_amount_paid', null),
+  ('invoice_payment_date_rederive.sql', 'function', 'recompute_invoice_amount_paid', null),
+  ('invoice_questions.sql', 'policy', 'acc_status_client_read_invoice', null),
+  ('invoice_reminders.sql', 'column', 'reminder_offsets', 'profiles'),
+  ('invoice_reminders.sql', 'column', 'reminders_enabled', 'profiles'),
+  ('invoice_reminders.sql', 'column', 'reminders_paused', 'invoices'),
+  ('invoice_reminders.sql', 'index', 'invoice_reminders_invoice_idx', null),
+  ('invoice_reminders.sql', 'index', 'invoice_reminders_user_idx', null),
+  ('invoice_reminders.sql', 'policy', 'invoice_reminders_select_own', null),
+  ('invoice_schedules.sql', 'column', 'schedule_id', 'invoices'),
+  ('invoice_schedules.sql', 'index', 'idx_invoice_schedules_due', null),
+  ('invoice_schedules.sql', 'index', 'idx_invoice_schedules_user', null),
+  ('invoice_schedules.sql', 'index', 'invoice_schedules_one_per_source', null),
+  ('invoice_schedules.sql', 'index', 'invoices_one_per_schedule_date', null),
+  ('invoice_schedules.sql', 'policy', 'invoice_schedules_delete_own', null),
+  ('invoice_superseded_by.sql', 'column', 'superseded_by_number', 'invoices'),
+  ('kas_opening_balance.sql', 'column', 'kas_opening_balance', 'profiles'),
+  ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_session_uidx', null),
+  ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_user_idx', null),
+  ('kluis_subscriptions.sql', 'policy', 'kluis_subscriptions_select_own', null),
+  ('kluis_subscriptions.sql', 'table', 'kluis_subscriptions', null),
+  ('ledger_daily.sql', 'index', 'idx_ledger_daily_user_date', null),
+  ('ledger_daily.sql', 'index', 'ledger_daily_unique_day_kind', null),
+  ('ledger_daily.sql', 'policy', 'ledger_daily_delete_own', null),
+  ('ledger_daily.sql', 'policy', 'ledger_daily_insert_own', null),
+  ('ledger_daily.sql', 'policy', 'ledger_daily_select_own', null),
+  ('ledger_daily.sql', 'policy', 'ledger_daily_update_own', null),
+  ('offerte_akkoord.sql', 'column', 'offerte_responded_at', 'invoices'),
+  ('offerte_akkoord.sql', 'column', 'offerte_response', 'invoices'),
+  ('offerte_akkoord.sql', 'column', 'offerte_response_name', 'invoices'),
+  ('offerte_akkoord.sql', 'column', 'offerte_token', 'invoices'),
+  ('offerte_akkoord.sql', 'constraint', 'invoices_offerte_response_check', null),
+  ('offerte_akkoord.sql', 'constraint', 'invoices_offerte_response_paired_check', null),
+  ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_bundle', null),
+  ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_invoice', null),
+  ('pay_bundles.sql', 'index', 'idx_pay_bundles_token', null),
+  ('pay_bundles.sql', 'index', 'idx_pay_bundles_user', null),
+  ('pay_bundles.sql', 'index', 'pay_bundle_invoices_unique_pair', null),
+  ('pay_bundles.sql', 'policy', 'pay_bundle_invoices_delete_own', null),
+  ('push_subscriptions.sql', 'index', 'idx_push_subscriptions_user', null),
+  ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', null),
+  ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', null),
+  ('push_subscriptions.sql', 'table', 'push_subscriptions', null),
+  ('regime_kor.sql', 'column', 'kor_active', 'profiles'),
+  ('register_profile_from_metadata.sql', 'function', 'handle_new_user', null),
+  ('repair_mandate_policies.sql', 'column', 'purge_warning_sent_at', 'deletion_requests'),
+  ('repair_mandate_policies.sql', 'index', 'deletion_requests_unwarned_idx', null),
+  ('repair_mandate_policies.sql', 'policy', 'invoice_lines_mandate_read', null),
+  ('repair_mandate_policies.sql', 'policy', 'invoices_mandate_draft_issue', null),
+  ('repair_mandate_policies.sql', 'policy', 'invoices_mandate_draft_read', null),
+  ('retention_purge.sql', 'column', 'purged_at', 'deletion_requests'),
+  ('retention_purge.sql', 'index', 'deletion_requests_purge_due_idx', null),
+  ('search_bank_cash.sql', 'index', 'bank_transactions_counterpart_iban_trgm', null),
+  ('search_bank_cash.sql', 'index', 'bank_transactions_counterpart_name_trgm', null),
+  ('search_bank_cash.sql', 'index', 'bank_transactions_description_trgm', null),
+  ('search_bank_cash.sql', 'index', 'bank_transactions_reference_trgm', null),
+  ('search_bank_cash.sql', 'index', 'cash_entries_category_trgm', null),
+  ('search_bank_cash.sql', 'index', 'cash_entries_description_trgm', null),
+  ('search_engine.sql', 'index', 'clients_email_trgm', null),
+  ('search_engine.sql', 'index', 'clients_name_trgm', null),
+  ('search_engine.sql', 'index', 'documents_ai_doc_type_trgm', null),
+  ('search_engine.sql', 'index', 'documents_doc_type_trgm', null),
+  ('search_engine.sql', 'index', 'documents_file_name_trgm', null),
+  ('search_engine.sql', 'index', 'documents_notes_trgm', null),
+  ('search_engine_clients_kvk_city.sql', 'index', 'clients_city_trgm', null),
+  ('search_engine_clients_kvk_city.sql', 'index', 'clients_kvk_number_trgm', null),
+  ('search_smart.sql', 'function', 'search_clients_fuzzy', null),
+  ('search_smart.sql', 'function', 'search_documents_fuzzy', null),
+  ('search_smart.sql', 'function', 'search_folders_fuzzy', null),
+  ('search_smart.sql', 'function', 'search_invoices_fuzzy', null),
+  ('seed_invoice_counter.sql', 'function', 'seed_invoice_counter', null),
+  ('snelstart_claim_before_push.sql', 'constraint', 'snelstart_exports_status_check', null),
+  ('snelstart_claim_before_push.sql', 'index', 'snelstart_exports_user_invoice_claim_uidx', null),
+  ('snelstart_connection.sql', 'index', 'snelstart_exports_user_pushed_at_idx', null),
+  ('snelstart_connection.sql', 'policy', 'snelstart_connections_select_own', null),
+  ('snelstart_connection.sql', 'policy', 'snelstart_exports_select_own', null),
+  ('snelstart_connection.sql', 'table', 'snelstart_connections', null),
+  ('snelstart_connection.sql', 'table', 'snelstart_exports', null),
+  ('subscription_plans_fair_use.sql', 'constraint', 'profiles_subscription_plan_check', null),
+  ('supplier_aliases.sql', 'index', 'idx_supplier_aliases_supplier', null),
+  ('supplier_aliases.sql', 'index', 'supplier_aliases_unique_key', null),
+  ('supplier_aliases.sql', 'policy', 'supplier_aliases_delete_own', null),
+  ('supplier_aliases.sql', 'policy', 'supplier_aliases_insert_own', null),
+  ('supplier_aliases.sql', 'policy', 'supplier_aliases_select_own', null),
+  ('supplier_aliases.sql', 'policy', 'supplier_aliases_update_own', null),
+  ('supplier_kvk_index.sql', 'index', 'suppliers_user_kvk_uidx', null),
+  ('supplier_registry.sql', 'column', 'supplier_id', 'invoices'),
+  ('supplier_registry.sql', 'index', 'idx_invoices_supplier_id', null),
+  ('supplier_registry.sql', 'index', 'suppliers_name_trgm', null),
+  ('supplier_registry.sql', 'index', 'suppliers_user_iban_uidx', null),
+  ('supplier_registry.sql', 'index', 'suppliers_user_name_key_idx', null),
+  ('supplier_registry.sql', 'policy', 'suppliers_delete_own', null),
+  ('vat_exemption.sql', 'column', 'vat_deduction', 'invoices'),
+  ('vat_exemption.sql', 'column', 'vat_exempt_activity', 'profiles'),
+  ('vat_exemption.sql', 'column', 'vat_exempt_since', 'profiles'),
+  ('vat_exemption.sql', 'column', 'vat_treatment', 'invoice_lines'),
+  ('vat_exemption.sql', 'constraint', 'invoice_lines_vat_treatment_check', null),
+  ('vat_exemption.sql', 'constraint', 'invoices_vat_deduction_check', null),
+  ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles'),
+  ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles'),
+  ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles')
+),
+bevonden as (
+  select p.*,
+    case p.soort
+      when 'table' then exists (select 1 from information_schema.tables
+             where table_schema = 'public' and table_name = p.object)
+      when 'column' then exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = p.tabel and column_name = p.object)
+      when 'function' then exists (select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace
+             where n.nspname = 'public' and f.proname = p.object)
+      when 'index' then exists (select 1 from pg_indexes
+             where schemaname = 'public' and indexname = p.object)
+      when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)
+      when 'policy' then exists (select 1 from pg_policies
+             where schemaname = 'public' and policyname = p.object)
+    end as aanwezig
+  from probe p
 )
 select
-  nr                                                        as "#",
+  case when bool_and(aanwezig) then 'TOEGEPAST'
+       when bool_or(aanwezig)  then 'GEDEELTELIJK  <-- KIJK HIER'
+       else 'OPEN' end                                        as stand,
   bestand,
-  case when aanwezig then '✅ toegepast' else '⏳ OPEN' end   as status,
-  waarom
-from (
-  select
-    v.nr, v.bestand, v.waarom,
-    case v.soort
-      when 'table'  then to_regclass('public.' || v.object) is not null
-      when 'index'  then exists (
-                          select 1 from pg_indexes
-                           where schemaname = 'public' and indexname = v.object)
-      when 'policy' then exists (
-                          select 1 from pg_policies
-                           where schemaname = 'public' and policyname = v.object)
-      when 'column' then exists (
-                          select 1 from information_schema.columns
-                           where table_schema = 'public'
-                             and table_name   = split_part(v.object, '.', 1)
-                             and column_name  = split_part(v.object, '.', 2))
-      -- Storage-policies leven in het schema 'storage', niet in 'public'. Zonder deze tak was
-      -- dit bestand blind voor de enige bescherming die de bestanden zelf hebben.
-      when 'storage_policy' then exists (
-                          select 1 from pg_policies
-                           where schemaname = 'storage' and policyname = v.object)
-      -- En de bucket zelf: 'toegepast' betekent hier "hij staat op privé".
-      when 'bucket_private' then exists (
-                          select 1 from storage.buckets
-                           where id = v.object and public = false)
-      -- Een FUNCTIE, niet een tabel. Voor de geldregels is dat het verschil dat telt: bij
-      -- invoice_partial_payments.sql zetten de kolommen alleen de bak neer, terwijl
-      -- apply_bank_payment() de regels IS — het slot op de rij, de clamp op het openstaande
-      -- bedrag, de weigering om een betaalde factuur nog eens te betalen. Dezelfde tweedeling
-      -- die #5 hieronder apart moet controleren, hier meteen goed.
-      when 'function' then exists (
-                          select 1 from pg_proc p
-                            join pg_namespace n on n.oid = p.pronamespace
-                           where n.nspname = 'public' and p.proname = v.object)
-    end as aanwezig
-  from verwacht v
-) t
-order by aanwezig, nr;
+  count(*) filter (where aanwezig) || ' / ' || count(*)       as objecten_gevonden,
+  string_agg(case when not aanwezig then soort || ' ' || object end, ', ')  as ontbreekt
+from bevonden
+group by bestand
+-- GEDEELTELIJK eerst, dan OPEN, dan de rest: de regels waar iets aan te doen is, bovenaan.
+order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- HOE JE DIT LEEST
---
--- De OPEN-regels staan bovenaan. Voor elke daarvan: open het bestand in
--- supabase/migrations/, draai het, en draai daarna het CONTROLE-blok onderaan datzelfde
--- bestand. Dat blok is het verschil tussen "toegepast" en "toegepast en gecontroleerd" —
--- en het heeft in deze codebase al twee echte fouten opgeleverd die op geen andere manier
--- zichtbaar waren (een 42P10 op een partiële index, en een functie die vijf kolommen noemde
--- die niet bestonden).
---
--- STAAT ER IETS OPEN DAT URGENT LIJKT? Bijna nooit. Elke migratie in deze lijst is zo
--- geschreven dat de code er ZONDER ook werkt: de negeer-knop archiveert dan zonder notitie,
--- het kasboek maakt één regel per factuur in plaats van per termijn, de SnelStart-push valt
--- terug op het oude pad (claim ná de POST). De eigenaar mist tot die tijd een label of een
--- verbetering — nooit een functie die stukgaat, en nooit stille schade.
---
--- Eén nuance bij 23: daar mist niet een label maar een CONTROLE. De boekhouding blijft kloppen
--- met wat erin zit, alleen merkt niemand dat er een maand bankafschrift ontbreekt. Geen schade,
--- wel een blinde vlek — en anders dan bij de rest zie je aan het scherm niet dát je hem hebt.
---
--- De enige twee met een échte scherpe kant zijn 11 en 15:
---   · 11 dicht een schrijfgat in de boekhoudersgrens (een gekoppelde boekhouder kon het IBAN
---     op een openstaande inkoopfactuur herschrijven);
---   · 15 dicht het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in het
---     wettelijke inkoopboek van de boekhouder kunnen zetten.
+-- NIET VAST TE STELLEN — 9 van de 104 migraties
 -- =====================================================================
-
+--
+-- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of
+-- wijzigen alleen bestaande objecten. Er is dus geen object waarvan het BESTAAN iets
+-- bewijst. Ze krijgen met opzet GEEN verzonnen vingerafdruk — een lijst die zwijgt over wat
+-- ze niet weet, is precies de lijst waar dit bestand tegen is geschreven.
+--
+-- Controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf.
+--
+--   BRIDGE-D_soft_delete_test_pollution.sql
+--   accountant_clients_insert_consent.sql
+--   accountant_clients_update_consent.sql
+--   bank_tx_invoices_amount.sql
+--   creditnota_one_per_original.sql
+--   function_search_path.sql
+--   rpc_anon_revoke.sql
+--   storage_bucket_hardening.sql
+--   supplier_backfill.sql
+--
 -- =====================================================================
--- DE TWEEDE HELFT VAN 5 — apart, want een kolom is niet het hele verhaal
---
--- account_purpose_archief.sql doet TWEE dingen: het zet de kolom neer, én het herschrijft
--- handle_new_user() zodat die het doel uit de signUp-metadata leest en onboarding_done
--- meteen op true zet voor een archiefaccount. De lijst hierboven kan alleen het eerste zien.
---
--- Dat onderscheid is niet theoretisch. Draaide alleen de kolom, dan:
---   · registratie ZONDER e-mailbevestiging gaat goed — de browser schrijft het doel zelf;
---   · registratie MET e-mailbevestiging niet — daar is geen sessie en is de trigger de enige
---     schrijver, dus het doel valt stil weg en de bezoeker krijgt de wizard die hij niet wou.
--- Precies de helft die je nooit ziet als je het zelf even test met bevestiging uit.
---
--- Draai dit in de SQL-editor; het leest alleen de catalogus.
-
-select
-  (to_regclass('public.profiles') is not null
-   and exists (select 1 from information_schema.columns
-                where table_schema = 'public' and table_name = 'profiles'
-                  and column_name = 'account_purpose'))                as kolom_staat_er,
-  exists (select 1 from pg_proc
-           where proname = 'handle_new_user'
-             and prosrc like '%account_purpose%')                      as trigger_leest_het_doel,
-  exists (select 1 from pg_trigger
-           where tgname = 'on_auth_user_created' and not tgisinternal) as trigger_hangt_aan_auth_users;
-
--- Verwacht: drie keer true. Is de tweede false terwijl de eerste true is, draai dan het
--- CREATE OR REPLACE-blok uit supabase/migrations/account_purpose_archief.sql opnieuw — dat is
--- idempotent en raakt de kolom niet aan.
+-- OBJECTEN DIE LATER ZIJN OPGERUIMD — tellen niet mee in het oordeel
 -- =====================================================================
+--
+-- Deze objecten worden door een LATERE migratie weer weggegooid. Hun afwezigheid bewijst
+-- niets over de migratie die ze aanmaakte — die kan allang gedraaid hebben. Meetellen zou
+-- een toegepaste migratie als OPEN aanmerken, en dat is de duurste soort fout die deze
+-- lijst kan maken: hem nog een keer draaien.
+--
+--   accountant_invoice_mandate.sql → index accountant_invoice_mandates_one_active
+--   accountant_subject_status.sql → policy acc_status_owner_all
+--   cash_settlement_invoice_link.sql → index cash_entries_one_settlement_per_invoice
+--   creditnota_one_per_original.sql → index invoices_one_creditnota_per_original
+--   snelstart_connection.sql → index snelstart_exports_user_invoice_pushed_uidx
+

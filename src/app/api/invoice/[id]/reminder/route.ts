@@ -28,7 +28,9 @@ import { sendInvoiceReminder } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canRemindInvoice } from '@/lib/acting-for'
-import { canRemind, nextManualOffset, outstandingAmount } from '@/lib/sales-overview'
+import { canRemind, nextManualOffset } from '@/lib/sales-overview'
+// [DEEL-CREDIT] Bedragen in plaats van ja/nee — zie de creditnota-controle verderop.
+import { creditedTotalsFrom, openAfterCredit } from '@/lib/credited-invoices'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
@@ -139,23 +141,40 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     // en nergens in dit product wordt de status van het origineel op 'credited' gezet, dus geen
     // enkele eerdere controle ziet dat.
     //
+    // [DEEL-CREDIT] Maar "er staat er een tegenaan" betekent niet meer "er valt niets meer te
+    // vorderen". Crediteer één betwiste regel van vijf, en de andere vier zijn gewoon nog
+    // verschuldigd. Deze knop weigerde daar categorisch op, terwijl de AUTOMATISCHE herinnering
+    // (api/cron/reminders) al met bedragen rekent — dus stopte de ondernemer met vorderen op het
+    // moment dat hij zijn klant tegemoetkwam, op een factuur die haar status en haar volle totaal
+    // houdt, en zei geen enkel scherm waarom.
+    //
     // De vraag staat hier, vlak vóór de claim: een weigering mag geen herinneringsregel verbruiken.
     // Faalt de query, dan gaat er GEEN mail — hetzelfde 'bij twijfel niets' dat de rest van deze
     // route al aanhoudt, want de fout die wij hier kunnen maken zit bij de klant van de ondernemer.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: tegenCreditnota, error: creditErr } = await (pipeline as any)
+    const { data: creditRijen, error: creditErr } = await (pipeline as any)
       .from('invoices')
-      .select('id')
+      .select('total_inc_btw')
       .eq('sender_id', ownerId)
       .eq('invoice_type', 'creditnota')
       .eq('original_invoice_id', id)
-      .limit(1)
-      .maybeSingle()
     if (creditErr) {
       console.error('[CREDITNOTA-NO-CHASE] creditnota-controle mislukt — niets verstuurd', { id, creditErr })
       return NextResponse.json({ error: 'Herinneren lukte niet — probeer het zo nog eens' }, { status: 503 })
     }
-    if (tegenCreditnota) {
+    const gecrediteerd = creditedTotalsFrom(
+      ((creditRijen ?? []) as { total_inc_btw: number | null }[]).map((r) => ({
+        original_invoice_id: id,
+        total_inc_btw: r.total_inc_btw,
+      })),
+    ).get(id) ?? 0
+    // Wat er ná de creditnota's én de deelbetalingen nog openstaat. Eén berekening voor twee
+    // dingen: de weigering hieronder en het bedrag dat straks in de mail komt. Twee aparte
+    // berekeningen zouden uit elkaar kunnen lopen, en dan vraagt de mail iets anders dan de app
+    // dacht toe te staan.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nogOpen = openAfterCredit(inv.total_inc_btw, (inv as any).amount_paid, gecrediteerd)
+    if (gecrediteerd > 0 && nogOpen <= 0) {
       return NextResponse.json(
         { error: 'Er staat een creditnota tegenover deze factuur — er valt niets meer te vorderen.' },
         { status: 409 },
@@ -202,8 +221,11 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         zzperName: eigenaarProfiel?.company_name || eigenaarProfiel?.full_name || 'BoekBrug',
         senderEmail: eigenaarProfiel?.email ?? null,
         invoiceNumber: inv.invoice_number?.trim() || '—',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        openstaand: outstandingAmount(inv as any),
+        // [DEEL-CREDIT] Het bedrag dat hierboven al is uitgerekend, minus wat er is teruggegeven.
+        // Het volle totaal noemen op een deels gecrediteerde factuur vraagt de klant om geld dat
+        // hij zwart-op-wit heeft teruggekregen — precies het vertrouwen dat een herinnering nodig
+        // heeft om te werken. Zonder creditnota is dit exact wat outstandingAmount teruggaf.
+        openstaand: nogOpen,
         dueDate: inv.due_date as string,
         // Nooit 'firm' en nooit een WIK-aanmaning vanaf deze knop — zie de kop.
         firm: false,

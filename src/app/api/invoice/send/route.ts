@@ -39,6 +39,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { createNotification } from '@/lib/notifications'
 import { sendInvoiceToClient } from '@/lib/email'
+// [FACTUUR-BIJLAGE] Of het eigen bestand mee mag, en wat de ondernemer leest als het niet kan.
+import { attachmentRefusal, attachmentRefusalText, safeAttachmentName } from '@/lib/invoice-attachment'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
@@ -452,6 +454,86 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── 7b. [FACTUUR-BIJLAGE] De eigen bijlage, VOOR het nummer ──────────────
+    //
+    // Hier en niet verderop, en dat is de hele reden dat dit blok bestaat. Een paar regels lager
+    // wordt een nummer gemunt uit de doorlopende reeks (Art. 35 — onomkeerbaar, geen gaten).
+    // Blijkt de bijlage pas daarna onleesbaar, dan zijn er twee slechte uitkomsten en geen goede:
+    // versturen zonder het bestand dat de ondernemer er bewust bij zette (de klant krijgt een
+    // onvolledig pakket en kan de factuur niet verwerken), of afbreken met een nummer dat al weg
+    // is. Dus: eerst ophalen, dan pas nummeren.
+    //
+    // De kolom bestaat pas na invoice_bijlage.sql. Op een database waar die migratie nog open
+    // staat is `attachment_document_id` simpelweg undefined en slaat dit blok zichzelf over —
+    // exact de route van hiervoor.
+    let bijlage: { filename: string; content: Buffer } | null = null
+    // Uit het VERZOEK als het scherm er iets over zegt, anders wat er op de factuur staat. Het
+    // scherm kiest de bijlage vlak voor het versturen, dus die keuze moet hier binnen kunnen komen
+    // zonder eerst een aparte opslagronde — en hij wordt hieronder op de factuur vastgelegd, zodat
+    // opnieuw versturen dezelfde bijlage meeneemt.
+    //
+    // DRIE standen, niet twee. Het verschil tussen "ik zeg er niets over" en "geen bijlage" is de
+    // hele mogelijkheid om een bijlage weer WEG te halen:
+    //
+    //   · sleutel afwezig  → neem wat er op de factuur staat (de cron, het bewerkscherm, elke
+    //                        aanroeper die van bijlagen niets weet — die mogen er niets aan
+    //                        veranderen alleen omdat ze zwijgen);
+    //   · sleutel met id   → dit bestand, en leg het vast op de factuur;
+    //   · sleutel met null → GEEN bijlage, en haal hem ook van de factuur af.
+    //
+    // Zonder die derde stand was een eenmaal vastgelegde bijlage er niet meer af te krijgen: de
+    // route viel altijd terug op de kolom, dus belandde het bestand in de prullenbak, dan weigerde
+    // elke verzending met "kies een ander bestand" en was er geen manier om dat te doen.
+    const bijlageMeegestuurd = !!body && typeof body === 'object' && 'attachment_document_id' in body
+    const gevraagdeBijlage = typeof body?.attachment_document_id === 'string' && body.attachment_document_id
+      ? body.attachment_document_id
+      : null
+    const bijlageId = bijlageMeegestuurd
+      ? gevraagdeBijlage
+      : ((invoice as { attachment_document_id?: string | null }).attachment_document_id ?? null)
+    if (bijlageId) {
+      // Namens een medewerker is de documentrij van de eigenaar via RLS onleesbaar; dan langs
+      // service_role, precies zoals de rest van deze route dat doet.
+      const bijlageClient = isActingForOther(acting) ? createPipelineClient() : supabase
+      const { data: bijlageDoc, error: bijlageErr } = await bijlageClient
+        .from('documents')
+        .select('id, user_id, file_name, file_url, file_size, file_type, trashed')
+        .eq('id', bijlageId)
+        // [RLS-UIT] Op de EIGENAAR, in de query zelf. Het id komt uit het verzoek en is dus
+        // attacker-supplied; attachmentRefusal weigert andermans bestand hieronder ook, maar een
+        // filter in code is de tweede verdedigingslinie en niet de eerste. Namens een medewerker
+        // loopt dit langs service_role, en dan is deze regel het enige wat er tussen zit.
+        .eq('user_id', ownerId)
+        .maybeSingle()
+
+      if (bijlageErr) {
+        // [LOCK-READ-HONEST] Niet kunnen kijken is niet hetzelfde als "er is niets". Weigeren, en
+        // zeggen dat het tijdelijk is — er is nog niets verbruikt.
+        return NextResponse.json(
+          { error: 'We konden de bijlage nu niet ophalen. Er is nog niets verstuurd — probeer het zo meteen opnieuw.' },
+          { status: 503 },
+        )
+      }
+
+      const weigering = attachmentRefusal(bijlageDoc as Parameters<typeof attachmentRefusal>[0], ownerId)
+      if (weigering) {
+        return NextResponse.json({ error: attachmentRefusalText(weigering), code: `attachment_${weigering}` }, { status: 400 })
+      }
+
+      const pad = (bijlageDoc as { file_url: string }).file_url
+      const { data: blob, error: dlErr } = await createPipelineClient().storage.from('documents').download(pad)
+      if (dlErr || !blob) {
+        return NextResponse.json(
+          { error: 'De bijlage kon niet worden gelezen. Er is nog niets verstuurd — probeer het zo meteen opnieuw of kies een ander bestand.' },
+          { status: 503 },
+        )
+      }
+      bijlage = {
+        filename: safeAttachmentName((bijlageDoc as { file_name: string | null }).file_name),
+        content: Buffer.from(await blob.arrayBuffer()),
+      }
+    }
+
     // ── 8. Generate number — skipped entirely for resend ───────
     // [FAIR-USE] Het maandhek, hier: alles is gevalideerd, en de eerstvolgende stap geeft een
     // nummer uit dat niet meer teruggegeven kan worden. Faalt open. Een weigering pauzeert
@@ -535,6 +617,19 @@ export async function POST(request: NextRequest) {
           // `select('*')` above returns the key iff the column exists, so the row itself answers.
           ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
           ...(computedTotals ?? {}),
+          // [FACTUUR-BIJLAGE] Vastleggen WAT er meeging, en alleen als het scherm zich erover
+          // uitsprak. Zonder dit zou opnieuw versturen de bijlage vergeten die de klant de eerste
+          // keer wél kreeg — twee mails over dezelfde factuur met een verschillende inhoud.
+          //
+          // `gevraagdeBijlage` mag hier null zijn, en dat is geen slordigheid maar de bedoeling:
+          // het scherm dat "Weghalen" meestuurt WIST de kolom, zodat de volgende verzending de
+          // bijlage ook echt niet meer meeneemt. Alleen wie zwijgt verandert niets.
+          //
+          // Dezelfde voorwaarde als de regel hierboven: de sleutel reist alleen mee als de kolom er
+          // is. Deze UPDATE is het punt van geen terugkeer.
+          ...(bijlageMeegestuurd && 'attachment_document_id' in invoice
+            ? { attachment_document_id: gevraagdeBijlage }
+            : {}),
           updated_at: new Date().toISOString(),
         })
         .eq('id', invoiceId)
@@ -594,6 +689,33 @@ export async function POST(request: NextRequest) {
     // [FACTUUR-A] resend path: no audit log. A resend touches no legal record
     // (no number, status, or amount change) — it is pure re-delivery, so there
     // is nothing auditable. (Avoids inventing a new AuditAction value.)
+
+    // [FACTUUR-BIJLAGE] …met één uitzondering, en die is opzettelijk klein.
+    //
+    // De vastlegging hierboven zit binnen `if (!resend)`, want daar hoort ze: dat is het blok dat
+    // een nummer en een status vastzet. Maar juist bij OPNIEUW versturen wisselt of vervalt een
+    // bijlage — het bestand belandde in de prullenbak, of het was het verkeerde. Bleef de kolom
+    // dan staan, dan koos de ondernemer "Weghalen", zag de mail vertrekken, en kreeg bij de
+    // volgende poging exact dezelfde weigering terug: de keuze gold voor die ene mail en nergens
+    // anders.
+    //
+    // Alleen deze kolom, alleen als het scherm zich erover uitsprak, en op een factuur die haar
+    // nummer en status al heeft. Geen juridisch veld, dus ook hier geen auditregel.
+    if (resend && bijlageMeegestuurd && 'attachment_document_id' in invoice) {
+      const { error: bijlageBewaarErr } = await supabase
+        .from('invoices')
+        .update({ attachment_document_id: gevraagdeBijlage } as never)
+        .eq('id', invoiceId)
+        // [ACTING-FOR] De eigenaar, niet de mens die op de knop drukte.
+        .eq('sender_id', ownerId)
+      if (bijlageBewaarErr) {
+        // De mail gaat hierna gewoon weg met de bijlage die de ondernemer koos — die is hierboven
+        // al opgehaald. Alleen het ONTHOUDEN mislukte, en daar mag een verzending niet op stuklopen.
+        console.error('[FACTUUR-BIJLAGE] bijlagekeuze niet vastgelegd bij opnieuw versturen', {
+          invoiceId, error: bijlageBewaarErr.message,
+        })
+      }
+    }
 
     // ── 11. Fetch sender profile — full row, the PDF needs it all ─
     // [ACTING-FOR] Het profiel van de VERKOPER staat op de PDF — dat is de eigenaar. Voor een
@@ -737,6 +859,8 @@ export async function POST(request: NextRequest) {
         toEmail: invoice.client_email,
         clientName: invoice.client_name,
         zzperName,
+        // [FACTUUR-BIJLAGE] Al opgehaald en gekeurd voordat er een nummer bestond.
+        extraAttachment: bijlage,
         invoiceNumber: finalNumber,
         totalInc: finalTotalInc,
         dueDate: invoice.due_date ?? '',

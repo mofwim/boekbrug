@@ -16,6 +16,8 @@ import { SITE_URL } from '@/lib/site'
 import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [DEEL-CREDIT] Bedragen, geen ja/nee — zie de creditnota-controle verderop.
+import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
 // [ALARM] Een poort die niet kon draaien moet iemand bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 
@@ -64,12 +66,19 @@ export async function POST(
   // public page 404s a credited invoice, so without this the owner copies a link that is
   // guaranteed to be dead — while this modal still shows them an IBAN, a QR and the full amount
   // to quote by hand. Refusing here keeps the route and the pay page saying the same thing.
+  //
+  // [DEEL-CREDIT] …and "the same thing" is what changed. The pay page stopped answering yes/no the
+  // moment a credit could be a PART: it stays live on a partly credited invoice and asks for the
+  // remainder. This route kept the old yes/no, so it refused to mint the very link that page was
+  // ready to serve — an owner who credited one disputed line of five could no longer ask to be
+  // paid for the other four, on an invoice that keeps its 'sent' status and its full total.
+  //
+  // So it reads AMOUNTS now, and refuses only when the credits cover the whole invoice.
   const { data: creditRows, error: creditErr } = await supabase
     .from('invoices')
-    .select('id')
+    .select('total_inc_btw')
     .eq('original_invoice_id', id)
     .eq('invoice_type', 'creditnota')
-    .limit(1)
   // [NO-SILENT-EMPTY] Failing CLOSED is right — an unminted link costs a moment, a link to a
   // withdrawn invoice sends a customer to a page that 404s. But the two reasons are not the same
   // sentence: "there is a creditnota for this invoice" sends the owner looking for one, and when
@@ -87,14 +96,31 @@ export async function POST(
       { status: 503 },
     )
   }
-  if ((creditRows ?? []).length > 0) {
+  // Hoeveel is er teruggegeven? Magnitudes — een creditnota staat negatief opgeslagen
+  // ([CREDIT-SIGN]) en de vraag hier is "hoeveel kwam er terug", niet "welke kant op".
+  const creditRowList = ((creditRows ?? []) as { total_inc_btw: number | null }[]).map((r) => ({
+    original_invoice_id: id,
+    total_inc_btw: r.total_inc_btw,
+  }))
+  const gecrediteerd = creditedTotalsFrom(creditRowList).get(id) ?? 0
+  // Volledig = de credits dekken de hele factuur. Dat oordeel heeft BEIDE kanten nodig: een
+  // creditregel weet wat hij teruggeeft, alleen de factuur weet hoeveel er te geven was.
+  if (fullyCreditedIdsFrom(creditRowList, [invoice as { id: string; total_inc_btw?: number | null }]).has(id)) {
     return NextResponse.json(
       { error: 'Voor deze factuur is een creditnota gemaakt — er kan geen betaalverzoek meer voor worden gedeeld.' },
       { status: 400 }
     )
   }
 
-  const built = buildBetaalverzoek(invoice as BetaalverzoekInvoice, owner ?? { iban: null, company_name: null, full_name: null })
+  // [DEEL-CREDIT] De verlaging reist mee het bedrag in. buildBetaalverzoek trekt hem er in
+  // openAmount vanaf, zodat het bedrag op de QR en in de modal de REST is. Zonder dit zou de
+  // ondernemer een link delen die om het volle bedrag vraagt van een klant die het verschil
+  // zwart-op-wit heeft teruggekregen — en de betaalpagina achter diezelfde link zou een ander
+  // bedrag tonen dan de modal waaruit hij gekopieerd werd.
+  const built = buildBetaalverzoek(
+    { ...(invoice as BetaalverzoekInvoice), credited_inc_btw: gecrediteerd },
+    owner ?? { iban: null, company_name: null, full_name: null },
+  )
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 400 })
 
   // Mint a random, unguessable token on first use; reuse it afterwards so the link

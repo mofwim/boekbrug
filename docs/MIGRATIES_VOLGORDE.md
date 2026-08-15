@@ -20,9 +20,28 @@
 > docs/WELKE_MIGRATIES_STAAN_ER.sql
 > ```
 >
-> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. De
-> OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
-> altijd; dit document niet noodzakelijk.
+> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. Dat antwoord
+> klopt altijd; dit document niet noodzakelijk.
+>
+> **Sinds 15 augustus 2026 wordt die query GEGENEREERD** uit `supabase/migrations/`, door
+> `scripts/migration-inventory.ts`. Dat is geen nettigheid maar de reparatie van dezelfde fout één
+> verdieping hoger: het antwoord kwam altijd al uit de database, maar de VRAAG stond met de hand
+> in dat bestand — en een migratie die er niet in stond, kon er ook nooit als OPEN uit komen. Dat
+> ging twee keer mis; de laatste keer dekte de lijst 28 van de 104 migraties op schijf en gaf een
+> schoon "alles toegepast" terug. Nu dekt hij ze alle 104, en een poort
+> (`[MIGRATIE-JOURNAAL]`) faalt zodra de map en het bestand uit elkaar lopen.
+>
+> Drie uitkomsten, en de middelste is de belangrijke:
+>
+> | | |
+> |---|---|
+> | `TOEGEPAST` | elk object dat de migratie aanmaakt, bestaat |
+> | `GEDEELTELIJK` | **halverwege gestopt** — lees het CONTROLE-blok van dát bestand |
+> | `OPEN` | geen enkel object bestaat |
+>
+> Negen migraties maken niets aan (ze trekken rechten in, wijzigen, of verplaatsen data). Die
+> staan onderaan met naam als "niet vast te stellen" — met opzet geen verzonnen vingerafdruk,
+> want een verkeerd antwoord is erger dan geen antwoord.
 >
 > ### De stand op 29 juli 2026 — GELEZEN UIT DE DATABASE, niet gemeld
 >
@@ -300,6 +319,106 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 9 | `snelstart_connection.sql` | pas nodig met een subscription key |
 | 10 | `kluis_subscriptions.sql` | **vóór de eerste Bewaarkluis-betaling** |
 | 11 | `cash_entry_soft_delete.sql` | zet zachte verwijdering in het kasboek AAN; tot dan blijft een kasboeking hard verwijderd |
+| 12 | `invoice_line_discount.sql` | korting per factuurregel |
+| 13 | `creditnota_partial.sql` | een creditnota voor een DEEL van een factuur |
+| 14 | `offerte_akkoord.sql` | de klant kan zelf akkoord geven op een offerte |
+| 15 | `invoice_bijlage.sql` | één eigen bestand met de factuurmail mee |
+| 16 | `rpc_anon_revoke.sql` | ⚠️ **de geld-functies zijn aanroepbaar zonder account — draai deze als eerste** |
+| 17 | `function_search_path.sql` | een vast zoekpad op de negen eigen functies — hygiëne, geen haast |
+
+**Over 16 — dit is de enige met haast.** De andere migraties voegen iets toe; deze sluit iets af
+dat open staat. Een reeks `SECURITY DEFINER`-functies bewaakt zichzelf met
+`IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id`, waarvan de gedachte is: "service_role
+heeft geen uid, dus dat is de server". Klopt — maar `anon` heeft óók geen uid, en `anon` is de rol
+achter de publieke sleutel die in elke browserbundel meegaat. Nagemeten op de productiedatabase:
+`SET LOCAL ROLE anon; SELECT auth.uid() IS NULL` → true, en `anon` had EXECUTE op alle dertien.
+
+Het zwaarste geval is niet het grootste bedrag maar het onomkeerbare: `seed_invoice_counter` kan
+door `GREATEST` alleen vooruit, dus verlagen kan niemand — maar de teller van een vreemde op
+999999999 zetten wél, en een kapotte Art. 35-reeks is niet te herstellen. Daarnaast staan het
+boeken en verplaatsen van betalingen open op andermans administratie.
+
+Intrekken in plaats van dertien guards aanscherpen: een rechtencontrole draait vóór de body en is
+niet te omzeilen door `SECURITY DEFINER`. De guards blijven staan voor ingelogde gebruikers
+onderling. Geen enkele aanroep in deze app gebeurt als `anon` — alle call sites nagelopen — dus er
+gaat niets van kapot; `service_role` wordt in de migratie expliciet opnieuw gemachtigd.
+
+> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** deze migratie is TOEGEPAST.
+> `has_function_privilege('anon', …)` is nu false voor alle dertien, `service_role` houdt overal
+> EXECUTE, en de zes functies die het scherm aanroept houden `authenticated`. De linter noemt onder
+> `anon` alleen nog de vijf leeshulpjes die met opzet buiten deze migratie bleven — zie hieronder.
+
+> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** 17 is TOEGEPAST. Alle negen
+> tonen `search_path=public, pg_catalog, pg_temp`; nul staan er nog los. Daarna een UPDATE op
+> `invoices` binnen een teruggedraaide transactie: de hele triggerketen liep zonder fout, dus elke
+> functie vindt haar namen onder het nieuwe pad. Er is niets geschreven.
+
+**Over 17.** Alleen metadata: `ALTER FUNCTION … SET search_path`, geen functie wordt herschreven.
+Er is **geen haast**, en dat staat er expliciet bij omdat de vorige regel wél haast had. Op de
+productiedatabase nagemeten: geen van de negen is `SECURITY DEFINER`, en noch `anon` noch
+`authenticated` heeft CREATE op énig schema — twee onafhankelijke redenen waarom er niets te kapen
+valt. Het wordt toch vastgezet omdat dat omstandigheden zijn en geen afspraken: wie morgen één van
+deze bewakers `SECURITY DEFINER` maakt, erft anders stilzwijgend een echte kwetsbaarheid.
+Terugdraaien is één regel per functie (`RESET search_path`).
+
+---
+
+## Wat de linter meldt en met opzet zo blijft
+
+Niet elke melding is een taak. Deze drie zijn nagekeken en blijven staan, met de reden erbij — een
+lijst waar bekende-en-geaccepteerde meldingen tussen staan zonder uitleg is een lijst die niemand
+meer leest.
+
+- **Vijf `SECURITY DEFINER`-functies die `anon` mag aanroepen** — `acting_for_owner`,
+  `is_my_accountant_client`, `has_active_invoice_mandate`, `has_active_confirm_mandate`,
+  `audit_row_is_about_me`. Alle vijf zijn `STABLE`/`IMMUTABLE`: ze veranderen niets en geven een
+  boolean of één uuid terug. Ze worden samen in **19 RLS-policies** aangeroepen, en een policy
+  draait als de bevragende rol — `anon` het recht afnemen zou dus LEZEN breken op de publieke
+  pagina's in plaats van schrijven dichtzetten. Dat is de verkeerde kant op.
+- **`rls_enabled_no_policy` op `ai_spend_daily`, `cron_runs`, `email_skipped_attachments`** — RLS
+  aan met nul policies betekent **alles geweigerd** voor `anon` en `authenticated`; alleen
+  `service_role` komt erlangs, en dat is precies wat deze drie tabellen nodig hebben. De linter
+  meldt het als INFO omdat het meestal een vergeten policy is; hier is het de bedoeling.
+- **`extension_in_public` op `pg_trgm`** — verplaatsen betekent elke index en elke functie die
+  eraan hangt opnieuw opbouwen, voor een melding die geen rechten verruimt.
+
+Eén melding is **wél** een taak en staat niet in SQL: **Leaked Password Protection** staat uit.
+Aanzetten is één schakelaar in het Supabase-dashboard onder *Authentication → Policies*; Supabase
+controleert een nieuw wachtwoord dan tegen HaveIBeenPwned.
+
+**Over 12 t/m 15.** Deze horen bij vier functies die al op `main` staan. Ze hebben geen onderlinge
+volgorde en mogen los van elkaar. **Zonder de migratie werkt de app precies als de dag ervoor** —
+elke functie is aan de kolom vastgeknoopt, niet aan een schakelaar, en de code weigert het NIEUWE
+in plaats van het bestaande stuk te maken:
+
+- **12** — een concept met een regelkorting wordt teruggedraaid en de ondernemer leest waarom
+  (`/api/invoice/draft`, HTTP 503). Een factuur zonder regelkorting merkt niets.
+- **13** — de oude unieke index laat één creditnota per factuur toe, dus een tweede deelcreditnota
+  wordt door de database geweigerd. Het plafond (Σ|credits| ≤ |origineel|) staat óók in de route en
+  in `partial-credit.ts`, dus het bedrag kan nooit te hoog worden; de migratie voegt de
+  vergrendeling tegen twee gelijktijdige verzoeken toe.
+- **14** — de offertemail gaat zonder akkoordknop de deur uit, met een luide regel in het log
+  (`send-offerte`). De offerte zelf verstuurt gewoon.
+- **15** — de bijlage kan per verzending worden meegegeven maar wordt niet op de factuur onthouden.
+  De weigering blijft vóór het factuurnummer staan, dus er ontstaat nooit een gat in de reeks.
+
+> **Stand op 15 augustus 2026 — 11 is TOEGEPAST, GEMELD door de eigenaar en niet nagemeten.**
+> Dat onderscheid staat er omdat de waarschuwing bovenaan dit document er precies over gaat: de
+> verbinding met de database was weg op het moment van melden, dus dit is een bewering en geen
+> lezing. Draai `docs/WELKE_MIGRATIES_STAAN_ER.sql` of het CONTROLE-blok onderin de migratie om er
+> een lezing van te maken. Let daarbij vooral op de definitie van
+> `cash_entries_one_settlement_per_instalment`: staat `deleted_at` er niet in, dan is de DROP/CREATE
+> niet gedraaid en houdt een verwijderde tegenboeking haar plek bezet.
+>
+> Wat er vóór toepassing wél is gemeten: beide voorwaarden stonden er (`invoice_id`,
+> `settlement_id`), de index stond nog in zijn oude vorm, en de tabel telde 14 rijen. Dat was geen
+> formaliteit — dit bestand faalt halverwege, ná de geslaagde ALTER, op een database waar die twee
+> kolommen ontbreken.
+>
+> **De code-kant is wél gemeten, en die is compleet.** Alle 24 aanroepen op `cash_entries` in
+> `src/` en `scripts/` vallen aan de goede kant: 18 gaan door `cash-live.ts`, 5 zijn zelf een
+> schrijfactie, 1 is de capability-probe. Nul werden alleen vrijgesteld doordat er toevallig een
+> insert in de buurt stond — de poort is dus niet groen bij toeval.
 
 **Over 11.** Deze mag op elk moment, ook los van de rest, en er zit geen haast bij: de app werkt er
 volledig zonder. De code PROBEERT de kolom (`src/lib/cash-live.ts`) en gedraagt zich zonder hem

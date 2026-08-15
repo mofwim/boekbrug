@@ -104,7 +104,24 @@ export interface InvoiceTotals {
   total_inc_btw: number;
 }
 
-/** Het excl.-bedrag van één regel: het opgeslagen totaal, of anders aantal × prijs. */
+/**
+ * Het excl.-bedrag van één regel: het opgeslagen totaal, of anders aantal × prijs.
+ *
+ * [REGEL-KORTING] Die terugval WEET NIETS VAN REGELKORTING, en dat is geen slordigheid maar de
+ * grens van deze module: `line_total` is per afspraak al NETTO (invoice_line_discount.sql), dus wie
+ * hem meegeeft heeft de korting er allang af. Alle drie de aanroepers doen dat ook — draft-totals
+ * en de PUT rekenen hem eerst uit met `lineNetEx`, en de verstuurroute leest hem uit de database.
+ * Nagelopen, niet aangenomen.
+ *
+ * Maar wie ooit regels ZONDER `line_total` doorgeeft — een nieuw voorbeeldscherm dat rechtstreeks
+ * uit een formulier rekent, bijvoorbeeld — krijgt hier stilzwijgend de VOLLE prijs terug, en dan
+ * staat er een korting op het scherm die niet in het bedrag zit. Reken hem in dat geval eerst uit
+ * met `lineNetEx` uit invoice-discount.ts; die module kent de kortingskolommen wel.
+ *
+ * Waarom niet gewoon hier `lineNetEx` aanroepen: invoice-discount.ts haalt `round2` uit dit
+ * bestand, dus dat zou een importcirkel maken tussen de twee modules die samen al het geld
+ * uitrekenen. Een waarschuwing op de juiste plek is dat niet waard.
+ */
 function lineEx(l: TotalsLine): number {
   return typeof l.line_total === "number" ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
 }
