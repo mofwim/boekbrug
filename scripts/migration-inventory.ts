@@ -60,7 +60,53 @@ interface Probe {
   object: string;
   /** Alleen bij een kolom: de tabel waar hij op zit. */
   tabel?: string;
+  /**
+   * Het schema. Bijna altijd 'public' — en die "bijna" was een echte fout.
+   *
+   * documents_shared_and_storage_policies.sql zet drie policies op `storage.objects`, want dat is
+   * waar de bestanden staan. Een probe die alleen in `public` keek noemde die migratie voor
+   * eeuwig GEDEELTELIJK, hoe goed ze ook gedraaid had — en dat is de duurste soort meting: een
+   * alarm dat altijd afgaat, leert iedereen om het weg te klikken.
+   */
+  schema: string;
 }
+
+/**
+ * Objecten die WEL worden aangemaakt maar NIETS bewijzen — met de reden erbij.
+ *
+ * Dit is de enige plek waar met de hand iets aan het oordeel wordt toegevoegd, en dat is met
+ * opzet krap gehouden: elke regel hier is een meting die niet meer gedaan wordt, dus hij moet
+ * verdiend zijn. De reden staat in de gegenereerde SQL, zodat wie de lijst leest ziet WAAROM er
+ * niet naar gekeken wordt, in plaats van dat het object stilletjes verdwijnt.
+ *
+ * Wat hier NIET thuishoort: een object dat gewoon ontbreekt. Dat hoort OPEN te heten.
+ */
+const NIETS_BEWIJZEND: Record<string, { object: string; reden: string }[]> = {
+  "documents_content_hash_unique.sql": [
+    {
+      object: "document_is_referenced",
+      reden:
+        "Steiger, geen fundament. Deze functie bestaat alleen om binnen DEZE migratie de " +
+        "eenmalige dedup-DELETE te rangschikken; geen enkele regel in src/ roept haar aan. Het " +
+        "blijvende resultaat is de unieke index uq_documents_user_content_hash, en die staat er. " +
+        "Haar afwezigheid betekent dus dat iemand de steiger heeft opgeruimd, niet dat de " +
+        "migratie niet liep.",
+    },
+  ],
+  "documents_shared_and_storage_policies.sql": [
+    {
+      object: "idx_documents_user_content_hash",
+      reden:
+        "Achterhaald door een LATERE beslissing, en niet door een DROP — daarom ziet de " +
+        "supersessie-regel hem niet. Deze niet-unieke index op (user_id, content_hash) is er " +
+        "gekomen met het argument dat een UNIQUE de 'nog een keer uploaden'-functie zou breken; " +
+        "documents_content_hash_unique.sql heeft die afweging later omgedraaid en zet " +
+        "uq_documents_user_content_hash op dezelfde kolommen. Die dekt dezelfde lookups. Hem " +
+        "alsnog aanmaken zou een tweede index op dezelfde twee kolommen zijn: schrijfkosten " +
+        "zonder leeswinst.",
+    },
+  ],
+};
 
 /** SQL-commentaar eraf. Uitgecommentarieerde DDL is geen DDL. */
 function stripSql(sql: string): string {
@@ -74,27 +120,30 @@ function probesOf(sql: string): Probe[] {
     if (!out.some((q) => q.soort === p.soort && q.object === p.object && q.tabel === p.tabel)) out.push(p);
   };
 
-  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?([a-z0-9_]+)"?/gi)) {
-    push({ soort: "table", object: m[1] });
+  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-z0-9_]+)\.)?"?([a-z0-9_]+)"?/gi)) {
+    push({ soort: "table", object: m[2], schema: m[1] ?? "public" });
   }
   // Een ALTER TABLE kan meerdere ADD COLUMNs dragen; de tabelnaam geldt tot de volgende ALTER.
-  for (const blok of sql.matchAll(/alter\s+table\s+(?:only\s+)?(?:public\.)?"?([a-z0-9_]+)"?([\s\S]*?)(?=alter\s+table|create\s+|do\s+\$\$|$)/gi)) {
-    const tabel = blok[1];
-    for (const kol of blok[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?/gi)) {
-      push({ soort: "column", object: kol[1], tabel });
+  for (const blok of sql.matchAll(/alter\s+table\s+(?:only\s+)?(?:([a-z0-9_]+)\.)?"?([a-z0-9_]+)"?([\s\S]*?)(?=alter\s+table|create\s+|do\s+\$\$|$)/gi)) {
+    const schema = blok[1] ?? "public";
+    const tabel = blok[2];
+    for (const kol of blok[3].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?/gi)) {
+      push({ soort: "column", object: kol[1], tabel, schema });
     }
-    for (const con of blok[2].matchAll(/add\s+constraint\s+"?([a-z0-9_]+)"?/gi)) {
-      push({ soort: "constraint", object: con[1] });
+    for (const con of blok[3].matchAll(/add\s+constraint\s+"?([a-z0-9_]+)"?/gi)) {
+      push({ soort: "constraint", object: con[1], schema });
     }
   }
-  for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?([a-z0-9_]+)"?\s*\(/gi)) {
-    push({ soort: "function", object: m[1] });
+  for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:([a-z0-9_]+)\.)?"?([a-z0-9_]+)"?\s*\(/gi)) {
+    push({ soort: "function", object: m[2], schema: m[1] ?? "public" });
   }
-  for (const m of sql.matchAll(/create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?\s+on/gi)) {
-    push({ soort: "index", object: m[1] });
+  // `... ON [schema.]tabel` bepaalt het schema van een index, niet de indexnaam zelf.
+  for (const m of sql.matchAll(/create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?"?([a-z0-9_]+)"?\s+on\s+(?:([a-z0-9_]+)\.)?"?[a-z0-9_]+"?/gi)) {
+    push({ soort: "index", object: m[1], schema: m[2] ?? "public" });
   }
-  for (const m of sql.matchAll(/create\s+policy\s+"?([a-z0-9_ ]+?)"?\s+on/gi)) {
-    push({ soort: "policy", object: m[1].trim() });
+  // Idem voor een policy — en juist hier zat de fout: drie policies staan op storage.objects.
+  for (const m of sql.matchAll(/create\s+policy\s+"?([a-z0-9_ ]+?)"?\s+on\s+(?:([a-z0-9_]+)\.)?"?([a-z0-9_]+)"?/gi)) {
+    push({ soort: "policy", object: m[1].trim(), tabel: m[3], schema: m[2] ?? "public" });
   }
   return out;
 }
@@ -147,11 +196,17 @@ const rijen: string[] = [];
 const zonderVingerafdruk: string[] = [];
 const opgeruimd: string[] = [];
 
+const nietsBewijzend: string[] = [];
+
 for (const { bestand, sql } of gelezen) {
   const probes = probesOf(sql);
-  const bruikbaar = probes.filter((p) => !weggegooid.has(p.object.toLowerCase()));
+  const genegeerd = new Map((NIETS_BEWIJZEND[bestand] ?? []).map((o) => [o.object.toLowerCase(), o.reden]));
+  const bruikbaar = probes.filter(
+    (p) => !weggegooid.has(p.object.toLowerCase()) && !genegeerd.has(p.object.toLowerCase()),
+  );
   const verloren = probes.filter((p) => weggegooid.has(p.object.toLowerCase()));
   for (const p of verloren) opgeruimd.push(`${bestand} → ${p.soort} ${p.object}`);
+  for (const [obj, reden] of genegeerd) nietsBewijzend.push(`${bestand} → ${obj}\n--       ${reden}`);
 
   if (bruikbaar.length === 0) {
     zonderVingerafdruk.push(bestand);
@@ -164,7 +219,9 @@ for (const { bestand, sql } of gelezen) {
     .slice(0, 6);
   for (const p of gekozen) {
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
-    rijen.push(`  (${q(bestand)}, ${q(p.soort)}, ${q(p.object)}, ${p.tabel ? q(p.tabel) : "null"})`);
+    rijen.push(
+      `  (${q(bestand)}, ${q(p.soort)}, ${q(p.object)}, ${p.tabel ? q(p.tabel) : "null"}, ${q(p.schema)})`,
+    );
   }
 }
 
@@ -205,23 +262,25 @@ zeg("--");
 zeg("-- Leest alleen de catalogus. Verandert niets. Draai hem als service_role in de SQL-editor.");
 zeg("-- =====================================================================");
 zeg();
-zeg("with probe(bestand, soort, object, tabel) as (values");
+zeg("with probe(bestand, soort, object, tabel, schema) as (values");
 zeg(rijen.join(",\n"));
 zeg("),");
 zeg("bevonden as (");
 zeg("  select p.*,");
 zeg("    case p.soort");
 zeg("      when 'table' then exists (select 1 from information_schema.tables");
-zeg("             where table_schema = 'public' and table_name = p.object)");
+zeg("             where table_schema = p.schema and table_name = p.object)");
 zeg("      when 'column' then exists (select 1 from information_schema.columns");
-zeg("             where table_schema = 'public' and table_name = p.tabel and column_name = p.object)");
+zeg("             where table_schema = p.schema and table_name = p.tabel and column_name = p.object)");
 zeg("      when 'function' then exists (select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace");
-zeg("             where n.nspname = 'public' and f.proname = p.object)");
+zeg("             where n.nspname = p.schema and f.proname = p.object)");
 zeg("      when 'index' then exists (select 1 from pg_indexes");
-zeg("             where schemaname = 'public' and indexname = p.object)");
+zeg("             where schemaname = p.schema and indexname = p.object)");
 zeg("      when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)");
+zeg("      -- Een policy staat lang niet altijd in public: de bestandspolicies zitten op");
+zeg("      -- storage.objects. Op het verkeerde schema zoeken gaf een alarm dat nooit uitging.");
 zeg("      when 'policy' then exists (select 1 from pg_policies");
-zeg("             where schemaname = 'public' and policyname = p.object)");
+zeg("             where schemaname = p.schema and tablename = p.tabel and policyname = p.object)");
 zeg("    end as aanwezig");
 zeg("  from probe p");
 zeg(")");
@@ -231,7 +290,7 @@ zeg("       when bool_or(aanwezig)  then 'GEDEELTELIJK  <-- KIJK HIER'");
 zeg("       else 'OPEN' end                                        as stand,");
 zeg("  bestand,");
 zeg("  count(*) filter (where aanwezig) || ' / ' || count(*)       as objecten_gevonden,");
-zeg("  string_agg(case when not aanwezig then soort || ' ' || object end, ', ')  as ontbreekt");
+zeg("  string_agg(case when not aanwezig then soort || ' ' || schema || '.' || object end, ', ') as ontbreekt");
 zeg("from bevonden");
 zeg("group by bestand");
 zeg("-- GEDEELTELIJK eerst, dan OPEN, dan de rest: de regels waar iets aan te doen is, bovenaan.");
@@ -260,6 +319,19 @@ zeg("-- een toegepaste migratie als OPEN aanmerken, en dat is de duurste soort f
 zeg("-- lijst kan maken: hem nog een keer draaien.");
 zeg("--");
 for (const r of opgeruimd) zeg(`--   ${r}`);
+zeg("--");
+zeg("-- =====================================================================");
+zeg("-- WEL AANGEMAAKT, MAAR BEWIJST NIETS — met de reden erbij");
+zeg("-- =====================================================================");
+zeg("--");
+zeg("-- Deze objecten worden door hun migratie aangemaakt, maar hun bestaan zegt niets over of");
+zeg("-- die migratie gedraaid heeft. Ze staan hier MET reden in plaats van stilletjes te");
+zeg("-- verdwijnen — wie de lijst leest hoort te zien waarom er niet naar gekeken wordt.");
+zeg("--");
+zeg("-- Ze staan in NIETS_BEWIJZEND in scripts/migration-inventory.ts. Een object dat gewoon");
+zeg("-- ontbreekt hoort daar NIET in: dat hoort OPEN te heten.");
+zeg("--");
+for (const r of nietsBewijzend) zeg(`--   ${r}`);
 zeg();
 
 process.stdout.write(lijnen.join("\n") + "\n");
