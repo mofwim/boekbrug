@@ -60,7 +60,25 @@
 > | 16 | `cash_settlement_per_instalment.sql` | Kasboekregels per termijn in plaats van één per factuur |
 > | 17 | `invoice_schedules.sql` | Terugkerende facturen |
 >
-> ### Nog open: vijf — één daarvan vóór de eerste echte gebruiker
+> ### ~~Nog open: vijf~~ — ACHTERHAALD op 15 augustus 2026
+>
+> **Vier van deze vijf zijn gemeten als TOEGEPAST**, met de volledige inventarislijst tegen de
+> productiedatabase: `cron_runs.sql`, `bank_ignore_reason.sql`, `bank_statement_periods.sql` en
+> `search_engine_clients_kvk_city.sql`. Ze stonden hier bijna drie weken als "nog open" terwijl ze
+> er allang stonden — precies waar de waarschuwing bovenaan dit document voor is.
+>
+> **De vijfde, `storage_bucket_hardening.sql`, blijft onbeantwoord** — en dat is een ander soort
+> onbeantwoord. Hij maakt niets aan (hij zet drie standen goed), dus geen enkele probe kan hem
+> vinden; hij staat in de lijst onder "niet vast te stellen". Uitgerekend de migratie die hieronder
+> "de enige die vóór livegang moet" heet, is dus de enige die geen automatische controle kan halen.
+> Daarom heeft hij sinds vandaag een eigen CONTROLE-blok onderaan het bestand: één query die zegt
+> of de `documents`-bucket privé staat, wat de limiet is en of RLS op `storage.objects` aan staat.
+> **Draai die vóór de eerste echte gebruiker.** Staat `public` op true, dan is elk bonnetje van elke
+> gebruiker met een geraden URL op te halen, en er gaat niets stuk dat iemand zou opmerken.
+>
+> De tekst hieronder is bewaard zoals ze op 29 juli was.
+>
+> ### (29 juli) Nog open: vijf — één daarvan vóór de eerste echte gebruiker
 >
 > **`storage_bucket_hardening.sql`** — de enige op deze lijst die vóór livegang moet. Hij
 > verandert vandaag NIETS: op 29 juli is gemeten dat de `documents`-bucket privé staat en de app
@@ -431,9 +449,40 @@ al fout was — en dat merkt de ondernemer pas als hij zo'n factuur probeert aan
 foutmelding over een datum waar hij niets aan deed. Komen er regels uit, repareer die datums
 voordat iemand ertegenaan loopt.
 
-### Inmiddels ook gesloten: `ai_budget_settle.sql`
+### De volledige inventarislijst, gedraaid — 15 augustus 2026
 
-> **Toegepast op 15 augustus 2026 — GEMELD door de eigenaar, nog niet nagemeten.** De verbinding
+**95 meetbare migraties: 94 TOEGEPAST, 1 OPEN, en nul GEDEELTELIJK.**
+
+Die laatste nul is de belangrijkste uitkomst en de makkelijkste om overheen te lezen. GEDEELTELIJK
+betekent halverwege gestopt — een kolom toegevoegd en de index eronder niet, een functie zonder
+haar trigger. Dat is de stand waar geen enkel scherm iets van laat zien en waar niemand naar keek
+omdat er geen manier was om te kijken. Er is er geen.
+
+De negen die geen objecten aanmaken staan apart; van die negen is er één die er echt toe doet, en
+dat is `storage_bucket_hardening.sql` — zie de correctie bovenaan.
+
+### Niet gesloten: `ai_budget_settle.sql` — de melding en de meting spreken elkaar tegen
+
+> **Gemeld als toegepast; de lijst zegt `OPEN`, 0 / 1, `function public.ai_budget_settle`
+> ontbreekt.** Bij een verschil tussen een melding en een lezing wint de lezing — dat is de hele
+> reden dat deze lijst bestaat.
+>
+> Het is géén meetfout. De probe vraagt naar `public.ai_budget_settle` en matcht op `proname`, dus
+> los van de argumenten; de migratie maakt exact die naam; en `src/lib/ai-budget.ts` roept exact
+> die naam aan. Anders dan bij de storage-policies is hier niets mis met de vraag.
+>
+> De waarschijnlijkste oorzaak is de vorm van het bestand. Het is één `BEGIN; … COMMIT;` — faalt er
+> binnenin iets, dan rolt ALLES terug en blijft er niets over. En sinds gisteren staat er onderaan
+> een CONTROLE-blok dat volledig uit commentaar bestaat: wie alleen dat staartje uitvoert, krijgt
+> "Success. No rows returned" te zien terwijl er niets is gebeurd. Dat blok is er op mijn verzoek
+> bij gekomen, dus die valkuil heb ik zelf gelegd.
+>
+> **Doe dit:** voer het bestand uit vanaf `BEGIN;` tot en met `COMMIT;` — de regels **48 t/m 92**, niet het
+> commentaar eronder — en kijk of de editor een fout meldt in plaats van alleen naar het
+> groene vinkje. Draai daarna de eerste query uit het CONTROLE-blok: één rij, `anon` en
+> `authenticated` false, `service_role` true.
+
+> **(Eerder genoteerd:) GEMELD door de eigenaar, nog niet nagemeten.** De verbinding
 > met de database was weg op dat moment, dus dit is een bewering en geen lezing. Draai
 > `docs/WELKE_MIGRATIES_STAAN_ER.sql` (die vraagt naar `function ai_budget_settle`) of het
 > CONTROLE-blok dat nu onderaan die migratie staat.
