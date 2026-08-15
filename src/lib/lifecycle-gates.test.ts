@@ -9190,3 +9190,53 @@ test("[DEEL-KORTING] a line's own fixed discount scales with the part being cred
   assert.match(spec, /a FULL credit is unchanged, to the cent/,
     "every creditnota this app has ever made took that path");
 });
+
+// ─── [DEEL-CREDIT] De twee handmatige knoppen die nog ja/nee vroegen ──────────
+//
+// De migratie creditnota_partial.sql maakte een creditnota voor een DEEL van een factuur mogelijk.
+// Zes oppervlakken werden toen omgezet van "is er een creditnota?" naar "hoeveel is er nog open?".
+// Twee bleven staan, en het zijn precies de HANDMATIGE varianten van flows waarvan de automatische
+// broer al was omgezet: de knop "Herinner" naast de automatische herinneringscron, en het
+// betaalverzoek voor één factuur naast dat voor een bundel.
+//
+// Het gevolg was in beide gevallen hetzelfde en het kostte de ondernemer geld: crediteer één
+// betwiste regel van vijf, en de app weigerde vanaf dat moment nog te vorderen voor de andere vier
+// — op een factuur die haar status 'sent' en haar volle totaal houdt, zonder dat enig scherm zei
+// waarom.
+
+test("[DEEL-CREDIT] a reminder stops only when NOTHING is left to claim", () => {
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  // Het oordeel gaat over een BEDRAG. Een enkele rij vinden is geen antwoord meer.
+  assert.match(route, /openAfterCredit\(inv\.total_inc_btw, \(inv as any\)\.amount_paid, gecrediteerd\)/,
+    "the refusal must weigh the amounts, not count the creditnotas");
+  assert.match(route, /if \(gecrediteerd > 0 && nogOpen <= 0\)/,
+    "…and refuse only when the credits (plus payments) cover the whole invoice");
+  assert.doesNotMatch(route, /if \(tegenCreditnota\)/,
+    "the old yes/no refusal must be gone, not merely bypassed");
+
+  // En het bedrag in de mail is diezelfde uitkomst. Het volle totaal noemen op een deels
+  // gecrediteerde factuur vraagt de klant om geld dat hij zwart-op-wit heeft teruggekregen.
+  assert.match(route, /openstaand: nogOpen,/,
+    "the reminder must name what is still owed, never the full total");
+  assert.doesNotMatch(route, /openstaand: outstandingAmount\(/,
+    "outstandingAmount knows nothing about creditnotas");
+});
+
+test("[DEEL-CREDIT] a payment link is refused only for a fully credited invoice", () => {
+  const route = code("src/app/api/invoice/[id]/betaalverzoek/route.ts");
+  // De betaalpagina zelf is al deelcredit-bewust en int de rest. Deze route weigerde de link te
+  // munten die diezelfde pagina klaarstond te bedienen.
+  assert.match(route, /fullyCreditedIdsFrom\(creditRowList, \[invoice as \{ id: string; total_inc_btw\?: number \| null \}\]\)\.has\(id\)/,
+    "only a FULLY credited invoice may be refused a payment link");
+  assert.doesNotMatch(route, /if \(\(creditRows \?\? \[\]\)\.length > 0\)/,
+    "the old count-based refusal must be gone");
+
+  // …en het bedrag op de QR is de rest, niet het volle totaal. Anders toont de betaalpagina achter
+  // de link een ander bedrag dan de modal waaruit hij gekopieerd werd.
+  assert.match(route, /credited_inc_btw: gecrediteerd/,
+    "the reduction must reach buildBetaalverzoek, which subtracts it in openAmount");
+
+  // De leesfout blijft een APARTE uitkomst: "we konden niet nakijken" is niet "er is een creditnota".
+  assert.match(route, /We konden niet nakijken of er een creditnota/,
+    "a failed check must still fail closed, and say so in its own words");
+});
