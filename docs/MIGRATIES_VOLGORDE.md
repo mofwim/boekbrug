@@ -383,13 +383,23 @@ in plaats van het bestaande stuk te maken:
 - **15** — de bijlage kan per verzending worden meegegeven maar wordt niet op de factuur onthouden.
   De weigering blijft vóór het factuurnummer staan, dus er ontstaat nooit een gat in de reeks.
 
-> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** 11 is als ENIGE nog OPEN.
-> `cash_entries.deleted_at` bestaat niet. De twee voorwaarden ervoor staan er wél — `invoice_id` en
-> `settlement_id` zijn aanwezig, en `cash_entries_one_settlement_per_instalment` staat er nog in
-> zijn OUDE vorm (`WHERE invoice_id IS NOT NULL`, zonder `deleted_at`), precies de index die deze
-> migratie opnieuw opbouwt. De tabel telt 14 rijen; de DROP/CREATE is een kwestie van niets.
-> Nagekeken vóór toepassing, want dit bestand faalt halverwege — ná de geslaagde ALTER — op een
-> database waar die twee kolommen ontbreken.
+> **Stand op 15 augustus 2026 — 11 is TOEGEPAST, GEMELD door de eigenaar en niet nagemeten.**
+> Dat onderscheid staat er omdat de waarschuwing bovenaan dit document er precies over gaat: de
+> verbinding met de database was weg op het moment van melden, dus dit is een bewering en geen
+> lezing. Draai `docs/WELKE_MIGRATIES_STAAN_ER.sql` of het CONTROLE-blok onderin de migratie om er
+> een lezing van te maken. Let daarbij vooral op de definitie van
+> `cash_entries_one_settlement_per_instalment`: staat `deleted_at` er niet in, dan is de DROP/CREATE
+> niet gedraaid en houdt een verwijderde tegenboeking haar plek bezet.
+>
+> Wat er vóór toepassing wél is gemeten: beide voorwaarden stonden er (`invoice_id`,
+> `settlement_id`), de index stond nog in zijn oude vorm, en de tabel telde 14 rijen. Dat was geen
+> formaliteit — dit bestand faalt halverwege, ná de geslaagde ALTER, op een database waar die twee
+> kolommen ontbreken.
+>
+> **De code-kant is wél gemeten, en die is compleet.** Alle 24 aanroepen op `cash_entries` in
+> `src/` en `scripts/` vallen aan de goede kant: 18 gaan door `cash-live.ts`, 5 zijn zelf een
+> schrijfactie, 1 is de capability-probe. Nul werden alleen vrijgesteld doordat er toevallig een
+> insert in de buurt stond — de poort is dus niet groen bij toeval.
 
 **Over 11.** Deze mag op elk moment, ook los van de rest, en er zit geen haast bij: de app werkt er
 volledig zonder. De code PROBEERT de kolom (`src/lib/cash-live.ts`) en gedraagt zich zonder hem

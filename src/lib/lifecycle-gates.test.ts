@@ -8961,17 +8961,33 @@ test("[KAS-ZACHT] every reader of the cash book asks only for the movements that
   const PROBE_MARKERS = ['select("settlement_id")', 'select("deleted_at")'];
   const WRAPPERS = ["liveCash.only(", "cash.only(", "live.only(", "liveForDelete.only("];
 
+  // ── Waar het venster WEL en NIET mag kijken ──
+  //
+  // Een wrapper opent VÓÓR `.from(` — `liveCash.only(client.from("cash_entries")…)` — dus daarvoor
+  // moet er achteruit gekeken worden, en met ruimte, want tussen de twee staan lange commentaren.
+  //
+  // Voor een WRITE geldt het omgekeerde, en dat verschil is hier het hele punt. `.insert(` en
+  // `.update(` komen ná `.from(`, in dezelfde keten. Zou een write ook ACHTERUIT mogen tellen, dan
+  // vrijwaart een insert een leesquery die er toevallig vlakbij staat — en juist in dit bestand
+  // staan lezen en schrijven dicht op elkaar: /api/cash doet er allebei binnen enkele regels.
+  // Deze poort zou dan groen blijven op een lezing die verwijderde boekingen meetelt, en dat is
+  // precies de stille fout waar hij tegen is geschreven.
+  //
+  // Gemeten toen dit werd aangescherpt: alle 24 aanroepen vielen al aan de goede kant — 18 door een
+  // wrapper, 5 doordat de aanroep ZELF een write is, 1 probe. Nul die alleen door een buurman werd
+  // vrijgesteld. De aanscherping verandert vandaag dus geen enkel oordeel; ze zorgt dat dat morgen
+  // ook nog zo is in plaats van toevallig.
   const unfiltered: string[] = [];
   for (const f of files) {
     if (EXEMPT_FILES.has(f)) continue;
     const src = readFileSync(f, "utf8");
     for (const m of src.matchAll(/from\((?:"|')cash_entries(?:"|')\)/g)) {
-      // A generous window: the wrapper opens before `.from(` and the write/probe marker follows it,
-      // and real call sites carry long comments between the two.
-      const window = src.slice(Math.max(0, m.index - 700), m.index + 700);
-      if (WRAPPERS.some((w) => window.includes(w))) continue;
-      if (WRITE_MARKERS.some((w) => window.includes(w))) continue;
-      if (PROBE_MARKERS.some((w) => window.includes(w))) continue;
+      const before = src.slice(Math.max(0, m.index - 700), m.index);
+      const statement = src.slice(m.index, m.index + 700);
+      if (WRAPPERS.some((w) => before.includes(w))) continue;
+      // Alleen vooruit: de write moet aan DEZE keten hangen, niet ergens in de buurt staan.
+      if (WRITE_MARKERS.some((w) => statement.includes(w))) continue;
+      if (PROBE_MARKERS.some((w) => statement.includes(w))) continue;
       unfiltered.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
   }
