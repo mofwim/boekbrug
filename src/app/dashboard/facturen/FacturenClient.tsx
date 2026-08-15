@@ -10,8 +10,10 @@ import { failureText } from '@/lib/server-message'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+// [DEEL-CREDIT] One definition of how much has been credited, and of when that is the whole thing.
+import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
 
@@ -257,15 +259,71 @@ export default function FacturenClient({
     amount_paid?: number | null
   }
 
+  // [DEEL-CREDIT] …and HOW MUCH, not merely whether. This read used to fetch original_invoice_id
+  // alone, which is a yes/no — and a yes/no became the wrong question the day a creditnota could
+  // cover one disputed line instead of the whole invoice. Three things followed from it on this
+  // screen, and all three said "withdrawn" about an invoice that still owes money:
+  //
+  //   · isBundelbaar refused it a place in a gebundeld betaalverzoek. The API stopped refusing
+  //     those (betaalverzoek-bundel: "A PARTLY credited invoice may join — it still owes the
+  //     rest"), so the screen was greying out something the server would have accepted, and the
+  //     comment there still explained the block by that server refusal.
+  //   · the 'Gecrediteerd' chip claimed the invoice is no longer chased or counted, on an invoice
+  //     that IS both.
+  //   · and the 'Deelbetaling' chip was suppressed beside it — so a partly paid AND partly
+  //     credited invoice lost the one line saying what is still owed, and with it the tap target
+  //     for recording the next instalment.
+  const [creditedAmounts, setCreditedAmounts] = useState<Map<string, number>>(new Map())
+
+  useEffect(() => {
+    if (!profile?.id) return
+    supabase
+      .from('invoices')
+      .select('original_invoice_id, total_inc_btw')
+      .eq('sender_id', profile.id)
+      .eq('invoice_type', 'creditnota')
+      .not('original_invoice_id', 'is', null)
+      .then(({ data }) => {
+        const rows = ((data ?? []) as unknown as { original_invoice_id: string | null; total_inc_btw: number | null }[])
+        setCreditedAmounts(creditedTotalsFrom(rows))
+      })
+  }, [profile?.id])
+
+  /** [DEEL-CREDIT] What has been credited against this invoice, incl. btw, as a positive amount. */
+  const gecrediteerdOp = useCallback(
+    (id: string) => creditedAmounts.get(id) ?? 0,
+    [creditedAmounts],
+  )
+
+  /**
+   * [DEEL-CREDIT] Withdrawn — the credits together cover the WHOLE invoice. Only this is what the
+   * 'Gecrediteerd' chip has ever meant: not chased, not counted, nothing left. A partial credit is
+   * a different state and gets a different chip, because an owner who reads "Gecrediteerd" on an
+   * invoice they are still owed € 450 for will stop expecting the money.
+   */
+  const isVolledigGecrediteerd = useCallback(
+    (inv: { id: string; total_inc_btw?: number | null }) =>
+      fullyCreditedIdsFrom(
+        [{ original_invoice_id: inv.id, total_inc_btw: -gecrediteerdOp(inv.id) }],
+        [{ id: inv.id, total_inc_btw: inv.total_inc_btw ?? null }],
+      ).has(inv.id),
+    [gecrediteerdOp],
+  )
+
   // Only an issued, unpaid verkoopfactuur can join a bundle (same rule as the lib).
-  // [CREDITNOTA-NO-CHASE] …and never one that was withdrawn with a creditnota. The API refuses
+  // [CREDITNOTA-NO-CHASE] …and never one that was WITHDRAWN with a creditnota. The API refuses
   // those (betaalverzoek-bundel checks it server-side, because the pay page drops them from the
   // payable set), so selecting one led to a dead "Betaalverzoek maken mislukt" for something this
-  // screen already knew: creditedIds is loaded right here. Grey it out instead of failing later.
+  // screen already knew: the credits are loaded right here. Grey it out instead of failing later.
+  //
+  // [DEEL-CREDIT] Withdrawn means FULLY credited, and the distinction is the whole point: the API
+  // now says in as many words that "a PARTLY credited invoice may join — it still owes the rest",
+  // so the yes/no test greyed out a row the server was waiting to accept. The block outlived the
+  // refusal it was mirroring.
   const isBundelbaar = (inv: BundelRow) =>
     (inv.invoice_type == null || inv.invoice_type === 'factuur') &&
     ['sent', 'overdue', 'processing'].includes(inv.status) &&
-    !creditedIds.has(inv.id)
+    !isVolledigGecrediteerd(inv)
 
   function toggleSelect(inv: BundelRow) {
     setSelected(prev => {
@@ -379,23 +437,6 @@ export default function FacturenClient({
   // this the two screens disagree: the tile stops counting the money and the list keeps
   // showing it as owed, with no explanation for why nothing is being chased. Keyed on the
   // owner (a creditnota per owner is rare), so it costs one small read and no pagination.
-  const [creditedIds, setCreditedIds] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    if (!profile?.id) return
-    supabase
-      .from('invoices')
-      .select('original_invoice_id')
-      .eq('sender_id', profile.id)
-      .eq('invoice_type', 'creditnota')
-      .not('original_invoice_id', 'is', null)
-      .then(({ data }) => {
-        const ids = ((data ?? []) as unknown as { original_invoice_id: string | null }[])
-          .map(r => r.original_invoice_id)
-          .filter((id): id is string => !!id)
-        setCreditedIds(new Set(ids))
-      })
-  }, [profile?.id])
 
   // [SEARCH] Debounced server query over ALL the user's invoices (any status), so a
   // match that hasn't been scrolled into the infinite list is still found instantly.
@@ -1239,8 +1280,11 @@ export default function FacturenClient({
                       {/* [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota. The invoice keeps
                           its 'Verzonden' chip on purpose (the +omzet stays, netted by the
                           creditnota), so without this the owner sees an invoice that is never
-                          chased and never counted in Te ontvangen, with nothing explaining why. */}
-                      {creditedIds.has(inv.id) && (
+                          chased and never counted in Te ontvangen, with nothing explaining why.
+                          [DEEL-CREDIT] Only when the credits cover the WHOLE invoice: this chip's
+                          own tooltip promises it is no longer chased and no longer counts as
+                          outstanding, and on a partly credited invoice both halves are false. */}
+                      {isVolledigGecrediteerd(inv) && (
                         <span
                           title={t('lijst.gecrediteerd.uitleg')}
                           style={{
@@ -1252,11 +1296,32 @@ export default function FacturenClient({
                         </span>
                       )}
 
+                      {/* [DEEL-CREDIT] Partly credited — a state of its own, and it needs its own
+                          words. Silence would leave the owner with an invoice whose amount no
+                          longer matches what anyone owes, and the withdrawn chip would tell them
+                          to stop expecting money they are still owed. So it names the amount that
+                          came back, and the headline total above it stays what was invoiced. */}
+                      {!isVolledigGecrediteerd(inv) && gecrediteerdOp(inv.id) > 0 && (
+                        <span
+                          title={t('lijst.deelsGecrediteerd.uitleg', { bedrag: fmtEur(gecrediteerdOp(inv.id)) })}
+                          style={{
+                            fontSize: 11, fontWeight: 600, color: '#5F6368', background: M3.surfaceVariant,
+                            border: '1px solid #DADCE0', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {t('lijst.deelsGecrediteerd', { bedrag: fmtEur(gecrediteerdOp(inv.id)) })}
+                        </span>
+                      )}
+
                       {/* [PARTIAL-PAY] Deelbetaling — part settled, rest still openstaand. The
                           headline amount stays the invoice total (same as the incoming side);
                           this chip carries what is actually still owed. Only for the genuine
-                          in-between state — a fully open or completed invoice has clearer UI. */}
-                      {isPartiallyPaid(inv) && !creditedIds.has(inv.id) && (
+                          in-between state — a fully open or completed invoice has clearer UI.
+                          [DEEL-CREDIT] Suppressed only for a WITHDRAWN invoice. A partly credited
+                          one is exactly where this line is needed most, and it was the one place
+                          it was hidden — together with the tap target that records the next
+                          instalment. */}
+                      {isPartiallyPaid(inv) && !isVolledigGecrediteerd(inv) && (
                         <button
                           onClick={e => {
                             e.stopPropagation()

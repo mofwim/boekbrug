@@ -194,5 +194,55 @@ console.log("\n— vatClawbackNote —");
   check("nothing eligible → no note", vatClawbackNote(claw([pur({ amountPaid: 1210 })])) === null);
 }
 
+console.log("\n— [DEEL-CREDIT] a PART of an invoice credited, on both sides —");
+{
+  // creditnota_partial.sql made a credit for one disputed LINE possible. Both detectors read
+  // "is there a creditnota?" as a yes/no and dropped the whole invoice on a yes — a rule that was
+  // exactly right while a credit could only ever be the whole thing.
+  const credit = (over: Partial<BadDebtInput> = {}): BadDebtInput => inv({
+    id: "cn-1", invoiceNumber: "C-1", invoiceType: "creditnota", originalInvoiceId: "inv-1",
+    status: "sent", totalExBtw: -100, btwAmount: -21, totalIncBtw: -121, ...over,
+  });
+
+  // € 1.210 sold, € 121 credited, the remaining € 1.089 never paid, more than a year past due.
+  const r = run([inv(), credit()]);
+  check("a partly credited sale is still a bad debt", r.eligible.length === 1);
+  check("…and reclaims the BTW on the UNPAID € 1.089, not on the whole invoice",
+    near(r.totalReclaimableBtw, 210 * (1089 / 1210)));
+  check("…which is € 189, not € 210 and not € 0", near(r.totalReclaimableBtw, 189));
+  // Indexed defensively: a negative control that empties this list must SHOW its failures, not
+  // crash the run on eligible[0] and hide every assertion after it.
+  check("the unpaid ex-BTW follows the same share", near(r.eligible[0]?.unpaidEx ?? 0, 1000 * (1089 / 1210)));
+
+  // The mirror, and the half that COSTS money: this is the naheffing warning, and one partial
+  // supplier credit used to switch it off completely.
+  const asPurchase = (rows: BadDebtInput[]) => rows.map((x) => ({ ...x, direction: "incoming" as const, status: "received" }));
+  const c = detectVatClawback({ scheme: "factuur", asOf: "2026-07-19", invoices: asPurchase([inv(), credit()]) });
+  check("a partly credited PURCHASE still owes its voorbelasting back", c.eligible.length === 1);
+  check("…on the unpaid part only", near(c.totalRepayableBtw, 189));
+
+  // A FULL credit must keep behaving exactly as it did — that is every creditnota ever made here.
+  const full = run([inv(), credit({ totalExBtw: -1000, btwAmount: -210, totalIncBtw: -1210 })]);
+  check("a FULLY credited sale is not a bad debt", full.eligible.length === 0 && full.totalReclaimableBtw === 0);
+  const fullPurchase = detectVatClawback({ scheme: "factuur", asOf: "2026-07-19",
+    invoices: asPurchase([inv(), credit({ totalExBtw: -1000, btwAmount: -210, totalIncBtw: -1210 })]) });
+  check("…and nothing is clawed back on one either", fullPurchase.eligible.length === 0);
+
+  // Several credits add up, and so do a credit and a payment. Neither may leave a sliver behind
+  // that a floating-point subtraction invented.
+  check("two credits together covering the invoice leave nothing",
+    run([inv(), credit({ id: "c1", totalIncBtw: -610, totalExBtw: -504.13, btwAmount: -105.87 }),
+              credit({ id: "c2", totalIncBtw: -600, totalExBtw: -495.87, btwAmount: -104.13 })]).eligible.length === 0);
+  check("a credit plus a part payment covering the rest leaves nothing",
+    run([inv({ amountPaid: 1089 }), credit()]).eligible.length === 0);
+  check("over-crediting never turns into a negative reclaim",
+    run([inv(), credit({ totalIncBtw: -2000, totalExBtw: -1652.89, btwAmount: -347.11 })]).eligible.length === 0);
+
+  // An UNLINKED supplier creditnota reduces nothing — the app cannot tell what it belongs to, and
+  // vatClawbackNote tells the owner to check rather than presenting a figure to copy.
+  check("a creditnota with no original_invoice_id reduces nothing",
+    near(run([inv(), credit({ originalInvoiceId: null })]).totalReclaimableBtw, 210));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

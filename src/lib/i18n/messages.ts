@@ -7743,6 +7743,22 @@ export const MESSAGES = {
     ar: 'مدفوعة جزئياً · المتبقي {open}',
     en: 'Partly paid · {open} open',
   },
+  // [DEEL-CREDIT] Een creditnota voor een DEEL van de factuur. Niet 'Gecrediteerd' — die belooft
+  // dat er niets meer openstaat en dat er niet meer wordt aangemaand, en hier is allebei onwaar.
+  // Het bedrag staat in de chip zelf: de ondernemer moet kunnen zien waarom het totaal boven de
+  // regel niet meer is wat iemand hem schuldig is.
+  'lijst.deelsGecrediteerd': {
+    nl: 'Deels gecrediteerd · {bedrag} terug',
+    ar: 'إشعار دائن جزئي · {bedrag} مُعادة',
+    en: 'Partly credited · {bedrag} returned',
+    tr: 'Kısmen alacaklandırıldı · {bedrag} iade',
+  },
+  'lijst.deelsGecrediteerd.uitleg': {
+    nl: 'Er is voor {bedrag} gecrediteerd op deze factuur. De rest staat nog open en wordt gewoon aangemaand.',
+    ar: 'صدر إشعار دائن بمبلغ {bedrag} على هذه الفاتورة. الباقي ما زال مستحقاً وتُرسَل له التذكيرات كالمعتاد.',
+    en: 'A creditnota of {bedrag} was made against this invoice. The rest is still owed and is still chased.',
+    tr: 'Bu fatura için {bedrag} tutarında alacak dekontu düzenlendi. Kalanı hâlâ açık ve takip ediliyor.',
+  },
   'lijst.dezeKlant': {
     nl: 'deze klant',
     ar: 'هذا العميل',

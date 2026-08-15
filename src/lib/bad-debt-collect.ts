@@ -52,8 +52,9 @@ export async function collectBadDebt(
 ): Promise<CollectedBadDebt> {
   if (scheme !== "factuur") return { ...EMPTY, readFailed: false };
   // NOTE: creditnotas are fetched too (they also sit in status 'sent') — the pure detector needs
-  // them to know which originals were reversed, and drops both the creditnota and its credited
-  // original. So the query must NOT filter invoice_type out.
+  // them to know how much of each original was reversed. [DEEL-CREDIT] It subtracts that amount
+  // from the unpaid portion rather than dropping the invoice: a credit for one disputed line
+  // leaves the rest a bad debt like any other. So the query must NOT filter invoice_type out.
   const rows = await fetchAllRows<{
     id: string | null; invoice_number: string | null; client_name: string | null; direction: string | null;
     status: string | null; invoice_type: string | null; original_invoice_id: string | null;
@@ -113,7 +114,9 @@ export async function collectVatClawback(
   if (scheme !== "factuur" || korActive) return { ...EMPTY_CLAWBACK, readFailed: false };
   // 'received' is the only purchase status whose BTW the ledger actually put in 5b while the
   // invoice is still open. A supplier creditnota sits in the same status, and the pure detector
-  // needs it to drop the original it reverses — so this query must not filter invoice_type out.
+  // needs it to measure how much of the original it reverses — [DEEL-CREDIT] a PART of it leaves
+  // the rest repayable, and this is the side that costs money. So this query must not filter
+  // invoice_type out.
   const rows = await fetchAllRows<{
     id: string | null; invoice_number: string | null; client_name: string | null; direction: string | null;
     status: string | null; invoice_type: string | null; original_invoice_id: string | null;
