@@ -9290,3 +9290,36 @@ test("[FACTUUR-BIJLAGE] the screen reads the attachment back, and stays silent w
   assert.equal(stuurt.length, 2,
     "both send paths (first send and resend) must speak only when the screen knows the truth");
 });
+
+// ─── [SHEET-NIET-OPSLAAN] The app sent the owner to the right door, then locked it ───────────────
+
+test("[SHEET-NIET-OPSLAAN] a spreadsheet on the bank endpoint claims no content_hash", () => {
+  // RECONCILIATION_TRIANGLE.md carried this as "latent": a spreadsheet dropped on the bank importer
+  // was still stored with doc_type "bankafschrift" and a content_hash.
+  //
+  // Mis-filing was the visible half. The half that costs a day's turnover is the hash: importBankStatement
+  // already DETECTS the spreadsheet and warns, by name, "importeer het via Dagomzet". The owner follows
+  // that advice, uploads the same bytes there, and byte-hash dedup rejects them as already seen. We
+  // point at the right door and lock it on the way. Nothing errors; the day's turnover just never arrives.
+  //
+  // A source gate, not a unit test, because importBankStatement is 440 lines of I/O over the Supabase
+  // pipeline — there is no pure seam to assert against. What it pins is the ONE structural fact that
+  // makes the bug impossible: the passthrough insert is not reachable while nonBankSpreadsheet is true.
+  const mod = code("src/lib/bank-ingest.ts");
+
+  // The guard exists and is the first branch of the passthrough store.
+  assert.match(mod, /if \(nonBankSpreadsheet\) \{\s*statementStored = false;\s*\} else if \(priorDocId\)/,
+    "the spreadsheet branch must short-circuit the passthrough store before priorDocId/insert");
+
+  // The insert that carries doc_type + content_hash + shared must sit in the else-branch, i.e. AFTER
+  // that guard. If a later edit moves it above, this fails while the branch above still reads fine.
+  const guardAt = mod.indexOf("if (nonBankSpreadsheet)");
+  const insertAt = mod.indexOf('doc_type: "bankafschrift"');
+  assert.ok(guardAt > 0 && insertAt > 0, "both the guard and the bankafschrift insert must exist");
+  assert.ok(guardAt < insertAt,
+    "the nonBankSpreadsheet guard must come BEFORE the bankafschrift insert, or the hash is claimed anyway");
+
+  // The detection that feeds the guard must still be wired — a guard on a flag nobody sets is not a guard.
+  assert.match(mod, /nonBankSpreadsheet = true/,
+    "looksLikeSpreadsheetBinary must still set the flag the guard reads");
+});
