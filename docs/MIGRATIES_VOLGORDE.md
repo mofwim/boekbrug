@@ -305,6 +305,7 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 14 | `offerte_akkoord.sql` | de klant kan zelf akkoord geven op een offerte |
 | 15 | `invoice_bijlage.sql` | één eigen bestand met de factuurmail mee |
 | 16 | `rpc_anon_revoke.sql` | ⚠️ **de geld-functies zijn aanroepbaar zonder account — draai deze als eerste** |
+| 17 | `function_search_path.sql` | een vast zoekpad op de negen eigen functies — hygiëne, geen haast |
 
 **Over 16 — dit is de enige met haast.** De andere migraties voegen iets toe; deze sluit iets af
 dat open staat. Een reeks `SECURITY DEFINER`-functies bewaakt zichzelf met
@@ -322,6 +323,44 @@ Intrekken in plaats van dertien guards aanscherpen: een rechtencontrole draait v
 niet te omzeilen door `SECURITY DEFINER`. De guards blijven staan voor ingelogde gebruikers
 onderling. Geen enkele aanroep in deze app gebeurt als `anon` — alle call sites nagelopen — dus er
 gaat niets van kapot; `service_role` wordt in de migratie expliciet opnieuw gemachtigd.
+
+> **Stand op 15 augustus 2026, gelezen uit de productiedatabase:** deze migratie is TOEGEPAST.
+> `has_function_privilege('anon', …)` is nu false voor alle dertien, `service_role` houdt overal
+> EXECUTE, en de zes functies die het scherm aanroept houden `authenticated`. De linter noemt onder
+> `anon` alleen nog de vijf leeshulpjes die met opzet buiten deze migratie bleven — zie hieronder.
+
+**Over 17.** Alleen metadata: `ALTER FUNCTION … SET search_path`, geen functie wordt herschreven.
+Er is **geen haast**, en dat staat er expliciet bij omdat de vorige regel wél haast had. Op de
+productiedatabase nagemeten: geen van de negen is `SECURITY DEFINER`, en noch `anon` noch
+`authenticated` heeft CREATE op énig schema — twee onafhankelijke redenen waarom er niets te kapen
+valt. Het wordt toch vastgezet omdat dat omstandigheden zijn en geen afspraken: wie morgen één van
+deze bewakers `SECURITY DEFINER` maakt, erft anders stilzwijgend een echte kwetsbaarheid.
+Terugdraaien is één regel per functie (`RESET search_path`).
+
+---
+
+## Wat de linter meldt en met opzet zo blijft
+
+Niet elke melding is een taak. Deze drie zijn nagekeken en blijven staan, met de reden erbij — een
+lijst waar bekende-en-geaccepteerde meldingen tussen staan zonder uitleg is een lijst die niemand
+meer leest.
+
+- **Vijf `SECURITY DEFINER`-functies die `anon` mag aanroepen** — `acting_for_owner`,
+  `is_my_accountant_client`, `has_active_invoice_mandate`, `has_active_confirm_mandate`,
+  `audit_row_is_about_me`. Alle vijf zijn `STABLE`/`IMMUTABLE`: ze veranderen niets en geven een
+  boolean of één uuid terug. Ze worden samen in **19 RLS-policies** aangeroepen, en een policy
+  draait als de bevragende rol — `anon` het recht afnemen zou dus LEZEN breken op de publieke
+  pagina's in plaats van schrijven dichtzetten. Dat is de verkeerde kant op.
+- **`rls_enabled_no_policy` op `ai_spend_daily`, `cron_runs`, `email_skipped_attachments`** — RLS
+  aan met nul policies betekent **alles geweigerd** voor `anon` en `authenticated`; alleen
+  `service_role` komt erlangs, en dat is precies wat deze drie tabellen nodig hebben. De linter
+  meldt het als INFO omdat het meestal een vergeten policy is; hier is het de bedoeling.
+- **`extension_in_public` op `pg_trgm`** — verplaatsen betekent elke index en elke functie die
+  eraan hangt opnieuw opbouwen, voor een melding die geen rechten verruimt.
+
+Eén melding is **wél** een taak en staat niet in SQL: **Leaked Password Protection** staat uit.
+Aanzetten is één schakelaar in het Supabase-dashboard onder *Authentication → Policies*; Supabase
+controleert een nieuw wachtwoord dan tegen HaveIBeenPwned.
 
 **Over 12 t/m 15.** Deze horen bij vier functies die al op `main` staan. Ze hebben geen onderlinge
 volgorde en mogen los van elkaar. **Zonder de migratie werkt de app precies als de dag ervoor** —

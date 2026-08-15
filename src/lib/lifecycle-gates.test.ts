@@ -9392,3 +9392,39 @@ test("[ANON-RPC] the server-only RPCs really are server-only", () => {
     }
   }
 });
+
+// ─── [ZOEKPAD] Een vast zoekpad op de negen eigen functies ────────────────────
+//
+// Hygiëne, geen gat, en dat verschil staat er met opzet bij: een migratie die zich voordoet als
+// noodreparatie maakt de volgende noodreparatie ongeloofwaardig. Op de productiedatabase gemeten
+// staat geen van de negen op SECURITY DEFINER, en heeft anon noch authenticated CREATE op enig
+// schema — twee onafhankelijke redenen waarom er vandaag niets te kapen valt.
+//
+// Het wordt toch vastgezet omdat die twee redenen OMSTANDIGHEDEN zijn, geen afspraken. Wie morgen
+// één van deze bewakers SECURITY DEFINER maakt — een volstrekt normale wijziging — erft anders
+// stilzwijgend een echte kwetsbaarheid, en niets zou daarop wijzen.
+
+test("[ZOEKPAD] every own function is pinned, and pg_temp comes last", () => {
+  const sql = readFileSync("supabase/migrations/function_search_path.sql", "utf8");
+  for (const fn of [
+    // De vier bewakers eerst — die hebben het meest te verliezen.
+    "prevent_billing_self_grant", "prevent_accountant_amount_changes",
+    "prevent_verwerkt_invoice_changes", "guard_paid_when_verwerkt",
+    "invoices_search_vector_update", "documents_search_vector_update",
+    "set_updated_at", "touch_updated_at", "get_accountant_for_zzper",
+  ]) {
+    assert.ok(sql.includes(`'${fn}'`), `${fn} must get a pinned search_path`);
+  }
+  // pg_temp ACHTERAAN. Laat je het weg, dan zet Postgres het impliciet vooraan, en dan is het
+  // tijdelijke schema van de aanroeper juist wél weer een plek om een naam te kapen — precies wat
+  // deze migratie afsluit. Een half toegepast idee is hier erger dan geen idee.
+  assert.match(sql, /SET search_path = public, pg_catalog, pg_temp/,
+    "pg_temp must be named explicitly and LAST, or the fix reopens what it closes");
+  assert.ok(!/search_path = pg_temp/.test(sql), "pg_temp must never come first");
+  // `public` moet erin, want get_accountant_for_zzper noemt accountant_clients zonder schema.
+  assert.match(sql, /accountant_clients/,
+    "the one unqualified table reference is why the path cannot be empty — say so");
+  // En de migratie moet zeggen dat dit GEEN gat was. Zie de kop hierboven.
+  assert.match(sql, /HYGIËNE, geen gat/,
+    "a migration that poses as an emergency spends credibility the next emergency needs");
+});
