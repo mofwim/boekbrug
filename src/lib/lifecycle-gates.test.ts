@@ -9468,3 +9468,56 @@ test("[FACTUUR-BIJLAGE] a copied invoice does not inherit the attachment", () =>
   assert.match(readFileSync("src/lib/invoice-attachment.ts", "utf8"), /EEN KOPIE KRIJGT DE BIJLAGE NIET MEE/,
     "the decision must be written where the feature is explained, or it reads as an omission");
 });
+
+// ─── [MIGRATIE-JOURNAAL] De inventarisvraag mag niet achterlopen op de map ────
+//
+// docs/WELKE_MIGRATIES_STAAN_ER.sql beantwoordt "wat staat er ÉCHT in de database?". De vorige
+// versie stelde die vraag met een lijst die iemand met de hand bijhield, en schreef zelf op wat
+// daar mis mee is:
+//
+//     "Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de hand in. Een migratie
+//      die er niet in staat, kan dit bestand ook niet 'OPEN' noemen."
+//
+// Dat ging twee keer mis. Eén keer dekte de lijst 17 van de 71 migraties en gaf een schoon "alles
+// toegepast" terug — met de vier waar de hele betaalkant op leunt er niet in. Bij de laatste
+// telling dekte hij er 28 van de 104.
+//
+// Het bestand wordt nu GEGENEREERD uit supabase/migrations/. Deze poort is wat die generatie waard
+// maakt: hij faalt zodra de map en het bestand uit elkaar lopen. Een nieuwe migratie zonder
+// regenereren is dan een rode poort in plaats van een lijst die stilletjes te weinig vraagt.
+
+test("[MIGRATIE-JOURNAAL] the inventory query covers every migration on disk", () => {
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const opSchijf = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
+
+  // Elke migratie komt óf als probe voor, óf staat expliciet bij "niet vast te stellen". Zwijgen
+  // is de enige uitkomst die niet mag: dat is precies hoe de vorige versie te weinig vroeg.
+  const ontbreekt = opSchijf.filter((f) => !sql.includes(f));
+  assert.deepEqual(ontbreekt, [],
+    "these migrations are on disk but absent from the inventory — regenerate with\n" +
+    "  npx tsx scripts/migration-inventory.ts > docs/WELKE_MIGRATIES_STAAN_ER.sql\n  " +
+    ontbreekt.join("\n  "));
+
+  // …en andersom: een regel over een migratie die niet meer bestaat, vraagt naar niets.
+  for (const m of sql.matchAll(/^ {2}\('([^']+\.sql)'/gm)) {
+    assert.ok(opSchijf.includes(m[1]), `${m[1]} is probed but no longer exists in supabase/migrations/`);
+  }
+
+  // Met de hand bijwerken is de fout die dit alles veroorzaakte, dus dat moet er ook op staan.
+  assert.match(sql, /automatisch gegenereerd, NIET met de hand bijwerken/);
+  assert.match(sql, /scripts\/migration-inventory\.ts/, "the file must name the script that makes it");
+});
+
+test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guessed at", () => {
+  // Een migratie die alleen intrekt (rpc_anon_revoke), alleen wijzigt (function_search_path) of
+  // alleen data verplaatst (supplier_backfill) heeft geen object waarvan het BESTAAN iets bewijst.
+  // Daar een vingerafdruk voor verzinnen zou een verkeerd antwoord geven in plaats van geen — en
+  // een lijst die zwijgt over wat ze niet weet is de lijst waar dit bestand tegen is geschreven.
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const blok = sql.slice(sql.indexOf("NIET VAST TE STELLEN"));
+  for (const f of ["rpc_anon_revoke.sql", "function_search_path.sql", "supplier_backfill.sql"]) {
+    assert.ok(blok.includes(f), `${f} creates nothing and must be listed as undeterminable`);
+    // …en dus NIET als probe, want dan zou hij voor eeuwig 'OPEN' heten.
+    assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
+  }
+});

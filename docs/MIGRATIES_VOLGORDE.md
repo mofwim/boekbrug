@@ -20,9 +20,28 @@
 > docs/WELKE_MIGRATIES_STAAN_ER.sql
 > ```
 >
-> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. De
-> OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
-> altijd; dit document niet noodzakelijk.
+> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. Dat antwoord
+> klopt altijd; dit document niet noodzakelijk.
+>
+> **Sinds 15 augustus 2026 wordt die query GEGENEREERD** uit `supabase/migrations/`, door
+> `scripts/migration-inventory.ts`. Dat is geen nettigheid maar de reparatie van dezelfde fout één
+> verdieping hoger: het antwoord kwam altijd al uit de database, maar de VRAAG stond met de hand
+> in dat bestand — en een migratie die er niet in stond, kon er ook nooit als OPEN uit komen. Dat
+> ging twee keer mis; de laatste keer dekte de lijst 28 van de 104 migraties op schijf en gaf een
+> schoon "alles toegepast" terug. Nu dekt hij ze alle 104, en een poort
+> (`[MIGRATIE-JOURNAAL]`) faalt zodra de map en het bestand uit elkaar lopen.
+>
+> Drie uitkomsten, en de middelste is de belangrijke:
+>
+> | | |
+> |---|---|
+> | `TOEGEPAST` | elk object dat de migratie aanmaakt, bestaat |
+> | `GEDEELTELIJK` | **halverwege gestopt** — lees het CONTROLE-blok van dát bestand |
+> | `OPEN` | geen enkel object bestaat |
+>
+> Negen migraties maken niets aan (ze trekken rechten in, wijzigen, of verplaatsen data). Die
+> staan onderaan met naam als "niet vast te stellen" — met opzet geen verzonnen vingerafdruk,
+> want een verkeerd antwoord is erger dan geen antwoord.
 >
 > ### De stand op 29 juli 2026 — GELEZEN UIT DE DATABASE, niet gemeld
 >
