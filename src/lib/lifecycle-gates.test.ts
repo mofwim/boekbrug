@@ -9315,6 +9315,41 @@ test("[DEEL-CREDIT] every caller that HOLDS the creditnota rows hands them over"
   assert.match(client, /outstandingAmount\(f, creditMap\.get\(f\.id\) \?\? 0\)/);
 });
 
+test("[DEEL-CREDIT] the facturenlijst tells withdrawn apart from partly credited", () => {
+  // Deze lijst laadde de creditnota's als een VERZAMELING IDS — een ja/nee — en dat werd de
+  // verkeerde vraag zodra een creditnota één betwiste regel kon dekken. Drie dingen zeiden daarna
+  // "ingetrokken" over een factuur waar nog geld op staat, en het derde nam een knop mee.
+  const client = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.doesNotMatch(client, /creditedIds/,
+    "the yes/no set must be gone, not merely bypassed");
+  assert.match(client, /\.select\('original_invoice_id, total_inc_btw'\)/,
+    "the read must fetch the AMOUNT — without it nothing here can tell the two states apart");
+  assert.match(client, /setCreditedAmounts\(creditedTotalsFrom\(rows\)\)/,
+    "…through the shared definition, not a second sum of the same rows");
+
+  // De bundel: de API weigert een deels gecrediteerde factuur al niet meer, dus het scherm mocht
+  // hem niet blijven uitgrijzen. Dit is de regel die geld kostte — een betaalverzoek dat niet
+  // verstuurd kon worden voor een bedrag dat gewoon openstond.
+  const bundel = client.slice(client.indexOf("const isBundelbaar"), client.indexOf("function toggleSelect"));
+  assert.match(bundel, /!isVolledigGecrediteerd\(inv\)/,
+    "only a FULLY credited invoice may be kept out of a bundle");
+
+  // De chip belooft in zijn eigen tooltip dat er niets meer openstaat. Dat mag alleen als het waar is.
+  assert.match(client, /\{isVolledigGecrediteerd\(inv\) && \(/,
+    "the 'Gecrediteerd' chip is for a withdrawn invoice only");
+  assert.match(client, /\{!isVolledigGecrediteerd\(inv\) && gecrediteerdOp\(inv\.id\) > 0 && \(/,
+    "a partly credited invoice gets its own chip rather than silence");
+  assert.match(client, /\{isPartiallyPaid\(inv\) && !isVolledigGecrediteerd\(inv\) && \(/,
+    "the deelbetaling chip — and the tap target under it — must survive a partial credit");
+
+  // [TDZ] De helper staat vóór zijn gebruiker. De buurscherm-bug die tests/render/ bestaat om te
+  // vangen was precies dit: een const die zeventig regels boven zijn declaratie werd gelezen.
+  assert.ok(
+    client.indexOf("const isVolledigGecrediteerd") < client.indexOf("const isBundelbaar"),
+    "a helper must be declared before the function that calls it",
+  );
+});
+
 test("[DEEL-CREDIT] a partial credit does not switch off either art. 29 detector", () => {
   // Beide detectoren vroegen "staat er een creditnota tegenover?" en lieten de héle factuur vallen
   // bij ja. Dat klopte zolang een creditnota alleen de hele factuur kon zijn. Sinds
