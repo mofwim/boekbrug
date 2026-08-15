@@ -9444,3 +9444,27 @@ test("[ZOEKPAD] every own function is pinned, and pg_temp comes last", () => {
   assert.match(sql, /HYGIËNE, geen gat/,
     "a migration that poses as an emergency spends credibility the next emergency needs");
 });
+
+test("[FACTUUR-BIJLAGE] a copied invoice does not inherit the attachment", () => {
+  // Twee routes maken een nieuwe factuur uit een bestaande. Zou de bijlage meereizen, dan krijgt de
+  // klant bij élke maandelijkse factuur de werkbon van de eerste maand, en bij elk duplicaat een
+  // document dat over ander werk gaat — een verkeerd document bij een derde, zonder dat er iets
+  // misgaat waar iemand op kan wijzen.
+  //
+  // Allebei de routes bouwen hun rij uit een EXPLICIETE kolommenlijst, dus vandaag klopt het
+  // vanzelf. Deze poort maakt van dat toeval een afspraak: wie de kolom later toevoegt — een
+  // volstrekt plausibele "verbetering" — krijgt hier rood in plaats van een verstuurde mail.
+  for (const f of [
+    "src/app/api/invoice/[id]/duplicate/route.ts",
+    "src/app/api/cron/recurring/route.ts",
+  ]) {
+    assert.ok(
+      !code(f).includes("attachment_document_id"),
+      `${f} must not carry the attachment into a copy — an attachment is evidence about ONE job`,
+    );
+  }
+  // En de reden staat op de plek waar iemand hem zoekt, niet alleen hier. readFileSync en niet
+  // code(): de uitleg IS commentaar, en code() is precies de helper die commentaar weghaalt.
+  assert.match(readFileSync("src/lib/invoice-attachment.ts", "utf8"), /EEN KOPIE KRIJGT DE BIJLAGE NIET MEE/,
+    "the decision must be written where the feature is explained, or it reads as an omission");
+});

@@ -27,6 +27,27 @@
 // Dus wordt de bijlage OPGEHAALD EN GEKEURD voordat er een nummer bestaat. Kan hij niet mee, dan
 // gaat er niets de deur uit, is er niets verbruikt, en hoort de ondernemer waarom.
 //
+// ── EEN KOPIE KRIJGT DE BIJLAGE NIET MEE, EN DAT IS EEN BESLISSING ──
+//
+// Twee routes maken een nieuwe factuur uit een bestaande: /api/invoice/[id]/duplicate en de
+// terugkerende facturen (api/cron/recurring). Geen van beide neemt `attachment_document_id` mee —
+// allebei bouwen ze hun rij uit een expliciete kolommenlijst, en die kolom staat er niet in.
+//
+// Dat leest als een omissie en is het niet. Een bijlage is bewijs over ÉÉN klus: de werkbon van
+// die dag, de urenstaat van die maand, de pakbon van die levering. Reist hij mee met een kopie,
+// dan krijgt de klant bij elke maandelijkse factuur de werkbon van de eerste maand, en bij elke
+// duplicaat een document dat over ander werk gaat. Dat is een verkeerd document bij een derde —
+// dezelfde soort fout als de `not_owned`-weigering hieronder tegenhoudt, alleen zonder dat er
+// iets misgaat waar iemand op kan wijzen.
+//
+// De omgekeerde keuze is goedkoop te herstellen (de ondernemer kiest de bijlage opnieuw, vlak
+// voor het versturen, op het scherm waar dat hoort); deze niet, want de mail is dan weg.
+//
+// Waarom dit hier staat en niet alleen in die twee routes: de zin verderop zegt dat de bijlage
+// wordt vastgelegd "zodat opnieuw versturen dezelfde bijlage meeneemt", en dat nodigt uit tot de
+// aanname dat een KOPIE dat ook doet. Een poort in lifecycle-gates.test.ts houdt de kolom uit
+// allebei de kopieerpaden, zodat die aanname rood wordt in plaats van verstuurd.
+//
 // ── DE GRENS ──
 //
 // Een mail met een bijlage van tientallen megabytes komt niet aan: de meeste mailservers weigeren
