@@ -20,6 +20,9 @@
 // the `reason` sentences stay Dutch — they are rendered on a Dutch screen.
 
 import { round2 } from './invoice-totals'
+// [DEEL-CREDIT] "What is still owed after a credit" has ONE definition in this app, and it is not
+// this file's. See outstandingAmount below for why the second spelling had to go.
+import { openAfterCredit } from './credited-invoices'
 
 export type InvoiceState = "concept" | "open" | "te-laat" | "betaald" | "vervallen";
 
@@ -62,16 +65,49 @@ export function stateOf(f: SalesInvoice, nowMs: number): InvoiceState {
   return "open";
 }
 
-/** What still has to come in. Never negative, and never more than the total. */
-export function outstandingAmount(f: SalesInvoice): number {
-  const total = typeof f.total_inc_btw === "number" && Number.isFinite(f.total_inc_btw)
-    ? Math.abs(f.total_inc_btw)
-    : 0;
-  const paid = typeof f.amount_paid === "number" && Number.isFinite(f.amount_paid) && f.amount_paid > 0
-    ? f.amount_paid
-    : 0;
-  const rest = total - paid;
-  return rest <= 0 ? 0 : round2(rest);
+/**
+ * What still has to come in. Never negative, and never more than the total.
+ *
+ * ── [DEEL-CREDIT] WHY THE CREDITED AMOUNT IS A PARAMETER ──
+ *
+ * This used to be `|total| − amount_paid`, and it was the app's SECOND answer to a question that
+ * already had one. Credit € 50 of a € 500 invoice and the two answers part company:
+ *
+ *     the reminder e-mail  (openAfterCredit)   asks the customer for   € 450
+ *     this screen          (outstandingAmount) tells the owner         € 500
+ *
+ * Same invoice, same second. The customer holds a creditnota saying € 50 is theirs; the owner's
+ * own "openstaand", and the accountant's debiteurenlijst, both still say € 500. The accountant
+ * chases the difference by telephone, on money the owner gave back in writing.
+ *
+ * The creditnota cannot net it out from the other side either, because every list that shows this
+ * number has already dropped it: `isOpenReceivable` refuses a creditnota by design, since leaving
+ * it in inflates the COUNT and the overdue count even when the euros happen to cancel. So the
+ * credit is subtracted here or it is subtracted nowhere.
+ *
+ * The bank line solves the same problem the other way and is deliberately NOT changed: there an
+ * invoice and its creditnota are two open items that a payment settles TOGETHER (findSupplierSumMatch,
+ * reconcileBatch's [BATCH-SIGN]), so the credit nets by PAIRING. Subtracting it from the invoice
+ * there as well would count it twice — € 500 − € 50 paired against a further − € 50 is € 400 for a
+ * € 450 payment. Two models, each correct where it lives; this comment exists so the next reader
+ * does not "harmonise" them.
+ *
+ * Defaults to 0, so a caller that has no creditnota rows to hand gets exactly the number it got
+ * before — a screen without the information must not start guessing at it.
+ */
+export function outstandingAmount(f: SalesInvoice, creditedIncBtw = 0): number {
+  return openAfterCredit(f.total_inc_btw, f.amount_paid, creditedIncBtw);
+}
+
+/**
+ * [DEEL-CREDIT] How much has been credited against each invoice id, as a positive amount.
+ * Built by `creditedTotalsFrom`; an absent id means nothing was credited.
+ */
+export type CreditedByInvoice = ReadonlyMap<string, number>;
+
+/** What has been credited against this invoice, or 0 when the caller supplied no map. */
+function creditedFor(f: SalesInvoice, credited?: CreditedByInvoice): number {
+  return credited?.get(f.id) ?? 0;
 }
 
 export interface SalesTotals {
@@ -85,11 +121,38 @@ export interface SalesTotals {
   overdueAmount: number;
 }
 
-export function summarise(invoices: readonly SalesInvoice[], nowMs: number): SalesTotals {
+/**
+ * The four counts and the two euro totals of a list of invoices.
+ *
+ * ── [CREDITNOTA-NO-CHASE] A creditnota is not a small debt ──
+ *
+ * It is written with status 'sent', a due date of today and a NEGATIVE total — and
+ * outstandingAmount takes the absolute value of that. So without the skip below a € 50 creditnota
+ * did not reduce the € 500 it corrects, it ADDED to it:
+ *
+ *     openstaand  € 550     te laat  € 550     te-laat count  2
+ *
+ * for a customer who owes € 450 and is one invoice late. Wrong in both directions at once, and by
+ * twice the credit — the one number this screen exists to show, and the count beside it.
+ *
+ * The rule was written for exactly this and lives four other places (invoice-reminders.ts twice,
+ * canRemind below, buildDebtorBoard). It reached every surface that judges ONE invoice and none
+ * that adds them up, which is why it took a partial credit to make it visible: while a creditnota
+ * could only ever be a whole invoice, the original was 'credited' and fell out on status anyway.
+ *
+ * `credited` is what has been credited against each remaining invoice — see outstandingAmount.
+ */
+export function summarise(
+  invoices: readonly SalesInvoice[],
+  nowMs: number,
+  credited?: CreditedByInvoice,
+): SalesTotals {
   const t: SalesTotals = { drafts: 0, open: 0, overdue: 0, paid: 0, outstanding: 0, overdueAmount: 0 };
   for (const f of invoices) {
+    // [CREDITNOTA-NO-CHASE] The opposite of a receivable, so it belongs in no count and no total.
+    if ((f.invoice_type ?? "factuur") !== "factuur") continue;
     const state = stateOf(f, nowMs);
-    const rest = outstandingAmount(f);
+    const rest = outstandingAmount(f, creditedFor(f, credited));
     if (state === "concept") t.drafts++;
     else if (state === "betaald") t.paid++;
     else if (state === "open") { t.open++; t.outstanding += rest; }
@@ -123,7 +186,7 @@ export type ReminderVerdict =
  * cause themselves and cannot undo. So this fails to "no, and here is why" — with a sentence the
  * sales member can read, rather than a button that does nothing.
  */
-export function canRemind(f: SalesInvoice, nowMs: number): ReminderVerdict {
+export function canRemind(f: SalesInvoice, nowMs: number, creditedIncBtw = 0): ReminderVerdict {
   // [CREDITNOTA-NO-CHASE] Eerst, en vóór alle andere regels: een creditnota is geen vordering maar
   // het tegendeel ervan. Hij wordt geschreven met status 'sent', een vervaldatum van vandaag en een
   // NEGATIEF totaal — en outstandingAmount() neemt daar de absolute waarde van. Zonder deze regel
@@ -141,7 +204,10 @@ export function canRemind(f: SalesInvoice, nowMs: number): ReminderVerdict {
   if (state === "concept") return { allowed: false, reason: "Deze factuur is nog niet verstuurd." };
   if (state === "betaald") return { allowed: false, reason: "Deze factuur is betaald." };
   if (state === "vervallen") return { allowed: false, reason: "Deze factuur telt niet meer mee." };
-  if (outstandingAmount(f) <= 0) {
+  // [DEEL-CREDIT] …or fully CREDITED, which the caller supplies as `creditedIncBtw`. An invoice
+  // whose credits cover it is settled just as finally as one that was paid, and the sentence below
+  // is true of both: there is nothing left to claim.
+  if (outstandingAmount(f, creditedIncBtw) <= 0) {
     // Fully paid while the status has not been updated yet. Sending a reminder about money that
     // already arrived is the most painful mail this product can send.
     return { allowed: false, reason: "Er staat niets meer open op deze factuur." };

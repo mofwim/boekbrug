@@ -9257,6 +9257,84 @@ test("[DEEL-CREDIT] a payment link is refused only for a fully credited invoice"
     "a failed check must still fail closed, and say so in its own words");
 });
 
+// ─── [DEEL-CREDIT] De derde plek: de schermen die het bedrag OPTELLEN ─────────
+//
+// De sweep hierboven zette elk oppervlak om dat over ÉÉN factuur oordeelt. De oppervlakken die ze
+// bij ELKAAR optellen bleven staan, en daar liep de tweede rekenwijze door: `|totaal| − betaald`,
+// zonder de creditnota. Twee antwoorden op dezelfde vraag, op hetzelfde moment:
+//
+//     de herinneringsmail (openAfterCredit)    vraagt de klant om    € 450
+//     het scherm          (outstandingAmount)  zegt de ondernemer    € 500
+//
+// De klant heeft de creditnota in handen; de boekhouder belt over het verschil. En de creditnota
+// kan het van de andere kant niet rechttrekken, want elke lijst die dit getal toont heeft hem er al
+// uit gehaald — isOpenReceivable weigert hem, anders klopt de TELLING niet meer.
+//
+// De banklijn lost dezelfde vraag met opzet ánders op en blijft ongemoeid: daar zijn de factuur en
+// haar creditnota twee openstaande posten die één betaling SAMEN afwikkelt (findSupplierSumMatch,
+// [BATCH-SIGN] in reconcileBatch). Daar aftrekken zou hem dubbel tellen.
+
+test("[DEEL-CREDIT] the screens that ADD amounts up subtract the credit too", () => {
+  const mod = code("src/lib/sales-overview.ts");
+  // Eén definitie, niet twee. De tweede spelling is precies wat uit elkaar liep.
+  assert.match(mod, /export function outstandingAmount\(f: SalesInvoice, creditedIncBtw = 0\): number \{\s*return openAfterCredit\(f\.total_inc_btw, f\.amount_paid, creditedIncBtw\);\s*\}/,
+    "outstandingAmount must delegate to openAfterCredit, not re-derive it");
+  assert.doesNotMatch(mod, /const rest = total - paid;/,
+    "the second spelling of the same arithmetic must be gone, not merely bypassed");
+
+  // …en summarise moet het bedrag ook echt DOORGEVEN. Een parameter die niemand vult is geen fix.
+  const body = mod.slice(mod.indexOf("export function summarise"));
+  assert.match(body, /const rest = outstandingAmount\(f, creditedFor\(f, credited\)\);/,
+    "summarise must price every invoice after its credits");
+  // [CREDITNOTA-NO-CHASE] En een creditnota telt in geen enkel totaal en in geen enkele telling
+  // mee: outstandingAmount neemt de absolute waarde, dus zonder deze regel werd € 50 krediet bij
+  // € 500 schuld OPGETELD — € 550 openstaand, en twee facturen te laat in plaats van één.
+  assert.match(body, /if \(\(f\.invoice_type \?\? "factuur"\) !== "factuur"\) continue;/,
+    "a creditnota is the opposite of a receivable and belongs in no total");
+});
+
+test("[DEEL-CREDIT] every caller that HOLDS the creditnota rows hands them over", () => {
+  // De reparatie zit in de aanroepen. Een optionele parameter repareert niets zolang de drie
+  // schermen die de creditnota-rijen al binnen hebben ze op de vloer laten liggen.
+  const debiteuren = code("src/app/dashboard/accountant/debiteuren/page.tsx");
+  assert.match(debiteuren, /const gecrediteerd = creditedTotalsFrom\(creditnotas\)/);
+  assert.match(debiteuren, /buildDebtorBoard\(invoer, namen, readClock\(\), gecrediteerd\)/,
+    "the debiteurenlijst is the number an accountant reads out on the telephone");
+
+  const board = code("src/lib/accountant-debtors.ts");
+  const boardBody = board.slice(board.indexOf("export function buildDebtorBoard"));
+  assert.match(boardBody, /const open = outstandingAmount\(f, gecrediteerd\);/);
+  assert.match(boardBody, /canRemind\(f, nowMs, gecrediteerd\)/,
+    "the button and the amount beside it must never disagree about what is owed");
+
+  const queues = code("src/modules/accountant/work-queues.ts");
+  assert.match(queues, /outstandingAmount\(row, gecrediteerd\.get\(row\.id\) \?\? 0\)/);
+
+  const client = code("src/app/dashboard/verkoop/VerkoopClient.tsx");
+  assert.match(client, /summarise\(facturen, nu, creditMap\)/);
+  assert.match(client, /outstandingAmount\(f, creditMap\.get\(f\.id\) \?\? 0\)/);
+});
+
+test("[CREDITNOTA-NO-CHASE] the verkoop query selects the column its own guard judges on", () => {
+  // canRemind weigert een creditnota op invoice_type. Deze query vroeg die kolom niet op, dus las
+  // de regel `?? 'factuur'` en weigerde niets: onder een creditnota stond een levende knop
+  // "Herinnering sturen" — de mail die geld opeist dat de klant juist terugkrijgt. De route
+  // weigerde hem alsnog, dus er ging niets de deur uit; er stond een knop die alleen een
+  // foutmelding kon geven. De bewaker stond er, alleen niet het gegeven waar hij op oordeelt.
+  const page = code("src/app/dashboard/verkoop/page.tsx");
+  const select = page.slice(page.indexOf("from('invoices')"), page.indexOf("const facturen"));
+  assert.match(select, /invoice_type/, "without this column the creditnota guard cannot fire");
+  assert.match(select, /original_invoice_id/, "…and without this one nothing can be netted");
+
+  // En het scherm spreekt zichzelf niet tegen: geen rood "te laat" boven de zin dat een
+  // creditnota geen vordering is.
+  const client = code("src/app/dashboard/verkoop/VerkoopClient.tsx");
+  assert.match(client, /\{credit \? 'creditnota' : LABEL\[stand\]\}/,
+    "a creditnota is badged as one, never as a late invoice");
+  assert.match(client, /\{!credit && stand === 'te-laat' && \(/,
+    "…and it is offered no reminder block at all");
+});
+
 // ─── [FACTUUR-BIJLAGE] De bijlage die op de factuur stond en nergens te zien was ───
 //
 // De kolom werd geschreven en nergens teruggelezen. De verstuurroute viel altijd terug op wat er
