@@ -119,10 +119,14 @@
 >
 > ### En draai altijd het CONTROLE-blok
 >
-> Onderaan elk migratiebestand staat er één. Dat is het verschil tussen "toegepast" en
-> "toegepast en gecontroleerd", en het heeft in deze codebase al twee echte fouten opgeleverd
-> die op geen andere manier zichtbaar waren: een 42P10 op een partiële index, en een functie
-> die vijf kolommen noemde die niet bestonden.
+> Waar er één staat: draaien. Dat is het verschil tussen "toegepast" en "toegepast en
+> gecontroleerd", en het heeft in deze codebase al twee echte fouten opgeleverd die op geen andere
+> manier zichtbaar waren: een 42P10 op een partiële index, en een functie die vijf kolommen noemde
+> die niet bestonden.
+>
+> *(Deze alinea zei "onderaan elk migratiebestand staat er één". Op 15 augustus 2026 geteld: 35
+> van de 104. Zie de correctie verderop — en `ai_budget_settle.sql`, dat er geen had en daardoor
+> maandenlang ongemerkt niet toegepast was.)*
 >
 > ### Wat ik NIET weet
 >
@@ -427,7 +431,21 @@ al fout was — en dat merkt de ondernemer pas als hij zo'n factuur probeert aan
 foutmelding over een datum waar hij niets aan deed. Komen er regels uit, repareer die datums
 voordat iemand ertegenaan loopt.
 
-### Nog echt open — één, veilig toe te passen, niet urgent
+### Inmiddels ook gesloten: `ai_budget_settle.sql`
+
+> **Toegepast op 15 augustus 2026 — GEMELD door de eigenaar, nog niet nagemeten.** De verbinding
+> met de database was weg op dat moment, dus dit is een bewering en geen lezing. Draai
+> `docs/WELKE_MIGRATIES_STAAN_ER.sql` (die vraagt naar `function ai_budget_settle`) of het
+> CONTROLE-blok dat nu onderaan die migratie staat.
+>
+> **En lees dit vóór je een grens kiest.** De functie raakt alleen de rij van VANDAAG aan en maakt
+> nooit een dag aan. Elke dag die vóór het toepassen is weggeschreven draagt dus nog de
+> RESERVERING — bewust aan de ruime kant — en niet het werkelijke verbruik. Het advies hierboven om
+> met `AI_DAILY_BUDGET_EUR=0` "je werkelijke uitgaven te leren kennen" geldt dus vanaf vandaag; de
+> oudere rijen lezen te hoog, en een grens die daarop wordt gekozen valt te ruim uit — de verkeerde
+> kant op voor een zekering.
+
+### De migratie waar dit over ging
 
 | | `ai_budget_settle.sql` |
 |---|---|
@@ -556,8 +574,23 @@ zoeken, het pakket voor de boekhouder) maar blijft leesbaar en omkeerbaar. Draai
 `cash_settlement_invoice_link.sql` en `cash_settlement_per_instalment.sql`: onderin wordt hún unieke
 index opnieuw gebouwd, en die noemt `invoice_id` en `settlement_id`.
 
-Na afloop staat onderaan elk bestand een **CONTROLE**-blok. Draai dat — het is per migratie
-één query en het is het verschil tussen "toegepast" en "toegepast en gecontroleerd".
+Onderaan een migratiebestand hoort een **CONTROLE**-blok: één query, en het verschil tussen
+"toegepast" en "toegepast en gecontroleerd".
+
+> **Geteld op 15 augustus 2026: 35 van de 104 bestanden hebben er een.** Deze regel zei tot vandaag
+> "onderaan **elk** bestand", en dat was niet waar — inclusief een paar migraties die in deze
+> sessie zelf zijn geschreven. Precies de soort bewering waar de waarschuwing bovenaan dit document
+> over gaat, en hier stond ze in dat document zelf.
+>
+> Het is ook niet vrijblijvend gebleken: `ai_budget_settle.sql` hád er geen, en is maandenlang
+> ongemerkt níét toegepast. De zekering onder de Anthropic-rekening telde wel, maar corrigeerde
+> nooit. Er was geen query om dat mee te zien.
+>
+> De 69 zonder blok worden niet met terugwerkende kracht voorzien — dat is veel werk voor weinig,
+> en de generieke vraag ("staat deze migratie er?") wordt sinds vandaag beantwoord door
+> `docs/WELKE_MIGRATIES_STAAN_ER.sql` voor alle 104. Een CONTROLE-blok beantwoordt de fijnere
+> vraag: liep ze ook *goed*. Schrijf er dus een bij elke nieuwe migratie, en bij elke oude die je
+> toch al openslaat.
 
 ---
 
