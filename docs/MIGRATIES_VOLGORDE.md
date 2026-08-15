@@ -399,13 +399,42 @@ reden komt onderaan de gegenereerde lijst terecht. Een poort eist dat zo'n uitzo
 object wijst dat de migratie écht aanmaakt — anders wordt die tabel de plek waar een falende
 migratie zich verstopt.
 
-### Echt open — allebei veilig toe te passen, geen van beide urgent
+### Inmiddels gesloten: `bookkeeping_date_sane.sql` — TOEGEPAST, en volledig
 
-| | `ai_budget_settle.sql` | `bookkeeping_date_sane.sql` |
-|---|---|---|
-| Wat mist | functie `ai_budget_settle` | functie `assert_bookkeeping_date_sane` + vier triggers |
-| Weggegooid door een latere migratie? | nee, door geen enkele | nee, door geen enkele |
-| Wat de app nu doet | `settleAiBudget` vangt de fout op en logt "the estimate stands" | de app bewaakt zelf strenger (`payment-date.ts`) |
+> **Gemeten met het CONTROLE-blok van de migratie zelf, 15 augustus 2026.** Alle vier de triggers
+> staan er, en de namen komen exact overeen met wat de `DO`-lus hoort te zetten:
+>
+> | tabel | trigger |
+> |---|---|
+> | `invoices` | `invoices_payment_date_sane` |
+> | `bank_tx_invoices` | `bank_tx_invoices_paid_on_sane` |
+> | `cash_entries` | `cash_entries_entry_date_sane` |
+> | `daily_turnover` | `daily_turnover_turnover_date_sane` |
+>
+> Vier van de vier is hier het hele punt: die lus SLAAT EEN TABEL OVER als de kolom er nog niet is
+> (`RAISE NOTICE 'overgeslagen'`). Geen enkele is overgeslagen, dus het vangnet ligt onder alle vier
+> de geldkolommen en niet onder drie.
+>
+> En daarmee staat de functie er ook — dat is een gevolgtrekking, geen aanname: een trigger kán niet
+> bestaan zonder de functie die hij aanroept, en die functie laten vallen vereist `CASCADE`, wat de
+> triggers zou meenemen. De eerdere melding `OPEN` was dus juist op het moment van meten, en is nu
+> achterhaald.
+
+**Wat hierna nog één keer gecontroleerd moet worden.** Het CONTROLE-blok heeft een DERDE deel dat
+de bestaande rijen mét een onmogelijke datum opsomt. Dat is het deel dat nu kan bijten: de triggers
+binden alleen nieuwe schrijfacties, maar zodra ze staan mislukt **élke** `UPDATE` van een rij die
+al fout was — en dat merkt de ondernemer pas als hij zo'n factuur probeert aan te passen, met een
+foutmelding over een datum waar hij niets aan deed. Komen er regels uit, repareer die datums
+voordat iemand ertegenaan loopt.
+
+### Nog echt open — één, veilig toe te passen, niet urgent
+
+| | `ai_budget_settle.sql` |
+|---|---|
+| Wat mist | functie `ai_budget_settle` |
+| Weggegooid door een latere migratie? | nee, door geen enkele |
+| Aangeroepen door | `settleAiBudget` in `src/lib/ai-budget.ts` |
+| Wat er nu gebeurt | de aanroep faalt, wordt opgevangen, en logt "the estimate stands" |
 
 **`ai_budget_settle.sql`.** De zekering onder de Anthropic-rekening werkt in twee tellen:
 `ai_budget_consume` RESERVEERT een schatting vóór de call, `ai_budget_settle` corrigeert die
@@ -437,7 +466,26 @@ Allebei zijn idempotent (`CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` 
 ### `rpc_anon_revoke.sql` — geen bevinding, en dat klopt
 
 Die maakt niets aan en kan dus niet via een object worden bewezen; ze staat bij "niet vast te
-stellen". Ze is apart nagemeten en geslaagd: `anon = false` op alle dertien, `service_role = true`.
+stellen". Daarom heeft ze een eigen CONTROLE-blok, en dat is gedraaid.
+
+> **Gemeten, 15 augustus 2026 — dertien rijen, en alle drie de kolommen kloppen.**
+>
+> `anon` is **false** op alle dertien. `service_role` is **true** op alle dertien — dat is de regel
+> die ertoe doet als het misgaat, want zonder die kolom zou deze migratie de app zelf buitensluiten.
+>
+> En `authenticated` staat op **precies zes**: `next_invoice_seq`, `apply_manual_payment`,
+> `apply_bank_payment`, `allocate_bank_payment`, `book_bank_batch`, `move_invoice_payment` — exact
+> de zes die een scherm met de sessieclient aanroept. De zeven die alleen via de pipeline lopen
+> (`seed_invoice_counter`, `recompute_invoice_amount_paid`, `fair_use_consume`, `fair_use_release`,
+> `confirm_bank_payment`, `handle_new_user`, `assert_credit_within_original`) staan op false. Dat is
+> niet "ook dicht": het is de tweede lijst uit de migratie, en hij is regel voor regel geraakt.
+>
+> Dat er dertien rijen TERUGKOMEN is zelf ook een uitkomst: geen van de functies is bij het
+> intrekken per ongeluk verdwenen.
+>
+> Een poort (`[ANON-RPC]`) houdt die zes-tegen-zeven verdeling vast: voegt iemand een aanroep met
+> de sessieclient toe aan een van de zeven, dan faalt hij vóór een gebruiker het merkt.
+
 Ongemoeid laten.
 
 ---
