@@ -21,7 +21,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { buildDebtorBoard, type DebtorInput } from '@/lib/accountant-debtors'
 // [CREDITNOTA-NO-CHASE] De gedeelde regel "is dit nog geld dat ik krijg" — beide helften van een
 // gecrediteerd paar moeten samen uit de vorderingenlijst (src/lib/credited-invoices.ts).
-import { fullyCreditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
+import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from '@/lib/credited-invoices'
 import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteuren'
 
 export const dynamic = 'force-dynamic'
@@ -143,10 +143,13 @@ export default async function AccountantDebiteurenPage() {
   // [DEEL-CREDIT] Alleen een creditnota die de factuur DEKT haalt hem van de lijst. Een deel
   // gecrediteerd betekent dat de rest nog openstaat, en een debiteurenlijst die dat weglaat laat
   // geld liggen zonder dat er iets rood wordt.
-  const rijen = filterOpenReceivables(
-    alle,
-    fullyCreditedIdsFrom(alle.filter((r) => r.invoice_type === 'creditnota'), alle),
-  )
+  const creditnotas = alle.filter((r) => r.invoice_type === 'creditnota')
+  const rijen = filterOpenReceivables(alle, fullyCreditedIdsFrom(creditnotas, alle))
+  // [DEEL-CREDIT] En hoevéél er per factuur is gecrediteerd. De regel hierboven haalt alleen de
+  // volledig gecrediteerde facturen van de lijst; zonder deze regel bleef een deels gecrediteerde
+  // factuur op haar VOLLE bedrag staan. Dat bedrag is precies wat de boekhouder aan de telefoon
+  // opnoemt, terwijl de klant de creditnota in handen heeft.
+  const gecrediteerd = creditedTotalsFrom(creditnotas)
 
   // Het herinneringsspoor. invoice_reminders is per RLS alleen voor de eigenaar leesbaar, dus ook
   // dit gaat via service_role — beperkt tot de facturen die we net zelf hebben opgehaald.
@@ -176,7 +179,7 @@ export default async function AccountantDebiteurenPage() {
     reminder_count: spoor[r.id]?.count ?? 0,
   }))
 
-  const groepen = buildDebtorBoard(invoer, namen, readClock())
+  const groepen = buildDebtorBoard(invoer, namen, readClock(), gecrediteerd)
 
   return (
     <AccountantDebiteuren

@@ -13,7 +13,7 @@
 // is. Eén getal erbij, en zowel de server- als de client-render komen op dezelfde uitkomst uit —
 // geen hydratieverschil, geen flits, geen onzuivere render.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FONT, M3, R } from '@/lib/design/tokens'
@@ -45,15 +45,25 @@ const LABEL: Record<InvoiceState, string> = {
   vervallen: 'vervallen',
 }
 
+/** [CREDITNOTA-NO-CHASE] Een creditnota is het tegendeel van een vordering, geen late factuur. */
+const isCreditnota = (f: SalesInvoice) => (f.invoice_type ?? 'factuur') !== 'factuur'
+
 export default function VerkoopClient({
   facturen,
   bedrijf,
   nu,
+  gecrediteerd,
 }: {
   facturen: SalesInvoice[]
   bedrijf: string
   /** Servertijd in ms — zie de kop waarom hij niet hier wordt opgehaald. */
   nu: number
+  /**
+   * [DEEL-CREDIT] Per factuur-id: hoeveel er is gecrediteerd, positief. Een gewoon object en geen
+   * Map, omdat het de servergrens over moet; hieronder wordt het er één, want dat is wat
+   * summarise() vraagt. Afwezig = niets gecrediteerd, en dan is elk bedrag exact wat het was.
+   */
+  gecrediteerd?: Record<string, number>
 }) {
   // [TAAL] `vert`, niet `t`: dit bestand noemt zijn totalen al `t`.
   const vert = translator(useLocale())
@@ -79,7 +89,8 @@ export default function VerkoopClient({
     }
   }
 
-  const t = summarise(facturen, nu)
+  const creditMap = useMemo(() => new Map(Object.entries(gecrediteerd ?? {})), [gecrediteerd])
+  const t = summarise(facturen, nu, creditMap)
   const kaart: React.CSSProperties = {
     background: M3.surface, border: `1px solid ${M3.hairline}`, borderRadius: R.lg,
   }
@@ -168,9 +179,14 @@ export default function VerkoopClient({
           ) : (
             <div style={{ ...kaart, overflow: 'hidden' }}>
               {facturen.map((f, i) => {
+                // [CREDITNOTA-NO-CHASE] Een creditnota draagt status 'sent' en een vervaldatum van
+                // vandaag, dus stateOf() noemt hem morgen 'te laat'. Hij is niet te laat — er valt
+                // niets te innen. Zonder deze regel sprak het scherm zichzelf tegen: een rood
+                // "te laat · nog € 50" met eronder de zin dat een creditnota geen vordering is.
+                const credit = isCreditnota(f)
                 const stand = stateOf(f, nu)
-                const rest = outstandingAmount(f)
-                const oordeel = canRemind(f, nu)
+                const rest = outstandingAmount(f, creditMap.get(f.id) ?? 0)
+                const oordeel = canRemind(f, nu, creditMap.get(f.id) ?? 0)
                 return (
                   <div
                     key={f.id}
@@ -198,9 +214,9 @@ export default function VerkoopClient({
                         <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.onSurface }}>
                           {EURO.format(Math.abs(Number(f.total_inc_btw ?? 0)))}
                         </div>
-                        <div style={{ fontSize: 11.5, fontWeight: 700, marginTop: 3, color: KLEUR[stand] }}>
-                          {LABEL[stand]}
-                          {stand === 'te-laat' && rest > 0 && rest !== Math.abs(Number(f.total_inc_btw ?? 0))
+                        <div style={{ fontSize: 11.5, fontWeight: 700, marginTop: 3, color: credit ? M3.mutedText : KLEUR[stand] }}>
+                          {credit ? 'creditnota' : LABEL[stand]}
+                          {!credit && stand === 'te-laat' && rest > 0 && rest !== Math.abs(Number(f.total_inc_btw ?? 0))
                             ? ` · nog ${EURO.format(rest)}`
                             : ''}
                         </div>
@@ -210,7 +226,7 @@ export default function VerkoopClient({
                     {/* De knop staat er ALLEEN als hij ook echt iets doet. Een grijze knop met een
                         tooltip is een belofte die niet wordt ingelost; een zin die zegt waarom het
                         niet kan, helpt wel. */}
-                    {stand === 'te-laat' && (
+                    {!credit && stand === 'te-laat' && (
                       <div style={{ marginTop: 10 }}>
                         {oordeel.allowed ? (
                           <button

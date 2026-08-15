@@ -26,6 +26,7 @@ import type { Translator } from '@/lib/i18n/t'
 import { isActingForOther } from '@/lib/acting-for'
 import { FONT, M3, R } from '@/lib/design/tokens'
 import type { SalesInvoice } from '@/lib/sales-overview'
+import { creditedTotalsFrom } from '@/lib/credited-invoices'
 import VerkoopClient from './VerkoopClient'
 
 export const dynamic = 'force-dynamic'
@@ -83,15 +84,36 @@ export default async function VerkoopPage() {
   // Read with the member's SESSION, never service_role: RLS decides unchanged what comes back.
   // The two .eq() calls are the read boundary from acting-for.ts — the owner's series, but only
   // the rows this member created themselves.
+  // [CREDITNOTA-NO-CHASE] invoice_type EN original_invoice_id horen in deze select, en het is geen
+  // uitbreiding maar een reparatie: canRemind() weigert een creditnota op precies deze kolom, en
+  // zonder de kolom leest hij `?? 'factuur'` en weigert dus niets. De medewerker kreeg een levende
+  // knop "Herinnering sturen" onder een creditnota — de mail die geld opeist dat de klant juist
+  // terugkrijgt. (De route weigert hem alsnog, dus er ging niets de deur uit; er stond een knop
+  // die alleen een foutmelding kon geven.) De regel stond er, alleen niet het gegeven waar hij op
+  // oordeelt — en een bewaker zonder invoer ziet er precies zo uit als een bewaker.
   const { data: facturenRuw } = await supabase
     .from('invoices')
-    .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status')
+    .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
     .eq('sender_id', acting.ownerId)
     .eq('created_by', acting.actorId)
     .order('created_at', { ascending: false })
-    .limit(200) as { data: SalesInvoice[] | null }
+    .limit(200) as { data: (SalesInvoice & { original_invoice_id?: string | null })[] | null }
 
   const facturen: SalesInvoice[] = facturenRuw ?? []
+
+  // [DEEL-CREDIT] Hoeveel er per factuur is gecrediteerd, zodat "openstaand" het RESTANT noemt en
+  // niet het volle bedrag. Alleen de creditnota's die deze medewerker zelf heeft gemaakt tellen
+  // mee — de leesgrens hierboven (created_by) is een bewuste keuze uit acting-for.ts en wordt hier
+  // niet opgerekt. Een creditnota die de eigenaar zelf schreef blijft dus buiten beeld; dat is
+  // hetzelfde als wat hij van de rest van de administratie ziet, en het is de veilige kant: het
+  // bedrag staat dan te hoog, nooit te laag, en de herinnering zelf gaat langs de route die de
+  // volledige controle wél doet.
+  const gecrediteerd: Record<string, number> = {}
+  for (const [id, bedrag] of creditedTotalsFrom(
+    (facturenRuw ?? []).filter((f) => f.invoice_type === 'creditnota'),
+  )) {
+    gecrediteerd[id] = bedrag
+  }
 
   const pipeline = createPipelineClient()
 
@@ -139,7 +161,7 @@ export default async function VerkoopPage() {
 
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.
-  return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} />
+  return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} gecrediteerd={gecrediteerd} />
 }
 
 /**

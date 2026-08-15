@@ -85,11 +85,19 @@ export function daysLate(f: SalesInvoice, nowMs: number): number {
  *
  * `names` maps a client id to what they are called. A client id with no name still appears — as
  * "Klant". Dropping the group would hide real money because a profile row was missing.
+ *
+ * [DEEL-CREDIT] `credited` says how much has been credited against each invoice. It matters more
+ * on THIS board than anywhere else the number appears: every row here is a customer an accountant
+ * is about to telephone, and the amount they read out is the one below. Chasing the full € 500 of
+ * an invoice the entrepreneur reduced to € 450 in writing is a call that damages a relationship
+ * the accountant was hired to protect — and the customer has the creditnota in their hand while it
+ * happens. Absent (the pre-partial-credit callers) → every amount is exactly what it was.
  */
 export function buildDebtorBoard(
   invoices: readonly DebtorInput[],
   names: Readonly<Record<string, string>>,
   nowMs: number,
+  credited?: ReadonlyMap<string, number>,
 ): DebtorGroup[] {
   const byClient = new Map<string, DebtorRow[]>();
 
@@ -110,9 +118,12 @@ export function buildDebtorBoard(
     // invoice whose due date has not passed is not one either — chasing it early is the fastest
     // way for an accountant to damage a relationship they were hired to protect.
     if (stateOf(f, nowMs) !== "te-laat") continue;
-    const open = outstandingAmount(f);
+    // [DEEL-CREDIT] What is left AFTER the credits, which is what the customer actually owes.
+    const gecrediteerd = credited?.get(f.id) ?? 0;
+    const open = outstandingAmount(f, gecrediteerd);
     // Fully settled while the status lags behind. sales-overview.ts calls a reminder here the most
-    // painful mail this product can send; it should not even be on the list.
+    // painful mail this product can send; it should not even be on the list. A FULLY credited
+    // invoice lands here too now, and drops out for the same reason: nothing is owed.
     if (open <= 0) continue;
 
     const row: DebtorRow = {
@@ -122,7 +133,9 @@ export function buildDebtorBoard(
       // Paused wins over every timing rule: it is the owner's explicit "not this one", and no
       // amount of waiting makes it allowed. The invoice still SHOWS — it is real debt, and hiding
       // it would make the total lie — it simply cannot be mailed from here.
-      verdict: f.reminders_paused ? { allowed: false, reason: PAUSED_REASON } : canRemind(f, nowMs),
+      // [DEEL-CREDIT] The same credited amount the row is priced with, so the button and the
+      // figure beside it can never disagree about whether anything is still owed.
+      verdict: f.reminders_paused ? { allowed: false, reason: PAUSED_REASON } : canRemind(f, nowMs, gecrediteerd),
     };
     const list = byClient.get(f.ownerId);
     if (list) list.push(row);

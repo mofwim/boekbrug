@@ -750,13 +750,42 @@ test("[RENDER-GATE] the sales overview renders", async () => {
           f({ id: "s3", status: "paid", amount_paid: 1210 }),
           f({ id: "s4", status: "sent", due_date: "2025-12-01", reminder_count: 3, last_reminder_at: "2026-01-05T10:00:00Z" }),
           f({ id: "s5", status: "sent", amount_paid: 500 }),
+          // [DEEL-CREDIT] A EUR 500 invoice, overdue, with EUR 50 credited against it…
+          f({ id: "s6", invoice_number: "2026-014", status: "sent", total_inc_btw: 500, due_date: "2026-03-01" }),
+          // …and the creditnota that did it. Both rows are handed over on purpose: the defect was
+          // invisible against a list without them, which is exactly how it survived.
+          f({ id: "s7", invoice_number: "C2026-003", invoice_type: "creditnota", total_inc_btw: -50,
+              status: "sent", due_date: "2026-03-01" }),
         ],
         bedrijf: "Mijn Zaak",
+        gecrediteerd: { s6: 50 },
         // Server time, passed in rather than read here — the component's own header says why.
         nu: Date.parse("2026-03-15T12:00:00Z"),
       })),
   );
   assert.ok(html.length > 500, "the sales overview rendered its list");
+
+  // Intl puts a NARROW NO-BREAK SPACE after the euro sign, so a literal " " never matches an
+  // amount. Normalised here rather than pasted into the assertions, where an invisible character
+  // is the difference between a gate and a gate-shaped hole.
+  const text = html.replace(/[\u00a0\u202f]/g, " ");
+
+  // [CREDITNOTA-NO-CHASE] The creditnota is labelled as one. Before this it carried a red
+  // "te laat", directly above the sentence saying a creditnota is not a receivable — a screen
+  // contradicting itself about the only thing it is there to say.
+  assert.ok(/€ 50,00<\/div><div[^>]*>creditnota</.test(text.replace(/[\u00a0\u202f]/g, " ")),
+    "the creditnota is badged as a creditnota, not as a late invoice");
+
+  // [DEEL-CREDIT] …and the invoice it corrects shows the REST. The reminder e-mail has always
+  // named EUR 450; this screen named EUR 500, and the customer holds the paper for the difference.
+  assert.ok(text.includes("te laat · nog € 450,00"), "the partly credited invoice shows what is still owed");
+  assert.ok(!text.includes("nog € 500,00"), "…never the amount before the credit");
+
+  // The totals at the top obey the same two rules. EUR 1.210 (s4) + EUR 450 (s6) = EUR 1.660 late,
+  // and the EUR 50 creditnota is in neither the sum nor the count — it used to be in both.
+  assert.ok(text.includes("€ 1.660,00"), "the 'te laat' total nets the credit and skips the creditnota");
+  assert.ok(text.includes("2 facturen — hier kun je vandaag iets aan doen"),
+    "…and two invoices are late, not three");
 });
 
 test("[READING-MEMORY] a supplier with no history renders the queue exactly as before", async () => {

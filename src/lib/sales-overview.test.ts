@@ -12,6 +12,7 @@ import {
   REMINDER_COOLDOWN_DAYS,
   type SalesInvoice,
 } from "./sales-overview";
+import { openAfterCredit } from "./credited-invoices";
 
 const NOW = Date.parse("2026-08-15T12:00:00.000Z");
 const day = (n: number) => new Date(NOW + n * 86_400_000).toISOString().slice(0, 10);
@@ -183,4 +184,73 @@ test("manual reminders get NEGATIVE offsets, so they never block a cron tier", (
   assert.equal(nextManualOffset([-1]), -2);
   assert.equal(nextManualOffset([14, 30, -1, -2]), -3);
   assert.ok(nextManualOffset([14, 30]) < 0);
+});
+
+// ── [CREDITNOTA-NO-CHASE] / [DEEL-CREDIT] the credit that no total subtracted ──────────────────
+//
+// A credit note is written with status 'sent', a due date of today and a NEGATIVE total, and
+// outstandingAmount takes the absolute value of it. summarise had no rule for that, so a € 50
+// creditnota against a € 500 invoice did not reduce the € 500 — it ADDED to it. Every one of the
+// six figures this screen shows was wrong at once, and by twice the credit.
+
+test("[CREDITNOTA-NO-CHASE] a creditnota belongs in no count and no total", () => {
+  const invoice = f({ id: "inv-1", total_inc_btw: 500, due_date: day(-5) });
+  const credit = f({ id: "cn-1", invoice_type: "creditnota", total_inc_btw: -50, due_date: day(-5) });
+
+  const t = summarise([invoice, credit], NOW);
+  assert.equal(t.outstanding, 500, "the credit must not be added to what is owed");
+  assert.equal(t.overdueAmount, 500, "…nor to what is late");
+  assert.equal(t.overdue, 1, "one invoice is late, not two");
+
+  // The invoice alone gives the same answer — which is the point: the creditnota changed nothing
+  // by being in the list, so it can no longer change anything by being counted.
+  assert.deepEqual(summarise([invoice], NOW), t, "a creditnota in the list is a no-op");
+});
+
+test("[DEEL-CREDIT] a partial credit reduces what is still owed, on the screen too", () => {
+  const invoice = f({ id: "inv-1", total_inc_btw: 500, due_date: day(-5) });
+  const credited = new Map([["inv-1", 50]]);
+
+  assert.equal(outstandingAmount(invoice, 50), 450, "€ 500 minus a € 50 credit is € 450");
+  assert.equal(summarise([invoice], NOW, credited).outstanding, 450);
+  assert.equal(summarise([invoice], NOW, credited).overdueAmount, 450);
+
+  // This is the number the reminder e-mail already named. The whole defect was that the screen
+  // named a different one, so the equality IS the assertion.
+  assert.equal(outstandingAmount(invoice, 50), openAfterCredit(500, 0, 50),
+    "the screen and the e-mail must name the same amount");
+
+  // Payments and credits stack — the customer paid € 200 and holds a € 50 credit.
+  assert.equal(outstandingAmount(f({ total_inc_btw: 500, amount_paid: 200 }), 50), 250);
+});
+
+test("[DEEL-CREDIT] a fully credited invoice is settled, and every surface goes quiet", () => {
+  const invoice = f({ id: "inv-1", total_inc_btw: 500, due_date: day(-5) });
+  assert.equal(outstandingAmount(invoice, 500), 0);
+  assert.equal(summarise([invoice], NOW, new Map([["inv-1", 500]])).outstanding, 0);
+  const verdict = canRemind(invoice, NOW, 500);
+  assert.equal(verdict.allowed, false, "there is nothing left to claim");
+  if (!verdict.allowed) assert.match(verdict.reason, /niets meer open/);
+  // …and over-crediting cannot turn the invoice into a debt the other way.
+  assert.equal(outstandingAmount(invoice, 900), 0, "never negative");
+});
+
+test("[DEEL-CREDIT] without a credited amount every number is exactly what it was", () => {
+  // The parameter defaults to 0 so a caller that holds no creditnota rows keeps its old answer.
+  // A screen without the information must not start guessing at it.
+  const invoice = f({ total_inc_btw: 500, amount_paid: 120, due_date: day(-5) });
+  assert.equal(outstandingAmount(invoice), 380);
+  assert.equal(outstandingAmount(invoice), outstandingAmount(invoice, 0));
+  assert.equal(canRemind(invoice, NOW).allowed, canRemind(invoice, NOW, 0).allowed);
+  assert.equal(outstandingAmount(f({ total_inc_btw: Number.NaN })), 0, "an unusable total is worth nothing");
+  assert.equal(outstandingAmount(f({ total_inc_btw: 500, amount_paid: Number.POSITIVE_INFINITY })), 500);
+
+  // A CORRUPT CREDIT must not settle a real invoice. Postgres numeric accepts 'Infinity', so one
+  // bad creditnota row reaches openAfterCredit through creditedTotalsFrom; unguarded, 500 - Infinity
+  // is negative and this whole chain reads negative as "nothing is owed". The invoice would stop
+  // being claimed, dunned and counted because of a single column.
+  assert.equal(outstandingAmount(f({ total_inc_btw: 500 }), Number.POSITIVE_INFINITY), 500,
+    "an unusable credit is ignored, never treated as full settlement");
+  assert.equal(summarise([f({ id: "inv-1", total_inc_btw: 500, due_date: day(-5) })], NOW,
+    new Map([["inv-1", Number.POSITIVE_INFINITY]])).outstanding, 500);
 });

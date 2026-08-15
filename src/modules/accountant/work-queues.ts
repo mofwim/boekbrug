@@ -31,7 +31,7 @@
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { daysLate } from '@/lib/accountant-debtors'
 import { outstandingAmount, type SalesInvoice } from '@/lib/sales-overview'
-import { fullyCreditedIdsFrom, filterOpenReceivables } from '@/lib/credited-invoices'
+import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from '@/lib/credited-invoices'
 
 /** Minimal shape of the session client — the same relaxed form the screens use. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -213,10 +213,13 @@ async function sumOverdue(
       SalesInvoice & { invoice_type?: string | null; original_invoice_id?: string | null }
     >
     // [DEEL-CREDIT] Dekkend gecrediteerd = van de lijst; deels gecrediteerd = de rest telt nog.
-    const rows = filterOpenReceivables(
-      all,
-      fullyCreditedIdsFrom(all.filter((r) => r.invoice_type === 'creditnota'), all),
-    )
+    const creditnotas = all.filter((r) => r.invoice_type === 'creditnota')
+    const rows = filterOpenReceivables(all, fullyCreditedIdsFrom(creditnotas, all))
+    // …en "de rest" is het totaal MINUS wat er is gecrediteerd. Zonder deze regel haalde de vorige
+    // regel wel de volledig gecrediteerde facturen van de lijst, maar prijsde ze de deels
+    // gecrediteerde op hun volle bedrag — het openstaande totaal dat de boekhouder ziet stond dan
+    // te hoog met precies het bedrag dat de ondernemer zwart-op-wit heeft teruggegeven.
+    const gecrediteerd = creditedTotalsFrom(creditnotas)
 
     let count = 0
     let total = 0
@@ -224,7 +227,7 @@ async function sumOverdue(
     for (const row of rows) {
       const late = daysLate(row, nowMs)
       if (late <= 0) continue
-      const open = outstandingAmount(row)
+      const open = outstandingAmount(row, gecrediteerd.get(row.id) ?? 0)
       if (open <= 0) continue
       count += 1
       total += open

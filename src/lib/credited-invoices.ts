@@ -128,20 +128,42 @@ export function fullyCreditedIdsFrom(
 }
 
 /**
+ * A money column as a usable magnitude. A non-finite value is worth nothing, never Infinity.
+ *
+ * The guard earns its place on the CREDITED side, not on the total: `round2` already answers 0 for
+ * a non-finite result, so an unusable total lands on 0 either way. A corrupt credit does not —
+ * Postgres `numeric` accepts 'Infinity', so one bad creditnota row reaches this function through
+ * creditedTotalsFrom, and `500 − 0 − Infinity` is negative, which this file reads as "settled".
+ * A € 500 invoice would stop being claimed, stop being dunned and stop being counted, on the
+ * strength of a single corrupt column. Ignoring the unusable credit keeps the claim alive, which
+ * is the fail-closed direction for money that is owed.
+ */
+function magnitude(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.abs(n) : 0;
+}
+
+/**
  * What is still owed on one invoice: the total, minus what was paid, minus what was credited.
  *
  * This is the amount a reminder must name. Naming the full total on a partly credited invoice
  * asks the customer for money that was given back in writing — the fastest way to lose the trust
  * the reminder needs to work at all.
+ *
+ * [DEEL-CREDIT] It is now also the amount every SCREEN names: `outstandingAmount` in
+ * sales-overview.ts delegates here rather than keeping a second spelling of the same arithmetic,
+ * because the two spellings had already drifted — the e-mail asked for € 450 while the owner's own
+ * "openstaand" and the accountant's debiteurenlijst both still said € 500.
  */
 export function openAfterCredit(
   totalIncBtw: number | null | undefined,
   amountPaid: number | null | undefined,
   creditedAmount: number
 ): number {
-  const totaal = Math.abs(Number(totalIncBtw) || 0);
-  const betaald = Number(amountPaid) > 0 ? Number(amountPaid) : 0;
-  const gecrediteerd = Math.abs(Number(creditedAmount) || 0);
+  const totaal = magnitude(totalIncBtw);
+  const betaaldRaw = Number(amountPaid);
+  const betaald = Number.isFinite(betaaldRaw) && betaaldRaw > 0 ? betaaldRaw : 0;
+  const gecrediteerd = magnitude(creditedAmount);
   const rest = totaal - betaald - gecrediteerd;
   if (rest <= 0) return 0;
   return round2(rest);
