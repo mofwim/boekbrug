@@ -9323,3 +9323,72 @@ test("[SHEET-NIET-OPSLAAN] a spreadsheet on the bank endpoint claims no content_
   assert.match(mod, /nonBankSpreadsheet = true/,
     "looksLikeSpreadsheetBinary must still set the flag the guard reads");
 });
+
+// ─── [ANON-RPC] De guard die aannam dat "geen uid" hetzelfde is als "de server" ───
+//
+// Een reeks SECURITY DEFINER-functies bewaakt zichzelf met
+//
+//     IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN RAISE …
+//
+// waarvan de eigen toelichting zegt: met de sessieclient is auth.uid() de aanroeper, met
+// service_role is hij NULL. Dat tweede klopt — en `anon` is óók NULL. Anon is niet "niemand" maar
+// de rol achter de publieke sleutel die in elke browserbundel meegaat, en PostgREST zet elke
+// functie in het public-schema op /rest/v1/rpc/. Gemeten op de productiedatabase:
+//
+//     SET LOCAL ROLE anon; SELECT auth.uid() IS NULL   →  true
+//     has_function_privilege('anon', …, 'EXECUTE')     →  true
+//
+// Het zwaarste geval is niet het grootste bedrag maar het onomkeerbare: seed_invoice_counter is
+// alleen-vooruit (GREATEST), dus verlagen kan niet — maar wie de teller van een vreemde op
+// 999999999 zet, heeft diens Art. 35-nummerreeks permanent stuk, en daar bestaat geen herstel voor.
+
+test("[ANON-RPC] every state-changing RPC is revoked from anon", () => {
+  const sql = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+  for (const fn of [
+    "seed_invoice_counter", "next_invoice_seq", "apply_manual_payment", "apply_bank_payment",
+    "allocate_bank_payment", "confirm_bank_payment", "book_bank_batch", "move_invoice_payment",
+    "recompute_invoice_amount_paid", "fair_use_consume", "fair_use_release",
+    "handle_new_user", "assert_credit_within_original",
+  ]) {
+    assert.ok(sql.includes(`'${fn}'`), `${fn} must be in the revoke list`);
+  }
+  assert.match(sql, /REVOKE ALL ON FUNCTION %s FROM anon/);
+  // REVOKE … FROM PUBLIC haalt ook impliciete rechten weg, dus de server moet expliciet terug —
+  // anders zet deze migratie de app zelf buiten de deur.
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION %s TO service_role/,
+    "the pipeline uses every one of these; without this grant the app locks itself out");
+  // Op handtekening, niet op naam: een overladen functie laat anders één variant openstaan.
+  assert.match(sql, /pg_get_function_identity_arguments/,
+    "an overloaded function needs every signature revoked, not just the first");
+});
+
+test("[ANON-RPC] the server-only RPCs really are server-only", () => {
+  // De tweede lijst in de migratie trekt óók `authenticated` in. Dat mag alleen als geen enkel
+  // scherm ze via de sessieclient aanroept — anders zet deze migratie een knop stil. Deze poort
+  // is de reden dat de lijst later niet stilletjes fout kan worden: voegt iemand een aanroep met
+  // de sessieclient toe, dan faalt hij hier en niet bij een gebruiker.
+  const SERVER_ONLY = [
+    "seed_invoice_counter", "recompute_invoice_amount_paid",
+    "fair_use_consume", "fair_use_release", "confirm_bank_payment",
+  ];
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !p.endsWith(".test.ts")) out.push(p);
+    }
+    return out;
+  };
+  const bronnen = walk("src");
+  for (const fn of SERVER_ONLY) {
+    for (const file of bronnen) {
+      const src = readFileSync(file, "utf8");
+      for (const regel of src.split("\n")) {
+        if (!regel.includes(`rpc("${fn}"`) && !regel.includes(`rpc('${fn}'`)) continue;
+        assert.match(regel, /(pipeline|insertPipeline|pipelineForConfirm)\s*(as any\s*)?\)?\.rpc/,
+          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client (${file})`);
+      }
+    }
+  }
+});

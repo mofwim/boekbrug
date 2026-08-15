@@ -304,6 +304,24 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 13 | `creditnota_partial.sql` | een creditnota voor een DEEL van een factuur |
 | 14 | `offerte_akkoord.sql` | de klant kan zelf akkoord geven op een offerte |
 | 15 | `invoice_bijlage.sql` | één eigen bestand met de factuurmail mee |
+| 16 | `rpc_anon_revoke.sql` | ⚠️ **de geld-functies zijn aanroepbaar zonder account — draai deze als eerste** |
+
+**Over 16 — dit is de enige met haast.** De andere migraties voegen iets toe; deze sluit iets af
+dat open staat. Een reeks `SECURITY DEFINER`-functies bewaakt zichzelf met
+`IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id`, waarvan de gedachte is: "service_role
+heeft geen uid, dus dat is de server". Klopt — maar `anon` heeft óók geen uid, en `anon` is de rol
+achter de publieke sleutel die in elke browserbundel meegaat. Nagemeten op de productiedatabase:
+`SET LOCAL ROLE anon; SELECT auth.uid() IS NULL` → true, en `anon` had EXECUTE op alle dertien.
+
+Het zwaarste geval is niet het grootste bedrag maar het onomkeerbare: `seed_invoice_counter` kan
+door `GREATEST` alleen vooruit, dus verlagen kan niemand — maar de teller van een vreemde op
+999999999 zetten wél, en een kapotte Art. 35-reeks is niet te herstellen. Daarnaast staan het
+boeken en verplaatsen van betalingen open op andermans administratie.
+
+Intrekken in plaats van dertien guards aanscherpen: een rechtencontrole draait vóór de body en is
+niet te omzeilen door `SECURITY DEFINER`. De guards blijven staan voor ingelogde gebruikers
+onderling. Geen enkele aanroep in deze app gebeurt als `anon` — alle call sites nagelopen — dus er
+gaat niets van kapot; `service_role` wordt in de migratie expliciet opnieuw gemachtigd.
 
 **Over 12 t/m 15.** Deze horen bij vier functies die al op `main` staan. Ze hebben geen onderlinge
 volgorde en mogen los van elkaar. **Zonder de migratie werkt de app precies als de dag ervoor** —
