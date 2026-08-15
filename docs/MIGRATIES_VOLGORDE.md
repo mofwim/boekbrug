@@ -363,6 +363,85 @@ Terugdraaien is één regel per functie (`RESET search_path`).
 
 ---
 
+## De eerste echte draai van de inventarislijst — 15 augustus 2026
+
+Vier meldingen kwamen eruit. **Twee waren een meetfout, twee zijn echt open.** Dat onderscheid is
+het halve werk: een migratie opnieuw draaien omdat een lijst zich vergiste, is hoe je dubbele
+indexen en dubbele policies krijgt.
+
+### Meetfout — er is niets aan de hand, de vraag was verkeerd
+
+**`documents_shared_and_storage_policies.sql`** meldde drie ontbrekende policies
+(`documents_upload`, `documents_read`, `documents_delete`). Die staan op **`storage.objects`**, want
+daar staan de bestanden — en de query keek alleen in `public`. De generator is nu schema-bewust en
+zoekt ze waar ze horen. *Niet opnieuw aanmaken.*
+
+> De `*_own`-policies op `public.documents` die je ernaast zag (`documents_select_own`,
+> `documents_insert_own`, `documents_delete_own`, `documents_owner_all`, `documents_update_own`)
+> zijn géén hernoemde versies hiervan. Ze komen uit andere migraties en gaan over een andere tabel.
+> Ze als "alternatieve namen" behandelen zou twee onafhankelijke dingen aan elkaar knopen.
+
+**`documents_content_hash_unique.sql`** meldde `document_is_referenced` als ontbrekend. Die functie
+is **steiger, geen fundament**: ze bestaat alleen om binnen diezelfde migratie de eenmalige
+dedup-`DELETE` te rangschikken, en geen regel in `src/` roept haar aan. Het blijvende resultaat is
+de unieke index `uq_documents_user_content_hash` — en die staat er. De migratie is dus toegepast.
+*Niets herstellen.*
+
+De vierde melding uit dat bestand, de index `idx_documents_user_content_hash`, ontbreekt **echt** —
+en hoort te ontbreken. Hij is er ooit gekomen met het argument dat een UNIQUE de "nog een keer
+uploaden"-functie zou breken; `documents_content_hash_unique.sql` heeft die afweging later
+omgedraaid en legt `uq_documents_user_content_hash` op dezelfde twee kolommen. Die dekt dezelfde
+lookups. Hem alsnog aanmaken is een tweede index op dezelfde kolommen: schrijfkosten zonder
+leeswinst. *Niet aanmaken.*
+
+Beide staan nu in `NIETS_BEWIJZEND` in `scripts/migration-inventory.ts`, **met de reden**, en die
+reden komt onderaan de gegenereerde lijst terecht. Een poort eist dat zo'n uitzondering naar een
+object wijst dat de migratie écht aanmaakt — anders wordt die tabel de plek waar een falende
+migratie zich verstopt.
+
+### Echt open — allebei veilig toe te passen, geen van beide urgent
+
+| | `ai_budget_settle.sql` | `bookkeeping_date_sane.sql` |
+|---|---|---|
+| Wat mist | functie `ai_budget_settle` | functie `assert_bookkeeping_date_sane` + vier triggers |
+| Weggegooid door een latere migratie? | nee, door geen enkele | nee, door geen enkele |
+| Wat de app nu doet | `settleAiBudget` vangt de fout op en logt "the estimate stands" | de app bewaakt zelf strenger (`payment-date.ts`) |
+
+**`ai_budget_settle.sql`.** De zekering onder de Anthropic-rekening werkt in twee tellen:
+`ai_budget_consume` RESERVEERT een schatting vóór de call, `ai_budget_settle` corrigeert die
+achteraf naar het echte verbruik. De tweede helft ontbreekt, dus de schatting blijft staan. De
+schatting is bewust aan de ruime kant — dus de zekering slaat te VROEG door, niet te laat. Geen
+weglopend geld.
+
+Wat het wél kost is de meting zelf, en die is de reden dat dit hier staat: dit document adviseert
+`AI_DAILY_BUDGET_EUR=0` voor de eerste dagen, *"dat telt wél maar begrenst niet, zodat je je
+werkelijke uitgaven leert kennen voordat je een getal kiest"*. Zonder de settle is dat getal te
+hoog. Je kiest een grens op basis van een cijfer dat niet klopt.
+
+**`bookkeeping_date_sane.sql`.** Zet `BEFORE INSERT OR UPDATE`-triggers op vier geldkolommen —
+`invoices.payment_date`, `bank_tx_invoices.paid_on`, `cash_entries.entry_date`,
+`daily_turnover.turnover_date` — die een datum buiten `[2000-01-01, vandaag + 7]` weigeren. Het is
+uitdrukkelijk *"de absolute ondergrens onder de striktere regel van de app, niet een tweede mening
+erover"*. De app bewaakt dus nog steeds; wat ontbreekt is het vangnet eronder, voor elke weg die
+`payment-date.ts` niet passeert — een import, het service-role-pad, een route die er later bij komt.
+Een typefout als `0202` in plaats van `2026` zou nu blijven staan en een btw-tijdvak verschuiven.
+
+**Vóór het toepassen, en dit is geen formaliteit:** onderaan dat bestand staan `SELECT`-regels die
+bestaande rijen mét zo'n onmogelijke datum opsommen. Draai die eerst. De triggers gelden alleen voor
+nieuwe schrijfacties, maar zodra ze staan mislukt élke UPDATE van een rij die al fout is. Staan er
+regels in die uitkomst, repareer die eerst.
+
+Allebei zijn idempotent (`CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` gevolgd door
+`CREATE TRIGGER`, met een kolomcontrole eromheen) en maken dus niets dubbel aan.
+
+### `rpc_anon_revoke.sql` — geen bevinding, en dat klopt
+
+Die maakt niets aan en kan dus niet via een object worden bewezen; ze staat bij "niet vast te
+stellen". Ze is apart nagemeten en geslaagd: `anon = false` op alle dertien, `service_role = true`.
+Ongemoeid laten.
+
+---
+
 ## Wat de linter meldt en met opzet zo blijft
 
 Niet elke melding is een taak. Deze drie zijn nagekeken en blijven staan, met de reden erbij — een

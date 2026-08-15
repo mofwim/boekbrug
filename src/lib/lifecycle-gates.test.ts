@@ -9521,3 +9521,50 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
     assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
   }
 });
+
+test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives in", () => {
+  // documents_shared_and_storage_policies.sql zet drie policies op `storage.objects` — daar staan
+  // de bestanden. De eerste versie van de generator zocht alles in `public` en noemde die migratie
+  // dus voor eeuwig GEDEELTELIJK, hoe goed ze ook gedraaid had.
+  //
+  // Dat is de duurste soort meetfout: een alarm dat nooit uitgaat leert iedereen om het weg te
+  // klikken, en dan mist het ook de keer dat het wél iets betekent.
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  for (const naam of ["documents_upload", "documents_read", "documents_delete"]) {
+    assert.match(sql, new RegExp(`'policy', '${naam}', 'objects', 'storage'`),
+      `${naam} lives on storage.objects — probing public would never find it`);
+  }
+  // En de query moet het schema van de probe gebruiken, niet een vast 'public'.
+  assert.match(sql, /where schemaname = p\.schema and tablename = p\.tabel and policyname = p\.object/);
+  assert.doesNotMatch(sql, /where schemaname = 'public' and policyname/,
+    "a hard-coded schema is exactly the bug this replaced");
+});
+
+test("[MIGRATIE-JOURNAAL] every ignored object is named, reasoned, and really created", () => {
+  // NIETS_BEWIJZEND is de enige plek waar met de hand een meting wordt uitgezet. Dat maakt het de
+  // enige plek waar een falende migratie zich kan verstoppen — dus staat er een prijs op: het
+  // object moet echt door die migratie worden aangemaakt, en er moet een reden bij staan die in
+  // de gegenereerde lijst terechtkomt.
+  const gen = readFileSync("scripts/migration-inventory.ts", "utf8");
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const blok = gen.slice(gen.indexOf("const NIETS_BEWIJZEND"), gen.indexOf("/** SQL-commentaar eraf"));
+
+  const entries = [...blok.matchAll(/"([a-z0-9_]+\.sql)":\s*\[([\s\S]*?)\n {2}\]/g)];
+  assert.ok(entries.length > 0, "the override table must be readable, or this gate proves nothing");
+
+  for (const [, bestand, body] of entries) {
+    const pad = `supabase/migrations/${bestand}`;
+    assert.ok(existsSync(pad), `${bestand} is overridden but does not exist`);
+    const migratie = readFileSync(pad, "utf8");
+    for (const obj of body.matchAll(/object:\s*"([a-z0-9_]+)"/g)) {
+      // Het object moet écht door DEZE migratie worden aangemaakt — anders zet je een meting uit
+      // die nergens over ging, en verbergt de regel iets anders dan hij beweert.
+      assert.ok(migratie.includes(obj[1]),
+        `${bestand} does not create ${obj[1]} — an override must point at something real`);
+      // …en de reden moet de lezer bereiken, niet alleen de generator.
+      assert.ok(sql.includes(obj[1]),
+        `${obj[1]} is ignored but its reason never reaches docs/WELKE_MIGRATIES_STAAN_ER.sql`);
+    }
+    assert.match(body, /reden:/, `${bestand} needs a written reason, not just a name`);
+  }
+});
