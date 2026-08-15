@@ -224,6 +224,18 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "retention-purge", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Zie de gelijknamige uitleg in api/cron/reminders. Deze route had dezelfde
+  // vorm en een scherper gevolg: `finishCronRun` stond alleen op het volledige pad, en de eerste
+  // vroege uitgang hieronder is "geen kandidaten" — de NORMALE uitkomst voor een jonge
+  // administratie. Deze cron meldde daardoor bij vrijwel elke run 'afgebroken'. Gemeten op
+  // 15 augustus: laatste run 10 augustus, ok = NULL, terwijl er simpelweg niets te wissen was.
+  //
+  // `klaar()` sluit de regel én bouwt het antwoord, zodat de uitgang niet te vergeten valt.
+  const klaar = async (body: Record<string, unknown>, ok = true) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body);
+  };
+
   // ── Guard 2: the dark switch. Unset ⇒ dry run. ─────────────────────
   const dryRun = (process.env.RETENTION_PURGE_ENABLED || "").trim() !== "true";
 
@@ -275,7 +287,10 @@ export async function GET(req: NextRequest) {
     );
   } catch (err) {
     console.error("[CRON-RETENTION] candidate query failed (migration applied?):", err);
-    return NextResponse.json({ ok: true, ...report, note: "no_candidates_or_migration_pending" });
+    // Kán twee dingen betekenen: niets te wissen, of de tabel bestaat nog niet. Het eerste is
+    // een geslaagde run; het tweede ziet de ondernemer aan de note. Niet als fout melden — deze
+    // route valt met opzet stil terug zolang de migratie open staat.
+    return klaar({ ok: true, ...report, note: "no_candidates_or_migration_pending" });
   }
 
   report.scanned = rows.length;
@@ -319,11 +334,13 @@ export async function GET(req: NextRequest) {
             "Is kluis_subscriptions.sql toegepast?",
           err
         );
-        return NextResponse.json({
-          ok: true,
+        // Er is NIETS gewist omdat de kluis-controle niet kon draaien. Dat is geen geslaagde
+        // run: blijft dit staan, dan wordt er nooit meer iets opgeruimd en zegt niemand iets.
+        return klaar({
+          ok: false,
           ...report,
           note: "kluis_check_unavailable_nothing_purged",
-        });
+        }, false);
       }
     }
   }
@@ -335,7 +352,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (purge.length === 0) {
-    return NextResponse.json({ ok: true, ...report });
+    return klaar({ ok: true, ...report });
   }
 
   // Loud: a real erasure becoming due is a compliance event, not routine noise.

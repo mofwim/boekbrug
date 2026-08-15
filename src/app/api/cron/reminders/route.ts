@@ -117,6 +117,26 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "reminders", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Vanaf hier is er een OPEN regel in cron_runs, en die moet dicht — langs
+  // welke uitgang de route ook vertrekt.
+  //
+  // Dat ging mis, en niet zeldzaam: `finishCronRun` stond alleen op het volledige pad, en deze
+  // route heeft vier vroege returns. "Geen ondernemers met herinneringen aan", "niets vervallen"
+  // — dat zijn de GEWONE uitkomsten, dus bleef de regel structureel op ok = NULL staan en las de
+  // gezondheidscheck 'afgebroken'. Gemeten: reminders stond op 15 augustus op AFGEROND NOOIT
+  // terwijl hij om 07:00 keurig had gedraaid en niets te doen had.
+  //
+  // Een alarm dat altijd afgaat leert je alarmen wegklikken, en dan mis je de keer dat hij wél
+  // ergens over gaat. Erger nog: een echte leesfout verliet deze route via precies dezelfde deur,
+  // dus "niets te doen" en "ik kon niet kijken" waren van buiten niet te onderscheiden.
+  //
+  // Daarom sluit `klaar()` de regel én bouwt het antwoord: door de uitgang zelf te zijn, kan een
+  // volgende vroege return hem niet meer vergeten.
+  const klaar = async (body: Record<string, unknown>, ok = true) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body);
+  };
+
   const pipeline = createPipelineClient();
   const today = amsterdamTodayDayNumber();
 
@@ -139,11 +159,12 @@ export async function GET(req: NextRequest) {
     console.error("[CRON-REMINDERS] enabled-owner lookup failed (migration applied?)", {
       error: e instanceof Error ? e.message : String(e),
     });
-    return NextResponse.json({ ok: true, enabledOwners: 0, note: "lookup_failed" });
+    // Een leesfout is GEEN geslaagde run: hij hoort op te vallen als hij zich herhaalt.
+    return klaar({ ok: false, enabledOwners: 0, note: "lookup_failed" }, false);
   }
 
   if (owners.length === 0) {
-    return NextResponse.json({ ok: true, enabledOwners: 0, sent: 0 });
+    return klaar({ ok: true, enabledOwners: 0, sent: 0 });
   }
 
   const ownerById = new Map<string, OwnerProfile>();
@@ -180,7 +201,7 @@ export async function GET(req: NextRequest) {
   });
 
   if (invoices.length === 0) {
-    return NextResponse.json({ ok: true, enabledOwners: owners.length, sent: 0 });
+    return klaar({ ok: true, enabledOwners: owners.length, sent: 0 });
   }
 
   // ── 3) Which tiers were already sent, per invoice (one batched read). ──
@@ -231,7 +252,8 @@ export async function GET(req: NextRequest) {
   });
   if (creditNoteRows == null) {
     // Fail closed: send nothing rather than risk one wrong demand. Tomorrow's run repeats it.
-    return NextResponse.json({ ok: true, enabledOwners: owners.length, sent: 0, skipped: "creditnota_lookup_failed" });
+    // Bewust niets verstuurd — maar de run deed zijn werk niet, dus zegt de regel dat ook.
+    return klaar({ ok: false, enabledOwners: owners.length, sent: 0, skipped: "creditnota_lookup_failed" }, false);
   }
   const creditedByInvoice = creditedTotalsFrom(creditNoteRows);
 
