@@ -22,6 +22,9 @@
 // never had its BTW declared — there is nothing to reclaim.
 
 import type { VatScheme } from "./vat-scheme";
+// [DEEL-CREDIT] "How much has been credited against this invoice" has one definition — see below
+// for why this module could no longer answer it with a yes or a no.
+import { creditedTotalsFrom } from "./credited-invoices";
 
 export interface BadDebtInput {
   id: string | null;            // row id — to spot an original that has since been credited
@@ -56,6 +59,56 @@ export interface BadDebtResult {
 // A verified outgoing sale whose BTW WAS declared (not a draft/processing/paid row).
 const DECLARED_OUTGOING = new Set(["sent", "overdue"]);
 
+/** The gross of one row, incl. btw, from whichever columns it carries. */
+function grossOf(i: BadDebtInput): number {
+  return i.totalIncBtw != null
+    ? Number(i.totalIncBtw)
+    : (Number(i.totalExBtw) || 0) + (Number(i.btwAmount) || 0);
+}
+
+/**
+ * [DEEL-CREDIT] How much has been credited against each original, incl. btw, as a positive amount.
+ *
+ * ── WHY THIS REPLACED A Set<string> ──
+ *
+ * Both detectors below used to build `creditedOriginalIds` and skip any invoice that appeared in
+ * it, on the reasoning — written into the comment there — that "a creditnota FULLY reverses its
+ * original". That was true of every creditnota this app could make, right up until
+ * creditnota_partial.sql made a credit for one disputed LINE possible. After that, one € 121
+ * credit on a € 1.210 invoice switched the whole rule off, and it did so on both sides:
+ *
+ *   lid 1, the money to GET: the customer never paid the remaining € 1.089, a year passed, and the
+ *     owner may reclaim the BTW on it. Measured: € 189 reclaimable, € 0 reported. Silently — a
+ *     reclaim that is never offered is never missed.
+ *
+ *   lid 7, the money to GIVE: the same shape on a purchase invoice removed the warning entirely.
+ *     That is the worse half, and this module's own header says why: it is "the only art. 29 side
+ *     that costs money", the one "an entrepreneur never hears about until the naheffing arrives".
+ *     A single partial supplier credit turned the alarm off.
+ *
+ * The credited portion needs no reclaim and no repayment of its own: the creditnota carries
+ * NEGATIVE btw and was declared in its own period, so that BTW is already back where it belongs.
+ * What is left is exactly the unpaid remainder, which is what the fraction below now measures.
+ */
+function creditedByOriginal(invoices: readonly BadDebtInput[]): Map<string, number> {
+  return creditedTotalsFrom(
+    invoices
+      .filter((i) => i.invoiceType === "creditnota")
+      .map((i) => ({ original_invoice_id: i.originalInvoiceId, total_inc_btw: grossOf(i) })),
+  );
+}
+
+/**
+ * The share of an invoice that is still unpaid AND still owed — after instalments and after
+ * credits. 0 when nothing is left, which is how a fully credited invoice keeps dropping out of
+ * both detectors exactly as it did before partial credits existed.
+ */
+function openFraction(i: BadDebtInput, gross: number, credited: ReadonlyMap<string, number>): number {
+  const paid = Math.max(0, Number(i.amountPaid) || 0);
+  const gecrediteerd = i.id != null ? (credited.get(String(i.id)) ?? 0) : 0;
+  return Math.max(0, Math.min(1, (gross - paid - gecrediteerd) / gross));
+}
+
 /** ISO 'YYYY-MM-DD' + 1 calendar year (Feb 29 → Mar 1, acceptable). Returns "" on bad input. */
 export function oneYearLater(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -83,29 +136,21 @@ export function detectBadDebt(args: {
   const eligible: BadDebtInvoice[] = [];
   let usedInvoiceDateFallback = false;
 
-  // A creditnota fully reverses its original: the BTW you'd otherwise reclaim was already put back.
-  // So an original that has since been credited is NOT a bad debt (reclaiming it = a refund you're
-  // not owed), and the creditnota row itself is a reversal, never a receivable. Build the set of
-  // credited originals up front so we can drop both.
-  const creditedOriginalIds = new Set<string>();
-  for (const i of args.invoices) {
-    if (i.invoiceType === "creditnota" && i.originalInvoiceId != null) {
-      creditedOriginalIds.add(String(i.originalInvoiceId));
-    }
-  }
+  // [DEEL-CREDIT] A creditnota reduces what is still owed, and since partial credits exist it may
+  // reduce it by a PART. What it takes away needs no reclaim (its own negative BTW already put
+  // that back); what is left over is a bad debt like any other. See creditedByOriginal.
+  const credited = creditedByOriginal(args.invoices);
 
   for (const i of args.invoices) {
     if (i.direction !== "outgoing") continue;
     if (i.invoiceType === "creditnota") continue;      // a creditnota is a reversal, not a receivable
-    if (i.id != null && creditedOriginalIds.has(String(i.id))) continue; // already reversed by a creditnota
     if (!DECLARED_OUTGOING.has(i.status ?? "")) continue; // draft/processing = not declared; paid = collected
 
-    const inc = i.totalIncBtw != null ? Number(i.totalIncBtw) : (Number(i.totalExBtw) || 0) + (Number(i.btwAmount) || 0);
+    const inc = grossOf(i);
     if (!(inc > 0)) continue;                          // a €0 / negative (credit) line is not a bad debt
-    const grossAbs = inc;
-    const paid = Math.max(0, Number(i.amountPaid) || 0);
-    const unpaidFraction = Math.max(0, Math.min(1, (grossAbs - paid) / grossAbs));
-    if (unpaidFraction <= 0) continue;                 // fully paid → nothing to reclaim
+    // Fully paid, fully credited, or the two together → nothing to reclaim.
+    const unpaidFraction = openFraction(i, inc, credited);
+    if (unpaidFraction <= 0) continue;
 
     const clockStart = i.dueDate ?? i.invoiceDate;     // rule runs from the due date; fall back to invoice date
     if (!clockStart) continue;                          // no date at all → can't age it
@@ -201,28 +246,23 @@ export function detectVatClawback(args: {
   const eligible: VatClawbackInvoice[] = [];
   let usedInvoiceDateFallback = false;
 
-  // A supplier creditnota reverses its original: the deduction was already put back, so demanding
-  // it again would be a correction you do not owe. This only fires where the link exists — an
-  // unlinked supplier creditnota cannot be matched, which is why the note tells the owner to check
-  // rather than presenting a figure to copy.
-  const creditedOriginalIds = new Set<string>();
-  for (const i of args.invoices) {
-    if (i.invoiceType === "creditnota" && i.originalInvoiceId != null) {
-      creditedOriginalIds.add(String(i.originalInvoiceId));
-    }
-  }
+  // [DEEL-CREDIT] A supplier creditnota reverses the deduction on the part it covers, so demanding
+  // THAT back would be a correction the owner does not owe. It says nothing about the rest, and
+  // the rest is where the liability lives: a partial credit used to silence this warning entirely.
+  // This only fires where the link exists — an unlinked supplier creditnota cannot be matched,
+  // which is why the note tells the owner to check rather than presenting a figure to copy.
+  const credited = creditedByOriginal(args.invoices);
 
   for (const i of args.invoices) {
     if (i.direction !== "incoming") continue;
     if (i.invoiceType === "creditnota") continue;      // a creditnota is a reversal, not a debt
-    if (i.id != null && creditedOriginalIds.has(String(i.id))) continue;
     if (!DEDUCTED_INCOMING.has(i.status ?? "")) continue;
 
-    const inc = i.totalIncBtw != null ? Number(i.totalIncBtw) : (Number(i.totalExBtw) || 0) + (Number(i.btwAmount) || 0);
+    const inc = grossOf(i);
     if (!(inc > 0)) continue;
-    const paid = Math.max(0, Number(i.amountPaid) || 0);
-    const unpaidFraction = Math.max(0, Math.min(1, (inc - paid) / inc));
-    if (unpaidFraction <= 0) continue;                 // fully paid → the deduction stands
+    // Fully paid or fully credited → the deduction stands and nothing goes back.
+    const unpaidFraction = openFraction(i, inc, credited);
+    if (unpaidFraction <= 0) continue;
 
     const clockStart = i.dueDate ?? i.invoiceDate;
     if (!clockStart) continue;
