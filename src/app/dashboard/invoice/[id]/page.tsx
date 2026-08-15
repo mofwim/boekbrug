@@ -102,7 +102,15 @@ export default function InvoiceDetailPage() {
   // [FACTUUR-BIJLAGE] Het eigen bestand dat met deze factuurmail meegaat — een werkbon, een
   // urenstaat, een pakbon. Gekozen vlak voor het versturen, want dat is het moment waarop je
   // eraan denkt.
-  const [bijlage, setBijlage] = useState<{ id: string; file_name: string; file_size: number } | null>(null)
+  const [bijlage, setBijlage] = useState<{ id: string; file_name: string; file_size: number; trashed?: boolean | null } | null>(null)
+  // Weet dit scherm zeker WAT er als bijlage meegaat?
+  //
+  // Alleen dan mag het meepraten. De verstuurroute kent drie standen: een id (dit bestand), null
+  // (geen bijlage) en de sleutel helemaal weglaten (neem wat er op de factuur staat). Zou het
+  // scherm bij twijfel `null` sturen, dan wist een verkoopmedewerker — die de documentenrij van
+  // zijn werkgever via RLS niet mag lezen — de bijlage van zijn baas door alleen maar op
+  // Versturen te drukken. Bij twijfel zwijgt het scherm dus, en beslist de factuur.
+  const [bijlageBekend, setBijlageBekend] = useState(false)
   const [bijlageZoek, setBijlageZoek] = useState('')
   const [bijlageTreffers, setBijlageTreffers] = useState<{ id: string; file_name: string; file_size: number }[]>([])
   const [bijlageZoekt, setBijlageZoekt] = useState(false)
@@ -201,7 +209,10 @@ export default function InvoiceDetailPage() {
     const res = await fetch('/api/invoice/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId, resend: true }),
+      // [FACTUUR-BIJLAGE] Ook hier, en juist hier. Opnieuw versturen droeg de bijlage van de
+      // eerste keer mee zonder dat er een weg was om hem te wijzigen of weg te halen; belandde
+      // dat bestand in de prullenbak, dan weigerde élke poging en zat de factuur vast.
+      body: JSON.stringify({ invoiceId, resend: true, ...(bijlageBekend ? { attachment_document_id: bijlage?.id ?? null } : {}) }),
     })
 
     if (!res.ok) {
@@ -255,6 +266,36 @@ export default function InvoiceDetailPage() {
       if (senderProfile) setProfile(senderProfile)
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
+
+      // [FACTUUR-BIJLAGE] Wat er al als bijlage op deze factuur staat, teruglezen.
+      //
+      // De kolom werd geschreven en nergens gelezen, en dat kost meer dan een leeg veld. De
+      // verstuurroute valt terug op wat er op de factuur staat, dus het bestand ging gewoon mee —
+      // alleen zag de ondernemer daar niets van. Twee gevolgen, en het tweede is het ergste:
+      //
+      //   · hij weet niet WELK bestand zijn klant krijgt, terwijl hij op Versturen drukt;
+      //   · en hij kan het er niet af halen. Belandt dat bestand later in de prullenbak, dan
+      //     weigert elke nieuwe verzending met "kies een ander bestand" — en er was geen scherm
+      //     waarop je een ander bestand kon kiezen. De factuur was niet meer te versturen.
+      //
+      // `trashed` doet mee in de lezing en wordt niet weggefilterd: juist dát geval moet zichtbaar
+      // zijn, want het is het geval waarin de ondernemer moet ingrijpen.
+      const bijlageId = (invoiceData as { attachment_document_id?: string | null }).attachment_document_id ?? null
+      if (!bijlageId) {
+        setBijlageBekend(true)
+      } else {
+        const { data: bijlageDoc, error: bijlageErr } = await supabase
+          .from('documents')
+          .select('id, file_name, file_size, trashed')
+          .eq('id', bijlageId)
+          .maybeSingle()
+        if (!bijlageErr && bijlageDoc) {
+          setBijlage(bijlageDoc as { id: string; file_name: string; file_size: number; trashed?: boolean | null })
+          setBijlageBekend(true)
+        }
+        // Niet kunnen lezen laat `bijlageBekend` op false staan: het scherm zwijgt dan over de
+        // bijlage en de verstuurroute houdt wat er op de factuur staat. Zie de uitleg bij de state.
+      }
 
       // [ACTING-FOR] Wie maakte deze factuur? Alleen relevant als dat NIET de kijker zelf was —
       // dan is het de medewerker die hem namens de eigenaar heeft uitgegeven. created_by werd
@@ -322,7 +363,9 @@ export default function InvoiceDetailPage() {
     const res = await fetch('/api/invoice/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId, attachment_document_id: bijlage?.id ?? null }),
+      // [FACTUUR-BIJLAGE] De sleutel reist alleen mee als dit scherm de waarheid kent — zie
+      // `bijlageBekend`. Meegestuurd is hij BEPALEND, null inbegrepen: dat is wat "Weghalen" doet.
+      body: JSON.stringify({ invoiceId, ...(bijlageBekend ? { attachment_document_id: bijlage?.id ?? null } : {}) }),
     })
 
     if (!res.ok) {
@@ -494,6 +537,85 @@ export default function InvoiceDetailPage() {
   const vanBlock = isIncoming ? counterpartyBlock : selfBlock
   const aanBlock = isIncoming ? selfBlock : counterpartyBlock
 
+  // [FACTUUR-BIJLAGE] Eén blok, twee plekken: de verstuurbevestiging van een concept én de
+  // opnieuw-versturen-melding van een factuur die al de deur uit is.
+  //
+  // Het stond alleen op de eerste. Dat leek genoeg — je kiest een bijlage bij het versturen — maar
+  // het zijn juist de LATERE verzendingen waarin er iets aan mankeert: het bestand is opgeruimd,
+  // of het was het verkeerde. Zonder dit blok op de tweede plek stond daar een knop die weigerde
+  // met "kies een ander bestand", op een scherm zonder enige manier om dat te doen.
+  const bijlageKiezer = !bijlageBekend ? null : (
+    <div style={{ marginBottom: 16, paddingTop: 12, borderTop: '1px solid #F1F3F4' }}>
+      {bijlage ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+            <span style={{ color: '#5F6368' }}>📎</span>
+            <span style={{ flex: 1, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {bijlage.file_name}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setBijlage(null); setBijlageZoek(''); setBijlageTreffers([]) }}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: '#70757a' }}
+            >
+              {t('bijlage.weghalen')}
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: '#70757a', margin: '4px 0 0' }}>{t('bijlage.staatOpFactuur')}</p>
+          {/* Het geval waarin de ondernemer moet ingrijpen: het bestand ligt in de prullenbak, dus
+              de verstuurroute weigert. Zeggen wat er is en wat eraan te doen — de weigering
+              hierachter komt vóór het factuurnummer, dus er raakt niets zoek. */}
+          {bijlage.trashed ? (
+            <p style={{ fontSize: 12, color: '#B3261E', margin: '4px 0 0', lineHeight: 1.5 }}>
+              {t('bijlage.inPrullenbak')}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <label htmlFor="bijlage-zoek" style={{ display: 'block', fontSize: 13, color: '#5F6368', marginBottom: 6 }}>
+            {t('bijlage.meesturen')}
+          </label>
+          <input
+            id="bijlage-zoek"
+            type="text"
+            value={bijlageZoek}
+            placeholder={t('bijlage.zoekHint')}
+            onChange={async (e) => {
+              const q = e.target.value
+              setBijlageZoek(q)
+              if (q.trim().length < 2) { setBijlageTreffers([]); return }
+              setBijlageZoekt(true)
+              try {
+                const r = await fetch(`/api/bestanden?search=${encodeURIComponent(q.trim())}`)
+                const d = await r.json().catch(() => ({}))
+                setBijlageTreffers(Array.isArray(d?.documents) ? d.documents.slice(0, 6) : [])
+              } catch {
+                // Zoeken dat niet lukt laat de lijst leeg; versturen kan gewoon door, want
+                // een bijlage is nooit verplicht.
+                setBijlageTreffers([])
+              } finally {
+                setBijlageZoekt(false)
+              }
+            }}
+            style={{ width: '100%', minHeight: 40, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 15, boxSizing: 'border-box' }}
+          />
+          {bijlageZoekt && <p style={{ fontSize: 12, color: '#70757a', margin: '6px 0 0' }}>{t('bijlage.zoeken')}</p>}
+          {bijlageTreffers.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => { setBijlage(d); setBijlageTreffers([]) }}
+              style={{ display: 'block', width: '100%', textAlign: 'start', background: 'none', border: 'none', borderBottom: '1px solid #F1F3F4', padding: '8px 0', cursor: 'pointer', fontSize: 13.5, color: '#202124' }}
+            >
+              {d.file_name}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  )
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA' }}>
 
@@ -639,27 +761,33 @@ export default function InvoiceDetailPage() {
 
           {/* [FACTUUR-A] Delivery recovery banner — shows when ?delivery=pdf_failed|email_failed — June 2026 */}
           {deliveryWarning && (
-            <div style={{ backgroundColor: '#FEF7E0', borderInlineStart: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
-                <span style={{ color: M3.warning, flexShrink: 0, fontSize: 16 }}>⚠</span>
-                <div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: '#7C4D00', margin: 0 }}>
-                    {t('detail.bezorgingMislukt')}
-                  </p>
-                  <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
-                    {deliveryWarning === 'pdf_failed'
-                      ? t('detail.bezorging.pdf')
-                      : t('detail.bezorging.email')}
-                  </p>
+            <div style={{ backgroundColor: '#FEF7E0', borderInlineStart: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
+                  <span style={{ color: M3.warning, flexShrink: 0, fontSize: 16 }}>⚠</span>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#7C4D00', margin: 0 }}>
+                      {t('detail.bezorgingMislukt')}
+                    </p>
+                    <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
+                      {deliveryWarning === 'pdf_failed'
+                        ? t('detail.bezorging.pdf')
+                        : t('detail.bezorging.email')}
+                    </p>
+                  </div>
                 </div>
+                <button
+                  onClick={handleResend}
+                  disabled={resending}
+                  style={{ flexShrink: 0, backgroundColor: '#F9AB00', color: '#202124', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: resending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: resending ? 0.6 : 1 }}
+                >
+                  {resending ? t('bewerk.verzendenBezig') : `↻ ${t('lijst.opnieuwVersturen')}`}
+                </button>
               </div>
-              <button
-                onClick={handleResend}
-                disabled={resending}
-                style={{ flexShrink: 0, backgroundColor: '#F9AB00', color: '#202124', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: resending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: resending ? 0.6 : 1 }}
-              >
-                {resending ? t('bewerk.verzendenBezig') : `↻ ${t('lijst.opnieuwVersturen')}`}
-              </button>
+              {/* [FACTUUR-BIJLAGE] Wat er meegaat, en de mogelijkheid om er iets anders van te
+                  maken — vóór de knop wordt ingedrukt, want dit is de enige plek waar een al
+                  verstuurde factuur nog een keer de deur uit gaat. */}
+              {bijlageKiezer}
             </div>
           )}
 
@@ -958,64 +1086,7 @@ export default function InvoiceDetailPage() {
             {/* [FACTUUR-BIJLAGE] Eén eigen bestand mee. Het staat hier en niet op het
                 bewerkscherm, omdat je er pas aan denkt op het moment dat je verstuurt — en omdat
                 dit het scherm is waarop de mail écht weggaat. */}
-            <div style={{ marginBottom: 16, paddingTop: 12, borderTop: '1px solid #F1F3F4' }}>
-              {bijlage ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
-                  <span style={{ color: '#5F6368' }}>📎</span>
-                  <span style={{ flex: 1, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {bijlage.file_name}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setBijlage(null); setBijlageZoek(''); setBijlageTreffers([]) }}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: '#70757a' }}
-                  >
-                    {t('bijlage.weghalen')}
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <label htmlFor="bijlage-zoek" style={{ display: 'block', fontSize: 13, color: '#5F6368', marginBottom: 6 }}>
-                    {t('bijlage.meesturen')}
-                  </label>
-                  <input
-                    id="bijlage-zoek"
-                    type="text"
-                    value={bijlageZoek}
-                    placeholder={t('bijlage.zoekHint')}
-                    onChange={async (e) => {
-                      const q = e.target.value
-                      setBijlageZoek(q)
-                      if (q.trim().length < 2) { setBijlageTreffers([]); return }
-                      setBijlageZoekt(true)
-                      try {
-                        const r = await fetch(`/api/bestanden?search=${encodeURIComponent(q.trim())}`)
-                        const d = await r.json().catch(() => ({}))
-                        setBijlageTreffers(Array.isArray(d?.documents) ? d.documents.slice(0, 6) : [])
-                      } catch {
-                        // Zoeken dat niet lukt laat de lijst leeg; versturen kan gewoon door, want
-                        // een bijlage is nooit verplicht.
-                        setBijlageTreffers([])
-                      } finally {
-                        setBijlageZoekt(false)
-                      }
-                    }}
-                    style={{ width: '100%', minHeight: 40, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 15, boxSizing: 'border-box' }}
-                  />
-                  {bijlageZoekt && <p style={{ fontSize: 12, color: '#70757a', margin: '6px 0 0' }}>{t('bijlage.zoeken')}</p>}
-                  {bijlageTreffers.map((d) => (
-                    <button
-                      key={d.id}
-                      type="button"
-                      onClick={() => { setBijlage(d); setBijlageTreffers([]) }}
-                      style={{ display: 'block', width: '100%', textAlign: 'start', background: 'none', border: 'none', padding: '8px 4px', cursor: 'pointer', fontSize: 13.5, color: '#202124', borderBottom: '1px solid #F1F3F4' }}
-                    >
-                      {d.file_name}
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
+            {bijlageKiezer}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
                 disabled={sending}

@@ -9240,3 +9240,53 @@ test("[DEEL-CREDIT] a payment link is refused only for a fully credited invoice"
   assert.match(route, /We konden niet nakijken of er een creditnota/,
     "a failed check must still fail closed, and say so in its own words");
 });
+
+// ─── [FACTUUR-BIJLAGE] De bijlage die op de factuur stond en nergens te zien was ───
+//
+// De kolom werd geschreven en nergens teruggelezen. De verstuurroute viel altijd terug op wat er
+// op de factuur stond, dus het bestand ging gewoon mee — alleen zag de ondernemer daar niets van,
+// en kon hij het er niet af halen. Belandde dat bestand later in de prullenbak, dan weigerde élke
+// nieuwe verzending met "kies een ander bestand", op een scherm zonder enige manier om dat te doen.
+// De factuur was daarmee niet meer te versturen.
+
+test("[FACTUUR-BIJLAGE] the send route knows THREE states, not two", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  // Sleutel afwezig = zwijgen = neem wat er op de factuur staat. Alleen zo kunnen de cron, het
+  // bewerkscherm en elke andere aanroeper die van bijlagen niets weet er niets aan veranderen.
+  assert.match(send, /const bijlageMeegestuurd = !!body && typeof body === 'object' && 'attachment_document_id' in body/,
+    "the KEY's presence decides, not its value");
+  assert.match(send, /const bijlageId = bijlageMeegestuurd\s*\n\s*\? gevraagdeBijlage\s*\n\s*: \(\(invoice as/,
+    "an explicit null must mean NO attachment, not 'fall back to the stored one'");
+  // …en dat wist ook de kolom, anders geldt "Weghalen" voor één mail en nergens anders.
+  assert.match(send, /\.\.\.\(bijlageMeegestuurd && 'attachment_document_id' in invoice\s*\n\s*\? \{ attachment_document_id: gevraagdeBijlage \}/,
+    "removing an attachment must clear the column, or the next send re-attaches it");
+});
+
+test("[FACTUUR-BIJLAGE] a resend can change the attachment, and remembers it", () => {
+  const send = code("src/app/api/invoice/send/route.ts");
+  // Het is juist bij OPNIEUW versturen dat een bijlage wisselt of vervalt, en dat pad slaat de
+  // gewone commit-update over (die zet nummer en status vast — bij een resend is er niets vast te
+  // zetten). Dus staat de bijlagekolom daar apart, en alleen die.
+  assert.match(send, /if \(resend && bijlageMeegestuurd && 'attachment_document_id' in invoice\)/,
+    "a resend must be able to persist a changed attachment");
+  assert.match(send, /bijlagekeuze niet vastgelegd bij opnieuw versturen/,
+    "…and a failure to remember must not stop the mail that is already assembled");
+});
+
+test("[FACTUUR-BIJLAGE] the screen reads the attachment back, and stays silent when it cannot", () => {
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(scherm, /const bijlageId = \(invoiceData as \{ attachment_document_id\?: string \| null \}\)\.attachment_document_id/,
+    "the invoice's own attachment must be read back — a column written and never read is a lie on screen");
+  // De prullenbak-stand wordt NIET weggefilterd: dat is juist het geval waarin de ondernemer moet
+  // ingrijpen, en het scherm zegt wat eraan te doen is.
+  assert.match(scherm, /\.select\('id, file_name, file_size, trashed'\)/,
+    "a trashed attachment must be visible, because that is the one that blocks sending");
+  assert.match(scherm, /t\('bijlage\.inPrullenbak'\)/);
+
+  // En bij twijfel zwijgt het scherm. Zou het `null` sturen wanneer het de documentrij niet kón
+  // lezen, dan wist een verkoopmedewerker — die de bestanden van zijn werkgever via RLS niet mag
+  // zien — de bijlage van zijn baas door alleen maar op Versturen te drukken.
+  const stuurt = scherm.match(/\.\.\.\(bijlageBekend \? \{ attachment_document_id: bijlage\?\.id \?\? null \} : \{\}\)/g) ?? [];
+  assert.equal(stuurt.length, 2,
+    "both send paths (first send and resend) must speak only when the screen knows the truth");
+});

@@ -3898,6 +3898,19 @@ export const MESSAGES = {
   'bijlage.zoekHint': { nl: 'Zoek in je bestanden…', ar: 'ابحث في ملفاتك…', en: 'Search your files…' },
   'bijlage.zoeken': { nl: 'Zoeken…', ar: 'جارٍ البحث…', en: 'Searching…' },
   'bijlage.weghalen': { nl: 'Weghalen', ar: 'إزالة', en: 'Remove' },
+  // De bijlage die AL op deze factuur staat. Zonder deze regels toont het scherm een leeg
+  // keuzeveld terwijl er wel degelijk een bestand meegaat — en dan verstuurt de ondernemer iets
+  // anders dan hij denkt.
+  'bijlage.staatOpFactuur': {
+    nl: 'Gaat mee met deze factuur',
+    ar: 'يُرسَل مع هذه الفاتورة',
+    en: 'Goes along with this invoice',
+  },
+  'bijlage.inPrullenbak': {
+    nl: 'Dit bestand staat in de prullenbak. Zet het terug of haal de bijlage weg — anders lukt versturen niet.',
+    ar: 'هذا الملف في سلة المهملات. أعِده أو أزِل المرفق — وإلا فلن ينجح الإرسال.',
+    en: 'This file is in the bin. Restore it or remove the attachment — otherwise sending will fail.',
+  },
   'detail.offerte.akkoord': { nl: 'De klant gaat akkoord', ar: 'وافق العميل', en: 'The customer accepted' },
   'detail.offerte.afgewezen': { nl: 'De klant gaat niet akkoord', ar: 'لم يوافق العميل', en: 'The customer declined' },
   'detail.offerte.doorOp': { nl: 'Door {naam}, op {datum}', ar: 'بواسطة {naam}، بتاريخ {datum}', en: 'By {naam}, on {datum}' },
