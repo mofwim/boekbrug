@@ -6,7 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { focusScrollMarginTop, stickyChromeBottom, FOCUS_GAP, MAX_CHROME_FRACTION } from "./focus-scroll";
+import { focusScrollMarginTop, stickyChromeBottom, FOCUS_GAP, MAX_CHROME_FRACTION,
+  focusLandingOff,
+  FOCUS_TOLERANCE,
+  FOCUS_SETTLE_MS,
+} from "./focus-scroll";
 
 const HEADER = 56;      // PAGE_HEADER_HEIGHT — the chrome that is always there
 const VIEWPORT = 844;
@@ -90,4 +94,54 @@ test("[FOCUS-KOP] nothing measurable is null, so the caller can fall back delibe
 test("[FOCUS-KOP] a null chrome flows into the documented fallback", () => {
   // The two functions have to compose: nothing measurable must still produce a usable margin.
   assert.equal(focusScrollMarginTop(stickyChromeBottom(null, null), HEADER, VIEWPORT), HEADER + FOCUS_GAP);
+});
+
+// ─── [FOCUS-NAZICHT] Aiming once is not landing ────────────────────────────────────────────────
+//
+// Reported after the margin was already in place: tapping an invoice on /vandaag still lands
+// several rows past it. Measured in Chromium at 390x844, on a page built to that screen's shape:
+//
+//     nothing changes during the animation      row top y=244, chrome bottom y=236   correct
+//     a 120px notice above the list disappears  row top y=124                        112px above
+//     the sticky toolbar itself re-wraps        still correct
+//
+// The window is exactly the animation. A shift AFTER it lands is absorbed by the browser's own
+// scroll anchoring; a shift DURING it is not, because scrollIntoView({behavior:'smooth'}) computes
+// its destination once and animates to that number whatever happens to the element.
+
+test("[FOCUS-NAZICHT] a landing that is off by more than the rounding is corrected", () => {
+  // Both numbers are viewport y. `wanted` is the scroll margin the row was aimed with — the chrome
+  // bottom plus the gap — which is exactly where a correct landing puts the row's top: measured
+  // 244, against a chrome bottom of 236.
+  assert.equal(focusLandingOff(244, 244), false, "the measured correct landing is not a miss");
+  // And the measured miss: the row at 124 after a 120px notice vanished mid-animation.
+  assert.equal(focusLandingOff(124, 244), true);
+  assert.equal(244 - 124, 120, "the error is the height of whatever moved — not a near miss");
+});
+
+test("[FOCUS-NAZICHT] rounding noise is not a miss", () => {
+  // Too tight and every landing re-scrolls on a sub-pixel difference, which is a visible twitch on
+  // a screen the owner just arrived at.
+  for (const off of [0, 1, -1, 5.9, -5.9]) {
+    assert.equal(focusLandingOff(244 + off, 244), false, `${off}px must not trigger a correction`);
+  }
+  assert.equal(focusLandingOff(244 + 6.1, 244), true, "just past the tolerance does");
+  assert.equal(FOCUS_TOLERANCE, 6);
+});
+
+test("[FOCUS-NAZICHT] an unmeasurable position corrects nothing", () => {
+  // The row is gone, or the browser answered with something that is not a number. Doing nothing is
+  // the only safe answer: a correction computed from NaN would scroll somewhere arbitrary.
+  assert.equal(focusLandingOff(null, 244), false);
+  assert.equal(focusLandingOff(undefined, 244), false);
+  assert.equal(focusLandingOff(NaN, 244), false);
+  assert.equal(focusLandingOff(124, NaN), false);
+});
+
+test("[FOCUS-NAZICHT] the checks sit past the end of a smooth scroll", () => {
+  // A correction fired mid-animation would cancel the animation the owner is watching. Chrome's
+  // smooth scroll runs roughly 300-500ms; the first look is at 700.
+  assert.ok(FOCUS_SETTLE_MS.length >= 2, "one look cannot catch a shift that arrives late");
+  assert.ok(FOCUS_SETTLE_MS[0] >= 600, `first check at ${FOCUS_SETTLE_MS[0]}ms would fight the animation`);
+  assert.deepEqual([...FOCUS_SETTLE_MS].sort((a, b) => a - b), [...FOCUS_SETTLE_MS], "in order");
 });

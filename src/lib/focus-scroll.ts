@@ -83,6 +83,53 @@ function safe(n: number | null | undefined, fallback: number): number {
   return typeof n === "number" && Number.isFinite(n) ? n : fallback;
 }
 
+// ─── [FOCUS-NAZICHT] Aiming once is not landing ────────────────────────────────────────────────
+//
+// Reported after the margin above was already in place: tapping an invoice on /vandaag still lands
+// several rows PAST it. Measured in Chromium at 390x844 on a page built to this screen's shape —
+// 56px header, sticky toolbar, 62px rows, the focused one expanded:
+//
+//     nothing changes during the animation      row top y=244, chrome bottom y=236   correct
+//     a 120px notice above the list disappears  row top y=124                        112px above
+//                                               the chrome — two rows off the screen
+//     the sticky toolbar itself re-wraps        still correct (it moves with the chrome)
+//
+// `scrollIntoView({ behavior: 'smooth' })` computes its destination ONCE and animates to that
+// number. Anything above the list that changes height while it animates — a notice that resolves,
+// an image that arrives, a font that swaps across forty rows — moves the row and the browser does
+// not re-aim. The error is exactly the height of whatever moved, which is why it reads as "a few
+// invoices too far" rather than as a near miss.
+//
+// So the landing checks itself. After the animation would have finished it re-measures, and if the
+// row is not where it was put, it is put there again — instantly this time, because a second
+// animation is a second window in which the same thing can happen.
+//
+// It stops the moment the owner touches the page. A correction that fights someone who has started
+// scrolling is worse than the miss it corrects: the miss is over, and the fight is not.
+
+/** When to look again, in ms after the scroll starts. Past the end of a smooth scroll (~300-500ms),
+ *  then once more for a layout shift that arrives late. */
+export const FOCUS_SETTLE_MS = [700, 1400];
+
+/** How far off is worth a correction. Sub-pixel differences are the browser rounding, not a miss. */
+export const FOCUS_TOLERANCE = 6;
+
+/**
+ * Is the row far enough from where it was aimed to be worth moving again?
+ *
+ * Pure, and separate from the DOM work, because this is the only part with an opinion: too tight a
+ * tolerance re-scrolls on rounding noise, too loose leaves the supplier name under the toolbar.
+ */
+export function focusLandingOff(
+  rowTop: number | null | undefined,
+  wantedTop: number,
+  tolerance = FOCUS_TOLERANCE,
+): boolean {
+  if (typeof rowTop !== "number" || !Number.isFinite(rowTop)) return false;
+  if (!Number.isFinite(wantedTop)) return false;
+  return Math.abs(rowTop - wantedTop) > tolerance;
+}
+
 /** Anything with a measurable box. Duck-typed so this stays testable without a DOM. */
 export interface Measurable {
   getBoundingClientRect(): { bottom: number };
@@ -108,16 +155,46 @@ export function landRowUnderChrome(
   fallbackChrome: number,
 ): boolean {
   if (!row) return false;
-  const shared =
-    typeof document === "undefined" ? null : document.querySelector(SUBPAGE_HEADER_SELECTOR);
-  row.style.scrollMarginTop = `${focusScrollMarginTop(
-    stickyChromeBottom(localBar, shared),
-    fallbackChrome,
-    typeof window === "undefined" ? 0 : window.innerHeight,
-  )}px`;
+  // The margin is re-measured on every attempt, not captured once: the chrome that has to be
+  // cleared can itself change height between the first aim and the last check.
+  const margin = () =>
+    focusScrollMarginTop(
+      stickyChromeBottom(
+        localBar,
+        typeof document === "undefined" ? null : document.querySelector(SUBPAGE_HEADER_SELECTOR),
+      ),
+      fallbackChrome,
+      typeof window === "undefined" ? 0 : window.innerHeight,
+    );
+
+  row.style.scrollMarginTop = `${margin()}px`;
   // block: 'start' — NEVER 'center'. See the header: an expanded card is routinely taller than
   // the viewport, and centring one puts its top, its name and its amount off the top of the screen.
   row.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // [FOCUS-NAZICHT] …and then check that it actually got there. See the block above the tolerance.
+  if (typeof window === "undefined") return true;
+  let cancelled = false;
+  const stop = () => {
+    cancelled = true;
+    for (const ev of ["wheel", "touchstart", "keydown"] as const) {
+      window.removeEventListener(ev, stop);
+    }
+  };
+  for (const ev of ["wheel", "touchstart", "keydown"] as const) {
+    window.addEventListener(ev, stop, { once: true, passive: true });
+  }
+  for (const at of FOCUS_SETTLE_MS) {
+    window.setTimeout(() => {
+      if (cancelled || !row.isConnected) return;
+      const want = margin();
+      if (!focusLandingOff(row.getBoundingClientRect().top, want)) return;
+      row.style.scrollMarginTop = `${want}px`;
+      // Instant: a second animation is a second window for the same layout shift to move the row.
+      row.scrollIntoView({ behavior: "auto", block: "start" });
+    }, at);
+  }
+  window.setTimeout(stop, FOCUS_SETTLE_MS[FOCUS_SETTLE_MS.length - 1] + 100);
   return true;
 }
 
