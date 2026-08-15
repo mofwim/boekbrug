@@ -1742,13 +1742,38 @@ export default function BankClient() {
           </button>
         </div>
       )}
-      {autoDoneCount != null && autoDoneCount > 0 && safeAutoCount === 0 && (
-        <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.successContainer, padding: '14px 16px' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: M3.success, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>task_alt</span>
-            {autoDoneCount === 1 ? t('bank.auto.gedaanEen') : t('bank.auto.gedaan', { count: autoDoneCount })}
+      {/* [AFHANDELEN-STIL] Reported: "Nu afhandelen" doet zichtbaar niets.
+          
+          This block used to require THREE things at once — the server booked something, AND the
+          screen's own counter had already fallen to zero. Both fail in the case that was reported:
+          the server books nothing, the counter stays at 1, and the panel above keeps saying
+          "1 zekere betaling klaar om af te handelen". Nothing on the page changes, so the owner
+          taps again, and again.
+          
+          The server may refuse what this screen calls certain, and legitimately: it knows about an
+          invoice the accountant has locked, a quarter already filed, a payment booked elsewhere in
+          the meantime. This screen cannot know which — so it reports what it DOES know, which is
+          that nothing was booked, and points at the thing that still works. A partial run is now
+          reported too: booking 1 of 2 used to be as silent as booking none. */}
+      {autoDoneCount != null && (
+        <div style={{
+          marginTop: 18, borderRadius: R.lg, padding: '14px 16px',
+          background: autoDoneCount > 0 ? M3.successContainer : M3.surfaceVariant,
+        }}>
+          <div style={{
+            fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+            color: autoDoneCount > 0 ? M3.success : '#3c4043',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              {autoDoneCount > 0 ? 'task_alt' : 'info'}
+            </span>
+            {autoDoneCount === 0
+              ? t('bank.auto.geenGeboekt')
+              : autoDoneCount === 1 ? t('bank.auto.gedaanEen') : t('bank.auto.gedaan', { count: autoDoneCount })}
           </div>
-          <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>{t('bank.rustig')}</div>
+          {autoDoneCount > 0 && safeAutoCount === 0 && (
+            <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>{t('bank.rustig')}</div>
+          )}
         </div>
       )}
 

@@ -2595,6 +2595,19 @@ export const MESSAGES = {
     ar: 'ما زال مفتوحاً: {numbers}',
     en: 'Still open: {numbers}',
   },
+  // [AFHANDELEN-STIL] Wat er gebeurde toen er niets gebeurde. De knop kon alleen iets zeggen als de
+  // server iets boekte ÉN de teller op nul stond; boekte hij nul, dan bleef het scherm precies
+  // staan zoals het stond — met "1 zekere betaling klaar" erboven. De ondernemer tikt dan opnieuw.
+  //
+  // Waarom de server kan weigeren wat dit scherm zeker noemt: hij weet dingen die de pagina niet
+  // ziet — een factuur die de boekhouder heeft vastgezet, een kwartaal dat al is ingediend, een
+  // betaling die intussen ergens anders is geboekt. Daarom noemt deze zin geen reden die hij niet
+  // kent, en wijst hij naar wat er wél kan.
+  'bank.auto.geenGeboekt': {
+    nl: 'Er is niets automatisch geboekt. Deze betalingen staan hieronder klaar — koppel ze met één tik, dan zie je per regel welke factuur erbij hoort.',
+    ar: 'لم يُقيَّد شيء تلقائياً. هذه الدفعات جاهزة بالأسفل — اربطها بلمسة واحدة، وسترى مع كل سطر الفاتورة التي تخصّه.',
+    en: 'Nothing was booked automatically. These payments are waiting below — link them with one tap and you will see which invoice each one belongs to.',
+  },
   'bank.nuAfhandelen': {
     nl: 'Nu afhandelen',
     ar: 'عالِج الآن',

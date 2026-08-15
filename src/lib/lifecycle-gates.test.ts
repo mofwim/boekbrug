@@ -9146,3 +9146,57 @@ test("[DEEL-KORTING] a line's own fixed discount scales with the part being cred
   assert.match(spec, /a FULL credit is unchanged, to the cent/,
     "every creditnota this app has ever made took that path");
 });
+
+test("[FOCUS-NAZICHT] a deep-linked row is checked after it lands, not only aimed", () => {
+  // Reported twice: tapping an invoice on /vandaag lands past it. The first fix was the margin
+  // ([FOCUS-KOP]); this is the second half. scrollIntoView({behavior:'smooth'}) computes its
+  // destination ONCE, so anything above the list that changes height while it animates moves the
+  // row and the browser never re-aims. Measured in Chromium at 390x844: a 120px notice vanishing
+  // mid-animation left the row 112px above the chrome — two rows off the top of the screen.
+  const mod = code("src/lib/focus-scroll.ts");
+  assert.match(mod, /for \(const at of FOCUS_SETTLE_MS\)/, "the landing must look again");
+  assert.match(mod, /if \(!focusLandingOff\(row\.getBoundingClientRect\(\)\.top, want\)\) return;/,
+    "…and only move when it is actually off");
+  assert.match(mod, /row\.scrollIntoView\(\{ behavior: "auto", block: "start" \}\)/,
+    "the correction is instant — a second animation is a second window for the same shift");
+  // The margin is re-measured per attempt: the chrome that has to be cleared can change too.
+  assert.match(mod, /const margin = \(\) =>/, "the aim must be recomputed, not captured once");
+  // And it stops the moment the owner touches the page. Fighting someone who has started scrolling
+  // is worse than the miss being corrected: the miss is over, the fight is not.
+  // The REGISTRATION, not the removal beside it: both loops read the same, and a negative control
+  // that deleted the listener still matched the one inside stop(). A gate that can be satisfied by
+  // the cleanup of a thing that is no longer set up is not guarding anything.
+  assert.match(mod, /window\.addEventListener\(ev, stop, \{ once: true, passive: true \}\);/,
+    "a correction must yield to the owner");
+  assert.match(mod, /if \(cancelled \|\| !row\.isConnected\) return;/,
+    "…and to a row that has left the page");
+
+  const spec = readFileSync("src/lib/focus-scroll.test.ts", "utf8");
+  assert.match(spec, /the error is the height of whatever moved/, "the measurement belongs in the test");
+  assert.match(spec, /would fight the animation/, "…including why the first look is at 700ms");
+});
+
+test("[AFHANDELEN-STIL] a run that books nothing says so", () => {
+  // Reported with the screen open: "Nu afhandelen" produces no visible result. The panel above it
+  // kept reading "1 zekere betaling klaar om af te handelen" and nothing else on the page moved,
+  // so the owner tapped it again.
+  //
+  // The outcome block required THREE things at once: a count above zero AND the screen's own
+  // counter already at zero. The reported case fails both — the server books nothing and the
+  // counter stays where it was — so a button on the money screen ran, finished, and reported
+  // nothing at all. A partial run was equally silent: booking 1 of 2 left the counter at 1.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /\{autoDoneCount != null && \(/,
+    "the outcome must be reported whenever a run finished, not only when it succeeded fully");
+  assert.doesNotMatch(bank, /autoDoneCount != null && autoDoneCount > 0 && safeAutoCount === 0/,
+    "the three-condition gate is what made the button silent");
+  assert.match(bank, /autoDoneCount === 0\s*\n?\s*\? t\('bank\.auto\.geenGeboekt'\)/,
+    "…and zero must have its own sentence");
+
+  // The sentence must not invent a reason. The server refuses for things this screen cannot see —
+  // an invoice the accountant locked, a filed quarter, a payment booked elsewhere meanwhile — so it
+  // says what it knows and points at what still works.
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'bank\.auto\.geenGeboekt'/);
+  assert.match(messages, /koppel ze met één tik/, "the owner must be given the next step");
+});
