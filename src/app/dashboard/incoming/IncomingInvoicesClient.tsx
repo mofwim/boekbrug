@@ -89,6 +89,7 @@ import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { M3, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
+import { applyServerRefresh } from '@/lib/queue-sync'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
@@ -3266,6 +3267,34 @@ export default function IncomingInvoicesClient({
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
+  // [WACHTRIJ-VERS] useState reads its initial value ONCE, so every router.refresh() on this page
+  // delivered fresh rows to a hook that had already made up its mind — including the one at
+  // handleReimport, whose own comment says "pick up the refreshed amounts + health". A card
+  // therefore kept the amounts read at page load, and the verify modal opens seeded from that card:
+  // the owner reviewing a just-corrected invoice was shown, and confirmed, the number the
+  // correction had replaced.
+  //
+  // Content only. Membership stays the screen's, or a refresh landing inside an optimistic removal
+  // would put a confirmed invoice back in the queue — see the rule and its tests in queue-sync.ts.
+  //
+  // Adjusted DURING RENDER, not in an effect. React supports exactly this shape for "a prop
+  // changed, so a piece of state derived from it must move with it": the re-render happens before
+  // anything is committed, so the screen never paints the stale row. An effect would paint it
+  // first and correct it a frame later — a cascading render this file already warns about at three
+  // other call sites, and one the linter refuses outright.
+  const [pendingSeed, setPendingSeed] = useState(initialInvoices);
+  if (pendingSeed !== initialInvoices) {
+    // Reference identity, deliberately: a server render always produces a NEW array, and comparing
+    // contents here would mean walking the whole queue on every render to answer a question the
+    // pointer already answers.
+    setPendingSeed(initialInvoices);
+    setPending((prev) => applyServerRefresh(prev, initialInvoices));
+  }
+  const [ignoredSeed, setIgnoredSeed] = useState(ignoredInvoices);
+  if (ignoredSeed !== ignoredInvoices) {
+    setIgnoredSeed(ignoredInvoices);
+    setIgnored((prev) => applyServerRefresh(prev, ignoredInvoices));
+  }
   // [INCOMING-BEVESTIGD] Read-only surface of recently confirmed invoices — no mutations here.
   const [confirmed] = useState<IncomingInvoice[]>(confirmedInvoices);
   const [tab, setTab] = useState<Tab>("pending");
@@ -3503,12 +3532,21 @@ export default function IncomingInvoicesClient({
             // it looked like: it re-read the owner's whole account N times to find, at most, what
             // one pass at the end finds anyway.
             deferAutoConfirm: true,
-            total_ex_btw: inv.total_ex_btw,
-            btw_amount: inv.btw_amount,
-            total_inc_btw: inv.total_inc_btw,
-            client_name: inv.client_name,
-            invoice_number: inv.invoice_number,
-            invoice_date: inv.invoice_date,
+            // [BULK-GEEN-ECHO] And NOTHING else. The block above says what this path is — "books
+            // the stored amounts AS-IS, with no per-invoice review" — and it then sent six fields
+            // copied out of this component's state, which is not the same thing at all.
+            //
+            // The confirm route treats every field as optional and keeps what is stored when one is
+            // absent, so these six added no information. What they could do is OVERWRITE. This list
+            // is seeded from the server render and never updated afterwards: `pending` holds the
+            // rows as they were when the page loaded, and router.refresh() cannot change that —
+            // useState ignores a new initial value. So after "Opnieuw inlezen" corrected an amount,
+            // or after a correction made in another tab, a bulk confirm wrote the OLD numbers back
+            // over the new ones, and the invoice went into the books and the aangifte wrong. A
+            // human being reviewed nothing on this path, so there was nobody to notice.
+            //
+            // The single verify still sends amounts, and must: those come from the modal, typed or
+            // approved by the owner looking at the document.
           }),
         });
         if (res.ok) {

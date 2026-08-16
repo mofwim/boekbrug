@@ -10423,3 +10423,103 @@ test("[CRON-HONEST] the accountant's morning run cannot report itself green afte
   assert.match(heartbeat, /if \(run\.ok === false\) return "gefaald";/,
     "ok=false is what /api/health turns into an alarm");
 });
+
+test("[BRUG-UPLOAD-DELEN] a file dropped in the shared folder is actually shared", () => {
+  // "Gedeeld met boekhouder" exists for one act. The bestanden PATCH route honours it — a MOVE
+  // into folder_type='shared' sets documents.shared, the flag the accountant's RLS reads — and the
+  // upload path went straight through uploadDocument's insert, which never wrote it. So the owner
+  // opened the shared folder, dropped a file, saw it sitting there, and the accountant received
+  // nothing. The failure is invisible from the owner's side by construction: the file IS in the
+  // folder they put it in.
+  const docs = code("src/lib/documents.ts");
+
+  // The question has to be ASKED — of the chosen folder, scoped to this owner.
+  assert.match(docs, /\.from\("folders"\)\s*\.select\("folder_type"\)\s*\.eq\("id", opts\.folderId\)\s*\.eq\("user_id", userId\)/,
+    "the target folder's type is read, and only from the owner's own folders");
+  assert.match(docs, /sharedOnUpload = folder\?\.folder_type === "shared"/);
+
+  // …and the ANSWER has to reach the row. Sliced to the insert, because a flag computed and not
+  // written is precisely the shape of the bug being fixed.
+  const insertAt = docs.indexOf('.from("documents")\n    .insert({');
+  assert.ok(insertAt > 0, "the upload insert still exists");
+  const insert = docs.slice(insertAt, docs.indexOf("})", insertAt));
+  assert.match(insert, /shared: sharedOnUpload,/,
+    "the row carries the verdict — not a literal, or it shares everything or nothing");
+
+  // The same flag, read by the two surfaces that ARE the accountant's access. Without this the
+  // gate above pins a column nobody consumes.
+  const bestanden = code("src/app/api/bestanden/route.ts");
+  assert.match(bestanden, /q = q\.eq\("shared", true\)/, "the shared view reads it");
+  assert.match(bestanden, /patch\.shared = true;/, "and a move into the folder still sets it");
+});
+
+test("[MAP-VAN-DE-EIGENAAR] automatic filing never overrides the folder the owner chose", () => {
+  // The upload takes a destination (lib/documents.ts [I#1]: "without this the file silently leaves
+  // the folder on the next refresh") — and then this client re-created that exact failure one layer
+  // up, by PATCHing the AI's suggested folder over it unconditionally. Drop a file in
+  // "2026 / Q1 / Facturen" and a second later it is somewhere else, with nothing said.
+  //
+  // At the ROOT there is no choice to override, and there the automatic filing is the help it was
+  // built to be. So the condition is the presence of a chosen folder, not a setting.
+  const upload = code("src/app/dashboard/bestanden/components/UploadArea.tsx");
+  const classifyAt = upload.indexOf('fetch("/api/bestanden/classify"');
+  assert.ok(classifyAt > 0, "the classify call still runs — it also stamps the document type");
+  const after = upload.slice(classifyAt, upload.indexOf("catch", classifyAt));
+  assert.match(after, /if \(cr\.ok && !currentFolderId\)/,
+    "the move is only considered when the owner chose no folder");
+  // And the move itself must sit INSIDE that condition, not merely after it.
+  const guardAt = after.indexOf("if (cr.ok && !currentFolderId)");
+  const patchAt = after.indexOf('method: "PATCH"');
+  assert.ok(patchAt > guardAt, "the folder PATCH is inside the guard");
+  // The destination the owner picked still travels with the upload in the first place.
+  assert.match(upload, /if \(currentFolderId\) fd\.append\("folder_id", currentFolderId\)/);
+});
+
+test("[WACHTRIJ-VERS] a refreshed queue actually refreshes, and a bulk confirm echoes nothing back", () => {
+  // Two halves of one defect. The list is seeded with useState(initialInvoices), which reads its
+  // initial value ONCE — so every router.refresh() on this page handed fresh rows to a hook that
+  // had already decided, including the call whose own comment says "pick up the refreshed amounts
+  // + health". Nothing of the sort could happen.
+  //
+  //   · The card kept the amounts read at page load, and the verify modal opens seeded from that
+  //     card — so after "Opnieuw inlezen" corrected a total, the owner reviewed and confirmed the
+  //     number the correction had just replaced.
+  //   · Worse, with no human at all: the BULK confirm copied six fields out of that stale state
+  //     into the request, and the confirm route writes any field it is sent. So a batch wrote the
+  //     old amounts back over a correction, into the books and the aangifte.
+  const client = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  assert.match(client, /applyServerRefresh\(prev, initialInvoices\)/, "the queue takes the server's content");
+  assert.match(client, /applyServerRefresh\(prev, ignoredInvoices\)/, "and so does the Genegeerd tab");
+  // DURING RENDER, not in an effect: an effect paints the stale row first and corrects it a frame
+  // later. The linter refuses it outright, and this page warns about the same shape three times.
+  assert.match(client, /if \(pendingSeed !== initialInvoices\) \{/, "adjusted during render");
+  assert.doesNotMatch(client, /useEffect\(\(\) => \{\s*setPending\(\(prev\) => applyServerRefresh/,
+    "never from an effect");
+
+  // The bulk request must carry the action and the flag and NOTHING copied out of local state.
+  const batchAt = client.indexOf("const handleVerifyBatch");
+  assert.ok(batchAt > 0, "the bulk verify still exists");
+  const batchBody = client.slice(client.indexOf('action: "verify"', batchAt), client.indexOf("if (res.ok)", batchAt));
+  for (const field of ["total_ex_btw", "btw_amount", "total_inc_btw", "client_name", "invoice_number", "invoice_date"]) {
+    assert.doesNotMatch(batchBody, new RegExp(`${field}: inv\\.`),
+      `the bulk confirm may not send ${field} — it books what is stored, as its own comment says`);
+  }
+  assert.match(batchBody, /deferAutoConfirm: true/, "the one flag it does send is still there");
+
+  // The single verify still sends amounts, and must: those came from the modal, where a person
+  // looked at the document. Dropping them there would silently discard every correction typed.
+  const verifyAt = client.indexOf("const handleVerify = useCallback");
+  assert.ok(verifyAt > 0);
+  assert.match(client.slice(verifyAt, verifyAt + 2000), /body: JSON\.stringify\(\{ action: "verify", \.\.\.amounts \}\)/,
+    "a reviewed amount still reaches the server");
+
+  // And the rule the merge rests on is the one that is unit-tested, not a second copy of it.
+  const rule = code("src/lib/queue-sync.ts");
+  assert.match(rule, /export function applyServerRefresh/);
+  assert.match(rule, /return changed \? next : \(held as T\[\]\);/,
+    "an unchanged refresh returns the same array — this runs on every router.refresh()");
+  const unit = readFileSync("src/lib/queue-sync.test.ts", "utf8");
+  assert.match(unit, /cannot resurrect an optimistically removed invoice/,
+    "the membership half of the invariant is held by a test, not by a comment");
+});

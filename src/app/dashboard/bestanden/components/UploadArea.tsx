@@ -80,14 +80,26 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
 
     setProgress(60);
 
-    // [BOEK-033] Silent AI — no popup, places file automatically
+    // [BOEK-033] Silent AI — no popup, places file automatically.
+    //
+    // [MAP-VAN-DE-EIGENAAR] …but only when the owner did not already say where it goes. This ran
+    // unconditionally, so opening "2026 / Q1 / Facturen" and dropping a file there uploaded it to
+    // that folder and then MOVED it somewhere else a second later. The file was not where it had
+    // just been put, and nothing said so — the owner looks in the folder they chose and the
+    // document is not in it.
+    //
+    // That is the very failure opts.folderId exists to prevent (see [I#1] in lib/documents.ts:
+    // "without this the file silently leaves the folder on the next refresh"); it was simply
+    // re-created one layer up, by a different route. Standing at the root is the case where there
+    // IS no choice to respect, and there the automatic filing is exactly the help it was built to
+    // be. The classify call still runs either way — it also stamps the document's type.
     try {
       const cr = await fetch("/api/bestanden/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documentId: json.id, fileName: file.name }),
       });
-      if (cr.ok) {
+      if (cr.ok && !currentFolderId) {
         const result = await cr.json() as { folderId: string | null; confidence?: number; type: string };
         if (result.folderId && result.type !== "unknown" && (result.confidence ?? 1) >= 0.7) {
           await fetch(`/api/bestanden?id=${json.id}`, {
