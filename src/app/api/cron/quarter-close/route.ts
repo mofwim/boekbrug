@@ -47,6 +47,15 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "quarter-close", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Zie de uitleg in api/cron/reminders. Deze route draait vier keer per jaar,
+  // dus haar vroege uitgang is de minst waarschijnlijke van allemaal om ontdekt te worden door hem
+  // te zien gebeuren — en de duurste om te missen: valt hij om, dan blijft de regel op ok = NULL en
+  // is niet te onderscheiden of het kwartaalbericht is uitgegaan of niet, tot drie maanden later.
+  const klaar = async (body: Record<string, unknown>, ok: boolean, status?: number) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body, status ? { status } : undefined);
+  };
+
   // Allow an explicit ?year&quarter override (manual re-run); otherwise the quarter that just ended.
   const sp = req.nextUrl.searchParams;
   const yParam = Number(sp.get("year"));
@@ -71,7 +80,7 @@ export async function GET(req: NextRequest) {
         .order("id", { ascending: true }).range(from, to));
   } catch (e) {
     Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "quarter-close", phase: "profiles" } });
-    return NextResponse.json({ error: "kon profielen niet laden" }, { status: 500 });
+    return klaar({ ok: false, error: "kon profielen niet laden" }, false, 500);
   }
   const ownerIds = [...new Set((profiles ?? []).map((p) => p.id).filter((x): x is string => !!x))];
 

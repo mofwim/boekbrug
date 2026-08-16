@@ -113,3 +113,38 @@ COMMIT;
 --    Clean up after testing:
 --      delete from public.ai_spend_daily;
 -- =====================================================================
+
+-- ── CONTROLE ───────────────────────────────────────────────────────────────────
+--
+-- Dit bestand had er geen, en dat is niet los te zien van het feit dat het maandenlang
+-- ongemerkt NIET toegepast was. De zekering telde wél, maar corrigeerde nooit.
+--
+-- 1) Staat de functie er, en mag alleen de server erbij?
+--    Verwacht: één rij, anon = false, authenticated = false, service_role = true.
+--
+--   SELECT p.proname,
+--          has_function_privilege('anon',          p.oid, 'EXECUTE') AS anon,
+--          has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated,
+--          has_function_privilege('service_role',  p.oid, 'EXECUTE') AS service_role
+--     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--    WHERE n.nspname = 'public' AND p.proname = 'ai_budget_settle';
+--
+-- 2) En of hij ook echt gebruikt wordt. Draai dit NA een dag waarop de app AI heeft gedaan:
+--    `updated_at` hoort dan LATER te zijn dan het moment waarop de dag begon, want elke
+--    afrekening raakt die kolom aan. Blijft updated_at gelijk aan het eerste call-moment, dan
+--    komt settleAiBudget niet langs — en staat de schatting er nog steeds.
+--
+--   SELECT day, calls, cost_micros, updated_at FROM public.ai_spend_daily ORDER BY day DESC LIMIT 7;
+--
+-- ── WAT DEZE MIGRATIE MET TERUGWERKENDE KRACHT NIET DOET ──
+--
+-- Niets. En dat is opzet, maar het heeft een gevolg dat je moet weten voordat je een grens kiest.
+--
+-- De functie raakt alleen de rij van VANDAAG aan (`WHERE day = v_day`) en maakt nooit een dag aan.
+-- Alle dagen die vóór het toepassen zijn weggeschreven, dragen dus nog steeds de RESERVERING en
+-- niet het werkelijke verbruik — en die reservering is bewust aan de ruime kant.
+--
+-- Dit document adviseert AI_DAILY_BUDGET_EUR=0 te draaien om "je werkelijke uitgaven te leren
+-- kennen voordat je een getal kiest". Doe dat oordeel dus op de dagen VANAF vandaag. De oudere
+-- rijen lezen te hoog, en een grens die daarop wordt gekozen valt te ruim uit — precies de
+-- verkeerde kant voor een zekering.

@@ -9845,3 +9845,69 @@ test("[AFHANDELEN-STIL] a run that books nothing says so", () => {
   assert.match(messages, /'bank\.auto\.geenGeboekt'/);
   assert.match(messages, /koppel ze met één tik/, "the owner must be given the next step");
 });
+
+// ─── [CRON-HARTSLAG-EIND] Een geopende hartslagregel moet ook dichtgaan ───────
+//
+// `beginCronRun` schrijft een regel met ok = NULL; `finishCronRun` zet hem op true/false. Een
+// route die daartussen vertrekt via een vroege return laat die regel voor eeuwig op NULL staan, en
+// de gezondheidscheck leest NULL als 'afgebroken'.
+//
+// Twee routes deden dat, en het waren niet de zeldzame paden: "geen ondernemers met herinneringen
+// aan", "niets vervallen", "geen kandidaten om te wissen" zijn de GEWONE uitkomsten. Gemeten op
+// 15 augustus 2026 in productie:
+//
+//     reminders        laatste run 07:00, ok = NULL   → gelezen als AFGEROND NOOIT
+//     retention-purge  laatste run 10 aug, ok = NULL  → idem
+//
+// Allebei hadden gewoon gedraaid en niets te doen gehad. Een alarm dat altijd afgaat leert je
+// alarmen wegklikken — en dan mis je de keer dat hij ergens over gaat. Erger: in reminders verliet
+// een ECHTE leesfout de route via dezelfde deur, dus "niets te doen" en "ik kon niet kijken" waren
+// van buiten niet te onderscheiden.
+
+test("[CRON-HARTSLAG-EIND] no cron route can leave with its heartbeat row still open", () => {
+  const dir = "src/app/api/cron";
+  const routes = readdirSync(dir)
+    .filter((d) => existsSync(`${dir}/${d}/route.ts`))
+    .map((d) => `${dir}/${d}/route.ts`);
+  assert.ok(routes.length >= 5, "the cron routes must be found, or this gate proves nothing");
+
+  for (const f of routes) {
+    const src = code(f);
+    const startAt = src.indexOf("beginCronRun(");
+    if (startAt < 0) continue; // deze route houdt geen hartslag bij
+
+    // Alles ná het openen van de regel. Elke `return NextResponse` daarin moet langs de afsluiter:
+    // óf finishCronRun staat ervóór op diezelfde regel-route, óf hij vertrekt via de klaar()-helper
+    // die zelf afsluit.
+    const na = src.slice(startAt);
+    const finishAt = na.indexOf("finishCronRun(");
+    assert.ok(finishAt > 0, `${f} opens a heartbeat row and never closes it`);
+
+    // De vroege uitgangen: alles wat vóór de afsluiter terugkeert.
+    const voorAfsluiter = na.slice(0, finishAt);
+    for (const m of voorAfsluiter.matchAll(/return NextResponse\.json\(/g)) {
+      const regel = voorAfsluiter.slice(0, m.index).split("\n").length;
+      assert.fail(
+        `${f}: a return before the heartbeat is closed (around line ` +
+        `${src.slice(0, startAt).split("\n").length + regel}). Leave via the klaar() helper, ` +
+        `so the run cannot be recorded as 'afgebroken' while it actually succeeded.`,
+      );
+    }
+  }
+});
+
+test("[CRON-HARTSLAG-EIND] a read that failed is not recorded as a good run", () => {
+  // Het tweede halve punt, en zonder dit is de eerste poort een dekmantel: je kunt élke uitgang
+  // dichtzetten met ok = true en dan meldt niets ooit nog iets. De twee paden die WÉL misgingen
+  // moeten als mislukt in de boeken staan, anders is de hartslag een groen lampje op een dood
+  // apparaat.
+  const rem = code("src/app/api/cron/reminders/route.ts");
+  assert.match(rem, /note: "lookup_failed" \}, false\)/,
+    "an enabled-owner lookup that threw is not a successful run");
+  assert.match(rem, /skipped: "creditnota_lookup_failed" \}, false\)/,
+    "failing closed still means the run did not do its job");
+
+  const ret = code("src/app/api/cron/retention-purge/route.ts");
+  assert.match(ret, /note: "kluis_check_unavailable_nothing_purged",\s*\}, false\)/,
+    "nothing purged because the kluis check could not run is a failed run, not a quiet one");
+});

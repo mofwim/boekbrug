@@ -54,6 +54,15 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "reconcile", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Zie de uitleg in api/cron/reminders. Deze route wist het al het beste van
+  // allemaal — haar vroege uitgang zegt zelf `ok: false` — maar schreef dat oordeel nergens op de
+  // hartslagregel. Van buiten was een mislukte run dus niet te onderscheiden van een afgebroken
+  // run, en dat verschil is nu juist het enige waar een gezondheidscheck iets aan heeft.
+  const klaar = async (body: Record<string, unknown>, ok: boolean, status?: number) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body, status ? { status } : undefined);
+  };
+
   const pipeline = createPipelineClient();
 
   // Only iterate users who actually have something to reconcile — pending bank lines (auto-
@@ -87,7 +96,7 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     console.error("[CRON-RECONCILE] user discovery failed — aborting run (will retry next schedule)", e);
     Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "reconcile", phase: "user-set" } });
-    return NextResponse.json({ ok: false, error: "user discovery failed" }, { status: 500 });
+    return klaar({ ok: false, error: "user discovery failed" }, false, 500);
   }
 
   const userIds = new Set<string>();

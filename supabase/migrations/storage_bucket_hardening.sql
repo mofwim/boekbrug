@@ -92,3 +92,28 @@ COMMIT;
 --    where n.nspname = 'storage' and c.relname = 'objects';
 --   -- Verwacht: true.
 -- =====================================================================
+
+-- ── CONTROLE ───────────────────────────────────────────────────────────────────
+--
+-- Dit bestand maakt niets AAN — het zet drie standen goed. Daarom kan de inventarislijst
+-- (docs/WELKE_MIGRATIES_STAAN_ER.sql) er niets over zeggen: er is geen object waarvan het bestaan
+-- iets bewijst, en hij staat daar dus onder "niet vast te stellen".
+--
+-- Dat is precies de reden dat DIT blok moet bestaan. De kop hierboven noemt deze migratie de enige
+-- die vóór livegang moet, en tegelijk is hij de enige die geen enkele geautomatiseerde controle
+-- kan halen. Zonder deze query is "staat de bucket privé?" een herinnering, geen feit.
+--
+-- Verwacht: één rij, public = false, file_size_limit = 26214400, rls_aan = true.
+--
+--   SELECT b.id,
+--          b.public                    AS publiek_moet_false_zijn,
+--          b.file_size_limit           AS limiet_moet_26214400_zijn,
+--          (SELECT c.relrowsecurity
+--             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+--            WHERE n.nspname = 'storage' AND c.relname = 'objects') AS rls_aan
+--     FROM storage.buckets b
+--    WHERE b.id = 'documents';
+--
+-- Staat `publiek` op true, dan is elk bonnetje, elk bankafschrift en elke factuur-PDF van elke
+-- gebruiker met een geraden URL op te halen. Er gaat dan niets stuk en er komt geen foutmelding —
+-- dat is de hele reden dat het met een query moet worden vastgesteld en niet met vertrouwen.

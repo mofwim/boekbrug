@@ -47,6 +47,16 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "email-sync", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Zie de uitleg in api/cron/reminders. Deze route heeft één vroege uitgang,
+  // en die is nooit opgevallen omdat hij zelden wordt gehaald — precies waarom een poort hem vond
+  // en een mens niet. Kan de verbindingenlijst niet worden geladen, dan vertrok de route met een
+  // 500 en bleef de hartslagregel voor eeuwig op ok = NULL staan: een echte storing die zich
+  // vermomt als een afgebroken run, in plaats van als een mislukte.
+  const klaar = async (body: Record<string, unknown>, ok: boolean, status?: number) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body, status ? { status } : undefined);
+  };
+
   const pipeline = createPipelineClient();
   // Ordered by connected_at so the iteration order is deterministic across runs.
   //
@@ -69,7 +79,7 @@ export async function GET(req: NextRequest) {
         .range(from, to),
     );
   } catch {
-    return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
+    return klaar({ ok: false, error: "kon verbindingen niet laden" }, false, 500);
   }
 
   // [PORT-RESIDU] `const`, niet `let`. Dit stond hier als const (34fcd15) en werd bij het overnemen

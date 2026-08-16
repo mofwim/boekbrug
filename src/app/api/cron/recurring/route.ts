@@ -69,6 +69,15 @@ export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
   cronRunId = await beginCronRun(createPipelineClient(), "recurring", cronStartedAt);
 
+  // [CRON-HARTSLAG-EIND] Zie de uitleg in api/cron/reminders. Twee vroege uitgangen, en ze horen
+  // NIET hetzelfde te melden: "de tabel bestaat nog niet" is een geslaagde no-op die zichzelf al zo
+  // noemt, een mislukte lookup is een storing. Vóór dit sloten ze allebei niets af en waren ze van
+  // buiten identiek — allebei een regel op ok = NULL.
+  const klaar = async (body: Record<string, unknown>, ok: boolean, status?: number) => {
+    await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });
+    return NextResponse.json(body, status ? { status } : undefined);
+  };
+
   const pipeline = createPipelineClient();
   const today = amsterdamToday();
 
@@ -87,9 +96,9 @@ export async function GET(req: NextRequest) {
     // that says so, instead of a red run every night.
     const msg = (dueErr.message ?? "").toLowerCase();
     if (msg.includes("does not exist") || msg.includes("schema cache") || dueErr.code === "42P01") {
-      return NextResponse.json({ ok: true, available: false, generated: 0 });
+      return klaar({ ok: true, available: false, generated: 0 }, true);
     }
-    return NextResponse.json({ error: "lookup_failed", detail: dueErr.message }, { status: 500 });
+    return klaar({ ok: false, error: "lookup_failed", detail: dueErr.message }, false, 500);
   }
 
   const schedules = (dueRows ?? []) as ScheduleRow[];
