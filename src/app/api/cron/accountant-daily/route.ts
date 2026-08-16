@@ -97,6 +97,27 @@ export async function GET(req: NextRequest) {
   // Yesterday, as a timestamp — the window for "new". A day exactly, so a run that slips by an hour
   // neither repeats nor skips anything.
   const since = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString();
+  const sinceMs = Date.parse(since);
+
+  /**
+   * Is this timestamp inside the "new" window?
+   *
+   * PARSED, not compared as a string, and the difference is measurable. PostgREST renders a
+   * timestamptz as `2026-08-15T10:00:00+00:00` while this cron builds `2026-08-15T00:00:00.000Z`,
+   * and a lexicographic comparison of the two diverges at the window boundary: `+` is 0x2B and `.`
+   * is 0x2E, so a stamp at exactly midnight UTC sorts BEFORE the window it is supposed to open.
+   *
+   * A microsecond, and it matters for one reason: these signals fire ONCE by design. A newly
+   * arrived stack is news today and ordinary tomorrow; a filing that moved is announced on the day
+   * it moved and afterwards only rides along on a message that was going out anyway. Miss the one
+   * firing and the accountant is never told at all.
+   *
+   * An unparseable value is not new. A row this cannot read must not manufacture a message.
+   */
+  const isNew = (iso: string | null | undefined): boolean => {
+    const ms = Date.parse(iso ?? "");
+    return Number.isFinite(ms) && ms >= sinceMs;
+  };
 
   let sent = 0;
   let quiet = 0;
@@ -119,7 +140,7 @@ export async function GET(req: NextRequest) {
           .order("id", { ascending: true }).range(from, to),
       );
       const totalToConfirm = rows.length;
-      const newToConfirm = rows.filter((r) => (r.created_at ?? "") >= since).length;
+      const newToConfirm = rows.filter((r) => isNew(r.created_at)).length;
 
       // Which of this accountant's clients have NOT filed the due quarter. A failed read here must
       // not read as "everyone still has to file" — that would invent urgency — so it degrades to
@@ -168,7 +189,7 @@ export async function GET(req: NextRequest) {
             .order("user_id", { ascending: true }).range(from, to),
         );
         divergedQuarters = diverged.length;
-        newlyDivergedQuarters = diverged.filter((d) => (d.first_divergence_at ?? "") >= since).length;
+        newlyDivergedQuarters = diverged.filter((d) => isNew(d.first_divergence_at)).length;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         // [DEPLOY-SAFE] btw_filings_divergence.sql is applied by hand. Until it lands there is no

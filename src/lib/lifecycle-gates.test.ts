@@ -1111,7 +1111,18 @@ test("[DAGSTART] the morning message stays silent unless something moved", () =>
   const cron = code("src/app/api/cron/accountant-daily/route.ts");
   // "New" must be measured against a window, not against the whole stack. Reading totalToConfirm
   // as the trigger is exactly the nag above.
-  assert.match(cron, /created_at \?\? ""\) >= since/, "new work is measured against a window");
+  // The WINDOW, not the shape of the comparison. This pinned the exact expression
+  // `(r.created_at ?? "") >= since` and then failed when that comparison was replaced by a parsed
+  // one — which is strictly more correct (PostgREST renders `+00:00`, this cron builds `Z`, and the
+  // two diverge lexicographically at the boundary). What the rule actually says is: newToConfirm is
+  // measured against a time window and never against the whole stack.
+  const newWorkLine = code("src/app/api/cron/accountant-daily/route.ts")
+    .split("\n").find((l) => l.includes("const newToConfirm ="));
+  assert.ok(newWorkLine, "the cron still measures new work");
+  assert.match(newWorkLine!, /rows\.filter\(/, "new work is a SUBSET of the stack…");
+  assert.match(newWorkLine!, /isNew\(|since/, "…chosen by a time window");
+  assert.doesNotMatch(newWorkLine!, /rows\.length/,
+    "the whole stack is not 'new' — that is the daily nag this module refuses");
   assert.match(
     cron, /if \(!message\) \{ quiet\+\+; continue; \}/,
     "and a null plan must actually SKIP the send — a plan computed and then ignored is the defect " +
@@ -10651,6 +10662,16 @@ test("[SUPPLETIE] the accountant hears about it, and is not nagged about it", ()
 
   const cron = code("src/app/api/cron/accountant-daily/route.ts");
   assert.match(cron, /\.not\("first_divergence_at", "is", null\)/, "read from the stamp, not recomputed");
+  // The window is decided by PARSED time. PostgREST renders a timestamptz as `…+00:00` while this
+  // cron builds `…Z`, and comparing those as strings diverges at the boundary — `+` is 0x2B, `.` is
+  // 0x2E, so a stamp at exactly midnight UTC sorts before the window it should open. Measured. It
+  // matters because these signals fire ONCE: miss the firing and the accountant is never told.
+  assert.match(cron, /const isNew = \(iso: string \| null \| undefined\): boolean =>/);
+  assert.match(cron, /Number\.isFinite\(ms\) && ms >= sinceMs/);
+  assert.doesNotMatch(cron, /\?\? ""\) >= since\b/,
+    "no window is decided by comparing two differently-formatted ISO strings");
+  assert.match(cron, /isNew\(d\.first_divergence_at\)/);
+  assert.match(cron, /isNew\(r\.created_at\)/, "the sibling signal in this same function too");
   assert.match(cron, /newlyDivergedQuarters, divergedQuarters,/, "and handed to the pure planner");
   // Degrades to zero, like the deadline half above it: an unreadable answer makes the morning
   // quieter rather than inventing a suppletie that may not exist.
