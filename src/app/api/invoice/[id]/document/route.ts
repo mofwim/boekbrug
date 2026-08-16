@@ -116,6 +116,30 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // Same answer as a missing row: whether someone else's invoice exists is not ours to disclose.
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
+  // ── [ORIGINEEL-INKOOP] Only a PURCHASE invoice has an original to attach ──
+  //
+  // `direction` was selected and never asked. This route's one write puts the uploaded file's key
+  // into invoices.pdf_url — and on an OUTGOING invoice that column is not an empty slot waiting for
+  // evidence, it is the legal PDF this app rendered and mailed to the customer (art. 35). Attaching
+  // here overwrote it with a photo, and the accountant's closing package then ships that photo to
+  // them as <invoice_number>.pdf: the document of record replaced by whatever was uploaded, with
+  // the invoice's own figures still beside it.
+  //
+  // The feature this route exists for cannot want that. It answers a readiness item about invoices
+  // whose ORIGINAL is missing — a supplier's document the owner typed in by hand, or an upload that
+  // failed halfway. An outgoing invoice whose PDF upload failed has its own recovery path and
+  // always did: resend, which renders the real thing again.
+  if ((inv.direction ?? "incoming") !== "incoming") {
+    return NextResponse.json(
+      {
+        error: "geen_inkoopfactuur",
+        message:
+          "Dit is een factuur die jij hebt verstuurd. Het originele document daarvan maakt de app zelf — " +
+          "je kunt er geen ander bestand voor in de plaats zetten. Ontbreekt de PDF? Verstuur de factuur opnieuw.",
+      },
+      { status: 400 },
+    );
+  }
   // Only ever fill an EMPTY slot. Replacing is a different act — it discards evidence that the
   // seven-year retention says we keep — and it needs its own deliberate flow, not this one.
   if (inv.document_id) {

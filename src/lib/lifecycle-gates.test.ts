@@ -9344,6 +9344,24 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[ORIGINEEL-INKOOP] only a purchase invoice may be given an original", () => {
+  // This route's one write puts the uploaded file's key into invoices.pdf_url. On an OUTGOING
+  // invoice that column is not an empty slot — it is the legal PDF the app rendered and mailed
+  // (art. 35), and the closing package ships it to the accountant as <invoice_number>.pdf. The
+  // route selected `direction` and never asked it.
+  const route = code("src/app/api/invoice/[id]/document/route.ts");
+  assert.match(route, /if \(\(inv\.direction \?\? "incoming"\) !== "incoming"\) \{/,
+    "an outgoing invoice may not have its pdf_url replaced by an upload");
+  assert.match(route, /geen_inkoopfactuur/);
+  // …and the refusal points at the path that DOES restore an outgoing PDF, or it is a dead end.
+  assert.match(route, /Verstuur de factuur opnieuw/);
+  // The guard must sit before the write, not beside it.
+  assert.ok(
+    route.indexOf('!== "incoming"') < route.indexOf("pdf_url: storagePath"),
+    "a guard that runs after the write is not a guard",
+  );
+});
+
 test("[MANDAAT-SOORT] an invoicing mandate is read as one, and only one", () => {
   // getActingForClient read EVERY unrevoked mandate row and never asked which kind it was — it did
   // not even select the column, so mandateKindOf saw `kind: undefined` and returned its default
