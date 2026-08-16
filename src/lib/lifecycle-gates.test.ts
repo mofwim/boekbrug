@@ -9344,6 +9344,37 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[DECLARED-INVOICE-EIGEN-CLAIM] the guard is not fed the payment's own claim", () => {
+  // undeclaredMissingInvoices computes "what this payment NAMES" minus "what we HOLD". It was
+  // handed [...refNumbers, …] as the held set, and refNumbers is parseReferenceNumbers(tx.reference)
+  // — the payment's own claim, read from the same text. The claim was subtracted from itself and
+  // the answer was always empty. Measured on the ATAPACK remittance the guard's own header cites:
+  // route's call → [], correct call → ["26302362"], the invoice then paid a second time.
+  const route = code("src/app/api/bank/confirm/route.ts");
+  assert.match(route, /\[inv\.invoice_number, \.\.\.linkedInvoiceNumbers\],/,
+    "held = this invoice plus the ones this bank line already settled");
+  assert.doesNotMatch(route, /\[\.\.\.refNumbers, inv\.invoice_number\]/,
+    "the payment's own reference tokens may never be the held set");
+  // …and the linked numbers must actually be collected, or the guard fires on a legitimate second
+  // booking against the same line.
+  assert.match(route, /if \(n !== ""\) linkedInvoiceNumbers\.push\(n\);/);
+  assert.match(route, /invoice_type, total_inc_btw, invoice_number"/,
+    "invoice_number has to be selected for that to be possible");
+});
+
+test("[CREDIT-NETTING-BEVESTIG] the confirm guard sees the same payment the matcher saw", () => {
+  // isEligible's escape for a netted credit note is referenceMatches(tx, …), which reads
+  // tx.reference and tx.description. The route blanked both while SELECTing them one screen up, so
+  // the rule could never fire: every netted creditnota answered 409 not_eligible on a Bevestig
+  // button the matcher had just rendered. Same defect the note beside it records for total_inc_btw.
+  const route = code("src/app/api/bank/confirm/route.ts");
+  const guard = route.slice(route.indexOf("const eligible = isEligible("), route.indexOf("if (!eligible)"));
+  assert.match(guard, /description: tx\.description \?\? "",/);
+  assert.match(guard, /reference: tx\.reference \?\? null,/);
+  assert.doesNotMatch(guard, /description: "",/);
+  assert.doesNotMatch(guard, /reference: null,/);
+});
+
 test("[CREDITNOTA-DOCUMENT] a creditnota is a CreditNote, not an Invoice with a code on it", () => {
   const mod = code("src/lib/ubl-export.ts");
   assert.match(mod, /cn: "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"/);
