@@ -4567,8 +4567,11 @@ test("[E-FACTUUR-VERLEGD] one predicate answers 'is this verlegd', for both docu
   );
 
   const ubl = code("src/lib/ubl-export.ts");
+  // Het gaat om WAAR het feit vandaan komt, niet om wat er verder in dezelfde regel staat. Deze
+  // assertie pinde de hele importregel en brak op [KOPER-LAND], dat classifyVatNumber uit exact
+  // datzelfde bestand haalde — de bedoeling was toen ongeschonden.
   assert.match(
-    ubl, /import \{ isReverseChargedInvoice \} from "\.\/icp"/,
+    ubl, /import \{[^}]*\bisReverseChargedInvoice\b[^}]*\} from "\.\/icp"/,
     "the UBL export must read the document-level fact from the same module the PDF reads",
   );
   assert.match(
@@ -9323,6 +9326,50 @@ test("[DEEL-CREDIT] every caller that HOLDS the creditnota rows hands them over"
 // booked as an invoice)" — maar 'kosten' staat open in het toevoegformulier, en niets vergeleek die
 // regel ooit met de factuur die de volgende ochtend binnenkomt. Dan telt dezelfde aankoop twee keer
 // als kosten, en met een bon + tarief wordt ook de btw twee keer teruggevraagd.
+
+test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
+  const mod = code("src/lib/partial-credit.ts");
+  // Het plafond is wat er NOG over is, niet wat er ooit op de regel stond.
+  assert.match(mod, /const overGebleven = remainingForKey\(lines, bron, eerder \+ alGevraagd\);/,
+    "the cap must be the remainder after earlier credits AND after this same selection");
+  assert.doesNotMatch(mod, /if \(Math\.abs\(gevraagd\) > Math\.abs\(origineel\) \+ 1e-9\)/,
+    "the original-line comparison must be gone, not merely bypassed");
+  // De route moet de eerdere creditnotaREGELS ook echt lezen — een parameter die niemand vult
+  // repareert niets, en dit is precies de vorm die dit bestand blijft dichtzetten.
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /creditedQuantitiesByLine\(\s*bronRegels,/);
+  assert.match(route, /checkCreditSelection\(bronRegels, selectie, alGecrediteerdPerRegel\)/);
+  // …en faalt DICHT als hij ze niet kan lezen. Anders valt de controle stil terug op
+  // "er is nog niets gecrediteerd", met een reden om het niet te zien.
+  assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
+});
+
+test("[KOPER-LAND] the e-factuur states the buyer's real country", () => {
+  const mod = code("src/lib/ubl-export.ts");
+  assert.doesNotMatch(mod, /cusAddr\.ele\(NS\.cac, "Country"\)\.ele\(NS\.cbc, "IdentificationCode"\)\.txt\("NL"\)/,
+    "BT-55 must not be a literal — the same call reverse-charges on a non-NL VAT number");
+  assert.match(mod, /\.txt\(buyerCountryCode\(header\.client_btw_number\)\)/);
+  // Dezelfde toets als de verlegging zelf, anders verhuist de tegenspraak alleen.
+  assert.match(mod, /if \(shape\.kind !== "eu"\) return "NL";/,
+    "the country follows exactly the evidence isReverseChargedInvoice follows");
+  assert.match(mod, /return shape\.country === "EL" \? "GR" : shape\.country;/,
+    "BT-55 is a country code: Greece is GR, not the EL of its VAT number");
+});
+
+test("[WIK-EEN-AANMANING] one statutory demand per debtor, not per invoice", () => {
+  const mod = code("src/lib/incasso.ts");
+  assert.match(mod, /export function aggregateWikClaims/);
+  assert.match(mod, /principal \+= open;/, "the hoofdsommen are added together (art. 6:96 lid 7 BW)");
+  assert.match(mod, /dag na de vervaldatum/, "handelsrente starts the day AFTER (art. 6:119a lid 1 BW)");
+
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /const samen = aggregateWikClaims\(claimsPerDebiteur\.get\(debiteur\) \?\? \[\]\);/);
+  assert.match(cron, /openstaand: samen\.principal > 0 \? samen\.principal : openstaand,/,
+    "the demand names the debtor's total, not this one invoice's remainder");
+  // …en de tweede factuur van dezelfde debiteur krijgt geen TWEEDE aanmaning.
+  assert.match(cron, /&& !aangemaand\.has\(debiteur\)/);
+  assert.match(cron, /if \(wik\) aangemaand\.add\(debiteur\);/);
+});
 
 test("[KAS-DUBBELE-KOST] the detector reads, reports, and never books", () => {
   const mod = code("src/lib/cash-cost-overlap.ts");

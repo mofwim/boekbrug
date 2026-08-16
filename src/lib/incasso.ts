@@ -152,22 +152,78 @@ export function buildWikNotice(args: {
   openstaand: number;
   sentIso: string;
   debtorType: DebtorType;
+  /**
+   * [WIK-EEN-AANMANING] The other invoice numbers this one demand also covers, when the same
+   * debtor is behind on more than one. Absent or empty = a single claim, and then every word of
+   * this letter is exactly what it was.
+   */
+  covers?: readonly string[];
 }): WikNotice | null {
   const principal = cents(Number(args.openstaand));
   if (!Number.isFinite(principal) || principal <= 0) return null;
 
   const costs = incassokosten(principal);
   const deadline = wikDeadline(args.sentIso);
+  // [WIK-EEN-AANMANING] Art. 6:96 lid 7 BW: where a debtor can be aanmaand for more than one
+  // claim, it happens in ONE aanmaning and the hoofdsommen are added together. So the letter has
+  // to say which claims it adds up — a demand for a total the reader cannot reconcile with any
+  // invoice they hold is exactly the demand they take to a judge.
+  const anderen = (args.covers ?? []).map((n) => String(n ?? "").trim()).filter((n) => n !== "");
+  const samen = anderen.length > 0
+    ? ` Dit bedrag betreft de facturen ${anderen.join(", ")} samen.`
+    : "";
   const sentence =
     args.debtorType === "consumer"
-      ? `Wij verzoeken u het openstaande bedrag van ${EUR.format(principal)} uiterlijk op ${formatDay(deadline)} te voldoen. ` +
+      ? `Wij verzoeken u het openstaande bedrag van ${EUR.format(principal)} uiterlijk op ${formatDay(deadline)} te voldoen.${samen} ` +
         `Betaalt u niet binnen deze termijn van veertien dagen, dan zijn wij genoodzaakt ${EUR.format(costs)} aan ` +
         `buitengerechtelijke incassokosten in rekening te brengen, vermeerderd met de wettelijke rente.`
-      : `Wij verzoeken u het openstaande bedrag van ${EUR.format(principal)} uiterlijk op ${formatDay(deadline)} te voldoen. ` +
+      : `Wij verzoeken u het openstaande bedrag van ${EUR.format(principal)} uiterlijk op ${formatDay(deadline)} te voldoen.${samen} ` +
         `Bij uitblijven van betaling brengen wij ${EUR.format(costs)} aan buitengerechtelijke incassokosten in rekening, ` +
-        `vermeerderd met de wettelijke handelsrente vanaf de vervaldatum.`;
+        // [HANDELSRENTE] Art. 6:119a lid 1 BW runs from the day FOLLOWING the last day of payment,
+        // not from the vervaldatum itself. No amount is computed anywhere from this sentence, so
+        // this corrects what the letter CLAIMS, which is the half a debtor can dispute.
+        `vermeerderd met de wettelijke handelsrente vanaf de dag na de vervaldatum.`;
 
   return { debtorType: args.debtorType, principal, costs, deadline, sentence };
+}
+
+/**
+ * [WIK-EEN-AANMANING] Which claims one aanmaning must cover, and what its hoofdsom is.
+ *
+ * ── WHY THIS IS NOT PER INVOICE ──
+ *
+ * The staffel of art. 6:96 lid 6 BW is degressive and starts at a EUR 40 MINIMUM, and lid 7 says
+ * in as many words that where a debtor can be aanmaand for several claims — from one agreement or
+ * from more than one — it happens in ONE aanmaning, with the hoofdsommen added together. Sending a
+ * letter per invoice therefore does not merely repeat itself, it CHARGES more:
+ *
+ *     3 x EUR   100   one letter each:  3 x EUR 40  = EUR 120     together:  EUR  40
+ *     3 x EUR 1.000   one letter each:  3 x EUR 150 = EUR 450     together:  EUR 425
+ *
+ * And for a consumer lid 5 makes this dwingend recht — the excess cannot be agreed away. Overstating
+ * the fee is the classic ground on which the whole incassokosten claim is struck, so the owner does
+ * not lose the difference, they lose the lot.
+ *
+ * Pure. The caller supplies every invoice of this debtor that is currently in verzuim; this decides
+ * the one hoofdsom and names the claims.
+ */
+export interface WikClaim {
+  invoiceNumber: string | null;
+  /** What is still owed on this invoice — after payments AND after credits. */
+  open: number;
+}
+
+export function aggregateWikClaims(claims: readonly WikClaim[]): { principal: number; numbers: string[] } {
+  let principal = 0;
+  const numbers: string[] = [];
+  for (const c of claims) {
+    const open = cents(Number(c.open));
+    if (!Number.isFinite(open) || open <= 0) continue;
+    principal += open;
+    const n = String(c.invoiceNumber ?? "").trim();
+    if (n !== "") numbers.push(n);
+  }
+  return { principal: cents(principal), numbers };
 }
 
 /**

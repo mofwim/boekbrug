@@ -53,6 +53,7 @@ import { creditLinesFor } from '@/lib/creditnota-lines'
 import {
   buildCreditSelection,
   checkCreditSelection,
+  creditedQuantitiesByLine,
   creditableRemaining,
   fitsWithinOriginal,
   overCreditReason,
@@ -203,7 +204,49 @@ export async function POST(request: NextRequest) {
     }
 
     const bronRegels = (originalLines ?? []) as Parameters<typeof buildCreditSelection>[0]['lines']
-    const selectieFout = checkCreditSelection(bronRegels, selectie)
+
+    // ── [DEEL-CREDIT-CUMULATIEF] Wat er van elke regel al is teruggenomen ──
+    //
+    // Zonder dit kijkt checkCreditSelection alleen naar het ORIGINEEL, en dan is elke tweede
+    // creditnota van dezelfde regel afzonderlijk in orde terwijl de som er dwars doorheen loopt.
+    // Het brutoplafond hieronder ving dat niet op: het telt de hele factuur en is blind voor het
+    // tarief, dus bij gemengde tarieven paste een dubbele credit er gewoon in. Gemeten op
+    // € 1.000 @ 21% + € 1.000 @ 9%: de 9%-regel twee keer crediteren is 2 x € 1.090 <= € 2.300 en
+    // haalde beide controles — € 180 btw teruggevraagd waar er € 90 is afgedragen.
+    //
+    // Deze lezing gaat VÓÓR het nummer, net als de twee erboven: een weigering hier heeft nog geen
+    // nummer verbruikt, en art. 35 kent geen weg terug.
+    const eerdereIds = (existingCreditnotas ?? []).map((c) => (c as { id: string }).id)
+    let alGecrediteerdPerRegel = new Map<string, number>()
+    if (eerdereIds.length > 0) {
+      const { data: eerdereRegels, error: eerdereErr } = await supabase
+        .from('invoice_lines')
+        // '*' om dezelfde reden als hierboven: elke kolom mee, zonder een tweede lijst die kan gaan
+        // afwijken van wat de spiegel schrijft.
+        .select('*')
+        .in('invoice_id', eerdereIds)
+      if (eerdereErr) {
+        // Fail closed. Dit is de enige lezing die weet hoeveel er al terug is, en zonder haar zou
+        // de controle stilletjes terugvallen op "er is nog niets gecrediteerd" — precies de fout
+        // die dit blok dichtzet, maar dan met een reden om hem niet te zien.
+        reportHandledFailure({
+          tag: 'DEEL-CREDIT-CUMULATIEF',
+          message: 'earlier creditnota lines unreadable — refusing to credit',
+          severity: 'gate-unavailable',
+          context: { ownerId, originalInvoiceId: original_invoice_id, error: eerdereErr.message },
+        })
+        return NextResponse.json(
+          { error: 'We konden niet nakijken wat er al per regel van deze factuur is gecrediteerd. Er is niets aangemaakt — probeer het zo meteen opnieuw.' },
+          { status: 503 },
+        )
+      }
+      alGecrediteerdPerRegel = creditedQuantitiesByLine(
+        bronRegels,
+        (eerdereRegels ?? []) as Parameters<typeof creditedQuantitiesByLine>[1],
+      )
+    }
+
+    const selectieFout = checkCreditSelection(bronRegels, selectie, alGecrediteerdPerRegel)
     if (selectieFout) {
       const uitleg: Record<string, string> = {
         no_lines: 'Deze factuur heeft geen regels om te crediteren.',

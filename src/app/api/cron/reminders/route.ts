@@ -44,7 +44,7 @@ import { creditedTotalsFrom, openAfterCredit } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
 // [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
-import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
+import { buildWikNotice, debtorTypeOf, isFinalTier, aggregateWikClaims } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
@@ -304,6 +304,37 @@ export async function GET(req: NextRequest) {
     const zzperName = owner.company_name?.trim() || owner.full_name?.trim() || "BoekBrug";
     const ownerInvoices = invoicesByOwner.get(ownerId) ?? [];
 
+    // ── [WIK-EEN-AANMANING] One aanmaning per DEBTOR, not per invoice ──
+    //
+    // Art. 6:96 lid 7 BW: where a debtor can be aanmaand for several claims, that happens in ONE
+    // aanmaning with the hoofdsommen added together — and the staffel of lid 6, with its EUR 40
+    // minimum, is then applied once. This loop sent a letter per invoice, each naming its own fee:
+    // three EUR 100 invoices demanded 3 x EUR 40 instead of EUR 40. For a consumer lid 5 makes
+    // that dwingend recht, and an over-stated fee is the classic ground on which the whole
+    // incassokosten claim is struck — so the owner does not lose the difference, they lose the lot.
+    //
+    // Keyed on the e-mail address, because that is who actually receives the letter; the name is
+    // the fallback for a debtor without one. Two customers sharing one mailbox genuinely receive
+    // one demand, which is what art. 6:96 lid 7 asks for.
+    const debiteurSleutel = (i: { client_email?: string | null; client_name?: string | null }) =>
+      (i.client_email?.trim().toLowerCase() || i.client_name?.trim().toLowerCase() || "");
+    const openstaandVan = (i: { total_inc_btw?: number | null; amount_paid?: number | null; id: string }) =>
+      openAfterCredit(i.total_inc_btw, i.amount_paid, creditedByInvoice.get(i.id) ?? 0);
+    const claimsPerDebiteur = new Map<string, Array<{ invoiceNumber: string | null; open: number }>>();
+    for (const i of ownerInvoices) {
+      const open = openstaandVan(i);
+      if (open <= 0) continue;
+      const k = debiteurSleutel(i);
+      if (k === "") continue;
+      const list = claimsPerDebiteur.get(k);
+      if (list) list.push({ invoiceNumber: i.invoice_number, open });
+      else claimsPerDebiteur.set(k, [{ invoiceNumber: i.invoice_number, open }]);
+    }
+    // Which debtors already received THE letter in this run. The second final-tier invoice of the
+    // same debtor still gets its ordinary reminder and its trail row — it simply does not carry a
+    // second statutory demand, because the first one already covered it by name.
+    const aangemaand = new Set<string>();
+
     for (const inv of ownerInvoices) {
       // Pure decision: which tier (or none) is due right now?
       const tier = reminderTierDue({
@@ -385,13 +416,22 @@ export async function GET(req: NextRequest) {
         // before was helpful and legally worth nothing once the customer kept ignoring it. The
         // debtor type comes from the invoice itself (a BTW number means a business), defaulting
         // to consumer, which is the only mistake of the two that stays recoverable.
-        const wik = finalTier
+        // [WIK-EEN-AANMANING] The hoofdsom is this DEBTOR's total, not this invoice's, and the
+        // letter names the invoices it adds up. A debtor who already had their one demand in this
+        // run gets a plain reminder instead of a second one — see the grouping above.
+        const debiteur = debiteurSleutel(inv);
+        const samen = aggregateWikClaims(claimsPerDebiteur.get(debiteur) ?? []);
+        const wik = finalTier && debiteur !== "" && !aangemaand.has(debiteur)
           ? buildWikNotice({
-              openstaand,
+              // Falls back to this invoice alone when the grouping found nothing — a debtor with
+              // no e-mail and no name cannot be grouped, and one claim is still a claim.
+              openstaand: samen.principal > 0 ? samen.principal : openstaand,
               sentIso: amsterdamToday(),
               debtorType: debtorTypeOf({ client_btw_number: inv.client_btw_number }),
+              covers: samen.numbers.length > 1 ? samen.numbers : [],
             })
           : null;
+        if (wik) aangemaand.add(debiteur);
         const delivery = await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",

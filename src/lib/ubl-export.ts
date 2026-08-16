@@ -26,7 +26,7 @@ import { create } from "xmlbuilder2";
 import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
-import { isReverseChargedInvoice } from "./icp";
+import { isReverseChargedInvoice, classifyVatNumber } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 import { round2 } from "./invoice-totals";
 // [KLANT-EXTRA] Dezelfde drie vrije klantregels als op de PDF — één leesdefinitie voor beide
@@ -158,6 +158,35 @@ export class UblValidationError extends Error {
 /** Format a number as a UBL amount: dot decimal, exactly 2 places. */
 function money(n: number): string {
   return round2(n).toFixed(2);
+}
+
+/**
+ * [KOPER-LAND] The buyer's country code for BT-55, from the only evidence the row carries.
+ *
+ * A VAT number states its country in its first two letters, and classifyVatNumber already parses
+ * exactly that — including the two prefixes that are not the ISO code of their member state (EL for
+ * Greece, and the UK/XI question it deliberately leaves as "none"). Anything it cannot place —
+ * absent, malformed, or a prefix outside the EU table — falls back to NL, which is what this line
+ * always said and is right for the overwhelming majority of these invoices.
+ *
+ * ── IT FOLLOWS THE SAME EVIDENCE AS THE REVERSE CHARGE, ON PURPOSE ──
+ *
+ * `kind === "eu"` is the exact test isReverseChargedInvoice makes (icp.ts), and this reads it
+ * rather than a stricter or looser one of its own. That is the whole point: the defect being fixed
+ * is a document that reverse-charges to a German VAT number while calling the buyer Dutch, and a
+ * country derived from a DIFFERENT rule than the treatment would simply move the contradiction
+ * somewhere else. Where the app charges no BTW because it read an EU number, the country is that
+ * number's country; everywhere else it is NL, exactly as before.
+ *
+ * `eu_suspect` therefore does NOT count — the reverse charge does not fire on it either.
+ */
+export function buyerCountryCode(clientVatNumber: string | null | undefined): string {
+  const shape = classifyVatNumber(clientVatNumber);
+  if (shape.kind !== "eu") return "NL";
+  // Greece files its VAT numbers under EL and is ISO 3166-1 GR. BT-55 is a COUNTRY code, so it
+  // takes GR — the one member state where the VAT prefix and the country code differ, and the one
+  // place classifyVatNumber's answer (which is about VAT numbers) must be translated before use.
+  return shape.country === "EL" ? "GR" : shape.country;
 }
 
 /** Format a quantity: up to a few decimals, dot decimal, no trailing-zero noise. */
@@ -587,7 +616,19 @@ export function buildInvoiceUbl(
   if (extraRegels.length > 1) {
     cusAddr.ele(NS.cac, "AddressLine").ele(NS.cbc, "Line").txt(extraRegels.slice(1).join(", "));
   }
-  cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt("NL");
+  // [KOPER-LAND] BT-55 is the buyer's country, and it was the literal "NL" on every export.
+  //
+  // That is not a harmless default here, because THIS SAME CALL decides the reverse charge on the
+  // buyer being somewhere else: documentIsReverseCharged is true only for a non-NL EU VAT number.
+  // So the file stated, in one breath, buyer VAT DE123456789 · buyer country NL · category AE —
+  // a document that contradicts itself about the one fact the tax treatment rests on (art. 35a
+  // lid 1 sub e). The app already knew better one module away: the ICP-opgaaf derives DE from this
+  // very field.
+  //
+  // The VAT number is the only country evidence on the row — there is no country column on
+  // clients or invoices — so it is what this reads, and NL remains the fallback for a customer
+  // without one. That keeps every domestic invoice byte-identical to what it was.
+  cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt(buyerCountryCode(header.client_btw_number));
   if (header.client_btw_number?.trim()) {
     const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");
     cusTax.ele(NS.cbc, "CompanyID").txt(header.client_btw_number.trim());

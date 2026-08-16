@@ -625,3 +625,64 @@ test("[REGEL-KORTING] without the columns the file is exactly what it always was
   assert.equal(base, withNulls);
   assert.doesNotMatch(base, /AllowanceCharge/, "no discount, no allowance element anywhere");
 });
+
+// ─── [KOPER-LAND] BT-55 is the buyer's country, and it was a literal ─────────
+//
+// Every export wrote Country/IdentificationCode "NL" for the CUSTOMER, while docReverseCharged in
+// the same call fires only on a NON-NL EU VAT number. The file therefore stated buyer VAT
+// DE123456789, buyer country NL and tax category AE together, by construction — contradicting
+// itself about the one fact the treatment rests on (art. 35a lid 1 sub e), while the ICP-opgaaf
+// derived DE from that very field one module away.
+
+const buyerCountryOf = (xml: string): string => {
+  // The SUPPLIER country comes first in the document, so take the second occurrence.
+  const all = [...xml.matchAll(/<cbc:IdentificationCode>([^<]+)<\/cbc:IdentificationCode>/g)].map((m) => m[1]);
+  return all[1] ?? all[0] ?? "";
+};
+
+test("[KOPER-LAND] a Dutch customer is unchanged", () => {
+  const { xml } = buildInvoiceUbl(header(), [line()], supplier);
+  assert.equal(buyerCountryOf(xml), "NL", "every domestic invoice must be byte-identical to before");
+  const zonder = buildInvoiceUbl(header({ client_btw_number: null }), [line()], supplier).xml;
+  assert.equal(buyerCountryOf(zonder), "NL", "…and so is a customer with no VAT number at all");
+});
+
+test("[KOPER-LAND] an EU customer gets their own country, beside their own VAT number", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ client_btw_number: "DE123456789", btw_amount: 0, total_inc_btw: 100 }),
+    [line({ btw_rate: 0, line_total: 100 })], supplier);
+  assert.equal(buyerCountryOf(xml), "DE");
+  assert.match(xml, /<cbc:CompanyID>DE123456789<\/cbc:CompanyID>/);
+  // The contradiction this closes: the document reverse-charges to Germany, so it may not also
+  // say the buyer is in the Netherlands.
+  assert.match(xml, /<cbc:ID>AE<\/cbc:ID>/, "the reverse charge still fires — this test is about the country beside it");
+});
+
+test("[KOPER-LAND] Greece is GR on a country code, not the EL of its VAT number", () => {
+  // The one member state where the VAT prefix and the ISO 3166-1 code differ. BT-55 takes the
+  // country code.
+  const { xml } = buildInvoiceUbl(
+    header({ client_btw_number: "EL123456789", btw_amount: 0, total_inc_btw: 100 }),
+    [line({ btw_rate: 0, line_total: 100 })], supplier);
+  assert.equal(buyerCountryOf(xml), "GR");
+});
+
+test("[KOPER-LAND] the country follows exactly the evidence the reverse charge follows", () => {
+  // Deriving the country from a stricter or looser rule than the treatment would only move the
+  // contradiction. Where no reverse charge fires, the country stays NL.
+  const metBtw = buildInvoiceUbl(
+    header({ client_btw_number: "DE123456789", btw_amount: 21, total_inc_btw: 121 }),
+    [line()], supplier).xml;
+  assert.doesNotMatch(metBtw, /<cbc:ID>AE<\/cbc:ID>/, "BTW on the invoice means it was not shifted");
+  assert.equal(buyerCountryOf(metBtw), "DE",
+    "the buyer is still German — the country is a FACT about the buyer, the category is about the treatment");
+
+  // A malformed number (real prefix, impossible length) is eu_suspect: the reverse charge does not
+  // fire on it, so neither may the country. Guessing DE from a number the app itself refuses to
+  // trust would put a country on the document that nothing else in the file agrees with.
+  const verdacht = buildInvoiceUbl(
+    header({ client_btw_number: "DE12", btw_amount: 0, total_inc_btw: 100 }),
+    [line({ btw_rate: 0, line_total: 100 })], supplier).xml;
+  assert.doesNotMatch(verdacht, /<cbc:ID>AE<\/cbc:ID>/, "no reverse charge on a suspect number…");
+  assert.equal(buyerCountryOf(verdacht), "NL", "…and therefore no country derived from it either");
+});
