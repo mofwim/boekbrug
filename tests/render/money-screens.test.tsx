@@ -447,6 +447,40 @@ test("[RENDER-GATE] the verify queue renders", async () => {
   assert.match(html, /Groothandel/);
 });
 
+test("[RENDER-GATE] the verify queue does not report an unread queue as finished", async () => {
+  const { default: IncomingInvoicesClient } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  // [NO-SILENT-EMPTY] The state that had no witness: no rows AND a failed read. The server's
+  // `.catch(() => null)` is right — the page must still render — but `?? []` downstream made the
+  // failure indistinguishable from success, and this screen's empty state is the sentence "Alles
+  // verwerkt". On the ONLY surface where a 'processing' invoice can be confirmed, that tells the
+  // owner every incoming invoice has been checked and passed on to the books.
+  const render = (readFailed: string[]) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingInvoicesClient as any, {
+          initialInvoices: [], ignoredInvoices: [], confirmedInvoices: [],
+          connectionStatus: { connected: false, provider: null, email: null, connected_at: null, needs_reauth: false, pending_count: 0 },
+          userRole: "zzper", readFailed,
+        }))),
+  );
+
+  const failed = render(["controlewachtrij"]);
+  assert.ok(failed.length > 500, "the screen still renders when the read failed");
+  assert.doesNotMatch(failed, /Alles verwerkt/, "an unread queue is never reported as a finished one");
+  assert.match(failed, /We konden je controlewachtrij niet ophalen/, "and it names the list it could not read");
+  assert.match(failed, /Deze lijst is daardoor niet compleet/);
+
+  // The other half, and without it the fix could be "never say it at all": a genuinely empty queue
+  // that read fine still says so, because that IS the good news the owner comes here for.
+  const clean = render([]);
+  assert.match(clean, /Alles verwerkt/, "an empty queue that read fine still reports itself finished");
+  assert.doesNotMatch(clean, /niet compleet/, "and claims nothing about a failure that did not happen");
+});
+
 test("[READING-MEMORY] the supplier memory reaches the open card", async () => {
   // Against the CARD, not the list. Every card in the list renders collapsed — the expanded body is
   // behind a click, and a static render never clicks — so a list-level assertion on this text can

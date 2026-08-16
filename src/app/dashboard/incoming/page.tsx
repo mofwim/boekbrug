@@ -123,7 +123,30 @@ export default async function IncomingPage() {
   // (ZzpDashboard, Vandaag's toVerifyCount) show the EXACT head-count. With
   // the old .limit(100), a large mailbox backfill said "130 wachten" while
   // the queue showed 100 and rows 101+ were unreachable.
-  const pendingRaw = await fetchAllRows((from, to) => supabase
+  //
+  // [NO-SILENT-EMPTY] The .catch(() => null) below is right — a failed read may not blank the
+  // page — but one line further down `pendingRaw ?? []` threw away the only difference that
+  // matters here. An empty queue renders "Alles verwerkt": on THIS screen that sentence says
+  // every incoming invoice has been checked and passed on, which is the exact opposite of what a
+  // failed read knows. The owner stops looking, and an unconfirmed invoice never reaches
+  // Crediteuren, the voorbelasting or the aangifte. Same rule and the same banner as Crediteuren
+  // next door: the page renders whatever DID load, and says out loud that it could not look.
+  const readFailed: string[] = [];
+  const readOrFlag = async <T,>(label: string, run: () => Promise<T[] | null>): Promise<T[]> => {
+    try {
+      const rows = await run();
+      if (rows === null) throw new Error("read returned no rows object");
+      return rows;
+    } catch (e) {
+      console.error("[NO-SILENT-EMPTY] incoming source read failed", {
+        userId: user.id, source: label, error: e instanceof Error ? e.message : String(e),
+      });
+      readFailed.push(label);
+      return [];
+    }
+  };
+
+  const pendingRaw = await readOrFlag("controlewachtrij", () => fetchAllRows((from, to) => supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
@@ -133,7 +156,7 @@ export default async function IncomingPage() {
     .order("created_at", { ascending: false })
     .order("id", { ascending: true })
     .range(from, to)
-  ).catch(() => null);
+  ));
 
   // [BOEK-011] Ignored invoices — status 'archived', can be restored
   // [QUEUE-COMPLETE] Also uncapped (was 50): an archived invoice beyond the
@@ -162,8 +185,13 @@ export default async function IncomingPage() {
       .order("id", { ascending: true })
       .range(from, to)
     );
-  const ignoredRaw = await fetchIgnored(ignoredColumns)
-    .catch(() => fetchIgnored(INVOICE_COLUMNS).catch(() => null));
+  // [NO-SILENT-EMPTY] The column fallback stays exactly as it was — a missing label column must
+  // not empty this tab. Only the LAST resort changes: when even the bare list will not read, the
+  // tab said "niets genegeerd" about the one surface from which an archived invoice can be
+  // restored. Archiving is this app's delete, so an empty Genegeerd tab is a claim that nothing
+  // is recoverable.
+  const ignoredRaw = await readOrFlag("genegeerde facturen", () =>
+    fetchIgnored(ignoredColumns).catch(() => fetchIgnored(INVOICE_COLUMNS)));
 
   // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
   // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),
@@ -175,7 +203,10 @@ export default async function IncomingPage() {
   // UNPAID rows out of the tab, so an open bill shown on Vandaag was nowhere to
   // be found here. Unpaid ('received') rows are actionable → own query, higher
   // bound; paid rows stay a bounded recent slice (full ledger on Crediteuren).
-  const { data: confirmedReceivedRaw } = await supabase
+  // [NO-SILENT-EMPTY] `const { data }` without `error`: supabase-js does not throw, it returns
+  // { data: null, error }, so a failed read arrived here as an empty tab that says the owner has
+  // confirmed nothing. Both reads now travel through the same flag as the two above.
+  const { data: confirmedReceivedRaw, error: confirmedReceivedErr } = await supabase
     .from("invoices")
     .select(`${INVOICE_COLUMNS}, status`)
     .eq("receiver_id", user.id)
@@ -185,7 +216,7 @@ export default async function IncomingPage() {
     .order("created_at", { ascending: false })
     .limit(500);
 
-  const { data: confirmedPaidRaw } = await supabase
+  const { data: confirmedPaidRaw, error: confirmedPaidErr } = await supabase
     .from("invoices")
     .select(`${INVOICE_COLUMNS}, status`)
     .eq("receiver_id", user.id)
@@ -194,6 +225,14 @@ export default async function IncomingPage() {
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(50);
+
+  if (confirmedReceivedErr || confirmedPaidErr) {
+    console.error("[NO-SILENT-EMPTY] incoming source read failed", {
+      userId: user.id, source: "bevestigde facturen",
+      error: (confirmedReceivedErr ?? confirmedPaidErr)?.message,
+    });
+    readFailed.push("bevestigde facturen");
+  }
 
   // Merge back to one newest-first list (the client renders a single tab).
   // ISO dates compare correctly as strings; nulls sort last, created_at breaks ties.
@@ -351,6 +390,7 @@ export default async function IncomingPage() {
       connectionStatus={connectionStatus}
       userRole={userRole}
       readingHints={readingHints}
+      readFailed={readFailed}
     />
   );
 }

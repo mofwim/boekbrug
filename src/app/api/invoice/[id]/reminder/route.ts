@@ -214,8 +214,19 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       .eq('id', ownerId)
       .single()
 
+    // [REMINDER-TRUTH] The RESULT is read, and that is the whole fix. sendInvoiceReminder returns
+    // { delivered } precisely because a provider REJECTION is not an exception: deliverEmail logs
+    // it, reports it, and returns false. This route awaited it and threw the answer away, so a
+    // rejected address ended here — claim still on 'sent', 200 back to the screen, "verstuurd N".
+    //
+    // What that costs the owner is worse than a lost mail. `geslaagd` counts every row that is not
+    // 'failed', and it feeds canRemind: the phantom send sets last_reminder_at to now and pushes
+    // reminder_count up, so the button then REFUSES the next attempt for the whole cooling-off
+    // period. Told it went out, and then blocked from sending it. Meanwhile the invoice ages toward
+    // the WIK term on a letter the customer never received.
+    let delivery: { delivered: boolean }
     try {
-      await sendInvoiceReminder({
+      delivery = await sendInvoiceReminder({
         toEmail: inv.client_email as string,
         clientName: inv.client_name?.trim() || 'klant',
         zzperName: eigenaarProfiel?.company_name || eigenaarProfiel?.full_name || 'BoekBrug',
@@ -239,6 +250,30 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       await (pipeline as any).from('invoice_reminders').update({ status: 'failed' }).eq('id', claim.id)
       console.error('[ACTING-FOR] herinnering versturen mislukt', { id, error: String(e) })
       return NextResponse.json({ error: 'De herinnering kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
+    }
+
+    // [REMINDER-TRUTH] A REJECTION is not the ambiguous case a throw is. The provider refused the
+    // message, so it demonstrably did not go out and a second attempt cannot become a second letter
+    // at the customer. The claim is therefore RELEASED rather than marked 'failed' — same reasoning
+    // as the cron, and here it also matters that releasing restores the button: a row left behind
+    // would keep canRemind refusing on a reminder that never happened.
+    if (!delivery.delivered) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: releaseErr } = await (pipeline as any)
+        .from('invoice_reminders').delete().eq('id', claim.id)
+      if (releaseErr) {
+        // Read, never discarded: supabase-js reports a query error in the RESULT. A release that
+        // silently did not happen leaves the phantom send standing — the exact state this branch
+        // exists to undo — so it has to be visible even though the answer below stays the same.
+        console.error('[REMINDER-TRUTH] afgewezen herinnering NIET vrijgegeven — de knop blijft geblokkeerd', {
+          id, error: releaseErr.message,
+        })
+      }
+      console.error('[REMINDER-TRUTH] herinnering geweigerd door de mailprovider', { id })
+      return NextResponse.json(
+        { error: 'De herinnering is niet aangekomen — controleer het e-mailadres van je klant en probeer opnieuw' },
+        { status: 502 },
+      )
     }
 
     // [DEBITEUREN] Stuurde de BOEKHOUDER hem, dan moet de ondernemer het weten. Aan de andere kant

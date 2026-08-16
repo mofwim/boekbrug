@@ -65,7 +65,7 @@ if (typeof window !== 'undefined') {
 // one of the three transports below, and each of them reserves budget first —
 // so there is no way to reach the paid API that skips the ceiling. See
 // src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
-import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE } from './ai-budget'
+import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, AI_BUDGET_EXHAUSTED_ERROR, isAiBudgetError } from './ai-budget'
 
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
@@ -664,7 +664,7 @@ async function callClaude(
     maxOutputTokens: MAX_TOKENS,
     label: 'callClaude',
   })
-  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+  if (!budget.allowed) throw new Error(AI_BUDGET_EXHAUSTED_ERROR)
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -875,7 +875,7 @@ async function callClaudeWithPdf(
     maxOutputTokens: MAX_TOKENS,
     label: 'callClaudeWithPdf',
   })
-  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+  if (!budget.allowed) throw new Error(AI_BUDGET_EXHAUSTED_ERROR)
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -1047,7 +1047,7 @@ async function callClaudeWithImage(
     maxOutputTokens: MAX_TOKENS,
     label: 'callClaudeWithImage',
   })
-  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+  if (!budget.allowed) throw new Error(AI_BUDGET_EXHAUSTED_ERROR)
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -2408,7 +2408,14 @@ Return JSON only.`;
     // then retries next sync (never a permanent 'could_not_read' skip); the manual re-read 502s
     // honestly ("probeer later opnieuw") instead of the swallowed FALLBACK being reported as
     // "geen boekbare factuur — negeer" (a config error must never masquerade as a document verdict).
-    if (opts?.throwOnTransient && (isTransientAiError(error) || isAiApiError(error))) throw error;
+    // [COST-GUARD] And the spend fuse belongs in exactly the same category, which it was not in.
+    // It refuses BEFORE the call, so it produces no "API error" text and no network symptom —
+    // isTransientAiError and isAiApiError both answer false, and a blown daily ceiling came back
+    // as a confident verdict that the document is not an invoice. Measured, not reasoned: see the
+    // gate in ai-budget.test.ts. Downstream that verdict is permanent (the e-mail sync registers
+    // could_not_read and lets the watermark pass), so one exhausted budget quietly retired every
+    // real invoice that arrived while it was blown — during a backfill, which is when it blows.
+    if (opts?.throwOnTransient && (isTransientAiError(error) || isAiApiError(error) || isAiBudgetError(error))) throw error;
     return FALLBACK;
   }
 }

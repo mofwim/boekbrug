@@ -6480,6 +6480,11 @@ export const MESSAGES = {
     ar: 'بهذا تكون الفاتورة مدفوعة بالكامل.',
     en: 'With this the invoice is fully paid.',
   },
+  'ink.wachtrijOnbekend': {
+    nl: 'We konden niet zien wat er klaarstaat',
+    ar: 'تعذّر علينا رؤية ما هو في الانتظار',
+    en: 'We could not see what is waiting',
+  },
   'ink.wordtBetaaldGemarkeerd': {
     nl: 'Inkoopfactuur {number} wordt als betaald gemarkeerd.',
     ar: 'ستُعلَّم فاتورة المشتريات {number} كمدفوعة.',

@@ -359,3 +359,39 @@ export async function settleAiBudget(params: {
 /** The Dutch message a user sees when the fuse has blown. Never blame them. */
 export const BUDGET_EXHAUSTED_MESSAGE =
   "Automatisch inlezen is even niet beschikbaar. Je kunt het bestand gewoon opslaan en de gegevens zelf invullen — er gaat niets verloren.";
+
+/**
+ * [COST-GUARD] The exact text the three transports in ai.ts throw when this fuse refuses a call.
+ *
+ * One constant, thrown there and recognised by isAiBudgetError below, because the two halves must
+ * be unable to drift. A predicate that matched a message someone later rewrote would keep
+ * compiling, keep passing its tests, and quietly stop recognising the one error it exists for.
+ */
+export const AI_BUDGET_EXHAUSTED_ERROR = "[COST-GUARD] daily AI budget exhausted";
+
+/**
+ * Is this error THIS FUSE — the global daily spend ceiling — rather than anything about the file?
+ *
+ * ── WHY THIS PREDICATE HAD TO EXIST ──
+ *
+ * The reader (verifyInvoiceFromPdf) catches every throw and returns a confidence-0 FALLBACK with
+ * is_invoice:false. For a genuine unreadable file that is the right answer. For an infra failure it
+ * is a lie with consequences, which is why the reader already re-throws a Claude HTTP error and a
+ * network error when the caller opted in — and this refusal was in neither category, because the
+ * fuse never reaches Anthropic and therefore never produces an "API error" text.
+ *
+ * So a blown ceiling read as "this is not an invoice". On the e-mail sync that verdict is
+ * PERMANENT: the attachment is registered could_not_read and the watermark passes it, so a real
+ * incoming invoice — its cost, its voorbelasting — is retired without anyone being told. And the
+ * fuse blows precisely during a backfill, when the most documents are in flight.
+ *
+ * It is app-wide, self-healing at midnight, and never the document's fault. That combination is why
+ * the sync must HOLD rather than give up, and why every manual door must say "probeer het zo
+ * meteen opnieuw" instead of pronouncing on the file.
+ *
+ * Substring, not equality: the error crosses an async boundary and a wrapper may prefix it.
+ */
+export function isAiBudgetError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes(AI_BUDGET_EXHAUSTED_ERROR);
+}

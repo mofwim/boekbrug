@@ -10178,3 +10178,248 @@ test("[CRON-HARTSLAG-EIND] a read that failed is not recorded as a good run", ()
   assert.match(ret, /note: "kluis_check_unavailable_nothing_purged",\s*\}, false\)/,
     "nothing purged because the kluis check could not run is a failed run, not a quiet one");
 });
+
+// ── [BRON-VOCABULAIRE] What may be written into a `source` column ────────────────────────────────
+//
+// `invoices.source` and `documents.source` each carry a CHECK constraint, and the two vocabularies
+// are NOT the same: an invoice may be 'created' (this owner wrote it) and a document may not; a
+// document may be 'whatsapp' and an invoice may not. So "which values exist" cannot be answered
+// from memory at a call site — it has to be read from the schema.
+//
+// One route did answer it from memory. /api/documents/[id]/read-as-invoice wrote source:'reread',
+// a fifth value that exists nowhere in the constraint, so Postgres rejected the row (23514) and the
+// route answered 500. Proven against a real Postgres 16 with the constraint copied verbatim from
+// database.sql: 'reread' → violates check constraint "invoices_source_check"; 'created', 'email',
+// 'upload' and 'camera' all insert.
+//
+// What made it worth a gate rather than a one-line fix: this was the ONLY recovery path for a file
+// the reader once skipped — "lees alsnog als factuur" — so it failed on every attempt, and each
+// attempt also charged the owner a document from their monthly allowance. TypeScript cannot catch
+// it (the generated type is `string | null`), and no test called the route.
+//
+// HONEST LIMIT, stated because a gate that hides its blind spot is worse than none: this reads
+// LITERAL values only. Two invoices-inserts and several documents-inserts write no `source` at all
+// (the column is nullable), and /api/intake writes a variable — which is why INTAKE_SOURCES is
+// checked separately below, against both tables, since that route writes to both.
+
+/** The CHECK vocabulary of one text column, read from the schema itself. */
+function schemaVocabulary(table: string, column: string): string[] {
+  const sql = readFileSync("database.sql", "utf8");
+  const from = sql.indexOf(`CREATE TABLE public.${table} (`);
+  assert.ok(from >= 0, `database.sql declares ${table}`);
+  const body = sql.slice(from, sql.indexOf("\n);", from));
+  const m = new RegExp(`${column} text[^,]*?CHECK \\(${column} = ANY \\(ARRAY\\[([^\\]]+)\\]`, "s").exec(body);
+  assert.ok(m, `${table}.${column} still has a CHECK vocabulary — if it was dropped, this gate must be rewritten, not deleted`);
+  const values = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  assert.ok(values.length > 0, `${table}.${column} vocabulary is not empty`);
+  return values;
+}
+
+/**
+ * The values assigned to `source` at the TOP LEVEL of the object literal that follows an
+ * insert/upsert on `table`. Depth-aware on purpose: a `source:` inside a nested jsonb payload
+ * (logAuditAction's newValue is the one right next to the defect) is not a column write, and a
+ * gate that counted it would fail on correct code and be switched off.
+ */
+function literalSourceWrites(table: string): Array<{ file: string; line: number; value: string }> {
+  const out: Array<{ file: string; line: number; value: string }> = [];
+  const files: string[] = [];
+  (function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const p = `${dir}/${entry}`;
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) files.push(p);
+    }
+  })("src");
+
+  const call = new RegExp(`\\.from\\(['"\`]${table}['"\`]\\)\\s*(?://[^\\n]*\\n\\s*)*\\.(insert|upsert)\\(`, "g");
+  for (const file of files) {
+    const src = readFileSync(file, "utf8");
+    let m: RegExpExecArray | null;
+    while ((m = call.exec(src))) {
+      const open = src.indexOf("{", m.index + m[0].length);
+      if (open < 0 || open - (m.index + m[0].length) > 40) continue; // .insert(rows) — nothing literal to read
+      let depth = 0, end = open, quote: string | null = null;
+      for (; end < src.length; end++) {
+        const c = src[end];
+        if (quote) { if (c === "\\") end++; else if (c === quote) quote = null; continue; }
+        if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+        if (c === "{") depth++;
+        else if (c === "}") { depth--; if (depth === 0) break; }
+      }
+      const body = src.slice(open, end + 1);
+      depth = 0; quote = null;
+      for (let j = 0; j < body.length; j++) {
+        const c = body[j];
+        if (quote) { if (c === "\\") j++; else if (c === quote) quote = null; continue; }
+        if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+        if (c === "{" || c === "[" || c === "(") depth++;
+        else if (c === "}" || c === "]" || c === ")") depth--;
+        else if (depth === 1) {
+          const f = /^(?<![_a-zA-Z])source: *(['"])([a-z_]+)\1/.exec(body.slice(j));
+          if (f) out.push({ file, line: src.slice(0, open + j).split("\n").length, value: f[2] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+test("[BRON-VOCABULAIRE] no row is written with a source the database refuses", () => {
+  let checked = 0;
+  for (const table of ["invoices", "documents"]) {
+    const allowed = schemaVocabulary(table, "source");
+    for (const w of literalSourceWrites(table)) {
+      checked++;
+      assert.ok(
+        allowed.includes(w.value),
+        `${w.file}:${w.line} writes ${table}.source = '${w.value}', which the CHECK constraint ` +
+        `does not allow (${allowed.join(" | ")}). Postgres rejects the row and the route fails.`,
+      );
+    }
+  }
+  // The gate must be LOOKING at something. Without this it would pass just as happily on a regex
+  // that stopped matching after a refactor of how these routes call Supabase — and a whole-app scan
+  // that silently finds nothing is the most convincing green light there is.
+  //
+  // The floor is the count that exists TODAY, and the direction is deliberate: a new insert site
+  // pushes it UP and still passes, while a site the scan stopped seeing pushes it DOWN and fails.
+  // A loose floor was measured to be no floor at all — at >= 12 the two intake writes could vanish
+  // with the gate still green.
+  assert.ok(checked >= 15, `expected every known literal source write to be examined, saw ${checked}`);
+});
+
+test("[BRON-VOCABULAIRE] the one route that writes a variable is fenced against BOTH tables", () => {
+  // /api/intake writes documents.source AND invoices.source from the same value, so its whitelist
+  // has to satisfy the intersection — the previous version of this route claimed 'camera' for every
+  // row including files dropped on /dashboard/upload, and the fix was this constant.
+  const intake = code("src/app/api/intake/route.ts");
+  const m = /const INTAKE_SOURCES = \[([^\]]+)\] as const/.exec(intake);
+  assert.ok(m, "the intake source whitelist still exists");
+  const values = [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  assert.ok(values.length > 0, "and it is not empty");
+  const invoices = schemaVocabulary("invoices", "source");
+  const documents = schemaVocabulary("documents", "source");
+  for (const v of values) {
+    assert.ok(invoices.includes(v), `intake may write invoices.source='${v}'`);
+    assert.ok(documents.includes(v), `intake may write documents.source='${v}'`);
+  }
+  // And the fallback for an older client is one of them, not a fifth invention.
+  assert.match(intake, /: "camera"/, "the fallback is a value from the whitelist");
+});
+
+test("[TWEEDE-KANS-BRON] the second-chance re-read gives the document back when it stores nothing", () => {
+  // The other half of the same route, and the same rule its own header states: a failure is not a
+  // reading. It was applied to the failed READ and not to the failed INSERT — the branch that ran
+  // on every single attempt, so the one path that could rescue a skipped file also charged for it.
+  const route = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  const insertFailure = route.indexOf("if (insErr || !invoice)");
+  assert.ok(insertFailure > 0, "the insert-failure branch still exists");
+  const branch = route.slice(insertFailure, route.indexOf("}", route.indexOf("status: 500", insertFailure)));
+  assert.match(branch, /await gate\.release\(\)/, "a reading that stored nothing is not charged");
+});
+
+test("[NO-SILENT-EMPTY] the verify queue never reports an unread queue as a finished one", () => {
+  // /dashboard/incoming is the ONLY surface where a 'processing' invoice can be confirmed, and its
+  // empty state is the sentence "Alles verwerkt" — a claim about the owner's books, not about this
+  // page. The server read was already fail-soft (`.catch(() => null)`, correct: a failed read may
+  // not blank the page), but `pendingRaw ?? []` one line down threw away the only distinction that
+  // matters, so a database that would not answer looked exactly like a queue that was finished.
+  // Nothing else on the screen contradicted it — the counts in the tab labels are counts of what
+  // loaded. Same rule, same two sentences and the same banner as Crediteuren next door.
+  const page = code("src/app/dashboard/incoming/page.tsx");
+
+  // All three lists travel through one flag. Naming them individually rather than counting calls:
+  // a gate that asserted "three readOrFlag calls" would pass on three calls for the same list.
+  assert.match(page, /readOrFlag\("controlewachtrij"/, "the queue itself");
+  assert.match(page, /readOrFlag\("genegeerde facturen"/, "the tab an archived invoice is restored from");
+  assert.match(page, /readFailed\.push\("bevestigde facturen"\)/, "and the confirmed tab, whose two reads dropped their error entirely");
+  // The confirmed reads must actually LOOK at the error — `const { data }` alone is how they got here.
+  assert.match(page, /const \{ data: confirmedReceivedRaw, error: confirmedReceivedErr \}/);
+  assert.match(page, /const \{ data: confirmedPaidRaw, error: confirmedPaidErr \}/);
+  // And the flag has to leave the server. Without this line every check above is bookkeeping.
+  assert.match(page, /readFailed=\{readFailed\}/, "the screen is handed what could not be read");
+
+  const client = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  // ORDER, not presence: both branches exist either way, and the defect is which one is asked
+  // first. `loadIncomplete` must be tested BEFORE the empty state, or "Alles verwerkt" wins on
+  // exactly the runs where it is false.
+  const incompleteAt = client.indexOf("{loadIncomplete ? (");
+  const emptyAt = client.indexOf("t('ink.allesVerwerkt')");
+  assert.ok(incompleteAt > 0, "the failed-read branch exists");
+  assert.ok(emptyAt > 0, "the empty state still exists — an honest empty queue is good news");
+  assert.ok(incompleteAt < emptyAt, "a failed read is asked about BEFORE the page claims to be done");
+  assert.match(client, /const loadIncomplete = readFailed\.length > 0;/);
+  assert.match(client, /t\('ink\.bronnenNietOpgehaald', \{ sources: readFailed\.join\(" en "\) \}\)/,
+    "the banner names which list is short");
+
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /the verify queue does not report an unread queue as finished/,
+    "and it renders in the render gate, with the empty-list-plus-failed-read rows that produce it");
+});
+
+test("[REMINDER-TRUTH] the Herinneren button does not report a rejected e-mail as sent", () => {
+  // sendInvoiceReminder returns { delivered } exactly because a provider REJECTION is not an
+  // exception — deliverEmail(critical:false) logs it, reports it, and returns false. The cron reads
+  // that; this route awaited the call and dropped the answer, so a refused address came back 200
+  // with "verstuurd N".
+  //
+  // And the claim row stayed on 'sent', which is the half that bites twice: `geslaagd` counts every
+  // row that is not 'failed' and feeds canRemind, so the phantom send both raised reminder_count and
+  // set last_reminder_at to now — the owner is told the letter went out AND is then refused when
+  // they try again. Released rather than marked failed, because a rejection means it demonstrably
+  // did not arrive: a retry cannot become a second letter at the customer.
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  assert.match(route, /delivery = await sendInvoiceReminder\(\{/, "the result is captured");
+  assert.match(route, /if \(!delivery\.delivered\) \{/, "…and acted on");
+  const branch = route.slice(route.indexOf("if (!delivery.delivered) {"));
+  const answer = branch.slice(0, branch.indexOf("status: 502") + 20);
+  assert.match(answer, /\.from\('invoice_reminders'\)\.delete\(\)\.eq\('id', claim\.id\)/,
+    "the claim is released, or the button stays blocked on a reminder that never happened");
+  assert.match(answer, /releaseErr/, "and a release that itself failed is not discarded");
+  // The branch must LEAVE, not merely log. Measured on the slice that ends at the 502 itself, so
+  // this cannot be satisfied by a `return` somewhere further down the route.
+  assert.match(answer, /return NextResponse\.json\(/,
+    "a rejection leaves the route as an error, never as ok:true");
+  assert.doesNotMatch(answer, /ok: true/, "and nothing on the way there claims success");
+
+  // The cron half is the one where this costs a legal right; it already reads the flag. Pinned here
+  // so the two never drift back apart.
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /if \(!delivery\.delivered\) \{/, "the automatic path reads the same flag");
+});
+
+test("[CRON-HONEST] the accountant's morning run cannot report itself green after failing everyone", () => {
+  // ok:true was a constant, and it is the one field with a reader — judgeCron maps ok=false to
+  // "gefaald" on /api/health. So a run where every accountant threw (invoices unreadable) or every
+  // notification insert was refused closed its heartbeat GREEN with sent:0, quiet:0. Nothing
+  // compares sent+quiet to the number of accountants, so there was no other trace.
+  const route = code("src/app/api/cron/accountant-daily/route.ts");
+  // SLICED TO EACH HEARTBEAT CALL, and every one of them checked. Two measurements shaped this:
+  //   · a whole-file /ok: failed === 0/ is no gate at all — the JSON response on the next line
+  //     carries the same text, so restoring `ok: true` inside finishCronRun left the file matching
+  //     and the negative control passed;
+  //   · indexOf() finds the EARLY exit (the links lookup, which correctly stamps ok:false), not
+  //     the one at the end. Reading "a finishCronRun call" was reading the wrong one.
+  // So: collect them all, and require each to be either an explicit failure or the computed verdict.
+  const stamps = [...route.matchAll(/finishCronRun\([^,]+,[^,]+,\s*\{([\s\S]*?)\}\s*\)/g)].map((m) => m[1]);
+  assert.ok(stamps.length >= 2, `both exits close the heartbeat, saw ${stamps.length}`);
+  for (const stamp of stamps) {
+    assert.doesNotMatch(stamp, /ok: true/, "no unconditional green stamp on any heartbeat in this file");
+    assert.match(stamp, /ok: (false|failed === 0)/, "every exit states a verdict it computed");
+  }
+  assert.ok(stamps.some((x) => /ok: failed === 0/.test(x)), "and the run that did the work judges itself by its failures");
+  // Both failure paths must actually FEED that counter — the flag is worthless if nothing raises it.
+  const perAccountant = route.slice(route.indexOf("} catch (e) {", route.indexOf("const melding")));
+  assert.match(perAccountant, /failed\+\+/, "an accountant skipped by a thrown read counts as a failure");
+  const insertFailure = route.slice(route.indexOf("if (!melding.ok)"));
+  assert.match(insertFailure.slice(0, insertFailure.indexOf("continue;")), /failed\+\+/,
+    "a notification the database refused counts too — that accountant was not told");
+  assert.match(route, /result: \{ sent, quiet, failed \}/, "and the count is recorded, not just used");
+
+  // The heartbeat judge is what gives ok=false its consequence. Without this the gate above pins a
+  // boolean nobody reads.
+  const heartbeat = code("src/lib/cron-heartbeat.ts");
+  assert.match(heartbeat, /if \(run\.ok === false\) return "gefaald";/,
+    "ok=false is what /api/health turns into an alarm");
+});

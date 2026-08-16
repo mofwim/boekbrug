@@ -98,6 +98,11 @@ export async function GET(req: NextRequest) {
 
   let sent = 0;
   let quiet = 0;
+  // [CRON-HONEST] Third counter, and without it the two above cannot tell a healthy morning from a
+  // broken one. Every accountant this run could not be served — a read that threw, a notification
+  // the database refused — used to leave no number at all: `sent` and `quiet` simply did not add up
+  // to `accountants`, and nothing anywhere compares those. See the heartbeat at the end.
+  let failed = 0;
 
   for (const [accountantId, clientIds] of clientsByAccountant) {
     try {
@@ -149,20 +154,39 @@ export async function GET(req: NextRequest) {
         link: message.link,
       });
       if (!melding.ok) {
+        // The message was composed and then not delivered: this accountant has work waiting and
+        // will not hear about it. Counted, so the run cannot report itself green.
         console.error("[CRON-DAGSTART] notification insert failed", { accountantId, error: melding.error });
+        failed++;
         continue;
       }
       sent++;
     } catch (e) {
-      // Best-effort per accountant: one failure must never stop the rest of the round.
+      // Best-effort per accountant: one failure must never stop the rest of the round. Continuing
+      // is right; being silent about it is not — an accountant skipped here is one who was not told
+      // about a confirm stack or a deadline, which is the entire purpose of this job.
+      failed++;
       console.error("[CRON-DAGSTART] accountant skipped", {
         accountantId, error: e instanceof Error ? e.message : String(e),
       });
     }
   }
 
-  await finishCronRun(pipeline, cronRunId, { ok: true, result: { sent, quiet } });
+  // [CRON-HONEST] `ok: true` used to be a constant here, and it is the one field with a reader:
+  // judgeCron turns ok=false into "gefaald" on /api/health. So a run in which EVERY accountant threw
+  // — an unreachable invoices table, a notifications table refusing every insert — closed its own
+  // heartbeat green with sent:0, quiet:0, and the health page said the morning message was fine.
+  // The same shape the reminders cron already uses: the run is good when nothing failed.
+  await finishCronRun(pipeline, cronRunId, {
+    ok: failed === 0,
+    result: { sent, quiet, failed },
+    ...(failed > 0
+      ? { error: `${failed} of ${clientsByAccountant.size} accountants could not be served` }
+      : {}),
+  });
   // `quiet` is returned on purpose: a run where everybody was quiet is the healthy common case, and
-  // without the number it is indistinguishable from a run that found nobody at all.
-  return NextResponse.json({ ok: true, accountants: clientsByAccountant.size, sent, quiet, daysToDeadline });
+  // without the number it is indistinguishable from a run that found nobody at all. `failed` is
+  // returned for the same reason in the other direction — a caller reading only `sent` cannot tell
+  // "nobody needed a message" from "nobody could be reached".
+  return NextResponse.json({ ok: failed === 0, accountants: clientsByAccountant.size, sent, quiet, failed, daysToDeadline });
 }

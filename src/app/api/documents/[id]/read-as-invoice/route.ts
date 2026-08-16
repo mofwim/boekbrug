@@ -202,7 +202,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     .from("invoices")
     .insert({
       sender_id: null, receiver_id: user.id, direction: "incoming", status: "processing",
-      source: "reread", client_name: v.vendor || "Onbekende afzender",
+      // [TWEEDE-KANS-BRON] "upload", not "reread". invoices.source is a CLOSED vocabulary
+      // (created | email | upload | camera) and every other insert in the app writes one of those;
+      // this route was the only place inventing a fifth value, so its INSERT was rejected and the
+      // route answered 500 — on the only recovery path a skipped file has. The provenance is not
+      // lost: the audit row two blocks down records action 'invoice.reread_from_document', which
+      // says more precisely what happened than a source value ever did.
+      source: "upload", client_name: v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number?.trim() || null,
@@ -215,6 +221,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     })
     .select("id").single();
   if (insErr || !invoice) {
+    // [FAIR-USE] Same rule as the read failure above, and it was missing here: a reading that
+    // produced nothing storable is not a reading. Without this every failed attempt cost the owner
+    // a document from their monthly allowance — and this branch failed on EVERY attempt.
+    await gate.release();
     console.error("[TWEEDE-KANS] insert failed", { id, error: insErr?.message });
     return NextResponse.json({ error: "De factuur kon niet worden opgeslagen." }, { status: 500 });
   }
