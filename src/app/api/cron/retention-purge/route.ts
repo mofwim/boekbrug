@@ -272,7 +272,13 @@ export async function GET(req: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pipeline as any)
         .from("deletion_requests")
-        .select("id, user_id, deleted_at, data_eligible_for_deletion_at, purged_at")
+        // [WAARSCHUWING] purge_warning_sent_at MOET mee. decidePurge weigert elke rij zonder dit
+        // stempel met `no_warning_sent` — het laatste hek, en het enige dat een belofte afdwingt in
+        // plaats van een techniek. Het stond niet in deze SELECT, dus kwam het bij decidePurge
+        // binnen als ONTBREKEND en werd élke rij geweigerd, elke nacht, voor altijd: de
+        // AVG-verwijdering (art. 17) kon niets wissen en het rapport zei "niets te doen".
+        // De brief zelf werd wél netjes verstuurd en gestempeld, honderd regels hierboven.
+        .select("id, user_id, deleted_at, data_eligible_for_deletion_at, purged_at, purge_warning_sent_at")
         .is("purged_at", null)
         .not("deleted_at", "is", null)
         .lte("data_eligible_for_deletion_at", now.toISOString())

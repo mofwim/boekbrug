@@ -9344,6 +9344,72 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[CRON-STIL] a failed candidate read is not a quiet night", () => {
+  // The catch returned [] and the very next line answered ok:true, sent:0 — indistinguishable from
+  // "nothing was overdue". Dunning could be dead every night while the heartbeat read green.
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /invoiceReadFailed = e instanceof Error \? e\.message : String\(e\);/,
+    "the failure has to be remembered, not only logged");
+  assert.match(cron, /if \(invoiceReadFailed !== null\) \{/);
+  assert.match(cron, /note: "invoice_lookup_failed" \}, false\)/,
+    "…and the run must close as FAILED, or the heartbeat still says green");
+  assert.match(cron, /tag: "CRON-REMINDERS",\s*\n\s*message: "candidate invoice read failed/,
+    "…and reach a person, since a cron's stdout reaches nobody");
+  // The guard must precede the empty-list branch it exists to distinguish from.
+  assert.ok(
+    cron.indexOf("if (invoiceReadFailed !== null)") < cron.indexOf("if (invoices.length === 0)"),
+    "a read failure must be answered before 'nothing to do' is",
+  );
+});
+
+test("[HERLEZING-STIL] a read that never happened may not archive an invoice", () => {
+  // classifyAttachment answers a caught failure — a blown AI-budget fuse, a model that returned
+  // nothing — with a FALLBACK: isInvoice false at confidence 0. That is the absence of a judgement,
+  // not a judgement, and it arrived here as "not an invoice". One blown fuse plus "herlees alles"
+  // then archives the whole verify queue: real invoices, real amounts, on a reading that never
+  // took place. The e-mail side already draws this distinction.
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+  assert.match(route, /if \(!c\.isInvoice && !\(\(c\.confidence \?\? 0\) > 0\)\) \{/,
+    "no confidence means no reading, and no reading means no archiving");
+  assert.match(route, /We konden dit document nu niet lezen/,
+    "…and the owner is told which of the two it was");
+  // …and it has to come BEFORE the archive branch, or it decides nothing.
+  assert.ok(
+    route.indexOf("(c.confidence ?? 0) > 0") < route.indexOf('status: "archived"'),
+    "a guard that runs after the write is not a guard",
+  );
+});
+
+test("[WAARSCHUWING] the purge reads the stamp its own refusal depends on", () => {
+  // decidePurge's last gate refuses any row without purge_warning_sent_at — including one where
+  // the field is ABSENT, which is the right answer for a row that proves nothing. The purge query
+  // did not select it, so every candidate arrived stamp-less and was refused, every night, forever:
+  // the AVG art. 17 erasure could never run. The 30-day letter itself was sent and stamped
+  // correctly a hundred lines above, by the same cron.
+  const route = code("src/app/api/cron/retention-purge/route.ts");
+  // Sliced to the PURGE query specifically: the warning query a hundred lines above selects the
+  // same column, and a whole-file match would have passed while the purge query lost it. It did —
+  // the first negative control edited the warning query and this gate never noticed.
+  const purgeQuery = route.slice(route.indexOf('.from("deletion_requests")', route.indexOf("let rows: DeletionRequestRow[]")));
+  assert.match(purgeQuery, /purged_at, purge_warning_sent_at"/,
+    "the purge query must fetch the stamp it refuses on");
+  // …and the WARNING query needs it too, for its own reason: it filters on it to find who has not
+  // been written to yet. Both, separately, or one of them silently stops working.
+  const warnQuery = route.slice(route.indexOf('.from("deletion_requests")'), route.indexOf("let rows: DeletionRequestRow[]"));
+  assert.match(warnQuery, /\.is\("purge_warning_sent_at", null\)/,
+    "the warning query must still find the rows that were never written to");
+
+  // …and the TYPE must declare it, or the next caller drops it again with tsc silent. That is how
+  // it happened: the field was never on DeletionRequestRow at all.
+  const mod = code("src/lib/retention-purge.ts");
+  assert.match(mod, /purge_warning_sent_at\?: string \| null;/);
+
+  // The promise itself is untouched: 29 days is still a refusal, 31 days still erases.
+  const spec = readFileSync("src/lib/retention-purge.test.ts", "utf8");
+  assert.match(spec, /a row that was never warned is refused, however expired it is/);
+  assert.match(spec, /a MISSING column is refused too/);
+});
+
 test("[ORIGINEEL-INKOOP] only a purchase invoice may be given an original", () => {
   // This route's one write puts the uploaded file's key into invoices.pdf_url. On an OUTGOING
   // invoice that column is not an empty slot — it is the legal PDF the app rendered and mailed

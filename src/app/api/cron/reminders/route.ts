@@ -180,6 +180,8 @@ export async function GET(req: NextRequest) {
   // 414 that supabase-js reports as an ordinary error — so fetchAllRows would throw and this cron
   // would simply stop sending, every night, with nobody looking. Chunking removes the cliff instead
   // of waiting for it. Same rows, same order, one bounded request per chunk.
+  // [CRON-STIL] Set by the catch below; null means the read really did answer.
+  let invoiceReadFailed: string | null = null;
   const invoices = await fetchAllRowsForIds<CandidateInvoice, string>(ownerIds, (chunk, from, to) =>
     pipeline
       .from("invoices")
@@ -196,11 +198,27 @@ export async function GET(req: NextRequest) {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch((e) => {
-    console.error("[CRON-REMINDERS] candidate invoice fetch failed", {
-      error: e instanceof Error ? e.message : String(e),
-    });
+    // [CRON-STIL] Caught so one bad chunk does not kill the run — and REMEMBERED, because an empty
+    // list from here is indistinguishable from "nothing is overdue tonight". Without the flag this
+    // route answered ok:true, sent:0 on a failed read, so dunning could be dead every night while
+    // the heartbeat reported the cron ran as intended and no owner was ever told.
+    invoiceReadFailed = e instanceof Error ? e.message : String(e);
+    console.error("[CRON-REMINDERS] candidate invoice fetch failed", { error: invoiceReadFailed });
     return [] as CandidateInvoice[];
   });
+
+  if (invoiceReadFailed !== null) {
+    // [ALARM] Not a quiet night: the question could not be asked. Through the reporter rather than
+    // stdout, for the reason this file already gives about a cron writing to a log nobody opens —
+    // and the run closes as FAILED, so the heartbeat says so too.
+    reportHandledFailure({
+      tag: "CRON-REMINDERS",
+      message: "candidate invoice read failed — nobody was dunned tonight, and not because nothing was due",
+      severity: "gate-unavailable",
+      context: { enabledOwners: owners.length, error: invoiceReadFailed },
+    });
+    return klaar({ ok: false, enabledOwners: owners.length, sent: 0, note: "invoice_lookup_failed" }, false);
+  }
 
   if (invoices.length === 0) {
     return klaar({ ok: true, enabledOwners: owners.length, sent: 0 });
