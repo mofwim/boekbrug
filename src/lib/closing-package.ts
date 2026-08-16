@@ -28,6 +28,8 @@ import JSZip from "jszip";
 // coordinates — no content parsing, no AI. Requires `npm install pdf-lib`.
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import type { PipelineClient } from "./supabase-pipeline";
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from "./storage-path";
 import {
   quarterStartDate,
   quarterEndDate,
@@ -1222,9 +1224,14 @@ export async function summarizeClosingPackage(args: {
   const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
   let docUrlById = new Map<string, boolean>();
   if (incomingDocIds.length > 0) {
+    // [SEC-STORAGE-PATH] Scoped to the owner, like the bankafschrift query below and unlike
+    // these two reads before it. invoices.document_id is ordinary text on a row the owner may
+    // write, and `supabase` here is service_role — so an id pointing at another tenant's
+    // document was read by id and its bytes shipped inside this owner's quarter ZIP.
     const { data: docs } = await supabase
       .from("documents")
       .select("id, file_url")
+      .eq("user_id", ownerId)
       .in("id", incomingDocIds);
     const rows = (docs ?? []) as unknown as Array<{ id: string; file_url: string | null }>;
     docUrlById = new Map(rows.map((d) => [d.id, !!d.file_url]));
@@ -1462,9 +1469,14 @@ export async function buildClosingPackageZip(args: {
 
   const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
   if (incomingDocIds.length > 0) {
+    // [SEC-STORAGE-PATH] Scoped to the owner, like the bankafschrift query below and unlike
+    // these two reads before it. invoices.document_id is ordinary text on a row the owner may
+    // write, and `supabase` here is service_role — so an id pointing at another tenant's
+    // document was read by id and its bytes shipped inside this owner's quarter ZIP.
     const { data: docs } = await supabase
       .from("documents")
       .select("id, file_url, file_name")
+      .eq("user_id", ownerId)
       .in("id", incomingDocIds);
     const docRows = (docs ?? []) as unknown as Array<{
       id: string;
@@ -1474,8 +1486,10 @@ export async function buildClosingPackageZip(args: {
     const docById = new Map(docRows.map((d) => [d.id, d]));
     for (const inv of incoming) {
       const d = inv.document_id ? docById.get(inv.document_id) : null;
-      if (d?.file_url) {
-        pathByInvoice.set(inv.id, { path: d.file_url, name: d.file_name ?? `${inv.invoice_number ?? inv.id}` });
+      // …and the key must sit in this owner's own folder, not merely on a row that is theirs.
+      const pad = toStoragePath(d?.file_url);
+      if (d?.file_url && pathBelongsToOwner(pad, ownerId)) {
+        pathByInvoice.set(inv.id, { path: pad, name: d.file_name ?? `${inv.invoice_number ?? inv.id}` });
       }
     }
   }

@@ -17,6 +17,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createClient } from "@supabase/supabase-js";
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 
 function createServiceRoleClient() {
   return createClient(
@@ -64,7 +66,15 @@ export async function DELETE(_req: NextRequest) {
       .ilike("file_name", "onboarding-%");  // files named "onboarding-{timestamp}.ext"
 
     if (docs && docs.length > 0) {
-      const paths = docs.map((d) => d.file_url).filter(Boolean) as string[];
+      // [SEC-STORAGE-PATH] These rows are this user's — and file_url is ordinary text on a row
+      // they may write, while serviceSupabase bypasses the bucket policy. This call is
+      // storage.remove(), so an unattributable key here is not a leak but a DELETION of somebody
+      // else's bytes, with nothing to undo it. Only keys inside this owner's own folder are
+      // removed; anything else keeps its row deleted and leaves an orphan object, which is
+      // reclaimable and is the direction this route already chose for a failed remove.
+      const paths = docs
+        .map((d) => toStoragePath(d.file_url))
+        .filter((p) => p && pathBelongsToOwner(p, user.id)) as string[];
       const ids = docs.map((d) => d.id);
 
       // [reset#2] Delete the DB rows FIRST, scoped by user_id (defense-in-depth),

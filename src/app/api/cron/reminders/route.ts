@@ -49,6 +49,8 @@ import { buildWikNotice, debtorTypeOf, isFinalTier, aggregateWikClaims } from "@
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path"
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -400,9 +402,15 @@ export async function GET(req: NextRequest) {
       // Best-effort PDF re-attach from the stored invoice PDF. Any failure →
       // send without attachment (the template renders fine without it).
       let pdfBuffer: Buffer | undefined;
-      if (inv.pdf_url) {
+      // [SEC-STORAGE-PATH] The invoice row is this owner's, which says nothing about where its
+      // pdf_url POINTS: that column is ordinary text on a row the owner may update, and `pipeline`
+      // is service_role, which bypasses the bucket policy that would otherwise catch a key from
+      // another tenant's folder. This attachment is then mailed to an address the same row carries.
+      // See the header of storage-path.ts — written for this shape, already applied at four doors.
+      const pdfPath = toStoragePath(inv.pdf_url);
+      if (inv.pdf_url && pathBelongsToOwner(pdfPath, ownerId)) {
         try {
-          const { data: blob } = await pipeline.storage.from(PDF_BUCKET).download(inv.pdf_url);
+          const { data: blob } = await pipeline.storage.from(PDF_BUCKET).download(pdfPath);
           if (blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
         } catch {
           /* non-blocking — reminder goes out without the PDF */

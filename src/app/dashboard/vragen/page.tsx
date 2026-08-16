@@ -21,6 +21,8 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from '@/lib/storage-path'
 import {
   buildOpenVragen, buildOpenInvoiceVragen, VRAAG_STATUS,
   type VraagStatusRow, type VraagInvoiceRow,
@@ -150,7 +152,13 @@ export default async function VragenPage() {
     docRows.map(async (d) => {
       if (!d.file_url) return
       if (/^https?:\/\//i.test(d.file_url)) { urlByDoc.set(d.id, d.file_url); return }
-      const { data } = await pipeline.storage.from('documents').createSignedUrl(d.file_url, 3600)
+      // [SEC-STORAGE-PATH] The document rows are this owner's; that says nothing about where their
+      // file_url POINTS. `pipeline` is service_role and bypasses the bucket policy, so an
+      // unattributable key would be signed into a working one-hour URL. A path we cannot prove
+      // belongs to this owner simply gets no link — the question still renders without one.
+      const pad = toStoragePath(d.file_url)
+      if (!pathBelongsToOwner(pad, user.id)) return
+      const { data } = await pipeline.storage.from('documents').createSignedUrl(pad, 3600)
       if (data?.signedUrl) urlByDoc.set(d.id, data.signedUrl)
     }),
   )

@@ -41,6 +41,8 @@ import { createNotification } from '@/lib/notifications'
 import { sendInvoiceToClient } from '@/lib/email'
 // [FACTUUR-BIJLAGE] Of het eigen bestand mee mag, en wat de ondernemer leest als het niet kan.
 import { attachmentRefusal, attachmentRefusalText, safeAttachmentName } from '@/lib/invoice-attachment'
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from '@/lib/storage-path'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
@@ -520,7 +522,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: attachmentRefusalText(weigering), code: `attachment_${weigering}` }, { status: 400 })
       }
 
-      const pad = (bijlageDoc as { file_url: string }).file_url
+      // [SEC-STORAGE-PATH] attachmentRefusal above proved the ROW is this owner's. It says nothing
+      // about where the row POINTS: file_url is ordinary text, and the pipeline client bypasses the
+      // bucket policy that would otherwise catch a key from another tenant's folder. Two different
+      // claims — see the header of storage-path.ts, which was written for exactly this shape and is
+      // already applied at four other doors.
+      const pad = toStoragePath((bijlageDoc as { file_url: string }).file_url)
+      if (!pathBelongsToOwner(pad, ownerId)) {
+        // Deliberately the same sentence as a missing attachment: the owner has one attachment and
+        // it cannot be sent, and a message that distinguishes "not yours" from "not found" would
+        // tell someone probing which keys exist.
+        return NextResponse.json(
+          { error: attachmentRefusalText('not_found'), code: 'attachment_not_found' },
+          { status: 400 },
+        )
+      }
       const { data: blob, error: dlErr } = await createPipelineClient().storage.from('documents').download(pad)
       if (dlErr || !blob) {
         return NextResponse.json(

@@ -9344,6 +9344,52 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is attributed first", () => {
+  // The rule this module's own header states: a ROW check says "you may see this record", never
+  // "and the record points at your bytes". file_url and pdf_url are ordinary text on rows the owner
+  // may write, and the service-role client bypasses the bucket policy that would catch a key from
+  // another tenant's folder. Four doors already applied it; these five did not.
+  //
+  // Each assertion below pins the GUARDED EXPRESSION, not the presence of the helper's name
+  // anywhere in the file. A first version of this gate did the latter and three negative controls
+  // walked straight through it — the same mention-not-wiring shape this file keeps closing.
+
+  // The attachment mailed to the customer. Refused with the not_found sentence on purpose: telling
+  // a prober "not yours" would tell them which keys exist.
+  assert.match(code("src/app/api/invoice/send/route.ts"),
+    /if \(!pathBelongsToOwner\(pad, ownerId\)\) \{/);
+
+  // The PDF attached to a dunning mail — sent to an address the same row carries.
+  assert.match(code("src/app/api/cron/reminders/route.ts"),
+    /if \(inv\.pdf_url && pathBelongsToOwner\(pdfPath, ownerId\)\) \{/);
+
+  // A working one-hour signed URL.
+  assert.match(code("src/app/dashboard/vragen/page.tsx"),
+    /if \(!pathBelongsToOwner\(pad, user\.id\)\) return/);
+
+  // The one that DELETES. Its filter must drop a foreign key rather than remove it: an orphan
+  // object is reclaimable, another tenant's bytes are not.
+  assert.match(code("src/app/api/onboarding/reset/route.ts"),
+    /\.filter\(\(p\) => p && pathBelongsToOwner\(p, user\.id\)\)/);
+
+  // Bytes shipped inside the quarter ZIP the accountant opens.
+  const pkg = code("src/lib/closing-package.ts");
+  assert.match(pkg, /if \(d\?\.file_url && pathBelongsToOwner\(pad, ownerId\)\) \{/);
+  // …and the two reads that fetched documents BY ID with no owner filter at all, while the
+  // bankafschrift query directly below them always had one.
+  assert.doesNotMatch(pkg, /\.select\("id, file_url"\)\s*\.in\("id", incomingDocIds\)/,
+    "a documents read by id must be scoped to the owner");
+  assert.doesNotMatch(pkg, /\.select\("id, file_url, file_name"\)\s*\.in\("id", incomingDocIds\)/,
+    "…both of them");
+
+  // Every one of them normalises first, or a stored full URL dodges the check entirely.
+  for (const f of ["src/app/api/invoice/send/route.ts", "src/app/api/cron/reminders/route.ts",
+                   "src/app/dashboard/vragen/page.tsx", "src/app/api/onboarding/reset/route.ts",
+                   "src/lib/closing-package.ts"]) {
+    assert.match(code(f), /toStoragePath\(/, `${f} must normalise the stored value first`);
+  }
+});
+
 test("[DECLARED-INVOICE-EIGEN-CLAIM] the guard is not fed the payment's own claim", () => {
   // undeclaredMissingInvoices computes "what this payment NAMES" minus "what we HOLD". It was
   // handed [...refNumbers, …] as the held set, and refNumbers is parseReferenceNumbers(tx.reference)
